@@ -26,64 +26,6 @@ from .data_service import DataService
 from .workflow_config_service import ConfigServiceAdapter, WorkflowConfigService
 
 
-class BoundWorkflowController:
-    """
-    Controller bound to a specific workflow, providing direct access without ID checks.
-
-    This controller is created from a main WorkflowController and provides a simplified
-    interface for widgets that work with a single workflow.
-    """
-
-    def __init__(
-        self,
-        workflow_id: WorkflowId,
-        spec: WorkflowSpec,
-        main_controller: WorkflowController,
-    ) -> None:
-        """
-        Initialize bound controller.
-
-        Parameters
-        ----------
-        workflow_id
-            The workflow ID this controller is bound to
-        spec
-            The workflow specification
-        main_controller
-            Reference to the main controller for operations
-        """
-        self._workflow_id = workflow_id
-        self._spec = spec
-        self._main_controller = main_controller
-
-    @property
-    def workflow_id(self) -> WorkflowId:
-        """Get the workflow ID."""
-        return self._workflow_id
-
-    @property
-    def spec(self) -> WorkflowSpec:
-        """Get the workflow specification."""
-        return self._spec
-
-    @property
-    def params_model_class(self) -> type[pydantic.BaseModel]:
-        """Get the parameters model class."""
-        return self._spec.params
-
-    def get_persistent_config(self) -> PersistentWorkflowConfig | None:
-        """Get persistent configuration for this workflow."""
-        return self._main_controller.get_workflow_config(self._workflow_id)
-
-    def start_workflow(
-        self, source_names: list[str], config: pydantic.BaseModel
-    ) -> bool:
-        """Start this workflow with given configuration."""
-        return self._main_controller.start_workflow(
-            self._workflow_id, source_names, config
-        )
-
-
 class WorkflowController:
     """
     Workflow controller backed by a config service.
@@ -282,23 +224,3 @@ class WorkflowController:
             callback(self._workflow_status.copy())
         except Exception as e:
             self._logger.error('Error in workflow status update callback: %s', e)
-
-    def get_bound_controller(
-        self, workflow_id: WorkflowId
-    ) -> BoundWorkflowController | None:
-        """
-        Get a controller bound to a specific workflow.
-
-        Parameters
-        ----------
-        workflow_id
-            ID of the workflow to bind to
-
-        Returns
-        -------
-        BoundWorkflowController | None
-            Bound controller if workflow exists, None otherwise
-        """
-        if (spec := self.get_workflow_spec(workflow_id)) is None:
-            return None
-        return BoundWorkflowController(workflow_id, spec, self)

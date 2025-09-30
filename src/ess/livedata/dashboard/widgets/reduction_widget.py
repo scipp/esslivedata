@@ -29,10 +29,7 @@ from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 from ess.livedata.dashboard.workflow_configuation_adapter import (
     WorkflowConfigurationAdapter,
 )
-from ess.livedata.dashboard.workflow_controller import (
-    BoundWorkflowController,
-    WorkflowController,
-)
+from ess.livedata.dashboard.workflow_controller import WorkflowController
 
 from .configuration_widget import ConfigurationModal
 
@@ -52,23 +49,23 @@ class WorkflowSelectorWidget:
             Controller for workflow operations
         """
         self._controller = controller
-        self._bound_controller: BoundWorkflowController | None = None
         self._selector = pn.widgets.Select(name="Workflow")
         self._description_pane = pn.pane.HTML(
             "Select a workflow to see its description"
         )
         self._widget = self._create_widget()
         self._setup_callbacks()
-        self._on_workflows_updated(self._controller.get_workflow_specs())
 
-    @classmethod
+        self._selector.options = self._make_workflow_options()
+        self._selector.value = self._no_selection
+
     def _make_workflow_options(
-        cls, specs: dict[WorkflowId, WorkflowSpec] | None = None
+        self, specs: dict[WorkflowId, WorkflowSpec] | None = None
     ) -> dict[str, WorkflowId | object]:
         """Get workflow options for selector widget."""
-        specs = specs or {}
+        specs = self._controller.get_workflow_specs()
         select_text = "--- Click to select a workflow ---"
-        options = {select_text: cls._no_selection}
+        options = {select_text: self._no_selection}
         options.update({spec.title: workflow_id for workflow_id, spec in specs.items()})
         return options
 
@@ -76,11 +73,6 @@ class WorkflowSelectorWidget:
     def _is_no_selection(cls, value: WorkflowId | object) -> bool:
         """Check if the given value represents no workflow selection."""
         return value is cls._no_selection
-
-    @classmethod
-    def _get_default_workflow_selection(cls) -> object:
-        """Get the default value for no workflow selection."""
-        return cls._no_selection
 
     def _create_widget(self) -> pn.Column:
         """Create the main selector widget."""
@@ -94,24 +86,18 @@ class WorkflowSelectorWidget:
         """Handle workflow selection change."""
         workflow_id = event.new
 
-        # Create bound controller and UI helper for selected workflow
+        # Update description based on selected workflow
         if self._is_no_selection(workflow_id):
-            self._bound_controller = None
             text = "Select a workflow to see its description"
         else:
-            self._bound_controller = self._controller.get_bound_controller(workflow_id)
-            if self._bound_controller is not None:
-                description = self._bound_controller.spec.description
+            spec = self._controller.get_workflow_spec(workflow_id)
+            if spec is not None:
+                description = spec.description
                 text = f"<p><strong>Description:</strong> {description}</p>"
             else:
                 text = "Select a workflow to see its description"
 
         self._description_pane.object = text
-
-    def _on_workflows_updated(self, specs: dict[WorkflowId, WorkflowSpec]) -> None:
-        """Handle workflow specs updates."""
-        self._selector.options = self._make_workflow_options(specs)
-        self._selector.value = self._get_default_workflow_selection()
 
     @property
     def widget(self) -> pn.Column:
@@ -125,11 +111,17 @@ class WorkflowSelectorWidget:
         return None if self._is_no_selection(value) else value
 
     def create_modal(self) -> ConfigurationModal | None:
-        if self._bound_controller is None:
+        workflow_id = self.selected_workflow_id
+        if workflow_id is None:
             return None
 
-        adapter = WorkflowConfigurationAdapter(self._bound_controller)
-        return ConfigurationModal(config=adapter, start_button_text="Start Workflow")
+        try:
+            adapter = WorkflowConfigurationAdapter(self._controller, workflow_id)
+            return ConfigurationModal(
+                config=adapter, start_button_text="Start Workflow"
+            )
+        except ValueError:
+            return None
 
 
 class ReductionWidget:
