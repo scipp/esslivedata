@@ -18,17 +18,13 @@ workflows. Concretely we have:
      the initial value of the parameters is configured from a
      :py:class:`~ess.livedata.config.workflow_spec.WorkflowConfig`, otherwise the
      default value from the parameter is used.
-- A list widget displaying running workflows, allowing users to stop them.
 """
 
 from __future__ import annotations
 
 import panel as pn
 
-from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
-from ess.livedata.dashboard.workflow_configuation_adapter import (
-    WorkflowConfigurationAdapter,
-)
+from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.workflow_controller import WorkflowController
 
 from .configuration_widget import ConfigurationModal
@@ -53,30 +49,24 @@ class WorkflowSelectorWidget:
         self._description_pane = pn.pane.HTML(
             "Select a workflow to see its description"
         )
-        self._widget = self._create_widget()
+        self._widget = pn.Column(self._selector, self._description_pane)
         self._setup_callbacks()
 
         self._selector.options = self._make_workflow_options()
         self._selector.value = self._no_selection
 
-    def _make_workflow_options(
-        self, specs: dict[WorkflowId, WorkflowSpec] | None = None
-    ) -> dict[str, WorkflowId | object]:
+    def _make_workflow_options(self) -> dict[str, WorkflowId | object]:
         """Get workflow options for selector widget."""
-        specs = self._controller.get_workflow_specs()
+        titles = self._controller.get_workflow_titles()
         select_text = "--- Click to select a workflow ---"
         options = {select_text: self._no_selection}
-        options.update({spec.title: workflow_id for workflow_id, spec in specs.items()})
+        options.update({title: workflow_id for workflow_id, title in titles.items()})
         return options
 
     @classmethod
     def _is_no_selection(cls, value: WorkflowId | object) -> bool:
         """Check if the given value represents no workflow selection."""
         return value is cls._no_selection
-
-    def _create_widget(self) -> pn.Column:
-        """Create the main selector widget."""
-        return pn.Column(self._selector, self._description_pane)
 
     def _setup_callbacks(self) -> None:
         """Setup callbacks for widget interactions."""
@@ -90,9 +80,8 @@ class WorkflowSelectorWidget:
         if self._is_no_selection(workflow_id):
             text = "Select a workflow to see its description"
         else:
-            spec = self._controller.get_workflow_spec(workflow_id)
-            if spec is not None:
-                description = spec.description
+            description = self._controller.get_workflow_description(workflow_id)
+            if description is not None:
                 text = f"<p><strong>Description:</strong> {description}</p>"
             else:
                 text = "Select a workflow to see its description"
@@ -116,7 +105,7 @@ class WorkflowSelectorWidget:
             return None
 
         try:
-            adapter = WorkflowConfigurationAdapter(self._controller, workflow_id)
+            adapter = self._controller.create_workflow_adapter(workflow_id)
             return ConfigurationModal(
                 config=adapter, start_button_text="Start Workflow"
             )

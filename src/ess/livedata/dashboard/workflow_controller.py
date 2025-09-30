@@ -185,23 +185,29 @@ class WorkflowController:
 
         return True
 
-    def get_workflow_specs(self) -> dict[WorkflowId, WorkflowSpec]:
-        """Get the current workflow specifications sorted by title."""
-        return dict(
-            sorted(self._workflow_registry.items(), key=lambda item: item[1].title)
-        )
+    def create_workflow_adapter(self, workflow_id: WorkflowId):
+        """Create a workflow configuration adapter for the given workflow ID."""
+        from .workflow_configuation_adapter import WorkflowConfigurationAdapter
+
+        return WorkflowConfigurationAdapter(self, workflow_id)
+
+    def get_workflow_titles(self) -> dict[WorkflowId, str]:
+        """Get workflow IDs mapped to their titles, sorted by title."""
+        return {
+            workflow_id: spec.title
+            for workflow_id, spec in sorted(
+                self._workflow_registry.items(), key=lambda item: item[1].title
+            )
+        }
+
+    def get_workflow_description(self, workflow_id: WorkflowId) -> str | None:
+        """Get the description for the given workflow ID."""
+        spec = self._workflow_registry.get(workflow_id)
+        return spec.description if spec else None
 
     def get_workflow_spec(self, workflow_id: WorkflowId) -> WorkflowSpec | None:
         """Get the current workflow specification for the given Id."""
         return self._workflow_registry.get(workflow_id)
-
-    def get_workflow_params(
-        self, workflow_id: WorkflowId
-    ) -> type[pydantic.BaseModel] | None:
-        """Get the parameters for the given workflow Id."""
-        if (workflow_spec := self.get_workflow_spec(workflow_id)) is None:
-            return None
-        return workflow_spec.params
 
     def get_workflow_config(
         self, workflow_id: WorkflowId

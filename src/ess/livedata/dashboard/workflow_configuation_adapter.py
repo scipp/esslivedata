@@ -19,7 +19,8 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter):
         """Initialize adapter with workflow controller and ID."""
         self._controller = controller
         self._workflow_id = workflow_id
-        if (spec := controller.get_workflow_spec(workflow_id)) is None:
+        spec = controller.get_workflow_spec(workflow_id)
+        if spec is None:
             raise ValueError(f'Workflow {workflow_id} not found')
         self._spec = spec
 
