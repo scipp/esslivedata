@@ -28,6 +28,10 @@ class Serializer(Protocol, Generic[T]):
 
 def serialize_dataarray_to_da00(msg: Message[sc.DataArray]) -> bytes:
     try:
+        # We use the payload timestamp, which in turn was set from the result's
+        # `start_time`. Depending on whether the result is a cumulative result or a
+        # delta result, this is either the time of the first event in the result, or
+        # the time of the first event since the last result was produced.
         da00 = dataarray_da00.serialise_da00(
             source_name=msg.stream.name,
             timestamp_ns=msg.timestamp,
