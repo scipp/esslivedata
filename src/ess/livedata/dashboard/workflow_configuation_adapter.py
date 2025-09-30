@@ -2,27 +2,29 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pydantic
 
-from ess.livedata.config.workflow_spec import WorkflowId
-from ess.livedata.dashboard.workflow_controller import WorkflowController
+from ess.livedata.config.workflow_spec import PersistentWorkflowConfig, WorkflowSpec
 
 from .configuration_adapter import ConfigurationAdapter
 
 
-class WorkflowConfigurationAdapter(ConfigurationAdapter):
-    """Adapter for workflow configuration using WorkflowController."""
+class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
+    """Adapter for workflow configuration using WorkflowSpec and persistent config."""
 
-    def __init__(self, controller: WorkflowController, workflow_id: WorkflowId) -> None:
-        """Initialize adapter with workflow controller and ID."""
-        self._controller = controller
-        self._workflow_id = workflow_id
-        spec = controller.get_workflow_spec(workflow_id)
-        if spec is None:
-            raise ValueError(f'Workflow {workflow_id} not found')
+    def __init__(
+        self,
+        spec: WorkflowSpec,
+        persistent_config: PersistentWorkflowConfig | None,
+        start_callback: Callable[[list[str], pydantic.BaseModel], bool],
+    ) -> None:
+        """Initialize adapter with workflow spec, config, and start callback."""
         self._spec = spec
+        self._persistent_config = persistent_config
+        self._start_callback = start_callback
 
     @property
     def title(self) -> str:
@@ -53,19 +55,17 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter):
     @property
     def initial_source_names(self) -> list[str]:
         """Get initial source names."""
-        persistent_config = self._controller.get_workflow_config(self._workflow_id)
-        return persistent_config.source_names if persistent_config else []
+        return self._persistent_config.source_names if self._persistent_config else []
 
     @property
     def initial_parameter_values(self) -> dict[str, Any]:
         """Get initial parameter values."""
-        persistent_config = self._controller.get_workflow_config(self._workflow_id)
-        if not persistent_config:
+        if not self._persistent_config:
             return {}
-        return persistent_config.config.params
+        return self._persistent_config.config.params
 
-    def start_action(self, selected_sources: list[str], parameter_values: Any) -> bool:
+    def start_action(
+        self, selected_sources: list[str], parameter_values: pydantic.BaseModel
+    ) -> bool:
         """Start the workflow with given sources and parameters."""
-        return self._controller.start_workflow(
-            self._workflow_id, selected_sources, parameter_values
-        )
+        return self._start_callback(selected_sources, parameter_values)

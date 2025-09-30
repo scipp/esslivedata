@@ -24,6 +24,7 @@ from ess.livedata.config.workflow_spec import (
 
 from .data_service import DataService
 from .workflow_config_service import ConfigServiceAdapter, WorkflowConfigService
+from .workflow_configuation_adapter import WorkflowConfigurationAdapter
 
 
 class WorkflowController:
@@ -187,9 +188,20 @@ class WorkflowController:
 
     def create_workflow_adapter(self, workflow_id: WorkflowId):
         """Create a workflow configuration adapter for the given workflow ID."""
-        from .workflow_configuation_adapter import WorkflowConfigurationAdapter
 
-        return WorkflowConfigurationAdapter(self, workflow_id)
+        spec = self.get_workflow_spec(workflow_id)
+        if spec is None:
+            raise ValueError(f'Workflow {workflow_id} not found')
+
+        persistent_config = self.get_workflow_config(workflow_id)
+
+        def start_callback(
+            selected_sources: list[str], parameter_values: pydantic.BaseModel
+        ) -> bool:
+            """Bound callback to start this specific workflow."""
+            return self.start_workflow(workflow_id, selected_sources, parameter_values)
+
+        return WorkflowConfigurationAdapter(spec, persistent_config, start_callback)
 
     def get_workflow_titles(self) -> dict[WorkflowId, str]:
         """Get workflow IDs mapped to their titles, sorted by title."""
