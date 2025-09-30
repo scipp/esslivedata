@@ -42,7 +42,7 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
     def _at_capacity(self) -> bool:
         return self._end >= self._timeseries.sizes['time']
 
-    def _ensure_capacity(self, data) -> None:
+    def _ensure_capacity(self, data: sc.Variable) -> None:
         if self._timeseries is None:
             # Initialize with initial capacity of 2
             arr = np.asarray(data.value)
