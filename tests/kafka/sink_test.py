@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import numpy as np
 import pytest
 import scipp as sc
 
@@ -27,9 +28,7 @@ class TestDa00Serializer:
         stream_id = StreamId(kind=StreamKind.LIVEDATA_DATA, name='test_detector')
         payload_timestamp = 1234567890
         original_msg = Message(
-            timestamp=payload_timestamp,
-            stream=stream_id,
-            value=original_data,
+            timestamp=payload_timestamp, stream=stream_id, value=original_data
         )
 
         # Serialize to da00
@@ -68,9 +67,7 @@ class TestDa00Serializer:
         stream_id = StreamId(kind=StreamKind.MONITOR_COUNTS, name='monitor_1')
         payload_timestamp = 9876543210
         original_msg = Message(
-            timestamp=payload_timestamp,
-            stream=stream_id,
-            value=original_data,
+            timestamp=payload_timestamp, stream=stream_id, value=original_data
         )
 
         # Serialize and deserialize
@@ -123,9 +120,7 @@ class TestF144Serializer:
         # Create fake Kafka message with different timestamp
         kafka_timestamp = 5555555555  # Should be ignored
         kafka_msg = FakeKafkaMessage(
-            value=serialized_bytes,
-            topic='test_topic',
-            timestamp=kafka_timestamp,
+            value=serialized_bytes, topic='test_topic', timestamp=kafka_timestamp
         )
 
         # Deserialize back to f144 log data
@@ -164,8 +159,6 @@ class TestF144Serializer:
         result_msg = f144_adapter.adapt(kafka_msg)
 
         # Verify array values are preserved and timestamp comes from time coordinate
-        import numpy as np
-
         np.testing.assert_array_equal(result_msg.value.value, [1.0, 2.0, 3.0])
         assert result_msg.timestamp == time_ns
         assert result_msg.stream.name == 'array_log'
@@ -178,19 +171,13 @@ class TestF144Serializer:
             coords={'time': sc.array(dims=[], values=time_ns, unit='ns')},
         )
         stream_id = StreamId(kind=StreamKind.LOG, name='unit_test_log')
-        original_msg = Message(
-            timestamp=0,
-            stream=stream_id,
-            value=original_data,
-        )
+        original_msg = Message(timestamp=0, stream=stream_id, value=original_data)
 
         # Serialize and deserialize
         serialized_bytes = serialize_dataarray_to_f144(original_msg)
         f144_adapter = KafkaToF144Adapter()
         kafka_msg = FakeKafkaMessage(
-            value=serialized_bytes,
-            topic='log_topic',
-            timestamp=0,
+            value=serialized_bytes, topic='log_topic', timestamp=0
         )
 
         result_msg = f144_adapter.adapt(kafka_msg)
@@ -208,19 +195,13 @@ class TestF144Serializer:
             coords={'time': sc.array(dims=[], values=time_us, unit='us')},
         )
         stream_id = StreamId(kind=StreamKind.LOG, name='time_unit_log')
-        original_msg = Message(
-            timestamp=0,
-            stream=stream_id,
-            value=original_data,
-        )
+        original_msg = Message(timestamp=0, stream=stream_id, value=original_data)
 
         # Serialize and deserialize
         serialized_bytes = serialize_dataarray_to_f144(original_msg)
         f144_adapter = KafkaToF144Adapter()
         kafka_msg = FakeKafkaMessage(
-            value=serialized_bytes,
-            topic='log_topic',
-            timestamp=0,
+            value=serialized_bytes, topic='log_topic', timestamp=0
         )
 
         result_msg = f144_adapter.adapt(kafka_msg)
@@ -240,9 +221,7 @@ class TestF144Serializer:
         )
         stream_id = StreamId(kind=StreamKind.LOG, name='no_time_log')
         original_msg = Message(
-            timestamp=1234567890,
-            stream=stream_id,
-            value=original_data,
+            timestamp=1234567890, stream=stream_id, value=original_data
         )
 
         # Should raise an error when trying to serialize without time coordinate
