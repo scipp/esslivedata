@@ -31,7 +31,8 @@ from ess.livedata.dashboard.workflow_controller import (
     WorkflowController,
 )
 
-from .workflow_config_modal import WorkflowConfigModal
+from .configuration_widget import ConfigurationModal
+from .workflow_config_modal import WorkflowConfigurationAdapter
 
 
 class WorkflowSelectorWidget:
@@ -121,11 +122,12 @@ class WorkflowSelectorWidget:
         value = self._selector.value
         return None if self._is_no_selection(value) else value
 
-    def create_modal(self) -> WorkflowConfigModal | None:
+    def create_modal(self) -> ConfigurationModal | None:
         if self._bound_controller is None:
-            return
+            return None
 
-        return WorkflowConfigModal(controller=self._bound_controller)
+        adapter = WorkflowConfigurationAdapter(self._bound_controller)
+        return ConfigurationModal(config=adapter, start_button_text="Start Workflow")
 
 
 class ReductionWidget:
