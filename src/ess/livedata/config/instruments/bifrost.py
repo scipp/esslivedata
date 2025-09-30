@@ -14,7 +14,10 @@ from scippnexus import NXdetector
 
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.env import StreamingEnv
-from ess.livedata.config.workflows import register_monitor_timeseries_workflows
+from ess.livedata.config.workflows import (
+    TimeseriesAccumulator,
+    register_monitor_timeseries_workflows,
+)
 from ess.livedata.handlers.detector_data_handler import (
     DetectorLogicalView,
     LogicalViewConfig,
@@ -32,6 +35,7 @@ from ess.reduce.nexus.types import (
     NeXusName,
     SampleRun,
 )
+from ess.reduce.streaming import EternalAccumulator
 from ess.spectroscopy.indirect.time_of_flight import TofWorkflow
 
 from ._bifrost_qmap import register_qmap_workflows
@@ -123,6 +127,9 @@ def _combine_banks(*bank: sc.DataArray) -> sc.DataArray:
 
 
 SpectrumView = NewType('SpectrumView', sc.DataArray)
+DetectorCounts = NewType('DetectorCounts', sc.DataArray)
+BankCounts = NewType('BankCounts', sc.DataArray)
+AnalyzerCounts = NewType('AnalyzerCounts', sc.DataArray)
 SpectrumViewTimeBins = NewType('SpectrumViewTimeBins', int)
 SpectrumViewPixelsPerTube = NewType('SpectrumViewPixelsPerTube', int)
 
@@ -146,6 +153,21 @@ def _make_spectrum_view(
     )
 
 
+def _analyzer_counts(data: DetectorData[SampleRun]) -> AnalyzerCounts:
+    time = data.bins.coords['event_time_zero'].min()
+    counts = data.sum(dim=('pixel', 'tube'))
+    counts.variances = counts.values  # Poisson statistics
+    return AnalyzerCounts(counts.assign_coords(time=time))
+
+
+def _bank_counts(analyzer_counts: AnalyzerCounts) -> BankCounts:
+    return BankCounts(analyzer_counts.sum(dim='analyzer'))
+
+
+def _detector_counts(bank_counts: BankCounts) -> DetectorCounts:
+    return DetectorCounts(bank_counts.sum())
+
+
 _reduction_workflow = TofWorkflow(run_types=(SampleRun,), monitor_types=())
 _reduction_workflow[Filename[SampleRun]] = get_nexus_geometry_filename('bifrost')
 _reduction_workflow[CalibratedBeamline[SampleRun]] = (
@@ -157,6 +179,9 @@ _reduction_workflow[CalibratedBeamline[SampleRun]] = (
 _reduction_workflow[SpectrumViewTimeBins] = 500
 _reduction_workflow[SpectrumViewPixelsPerTube] = 10
 _reduction_workflow.insert(_make_spectrum_view)
+_reduction_workflow.insert(_analyzer_counts)
+_reduction_workflow.insert(_bank_counts)
+_reduction_workflow.insert(_detector_counts)
 
 _source_names = ('unified_detector',)
 
@@ -232,8 +257,11 @@ def _spectrum_view(params: BifrostWorkflowParams) -> StreamProcessorWorkflow:
     return StreamProcessorWorkflow(
         wf,
         dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
-        target_keys=(SpectrumView,),
-        accumulators=(SpectrumView,),
+        target_keys=(SpectrumView, AnalyzerCounts, BankCounts, DetectorCounts),
+        accumulators={
+            SpectrumView: EternalAccumulator,
+            AnalyzerCounts: TimeseriesAccumulator,
+        },
     )
 
 
