@@ -109,7 +109,9 @@ class WorkflowSelectorWidget:
             return ConfigurationModal(
                 config=adapter, start_button_text="Start Workflow"
             )
-        except ValueError:
+        except Exception as e:
+            error_msg = f"<p style='color: red;'><strong>Error:</strong> {e}</p>"
+            self._description_pane.object = error_msg
             return None
 
 

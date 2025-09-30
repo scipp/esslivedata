@@ -7,9 +7,7 @@ import panel as pn
 
 from ess.livedata import Service
 
-from .correlation_histogram import CorrelationHistogramController
 from .dashboard import DashboardBase
-from .widgets.correlation_histogram_widget import CorrelationHistogramWidget
 
 pn.extension('holoviews', 'modal', template='material')
 hv.extension('bokeh')
@@ -26,12 +24,6 @@ class ReductionApp(DashboardBase):
             dashboard_name='reduction_dashboard',
             port=5009,  # Default port for reduction dashboard
         )
-        self._correlation_controller = CorrelationHistogramController(
-            self._data_service
-        )
-        self._correlation_widget = CorrelationHistogramWidget(
-            correlation_histogram_controller=self._correlation_controller
-        )
         self._logger.info("Reduction dashboard initialized")
 
     def create_sidebar_content(self) -> pn.viewable.Viewable:
@@ -39,8 +31,6 @@ class ReductionApp(DashboardBase):
         return pn.Column(
             pn.pane.Markdown("## Data Reduction"),
             self._reduction_widget.widget,
-            pn.pane.Markdown("## Correlation Histograms"),
-            self._correlation_widget.panel,
         )
 
     def create_main_content(self) -> pn.viewable.Viewable:

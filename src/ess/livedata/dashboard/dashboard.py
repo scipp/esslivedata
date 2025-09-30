@@ -26,6 +26,7 @@ from ess.livedata.kafka.source import BackgroundMessageSource
 
 from .config_service import ConfigService
 from .controller_factory import ControllerFactory
+from .correlation_histogram import CorrelationHistogramController
 from .data_service import DataService
 from .job_controller import JobController
 from .job_service import JobService
@@ -177,11 +178,15 @@ class DashboardBase(ServiceBase, ABC):
 
     def _setup_workflow_management(self) -> None:
         """Initialize workflow controller and reduction widget."""
+        self._correlation_controller = CorrelationHistogramController(
+            self._data_service
+        )
         self._workflow_controller = WorkflowController.from_config_service(
             config_service=self._config_service,
             source_names=sorted(self._processor_factory.source_names),
             workflow_registry=self._processor_factory,
             data_service=self._data_service,
+            correlation_histogram_controller=self._correlation_controller,
         )
         self._reduction_widget = ReductionWidget(controller=self._workflow_controller)
 
