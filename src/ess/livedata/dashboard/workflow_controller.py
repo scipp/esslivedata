@@ -149,13 +149,6 @@ class WorkflowController:
 
         Returns True if the workflow was started successfully, False otherwise.
         """
-        # Check if workflow exists
-        if workflow_id not in self._workflow_registry:
-            self._logger.warning(
-                'Cannot start workflow %s: workflow does not exist', workflow_id
-            )
-            return False
-
         self._logger.info(
             'Starting workflow %s on sources %s with config %s',
             workflow_id,
