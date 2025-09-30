@@ -154,7 +154,9 @@ class ReductionWidget:
         """Create the main widget layout."""
         return pn.Column(
             pn.Column(
-                self._workflow_selector.widget, self._configure_button, width=500
+                self._workflow_selector.widget,
+                self._configure_button,
+                sizing_mode="stretch_width",
             ),
             self._modal_container,  # Add modal container to main structure
         )
