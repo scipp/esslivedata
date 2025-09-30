@@ -24,7 +24,7 @@ from ess.livedata.config.workflow_spec import (
 
 from .data_service import DataService
 from .workflow_config_service import ConfigServiceAdapter, WorkflowConfigService
-from .workflow_configuation_adapter import WorkflowConfigurationAdapter
+from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
 
 class WorkflowController:
