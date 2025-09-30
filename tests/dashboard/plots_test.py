@@ -54,29 +54,27 @@ def image_plotter(color_scale):
 @pytest.fixture
 def zero_data(test_coordinates):
     """Create test data with all zeros."""
-    data = sc.DataArray(sc.zeros(dims=['y', 'x'], shape=[8, 10], unit='counts'))
-    data.coords.update(test_coordinates)
-    return data
+    return sc.DataArray(
+        sc.zeros(dims=['y', 'x'], shape=[8, 10], unit='counts'), coords=test_coordinates
+    )
 
 
 @pytest.fixture
 def constant_nonzero_data(test_coordinates):
     """Create test data with constant non-zero values."""
-    data = sc.DataArray(
-        sc.full(dims=['y', 'x'], shape=[8, 10], value=42.0, unit='counts')
+    return sc.DataArray(
+        sc.full(dims=['y', 'x'], shape=[8, 10], value=42.0, unit='counts'),
+        coords=test_coordinates,
     )
-    data.coords.update(test_coordinates)
-    return data
 
 
 @pytest.fixture
 def negative_data(test_coordinates):
     """Create test data with negative values."""
-    data = sc.DataArray(
-        sc.full(dims=['y', 'x'], shape=[8, 10], value=-5.0, unit='counts')
+    return sc.DataArray(
+        sc.full(dims=['y', 'x'], shape=[8, 10], value=-5.0, unit='counts'),
+        coords=test_coordinates,
     )
-    data.coords.update(test_coordinates)
-    return data
 
 
 def render_to_bokeh(hv_element):
