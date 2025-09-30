@@ -26,13 +26,15 @@ from __future__ import annotations
 import panel as pn
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
+from ess.livedata.dashboard.workflow_configuation_adapter import (
+    WorkflowConfigurationAdapter,
+)
 from ess.livedata.dashboard.workflow_controller import (
     BoundWorkflowController,
     WorkflowController,
 )
 
 from .configuration_widget import ConfigurationModal
-from .workflow_config_modal import WorkflowConfigurationAdapter
 
 
 class WorkflowSelectorWidget:

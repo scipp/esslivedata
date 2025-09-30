@@ -8,7 +8,7 @@ import pydantic
 
 from ess.livedata.dashboard.workflow_controller import BoundWorkflowController
 
-from .configuration_widget import ConfigurationAdapter
+from .configuration_adapter import ConfigurationAdapter
 
 
 class WorkflowConfigurationAdapter(ConfigurationAdapter):

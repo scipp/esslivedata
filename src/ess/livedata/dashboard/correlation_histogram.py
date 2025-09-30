@@ -14,9 +14,9 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import JobId, JobNumber, ResultKey, WorkflowSpec
 from ess.livedata.parameter_models import EdgesModel, make_edges
 
+from .configuration_adapter import ConfigurationAdapter
 from .data_service import DataService
 from .data_subscriber import DataSubscriber, MergingStreamAssembler
-from .widgets.configuration_widget import ConfigurationAdapter
 
 
 class EdgesWithUnit(EdgesModel):
