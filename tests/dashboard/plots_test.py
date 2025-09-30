@@ -104,7 +104,7 @@ class TestImagePlotter:
                 warnings.filterwarnings(
                     "ignore", "All-NaN slice encountered", RuntimeWarning
                 )
-                # Holoviews trie to compare None to int or float. Not sure what we can
+                # Holoviews tries to compare None to int or float. Not sure what we can
                 # do about that.
                 with pytest.raises(hv.core.options.AbbreviatedException):
                     render_to_bokeh(hv_element)
@@ -142,7 +142,7 @@ class TestImagePlotter:
                 warnings.filterwarnings(
                     "ignore", "All-NaN slice encountered", RuntimeWarning
                 )
-                # Holoviews trie to compare None to int or float. Not sure what we can
+                # Holoviews tries to compare None to int or float. Not sure what we can
                 # do about that.
                 with pytest.raises(hv.core.options.AbbreviatedException):
                     render_to_bokeh(hv_element)
