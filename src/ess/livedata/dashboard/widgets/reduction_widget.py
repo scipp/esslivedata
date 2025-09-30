@@ -180,7 +180,8 @@ class ReductionWidget:
         if (modal := self._workflow_selector.create_modal()) is None:
             return
 
-        # Add modal to container and show it
+        # Clear previous modals and add the new one
+        self._modal_container.clear()
         self._modal_container.append(modal.modal)
         modal.show()
 
