@@ -2,7 +2,6 @@
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
 import json
 import logging
-import time
 from dataclasses import replace
 from typing import Any, Generic, Protocol, TypeVar
 
@@ -31,7 +30,7 @@ def serialize_dataarray_to_da00(msg: Message[sc.DataArray]) -> bytes:
     try:
         da00 = dataarray_da00.serialise_da00(
             source_name=msg.stream.name,
-            timestamp_ns=time.time_ns(),
+            timestamp_ns=msg.timestamp,
             data=scipp_to_da00(msg.value),
         )
     except (ValueError, TypeError) as e:
@@ -44,7 +43,7 @@ def serialize_dataarray_to_f144(msg: Message[sc.DataArray]) -> bytes:
         da = msg.value
         f144 = logdata_f144.serialise_f144(
             source_name=msg.stream.name,
-            value=da.value,
+            value=da.values,
             timestamp_unix_ns=da.coords['time'].to(unit='ns', copy=False).value,
         )
     except (ValueError, TypeError) as e:

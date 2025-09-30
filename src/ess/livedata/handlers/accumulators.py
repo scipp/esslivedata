@@ -32,6 +32,22 @@ class LogData:
     def from_f144(f144: logdata_f144.LogData) -> LogData:
         return LogData(time=f144.timestamp_unix_ns, value=f144.value)
 
+    def to_dataarray(self, *, unit: str | None = None) -> sc.DataArray:
+        """
+        Convert LogData to a scalar DataArray.
+
+        Parameters
+        ----------
+        unit
+            Optional unit for the data. Since f144 doesn't preserve units,
+            the caller must specify the expected unit if needed.
+        """
+        data = sc.scalar(self.value, unit=unit) if unit else sc.scalar(self.value)
+        return sc.DataArray(
+            data=data,
+            coords={'time': sc.scalar(self.time, unit='ns')},
+        )
+
 
 class NullAccumulator(Accumulator[Any, None]):
     def add(self, timestamp: int, data: Any) -> None:
