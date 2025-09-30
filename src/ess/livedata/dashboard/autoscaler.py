@@ -79,11 +79,11 @@ class Autoscaler:
         """Update value bounds based on the data, return True if bounds changed."""
         low = data.nanmin().value
         high = data.nanmax().value
-        changed = False
         if high <= low:
             # Avoid updating bounds if data is constant or empty
             return False
 
+        changed = False
         if self.value_bounds[0] is None or low < self.value_bounds[0]:
             self.value_bounds = (
                 low * (1 - self._value_margin_factor),

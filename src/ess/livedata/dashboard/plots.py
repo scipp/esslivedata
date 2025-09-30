@@ -195,12 +195,13 @@ class ImagePlotter(Plotter):
             Additional keyword arguments passed to the base class.
         """
         super().__init__(**kwargs)
+        self._scale_opts = scale_opts
         self._base_opts = {
             'colorbar': True,
             'cmap': 'viridis',
             'logx': True if scale_opts.x_scale == PlotScale.log else False,
             'logy': True if scale_opts.y_scale == PlotScale.log else False,
-            'logz': True,
+            'logz': True if scale_opts.color_scale == PlotScale.log else False,
         }
 
     @classmethod
@@ -215,22 +216,28 @@ class ImagePlotter(Plotter):
 
     def plot(self, data: sc.DataArray, data_key: ResultKey) -> hv.Image:
         """Create a 2D plot from a scipp DataArray."""
-        # With logz=True we need to exclude zero values:
-        # The value bounds calculation should properly adjust the color limits. Since
-        # zeros can never be included we want to adjust to the lowest positive value.
         data = data.to(dtype='float64')
-        masked = data.assign(
-            sc.where(
-                data.data <= sc.scalar(0.0, unit=data.unit),
-                sc.scalar(np.nan, unit=data.unit, dtype=data.dtype),
-                data.data,
-            )
-        )
 
-        framewise = self._update_autoscaler_and_get_framewise(masked, data_key)
+        # Only mask data when using log color scale
+        if self._scale_opts.color_scale == PlotScale.log:
+            # With logz=True we need to exclude zero values: The value bounds
+            # calculation should properly adjust the color limits. Since zeros can never
+            # be included we want to adjust to the lowest positive value.
+            masked = data.assign(
+                sc.where(
+                    data.data <= sc.scalar(0.0, unit=data.unit),
+                    sc.scalar(np.nan, unit=data.unit, dtype=data.dtype),
+                    data.data,
+                )
+            )
+            plot_data = masked
+        else:
+            plot_data = data
+
+        framewise = self._update_autoscaler_and_get_framewise(plot_data, data_key)
         # We are using the masked data here since Holoviews (at least with the Bokeh
         # backend) show values below the color limits with the same color as the lowest
         # value in the colormap, which is not what we want for, e.g., zeros on a log
         # scale plot. The nan values will be shown as transparent.
-        histogram = to_holoviews(masked)
+        histogram = to_holoviews(plot_data)
         return histogram.opts(framewise=framewise, **self._base_opts)
