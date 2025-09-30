@@ -5,12 +5,7 @@ from __future__ import annotations
 import logging
 
 from ..config.models import ConfigKey
-from ..config.workflow_spec import (
-    JobId,
-    WorkflowConfig,
-    WorkflowStatus,
-    WorkflowStatusType,
-)
+from ..config.workflow_spec import WorkflowConfig, WorkflowStatus, WorkflowStatusType
 from .job_manager import DifferentInstrument, JobCommand, JobManager
 
 
@@ -29,7 +24,6 @@ class JobManagerAdapter:
     def __init__(self, *, job_manager: JobManager, logger: logging.Logger) -> None:
         self._logger = logger
         self._job_manager = job_manager
-        self._jobs: dict[str, JobId] = {}
 
     def job_command(self, source_name: str, value: dict) -> None:
         _ = source_name  # Legacy, not used.
@@ -48,13 +42,7 @@ class JobManagerAdapter:
 
         config = WorkflowConfig.model_validate(value)
         try:
-            job_id = self._job_manager.schedule_job(
-                source_name=source_name, config=config
-            )
-            if source_name in self._jobs:
-                # If we have a job for this source, we stop it first.
-                self._job_manager.stop_job(self._jobs[source_name])
-            self._jobs[source_name] = job_id
+            _ = self._job_manager.schedule_job(source_name=source_name, config=config)
         except DifferentInstrument:
             # We have multiple backend services that handle jobs, e.g., data_reduction
             # and monitor_data. The frontend simply sends a WorkflowConfig message and
@@ -69,15 +57,6 @@ class JobManagerAdapter:
             )
             return []
         except Exception as e:
-            # TODO This system is a bit flawed: If we have a workflow running already
-            # it will keep running, but we need to notify about startup errors. Frontend
-            # will not be able to display the correct workflow status. Need to come up
-            # with a better way to handle this.
-            # NOTE This can be fixed using the new JobManager approach, provided that
-            # the frontend can display a per-job status, instead of per-source.
-            # But maybe the key insight is that status-reporting should be decoupled
-            # from reply messages. Maybe status should just be emitted periodically for
-            # all jobs?
             self._logger.exception("Failed to start workflow %s", config.identifier)
             status = WorkflowStatus(
                 source_name=source_name,
