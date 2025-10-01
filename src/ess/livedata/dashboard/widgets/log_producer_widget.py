@@ -25,6 +25,12 @@ class LogProducerWidget:
             logger=logger,
         )
 
+        self._throttled_checkbox = pn.widgets.Checkbox(
+            name='Continuous updates', value=True, width=300
+        )
+        pn.config.throttled = True
+        self._throttled_checkbox.param.watch(self._on_throttled_change, 'value')
+
         self._sliders = []
         self._load_and_create_sliders()
 
@@ -50,7 +56,7 @@ class LogProducerWidget:
     def _get_config_path(self) -> Path:
         """Get the path to the configuration file for the current instrument."""
         # Get the package root directory
-        package_root = Path(__file__).parent.parent.parent.parent.parent
+        package_root = Path(__file__).parent.parent.parent.parent.parent.parent
         config_dir = package_root / 'configs'
         return config_dir / f'log_producer_{self._instrument}.json'
 
@@ -85,16 +91,23 @@ class LogProducerWidget:
             "Stream '%s' - Published message with value: %s", stream_name, value
         )
 
+    def _on_throttled_change(self, event):
+        """Update pn.config.throttled when checkbox value changes."""
+        pn.config.throttled = event.new
+        self._logger.info("Throttled mode set to: %s", event.new)
+
     @property
     def panel(self) -> pn.viewable.Viewable:
         """Return the panel widget."""
-        if not self._sliders:
-            return pn.Column(
-                pn.pane.Markdown("### Log Producer (Dev)"),
-                pn.pane.Markdown("*No configuration found*"),
-            )
-
         return pn.Column(
-            pn.pane.Markdown("### Log Producer (Dev)"),
+            pn.pane.Markdown("## Fake instrument controls"),
             *self._sliders,
+            self._throttled_checkbox,
+            pn.pane.Alert(
+                "### Note\nThis **does not control the instrument**. The sliders feed "
+                "motor \"readback\" values into Kafka for demonstration purposes. "
+                "This widget is only shown in development mode and is not available in "
+                "a production version of the ESSlivedata Dashboard.",
+                alert_type="warning",
+            ),
         )

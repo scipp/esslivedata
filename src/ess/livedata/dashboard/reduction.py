@@ -35,9 +35,9 @@ class ReductionApp(DashboardBase):
         )
 
         # Create log producer widget only in dev mode
-        self._log_producer_widget = None
+        self._dev_widget = None
         if dev:
-            self._log_producer_widget = LogProducerWidget(
+            self._dev_widget = LogProducerWidget(
                 instrument=instrument, logger=self._logger
             )
 
@@ -45,27 +45,17 @@ class ReductionApp(DashboardBase):
 
     def create_sidebar_content(self) -> pn.viewable.Viewable:
         """Create the sidebar content with workflow controls."""
-        content = []
-
-        # Add log producer widget at the top if in dev mode
-        if self._log_producer_widget is not None:
-            content.extend(
-                [
-                    self._log_producer_widget.panel,
-                    pn.layout.Divider(),
-                ]
-            )
-
-        content.extend(
-            [
-                pn.pane.Markdown("## Data Reduction"),
-                self._reduction_widget.widget,
-                pn.pane.Markdown("## Correlation Histograms"),
-                self._correlation_widget.panel,
-            ]
+        if self._dev_widget is not None:
+            dev_content = [self._dev_widget.panel, pn.layout.Divider()]
+        else:
+            dev_content = []
+        return pn.Column(
+            *dev_content,
+            pn.pane.Markdown("## Data Reduction"),
+            self._reduction_widget.widget,
+            pn.pane.Markdown("## Correlation Histograms"),
+            self._correlation_widget.panel,
         )
-
-        return pn.Column(*content)
 
     def create_main_content(self) -> pn.viewable.Viewable:
         """Create the main content area."""
