@@ -8,6 +8,7 @@ import panel as pn
 from ess.livedata import Service
 
 from .dashboard import DashboardBase
+from .widgets.log_producer_widget import LogProducerWidget
 
 pn.extension('holoviews', 'modal', template='material')
 hv.extension('bokeh')
@@ -24,11 +25,24 @@ class ReductionApp(DashboardBase):
             dashboard_name='reduction_dashboard',
             port=5009,  # Default port for reduction dashboard
         )
+
+        # Create log producer widget only in dev mode
+        self._dev_widget = None
+        if dev:
+            self._dev_widget = LogProducerWidget(
+                instrument=instrument, logger=self._logger
+            )
+
         self._logger.info("Reduction dashboard initialized")
 
     def create_sidebar_content(self) -> pn.viewable.Viewable:
         """Create the sidebar content with workflow controls."""
+        if self._dev_widget is not None:
+            dev_content = [self._dev_widget.panel, pn.layout.Divider()]
+        else:
+            dev_content = []
         return pn.Column(
+            *dev_content,
             pn.pane.Markdown("## Data Reduction"),
             self._reduction_widget.widget,
         )

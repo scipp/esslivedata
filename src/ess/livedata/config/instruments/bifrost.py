@@ -165,7 +165,7 @@ def _bank_counts(analyzer_counts: AnalyzerCounts) -> BankCounts:
 
 
 def _detector_counts(bank_counts: BankCounts) -> DetectorCounts:
-    return DetectorCounts(bank_counts.sum())
+    return DetectorCounts(bank_counts.sum(dim='sector'))
 
 
 _reduction_workflow = TofWorkflow(run_types=(SampleRun,), monitor_types=())

@@ -70,14 +70,16 @@ def make_consumer_from_config(
 
 @contextmanager
 def make_control_consumer(
-    *, instrument: str
+    *,
+    instrument: str,
+    extra_config: dict[str, Any] | None = None,
 ) -> Generator[str, kafka.Consumer, None, None]:
     control_config = load_config(namespace='control_consumer', env='')
     kafka_downstream_config = load_config(namespace='kafka_downstream')
     topic = stream_kind_to_topic(instrument=instrument, kind=StreamKind.LIVEDATA_CONFIG)
     with make_consumer_from_config(
         topics=[topic],
-        config={**control_config, **kafka_downstream_config},
+        config={**control_config, **kafka_downstream_config, **(extra_config or {})},
         group='livedata_commands',
     ) as consumer:
         yield topic, consumer
