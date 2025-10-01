@@ -64,6 +64,9 @@ dream = [
 loki = [
     "esssans",
 ]
+odin = [
+    "essimaging",
+]
 dashboard = [
   "bokeh",
   "gunicorn",
