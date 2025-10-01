@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import pytest
 import scipp as sc
 from scipp.testing import assert_identical
 
@@ -113,9 +114,9 @@ def test_to_nxlog_empty_get():
     attrs = {'units': 'counts'}
     accumulator = ToNXlog(attrs=attrs)
 
-    # Getting data from an empty accumulator should return an empty DataArray
-    result = accumulator.get()
-    assert_identical(result.data, sc.array(dims=['time'], values=[], unit='counts'))
+    # Getting data from an empty accumulator should raise RuntimeError
+    with pytest.raises(RuntimeError, match="No data has been added yet"):
+        accumulator.get()
 
 
 def test_to_nxlog_missing_attributes():
@@ -295,13 +296,199 @@ def test_preservation_of_addition_order():
     assert_identical(result.coords['time'], expected_time_coord)
 
 
-def test_empty_initialization_get():
-    """Test that a newly created ToNXlog returns an empty DataArray."""
-    attrs = {'units': 'K'}
-    accumulator = ToNXlog(attrs=attrs)
+def test_to_nxlog_array_data_1d():
+    attrs = {'units': 'counts'}
+    accumulator = ToNXlog(attrs=attrs, data_dims=('x',))
+
+    log_data1 = LogData(time=1000000, value=[1.0, 2.0, 3.0])
+    log_data2 = LogData(time=2000000, value=[4.0, 5.0, 6.0])
+
+    accumulator.add(timestamp=0, data=log_data1)
+    accumulator.add(timestamp=0, data=log_data2)
 
     result = accumulator.get()
-    assert result.sizes["time"] == 0
-    assert result.dims == ('time',)
-    assert result.unit == 'K'
-    assert 'time' in result.coords
+
+    expected_values = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+    assert_identical(
+        result.data, sc.array(dims=['time', 'x'], values=expected_values, unit='counts')
+    )
+
+    start_time = sc.epoch(unit='ns')
+    expected_times = [start_time.value + t for t in [1000000, 2000000]]
+    expected_time_coord = sc.array(dims=['time'], values=expected_times, unit='ns')
+    assert_identical(result.coords['time'], expected_time_coord)
+
+
+def test_to_nxlog_array_data_2d():
+    attrs = {'units': 'K'}
+    accumulator = ToNXlog(attrs=attrs, data_dims=('y', 'x'))
+
+    log_data1 = LogData(time=1000000, value=[[1.0, 2.0], [3.0, 4.0]])
+    log_data2 = LogData(time=2000000, value=[[5.0, 6.0], [7.0, 8.0]])
+
+    accumulator.add(timestamp=0, data=log_data1)
+    accumulator.add(timestamp=0, data=log_data2)
+
+    result = accumulator.get()
+
+    expected_values = [[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]
+    assert_identical(
+        result.data, sc.array(dims=['time', 'y', 'x'], values=expected_values, unit='K')
+    )
+
+
+def test_to_nxlog_scalar_with_variances():
+    attrs = {'units': 'counts'}
+    accumulator = ToNXlog(attrs=attrs)
+
+    log_data1 = LogData(time=1000000, value=10.0, variances=1.0)
+    log_data2 = LogData(time=2000000, value=20.0, variances=4.0)
+
+    accumulator.add(timestamp=0, data=log_data1)
+    accumulator.add(timestamp=0, data=log_data2)
+
+    result = accumulator.get()
+
+    expected_data = sc.array(
+        dims=['time'], values=[10.0, 20.0], variances=[1.0, 4.0], unit='counts'
+    )
+    assert_identical(result.data, expected_data)
+
+
+def test_to_nxlog_array_with_variances():
+    attrs = {'units': 'counts'}
+    accumulator = ToNXlog(attrs=attrs, data_dims=('x',))
+
+    log_data1 = LogData(time=1000000, value=[1.0, 2.0], variances=[0.1, 0.2])
+    log_data2 = LogData(time=2000000, value=[3.0, 4.0], variances=[0.3, 0.4])
+
+    accumulator.add(timestamp=0, data=log_data1)
+    accumulator.add(timestamp=0, data=log_data2)
+
+    result = accumulator.get()
+
+    expected_data = sc.array(
+        dims=['time', 'x'],
+        values=[[1.0, 2.0], [3.0, 4.0]],
+        variances=[[0.1, 0.2], [0.3, 0.4]],
+        unit='counts',
+    )
+    assert_identical(result.data, expected_data)
+
+
+def test_to_nxlog_mixed_variances():
+    """Test mixing data with and without variances - should fail gracefully."""
+    attrs = {'units': 'counts'}
+    accumulator = ToNXlog(attrs=attrs)
+
+    # First add data with variances
+    log_data1 = LogData(time=1000000, value=10.0, variances=1.0)
+    accumulator.add(timestamp=0, data=log_data1)
+
+    # Then add data without variances
+    log_data2 = LogData(time=2000000, value=20.0)
+    accumulator.add(timestamp=0, data=log_data2)
+
+    result = accumulator.get()
+
+    # The result should have variances, with the second entry having variance 0
+    expected_data = sc.array(
+        dims=['time'], values=[10.0, 20.0], variances=[1.0, 0.0], unit='counts'
+    )
+    assert_identical(result.data, expected_data)
+
+
+def test_to_nxlog_capacity_expansion_with_arrays():
+    """Test that capacity expansion works correctly with array data."""
+    attrs = {'units': 'K'}
+    accumulator = ToNXlog(attrs=attrs, data_dims=('x',))
+
+    # Add enough array data to trigger capacity expansion
+    for i in range(10):
+        log_data = LogData(time=(i + 1) * 1000000, value=[float(i), float(i + 1)])
+        accumulator.add(timestamp=0, data=log_data)
+
+    result = accumulator.get()
+    assert result.sizes["time"] == 10
+    assert result.sizes["x"] == 2
+
+    # Check first and last values
+    assert_identical(
+        result.data['time', 0], sc.array(dims=['x'], values=[0.0, 1.0], unit='K')
+    )
+    assert_identical(
+        result.data['time', -1], sc.array(dims=['x'], values=[9.0, 10.0], unit='K')
+    )
+
+
+def test_to_nxlog_array_sorting():
+    """Test that array data is correctly sorted by time."""
+    attrs = {'units': 'K'}
+    accumulator = ToNXlog(attrs=attrs, data_dims=('x',))
+
+    # Add data out of time order
+    log_data1 = LogData(time=3000000, value=[30.0, 31.0])
+    log_data2 = LogData(time=1000000, value=[10.0, 11.0])
+    log_data3 = LogData(time=2000000, value=[20.0, 21.0])
+
+    accumulator.add(timestamp=0, data=log_data1)
+    accumulator.add(timestamp=0, data=log_data2)
+    accumulator.add(timestamp=0, data=log_data3)
+
+    result = accumulator.get()
+
+    # Should be sorted by time
+    expected_values = [[10.0, 11.0], [20.0, 21.0], [30.0, 31.0]]
+    assert_identical(
+        result.data, sc.array(dims=['time', 'x'], values=expected_values, unit='K')
+    )
+
+    start_time = sc.epoch(unit='ns')
+    expected_times = [start_time.value + t for t in [1000000, 2000000, 3000000]]
+    expected_time_coord = sc.array(dims=['time'], values=expected_times, unit='ns')
+    assert_identical(result.coords['time'], expected_time_coord)
+
+
+def test_to_nxlog_different_dtypes():
+    """Test that different numeric dtypes work correctly."""
+    attrs = {'units': 'counts'}
+    accumulator = ToNXlog(attrs=attrs)
+
+    # Add integer data
+    log_data1 = LogData(time=1000000, value=42)
+    log_data2 = LogData(time=2000000, value=43)
+
+    accumulator.add(timestamp=0, data=log_data1)
+    accumulator.add(timestamp=0, data=log_data2)
+
+    result = accumulator.get()
+
+    assert_identical(
+        result.data, sc.array(dims=['time'], values=[42, 43], unit='counts')
+    )
+
+
+def test_to_nxlog_clear_preserves_structure():
+    """Test that clearing preserves the array structure for subsequent additions."""
+    attrs = {'units': 'K'}
+    accumulator = ToNXlog(attrs=attrs, data_dims=('x',))
+
+    # Add array data
+    log_data1 = LogData(time=1000000, value=[1.0, 2.0], variances=[0.1, 0.2])
+    accumulator.add(timestamp=0, data=log_data1)
+
+    result = accumulator.get()
+    assert result.sizes["time"] == 1
+    assert result.data.variances is not None
+
+    # Clear and add new data
+    accumulator.clear()
+    log_data2 = LogData(time=2000000, value=[3.0, 4.0], variances=[0.3, 0.4])
+    accumulator.add(timestamp=0, data=log_data2)
+
+    result = accumulator.get()
+    assert result.sizes["time"] == 1
+    expected_data = sc.array(
+        dims=['time', 'x'], values=[[3.0, 4.0]], variances=[[0.3, 0.4]], unit='K'
+    )
+    assert_identical(result.data, expected_data)

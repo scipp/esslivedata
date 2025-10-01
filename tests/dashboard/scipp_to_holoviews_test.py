@@ -128,6 +128,100 @@ class TestConvertCurve1d:
         np.testing.assert_array_equal(curve_data['values'], [5, 10, 15])
 
 
+class TestConvertErrorBars1d:
+    def test_basic_conversion(self):
+        x_coord = sc.array(dims=['x'], values=[1, 2, 3, 4], unit='s')
+        y_values = sc.array(dims=['x'], values=[10.0, 15.0, 20.0, 25.0], unit='V')
+        y_variances = sc.array(dims=['x'], values=[1.0, 2.0, 1.5, 3.0], unit='V^2')
+        data = sc.DataArray(
+            data=sc.array(
+                dims=['x'],
+                values=y_values.values,
+                variances=y_variances.values,
+                unit='V',
+            ),
+            coords={'x': x_coord},
+        )
+
+        result = scipp_to_holoviews.convert_error_bars_1d(data)
+
+        assert isinstance(result, hv.ErrorBars)
+        assert len(result.kdims) == 1
+        assert len(result.vdims) == 2  # values and yerr
+        assert result.kdims[0].name == 'x'
+        assert result.kdims[0].unit == 's'
+        assert result.vdims[0].unit == 'V'
+
+        # Check data
+        error_data = result.data
+        np.testing.assert_array_equal(error_data['x'], [1, 2, 3, 4])
+        np.testing.assert_array_equal(error_data['values'], [10.0, 15.0, 20.0, 25.0])
+        np.testing.assert_array_almost_equal(
+            error_data['yerr'], [1, np.sqrt(2), np.sqrt(1.5), np.sqrt(3)]
+        )
+
+    def test_with_named_data(self):
+        coord = sc.array(dims=['time'], values=[0, 1, 2])
+        values = sc.array(dims=['time'], values=[5.0, 10.0, 15.0])
+        variances = sc.array(dims=['time'], values=[0.25, 1.0, 2.25])
+        data = sc.DataArray(
+            data=sc.array(
+                dims=['time'], values=values.values, variances=variances.values
+            ),
+            coords={'time': coord},
+            name='signal',
+        )
+
+        result = scipp_to_holoviews.convert_error_bars_1d(data)
+
+        assert result.vdims[0].label == 'signal'
+
+    def test_with_missing_coord(self):
+        values = sc.array(dims=['time'], values=[5.0, 10.0, 15.0], unit='V')
+        variances = sc.array(dims=['time'], values=[1.0, 4.0, 9.0], unit='V^2')
+        data = sc.DataArray(
+            data=sc.array(
+                dims=['time'],
+                values=values.values,
+                variances=variances.values,
+                unit='V',
+            ),
+            name='signal',
+        )
+
+        result = scipp_to_holoviews.convert_error_bars_1d(data)
+
+        assert isinstance(result, hv.ErrorBars)
+        assert result.kdims[0].name == 'time'
+        assert result.kdims[0].unit is None  # Dummy coord has no unit
+        assert result.vdims[0].label == 'signal'
+
+        # Check data contains dummy coordinates
+        error_data = result.data
+        np.testing.assert_array_equal(error_data['time'], [0, 1, 2])  # dummy coords
+        np.testing.assert_array_equal(error_data['values'], [5.0, 10.0, 15.0])
+        np.testing.assert_array_equal(
+            error_data['yerr'], [1, 2, 3]
+        )  # sqrt of variances
+
+    def test_zero_variances(self):
+        x_coord = sc.array(dims=['x'], values=[1, 2, 3])
+        y_values = sc.array(dims=['x'], values=[10.0, 20.0, 30.0])
+        y_variances = sc.array(dims=['x'], values=[0.0, 0.0, 0.0])  # Zero variances
+        data = sc.DataArray(
+            data=sc.array(
+                dims=['x'], values=y_values.values, variances=y_variances.values
+            ),
+            coords={'x': x_coord},
+        )
+
+        result = scipp_to_holoviews.convert_error_bars_1d(data)
+
+        assert isinstance(result, hv.ErrorBars)
+        error_data = result.data
+        np.testing.assert_array_equal(error_data['yerr'], [0, 0, 0])
+
+
 class TestConvertQuadMesh2d:
     def test_basic_conversion(self):
         x_coord = sc.array(dims=['x'], values=[1, 2, 3], unit='m')
@@ -356,6 +450,36 @@ class TestToHoloviews:
         result = scipp_to_holoviews.to_holoviews(data)
 
         assert isinstance(result, hv.Curve)
+
+    def test_1d_error_bars(self):
+        coord = sc.array(dims=['x'], values=[0, 1, 2])
+        values = sc.array(dims=['x'], values=[10.0, 20.0, 30.0])
+        variances = sc.array(dims=['x'], values=[1.0, 4.0, 9.0])
+        data = sc.DataArray(
+            data=sc.array(dims=['x'], values=values.values, variances=variances.values),
+            coords={'x': coord},
+        )
+
+        result = scipp_to_holoviews.to_holoviews(data)
+
+        assert isinstance(result, hv.ErrorBars)
+
+    def test_1d_error_bars_missing_coord(self):
+        values = sc.array(dims=['x'], values=[10.0, 20.0, 30.0])
+        variances = sc.array(dims=['x'], values=[1.0, 4.0, 9.0])
+        data = sc.DataArray(
+            data=sc.array(dims=['x'], values=values.values, variances=variances.values)
+        )
+
+        result = scipp_to_holoviews.to_holoviews(data)
+
+        assert isinstance(result, hv.ErrorBars)
+        error_data = result.data
+        np.testing.assert_array_equal(error_data['x'], [0, 1, 2])  # dummy coords
+        np.testing.assert_array_equal(error_data['values'], [10.0, 20.0, 30.0])
+        np.testing.assert_array_equal(
+            error_data['yerr'], [1, 2, 3]
+        )  # sqrt of variances
 
     def test_2d_image_evenly_spaced(self):
         x_coord = sc.linspace('x', 0, 2, 3)
