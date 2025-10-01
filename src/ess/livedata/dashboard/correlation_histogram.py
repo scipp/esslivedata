@@ -248,6 +248,8 @@ class CorrelationHistogram1dConfigurationAdapter(
     @property
     def aux_source_names(self) -> dict[str, list[str]]:
         source_names = list(self._source_name_to_key.keys())
+        if len(source_names) < 1:
+            raise ValueError("At least one timeseries must be available.")
         return {'x_param': source_names}
 
     def _create_dynamic_model_class(
@@ -277,6 +279,8 @@ class CorrelationHistogram2dConfigurationAdapter(
     @property
     def aux_source_names(self) -> dict[str, list[str]]:
         source_names = list(self._source_name_to_key.keys())
+        if len(source_names) < 2:
+            raise ValueError("At least two timeseries must be available.")
         return {'x_param': source_names, 'y_param': source_names}
 
     def _create_dynamic_model_class(

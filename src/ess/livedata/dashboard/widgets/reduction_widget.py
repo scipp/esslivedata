@@ -22,6 +22,8 @@ workflows. Concretely we have:
 
 from __future__ import annotations
 
+import html
+
 import panel as pn
 
 from ess.livedata.config.workflow_spec import WorkflowId
@@ -109,7 +111,12 @@ class WorkflowSelectorWidget:
             return ConfigurationModal(
                 config=adapter, start_button_text="Start Workflow"
             )
-        except ValueError:
+        except Exception as e:
+            escaped_error = html.escape(str(e))
+            error_msg = (
+                f"<p style='color: red;'><strong>Error:</strong> {escaped_error}</p>"
+            )
+            self._description_pane.object = error_msg
             return None
 
 
