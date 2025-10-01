@@ -176,7 +176,7 @@ class Service(ServiceBase):
 
     @staticmethod
     def setup_arg_parser(
-        description: str, *, dev_flag: bool = True
+        description: str, *, dev_flag: bool = True, dashboard_auth: bool = False
     ) -> argparse.ArgumentParser:
         parser = argparse.ArgumentParser(
             description=description,
@@ -201,6 +201,17 @@ class Service(ServiceBase):
             default='INFO',
             help='Set the logging level',
         )
+        if dashboard_auth:
+            parser.add_argument(
+                '--basic-auth-password',
+                default=None,
+                help='Basic authentication password for the dashboard',
+            )
+            parser.add_argument(
+                '--basic-auth-cookie-secret',
+                default=None,
+                help='Basic authentication cookie secret for the dashboard',
+            )
         return parser
 
 
@@ -218,7 +229,6 @@ def get_env_defaults(
         # Convert --arg-name to LIVEDATA_ARG_NAME
         env_name = f"{prefix}_{action.dest.upper().replace('-', '_')}"
         env_val = os.getenv(env_name)
-
         # Override with environment variable if present
         if env_val is not None:
             if isinstance(default_value, bool):

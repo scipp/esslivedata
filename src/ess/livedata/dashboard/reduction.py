@@ -19,13 +19,23 @@ hv.extension('bokeh')
 class ReductionApp(DashboardBase):
     """Reduction dashboard application."""
 
-    def __init__(self, *, instrument: str = 'dummy', dev: bool = False, log_level: int):
+    def __init__(
+        self,
+        *,
+        instrument: str = 'dummy',
+        dev: bool = False,
+        log_level: int,
+        basic_auth_password: str | None = None,
+        basic_auth_cookie_secret: str | None = None,
+    ):
         super().__init__(
             instrument=instrument,
             dev=dev,
             log_level=log_level,
             dashboard_name='reduction_dashboard',
             port=5009,  # Default port for reduction dashboard
+            basic_auth_password=basic_auth_password,
+            basic_auth_cookie_secret=basic_auth_cookie_secret,
         )
         self._correlation_controller = CorrelationHistogramController(
             self._data_service
@@ -63,7 +73,9 @@ class ReductionApp(DashboardBase):
 
 
 def get_arg_parser() -> argparse.ArgumentParser:
-    return Service.setup_arg_parser(description='ESSlivedata Dashboard')
+    return Service.setup_arg_parser(
+        description='ESSlivedata Dashboard', dashboard_auth=True
+    )
 
 
 def main() -> None:
