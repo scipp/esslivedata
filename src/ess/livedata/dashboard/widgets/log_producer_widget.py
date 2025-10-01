@@ -8,6 +8,8 @@ import panel as pn
 import scipp as sc
 
 from ess.livedata import Message, StreamId, StreamKind
+from ess.livedata.config import config_names
+from ess.livedata.config.config_loader import load_config
 from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_f144
 
 
@@ -19,7 +21,7 @@ class LogProducerWidget:
         self._logger = logger
 
         self._sink = KafkaSink(
-            kafka_config={"bootstrap.servers": "localhost:9092"},
+            kafka_config=load_config(namespace=config_names.kafka_upstream),
             instrument=instrument,
             serializer=serialize_dataarray_to_f144,
             logger=logger,
@@ -56,7 +58,7 @@ class LogProducerWidget:
     def _get_config_path(self) -> Path:
         """Get the path to the configuration file for the current instrument."""
         # Get the package root directory
-        package_root = Path(__file__).parent.parent.parent.parent.parent.parent
+        package_root = Path(__file__).resolve().parents[5]
         config_dir = package_root / 'configs'
         return config_dir / f'log_producer_{self._instrument}.json'
 
