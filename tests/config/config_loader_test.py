@@ -36,7 +36,7 @@ def _downstream_env_setup(monkeypatch):
 
 def test_control_consumer():
     config = load_config(namespace=config_names.control_consumer, env='')
-    assert config['auto.offset.reset'] == 'earliest'
+    assert config['auto.offset.reset'] == 'latest'
 
 
 @pytest.mark.parametrize('env', [None, 'dev', 'docker'])
