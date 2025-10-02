@@ -24,8 +24,7 @@ instrument.add_detector(
     # Should be consistent with detector config keys,
     # i.e. detector_group name in nexus file
     # Test file has 1024*1024 pixels but real data may have 4096*4096 pixels
-    # 'timepix3',
-    'test',
+    'timepix3',
     detector_number=sc.arange('yx', 1, 1024**2 + 1, unit=None).fold(
         dim='yx', sizes={'y': -1, 'x': 1024}
     ),
@@ -67,7 +66,7 @@ def _make_odin_detectors() -> StreamLUT:
     """
     # return {InputStreamKey(topic='odin_detector', source_name='timepix3'): 'timepix3'}
     return {
-        InputStreamKey(topic='odin_detector_tpx3_empir', source_name='test'): 'test'
+        InputStreamKey(topic='odin_detector_tpx3_empir', source_name='test'): 'timepix3'
     }
 
 
