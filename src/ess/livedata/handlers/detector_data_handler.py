@@ -202,6 +202,7 @@ class ROIHistogram(Workflow):
             y_range=params.y_range,
             roi_filter=detector_view.make_roi_filter(),
         )
+        self._cumulative: sc.DataArray | None = None
 
     def accumulate(self, data: dict[Hashable, Any]) -> None:
         if len(data) != 1:
@@ -210,9 +211,16 @@ class ROIHistogram(Workflow):
         self._accumulator.add(0, raw)  # Timestamp not used.
 
     def finalize(self) -> dict[str, sc.DataArray]:
-        return {'current': self._accumulator.get()}
+        delta = self._accumulator.get()
+        if self._cumulative is None:
+            self._cumulative = delta.copy()
+        else:
+            self._cumulative += delta
+        return {'cumulative': self._cumulative, 'current': delta}
 
     def clear(self) -> None:
+        if self._cumulative is not None:
+            self._cumulative = None
         self._accumulator.clear()
 
 
