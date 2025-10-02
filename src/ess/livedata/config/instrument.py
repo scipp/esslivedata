@@ -55,6 +55,7 @@ class Instrument:
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
     _nexus_file: str | None = None
     active_namespace: str | None = None
+    _detector_group_names: dict[str, str] = field(default_factory=dict)
 
     @property
     def nexus_file(self) -> str:
@@ -76,14 +77,31 @@ class Instrument:
         """Get the names of all detectors registered in this instrument."""
         return list(self._detector_numbers.keys())
 
+    def get_detector_group_name(self, name: str) -> str:
+        """
+        Get the group name for a detector, defaulting to the detector name.
+
+        If the NXdetector is inside an NXdetector_group, this returns the combination of
+        the group name and the detector name. Otherwise, just the detector name.
+        """
+        return self._detector_group_names.get(name, name)
+
     def add_detector(
-        self, name: str, detector_number: sc.Variable | None = None
+        self,
+        name: str,
+        detector_number: sc.Variable | None = None,
+        *,
+        detector_group_name: str | None = None,
     ) -> None:
         if detector_number is not None:
             self._detector_numbers[name] = detector_number
             return
+        if detector_group_name is not None:
+            group_name = f'{detector_group_name}/{name}'
+            self._detector_group_names[name] = group_name
         candidate = snx.load(
-            self.nexus_file, root=f'entry/instrument/{name}/detector_number'
+            self.nexus_file,
+            root=f'entry/instrument/{self.get_detector_group_name(name)}/detector_number',
         )
         if not isinstance(candidate, sc.Variable):
             raise ValueError(
