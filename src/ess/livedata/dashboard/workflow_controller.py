@@ -22,66 +22,10 @@ from ess.livedata.config.workflow_spec import (
     WorkflowStatusType,
 )
 
+from .correlation_histogram import CorrelationHistogramController, make_workflow_spec
 from .data_service import DataService
 from .workflow_config_service import ConfigServiceAdapter, WorkflowConfigService
-
-
-class BoundWorkflowController:
-    """
-    Controller bound to a specific workflow, providing direct access without ID checks.
-
-    This controller is created from a main WorkflowController and provides a simplified
-    interface for widgets that work with a single workflow.
-    """
-
-    def __init__(
-        self,
-        workflow_id: WorkflowId,
-        spec: WorkflowSpec,
-        main_controller: WorkflowController,
-    ) -> None:
-        """
-        Initialize bound controller.
-
-        Parameters
-        ----------
-        workflow_id
-            The workflow ID this controller is bound to
-        spec
-            The workflow specification
-        main_controller
-            Reference to the main controller for operations
-        """
-        self._workflow_id = workflow_id
-        self._spec = spec
-        self._main_controller = main_controller
-
-    @property
-    def workflow_id(self) -> WorkflowId:
-        """Get the workflow ID."""
-        return self._workflow_id
-
-    @property
-    def spec(self) -> WorkflowSpec:
-        """Get the workflow specification."""
-        return self._spec
-
-    @property
-    def params_model_class(self) -> type[pydantic.BaseModel]:
-        """Get the parameters model class."""
-        return self._spec.params
-
-    def get_persistent_config(self) -> PersistentWorkflowConfig | None:
-        """Get persistent configuration for this workflow."""
-        return self._main_controller.get_workflow_config(self._workflow_id)
-
-    def start_workflow(
-        self, source_names: list[str], config: pydantic.BaseModel
-    ) -> bool:
-        """Start this workflow with given configuration."""
-        return self._main_controller.start_workflow(
-            self._workflow_id, source_names, config
-        )
+from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
 
 class WorkflowController:
@@ -110,6 +54,7 @@ class WorkflowController:
         source_names: list[str],
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         data_service: DataService[ResultKey, object] | None = None,
+        correlation_histogram_controller: CorrelationHistogramController | None = None,
     ) -> None:
         """
         Initialize the workflow controller.
@@ -124,12 +69,23 @@ class WorkflowController:
             Registry of available workflows and their specifications.
         data_service
             Optional data service for cleaning up workflow data keys.
+        correlation_histogram_controller
+            Optional controller for correlation histogram workflows.
         """
         self._service = service
         self._logger = logging.getLogger(__name__)
 
         self._source_names = source_names
-        self._workflow_registry = workflow_registry
+
+        # Extend registry with correlation histogram specs if controller provided
+        self._workflow_registry = dict(workflow_registry)
+        self._correlation_histogram_controller = correlation_histogram_controller
+        if correlation_histogram_controller is not None:
+            correlation_1d_spec = make_workflow_spec(1)
+            correlation_2d_spec = make_workflow_spec(2)
+            self._workflow_registry[correlation_1d_spec.get_id()] = correlation_1d_spec
+            self._workflow_registry[correlation_2d_spec.get_id()] = correlation_2d_spec
+
         self._data_service = data_service
 
         # Initialize all sources with UNKNOWN status
@@ -157,6 +113,7 @@ class WorkflowController:
         source_names: list[str],
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         data_service: DataService[ResultKey, object] | None = None,
+        correlation_histogram_controller: CorrelationHistogramController | None = None,
     ) -> WorkflowController:
         """Create WorkflowController from ConfigService."""
         return cls(
@@ -164,6 +121,7 @@ class WorkflowController:
             source_names=source_names,
             workflow_registry=workflow_registry,
             data_service=data_service,
+            correlation_histogram_controller=correlation_histogram_controller,
         )
 
     def _setup_subscriptions(self) -> None:
@@ -191,13 +149,6 @@ class WorkflowController:
 
         Returns True if the workflow was started successfully, False otherwise.
         """
-        # Check if workflow exists
-        if workflow_id not in self._workflow_registry:
-            self._logger.warning(
-                'Cannot start workflow %s: workflow does not exist', workflow_id
-            )
-            return False
-
         self._logger.info(
             'Starting workflow %s on sources %s with config %s',
             workflow_id,
@@ -243,23 +194,52 @@ class WorkflowController:
 
         return True
 
-    def get_workflow_specs(self) -> dict[WorkflowId, WorkflowSpec]:
-        """Get the current workflow specifications sorted by title."""
-        return dict(
-            sorted(self._workflow_registry.items(), key=lambda item: item[1].title)
-        )
+    def create_workflow_adapter(self, workflow_id: WorkflowId):
+        """Create a workflow configuration adapter for the given workflow ID."""
+
+        spec = self.get_workflow_spec(workflow_id)
+        if spec is None:
+            raise ValueError(f'Workflow {workflow_id} not found')
+
+        # Handle correlation histogram workflows specially
+        if (
+            self._correlation_histogram_controller is not None
+            and spec.namespace == 'correlation'
+            and spec.name.startswith('correlation_histogram_')
+        ):
+            if spec.name == 'correlation_histogram_1d':
+                return self._correlation_histogram_controller.create_1d_config()
+            elif spec.name == 'correlation_histogram_2d':
+                return self._correlation_histogram_controller.create_2d_config()
+
+        # Handle regular workflows
+        persistent_config = self.get_workflow_config(workflow_id)
+
+        def start_callback(
+            selected_sources: list[str], parameter_values: pydantic.BaseModel
+        ) -> bool:
+            """Bound callback to start this specific workflow."""
+            return self.start_workflow(workflow_id, selected_sources, parameter_values)
+
+        return WorkflowConfigurationAdapter(spec, persistent_config, start_callback)
+
+    def get_workflow_titles(self) -> dict[WorkflowId, str]:
+        """Get workflow IDs mapped to their titles, sorted by title."""
+        return {
+            workflow_id: spec.title
+            for workflow_id, spec in sorted(
+                self._workflow_registry.items(), key=lambda item: item[1].title
+            )
+        }
+
+    def get_workflow_description(self, workflow_id: WorkflowId) -> str | None:
+        """Get the description for the given workflow ID."""
+        spec = self._workflow_registry.get(workflow_id)
+        return spec.description if spec else None
 
     def get_workflow_spec(self, workflow_id: WorkflowId) -> WorkflowSpec | None:
         """Get the current workflow specification for the given Id."""
         return self._workflow_registry.get(workflow_id)
-
-    def get_workflow_params(
-        self, workflow_id: WorkflowId
-    ) -> type[pydantic.BaseModel] | None:
-        """Get the parameters for the given workflow Id."""
-        if (workflow_spec := self.get_workflow_spec(workflow_id)) is None:
-            return None
-        return workflow_spec.params
 
     def get_workflow_config(
         self, workflow_id: WorkflowId
@@ -282,23 +262,3 @@ class WorkflowController:
             callback(self._workflow_status.copy())
         except Exception as e:
             self._logger.error('Error in workflow status update callback: %s', e)
-
-    def get_bound_controller(
-        self, workflow_id: WorkflowId
-    ) -> BoundWorkflowController | None:
-        """
-        Get a controller bound to a specific workflow.
-
-        Parameters
-        ----------
-        workflow_id
-            ID of the workflow to bind to
-
-        Returns
-        -------
-        BoundWorkflowController | None
-            Bound controller if workflow exists, None otherwise
-        """
-        if (spec := self.get_workflow_spec(workflow_id)) is None:
-            return None
-        return BoundWorkflowController(workflow_id, spec, self)
