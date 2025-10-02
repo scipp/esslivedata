@@ -24,7 +24,8 @@ instrument.add_detector(
     # Should be consistent with detector config keys,
     # i.e. detector_group name in nexus file
     # Test file has 1024*1024 pixels but real data may have 4096*4096 pixels
-    'timepix3',
+    # 'timepix3',
+    'test',
     detector_number=sc.arange('yx', 1, 1024**2 + 1, unit=None).fold(
         dim='yx', sizes={'y': -1, 'x': 1024}
     ),
@@ -44,7 +45,8 @@ _panel_0_config = LogicalViewConfig(
     name='odin_detector_xy',
     title='Timepix3 XY Detector Counts',
     description='2D view of the Timepix3 detector counts',
-    source_names=['timepix3'],
+    # source_names=['timepix3'],
+    source_names=['test'],
     # transform allows to scale the view.
     transform=_resize_image,
 )
@@ -63,7 +65,8 @@ def _make_odin_detectors() -> StreamLUT:
     Input keys based on
     https://confluence.ess.eu/display/ECDC/Kafka+Topics+Overview+for+Instruments
     """
-    return {InputStreamKey(topic='odin_detector', source_name='timepix3'): 'timepix3'}
+    # return {InputStreamKey(topic='odin_detector', source_name='timepix3'): 'timepix3'}
+    return {InputStreamKey(topic='odin_detector_tpx3_empir', source_name='test'): 'test'}
 
 
 stream_mapping = {
