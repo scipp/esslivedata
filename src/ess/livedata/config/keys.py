@@ -60,3 +60,12 @@ PERSISTENT_WORKFLOW_CONFIGS = _registry.create(
     produced_by={"dashboard"},
     consumed_by={"dashboard"},
 )
+
+PERSISTENT_PLOTTING_CONFIGS = _registry.create(
+    key="persistent_plotting_configs",
+    service_name="dashboard",
+    model=PersistentWorkflowConfigs,
+    description="Saved plotting configurations",
+    produced_by={"dashboard"},
+    consumed_by={"dashboard"},
+)
