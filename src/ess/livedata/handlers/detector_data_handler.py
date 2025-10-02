@@ -131,7 +131,7 @@ class DetectorProjection(DetectorProcessorFactory):
     def _make_rolling_view(self, source_name: str) -> raw.RollingDetectorView:
         return raw.RollingDetectorView.from_nexus(
             self._instrument.nexus_file,
-            detector_name=source_name,
+            detector_name=self._instrument._detector_group_names[source_name],
             window=self._window_length,
             projection=self._projection,
             resolution=self._get_resolution(source_name),
