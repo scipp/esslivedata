@@ -201,7 +201,7 @@ def create_app() -> pn.template.MaterialTemplate:
 
 if __name__ == '__main__':
     # For running standalone
-    pn.serve(create_app, port=5009, show=True, autoreload=False)
+    pn.serve(create_app, port=5111, show=True, autoreload=False)
 else:
     # For panel serve
     create_app().servable()
