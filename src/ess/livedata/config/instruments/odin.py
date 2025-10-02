@@ -44,8 +44,7 @@ _panel_0_config = LogicalViewConfig(
     name='odin_detector_xy',
     title='Timepix3 XY Detector Counts',
     description='2D view of the Timepix3 detector counts',
-    # source_names=['timepix3'],
-    source_names=['test'],
+    source_names=['timepix3'],
     # transform allows to scale the view.
     transform=_resize_image,
 )
