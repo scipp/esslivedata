@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
+import h5py
 import scipp as sc
 
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.env import StreamingEnv
 from ess.livedata.handlers.detector_data_handler import (
-    DetectorLogicalView,
     DetectorProjection,
     LogicalViewConfig,
 )
@@ -17,6 +17,18 @@ from ._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
 
 instrument = Instrument(name='odin')
 instrument_registry.register(instrument)
+
+# Patch the Odin geometry file with:
+# 1. Non-zero z (needed for detector xy projection)
+# 2. Axes names and mapping to detector number shape, since ScippNexus cannot infer
+#    these automatically from the Timepix3 data.
+with h5py.File(instrument.nexus_file, 'r+') as f:
+    det = f['entry/instrument/event_mode_detectors/timepix3']
+    trans = det['transformations/translation']
+    trans[...] = 1.0
+    det.attrs['axes'] = ['x_pixel_offset', 'y_pixel_offset']
+    det.attrs['detector_number_indices'] = [0, 1]
+
 register_monitor_workflows(
     instrument=instrument, source_names=['monitor1', 'monitor2']
 )  # Monitor names - in the streaming module

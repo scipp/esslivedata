@@ -77,29 +77,31 @@ class Instrument:
         """Get the names of all detectors registered in this instrument."""
         return list(self._detector_numbers.keys())
 
+    def get_detector_group_name(self, name: str) -> str:
+        """
+        Get the group name for a detector, defaulting to the detector name.
+
+        If the NXdetector is inside an NXdetector_group, this returns the combination of
+        the group name and the detector name. Otherwise, just the detector name.
+        """
+        return self._detector_group_names.get(name, name)
+
     def add_detector(
         self,
         name: str,
-        *,
         detector_number: sc.Variable | None = None,
+        *,
         detector_group_name: str | None = None,
     ) -> None:
         if detector_number is not None:
             self._detector_numbers[name] = detector_number
             return
-        group_name = f'{detector_group_name}/{name}' if detector_group_name else name
-        self._detector_group_names[name] = group_name
-        if self.name == 'odin':
-            import h5py
-
-            with h5py.File(self.nexus_file, 'r+') as f:
-                det = f['entry/instrument/event_mode_detectors/timepix3']
-                trans = det['transformations/translation']
-                trans[...] = 1.0
-                det.attrs['axes'] = ['x_pixel_offset', 'y_pixel_offset']
-                det.attrs['detector_number_indices'] = [0, 1]
+        if detector_group_name is not None:
+            group_name = f'{detector_group_name}/{name}'
+            self._detector_group_names[name] = group_name
         candidate = snx.load(
-            self.nexus_file, root=f'entry/instrument/{group_name}/detector_number'
+            self.nexus_file,
+            root=f'entry/instrument/{self.get_detector_group_name(name)}/detector_number',
         )
         if not isinstance(candidate, sc.Variable):
             raise ValueError(
