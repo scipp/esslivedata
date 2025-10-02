@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
+import h5py
 import scipp as sc
 
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.env import StreamingEnv
 from ess.livedata.handlers.detector_data_handler import (
-    DetectorLogicalView,
+    DetectorProjection,
     LogicalViewConfig,
 )
 from ess.livedata.handlers.monitor_data_handler import register_monitor_workflows
@@ -16,18 +17,27 @@ from ._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
 
 instrument = Instrument(name='odin')
 instrument_registry.register(instrument)
+
+# Patch the Odin geometry file with:
+# 1. Non-zero z (needed for detector xy projection)
+# 2. Axes names and mapping to detector number shape, since ScippNexus cannot infer
+#    these automatically from the Timepix3 data.
+with h5py.File(instrument.nexus_file, 'r+') as f:
+    det = f['entry/instrument/event_mode_detectors/timepix3']
+    trans = det['transformations/translation']
+    trans[...] = 1.0
+    det.attrs['axes'] = ['x_pixel_offset', 'y_pixel_offset']
+    det.attrs['detector_number_indices'] = [0, 1]
+
 register_monitor_workflows(
     instrument=instrument, source_names=['monitor1', 'monitor2']
 )  # Monitor names - in the streaming module
 
-instrument.add_detector(
-    # Should be consistent with detector config keys,
-    # i.e. detector_group name in nexus file
-    # Test file has 1024*1024 pixels but real data may have 4096*4096 pixels
-    'timepix3',
-    detector_number=sc.arange('yx', 1, 1024**2 + 1, unit=None).fold(
-        dim='yx', sizes={'y': -1, 'x': 1024}
-    ),
+instrument.add_detector('timepix3', detector_group_name='event_mode_detectors')
+_xy_projection = DetectorProjection(
+    instrument=instrument,
+    projection='xy_plane',
+    resolution={'timepix3': {'y': 512, 'x': 512}},
 )
 
 
@@ -48,12 +58,13 @@ _panel_0_config = LogicalViewConfig(
     # transform allows to scale the view.
     transform=_resize_image,
 )
-_panel_0_view = DetectorLogicalView(
-    instrument=instrument, config=_panel_0_config
-)  # Instantiating the DetectorLogicalView itself registers it.
+# WARNING: Disabled until fidex
+# _panel_0_view = DetectorLogicalView(
+#    instrument=instrument, config=_panel_0_config
+# )  # Instantiating the DetectorLogicalView itself registers it.
 
 
-detectors_config = {'fakes': {'timepix3': (1, 1024**2)}}
+detectors_config = {'fakes': {'timepix3': (1, 4096**2)}}
 
 
 def _make_odin_detectors() -> StreamLUT:
