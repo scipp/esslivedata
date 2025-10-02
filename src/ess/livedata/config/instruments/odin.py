@@ -22,6 +22,8 @@ instrument_registry.register(instrument)
 # 1. Non-zero z (needed for detector xy projection)
 # 2. Axes names and mapping to detector number shape, since ScippNexus cannot infer
 #    these automatically from the Timepix3 data.
+# Note: We do this every time on import. Accessing `instrument.nexus_file` the first
+# time will actually fetch the file using pooch, so it reverts this change every time.
 with h5py.File(instrument.nexus_file, 'r+') as f:
     det = f['entry/instrument/event_mode_detectors/timepix3']
     trans = det['transformations/translation']
