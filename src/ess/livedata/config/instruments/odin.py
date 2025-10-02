@@ -46,9 +46,10 @@ _panel_0_config = LogicalViewConfig(
     # transform allows to scale the view.
     transform=_resize_image,
 )
-_panel_0_view = DetectorLogicalView(
-    instrument=instrument, config=_panel_0_config
-)  # Instantiating the DetectorLogicalView itself registers it.
+# WARNING: Disabled until fidex
+# _panel_0_view = DetectorLogicalView(
+#    instrument=instrument, config=_panel_0_config
+# )  # Instantiating the DetectorLogicalView itself registers it.
 
 
 detectors_config = {'fakes': {'timepix3': (1, 4096**2)}}
