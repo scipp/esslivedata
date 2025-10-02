@@ -66,7 +66,9 @@ def _make_odin_detectors() -> StreamLUT:
     https://confluence.ess.eu/display/ECDC/Kafka+Topics+Overview+for+Instruments
     """
     # return {InputStreamKey(topic='odin_detector', source_name='timepix3'): 'timepix3'}
-    return {InputStreamKey(topic='odin_detector_tpx3_empir', source_name='test'): 'test'}
+    return {
+        InputStreamKey(topic='odin_detector_tpx3_empir', source_name='test'): 'test'
+    }
 
 
 stream_mapping = {
