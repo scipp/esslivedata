@@ -51,9 +51,9 @@ def test_can_configure_and_stop_workflow_with_detector(
         'dummy': 'total_counts',
         'dream': 'powder_reduction',
     }[instrument]
-    # WorkflowSpec (second arg) unused here since the workflow does not take params.
-    n_target = {'bifrost': 1, 'dummy': 1, 'dream': 2}[instrument]
+    n_target = {'bifrost': 4, 'dummy': 1, 'dream': 2}[instrument]
     check_counts = instrument != 'dream'
+    # WorkflowSpec (second arg) unused here since the workflow does not take params.
     workflow_id, _ = _get_workflow_from_registry(instrument, workflow_name)
 
     source_name = first_source_name[instrument]
@@ -72,14 +72,14 @@ def test_can_configure_and_stop_workflow_with_detector(
     assert len(sink.messages) == 1 * n_target
     if check_counts:
         # Events before workflow config was published should not be included
-        assert sink.messages[0].value.values.sum() == 2000
+        assert sink.messages[0 * n_target].value.values.sum() == 2000
     service.step()
     assert len(sink.messages) == 1 * n_target
     app.publish_events(size=3000, time=4)
     service.step()
     assert len(sink.messages) == 2 * n_target
     if check_counts:
-        assert sink.messages[1].value.values.sum() == 5000
+        assert sink.messages[1 * n_target].value.values.sum() == 5000
 
     # More events but the same time
     app.publish_events(size=1000, time=4)
@@ -89,7 +89,7 @@ def test_can_configure_and_stop_workflow_with_detector(
     assert len(sink.messages) == 3 * n_target
     if check_counts:
         # Result should include previous events with duplicate time
-        assert sink.messages[2].value.values.sum() == 7000
+        assert sink.messages[2 * n_target].value.values.sum() == 7000
 
     # Stop workflow
     command = JobCommand(action=JobAction.stop)
