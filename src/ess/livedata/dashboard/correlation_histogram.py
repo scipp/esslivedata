@@ -409,7 +409,12 @@ class CorrelationHistogrammer:
         # For now, if we expect timeseries to not update more than once per second, this
         # should be acceptable.
         for dim in self._edges:
-            lut = sc.lookup(sc.values(coords[dim]), mode='previous')
+            lut = sc.lookup(
+                sc.values(coords[dim])
+                if coords[dim].variances is not None
+                else coords[dim],
+                mode='previous',
+            )
             dependent.coords[dim] = lut[dependent.coords['time']]
         if self._normalize:
             return dependent.bin(**self._edges).bins.mean()
