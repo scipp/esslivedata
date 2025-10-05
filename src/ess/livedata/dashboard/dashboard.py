@@ -136,6 +136,7 @@ class DashboardBase(ServiceBase, ABC):
         )
         self._plotting_controller = PlottingController(
             job_service=self._job_service,
+            config_service=self._config_service,
             stream_manager=self._stream_manager,
             logger=self._logger,
         )
