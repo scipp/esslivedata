@@ -9,12 +9,13 @@ import panel as pn
 import pydantic
 
 from ess.livedata.config.workflow_spec import JobNumber
+from ess.livedata.dashboard.configuration_adapter import ConfigurationAdapter
 from ess.livedata.dashboard.job_controller import JobController
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.plotting import PlotterSpec
 from ess.livedata.dashboard.plotting_controller import PlottingController
 
-from .configuration_widget import ConfigurationAdapter, ConfigurationModal
+from .configuration_widget import ConfigurationModal
 from .job_status_widget import JobStatusListWidget
 
 

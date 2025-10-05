@@ -1,6 +1,10 @@
-# The control topic is compacted, we to set auto.offset.reset to earliest
-# to get config values that were set in the past
-auto.offset.reset: earliest
+# The control topic is compacted, we can set auto.offset.reset to earliest
+# to get config values that were set in the past. This is currently not enabled, since
+# workflow start commands are still on this topic, leading to duplicate and "zombie"
+# jobs across backend restarts in some cases. The dashboard manually configures the
+# offset to "earliest" when reading the control topic since it uses the topic for
+# storing previous workflow configurations.
+auto.offset.reset: latest
 enable.auto.commit: true
 fetch.min.bytes: 1
 session.timeout.ms: 6000

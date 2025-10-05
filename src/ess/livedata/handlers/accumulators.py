@@ -27,6 +27,7 @@ class LogData:
 
     time: int
     value: Any
+    variances: Any | None = None
 
     @staticmethod
     def from_f144(f144: logdata_f144.LogData) -> LogData:

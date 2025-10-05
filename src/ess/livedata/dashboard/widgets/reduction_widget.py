@@ -18,20 +18,18 @@ workflows. Concretely we have:
      the initial value of the parameters is configured from a
      :py:class:`~ess.livedata.config.workflow_spec.WorkflowConfig`, otherwise the
      default value from the parameter is used.
-- A list widget displaying running workflows, allowing users to stop them.
 """
 
 from __future__ import annotations
 
+import html
+
 import panel as pn
 
-from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
-from ess.livedata.dashboard.workflow_controller import (
-    BoundWorkflowController,
-    WorkflowController,
-)
+from ess.livedata.config.workflow_spec import WorkflowId
+from ess.livedata.dashboard.workflow_controller import WorkflowController
 
-from .workflow_config_modal import WorkflowConfigModal
+from .configuration_widget import ConfigurationModal
 
 
 class WorkflowSelectorWidget:
@@ -49,39 +47,28 @@ class WorkflowSelectorWidget:
             Controller for workflow operations
         """
         self._controller = controller
-        self._bound_controller: BoundWorkflowController | None = None
         self._selector = pn.widgets.Select(name="Workflow")
         self._description_pane = pn.pane.HTML(
             "Select a workflow to see its description"
         )
-        self._widget = self._create_widget()
+        self._widget = pn.Column(self._selector, self._description_pane)
         self._setup_callbacks()
-        self._on_workflows_updated(self._controller.get_workflow_specs())
 
-    @classmethod
-    def _make_workflow_options(
-        cls, specs: dict[WorkflowId, WorkflowSpec] | None = None
-    ) -> dict[str, WorkflowId | object]:
+        self._selector.options = self._make_workflow_options()
+        self._selector.value = self._no_selection
+
+    def _make_workflow_options(self) -> dict[str, WorkflowId | object]:
         """Get workflow options for selector widget."""
-        specs = specs or {}
+        titles = self._controller.get_workflow_titles()
         select_text = "--- Click to select a workflow ---"
-        options = {select_text: cls._no_selection}
-        options.update({spec.title: workflow_id for workflow_id, spec in specs.items()})
+        options = {select_text: self._no_selection}
+        options.update({title: workflow_id for workflow_id, title in titles.items()})
         return options
 
     @classmethod
     def _is_no_selection(cls, value: WorkflowId | object) -> bool:
         """Check if the given value represents no workflow selection."""
         return value is cls._no_selection
-
-    @classmethod
-    def _get_default_workflow_selection(cls) -> object:
-        """Get the default value for no workflow selection."""
-        return cls._no_selection
-
-    def _create_widget(self) -> pn.Column:
-        """Create the main selector widget."""
-        return pn.Column(self._selector, self._description_pane)
 
     def _setup_callbacks(self) -> None:
         """Setup callbacks for widget interactions."""
@@ -91,24 +78,17 @@ class WorkflowSelectorWidget:
         """Handle workflow selection change."""
         workflow_id = event.new
 
-        # Create bound controller and UI helper for selected workflow
+        # Update description based on selected workflow
         if self._is_no_selection(workflow_id):
-            self._bound_controller = None
             text = "Select a workflow to see its description"
         else:
-            self._bound_controller = self._controller.get_bound_controller(workflow_id)
-            if self._bound_controller is not None:
-                description = self._bound_controller.spec.description
+            description = self._controller.get_workflow_description(workflow_id)
+            if description is not None:
                 text = f"<p><strong>Description:</strong> {description}</p>"
             else:
                 text = "Select a workflow to see its description"
 
         self._description_pane.object = text
-
-    def _on_workflows_updated(self, specs: dict[WorkflowId, WorkflowSpec]) -> None:
-        """Handle workflow specs updates."""
-        self._selector.options = self._make_workflow_options(specs)
-        self._selector.value = self._get_default_workflow_selection()
 
     @property
     def widget(self) -> pn.Column:
@@ -121,11 +101,23 @@ class WorkflowSelectorWidget:
         value = self._selector.value
         return None if self._is_no_selection(value) else value
 
-    def create_modal(self) -> WorkflowConfigModal | None:
-        if self._bound_controller is None:
-            return
+    def create_modal(self) -> ConfigurationModal | None:
+        workflow_id = self.selected_workflow_id
+        if workflow_id is None:
+            return None
 
-        return WorkflowConfigModal(controller=self._bound_controller)
+        try:
+            adapter = self._controller.create_workflow_adapter(workflow_id)
+            return ConfigurationModal(
+                config=adapter, start_button_text="Start Workflow"
+            )
+        except Exception as e:
+            escaped_error = html.escape(str(e))
+            error_msg = (
+                f"<p style='color: red;'><strong>Error:</strong> {escaped_error}</p>"
+            )
+            self._description_pane.object = error_msg
+            return None
 
 
 class ReductionWidget:
@@ -154,7 +146,9 @@ class ReductionWidget:
         """Create the main widget layout."""
         return pn.Column(
             pn.Column(
-                self._workflow_selector.widget, self._configure_button, width=500
+                self._workflow_selector.widget,
+                self._configure_button,
+                sizing_mode="stretch_width",
             ),
             self._modal_container,  # Add modal container to main structure
         )
@@ -178,7 +172,8 @@ class ReductionWidget:
         if (modal := self._workflow_selector.create_modal()) is None:
             return
 
-        # Add modal to container and show it
+        # Clear previous modals and add the new one
+        self._modal_container.clear()
         self._modal_container.append(modal.modal)
         modal.show()
 
