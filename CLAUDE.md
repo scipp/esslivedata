@@ -10,28 +10,26 @@ ESSlivedata is a live data reduction visualization framework for the European Sp
 
 ### Environment Setup
 
-**IMPORTANT**: This project uses a mamba environment with Python 3.11. The devcontainer includes mamba pre-installed.
+**IMPORTANT**: This project uses a Python 3.11 virtual environment.
 
 ```sh
-# Create mamba environment with Python 3.11
-mamba create -n esslivedata python=3.11 -y
+# Create virtual environment with Python 3.11
+python3.11 -m venv venv
 
-# Install development dependencies (note: skips docs.txt due to dependency conflict)
-mamba run -n esslivedata pip install -r requirements/base.txt -r requirements/basetest.txt -r requirements/static.txt pre-commit
+# Activate the virtual environment
+source venv/bin/activate
+
+# Install all development dependencies
+pip install -r requirements/dev.txt
 
 # Install package in editable mode
-mamba run -n esslivedata pip install -e .
+pip install -e .
 
 # Setup pre-commit hooks (automatically runs on git commit)
-mamba run -n esslivedata pre-commit install
+pre-commit install
 ```
 
-**For Claude Code**: Always use `mamba run -n esslivedata <command>` to run commands in the environment:
-- Use `mamba run -n esslivedata <command>` instead of activating the environment
-- Example: `mamba run -n esslivedata pytest` or `mamba run -n esslivedata python -m pytest`
-- Pre-commit hooks will run automatically on `git commit` if properly installed
-- The environment includes all tools needed for testing, linting, and development
-- When making commits, use `mamba run -n esslivedata git commit` to ensure pre-commit hooks run correctly
+**For Claude Code**: Commands assume the virtual environment is activated. Pre-commit hooks will run automatically on `git commit` if properly installed.
 
 ### Running Tests
 
@@ -44,14 +42,14 @@ tox
 # Run tests for specific Python version
 tox -e py311
 
-# Run tests manually with pytest (using mamba environment)
-mamba run -n esslivedata python -m pytest
+# Run tests manually with pytest
+python -m pytest
 
 # Run specific test file
-mamba run -n esslivedata python -m pytest tests/core/processor_test.py
+python -m pytest tests/core/processor_test.py
 
 # Run tests with benchmarks
-mamba run -n esslivedata python -m pytest --benchmark-only
+python -m pytest --benchmark-only
 ```
 
 ### Code Quality
@@ -60,11 +58,11 @@ mamba run -n esslivedata python -m pytest --benchmark-only
 # Run all pre-commit checks (formatting, linting, static analysis)
 tox -e static
 
-# Run ruff linting (primary linting tool) - using mamba environment
-mamba run -n esslivedata ruff check .
+# Run ruff linting (primary linting tool)
+ruff check .
 
-# Run ruff formatting - using mamba environment
-mamba run -n esslivedata ruff format .
+# Run ruff formatting
+ruff format .
 
 # Type checking with mypy (minimize errors, but not strictly enforced)
 tox -e mypy
@@ -114,22 +112,22 @@ The template manages the project structure, configuration files, and development
 # Start Kafka using Docker
 docker-compose up kafka
 
-# Run fake data producers for testing (using mamba environment)
-mamba run -n esslivedata python -m ess.livedata.services.fake_monitors --mode ev44 --instrument dummy
-mamba run -n esslivedata python -m ess.livedata.services.fake_detectors --instrument dummy
-mamba run -n esslivedata python -m ess.livedata.services.fake_logdata --instrument dummy
+# Run fake data producers for testing
+python -m ess.livedata.services.fake_monitors --mode ev44 --instrument dummy
+python -m ess.livedata.services.fake_detectors --instrument dummy
+python -m ess.livedata.services.fake_logdata --instrument dummy
 
 # Run main processing services (use --dev for local testing)
-mamba run -n esslivedata python -m ess.livedata.services.monitor_data --instrument dummy --dev
-mamba run -n esslivedata python -m ess.livedata.services.detector_data --instrument dummy --dev
-mamba run -n esslivedata python -m ess.livedata.services.data_reduction --instrument dummy --dev
-mamba run -n esslivedata python -m ess.livedata.services.timeseries --instrument dummy --dev
+python -m ess.livedata.services.monitor_data --instrument dummy --dev
+python -m ess.livedata.services.detector_data --instrument dummy --dev
+python -m ess.livedata.services.data_reduction --instrument dummy --dev
+python -m ess.livedata.services.timeseries --instrument dummy --dev
 
 # Run dashboard in development mode
-mamba run -n esslivedata python -m ess.livedata.dashboard.reduction --instrument dummy
+python -m ess.livedata.dashboard.reduction --instrument dummy
 
 # Run dashboard in production mode with gunicorn (port 5009)
-mamba run -n esslivedata bash -c "LIVEDATA_INSTRUMENT=dummy gunicorn ess.livedata.dashboard.reduction_wsgi:application"
+LIVEDATA_INSTRUMENT=dummy gunicorn ess.livedata.dashboard.reduction_wsgi:application
 ```
 
 Note: Use `--sink png` argument with processing services to save outputs as PNG files instead of publishing to Kafka for testing.
