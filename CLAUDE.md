@@ -198,6 +198,16 @@ The dashboard follows a **layered MVC architecture**:
 
 See [docs/developer/design/dashboard-architecture.md](docs/developer/design/dashboard-architecture.md) for detailed architecture diagrams.
 
+## Detailed Architecture Documentation
+
+For in-depth understanding of ESSlivedata's architecture, see the following design documents:
+
+- **[Backend Service Architecture](docs/developer/design/backend-service-architecture.md)**: Service-Processor-Handler pattern, job management, and service lifecycle
+- **[Message Flow and Transformation](docs/developer/design/message-flow-and-transformation.md)**: End-to-end message journey, adapters, stream mapping, and batching strategies
+- **[Job-Based Processing](docs/developer/design/job-based-processing.md)**: Job lifecycle, scheduling, primary vs auxiliary data, and workflow protocol
+- **[Testing Guide](docs/developer/testing-guide.md)**: Unit testing with fakes, integration testing, and testing strategies
+- **[Dashboard Architecture](docs/developer/design/dashboard-architecture.md)**: MVC pattern, configuration management, and threading model
+
 ## Service Factory Pattern
 
 New services are created using `DataServiceBuilder`:
@@ -226,9 +236,10 @@ See [src/ess/livedata/service_factory.py](src/ess/livedata/service_factory.py) f
 ## Testing
 
 - Tests are in `tests/` mirroring the `src/ess/livedata/` structure
-- Use fakes from `fakes.py` for testing (e.g., `FakeMessageSource`, `FakeMessageSink`)
+- **All unit tests run without Kafka** - use fakes from `fakes.py` (e.g., `FakeMessageSource`, `FakeMessageSink`)
 - Test files follow pattern `*_test.py`
 - Tests use `pytest` with `--import-mode=importlib`
+- See [Testing Guide](docs/developer/testing-guide.md) for comprehensive testing strategies and examples
 
 ## Code Style Conventions
 
