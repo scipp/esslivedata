@@ -38,6 +38,14 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         self._plotting_controller = plotting_controller
         self._success_callback = success_callback
 
+        self._persisted_config = (
+            self._plotting_controller.get_persistent_plotter_config(
+                job_number=self._job_number,
+                output_name=self._output_name,
+                plot_name=self._plot_spec.name,
+            )
+        )
+
     @property
     def title(self) -> str:
         return f"Configure {self._plot_spec.title}"
@@ -57,11 +65,20 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
 
     @property
     def initial_source_names(self) -> list[str]:
+        if self._persisted_config is not None:
+            # Filter persisted source names to only include those still available
+            persisted_sources = [
+                name
+                for name in self._persisted_config.source_names
+                if name in self._available_sources
+            ]
+            return persisted_sources if persisted_sources else self._available_sources
         return self._available_sources
 
     @property
     def initial_parameter_values(self) -> dict[str, Any]:
-        # We rely on defaults in the Pydantic model
+        if self._persisted_config is not None:
+            return self._persisted_config.config.params
         return {}
 
     def start_action(self, selected_sources: list[str], parameter_values: Any) -> bool:
