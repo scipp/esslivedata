@@ -10,7 +10,7 @@ import scipp as sc
 
 from .. import parameter_models
 from ..config.instrument import Instrument
-from ..core.handler import JobBasedHandlerFactoryBase
+from ..core.handler import JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import Accumulator, CollectTOA, Cumulative, MonitorEvents
 from .workflow_factory import Workflow
@@ -100,7 +100,7 @@ def register_monitor_workflows(instrument: Instrument, source_names: list[str]) 
 
 
 class MonitorHandlerFactory(
-    JobBasedHandlerFactoryBase[MonitorEvents | sc.DataArray, sc.DataArray]
+    JobBasedPreprocessorFactoryBase[MonitorEvents | sc.DataArray, sc.DataArray]
 ):
     def make_preprocessor(self, key: StreamId) -> Accumulator | None:
         match key.kind:

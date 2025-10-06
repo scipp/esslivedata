@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
-from .handler import CommonHandlerFactory, Handler
+from .handler import Accumulator, JobBasedPreprocessorFactoryBase, PreprocessorFactory
 from .message import (
     Message,
     MessageSink,
@@ -9,15 +9,17 @@ from .message import (
     StreamKind,
     compact_messages,
 )
-from .processor import Processor, StreamProcessor
+from .processor import IdentityProcessor, Processor, StreamProcessor
 from .service import Service, ServiceBase
 
 __all__ = [
-    'CommonHandlerFactory',
-    'Handler',
+    'Accumulator',
+    'IdentityProcessor',
+    'JobBasedPreprocessorFactoryBase',
     'Message',
     'MessageSink',
     'MessageSource',
+    'PreprocessorFactory',
     'Processor',
     'Service',
     'ServiceBase',

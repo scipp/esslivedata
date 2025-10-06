@@ -8,7 +8,7 @@ from collections import defaultdict
 from typing import Any, Generic
 
 from ..handlers.config_handler import ConfigProcessor
-from .handler import Accumulator, HandlerFactory, HandlerRegistry
+from .handler import Accumulator, PreprocessorFactory
 from .job import JobResult, JobStatus
 from .job_manager import JobFactory, JobManager, WorkflowData
 from .job_manager_adapter import JobManagerAdapter
@@ -30,7 +30,9 @@ class MessagePreprocessor(Generic[Tin, Tout]):
     """Message preprocessor that handles batches of messages."""
 
     def __init__(
-        self, factory: HandlerFactory[Tin, Tout], logger: logging.Logger | None = None
+        self,
+        factory: PreprocessorFactory[Tin, Tout],
+        logger: logging.Logger | None = None,
     ) -> None:
         self._factory = factory
         self._logger = logger or logging.getLogger(__name__)
@@ -84,17 +86,17 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         logger: logging.Logger | None = None,
         source: MessageSource[Message[Tin]],
         sink: MessageSink[Tout],
-        handler_registry: HandlerRegistry[Tin, Tout],
+        preprocessor_factory: PreprocessorFactory[Tin, Tout],
         message_batcher: MessageBatcher | None = None,
     ) -> None:
         self._logger = logger or logging.getLogger(__name__)
         self._source = source
         self._sink = sink
         self._message_preprocessor = MessagePreprocessor(
-            factory=handler_registry._factory, logger=self._logger
+            factory=preprocessor_factory, logger=self._logger
         )
         self._job_manager = JobManager(
-            job_factory=JobFactory(instrument=handler_registry._factory.instrument)
+            job_factory=JobFactory(instrument=preprocessor_factory.instrument)
         )
         self._job_manager_adapter = JobManagerAdapter(
             job_manager=self._job_manager, logger=self._logger

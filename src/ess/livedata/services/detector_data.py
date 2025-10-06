@@ -8,7 +8,6 @@ from typing import NoReturn
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.instruments import get_config
 from ess.livedata.config.streams import get_stream_mapping
-from ess.livedata.core.orchestrating_processor import OrchestratingProcessor
 from ess.livedata.handlers.detector_data_handler import DetectorHandlerFactory
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
@@ -26,14 +25,15 @@ def make_detector_service_builder(
     )
     _ = get_config(instrument)  # Load the module to register the instrument
     service_name = 'detector_data'
-    handler_factory = DetectorHandlerFactory(instrument=instrument_registry[instrument])
+    preprocessor_factory = DetectorHandlerFactory(
+        instrument=instrument_registry[instrument]
+    )
     return DataServiceBuilder(
         instrument=instrument,
         name=service_name,
         log_level=log_level,
         adapter=adapter,
-        handler_factory=handler_factory,
-        processor_cls=OrchestratingProcessor,
+        preprocessor_factory=preprocessor_factory,
     )
 
 

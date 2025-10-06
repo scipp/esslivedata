@@ -17,7 +17,7 @@ from ess.reduce.live import raw
 from .. import parameter_models
 from ..config import models
 from ..config.instrument import Instrument
-from ..core.handler import Accumulator, JobBasedHandlerFactoryBase
+from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import DetectorEvents, GroupIntoPixels, ROIBasedTOAHistogram
 from .workflow_factory import Workflow
@@ -224,7 +224,9 @@ class ROIHistogram(Workflow):
         self._accumulator.clear()
 
 
-class DetectorHandlerFactory(JobBasedHandlerFactoryBase[DetectorEvents, sc.DataArray]):
+class DetectorHandlerFactory(
+    JobBasedPreprocessorFactoryBase[DetectorEvents, sc.DataArray]
+):
     """
     Factory for detector data handlers.
 

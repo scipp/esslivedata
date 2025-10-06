@@ -69,20 +69,21 @@ graph TD
     class MS,MSink infra;
 ```
 
-## Service-Processor-Handler Pattern
+## Service-Processor-Workflow Pattern
 
 ### The Pattern
 
-This three-layer pattern provides clear separation of concerns:
+This architecture provides clear separation of concerns:
 
 1. **Service**: Orchestrates the lifecycle and main processing loop
-2. **Processor**: Routes messages to appropriate handlers based on stream keys
-3. **Handler**: Processes messages for a specific stream type
+2. **Processor**: Batches messages and routes them through preprocessors
+3. **Preprocessor/Accumulator**: Accumulates and transforms messages
+4. **Workflow**: Executes scientific reduction logic on accumulated data
 
 ### Why This Pattern?
 
 - **Testability**: Each layer can be tested independently using fakes
-- **Flexibility**: Processors and handlers are injected, not hardcoded
+- **Flexibility**: Processors, preprocessors, and workflows are injected, not hardcoded
 - **Reusability**: The same service infrastructure works for all backend services
 - **Clarity**: Each component has a single, well-defined responsibility
 
@@ -118,141 +119,44 @@ with service:
 
 ### Processor Layer
 
-ESSlivedata provides two processor implementations:
-
-#### StreamProcessor (Simple Services)
-
-Used by monitor_data, detector_data, and timeseries services.
-
-```python
-from ess.livedata.core.processor import StreamProcessor
-
-processor = StreamProcessor(
-    source=message_source,
-    sink=message_sink,
-    handler_registry=handler_registry,
-)
-```
+All backend services use **OrchestratingProcessor** for job-based message processing.
 
 **Processing Flow:**
 1. Get batch of messages from source
-2. Group messages by stream key (StreamId)
-3. Look up handler for each stream key
-4. Call handler with batched messages
-5. Publish handler results to sink
+2. Route configuration messages to ConfigProcessor
+3. Batch data messages by time window
+4. Pass messages through preprocessors (accumulators)
+5. Push accumulated data to JobManager
+6. Compute workflow results
+7. Publish results to sink
 
-#### OrchestratingProcessor (Data Reduction Service)
-
-Used by the data_reduction service for complex job management.
-
-```python
-from ess.livedata.core.orchestrating_processor import OrchestratingProcessor
-
-processor = OrchestratingProcessor(
-    source=message_source,
-    sink=message_sink,
-    handler_registry=handler_registry,
-    message_batcher=message_batcher,
-)
-```
-
-**Additional Capabilities:**
+**Key Capabilities:**
 - Job scheduling and lifecycle management
 - Message batching by time windows
-- Preprocessing accumulation
+- Preprocessing/accumulation layer
 - Configuration message handling
 - Status reporting
 
 See [Job-Based Processing System](#job-based-processing-system) for details.
 
-### Handler Layer
+### Preprocessor Layer
 
-Handlers implement the actual business logic for processing messages.
+Preprocessors accumulate and transform raw messages before they reach workflows.
 
-#### Handler Protocol
+**PreprocessorFactory** creates accumulators on-demand based on stream type. Each backend service provides a factory that knows which preprocessors to create for different message streams.
 
-```python
-from ess.livedata.core.handler import Handler
+**Common Preprocessors:**
+- `GroupIntoPixels`: Groups detector events by pixel ID
+- `CollectTOA`: Collects time-of-arrival values
+- `Cumulative`: Accumulates histograms
+- `ToNXevent_data`: Converts to NeXus event format
+- `ToNXlog`: Converts to NeXus log format
 
-class MyHandler(Handler[InputType, OutputType]):
-    def handle(self, messages: list[Message[InputType]]) -> list[Message[OutputType]]:
-        # Process messages and return results
-        results = []
-        for msg in messages:
-            processed = self._process(msg.value)
-            results.append(Message(
-                timestamp=msg.timestamp,
-                stream=msg.stream,
-                value=processed,
-            ))
-        return results
-```
+Preprocessors implement the `Accumulator` protocol with `add()`, `get()`, and `clear()` methods.
 
-**Key Points:**
-- Generic over input and output types
-- Receives batched messages for the same stream
-- Returns list of result messages (not 1:1 mapping)
-- May return empty list or multiple results per input
+## Job-Based Processing Architecture
 
-#### HandlerFactory and Registry
-
-Handlers are created on-demand by a factory:
-
-```python
-from ess.livedata.core.handler import HandlerFactory, HandlerRegistry
-
-class MyHandlerFactory(HandlerFactory[InputType, OutputType]):
-    def make_handler(self, key: StreamId) -> Handler | None:
-        # Return handler for this stream, or None to skip
-        if key.kind == StreamKind.DETECTOR_EVENTS:
-            return DetectorHandler(logger=self._logger, config={})
-        return None
-
-registry = HandlerRegistry(factory=handler_factory)
-handler = registry.get(stream_id)  # Created on first access, cached
-```
-
-**Registry Benefits:**
-- Lazy handler creation (only when needed)
-- Handler caching by stream key
-- None return value skips messages for unknown streams
-- Preprocessor factory method for accumulation (OrchestratingProcessor only)
-
-## Two-Tier Processing Architecture
-
-### StreamProcessor: Simple Message Routing
-
-For services that don't need job management (monitor_data, detector_data, timeseries):
-
-```mermaid
-sequenceDiagram
-    participant S as Service
-    participant SP as StreamProcessor
-    participant HR as HandlerRegistry
-    participant H as Handler
-    participant Sink as MessageSink
-
-    S->>SP: process()
-    SP->>SP: Get messages from source
-    SP->>SP: Group by stream key
-    loop For each stream
-        SP->>HR: get(stream_key)
-        HR->>SP: handler
-        SP->>H: handle(messages)
-        H->>SP: results
-    end
-    SP->>Sink: publish_messages(results)
-```
-
-**Characteristics:**
-- Stateless processing (no accumulation across calls)
-- Per-stream handler selection
-- Error isolation (exceptions caught per stream)
-- All results published immediately
-
-### OrchestratingProcessor: Job Management
-
-For the data_reduction service which needs to manage multiple concurrent workflows:
+All backend services (monitor_data, detector_data, data_reduction, timeseries) use the same job-based architecture:
 
 ```mermaid
 sequenceDiagram

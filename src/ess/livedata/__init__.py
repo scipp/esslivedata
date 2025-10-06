@@ -12,11 +12,13 @@ except importlib.metadata.PackageNotFoundError:
 del importlib
 
 from .core import (
-    CommonHandlerFactory,
-    Handler,
+    Accumulator,
+    IdentityProcessor,
+    JobBasedPreprocessorFactoryBase,
     Message,
     MessageSink,
     MessageSource,
+    PreprocessorFactory,
     Processor,
     Service,
     ServiceBase,
@@ -27,11 +29,13 @@ from .core import (
 )
 
 __all__ = [
-    "CommonHandlerFactory",
-    "Handler",
+    "Accumulator",
+    "IdentityProcessor",
+    "JobBasedPreprocessorFactoryBase",
     "Message",
     "MessageSink",
     "MessageSource",
+    "PreprocessorFactory",
     "Processor",
     "Service",
     "ServiceBase",

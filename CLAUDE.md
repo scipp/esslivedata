@@ -8,18 +8,30 @@ ESSlivedata is a live data reduction visualization framework for the European Sp
 
 ## Development Commands
 
-### Setup and Installation
+### Environment Setup
+
+**IMPORTANT**: This project uses a mamba environment with Python 3.11. The devcontainer includes mamba pre-installed.
 
 ```sh
-# Install development dependencies
-pip install -r requirements/dev.txt
+# Create mamba environment with Python 3.11
+mamba create -n esslivedata python=3.11 -y
+
+# Install development dependencies (note: skips docs.txt due to dependency conflict)
+mamba run -n esslivedata pip install -r requirements/base.txt -r requirements/basetest.txt -r requirements/static.txt pre-commit
 
 # Install package in editable mode
-pip install -e .
+mamba run -n esslivedata pip install -e .
 
-# Setup pre-commit hooks
-pre-commit install
+# Setup pre-commit hooks (automatically runs on git commit)
+mamba run -n esslivedata pre-commit install
 ```
+
+**For Claude Code**: Always use `mamba run -n esslivedata <command>` to run commands in the environment:
+- Use `mamba run -n esslivedata <command>` instead of activating the environment
+- Example: `mamba run -n esslivedata pytest` or `mamba run -n esslivedata python -m pytest`
+- Pre-commit hooks will run automatically on `git commit` if properly installed
+- The environment includes all tools needed for testing, linting, and development
+- When making commits, use `mamba run -n esslivedata git commit` to ensure pre-commit hooks run correctly
 
 ### Running Tests
 
@@ -32,14 +44,14 @@ tox
 # Run tests for specific Python version
 tox -e py311
 
-# Run tests manually with pytest
-python -m pytest
+# Run tests manually with pytest (using mamba environment)
+mamba run -n esslivedata python -m pytest
 
 # Run specific test file
-python -m pytest tests/core/processor_test.py
+mamba run -n esslivedata python -m pytest tests/core/processor_test.py
 
 # Run tests with benchmarks
-python -m pytest --benchmark-only
+mamba run -n esslivedata python -m pytest --benchmark-only
 ```
 
 ### Code Quality
@@ -48,11 +60,11 @@ python -m pytest --benchmark-only
 # Run all pre-commit checks (formatting, linting, static analysis)
 tox -e static
 
-# Run ruff linting (primary linting tool)
-ruff check .
+# Run ruff linting (primary linting tool) - using mamba environment
+mamba run -n esslivedata ruff check .
 
-# Run ruff formatting
-ruff format .
+# Run ruff formatting - using mamba environment
+mamba run -n esslivedata ruff format .
 
 # Type checking with mypy (minimize errors, but not strictly enforced)
 tox -e mypy
@@ -102,22 +114,22 @@ The template manages the project structure, configuration files, and development
 # Start Kafka using Docker
 docker-compose up kafka
 
-# Run fake data producers for testing
-python -m ess.livedata.services.fake_monitors --mode ev44 --instrument dummy
-python -m ess.livedata.services.fake_detectors --instrument dummy
-python -m ess.livedata.services.fake_logdata --instrument dummy
+# Run fake data producers for testing (using mamba environment)
+mamba run -n esslivedata python -m ess.livedata.services.fake_monitors --mode ev44 --instrument dummy
+mamba run -n esslivedata python -m ess.livedata.services.fake_detectors --instrument dummy
+mamba run -n esslivedata python -m ess.livedata.services.fake_logdata --instrument dummy
 
 # Run main processing services (use --dev for local testing)
-python -m ess.livedata.services.monitor_data --instrument dummy --dev
-python -m ess.livedata.services.detector_data --instrument dummy --dev
-python -m ess.livedata.services.data_reduction --instrument dummy --dev
-python -m ess.livedata.services.timeseries --instrument dummy --dev
+mamba run -n esslivedata python -m ess.livedata.services.monitor_data --instrument dummy --dev
+mamba run -n esslivedata python -m ess.livedata.services.detector_data --instrument dummy --dev
+mamba run -n esslivedata python -m ess.livedata.services.data_reduction --instrument dummy --dev
+mamba run -n esslivedata python -m ess.livedata.services.timeseries --instrument dummy --dev
 
 # Run dashboard in development mode
-python -m ess.livedata.dashboard.reduction --instrument dummy
+mamba run -n esslivedata python -m ess.livedata.dashboard.reduction --instrument dummy
 
 # Run dashboard in production mode with gunicorn (port 5009)
-LIVEDATA_INSTRUMENT=dummy gunicorn ess.livedata.dashboard.reduction_wsgi:application
+mamba run -n esslivedata bash -c "LIVEDATA_INSTRUMENT=dummy gunicorn ess.livedata.dashboard.reduction_wsgi:application"
 ```
 
 Note: Use `--sink png` argument with processing services to save outputs as PNG files instead of publishing to Kafka for testing.
@@ -129,29 +141,34 @@ Note: Use `--sink png` argument with processing services to save outputs as PNG 
 The codebase follows a **message-driven service architecture** with these key abstractions:
 
 - **Service**: Top-level lifecycle manager that runs processors in a loop
-- **Processor**: Orchestrates message processing (typically `StreamProcessor`)
-- **Handler**: Business logic for processing messages from specific streams
+- **Processor**: Orchestrates message processing (always `OrchestratingProcessor`)
+- **PreprocessorFactory**: Creates accumulators for different message stream types
+- **Accumulator**: Preprocesses and accumulates messages before workflow execution
+- **Workflow**: Scientific reduction logic that processes accumulated data
 - **MessageSource**: Abstraction for consuming messages (e.g., from Kafka)
 - **MessageSink**: Abstraction for publishing results (e.g., to Kafka)
 
 ### Message Flow
 
 ```
-Kafka Topics → MessageSource → Processor → Handler → MessageSink → Kafka Topics
+Kafka Topics → MessageSource → Processor → Preprocessor → JobManager → Workflow → MessageSink → Kafka Topics
 ```
 
 1. Messages arrive from Kafka via `MessageSource` (e.g., `BackgroundMessageSource` wrapping `KafkaConsumer`)
-2. `StreamProcessor` batches messages by stream key and routes to appropriate handlers
-3. Handlers (registered in `HandlerRegistry`) process messages and return results
-4. Results are published via `MessageSink` (e.g., `KafkaSink`)
+2. `OrchestratingProcessor` batches messages by time window
+3. Preprocessors (accumulators) transform and accumulate messages
+4. `JobManager` schedules workflow execution with accumulated data
+5. Workflows execute scientific reduction logic
+6. Results are published via `MessageSink` (e.g., `KafkaSink`)
 
 ### Key Components
 
 **Core Layer** (`src/ess/livedata/core/`):
 - `service.py`: Service lifecycle management with signal handling
-- `processor.py`: `StreamProcessor` routes messages to handlers
-- `handler.py`: Base handler protocol and registry
+- `orchestrating_processor.py`: `OrchestratingProcessor` manages job-based processing
+- `handler.py`: Preprocessor factory and accumulator protocols
 - `message.py`: Core message types (`Message`, `StreamId`, `StreamKind`)
+- `job_manager.py`: Manages workflow job scheduling and execution
 
 **Kafka Layer** (`src/ess/livedata/kafka/`):
 - `source.py`: Kafka consumers with background polling
@@ -165,10 +182,11 @@ Kafka Topics → MessageSource → Processor → Handler → MessageSink → Kaf
 - `workflows.py`: Workflow definitions using sciline workflows
 
 **Handlers** (`src/ess/livedata/handlers/`):
-- `detector_data_handler.py`: Handles detector events
-- `monitor_data_handler.py`: Handles monitor data
-- `data_reduction_handler.py`: Executes reduction workflows
-- `workflow_factory.py`: Creates workflow graphs
+- `detector_data_handler.py`: Preprocessor factory for detector events
+- `monitor_data_handler.py`: Preprocessor factory for monitor data
+- `data_reduction_handler.py`: Preprocessor factory for reduction workflows
+- `accumulators.py`: Common preprocessor/accumulator implementations
+- `workflow_factory.py`: Workflow protocol and factory interfaces
 
 **Dashboard** (`src/ess/livedata/dashboard/`):
 - Uses Panel/Holoviews for interactive visualizations
@@ -216,14 +234,14 @@ New services are created using `DataServiceBuilder`:
 builder = DataServiceBuilder(
     instrument='dummy',
     name='my_service',
-    handler_factory=MyHandlerFactory(),
+    preprocessor_factory=MyPreprocessorFactory(),
     adapter=MyMessageAdapter()  # optional
 )
 service = builder.build_from_config(topics=[...])
 service.start()
 ```
 
-See [src/ess/livedata/service_factory.py](src/ess/livedata/service_factory.py) for details.
+All services use `OrchestratingProcessor` for job-based processing. See [src/ess/livedata/service_factory.py](src/ess/livedata/service_factory.py) for details.
 
 ## Configuration System
 
@@ -278,11 +296,12 @@ def simple_method(self) -> int:
 
 ### Adding a New Service
 
-1. Create handler factory implementing `HandlerFactory[Tin, Tout]`
-2. Create handlers implementing `Handler` protocol
-3. Use `DataServiceBuilder` to construct service
-4. Register service in `services/` module
-5. Add instrument configuration in `config/defaults/`
+1. Create preprocessor factory extending `JobBasedPreprocessorFactoryBase[Tin, Tout]`
+2. Implement `make_preprocessor()` to create accumulators for different stream types
+3. Register workflows with the instrument configuration
+4. Use `DataServiceBuilder` to construct service
+5. Add service module in `services/`
+6. Add instrument configuration in `config/defaults/`
 
 ### Adding Dashboard Widgets
 
@@ -296,7 +315,8 @@ def simple_method(self) -> int:
 - Messages have `timestamp`, `stream`, and `value` fields
 - `StreamId` identifies message type (kind + name)
 - Use `compact_messages()` to deduplicate by keeping latest per stream
-- Handlers receive batched messages for the same stream
+- Preprocessors accumulate messages via `add()`, return accumulated data via `get()`
+- Workflows receive accumulated data and execute scientific reduction logic
 
 ### Background Processing
 

@@ -25,6 +25,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   jq \
   nano \
   vim \
+  wget \
+  curl \
+  bzip2 \
+  ca-certificates \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Ensure default node user has access to /usr/local/share
@@ -54,8 +58,23 @@ RUN ARCH=$(dpkg --print-architecture) && \
   sudo dpkg -i "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
   rm "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb"
 
+# Install Mambaforge (Python 3.11)
+ARG MAMBAFORGE_VERSION=24.1.2-0
+RUN ARCH=$(uname -m) && \
+  wget "https://github.com/conda-forge/miniforge/releases/download/${MAMBAFORGE_VERSION}/Mambaforge-${MAMBAFORGE_VERSION}-Linux-${ARCH}.sh" -O /tmp/mambaforge.sh && \
+  bash /tmp/mambaforge.sh -b -p /opt/conda && \
+  rm /tmp/mambaforge.sh && \
+  /opt/conda/bin/conda clean -afy && \
+  chown -R node:node /opt/conda
+
 # Set up non-root user
 USER node
+
+# Configure conda/mamba for node user
+ENV PATH=/opt/conda/bin:$PATH
+RUN conda init bash && conda init zsh && \
+  mamba install -y python=3.11 pip && \
+  mamba clean -afy
 
 # Install global packages
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
