@@ -87,6 +87,7 @@ This architecture provides clear separation with distinct responsibilities:
 **IdentityProcessor**: Simple pass-through for fake data producers (no preprocessing or job management).
 
 **OrchestratingProcessor**: Full job-based processing for all backend services:
+
 - Configuration message handling
 - Time-based message batching
 - Preprocessing via accumulators
@@ -180,6 +181,9 @@ Adapters convert raw Kafka messages to typed domain messages. Available adapters
 `OrchestratingProcessor` uses job management for multiple concurrent data reduction workflows.
 
 ### Job Lifecycle
+
+**Note** _Drawing this state machine highlights an issue: In practice we have a transition error<-->warning as well, because we can actually be in both states at once.
+We should fix the implementation so we have a proper state machine._
 
 ```mermaid
 stateDiagram-v2
