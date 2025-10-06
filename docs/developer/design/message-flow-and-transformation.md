@@ -16,6 +16,7 @@
 ESSlivedata processes neutron detector data flowing through Kafka topics. Messages undergo several transformations as they move from raw Kafka messages to typed domain objects ready for processing. This document describes the message transformation pipeline and the abstractions that enable it.
 
 **Key Principles:**
+
 - **Isolation from Kafka details**: Internal code works with domain types, not Kafka specifics
 - **Composable transformations**: Adapters can be chained and routed
 - **Type safety**: Generic types ensure correct transformations
@@ -139,6 +140,7 @@ class Message(Generic[T]):
 ```
 
 **Key Characteristics:**
+
 - **Generic over value type**: `Message[DetectorEvents]`, `Message[DataArray]`, etc.
 - **Immutable**: Frozen dataclass ensures messages aren't modified
 - **Timestamp-based ordering**: Messages are comparable by timestamp
@@ -166,11 +168,13 @@ class StreamKind(str, Enum):
 ```
 
 **Purpose:**
+
 - **Kind**: Broad category (detector, monitor, log, etc.)
 - **Name**: Specific identifier within category (detector name, log variable name)
 - **Isolation**: Internal code doesn't depend on Kafka topic names or source names
 
 **Examples:**
+
 ```python
 # Detector events from high_flux_detector
 StreamId(kind=StreamKind.DETECTOR_EVENTS, name='high_flux_detector')
@@ -195,6 +199,7 @@ Stream mapping isolates ESSlivedata internals from Kafka topic structure:
 - **ESSlivedata side**: Messages identified by `StreamId(kind, name)`
 
 This isolation allows:
+
 - Topic renaming without code changes
 - Split topics (multiple topics for same stream kind)
 - Merging streams from different topics
@@ -264,6 +269,7 @@ class MessageAdapter(Protocol, Generic[T, U]):
 ```
 
 **Benefits:**
+
 - **Composable**: Chain adapters for multi-step transformations
 - **Type-safe**: Generic types ensure correct connections
 - **Testable**: Mock adapters for testing
@@ -289,6 +295,7 @@ message = adapter.adapt(kafka_message)
 ```
 
 **Key Features:**
+
 - Uses stream_lut to map `(topic, source_name)` → internal name
 - Extracts timestamp from reference_time (or Kafka timestamp as fallback)
 - Returns typed `Message[EventData]`
@@ -307,6 +314,7 @@ message = adapter.adapt(kafka_message)
 ```
 
 **Performance Optimization:**
+
 - Directly extracts time-of-flight arrays from FlatBuffers
 - Skips deserializing unused fields (detector_id, weights, etc.)
 - Reduces memory allocations for high-rate monitor streams
@@ -325,6 +333,7 @@ message = adapter.adapt(ev44_message)
 ```
 
 **Options:**
+
 - `merge_detectors=True`: All detectors merged into 'unified_detector' stream
 - Useful for instruments with many detector banks treated as one
 
@@ -347,6 +356,7 @@ adapter = ChainedAdapter(
 ```
 
 **DA00 Compatibility:**
+
 - Handles differences between streaming_data_types DA00 and Scipp DataArray
 - Converts variable list to proper DataArray structure
 
@@ -370,6 +380,7 @@ adapter = ChainedAdapter(
 ```
 
 **LogData Domain Type:**
+
 - Decouples from upstream schema changes
 - Simplifies testing (no need to construct F144 objects)
 
@@ -407,6 +418,7 @@ adapter = RouteByTopicAdapter({
 ```
 
 **Topic List:**
+
 ```python
 topics = adapter.topics  # Returns list of topics to subscribe to
 ```
@@ -428,6 +440,7 @@ adapter = RouteBySchemaAdapter({
 ```
 
 **Use Case:**
+
 - Multiple schemas on same topic
 - Schema-based message routing
 
@@ -444,6 +457,7 @@ source = AdaptingMessageSource(
 ```
 
 **Error Modes:**
+
 - `raise_on_error=False`: Log error, skip message, continue processing
 - `raise_on_error=True`: Re-raise exception, stop processing
 - Unknown schema exceptions always logged as warnings
@@ -472,6 +486,7 @@ class MessageBatch:
 ```
 
 **Semantics:**
+
 - `start_time`: Lower bound (inclusive)
 - `end_time`: Upper bound (exclusive)
 - `messages`: All messages in this time window (may include late arrivals)
@@ -494,10 +509,12 @@ if batch is not None:
 **Behavior:**
 
 1. **Initial batch**: First call returns batch containing all received messages
+
    - `start_time = min(msg.timestamp for msg in messages)`
    - `end_time = max(msg.timestamp for msg in messages)`
 
 2. **Subsequent batches**: Aligned to batch_length intervals
+
    - Batch 1: `[T, T + 1s)`
    - Batch 2: `[T + 1s, T + 2s)`
    - Batch 3: `[T + 2s, T + 3s)`
@@ -524,6 +541,7 @@ batch = batcher.batch(messages)
 ```
 
 **Use Cases:**
+
 - Testing without time-based logic
 - Services that don't need time alignment
 
@@ -540,6 +558,7 @@ class MessageSource(Protocol, Generic[Tin]):
 ```
 
 **Simple Interface:**
+
 - Called by processor in each iteration
 - Returns batch of available messages
 - May return empty list
@@ -561,6 +580,7 @@ messages = source.get_messages()  # Blocks for up to timeout
 ```
 
 **Blocking Behavior:**
+
 - Polls Kafka for up to `timeout` seconds
 - Returns fewer messages if timeout reached
 - Processor blocked during poll
@@ -582,17 +602,20 @@ with BackgroundMessageSource(
 ```
 
 **Architecture:**
+
 - Background thread polls Kafka continuously
 - Messages queued in memory (queue.Queue)
 - `get_messages()` drains queue without blocking
 - Automatic overflow handling (drops oldest batches)
 
 **Benefits:**
+
 - Processor never blocked on Kafka I/O
 - Handles bursts of messages
 - Reduces risk of falling behind
 
 **Context Manager:**
+
 - `__enter__`: Start background thread
 - `__exit__`: Stop thread, cleanup
 
@@ -614,6 +637,7 @@ messages = source.get_messages()
 ```
 
 **Error Handling:**
+
 - Catches exceptions during adaptation
 - Logs error, skips message (if `raise_on_error=False`)
 - Continues with remaining messages
@@ -632,6 +656,7 @@ messages = consumer.consume(num_messages=100, timeout=0.05)
 ```
 
 **Use Case:**
+
 - Different offset strategies for different topics
 - Config topics: Read from earliest (auto.offset.reset=earliest)
 - Data topics: Read from latest (auto.offset.reset=latest)
@@ -661,6 +686,7 @@ ev44 = eventdata_ev44.deserialise_ev44(buffer)
 ```
 
 **Fields:**
+
 - `source_name`: Detector/monitor name
 - `reference_time`: Pulse times (nanoseconds)
 - `time_of_flight`: Event TOF (nanoseconds or microseconds)
@@ -683,6 +709,7 @@ f144 = logdata_f144.deserialise_f144(buffer)
 ```
 
 **Fields:**
+
 - `source_name`: Log variable name
 - `value`: Scalar or array value
 - `timestamp_unix_ns`: Timestamp (nanoseconds)
@@ -709,6 +736,7 @@ data_array = da00_to_scipp(da00.data)
 ```
 
 **Compatibility Layer:**
+
 - `scipp_to_da00`: Scipp DataArray → DA00 format
 - `da00_to_scipp`: DA00 format → Scipp DataArray
 - Handles differences in variable structure
@@ -729,10 +757,12 @@ sink.publish_messages(messages)
 ```
 
 **Built-in Serializers:**
+
 - `serialize_dataarray_to_da00`: DataArray → DA00
 - `serialize_dataarray_to_f144`: DataArray → F144 (for logs)
 
 **Stream-Specific Serialization:**
+
 - Config messages: JSON encoding with message key
 - Status messages: X5f2 format
 - Data messages: DA00 format
@@ -752,6 +782,7 @@ sink.publish_messages(messages)
 ```
 
 **Purpose:**
+
 - Workflows can return `DataGroup` with multiple outputs
 - Each output published as separate DA00 message
 - Stream name includes output name: `workflow_id/job_id/output_name`
@@ -770,6 +801,7 @@ ESSlivedata's message transformation pipeline:
 6. **Domain Messages** → Type-safe messages for handlers
 
 **Key Abstractions:**
+
 - `Message[T]`: Unified message structure
 - `StreamId`: Internal stream identification
 - `MessageAdapter`: Composable transformations

@@ -220,7 +220,7 @@ See [docs/developer/design/dashboard-architecture.md](docs/developer/design/dash
 
 For in-depth understanding of ESSlivedata's architecture, see the following design documents:
 
-- **[Backend Service Architecture](docs/developer/design/backend-service-architecture.md)**: Service-Processor-Handler pattern, job management, and service lifecycle
+- **[Backend Service Architecture](docs/developer/design/backend-service-architecture.md)**: Service-Processor-Workflow pattern, job management, and service lifecycle
 - **[Message Flow and Transformation](docs/developer/design/message-flow-and-transformation.md)**: End-to-end message journey, adapters, stream mapping, and batching strategies
 - **[Job-Based Processing](docs/developer/design/job-based-processing.md)**: Job lifecycle, scheduling, primary vs auxiliary data, and workflow protocol
 - **[Testing Guide](docs/developer/testing-guide.md)**: Unit testing with fakes, integration testing, and testing strategies

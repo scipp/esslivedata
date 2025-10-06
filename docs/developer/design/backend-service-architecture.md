@@ -3,7 +3,7 @@
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Service-Processor-Handler Pattern](#service-processor-handler-pattern)
+2. [Service-Processor-Workflow Pattern](#service-processor-workflow-pattern)
 3. [Two-Tier Processing Architecture](#two-tier-processing-architecture)
 4. [Message Flow in Backend Services](#message-flow-in-backend-services)
 5. [Job-Based Processing System](#job-based-processing-system)
@@ -12,13 +12,15 @@
 
 ## Overview
 
-ESSlivedata backend services follow a consistent **message-driven architecture** with clear separation of concerns. The architecture is built around three core abstractions:
+ESSlivedata backend services follow a consistent **message-driven architecture** with clear separation of concerns. The architecture is built around these core abstractions:
 
 - **Service**: Manages lifecycle and runs the processing loop
-- **Processor**: Routes and batches messages to appropriate handlers
-- **Handler**: Implements business logic for specific message types
+- **Processor**: Routes and batches messages (IdentityProcessor or OrchestratingProcessor)
+- **Preprocessor/Accumulator**: Accumulates and transforms messages before workflow execution
+- **JobManager**: Orchestrates job lifecycle and workflow execution
+- **Workflow**: Implements scientific reduction logic using sciline workflows
 
-All backend services (monitor_data, detector_data, data_reduction, timeseries) follow this same pattern, differing only in their handler implementations.
+All backend services (monitor_data, detector_data, data_reduction, timeseries) follow this same pattern, differing only in their preprocessor implementations.
 
 ```mermaid
 graph TD
@@ -27,16 +29,21 @@ graph TD
     end
 
     subgraph "Processing Layer"
-        SP[StreamProcessor]
+        IP[IdentityProcessor]
         OP[OrchestratingProcessor]
     end
 
-    subgraph "Handler Layer"
-        HR[HandlerRegistry]
-        HF[HandlerFactory]
-        H1[Handler 1]
-        H2[Handler 2]
-        H3[Handler N]
+    subgraph "Preprocessing Layer"
+        PF[PreprocessorFactory]
+        MP[MessagePreprocessor]
+        A1[Accumulator 1]
+        A2[Accumulator 2]
+        A3[Accumulator N]
+    end
+
+    subgraph "Job Management"
+        JM[JobManager]
+        WF[Workflows]
     end
 
     subgraph "Infrastructure"
@@ -44,28 +51,33 @@ graph TD
         MSink[MessageSink]
     end
 
-    Service -->|process loop| SP
+    Service -->|process loop| IP
     Service -->|process loop| OP
-    MS --> SP
+    MS --> IP
     MS --> OP
-    SP --> HR
-    OP --> HR
-    HR --> HF
-    HF -.creates.-> H1
-    HF -.creates.-> H2
-    HF -.creates.-> H3
-    H1 --> MSink
-    H2 --> MSink
-    H3 --> MSink
+    IP --> MSink
+    OP --> MP
+    MP --> PF
+    PF -.creates.-> A1
+    PF -.creates.-> A2
+    PF -.creates.-> A3
+    A1 --> JM
+    A2 --> JM
+    A3 --> JM
+    JM --> WF
+    WF --> MSink
+    OP --> MSink
 
     classDef service fill:#e3f2fd,stroke:#1976d2;
     classDef processor fill:#f3e5f5,stroke:#7b1fa2;
-    classDef handler fill:#fff3e0,stroke:#f57c00;
+    classDef preproc fill:#fff3e0,stroke:#f57c00;
+    classDef job fill:#fce4ec,stroke:#c2185b;
     classDef infra fill:#e8f5e9,stroke:#388e3c;
 
     class Service service;
-    class SP,OP processor;
-    class HR,HF,H1,H2,H3 handler;
+    class IP,OP processor;
+    class PF,MP,A1,A2,A3 preproc;
+    class JM,WF job;
     class MS,MSink infra;
 ```
 
@@ -76,9 +88,25 @@ graph TD
 This architecture provides clear separation of concerns:
 
 1. **Service**: Orchestrates the lifecycle and main processing loop
-2. **Processor**: Batches messages and routes them through preprocessors
-3. **Preprocessor/Accumulator**: Accumulates and transforms messages
-4. **Workflow**: Executes scientific reduction logic on accumulated data
+2. **Processor**: Batches messages and coordinates the processing pipeline
+3. **MessagePreprocessor**: Routes messages to appropriate accumulators
+4. **Accumulator**: Accumulates and transforms messages per stream
+5. **JobManager**: Manages job lifecycle and coordinates workflow execution
+6. **Workflow**: Executes scientific reduction logic on accumulated data
+
+### Two Processor Types
+
+**IdentityProcessor**: Simple pass-through processor used by fake data producers.
+- No preprocessing or job management
+- Messages flow directly from source to sink
+- Used by fake_monitors, fake_detectors, fake_logdata
+
+**OrchestratingProcessor**: Full job-based processing used by all backend services.
+- Configuration message handling
+- Time-based message batching
+- Preprocessing via accumulators
+- Job lifecycle management
+- Workflow execution
 
 ### Why This Pattern?
 
@@ -119,25 +147,35 @@ with service:
 
 ### Processor Layer
 
-All backend services use **OrchestratingProcessor** for job-based message processing.
+Backend services use either **IdentityProcessor** (fake data producers) or **OrchestratingProcessor** (all real backend services).
+
+#### OrchestratingProcessor
 
 **Processing Flow:**
 1. Get batch of messages from source
-2. Route configuration messages to ConfigProcessor
-3. Batch data messages by time window
-4. Pass messages through preprocessors (accumulators)
-5. Push accumulated data to JobManager
-6. Compute workflow results
-7. Publish results to sink
+2. Split messages into config vs data messages
+3. Route configuration messages to ConfigProcessor (job commands)
+4. Batch data messages by time window
+5. Pass messages through MessagePreprocessor → Accumulators
+6. Push accumulated data to JobManager
+7. Compute workflow results from jobs that received primary data
+8. Publish results and status to sink
 
 **Key Capabilities:**
 - Job scheduling and lifecycle management
 - Message batching by time windows
 - Preprocessing/accumulation layer
 - Configuration message handling
-- Status reporting
+- Periodic status reporting (every 2 seconds)
 
 See [Job-Based Processing System](#job-based-processing-system) for details.
+
+#### IdentityProcessor
+
+Simple pass-through processor for fake data producers:
+- No preprocessing or job management
+- Messages flow directly: source → sink
+- Used by services that generate test data
 
 ### Preprocessor Layer
 
@@ -196,33 +234,38 @@ sequenceDiagram
 
 ```mermaid
 graph LR
-    K[Kafka Raw Data] --> MS[MessageSource]
-    MS --> KMS[KafkaMessageSource]
-    KMS --> BMS[BackgroundMessageSource]
+    K[Kafka Raw Data] --> KC[KafkaConsumer]
+    KC --> BMS[BackgroundMessageSource]
     BMS --> AMS[AdaptingMessageSource]
-    AMS --> P[Processor]
-    P --> H[Handler]
-    H --> MS2[MessageSink]
-    MS2 --> KS[KafkaSink]
+    AMS --> P[OrchestratingProcessor]
+    P --> MP[MessagePreprocessor]
+    MP --> ACC[Accumulators]
+    ACC --> JM[JobManager]
+    JM --> WF[Workflows]
+    WF --> KS[KafkaSink]
     KS --> K2[Kafka Processed Data]
 
     classDef kafka fill:#fff3e0,stroke:#ef6c00;
     classDef source fill:#e3f2fd,stroke:#1976d2;
     classDef processor fill:#f3e5f5,stroke:#7b1fa2;
+    classDef preproc fill:#fff9c4,stroke:#f57f17;
+    classDef job fill:#fce4ec,stroke:#c2185b;
     classDef sink fill:#e8f5e9,stroke:#388e3c;
 
     class K,K2 kafka;
-    class MS,KMS,BMS,AMS source;
-    class P,H processor;
-    class MS2,KS sink;
+    class KC,BMS,AMS source;
+    class P processor;
+    class MP,ACC preproc;
+    class JM,WF job;
+    class KS sink;
 ```
 
 ### Message Source Chain
 
 Services typically use a chain of message sources:
 
-1. **KafkaMessageSource**: Wraps Kafka consumer, polls for messages
-2. **BackgroundMessageSource**: Wraps KafkaMessageSource, polls in background thread
+1. **KafkaConsumer**: Confluent Kafka consumer, polls Kafka topics
+2. **BackgroundMessageSource**: Wraps consumer, polls in background thread
 3. **AdaptingMessageSource**: Applies adapters to convert Kafka messages to domain types
 
 ```python
@@ -454,10 +497,10 @@ except Exception:
 - Service stops and signals main thread (via `os.kill(os.getpid(), SIGINT)`)
 - Prevents service from running with broken processor
 
-**Handler Errors:**
-- Exceptions caught per-stream in processor
+**Preprocessor Errors:**
+- Exceptions caught per-stream in MessagePreprocessor
 - Error logged, other streams continue processing
-- Handler registry may return None for unknown streams (skipped silently)
+- PreprocessorFactory may return None for unknown streams (skipped silently)
 
 **Job Errors:**
 - Processing errors set job to `warning` state
@@ -475,9 +518,8 @@ from ess.livedata.service_factory import DataServiceBuilder
 builder = DataServiceBuilder(
     instrument='dream',
     name='detector_data',
-    handler_factory=DetectorDataHandlerFactory(instrument),
+    preprocessor_factory=DetectorDataPreprocessorFactory(instrument),
     adapter=detector_adapter,
-    processor_cls=StreamProcessor,  # or OrchestratingProcessor
 )
 
 # Build from consumer config
@@ -492,6 +534,8 @@ with service:
     service.start()
 ```
 
+**Note**: All backend services use `OrchestratingProcessor` by default. For simple pass-through services (fake data producers), use `IdentityProcessor` directly instead of `DataServiceBuilder`.
+
 ### DataServiceRunner
 
 For command-line services, use `DataServiceRunner`:
@@ -503,14 +547,14 @@ def make_builder(instrument: str, log_level: int, dev: bool) -> DataServiceBuild
     # Create stream mapping and adapters
     stream_mapping = create_stream_mapping(instrument, dev=dev)
     adapter = create_adapter(stream_mapping)
-    handler_factory = MyHandlerFactory(instrument)
+    preprocessor_factory = MyPreprocessorFactory(instrument)
 
     return DataServiceBuilder(
         instrument=instrument,
         name='my_service',
         log_level=log_level,
         adapter=adapter,
-        handler_factory=handler_factory,
+        preprocessor_factory=preprocessor_factory,
     )
 
 # Standard service runner
@@ -556,7 +600,7 @@ builder = DataServiceBuilder(
 
 The backend service architecture provides:
 
-- **Consistent structure** across all services (Service-Processor-Handler)
+- **Consistent structure** across all services (Service-Processor-Workflow)
 - **Clear separation of concerns** (lifecycle, routing, business logic)
 - **Protocol-based design** for testability and flexibility
 - **Two processing tiers** (simple routing vs job orchestration)
