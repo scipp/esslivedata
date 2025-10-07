@@ -7,10 +7,12 @@ from typing import Any
 
 import numpy as np
 import scipp as sc
+from scipp.core import label_based_index_to_positional_index
 from streaming_data_types import logdata_f144
 
 from ess.reduce.live.roi import ROIFilter
 
+from ..config.models import EllipseROI, PolygonROI, RectangleROI
 from ..core.handler import Accumulator
 from .to_nxevent_data import DetectorEvents, MonitorEvents
 
@@ -152,7 +154,9 @@ class ROIBasedTOAHistogram(Accumulator[sc.DataArray, sc.DataArray]):
         self._edges = toa_edges
         self._edges_ns = toa_edges.to(unit='ns')
 
-    def configure_from_roi_model(self, roi: Any) -> None:
+    def configure_from_roi_model(
+        self, roi: RectangleROI | PolygonROI | EllipseROI
+    ) -> None:
         """
         Configure the ROI filter from an ROI model (RectangleROI, PolygonROI, etc.).
 
@@ -161,27 +165,38 @@ class ROIBasedTOAHistogram(Accumulator[sc.DataArray, sc.DataArray]):
         roi:
             An ROI model from config.models (RectangleROI, PolygonROI, or EllipseROI).
         """
-        from ..config.models import ROIType
-
-        # Get dims from the filter's indices
+        # Get dims and coords from the filter's indices
         y, x = self._roi_filter._indices.dims
         sizes = self._roi_filter._indices.sizes
+        y_coords = self._roi_filter._indices.coords[y]
+        x_coords = self._roi_filter._indices.coords[x]
 
         # Convert ROI model to indices based on type
-        if roi.to_data_array().name == ROIType.RECTANGLE:
-            # Convert normalized coordinates [0, 1] to pixel indices
-            y_indices = (
-                int(roi.y_min * (sizes[y] - 1)),
-                int(roi.y_max * (sizes[y] - 1)),
+        if isinstance(roi, RectangleROI):
+            # Convert physical coordinates to pixel indices using the coords
+            y_min_val = sc.scalar(roi.y_min, unit=roi.y_unit)
+            y_max_val = sc.scalar(roi.y_max, unit=roi.y_unit)
+            x_min_val = sc.scalar(roi.x_min, unit=roi.x_unit)
+            x_max_val = sc.scalar(roi.x_max, unit=roi.x_unit)
+
+            # Use scipp's label-based indexing to find positional indices
+            # Returns tuple of (dim_name, slice_object)
+            _, y_slice = label_based_index_to_positional_index(
+                sizes, y_coords, slice(y_min_val, y_max_val)
             )
-            x_indices = (
-                int(roi.x_min * (sizes[x] - 1)),
-                int(roi.x_max * (sizes[x] - 1)),
+            _, x_slice = label_based_index_to_positional_index(
+                sizes, x_coords, slice(x_min_val, x_max_val)
             )
+
+            # Extract start/stop from the slice objects
+            # Note: slice.stop is already exclusive, so we use it directly
+            y_indices = (y_slice.start, y_slice.stop)
+            x_indices = (x_slice.start, x_slice.stop)
+
             new_roi = {y: y_indices, x: x_indices}
             self._roi_filter.set_roi_from_intervals(sc.DataGroup(new_roi))
         else:
-            roi_type = roi.to_data_array().name
+            roi_type = type(roi).__name__
             raise ValueError(
                 f"Only rectangle ROI is currently supported, got {roi_type}"
             )
@@ -205,9 +220,20 @@ class ROIBasedTOAHistogram(Accumulator[sc.DataArray, sc.DataArray]):
         self._chunks.append(chunk)
 
     def get(self) -> sc.DataArray:
-        da = sc.reduce(self._chunks).sum()
-        self._chunks.clear()
-        da.coords['time_of_arrival'] = self._edges
+        if not self._chunks:
+            # Return empty histogram if no data
+            da = sc.DataArray(
+                data=sc.zeros(
+                    dims=['time_of_arrival'],
+                    shape=[len(self._edges) - 1],
+                    unit='counts',
+                ),
+                coords={'time_of_arrival': self._edges},
+            )
+        else:
+            da = sc.reduce(self._chunks).sum()
+            self._chunks.clear()
+            da.coords['time_of_arrival'] = self._edges
         return da
 
     def clear(self) -> None:
