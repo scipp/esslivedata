@@ -12,7 +12,6 @@ from streaming_data_types import logdata_f144
 from ess.reduce.live.roi import ROIFilter
 
 from ..core.handler import Accumulator
-from ..parameter_models import RangeModel
 from .to_nxevent_data import DetectorEvents, MonitorEvents
 
 
@@ -144,8 +143,6 @@ class ROIBasedTOAHistogram(Accumulator[sc.DataArray, sc.DataArray]):
     def __init__(
         self,
         *,
-        x_range: RangeModel,
-        y_range: RangeModel,
         toa_edges: sc.Variable,
         roi_filter: ROIFilter,
     ):
@@ -154,20 +151,40 @@ class ROIBasedTOAHistogram(Accumulator[sc.DataArray, sc.DataArray]):
         self._nbin = -1
         self._edges = toa_edges
         self._edges_ns = toa_edges.to(unit='ns')
-        self._configure_roi_filter(rx=x_range, ry=y_range)
 
-    def _configure_roi_filter(self, rx: RangeModel, ry: RangeModel) -> None:
-        # Access to protected variables should hopefully be avoided by changing the
-        # config values to send indices instead of percentages, once we have per-view
-        # configuration.
+    def configure_from_roi_model(self, roi: Any) -> None:
+        """
+        Configure the ROI filter from an ROI model (RectangleROI, PolygonROI, etc.).
+
+        Parameters
+        ----------
+        roi:
+            An ROI model from config.models (RectangleROI, PolygonROI, or EllipseROI).
+        """
+        from ..config.models import ROIType
+
+        # Get dims from the filter's indices
         y, x = self._roi_filter._indices.dims
         sizes = self._roi_filter._indices.sizes
-        # Convert fraction to indices
-        y_indices = (int(ry.start * (sizes[y] - 1)), int(ry.stop * (sizes[y] - 1)))
-        x_indices = (int(rx.start * (sizes[x] - 1)), int(rx.stop * (sizes[x] - 1)))
-        new_roi = {y: y_indices, x: x_indices}
 
-        self._roi_filter.set_roi_from_intervals(sc.DataGroup(new_roi))
+        # Convert ROI model to indices based on type
+        if roi.to_data_array().name == ROIType.RECTANGLE:
+            # Convert normalized coordinates [0, 1] to pixel indices
+            y_indices = (
+                int(roi.y_min * (sizes[y] - 1)),
+                int(roi.y_max * (sizes[y] - 1)),
+            )
+            x_indices = (
+                int(roi.x_min * (sizes[x] - 1)),
+                int(roi.x_max * (sizes[x] - 1)),
+            )
+            new_roi = {y: y_indices, x: x_indices}
+            self._roi_filter.set_roi_from_intervals(sc.DataGroup(new_roi))
+        else:
+            roi_type = roi.to_data_array().name
+            raise ValueError(
+                f"Only rectangle ROI is currently supported, got {roi_type}"
+            )
 
     def _add_weights(self, data: sc.DataArray) -> None:
         constituents = data.bins.constituents

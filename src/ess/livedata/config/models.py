@@ -6,11 +6,13 @@ Models for configuration values that can be used to control services via Kafka.
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any, Literal
 
+import numpy as np
 import scipp as sc
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 TimeUnit = Literal['ns', 'us', 'μs', 'ms', 's']
 
@@ -129,3 +131,225 @@ class ConfigKey(BaseModel, frozen=True):
         if service_name == '*':
             service_name = None
         return cls(source_name=source_name, service_name=service_name, key=key)
+
+
+class ROIType(str, Enum):
+    """Types of Region of Interest (ROI) shapes."""
+
+    RECTANGLE = 'rectangle'
+    POLYGON = 'polygon'
+    ELLIPSE = 'ellipse'
+
+
+class ROI(BaseModel, ABC):
+    """
+    Base class for Region of Interest (ROI) definitions.
+
+    ROIs can be serialized to/from scipp DataArrays which can then be converted
+    to da00 format using the existing compat module for Kafka transmission.
+
+    The ROI type is encoded in the DataArray's name attribute, which maps to the
+    'label' field in da00 Variable for the signal.
+    """
+
+    @abstractmethod
+    def to_data_array(self) -> sc.DataArray:
+        """
+        Convert ROI to scipp DataArray representation.
+
+        The DataArray name is set to the ROI type to distinguish ROI shapes.
+
+        Returns
+        -------
+        :
+            DataArray with ROI geometry stored in coordinates and type in name.
+        """
+        ...
+
+    @classmethod
+    def from_data_array(cls, da: sc.DataArray) -> ROI:
+        """
+        Create ROI from scipp DataArray representation.
+
+        Dispatches to the appropriate ROI subclass based on the DataArray name.
+
+        Parameters
+        ----------
+        da:
+            DataArray with ROI geometry in coordinates and type in name.
+
+        Returns
+        -------
+        :
+            ROI instance (Rectangle, Polygon, or Ellipse).
+        """
+        if da.name is None or da.name == '':
+            raise ValueError("DataArray missing name (roi_type)")
+
+        roi_type = str(da.name)
+
+        if roi_type == ROIType.RECTANGLE:
+            return RectangleROI._from_data_array(da)
+        elif roi_type == ROIType.POLYGON:
+            return PolygonROI._from_data_array(da)
+        elif roi_type == ROIType.ELLIPSE:
+            return EllipseROI._from_data_array(da)
+        else:
+            raise ValueError(f"Unknown ROI type: {roi_type}")
+
+    @classmethod
+    @abstractmethod
+    def _from_data_array(cls, da: sc.DataArray) -> ROI:
+        """
+        Internal method to create specific ROI subclass from DataArray.
+
+        Subclasses must implement this method.
+        """
+        ...
+
+
+class RectangleROI(ROI):
+    """
+    Rectangle ROI defined by x and y bounds.
+
+    The rectangle is axis-aligned (not rotated).
+    """
+
+    x_min: float = Field(description="Minimum x coordinate")
+    x_max: float = Field(description="Maximum x coordinate")
+    y_min: float = Field(description="Minimum y coordinate")
+    y_max: float = Field(description="Maximum y coordinate")
+    x_unit: str = Field(description="Unit for x coordinates")
+    y_unit: str = Field(description="Unit for y coordinates")
+
+    @model_validator(mode='after')
+    def validate_bounds(self) -> RectangleROI:
+        """Validate that min < max for both dimensions."""
+        if self.x_min >= self.x_max:
+            raise ValueError(f"x_min ({self.x_min}) must be < x_max ({self.x_max})")
+        if self.y_min >= self.y_max:
+            raise ValueError(f"y_min ({self.y_min}) must be < y_max ({self.y_max})")
+        return self
+
+    def to_data_array(self) -> sc.DataArray:
+        """Convert to scipp DataArray with bounds dimension."""
+        data = sc.array(dims=['bounds'], values=[1, 1], dtype='int32', unit='')
+        coords = {
+            'x': sc.array(
+                dims=['bounds'], values=[self.x_min, self.x_max], unit=self.x_unit
+            ),
+            'y': sc.array(
+                dims=['bounds'], values=[self.y_min, self.y_max], unit=self.y_unit
+            ),
+        }
+        da = sc.DataArray(data, coords=coords, name=ROIType.RECTANGLE)
+        return da
+
+    @classmethod
+    def _from_data_array(cls, da: sc.DataArray) -> RectangleROI:
+        """Create from scipp DataArray."""
+        x = da.coords['x'].values
+        y = da.coords['y'].values
+        return cls(
+            x_min=float(x[0]),
+            x_max=float(x[1]),
+            y_min=float(y[0]),
+            y_max=float(y[1]),
+            x_unit=str(da.coords['x'].unit),
+            y_unit=str(da.coords['y'].unit),
+        )
+
+
+class PolygonROI(ROI):
+    """
+    Polygon ROI defined by a sequence of vertices.
+
+    The polygon is defined by (x, y) coordinate pairs. The polygon is automatically
+    closed (last vertex connects to first).
+    """
+
+    x: list[float] = Field(description="X coordinates of vertices")
+    y: list[float] = Field(description="Y coordinates of vertices")
+    x_unit: str = Field(description="Unit for x coordinates")
+    y_unit: str = Field(description="Unit for y coordinates")
+
+    @model_validator(mode='after')
+    def validate_vertices(self) -> PolygonROI:
+        """Validate that x and y have the same length and at least 3 vertices."""
+        if len(self.x) != len(self.y):
+            raise ValueError("x and y must have the same length")
+        if len(self.x) < 3:
+            raise ValueError("Polygon must have at least 3 vertices")
+        return self
+
+    def to_data_array(self) -> sc.DataArray:
+        """Convert to scipp DataArray with vertex dimension."""
+        n = len(self.x)
+        data = sc.array(dims=['vertex'], values=np.ones(n, dtype=np.int32), unit='')
+        coords = {
+            'x': sc.array(dims=['vertex'], values=self.x, unit=self.x_unit),
+            'y': sc.array(dims=['vertex'], values=self.y, unit=self.y_unit),
+        }
+        da = sc.DataArray(data, coords=coords, name=ROIType.POLYGON)
+        return da
+
+    @classmethod
+    def _from_data_array(cls, da: sc.DataArray) -> PolygonROI:
+        """Create from scipp DataArray."""
+        return cls(
+            x=da.coords['x'].values.tolist(),
+            y=da.coords['y'].values.tolist(),
+            x_unit=str(da.coords['x'].unit),
+            y_unit=str(da.coords['y'].unit),
+        )
+
+
+class EllipseROI(ROI):
+    """
+    Ellipse ROI defined by center, radii, and optional rotation.
+
+    The ellipse can be rotated by specifying a rotation angle in degrees.
+    Note: Due to rotation, x and y must have the same unit.
+    """
+
+    center_x: float = Field(description="X coordinate of center")
+    center_y: float = Field(description="Y coordinate of center")
+    radius_x: float = Field(description="Radius along x-axis", gt=0)
+    radius_y: float = Field(description="Radius along y-axis", gt=0)
+    rotation: float = Field(
+        default=0.0, description="Rotation angle in degrees (counterclockwise)"
+    )
+    unit: str = Field(description="Unit for coordinates (must be same for x and y)")
+
+    def to_data_array(self) -> sc.DataArray:
+        """Convert to scipp DataArray with dim dimension."""
+        data = sc.array(dims=['dim'], values=[1, 1], dtype='int32', unit='')
+        coords = {
+            'center': sc.array(
+                dims=['dim'], values=[self.center_x, self.center_y], unit=self.unit
+            ),
+            'radius': sc.array(
+                dims=['dim'], values=[self.radius_x, self.radius_y], unit=self.unit
+            ),
+        }
+        da = sc.DataArray(data, coords=coords, name=ROIType.ELLIPSE)
+        # Add rotation as a scalar coordinate (no dimension)
+        da.coords['rotation'] = sc.scalar(self.rotation, unit='deg')
+        return da
+
+    @classmethod
+    def _from_data_array(cls, da: sc.DataArray) -> EllipseROI:
+        """Create from scipp DataArray."""
+        center = da.coords['center'].values
+        radius = da.coords['radius'].values
+        rotation = (
+            float(da.coords['rotation'].value) if 'rotation' in da.coords else 0.0
+        )
+        return cls(
+            center_x=float(center[0]),
+            center_y=float(center[1]),
+            radius_x=float(radius[0]),
+            radius_y=float(radius[1]),
+            rotation=rotation,
+            unit=str(da.coords['center'].unit),
+        )

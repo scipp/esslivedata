@@ -38,6 +38,16 @@ class DetectorViewParams(pydantic.BaseModel):
         description="Time of arrival range for detector data.",
         default=parameter_models.TOARange(),
     )
+    toa_edges: parameter_models.TOAEdges = pydantic.Field(
+        title="Time of Arrival Edges",
+        description="Time of arrival edges for histogramming.",
+        default=parameter_models.TOAEdges(
+            start=0.0,
+            stop=1000.0 / 14,
+            num_bins=100,
+            unit=parameter_models.TimeUnit.MS,
+        ),
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -61,12 +71,6 @@ class DetectorProcessorFactory(ABC):
             params=params, detector_view=self._make_rolling_view(source_name)
         )
 
-    def make_roi(self, source_name: str, params: ROIHistogramParams) -> ROIHistogram:
-        """Factory method that will be registered as a workflow creation function."""
-        return ROIHistogram(
-            params=params, detector_view=self._make_rolling_view(source_name)
-        )
-
     def _register_with_instrument(self, instrument: Instrument) -> None:
         instrument.register_workflow(
             namespace='detector_data',
@@ -75,15 +79,8 @@ class DetectorProcessorFactory(ABC):
             title=self._config.title,
             description=self._config.description,
             source_names=self._config.source_names,
+            aux_source_names=['roi_config'],
         )(self.make_view)
-        instrument.register_workflow(
-            namespace='detector_data',
-            name=f'{self._config.name}_roi',
-            version=1,
-            title=f'ROI Histogram: {self._config.title} ',
-            description=f'ROI Histogram for {self._config.description}',
-            source_names=self._config.source_names,
-        )(self.make_roi)
 
     @abstractmethod
     def _make_rolling_view(self, source_name: str) -> raw.RollingDetectorView:
@@ -158,72 +155,6 @@ class DetectorLogicalView(DetectorProcessorFactory):
         )
 
 
-class LimitedRange(parameter_models.RangeModel):
-    """Model for a limited range between 0 and 1."""
-
-    start: float = parameter_models.Field(
-        ge=0.0, le=1.0, default=0.0, description="Start of the range."
-    )
-    stop: float = parameter_models.Field(
-        ge=0.0, le=1.0, default=1.0, description="Stop of the range."
-    )
-
-
-class ROIHistogramParams(pydantic.BaseModel):
-    x_range: LimitedRange = pydantic.Field(
-        title="X Range",
-        description="X range of the ROI as a fraction of the viewport.",
-        default=LimitedRange(start=0.0, stop=1.0),
-    )
-    y_range: LimitedRange = pydantic.Field(
-        title="Y Range",
-        description="Y range of the ROI as a fraction of the viewport.",
-        default=LimitedRange(start=0.0, stop=1.0),
-    )
-    toa_edges: parameter_models.TOAEdges = pydantic.Field(
-        title="Time of Arrival Edges",
-        description="Time of arrival edges for histogramming.",
-        default=parameter_models.TOAEdges(
-            start=0.0,
-            stop=1000.0 / 14,
-            num_bins=100,
-            unit=parameter_models.TimeUnit.MS,
-        ),
-    )
-
-
-class ROIHistogram(Workflow):
-    def __init__(
-        self, params: ROIHistogramParams, detector_view: raw.RollingDetectorView
-    ) -> None:
-        self._accumulator = ROIBasedTOAHistogram(
-            toa_edges=params.toa_edges.get_edges(),
-            x_range=params.x_range,
-            y_range=params.y_range,
-            roi_filter=detector_view.make_roi_filter(),
-        )
-        self._cumulative: sc.DataArray | None = None
-
-    def accumulate(self, data: dict[Hashable, Any]) -> None:
-        if len(data) != 1:
-            raise ValueError("ROIHistogram expects exactly one data item.")
-        raw = next(iter(data.values()))
-        self._accumulator.add(0, raw)  # Timestamp not used.
-
-    def finalize(self) -> dict[str, sc.DataArray]:
-        delta = self._accumulator.get()
-        if self._cumulative is None:
-            self._cumulative = delta.copy()
-        else:
-            self._cumulative += delta
-        return {'cumulative': self._cumulative, 'current': delta}
-
-    def clear(self) -> None:
-        if self._cumulative is not None:
-            self._cumulative = None
-        self._accumulator.clear()
-
-
 class DetectorHandlerFactory(
     JobBasedPreprocessorFactoryBase[DetectorEvents, sc.DataArray]
 ):
@@ -247,9 +178,10 @@ class DetectorHandlerFactory(
 
 class DetectorView(Workflow):
     """
-    Accumulator for detector counts, based on a rolling detector view.
+    Unified workflow for detector counts and ROI histogram.
 
-    Return both a current (since last update) and a cumulative view of the counts.
+    Return both a current (since last update) and a cumulative view of the counts,
+    and optionally ROI histogram data.
     """
 
     def __init__(
@@ -271,6 +203,15 @@ class DetectorView(Workflow):
         self._inv_weights = sc.reciprocal(detector_view.transform_weights())
         self._previous: sc.DataArray | None = None
 
+        # ROI histogram accumulator
+        self._roi_accumulator = ROIBasedTOAHistogram(
+            toa_edges=params.toa_edges.get_edges(),
+            roi_filter=detector_view.make_roi_filter(),
+        )
+        self._roi_cumulative: sc.DataArray | None = None
+        self._roi_model: models.ROI | None = None
+        self._roi_config_updated = False
+
     def apply_toa_range(self, data: sc.DataArray) -> sc.DataArray:
         if not self._use_toa_range:
             return data
@@ -287,14 +228,35 @@ class DetectorView(Workflow):
         Parameters
         ----------
         data:
-            Data to be added. It is assumed that this is ev44 data that was passed
-            through :py:class:`GroupIntoPixels`.
+            Data to be added. Expected to contain detector event data and optionally
+            ROI configuration. Detector data is assumed to be ev44 data that was
+            passed through :py:class:`GroupIntoPixels`.
         """
-        if len(data) != 1:
-            raise ValueError("DetectorViewProcessor expects exactly one data item.")
-        raw = next(iter(data.values()))
+        # Check for ROI configuration update (auxiliary data)
+        roi_config_key = 'roi_config'
+        if roi_config_key in data:
+            roi_data_array = data[roi_config_key]
+            # Convert DataArray to ROI model
+            self._roi_model = models.ROI.from_data_array(roi_data_array)
+            # Configure the ROI accumulator with the new model
+            self._roi_accumulator.configure_from_roi_model(self._roi_model)
+            self._roi_config_updated = True
+            # If only ROI config was sent (no detector data), return early
+            if len(data) == 1:
+                return
+
+        # Process detector event data
+        detector_data = {k: v for k, v in data.items() if k != roi_config_key}
+        if len(detector_data) != 1:
+            raise ValueError(
+                "DetectorViewProcessor expects exactly one detector data item."
+            )
+        raw = next(iter(detector_data.values()))
         filtered = self.apply_toa_range(raw)
         self._view.add_events(filtered)
+        # Also accumulate for ROI histogram (only if ROI is configured)
+        if self._roi_model is not None:
+            self._roi_accumulator.add(0, raw)  # Timestamp not used.
 
     def finalize(self) -> dict[str, sc.DataArray]:
         cumulative = self._view.cumulative.copy()
@@ -305,11 +267,35 @@ class DetectorView(Workflow):
             current = current - self._previous
         self._previous = cumulative
         result = sc.DataGroup(cumulative=cumulative, current=current)
-        return dict(result * self._inv_weights if self._use_weights else result)
+        view_result = dict(result * self._inv_weights if self._use_weights else result)
+
+        # Add ROI histogram results (only if ROI is configured)
+        roi_result = {}
+        if self._roi_model is not None:
+            roi_delta = self._roi_accumulator.get()
+            if self._roi_cumulative is None:
+                self._roi_cumulative = roi_delta.copy()
+            else:
+                self._roi_cumulative += roi_delta
+            roi_result = {
+                'roi_cumulative': self._roi_cumulative,
+                'roi_current': roi_delta,
+            }
+
+            # Publish ROI configuration when it's been updated
+            if self._roi_config_updated:
+                roi_result['roi_config'] = self._roi_model.to_data_array()
+                self._roi_config_updated = False
+
+        # Merge detector view and ROI results
+        return {**view_result, **roi_result}
 
     def clear(self) -> None:
         self._view.clear_counts()
         self._previous = None
+        if self._roi_cumulative is not None:
+            self._roi_cumulative = None
+        self._roi_accumulator.clear()
 
 
 # Note: Currently no need for a geometry file for NMX since the view is purely logical.
