@@ -499,3 +499,93 @@ class TestROIBasedTOAHistogramIntegration:
         assert (
             total_counts == expected_events_in_roi
         ), f"Expected {expected_events_in_roi} events in ROI, got {total_counts}"
+
+    def test_roi_configuration_without_coordinates(
+        self, detector_number: sc.Variable
+    ) -> None:
+        """Test ROI configuration when detector_indices has no coordinates."""
+        from ess.livedata.handlers.accumulators import ROIBasedTOAHistogram
+
+        # Create detector indices WITHOUT coordinates (just pixel indices)
+        detector_indices_no_coords = sc.DataArray(
+            data=sc.arange('y', 4) * sc.scalar(4) + sc.arange('x', 4),
+            coords={},  # No coordinates!
+        )
+
+        roi_filter = ROIFilter(detector_indices_no_coords)
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+
+        accumulator = ROIBasedTOAHistogram(toa_edges=toa_edges, roi_filter=roi_filter)
+
+        # Configure ROI using pixel indices (unit=None)
+        # Select pixels with indices y:[1,3), x:[1,3) = pixels 5, 6, 9, 10
+        roi = RectangleROI(x_min=1, x_max=3, y_min=1, y_max=3, x_unit=None, y_unit=None)
+        accumulator.configure_from_roi_model(roi)
+
+        # Create events for all 16 pixels (one event per pixel for simplicity)
+        events = DetectorEvents(
+            pixel_id=list(range(16)),  # All 16 pixels
+            time_of_arrival=[100.0] * 16,  # All events in first TOA bin
+            unit='ns',
+        )
+
+        # Group into pixels
+        grouper = GroupIntoPixels(detector_number=detector_number)
+        grouper.add(0, events)
+        grouped_events = grouper.get()
+
+        # Accumulate
+        accumulator.add(0, grouped_events)
+        result = accumulator.get()
+
+        # Should get same result: 4 events in ROI (pixels 5, 6, 9, 10)
+        expected_events_in_roi = 4
+        total_counts = sc.sum(result).value
+        assert (
+            total_counts == expected_events_in_roi
+        ), f"Expected {expected_events_in_roi} events in ROI, got {total_counts}"
+
+    def test_roi_with_unit_but_no_coordinates_raises_error(
+        self, detector_number: sc.Variable
+    ) -> None:
+        """Test that providing unit when coordinates are missing raises RuntimeError."""
+        from ess.livedata.handlers.accumulators import ROIBasedTOAHistogram
+
+        # Create detector indices WITHOUT coordinates
+        detector_indices_no_coords = sc.DataArray(
+            data=sc.arange('y', 4) * sc.scalar(4) + sc.arange('x', 4),
+            coords={},
+        )
+
+        roi_filter = ROIFilter(detector_indices_no_coords)
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+        accumulator = ROIBasedTOAHistogram(toa_edges=toa_edges, roi_filter=roi_filter)
+
+        # Try to configure ROI with physical units (should fail - no coords!)
+        roi = RectangleROI(
+            x_min=10.0, x_max=20.0, y_min=10.0, y_max=20.0, x_unit='mm', y_unit='mm'
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="ROI has y_unit='mm' but dimension 'y' has no coordinates",
+        ):
+            accumulator.configure_from_roi_model(roi)
+
+    def test_roi_without_unit_but_has_coordinates_raises_error(
+        self, detector_indices: sc.DataArray
+    ) -> None:
+        """Test that unit=None when coordinates exist raises RuntimeError."""
+        from ess.livedata.handlers.accumulators import ROIBasedTOAHistogram
+
+        roi_filter = ROIFilter(detector_indices)  # Has coordinates
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+        accumulator = ROIBasedTOAHistogram(toa_edges=toa_edges, roi_filter=roi_filter)
+
+        # Try to configure ROI with None units (should fail - coords exist!)
+        roi = RectangleROI(x_min=1, x_max=3, y_min=1, y_max=3, x_unit=None, y_unit=None)
+
+        with pytest.raises(
+            RuntimeError, match="ROI has y_unit=None but dimension 'y' has coordinates"
+        ):
+            accumulator.configure_from_roi_model(roi)
