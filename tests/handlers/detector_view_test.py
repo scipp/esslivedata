@@ -357,6 +357,63 @@ class TestDetectorViewROIMechanism:
         # Note: ROI model configuration persists after clear
         assert view._roi_model is not None
 
+    def test_roi_change_resets_cumulative(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that changing ROI resets cumulative histogram."""
+        params = DetectorViewParams(
+            toa_edges=TOAEdges(start=0.0, stop=1000.0, num_bins=10, unit='ns')
+        )
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # Configure first ROI covering pixels 5, 6, 10
+        roi1 = RectangleROI(
+            x_min=5.0,
+            x_max=25.0,
+            y_min=5.0,
+            y_max=25.0,
+            x_unit='mm',
+            y_unit='mm',
+        )
+        view.accumulate({'roi_config': roi1.to_data_array()})
+        view.accumulate({'detector': sample_detector_events})
+        result1 = view.finalize()
+
+        # Sample has pixels [0, 1, 2, 5, 6, 10, 11, 15]
+        # ROI1 covers x=[5,25]mm, y=[5,25]mm which includes pixels 5, 6, 10
+        expected_roi1_events = 3
+        assert sc.sum(result1['roi_current']).value == expected_roi1_events
+        assert sc.sum(result1['roi_cumulative']).value == expected_roi1_events
+
+        # Now change ROI to cover different pixels (1, 2, 5, 6)
+        # Pixel 1 at (10,0), Pixel 2 at (20,0), Pixel 5 at (10,10), Pixel 6 at (20,10)mm
+        roi2 = RectangleROI(
+            x_min=5.0,
+            x_max=25.0,
+            y_min=-5.0,  # Include y=0mm pixels
+            y_max=15.0,  # Exclude y=20mm and y=30mm pixels
+            x_unit='mm',
+            y_unit='mm',
+        )
+        view.accumulate({'roi_config': roi2.to_data_array()})
+        view.accumulate({'detector': sample_detector_events})
+        result2 = view.finalize()
+
+        # ROI2 should have 4 events (pixels 1, 2, 5, 6)
+        expected_roi2_events = 4
+        assert sc.sum(result2['roi_current']).value == expected_roi2_events
+
+        # CRITICAL: Cumulative should reset when ROI changes
+        # It should NOT be roi1_events + roi2_events (which would be 7)
+        # It should be just roi2_events since we changed the ROI
+        assert sc.sum(result2['roi_cumulative']).value == expected_roi2_events, (
+            f"Expected cumulative to reset to {expected_roi2_events} when ROI changes, "
+            f"got {sc.sum(result2['roi_cumulative']).value}. "
+            "Cumulative should not mix events from different ROI regions."
+        )
+
 
 class TestROIBasedTOAHistogramIntegration:
     """Integration tests for the ROI histogram accumulator."""
