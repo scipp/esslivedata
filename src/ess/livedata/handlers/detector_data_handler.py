@@ -250,6 +250,9 @@ class DetectorView(Workflow):
 
         # Process detector event data
         detector_data = {k: v for k, v in data.items() if k != roi_config_key}
+        if len(detector_data) == 0:
+            # No detector data to process (e.g., empty dict or only roi_config)
+            return
         if len(detector_data) != 1:
             raise ValueError(
                 "DetectorViewProcessor expects exactly one detector data item."
