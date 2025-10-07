@@ -216,6 +216,42 @@ class TestRectangleROI:
         assert restored.x_unit == 'mm'
         assert restored.y_unit == 'm'
 
+    def test_none_units_with_float_values(self):
+        # None units allow floats for sub-pixel precision
+        roi = models.RectangleROI(
+            x_min=10.5, x_max=20.5, y_min=5.0, y_max=15.0, x_unit=None, y_unit=None
+        )
+        assert roi.x_unit is None
+        assert roi.y_unit is None
+        assert roi.x_min == 10.5
+        assert roi.x_max == 20.5
+
+    def test_none_units_roundtrip(self):
+        original = models.RectangleROI(
+            x_min=10.0, x_max=20.0, y_min=5.0, y_max=15.0, x_unit=None, y_unit=None
+        )
+        da = original.to_data_array()
+
+        # Check that coordinates have None unit
+        assert da.coords['x'].unit is None
+        assert da.coords['y'].unit is None
+
+        # Roundtrip conversion
+        restored = models.ROI.from_data_array(da)
+        assert restored.x_unit is None
+        assert restored.y_unit is None
+        assert original == restored
+
+    def test_mixed_units(self):
+        # One dimension with unit, one without
+        roi = models.RectangleROI(
+            x_min=10.0, x_max=20.0, y_min=5.0, y_max=15.0, x_unit='mm', y_unit=None
+        )
+        da = roi.to_data_array()
+        restored = models.ROI.from_data_array(da)
+        assert restored.x_unit == 'mm'
+        assert restored.y_unit is None
+
 
 class TestPolygonROI:
     def test_creation(self):
@@ -274,6 +310,32 @@ class TestPolygonROI:
         )
         da = original.to_data_array()
         restored = models.ROI.from_data_array(da)
+        assert original == restored
+
+    def test_none_units_with_float_vertices(self):
+        # None units allow floats for sub-pixel precision
+        roi = models.PolygonROI(
+            x=[0.5, 10.5, 5.0], y=[0.0, 0.0, 10.5], x_unit=None, y_unit=None
+        )
+        assert roi.x_unit is None
+        assert roi.y_unit is None
+        assert roi.x == [0.5, 10.5, 5.0]
+        assert roi.y == [0.0, 0.0, 10.5]
+
+    def test_none_units_roundtrip(self):
+        original = models.PolygonROI(
+            x=[0.0, 10.0, 5.0, 2.0], y=[0.0, 0.0, 10.0, 5.0], x_unit=None, y_unit=None
+        )
+        da = original.to_data_array()
+
+        # Check that coordinates have None unit
+        assert da.coords['x'].unit is None
+        assert da.coords['y'].unit is None
+
+        # Roundtrip conversion
+        restored = models.ROI.from_data_array(da)
+        assert restored.x_unit is None
+        assert restored.y_unit is None
         assert original == restored
 
 
@@ -378,6 +440,42 @@ class TestEllipseROI:
         )
         da = original.to_data_array()
         restored = models.ROI.from_data_array(da)
+        assert original == restored
+
+    def test_none_unit_with_float_values(self):
+        # None unit allows floats for sub-pixel precision
+        roi = models.EllipseROI(
+            center_x=10.5,
+            center_y=20.5,
+            radius_x=5.5,
+            radius_y=3.5,
+            rotation=45.0,
+            unit=None,
+        )
+        assert roi.unit is None
+        assert roi.center_x == 10.5
+        assert roi.center_y == 20.5
+        assert roi.radius_x == 5.5
+        assert roi.radius_y == 3.5
+
+    def test_none_unit_roundtrip(self):
+        original = models.EllipseROI(
+            center_x=10.0,
+            center_y=20.0,
+            radius_x=5.0,
+            radius_y=3.0,
+            rotation=45.0,
+            unit=None,
+        )
+        da = original.to_data_array()
+
+        # Check that coordinates have None unit
+        assert da.coords['center'].unit is None
+        assert da.coords['radius'].unit is None
+
+        # Roundtrip conversion
+        restored = models.ROI.from_data_array(da)
+        assert restored.unit is None
         assert original == restored
 
 

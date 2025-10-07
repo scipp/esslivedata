@@ -141,6 +141,11 @@ class ROIType(str, Enum):
     ELLIPSE = 'ellipse'
 
 
+def _unit_to_str(unit: sc.Unit | None) -> str | None:
+    """Convert scipp Unit to string, handling None."""
+    return None if unit is None else str(unit)
+
+
 class ROI(BaseModel, ABC):
     """
     Base class for Region of Interest (ROI) definitions.
@@ -213,14 +218,21 @@ class RectangleROI(ROI):
     Rectangle ROI defined by x and y bounds.
 
     The rectangle is axis-aligned (not rotated).
+
+    If x_unit or y_unit is None, the corresponding coordinates are interpreted as
+    integer pixel indices (though floats are allowed for sub-pixel precision).
     """
 
     x_min: float = Field(description="Minimum x coordinate")
     x_max: float = Field(description="Maximum x coordinate")
     y_min: float = Field(description="Minimum y coordinate")
     y_max: float = Field(description="Maximum y coordinate")
-    x_unit: str = Field(description="Unit for x coordinates")
-    y_unit: str = Field(description="Unit for y coordinates")
+    x_unit: str | None = Field(
+        description="Unit for x coordinates (None for pixel indices)"
+    )
+    y_unit: str | None = Field(
+        description="Unit for y coordinates (None for pixel indices)"
+    )
 
     @model_validator(mode='after')
     def validate_bounds(self) -> RectangleROI:
@@ -255,8 +267,8 @@ class RectangleROI(ROI):
             x_max=float(x[1]),
             y_min=float(y[0]),
             y_max=float(y[1]),
-            x_unit=str(da.coords['x'].unit),
-            y_unit=str(da.coords['y'].unit),
+            x_unit=_unit_to_str(da.coords['x'].unit),
+            y_unit=_unit_to_str(da.coords['y'].unit),
         )
 
 
@@ -266,12 +278,19 @@ class PolygonROI(ROI):
 
     The polygon is defined by (x, y) coordinate pairs. The polygon is automatically
     closed (last vertex connects to first).
+
+    If x_unit or y_unit is None, the corresponding coordinates are interpreted as
+    pixel indices (floats allowed for sub-pixel precision).
     """
 
     x: list[float] = Field(description="X coordinates of vertices")
     y: list[float] = Field(description="Y coordinates of vertices")
-    x_unit: str = Field(description="Unit for x coordinates")
-    y_unit: str = Field(description="Unit for y coordinates")
+    x_unit: str | None = Field(
+        description="Unit for x coordinates (None for pixel indices)"
+    )
+    y_unit: str | None = Field(
+        description="Unit for y coordinates (None for pixel indices)"
+    )
 
     @model_validator(mode='after')
     def validate_vertices(self) -> PolygonROI:
@@ -299,8 +318,8 @@ class PolygonROI(ROI):
         return cls(
             x=da.coords['x'].values.tolist(),
             y=da.coords['y'].values.tolist(),
-            x_unit=str(da.coords['x'].unit),
-            y_unit=str(da.coords['y'].unit),
+            x_unit=_unit_to_str(da.coords['x'].unit),
+            y_unit=_unit_to_str(da.coords['y'].unit),
         )
 
 
@@ -310,6 +329,9 @@ class EllipseROI(ROI):
 
     The ellipse can be rotated by specifying a rotation angle in degrees.
     Note: Due to rotation, x and y must have the same unit.
+
+    If unit is None, coordinates are interpreted as pixel indices (floats allowed
+    for sub-pixel precision).
     """
 
     center_x: float = Field(description="X coordinate of center")
@@ -319,7 +341,9 @@ class EllipseROI(ROI):
     rotation: float = Field(
         default=0.0, description="Rotation angle in degrees (counterclockwise)"
     )
-    unit: str = Field(description="Unit for coordinates (must be same for x and y)")
+    unit: str | None = Field(
+        description="Unit for coordinates (None for pixel indices)"
+    )
 
     def to_data_array(self) -> sc.DataArray:
         """Convert to scipp DataArray with dim dimension."""
@@ -351,5 +375,5 @@ class EllipseROI(ROI):
             radius_x=float(radius[0]),
             radius_y=float(radius[1]),
             rotation=rotation,
-            unit=str(da.coords['center'].unit),
+            unit=_unit_to_str(da.coords['center'].unit),
         )
