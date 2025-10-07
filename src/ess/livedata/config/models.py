@@ -213,45 +213,85 @@ class ROI(BaseModel, ABC):
         ...
 
 
-class RectangleROI(ROI):
+class Interval(BaseModel):
     """
-    Rectangle ROI defined by x and y bounds.
+    An interval with min and max bounds.
 
-    The rectangle is axis-aligned (not rotated).
-
-    If x_unit or y_unit is None, the corresponding coordinates are interpreted as
-    integer pixel indices (though floats are allowed for sub-pixel precision).
+    If unit is None, the coordinates are interpreted as integer pixel indices
+    (though floats are allowed for sub-pixel precision).
     """
 
-    x_min: float = Field(description="Minimum x coordinate")
-    x_max: float = Field(description="Maximum x coordinate")
-    y_min: float = Field(description="Minimum y coordinate")
-    y_max: float = Field(description="Maximum y coordinate")
-    x_unit: str | None = Field(
-        description="Unit for x coordinates (None for pixel indices)"
-    )
-    y_unit: str | None = Field(
-        description="Unit for y coordinates (None for pixel indices)"
+    min: float = Field(description="Minimum coordinate")
+    max: float = Field(description="Maximum coordinate")
+    unit: str | None = Field(
+        default=None, description="Unit for coordinates (None for pixel indices)"
     )
 
     @model_validator(mode='after')
-    def validate_bounds(self) -> RectangleROI:
-        """Validate that min < max for both dimensions."""
-        if self.x_min >= self.x_max:
-            raise ValueError(f"x_min ({self.x_min}) must be < x_max ({self.x_max})")
-        if self.y_min >= self.y_max:
-            raise ValueError(f"y_min ({self.y_min}) must be < y_max ({self.y_max})")
+    def validate_bounds(self) -> Interval:
+        """Validate that min < max."""
+        if self.min >= self.max:
+            raise ValueError(f"min ({self.min}) must be < max ({self.max})")
         return self
+
+    def to_bounds(self) -> tuple[int, int] | tuple[sc.Variable, sc.Variable]:
+        """
+        Convert to bounds tuple suitable for ROIFilter.set_roi_from_intervals.
+
+        Returns
+        -------
+        :
+            If unit is None, returns integer tuple for pixel indices.
+            Otherwise returns tuple of sc.Variable with physical coordinates.
+        """
+        if self.unit is not None:
+            return (
+                sc.scalar(self.min, unit=self.unit),
+                sc.scalar(self.max, unit=self.unit),
+            )
+        else:
+            return (int(self.min), int(self.max))
+
+
+class RectangleROI(ROI):
+    """
+    Rectangle ROI defined by x and y intervals.
+
+    The rectangle is axis-aligned (not rotated).
+    """
+
+    x: Interval = Field(description="X interval")
+    y: Interval = Field(description="Y interval")
+
+    def get_bounds(
+        self, x_dim: str, y_dim: str
+    ) -> dict[str, tuple[int, int] | tuple[sc.Variable, sc.Variable]]:
+        """
+        Get ROI bounds as a dict suitable for ROIFilter.set_roi_from_intervals.
+
+        Parameters
+        ----------
+        x_dim:
+            Name of the x dimension in the data.
+        y_dim:
+            Name of the y dimension in the data.
+
+        Returns
+        -------
+        :
+            Dict mapping dimension names to bound tuples.
+        """
+        return {x_dim: self.x.to_bounds(), y_dim: self.y.to_bounds()}
 
     def to_data_array(self) -> sc.DataArray:
         """Convert to scipp DataArray with bounds dimension."""
         data = sc.array(dims=['bounds'], values=[1, 1], dtype='int32', unit='')
         coords = {
             'x': sc.array(
-                dims=['bounds'], values=[self.x_min, self.x_max], unit=self.x_unit
+                dims=['bounds'], values=[self.x.min, self.x.max], unit=self.x.unit
             ),
             'y': sc.array(
-                dims=['bounds'], values=[self.y_min, self.y_max], unit=self.y_unit
+                dims=['bounds'], values=[self.y.min, self.y.max], unit=self.y.unit
             ),
         }
         da = sc.DataArray(data, coords=coords, name=ROIType.RECTANGLE)
@@ -260,15 +300,19 @@ class RectangleROI(ROI):
     @classmethod
     def _from_data_array(cls, da: sc.DataArray) -> RectangleROI:
         """Create from scipp DataArray."""
-        x = da.coords['x'].values
-        y = da.coords['y'].values
+        x_vals = da.coords['x'].values
+        y_vals = da.coords['y'].values
         return cls(
-            x_min=float(x[0]),
-            x_max=float(x[1]),
-            y_min=float(y[0]),
-            y_max=float(y[1]),
-            x_unit=_unit_to_str(da.coords['x'].unit),
-            y_unit=_unit_to_str(da.coords['y'].unit),
+            x=Interval(
+                min=float(x_vals[0]),
+                max=float(x_vals[1]),
+                unit=_unit_to_str(da.coords['x'].unit),
+            ),
+            y=Interval(
+                min=float(y_vals[0]),
+                max=float(y_vals[1]),
+                unit=_unit_to_str(da.coords['y'].unit),
+            ),
         )
 
 

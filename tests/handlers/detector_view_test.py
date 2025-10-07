@@ -10,7 +10,7 @@ correctly in the DetectorView workflow.
 import pytest
 import scipp as sc
 
-from ess.livedata.config.models import RectangleROI
+from ess.livedata.config.models import Interval, RectangleROI
 from ess.livedata.handlers.accumulators import GroupIntoPixels
 from ess.livedata.handlers.detector_view import (
     DetectorView,
@@ -21,6 +21,21 @@ from ess.livedata.handlers.to_nxevent_data import DetectorEvents
 from ess.livedata.parameter_models import TOAEdges
 from ess.reduce.live.raw import RollingDetectorView
 from ess.reduce.live.roi import ROIFilter
+
+
+def make_rectangle_roi(
+    x_min: float,
+    x_max: float,
+    y_min: float,
+    y_max: float,
+    x_unit: str | None,
+    y_unit: str | None,
+) -> RectangleROI:
+    """Helper function to create RectangleROI with old-style parameters."""
+    return RectangleROI(
+        x=Interval(min=x_min, max=x_max, unit=x_unit),
+        y=Interval(min=y_min, max=y_max, unit=y_unit),
+    )
 
 
 @pytest.fixture
@@ -155,7 +170,7 @@ class TestDetectorViewROIMechanism:
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         # Create ROI configuration
-        roi = RectangleROI(
+        roi = make_rectangle_roi(
             x_min=5.0,
             x_max=25.0,
             y_min=5.0,
@@ -171,8 +186,8 @@ class TestDetectorViewROIMechanism:
         # ROI model should be configured
         assert view._roi_model is not None
         assert isinstance(view._roi_model, RectangleROI)
-        assert view._roi_model.x_min == 5.0
-        assert view._roi_model.x_max == 25.0
+        assert view._roi_model.x.min == 5.0
+        assert view._roi_model.x.max == 25.0
 
     def test_roi_config_only_does_not_process_events(
         self, mock_rolling_view: RollingDetectorView
@@ -181,7 +196,7 @@ class TestDetectorViewROIMechanism:
         params = DetectorViewParams()
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
-        roi = RectangleROI(
+        roi = make_rectangle_roi(
             x_min=5.0,
             x_max=25.0,
             y_min=5.0,
@@ -216,7 +231,7 @@ class TestDetectorViewROIMechanism:
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         # Configure ROI first
-        roi = RectangleROI(
+        roi = make_rectangle_roi(
             x_min=5.0,
             x_max=25.0,
             y_min=5.0,
@@ -265,7 +280,7 @@ class TestDetectorViewROIMechanism:
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         # Configure ROI
-        roi = RectangleROI(
+        roi = make_rectangle_roi(
             x_min=5.0,
             x_max=25.0,
             y_min=5.0,
@@ -313,7 +328,7 @@ class TestDetectorViewROIMechanism:
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         # Configure ROI
-        roi = RectangleROI(
+        roi = make_rectangle_roi(
             x_min=5.0,
             x_max=25.0,
             y_min=5.0,
@@ -342,7 +357,7 @@ class TestDetectorViewROIMechanism:
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         # Configure ROI and accumulate
-        roi = RectangleROI(
+        roi = make_rectangle_roi(
             x_min=5.0,
             x_max=25.0,
             y_min=5.0,
@@ -373,7 +388,7 @@ class TestDetectorViewROIMechanism:
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         # Configure first ROI covering pixels 5, 6, 10
-        roi1 = RectangleROI(
+        roi1 = make_rectangle_roi(
             x_min=5.0,
             x_max=25.0,
             y_min=5.0,
@@ -393,7 +408,7 @@ class TestDetectorViewROIMechanism:
 
         # Now change ROI to cover different pixels (1, 2, 5, 6)
         # Pixel 1 at (10,0), Pixel 2 at (20,0), Pixel 5 at (10,10), Pixel 6 at (20,10)mm
-        roi2 = RectangleROI(
+        roi2 = make_rectangle_roi(
             x_min=5.0,
             x_max=25.0,
             y_min=-5.0,  # Include y=0mm pixels
@@ -429,7 +444,7 @@ class TestROIBasedTOAHistogramIntegration:
         roi_filter = ROIFilter(detector_indices)
 
         # Create a rectangle ROI covering the central region
-        roi = RectangleROI(
+        roi = make_rectangle_roi(
             x_min=10.0,
             x_max=20.0,
             y_min=10.0,
@@ -459,7 +474,7 @@ class TestROIBasedTOAHistogramIntegration:
         # Detector coordinates: 0, 10, 20, 30 mm in both x and y
         # We want pixels at (10,10), (20,10), (10,20), (20,20)
         # Use range 5-25 to ensure we include pixels at 10 and 20
-        roi = RectangleROI(
+        roi = make_rectangle_roi(
             x_min=5.0,
             x_max=25.0,
             y_min=5.0,
@@ -517,7 +532,9 @@ class TestROIBasedTOAHistogramIntegration:
 
         # Configure ROI using pixel indices (unit=None)
         # Select pixels with indices y:[1,3), x:[1,3) = pixels 5, 6, 9, 10
-        roi = RectangleROI(x_min=1, x_max=3, y_min=1, y_max=3, x_unit=None, y_unit=None)
+        roi = make_rectangle_roi(
+            x_min=1, x_max=3, y_min=1, y_max=3, x_unit=None, y_unit=None
+        )
         accumulator.configure_from_roi_model(roi)
 
         # Create events for all 16 pixels (one event per pixel for simplicity)
@@ -546,7 +563,7 @@ class TestROIBasedTOAHistogramIntegration:
     def test_roi_with_unit_but_no_coordinates_raises_error(
         self, detector_number: sc.Variable
     ) -> None:
-        """Test that providing unit when coordinates are missing raises RuntimeError."""
+        """Test that unit when coordinates are missing raises DimensionError."""
         # Create detector indices WITHOUT coordinates
         detector_indices_no_coords = sc.DataArray(
             data=sc.arange('y', 4) * sc.scalar(4) + sc.arange('x', 4),
@@ -558,31 +575,35 @@ class TestROIBasedTOAHistogramIntegration:
         accumulator = ROIBasedTOAHistogram(toa_edges=toa_edges, roi_filter=roi_filter)
 
         # Try to configure ROI with physical units (should fail - no coords!)
-        roi = RectangleROI(
+        roi = make_rectangle_roi(
             x_min=10.0, x_max=20.0, y_min=10.0, y_max=20.0, x_unit='mm', y_unit='mm'
         )
 
+        # Error comes from scipp's slicing in select_indices_in_intervals
         with pytest.raises(
-            RuntimeError,
-            match="ROI has y_unit='mm' but dimension 'y' has no coordinates",
+            sc.DimensionError,
+            match="no coordinate for that dimension",
         ):
             accumulator.configure_from_roi_model(roi)
 
-    def test_roi_without_unit_but_has_coordinates_raises_error(
+    def test_roi_without_unit_but_has_coordinates_uses_pixel_indices(
         self, detector_indices: sc.DataArray
     ) -> None:
-        """Test that unit=None when coordinates exist raises RuntimeError."""
+        """Test that unit=None uses pixel indices even when coordinates exist."""
         roi_filter = ROIFilter(detector_indices)  # Has coordinates
         toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
         accumulator = ROIBasedTOAHistogram(toa_edges=toa_edges, roi_filter=roi_filter)
 
-        # Try to configure ROI with None units (should fail - coords exist!)
-        roi = RectangleROI(x_min=1, x_max=3, y_min=1, y_max=3, x_unit=None, y_unit=None)
+        # Configure ROI with None units - should use pixel indices (not an error!)
+        roi = make_rectangle_roi(
+            x_min=1, x_max=3, y_min=1, y_max=3, x_unit=None, y_unit=None
+        )
 
-        with pytest.raises(
-            RuntimeError, match="ROI has y_unit=None but dimension 'y' has coordinates"
-        ):
-            accumulator.configure_from_roi_model(roi)
+        # This should work - scipp allows integer slicing even with coordinates
+        accumulator.configure_from_roi_model(roi)
+
+        # Verify the ROI was configured (by checking that _selection was updated)
+        assert len(roi_filter._selection) > 0
 
 
 class TestDetectorViewBothROIAndDetectorData:
@@ -600,7 +621,7 @@ class TestDetectorViewBothROIAndDetectorData:
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         # Configure ROI and send detector data in same call
-        roi = RectangleROI(
+        roi = make_rectangle_roi(
             x_min=5.0,
             x_max=25.0,
             y_min=5.0,
@@ -640,7 +661,7 @@ class TestDetectorViewBothROIAndDetectorData:
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         # First call: both roi_config and detector data
-        roi = RectangleROI(
+        roi = make_rectangle_roi(
             x_min=5.0,
             x_max=25.0,
             y_min=5.0,
@@ -684,7 +705,7 @@ class TestDetectorViewBothROIAndDetectorData:
         assert 'roi_current' not in result1
 
         # Second: both roi_config and detector data
-        roi = RectangleROI(
+        roi = make_rectangle_roi(
             x_min=5.0,
             x_max=25.0,
             y_min=5.0,
@@ -715,7 +736,7 @@ class TestDetectorViewBothROIAndDetectorData:
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         # First ROI
-        roi1 = RectangleROI(
+        roi1 = make_rectangle_roi(
             x_min=5.0,
             x_max=25.0,
             y_min=5.0,
@@ -733,7 +754,7 @@ class TestDetectorViewBothROIAndDetectorData:
         assert sc.sum(result1['roi_cumulative']).value == expected_roi1_events
 
         # Change ROI and accumulate in same call
-        roi2 = RectangleROI(
+        roi2 = make_rectangle_roi(
             x_min=5.0,
             x_max=25.0,
             y_min=-5.0,
@@ -801,12 +822,12 @@ class TestDetectorViewEdgeCases:
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         # Update ROI multiple times
-        roi1 = RectangleROI(
+        roi1 = make_rectangle_roi(
             x_min=5.0, x_max=25.0, y_min=5.0, y_max=25.0, x_unit='mm', y_unit='mm'
         )
         view.accumulate({'roi_config': roi1.to_data_array()})
 
-        roi2 = RectangleROI(
+        roi2 = make_rectangle_roi(
             x_min=10.0, x_max=20.0, y_min=10.0, y_max=20.0, x_unit='mm', y_unit='mm'
         )
         view.accumulate({'roi_config': roi2.to_data_array()})
@@ -834,7 +855,7 @@ class TestDetectorViewEdgeCases:
         # Configure ROI that doesn't overlap with any events
         # Sample has pixels [0, 1, 2, 5, 6, 10, 11, 15]
         # Use ROI that covers pixels at (30mm, 30mm) only - pixel 15
-        roi = RectangleROI(
+        roi = make_rectangle_roi(
             x_min=25.0,
             x_max=35.0,
             y_min=25.0,
@@ -864,7 +885,7 @@ class TestDetectorViewEdgeCases:
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         # First ROI + detector
-        roi1 = RectangleROI(
+        roi1 = make_rectangle_roi(
             x_min=5.0, x_max=25.0, y_min=5.0, y_max=25.0, x_unit='mm', y_unit='mm'
         )
         view.accumulate(
@@ -879,7 +900,7 @@ class TestDetectorViewEdgeCases:
         assert 'roi_config' not in result2
 
         # Updated ROI + detector
-        roi2 = RectangleROI(
+        roi2 = make_rectangle_roi(
             x_min=10.0, x_max=20.0, y_min=10.0, y_max=20.0, x_unit='mm', y_unit='mm'
         )
         view.accumulate(
@@ -890,5 +911,5 @@ class TestDetectorViewEdgeCases:
 
         # Verify the published config is the new one
         published_roi = RectangleROI.from_data_array(result3['roi_config'])
-        assert published_roi.x_min == 10.0
-        assert published_roi.x_max == 20.0
+        assert published_roi.x.min == 10.0
+        assert published_roi.x.max == 20.0
