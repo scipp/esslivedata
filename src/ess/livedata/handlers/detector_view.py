@@ -14,7 +14,6 @@ from typing import Any
 
 import pydantic
 import scipp as sc
-from scipp.core import label_based_index_to_positional_index
 
 from ess.reduce.live import raw
 from ess.reduce.live.roi import ROIFilter
@@ -65,66 +64,6 @@ class ROIBasedTOAHistogram(Accumulator[sc.DataArray, sc.DataArray]):
         self._edges = toa_edges
         self._edges_ns = toa_edges.to(unit='ns')
 
-    def _convert_roi_bounds_to_indices(
-        self,
-        dim_name: str,
-        min_val: float,
-        max_val: float,
-        unit: str | None,
-    ) -> tuple[int, int]:
-        """
-        Convert ROI bounds to pixel indices for a single dimension.
-
-        Parameters
-        ----------
-        dim_name:
-            Name of the dimension (e.g., 'x' or 'y').
-        min_val:
-            Minimum coordinate value.
-        max_val:
-            Maximum coordinate value.
-        unit:
-            Unit string for physical coordinates, or None for pixel indices.
-
-        Returns
-        -------
-        :
-            Tuple of (start_index, stop_index).
-
-        Raises
-        ------
-        RuntimeError
-            If unit is None but coordinates exist, or if unit is provided but
-            coordinates are missing.
-        """
-        indices = self._roi_filter._indices
-        has_coord = dim_name in indices.coords
-
-        if unit is None:
-            # Direct pixel indices - no coordinate lookup needed
-            if has_coord:
-                raise RuntimeError(
-                    f"ROI has {dim_name}_unit=None but dimension '{dim_name}' "
-                    "has coordinates. This indicates an implementation error "
-                    "in ROI configuration."
-                )
-            return (int(min_val), int(max_val))
-        else:
-            # Physical coordinates - need label-based lookup
-            if not has_coord:
-                raise RuntimeError(
-                    f"ROI has {dim_name}_unit='{unit}' but dimension '{dim_name}' "
-                    "has no coordinates. This indicates an implementation error "
-                    "in ROI configuration."
-                )
-            coords = indices.coords[dim_name]
-            min_scalar = sc.scalar(min_val, unit=unit)
-            max_scalar = sc.scalar(max_val, unit=unit)
-            _, bounds_slice = label_based_index_to_positional_index(
-                indices.sizes, coords, slice(min_scalar, max_scalar)
-            )
-            return (bounds_slice.start, bounds_slice.stop)
-
     def configure_from_roi_model(
         self, roi: models.RectangleROI | models.PolygonROI | models.EllipseROI
     ) -> None:
@@ -138,14 +77,8 @@ class ROIBasedTOAHistogram(Accumulator[sc.DataArray, sc.DataArray]):
         """
         if isinstance(roi, models.RectangleROI):
             y, x = self._roi_filter._indices.dims
-            y_indices = self._convert_roi_bounds_to_indices(
-                y, roi.y_min, roi.y_max, roi.y_unit
-            )
-            x_indices = self._convert_roi_bounds_to_indices(
-                x, roi.x_min, roi.x_max, roi.x_unit
-            )
-            new_roi = {y: y_indices, x: x_indices}
-            self._roi_filter.set_roi_from_intervals(sc.DataGroup(new_roi))
+            intervals = roi.get_bounds(x_dim=x, y_dim=y)
+            self._roi_filter.set_roi_from_intervals(sc.DataGroup(intervals))
         else:
             roi_type = type(roi).__name__
             raise ValueError(

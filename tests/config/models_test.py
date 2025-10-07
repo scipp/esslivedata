@@ -139,33 +139,71 @@ class TestConfigKey:
         assert parsed.key == original.key
 
 
+class TestInterval:
+    def test_creation(self):
+        interval = models.Interval(min=10.0, max=20.0, unit='mm')
+        assert interval.min == 10.0
+        assert interval.max == 20.0
+        assert interval.unit == 'mm'
+
+    def test_validation_bounds(self):
+        with pytest.raises(ValidationError, match="min .* must be < max"):
+            models.Interval(min=20.0, max=10.0, unit='mm')
+
+    def test_to_bounds_with_unit(self):
+        interval = models.Interval(min=10.0, max=20.0, unit='mm')
+        bounds = interval.to_bounds()
+        assert len(bounds) == 2
+        assert isinstance(bounds[0], sc.Variable)
+        assert isinstance(bounds[1], sc.Variable)
+        assert bounds[0].value == 10.0
+        assert bounds[1].value == 20.0
+        assert str(bounds[0].unit) == 'mm'
+        assert str(bounds[1].unit) == 'mm'
+
+    def test_to_bounds_without_unit(self):
+        interval = models.Interval(min=1.0, max=5.0, unit=None)
+        bounds = interval.to_bounds()
+        assert bounds == (1, 5)
+        assert isinstance(bounds[0], int)
+        assert isinstance(bounds[1], int)
+
+    def test_default_unit_is_none(self):
+        interval = models.Interval(min=1.0, max=5.0)
+        assert interval.unit is None
+
+
 class TestRectangleROI:
     def test_creation(self):
         roi = models.RectangleROI(
-            x_min=10.0, x_max=20.0, y_min=5.0, y_max=15.0, x_unit='mm', y_unit='mm'
+            x=models.Interval(min=10.0, max=20.0, unit='mm'),
+            y=models.Interval(min=5.0, max=15.0, unit='mm'),
         )
-        assert roi.x_min == 10.0
-        assert roi.x_max == 20.0
-        assert roi.y_min == 5.0
-        assert roi.y_max == 15.0
-        assert roi.x_unit == 'mm'
-        assert roi.y_unit == 'mm'
+        assert roi.x.min == 10.0
+        assert roi.x.max == 20.0
+        assert roi.y.min == 5.0
+        assert roi.y.max == 15.0
+        assert roi.x.unit == 'mm'
+        assert roi.y.unit == 'mm'
 
     def test_validation_x_bounds(self):
-        with pytest.raises(ValidationError, match="x_min .* must be < x_max"):
+        with pytest.raises(ValidationError, match="min .* must be < max"):
             models.RectangleROI(
-                x_min=20.0, x_max=10.0, y_min=5.0, y_max=15.0, x_unit='mm', y_unit='mm'
+                x=models.Interval(min=20.0, max=10.0, unit='mm'),
+                y=models.Interval(min=5.0, max=15.0, unit='mm'),
             )
 
     def test_validation_y_bounds(self):
-        with pytest.raises(ValidationError, match="y_min .* must be < y_max"):
+        with pytest.raises(ValidationError, match="min .* must be < max"):
             models.RectangleROI(
-                x_min=10.0, x_max=20.0, y_min=15.0, y_max=5.0, x_unit='mm', y_unit='mm'
+                x=models.Interval(min=10.0, max=20.0, unit='mm'),
+                y=models.Interval(min=15.0, max=5.0, unit='mm'),
             )
 
     def test_to_data_array(self):
         roi = models.RectangleROI(
-            x_min=10.0, x_max=20.0, y_min=5.0, y_max=15.0, x_unit='mm', y_unit='mm'
+            x=models.Interval(min=10.0, max=20.0, unit='mm'),
+            y=models.Interval(min=5.0, max=15.0, unit='mm'),
         )
         da = roi.to_data_array()
 
@@ -192,16 +230,17 @@ class TestRectangleROI:
         roi = models.ROI.from_data_array(da)
 
         assert isinstance(roi, models.RectangleROI)
-        assert roi.x_min == 10.0
-        assert roi.x_max == 20.0
-        assert roi.y_min == 5.0
-        assert roi.y_max == 15.0
-        assert roi.x_unit == 'mm'
-        assert roi.y_unit == 'mm'
+        assert roi.x.min == 10.0
+        assert roi.x.max == 20.0
+        assert roi.y.min == 5.0
+        assert roi.y.max == 15.0
+        assert roi.x.unit == 'mm'
+        assert roi.y.unit == 'mm'
 
     def test_roundtrip_conversion(self):
         original = models.RectangleROI(
-            x_min=10.0, x_max=20.0, y_min=5.0, y_max=15.0, x_unit='mm', y_unit='mm'
+            x=models.Interval(min=10.0, max=20.0, unit='mm'),
+            y=models.Interval(min=5.0, max=15.0, unit='mm'),
         )
         da = original.to_data_array()
         restored = models.ROI.from_data_array(da)
@@ -209,26 +248,29 @@ class TestRectangleROI:
 
     def test_different_units(self):
         roi = models.RectangleROI(
-            x_min=10.0, x_max=20.0, y_min=5.0, y_max=15.0, x_unit='mm', y_unit='m'
+            x=models.Interval(min=10.0, max=20.0, unit='mm'),
+            y=models.Interval(min=5.0, max=15.0, unit='m'),
         )
         da = roi.to_data_array()
         restored = models.ROI.from_data_array(da)
-        assert restored.x_unit == 'mm'
-        assert restored.y_unit == 'm'
+        assert restored.x.unit == 'mm'
+        assert restored.y.unit == 'm'
 
     def test_none_units_with_float_values(self):
         # None units allow floats for sub-pixel precision
         roi = models.RectangleROI(
-            x_min=10.5, x_max=20.5, y_min=5.0, y_max=15.0, x_unit=None, y_unit=None
+            x=models.Interval(min=10.5, max=20.5, unit=None),
+            y=models.Interval(min=5.0, max=15.0, unit=None),
         )
-        assert roi.x_unit is None
-        assert roi.y_unit is None
-        assert roi.x_min == 10.5
-        assert roi.x_max == 20.5
+        assert roi.x.unit is None
+        assert roi.y.unit is None
+        assert roi.x.min == 10.5
+        assert roi.x.max == 20.5
 
     def test_none_units_roundtrip(self):
         original = models.RectangleROI(
-            x_min=10.0, x_max=20.0, y_min=5.0, y_max=15.0, x_unit=None, y_unit=None
+            x=models.Interval(min=10.0, max=20.0, unit=None),
+            y=models.Interval(min=5.0, max=15.0, unit=None),
         )
         da = original.to_data_array()
 
@@ -238,19 +280,40 @@ class TestRectangleROI:
 
         # Roundtrip conversion
         restored = models.ROI.from_data_array(da)
-        assert restored.x_unit is None
-        assert restored.y_unit is None
+        assert restored.x.unit is None
+        assert restored.y.unit is None
         assert original == restored
 
     def test_mixed_units(self):
         # One dimension with unit, one without
         roi = models.RectangleROI(
-            x_min=10.0, x_max=20.0, y_min=5.0, y_max=15.0, x_unit='mm', y_unit=None
+            x=models.Interval(min=10.0, max=20.0, unit='mm'),
+            y=models.Interval(min=5.0, max=15.0, unit=None),
         )
         da = roi.to_data_array()
         restored = models.ROI.from_data_array(da)
-        assert restored.x_unit == 'mm'
-        assert restored.y_unit is None
+        assert restored.x.unit == 'mm'
+        assert restored.y.unit is None
+
+    def test_get_bounds_with_units(self):
+        roi = models.RectangleROI(
+            x=models.Interval(min=10.0, max=20.0, unit='mm'),
+            y=models.Interval(min=5.0, max=15.0, unit='mm'),
+        )
+        bounds = roi.get_bounds(x_dim='x', y_dim='y')
+        assert 'x' in bounds
+        assert 'y' in bounds
+        assert isinstance(bounds['x'][0], sc.Variable)
+        assert isinstance(bounds['y'][0], sc.Variable)
+
+    def test_get_bounds_without_units(self):
+        roi = models.RectangleROI(
+            x=models.Interval(min=1.0, max=3.0, unit=None),
+            y=models.Interval(min=2.0, max=4.0, unit=None),
+        )
+        bounds = roi.get_bounds(x_dim='x', y_dim='y')
+        assert bounds['x'] == (1, 3)
+        assert bounds['y'] == (2, 4)
 
 
 class TestPolygonROI:
@@ -511,7 +574,8 @@ class TestROIWithDa00:
 
         # Create ROI
         original_roi = models.RectangleROI(
-            x_min=10.0, x_max=20.0, y_min=5.0, y_max=15.0, x_unit='mm', y_unit='mm'
+            x=models.Interval(min=10.0, max=20.0, unit='mm'),
+            y=models.Interval(min=5.0, max=15.0, unit='mm'),
         )
 
         # Convert to DataArray
