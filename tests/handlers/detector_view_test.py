@@ -12,7 +12,11 @@ import scipp as sc
 
 from ess.livedata.config.models import RectangleROI
 from ess.livedata.handlers.accumulators import GroupIntoPixels
-from ess.livedata.handlers.detector_data_handler import DetectorView, DetectorViewParams
+from ess.livedata.handlers.detector_view import (
+    DetectorView,
+    DetectorViewParams,
+    ROIBasedTOAHistogram,
+)
 from ess.livedata.handlers.to_nxevent_data import DetectorEvents
 from ess.livedata.parameter_models import TOAEdges
 from ess.reduce.live.raw import RollingDetectorView
@@ -435,8 +439,6 @@ class TestROIBasedTOAHistogramIntegration:
         )
 
         # Configure ROI accumulator (this is done inside DetectorView)
-        from ess.livedata.handlers.accumulators import ROIBasedTOAHistogram
-
         toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
         accumulator = ROIBasedTOAHistogram(toa_edges=toa_edges, roi_filter=roi_filter)
         accumulator.configure_from_roi_model(roi)
@@ -448,8 +450,6 @@ class TestROIBasedTOAHistogramIntegration:
         self, detector_number: sc.Variable, detector_indices: sc.DataArray
     ) -> None:
         """Test that histogram correctly bins events within ROI."""
-        from ess.livedata.handlers.accumulators import ROIBasedTOAHistogram
-
         roi_filter = ROIFilter(detector_indices)
         toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
 
@@ -504,8 +504,6 @@ class TestROIBasedTOAHistogramIntegration:
         self, detector_number: sc.Variable
     ) -> None:
         """Test ROI configuration when detector_indices has no coordinates."""
-        from ess.livedata.handlers.accumulators import ROIBasedTOAHistogram
-
         # Create detector indices WITHOUT coordinates (just pixel indices)
         detector_indices_no_coords = sc.DataArray(
             data=sc.arange('y', 4) * sc.scalar(4) + sc.arange('x', 4),
@@ -549,8 +547,6 @@ class TestROIBasedTOAHistogramIntegration:
         self, detector_number: sc.Variable
     ) -> None:
         """Test that providing unit when coordinates are missing raises RuntimeError."""
-        from ess.livedata.handlers.accumulators import ROIBasedTOAHistogram
-
         # Create detector indices WITHOUT coordinates
         detector_indices_no_coords = sc.DataArray(
             data=sc.arange('y', 4) * sc.scalar(4) + sc.arange('x', 4),
@@ -576,8 +572,6 @@ class TestROIBasedTOAHistogramIntegration:
         self, detector_indices: sc.DataArray
     ) -> None:
         """Test that unit=None when coordinates exist raises RuntimeError."""
-        from ess.livedata.handlers.accumulators import ROIBasedTOAHistogram
-
         roi_filter = ROIFilter(detector_indices)  # Has coordinates
         toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
         accumulator = ROIBasedTOAHistogram(toa_edges=toa_edges, roi_filter=roi_filter)

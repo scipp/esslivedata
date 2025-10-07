@@ -7,12 +7,8 @@ from typing import Any
 
 import numpy as np
 import scipp as sc
-from scipp.core import label_based_index_to_positional_index
 from streaming_data_types import logdata_f144
 
-from ess.reduce.live.roi import ROIFilter
-
-from ..config.models import EllipseROI, PolygonROI, RectangleROI
 from ..core.handler import Accumulator
 from .to_nxevent_data import DetectorEvents, MonitorEvents
 
@@ -136,145 +132,6 @@ class GroupIntoPixels(Accumulator[DetectorEvents, sc.DataArray]):
         )
         self._chunks.clear()
         return da.group(self._groups).fold(dim=self._dim, sizes=self._sizes)
-
-    def clear(self) -> None:
-        self._chunks.clear()
-
-
-class ROIBasedTOAHistogram(Accumulator[sc.DataArray, sc.DataArray]):
-    def __init__(
-        self,
-        *,
-        toa_edges: sc.Variable,
-        roi_filter: ROIFilter,
-    ):
-        self._roi_filter = roi_filter
-        self._chunks: list[sc.DataArray] = []
-        self._nbin = -1
-        self._edges = toa_edges
-        self._edges_ns = toa_edges.to(unit='ns')
-
-    def _convert_roi_bounds_to_indices(
-        self,
-        dim_name: str,
-        min_val: float,
-        max_val: float,
-        unit: str | None,
-    ) -> tuple[int, int]:
-        """
-        Convert ROI bounds to pixel indices for a single dimension.
-
-        Parameters
-        ----------
-        dim_name:
-            Name of the dimension (e.g., 'x' or 'y').
-        min_val:
-            Minimum coordinate value.
-        max_val:
-            Maximum coordinate value.
-        unit:
-            Unit string for physical coordinates, or None for pixel indices.
-
-        Returns
-        -------
-        :
-            Tuple of (start_index, stop_index).
-
-        Raises
-        ------
-        RuntimeError
-            If unit is None but coordinates exist, or if unit is provided but
-            coordinates are missing.
-        """
-        indices = self._roi_filter._indices
-        has_coord = dim_name in indices.coords
-
-        if unit is None:
-            # Direct pixel indices - no coordinate lookup needed
-            if has_coord:
-                raise RuntimeError(
-                    f"ROI has {dim_name}_unit=None but dimension '{dim_name}' "
-                    "has coordinates. This indicates an implementation error "
-                    "in ROI configuration."
-                )
-            return (int(min_val), int(max_val))
-        else:
-            # Physical coordinates - need label-based lookup
-            if not has_coord:
-                raise RuntimeError(
-                    f"ROI has {dim_name}_unit='{unit}' but dimension '{dim_name}' "
-                    "has no coordinates. This indicates an implementation error "
-                    "in ROI configuration."
-                )
-            coords = indices.coords[dim_name]
-            min_scalar = sc.scalar(min_val, unit=unit)
-            max_scalar = sc.scalar(max_val, unit=unit)
-            _, bounds_slice = label_based_index_to_positional_index(
-                indices.sizes, coords, slice(min_scalar, max_scalar)
-            )
-            return (bounds_slice.start, bounds_slice.stop)
-
-    def configure_from_roi_model(
-        self, roi: RectangleROI | PolygonROI | EllipseROI
-    ) -> None:
-        """
-        Configure the ROI filter from an ROI model (RectangleROI, PolygonROI, etc.).
-
-        Parameters
-        ----------
-        roi:
-            An ROI model from config.models (RectangleROI, PolygonROI, or EllipseROI).
-        """
-        if isinstance(roi, RectangleROI):
-            y, x = self._roi_filter._indices.dims
-            y_indices = self._convert_roi_bounds_to_indices(
-                y, roi.y_min, roi.y_max, roi.y_unit
-            )
-            x_indices = self._convert_roi_bounds_to_indices(
-                x, roi.x_min, roi.x_max, roi.x_unit
-            )
-            new_roi = {y: y_indices, x: x_indices}
-            self._roi_filter.set_roi_from_intervals(sc.DataGroup(new_roi))
-        else:
-            roi_type = type(roi).__name__
-            raise ValueError(
-                f"Only rectangle ROI is currently supported, got {roi_type}"
-            )
-
-    def _add_weights(self, data: sc.DataArray) -> None:
-        constituents = data.bins.constituents
-        content = constituents['data']
-        content.coords['time_of_arrival'] = content.data
-        content.data = sc.ones(
-            dims=content.dims, shape=content.shape, dtype='float32', unit='counts'
-        )
-        data.data = sc.bins(**constituents, validate_indices=False)
-
-    def add(self, timestamp: int, data: sc.DataArray) -> None:
-        # Note that the preprocessor does *not* add weights of 1 (unlike NeXus loaders).
-        # Instead, the data column of the content corresponds to the time of arrival.
-        filtered, scale = self._roi_filter.apply(data)
-        self._add_weights(filtered)
-        filtered *= scale
-        chunk = filtered.hist(time_of_arrival=self._edges_ns, dim=filtered.dim)
-        self._chunks.append(chunk)
-
-    def get(self) -> sc.DataArray:
-        if not self._chunks:
-            # Return empty histogram if no data
-            da = sc.DataArray(
-                data=sc.zeros(
-                    dims=['time_of_arrival'],
-                    shape=[len(self._edges) - 1],
-                    unit='counts',
-                ),
-                coords={'time_of_arrival': self._edges},
-            )
-        else:
-            da = sc.reduce(self._chunks).sum()
-            self._chunks.clear()
-            da.coords['time_of_arrival'] = self._edges
-        return da
 
     def clear(self) -> None:
         self._chunks.clear()
