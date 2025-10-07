@@ -241,6 +241,9 @@ class DetectorView(Workflow):
             # Configure the ROI accumulator with the new model
             self._roi_accumulator.configure_from_roi_model(self._roi_model)
             self._roi_config_updated = True
+            # Reset cumulative histogram when ROI changes
+            # (otherwise we'd be mixing events from different ROI regions)
+            self._roi_cumulative = None
             # If only ROI config was sent (no detector data), return early
             if len(data) == 1:
                 return
