@@ -8,18 +8,27 @@ ESSlivedata is a live data reduction visualization framework for the European Sp
 
 ## Development Commands
 
-### Setup and Installation
+### Environment Setup
+
+**IMPORTANT**: This project uses a Python 3.11 virtual environment located at `/workspace/venv`. The environment is managed automatically - you do not need to activate it manually.
+
+For manual setup (if needed):
 
 ```sh
-# Install development dependencies
+# Create virtual environment with Python 3.11
+python3.11 -m venv venv
+
+# Install all development dependencies
 pip install -r requirements/dev.txt
 
 # Install package in editable mode
 pip install -e .
 
-# Setup pre-commit hooks
+# Setup pre-commit hooks (automatically runs on git commit)
 pre-commit install
 ```
+
+**Note**: All Python commands (`python`, `pytest`, `tox`, etc.) will automatically use the virtual environment. Pre-commit hooks will run automatically on `git commit` if properly installed.
 
 ### Running Tests
 
@@ -129,29 +138,34 @@ Note: Use `--sink png` argument with processing services to save outputs as PNG 
 The codebase follows a **message-driven service architecture** with these key abstractions:
 
 - **Service**: Top-level lifecycle manager that runs processors in a loop
-- **Processor**: Orchestrates message processing (typically `StreamProcessor`)
-- **Handler**: Business logic for processing messages from specific streams
+- **Processor**: Orchestrates message processing (always `OrchestratingProcessor`)
+- **PreprocessorFactory**: Creates accumulators for different message stream types
+- **Accumulator**: Preprocesses and accumulates messages before workflow execution
+- **Workflow**: Scientific reduction logic that processes accumulated data
 - **MessageSource**: Abstraction for consuming messages (e.g., from Kafka)
 - **MessageSink**: Abstraction for publishing results (e.g., to Kafka)
 
 ### Message Flow
 
 ```
-Kafka Topics → MessageSource → Processor → Handler → MessageSink → Kafka Topics
+Kafka Topics → MessageSource → Processor → Preprocessor → JobManager → Workflow → MessageSink → Kafka Topics
 ```
 
 1. Messages arrive from Kafka via `MessageSource` (e.g., `BackgroundMessageSource` wrapping `KafkaConsumer`)
-2. `StreamProcessor` batches messages by stream key and routes to appropriate handlers
-3. Handlers (registered in `HandlerRegistry`) process messages and return results
-4. Results are published via `MessageSink` (e.g., `KafkaSink`)
+2. `OrchestratingProcessor` batches messages by time window
+3. Preprocessors (accumulators) transform and accumulate messages
+4. `JobManager` schedules workflow execution with accumulated data
+5. Workflows execute scientific reduction logic
+6. Results are published via `MessageSink` (e.g., `KafkaSink`)
 
 ### Key Components
 
 **Core Layer** (`src/ess/livedata/core/`):
 - `service.py`: Service lifecycle management with signal handling
-- `processor.py`: `StreamProcessor` routes messages to handlers
-- `handler.py`: Base handler protocol and registry
+- `orchestrating_processor.py`: `OrchestratingProcessor` manages job-based processing
+- `handler.py`: Preprocessor factory and accumulator protocols
 - `message.py`: Core message types (`Message`, `StreamId`, `StreamKind`)
+- `job_manager.py`: Manages workflow job scheduling and execution
 
 **Kafka Layer** (`src/ess/livedata/kafka/`):
 - `source.py`: Kafka consumers with background polling
@@ -165,10 +179,11 @@ Kafka Topics → MessageSource → Processor → Handler → MessageSink → Kaf
 - `workflows.py`: Workflow definitions using sciline workflows
 
 **Handlers** (`src/ess/livedata/handlers/`):
-- `detector_data_handler.py`: Handles detector events
-- `monitor_data_handler.py`: Handles monitor data
-- `data_reduction_handler.py`: Executes reduction workflows
-- `workflow_factory.py`: Creates workflow graphs
+- `detector_data_handler.py`: Preprocessor factory for detector events
+- `monitor_data_handler.py`: Preprocessor factory for monitor data
+- `data_reduction_handler.py`: Preprocessor factory for reduction workflows
+- `accumulators.py`: Common preprocessor/accumulator implementations
+- `workflow_factory.py`: Workflow protocol and factory interfaces
 
 **Dashboard** (`src/ess/livedata/dashboard/`):
 - Uses Panel/Holoviews for interactive visualizations
@@ -198,6 +213,16 @@ The dashboard follows a **layered MVC architecture**:
 
 See [docs/developer/design/dashboard-architecture.md](docs/developer/design/dashboard-architecture.md) for detailed architecture diagrams.
 
+## Detailed Architecture Documentation
+
+For in-depth understanding of ESSlivedata's architecture, see the following design documents:
+
+- **[Backend Service Architecture](docs/developer/design/backend-service-architecture.md)**: Service-Processor-Workflow pattern, job management, and service lifecycle
+- **[Message Flow and Transformation](docs/developer/design/message-flow-and-transformation.md)**: End-to-end message journey, adapters, stream mapping, and batching strategies
+- **[Job-Based Processing](docs/developer/design/job-based-processing.md)**: Job lifecycle, scheduling, primary vs auxiliary data, and workflow protocol
+- **[Testing Guide](docs/developer/testing-guide.md)**: Unit testing with fakes, integration testing, and testing strategies
+- **[Dashboard Architecture](docs/developer/design/dashboard-architecture.md)**: MVC pattern, configuration management, and threading model
+
 ## Service Factory Pattern
 
 New services are created using `DataServiceBuilder`:
@@ -206,14 +231,14 @@ New services are created using `DataServiceBuilder`:
 builder = DataServiceBuilder(
     instrument='dummy',
     name='my_service',
-    handler_factory=MyHandlerFactory(),
+    preprocessor_factory=MyPreprocessorFactory(),
     adapter=MyMessageAdapter()  # optional
 )
 service = builder.build_from_config(topics=[...])
 service.start()
 ```
 
-See [src/ess/livedata/service_factory.py](src/ess/livedata/service_factory.py) for details.
+All services use `OrchestratingProcessor` for job-based processing. See [src/ess/livedata/service_factory.py](src/ess/livedata/service_factory.py) for details.
 
 ## Configuration System
 
@@ -226,9 +251,10 @@ See [src/ess/livedata/service_factory.py](src/ess/livedata/service_factory.py) f
 ## Testing
 
 - Tests are in `tests/` mirroring the `src/ess/livedata/` structure
-- Use fakes from `fakes.py` for testing (e.g., `FakeMessageSource`, `FakeMessageSink`)
+- **All unit tests run without Kafka** - use fakes from `fakes.py` (e.g., `FakeMessageSource`, `FakeMessageSink`)
 - Test files follow pattern `*_test.py`
 - Tests use `pytest` with `--import-mode=importlib`
+- See [Testing Guide](docs/developer/testing-guide.md) for comprehensive testing strategies and examples
 
 ## Code Style Conventions
 
@@ -267,11 +293,12 @@ def simple_method(self) -> int:
 
 ### Adding a New Service
 
-1. Create handler factory implementing `HandlerFactory[Tin, Tout]`
-2. Create handlers implementing `Handler` protocol
-3. Use `DataServiceBuilder` to construct service
-4. Register service in `services/` module
-5. Add instrument configuration in `config/defaults/`
+1. Create preprocessor factory extending `JobBasedPreprocessorFactoryBase[Tin, Tout]`
+2. Implement `make_preprocessor()` to create accumulators for different stream types
+3. Register workflows with the instrument configuration
+4. Use `DataServiceBuilder` to construct service
+5. Add service module in `services/`
+6. Add instrument configuration in `config/defaults/`
 
 ### Adding Dashboard Widgets
 
@@ -285,7 +312,8 @@ def simple_method(self) -> int:
 - Messages have `timestamp`, `stream`, and `value` fields
 - `StreamId` identifies message type (kind + name)
 - Use `compact_messages()` to deduplicate by keeping latest per stream
-- Handlers receive batched messages for the same stream
+- Preprocessors accumulate messages via `add()`, return accumulated data via `get()`
+- Workflows receive accumulated data and execute scientific reduction logic
 
 ### Background Processing
 
