@@ -224,3 +224,84 @@ def test_roundtrip_conversion():
     converted = da00_to_scipp(da00)
 
     assert sc.identical(original, converted)
+
+
+def test_scipp_to_da00_with_name():
+    """Test that DataArray.name is preserved in the label field."""
+    da = sc.DataArray(
+        data=sc.array(dims=['x'], values=[1, 2, 3], unit='counts'),
+        coords={'x': sc.array(dims=['x'], values=[10, 20, 30], unit='m')},
+        name='my_data',
+    )
+
+    variables = scipp_to_da00(da)
+
+    signal_var = next(var for var in variables if var.name == 'signal')
+    assert signal_var.label == 'my_data'
+
+
+def test_scipp_to_da00_without_name():
+    """Test that DataArray without name has empty string label."""
+    da = sc.DataArray(
+        data=sc.array(dims=['x'], values=[1, 2, 3], unit='counts'),
+        coords={'x': sc.array(dims=['x'], values=[10, 20, 30], unit='m')},
+    )
+
+    variables = scipp_to_da00(da)
+
+    signal_var = next(var for var in variables if var.name == 'signal')
+    # scipp uses empty string for "no name"
+    assert signal_var.label == ''
+
+
+def test_da00_to_scipp_with_label():
+    """Test that label is restored as DataArray.name."""
+    variables = [
+        dataarray_da00.Variable(
+            name='signal',
+            data=[1, 2, 3],
+            axes=['x'],
+            shape=(3,),
+            unit='counts',
+            label='my_data',
+        ),
+        dataarray_da00.Variable(
+            name='x', data=[10, 20, 30], axes=['x'], shape=(3,), unit='m'
+        ),
+    ]
+
+    da = da00_to_scipp(variables)
+
+    assert da.name == 'my_data'
+
+
+def test_da00_to_scipp_without_label():
+    """Test that missing label results in DataArray with empty string name."""
+    variables = [
+        dataarray_da00.Variable(
+            name='signal', data=[1, 2, 3], axes=['x'], shape=(3,), unit='counts'
+        ),
+        dataarray_da00.Variable(
+            name='x', data=[10, 20, 30], axes=['x'], shape=(3,), unit='m'
+        ),
+    ]
+
+    da = da00_to_scipp(variables)
+
+    # scipp uses empty string for "no name"
+    assert da.name == ''
+
+
+def test_roundtrip_with_name():
+    """Test roundtrip conversion preserves DataArray.name."""
+    original = sc.DataArray(
+        data=sc.array(dims=['x'], values=[1, 2, 3], unit='counts'),
+        coords={'x': sc.array(dims=['x'], values=[10, 20, 30], unit='m')},
+        name='test_name',
+    )
+
+    da00 = scipp_to_da00(original)
+    converted = da00_to_scipp(da00)
+
+    assert converted.name == original.name
+    assert sc.identical(original, converted)
