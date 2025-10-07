@@ -83,6 +83,12 @@ RUN conda init bash && conda init zsh && \
   mamba install -y python=3.11 pip && \
   mamba clean -afy
 
+# Ensure venv takes precedence over conda by appending to shell init files
+# These run AFTER conda init, so they override conda's PATH manipulation
+RUN echo 'export PATH="/workspace/venv/bin:$PATH"' >> /home/node/.bashrc && \
+  echo 'export PATH="/workspace/venv/bin:$PATH"' >> /home/node/.zshrc
+ENV PATH="/workspace/venv/bin:$PATH"
+
 # Install global packages
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
 ENV PATH=$PATH:/usr/local/share/npm-global/bin

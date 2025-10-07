@@ -64,6 +64,7 @@ while read -r cidr; do
 done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
 
 # Resolve and add other allowed domains
+# - go.dev, dl.google.com, proxy.golang.org needed by actionlint pre-commit (Go installation and dependencies)
 for domain in \
     "public.esss.dk" \
     "registry.npmjs.org" \
@@ -74,6 +75,9 @@ for domain in \
     "marketplace.visualstudio.com" \
     "vscode.blob.core.windows.net" \
     "update.code.visualstudio.com" \
+    "go.dev" \
+    "dl.google.com" \
+    "proxy.golang.org" \
     "pypi.org" \
     "files.pythonhosted.org" \
     "conda.anaconda.org"; do
@@ -119,6 +123,9 @@ iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 
 # Then allow only specific outbound traffic to allowed domains
 iptables -A OUTPUT -m set --match-set allowed-domains dst -j ACCEPT
+
+# Log blocked outbound traffic before rejecting
+iptables -A OUTPUT -j LOG --log-prefix "FIREWALL-BLOCKED: " --log-level 4
 
 # Explicitly REJECT all other outbound traffic for immediate feedback
 iptables -A OUTPUT -j REJECT --reject-with icmp-admin-prohibited

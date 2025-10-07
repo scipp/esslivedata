@@ -10,14 +10,13 @@ ESSlivedata is a live data reduction visualization framework for the European Sp
 
 ### Environment Setup
 
-**IMPORTANT**: This project uses a Python 3.11 virtual environment.
+**IMPORTANT**: This project uses a Python 3.11 virtual environment located at `/workspace/venv`. The environment is managed automatically - you do not need to activate it manually.
+
+For manual setup (if needed):
 
 ```sh
 # Create virtual environment with Python 3.11
 python3.11 -m venv venv
-
-# Activate the virtual environment
-source venv/bin/activate
 
 # Install all development dependencies
 pip install -r requirements/dev.txt
@@ -29,7 +28,7 @@ pip install -e .
 pre-commit install
 ```
 
-**For Claude Code**: Commands assume the virtual environment is activated. Pre-commit hooks will run automatically on `git commit` if properly installed.
+**Note**: All Python commands (`python`, `pytest`, `tox`, etc.) will automatically use the virtual environment. Pre-commit hooks will run automatically on `git commit` if properly installed.
 
 ### Running Tests
 
