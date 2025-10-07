@@ -5,49 +5,19 @@ from __future__ import annotations
 import pathlib
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Hashable
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Literal
 
-import pydantic
 import scipp as sc
 
 from ess.reduce.live import raw
 
-from .. import parameter_models
-from ..config import models
 from ..config.instrument import Instrument
 from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
-from .accumulators import DetectorEvents, GroupIntoPixels, ROIBasedTOAHistogram
-from .workflow_factory import Workflow
-
-
-class DetectorViewParams(pydantic.BaseModel):
-    pixel_weighting: models.PixelWeighting = pydantic.Field(
-        title="Pixel Weighting",
-        description="Whether to apply pixel weighting based on the number of pixels "
-        "contributing to each screen pixel.",
-        default=models.PixelWeighting(
-            enabled=False, method=models.WeightingMethod.PIXEL_NUMBER
-        ),
-    )
-    # TODO split out the enabled flag?
-    toa_range: parameter_models.TOARange = pydantic.Field(
-        title="Time of Arrival Range",
-        description="Time of arrival range for detector data.",
-        default=parameter_models.TOARange(),
-    )
-    toa_edges: parameter_models.TOAEdges = pydantic.Field(
-        title="Time of Arrival Edges",
-        description="Time of arrival edges for histogramming.",
-        default=parameter_models.TOAEdges(
-            start=0.0,
-            stop=1000.0 / 14,
-            num_bins=100,
-            unit=parameter_models.TimeUnit.MS,
-        ),
-    )
+from .accumulators import DetectorEvents, GroupIntoPixels
+from .detector_view import DetectorView, DetectorViewParams
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -174,134 +144,6 @@ class DetectorHandlerFactory(
                 return GroupIntoPixels(detector_number=detector_number)
             case _:
                 return None
-
-
-class DetectorView(Workflow):
-    """
-    Unified workflow for detector counts and ROI histogram.
-
-    Return both a current (since last update) and a cumulative view of the counts,
-    and optionally ROI histogram data.
-    """
-
-    def __init__(
-        self,
-        params: DetectorViewParams,
-        detector_view: raw.RollingDetectorView,
-    ) -> None:
-        self._use_toa_range = params.toa_range.enabled
-        self._toa_range = params.toa_range.range_ns
-        self._use_weights = params.pixel_weighting.enabled
-        # Note: Currently we use default weighting based on the number of detector
-        # pixels contributing to each screen pixel. In the future more advanced options
-        # such as by the signal of a uniform scattered may need to be supported.
-        weighting = params.pixel_weighting
-        if weighting.method != models.WeightingMethod.PIXEL_NUMBER:
-            raise ValueError(f'Unsupported pixel weighting method: {weighting.method}')
-        self._use_weights = weighting.enabled
-        self._view = detector_view
-        self._inv_weights = sc.reciprocal(detector_view.transform_weights())
-        self._previous: sc.DataArray | None = None
-
-        # ROI histogram accumulator
-        self._roi_accumulator = ROIBasedTOAHistogram(
-            toa_edges=params.toa_edges.get_edges(),
-            roi_filter=detector_view.make_roi_filter(),
-        )
-        self._roi_cumulative: sc.DataArray | None = None
-        self._roi_model: models.ROI | None = None
-        self._roi_config_updated = False
-
-    def apply_toa_range(self, data: sc.DataArray) -> sc.DataArray:
-        if not self._use_toa_range:
-            return data
-        low, high = self._toa_range
-        # GroupIntoPixels stores time-of-arrival as the data variable of the bins to
-        # avoid allocating weights that are all ones. For filtering we need to turn this
-        # into a coordinate, since scipp does not support filtering on data variables.
-        return data.bins.assign_coords(toa=data.bins.data).bins['toa', low:high]
-
-    def accumulate(self, data: dict[Hashable, Any]) -> None:
-        """
-        Add data to the accumulator.
-
-        Parameters
-        ----------
-        data:
-            Data to be added. Expected to contain detector event data and optionally
-            ROI configuration. Detector data is assumed to be ev44 data that was
-            passed through :py:class:`GroupIntoPixels`.
-        """
-        # Check for ROI configuration update (auxiliary data)
-        roi_config_key = 'roi_config'
-        if roi_config_key in data:
-            roi_data_array = data[roi_config_key]
-            # Convert DataArray to ROI model
-            self._roi_model = models.ROI.from_data_array(roi_data_array)
-            # Configure the ROI accumulator with the new model
-            self._roi_accumulator.configure_from_roi_model(self._roi_model)
-            self._roi_config_updated = True
-            # Reset cumulative histogram when ROI changes
-            # (otherwise we'd be mixing events from different ROI regions)
-            self._roi_cumulative = None
-            # If only ROI config was sent (no detector data), return early
-            if len(data) == 1:
-                return
-
-        # Process detector event data
-        detector_data = {k: v for k, v in data.items() if k != roi_config_key}
-        if len(detector_data) == 0:
-            # No detector data to process (e.g., empty dict or only roi_config)
-            return
-        if len(detector_data) != 1:
-            raise ValueError(
-                "DetectorViewProcessor expects exactly one detector data item."
-            )
-        raw = next(iter(detector_data.values()))
-        filtered = self.apply_toa_range(raw)
-        self._view.add_events(filtered)
-        # Also accumulate for ROI histogram (only if ROI is configured)
-        if self._roi_model is not None:
-            self._roi_accumulator.add(0, raw)  # Timestamp not used.
-
-    def finalize(self) -> dict[str, sc.DataArray]:
-        cumulative = self._view.cumulative.copy()
-        # This is a hack to get the current counts. Should be updated once
-        # ess.reduce.live.raw.RollingDetectorView has been modified to support this.
-        current = cumulative
-        if self._previous is not None:
-            current = current - self._previous
-        self._previous = cumulative
-        result = sc.DataGroup(cumulative=cumulative, current=current)
-        view_result = dict(result * self._inv_weights if self._use_weights else result)
-
-        # Add ROI histogram results (only if ROI is configured)
-        roi_result = {}
-        if self._roi_model is not None:
-            roi_delta = self._roi_accumulator.get()
-            if self._roi_cumulative is None:
-                self._roi_cumulative = roi_delta.copy()
-            else:
-                self._roi_cumulative += roi_delta
-            roi_result = {
-                'roi_cumulative': self._roi_cumulative,
-                'roi_current': roi_delta,
-            }
-
-            # Publish ROI configuration when it's been updated
-            if self._roi_config_updated:
-                roi_result['roi_config'] = self._roi_model.to_data_array()
-                self._roi_config_updated = False
-
-        # Merge detector view and ROI results
-        return {**view_result, **roi_result}
-
-    def clear(self) -> None:
-        self._view.clear_counts()
-        self._previous = None
-        if self._roi_cumulative is not None:
-            self._roi_cumulative = None
-        self._roi_accumulator.clear()
 
 
 # Note: Currently no need for a geometry file for NMX since the view is purely logical.
