@@ -29,7 +29,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   curl \
   bzip2 \
   ca-certificates \
+  locales \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Configure locale
+RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && \
+  locale-gen en_US.UTF-8
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
 
 # Ensure default node user has access to /usr/local/share
 RUN mkdir -p /usr/local/share/npm-global && \
@@ -81,11 +88,11 @@ ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
 ENV PATH=$PATH:/usr/local/share/npm-global/bin
 
 # Set the default shell to zsh rather than sh
-ENV SHELL=/bin/zsh
+ENV SHELL=/bin/bash
 
 # Set the default editor and visual
-ENV EDITOR=nano
-ENV VISUAL=nano
+ENV EDITOR=vim
+ENV VISUAL=vim
 
 # Default powerline10k theme
 ARG ZSH_IN_DOCKER_VERSION=1.2.0

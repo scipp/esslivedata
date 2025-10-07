@@ -24,7 +24,7 @@
       ],
       "settings": {
         "editor.formatOnSave": true,
-        "editor.defaultFormatter": "ruff",
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
         "editor.codeActionsOnSave": {
           "source.fixAll.eslint": "explicit"
         },
@@ -37,9 +37,7 @@
           "zsh": {
             "path": "zsh"
           }
-        },
-        "python.defaultInterpreterPath": "/workspace/.venv/bin/python",
-        "python.terminal.activateEnvironment": true
+        }
       }
     }
   },
