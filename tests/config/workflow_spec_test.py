@@ -181,6 +181,82 @@ class TestWorkflowConfigAuxSourceNames:
         assert loaded.params == {"param1": 10}
 
 
+class TestWorkflowConfigFromParams:
+    """Tests for WorkflowConfig.from_params() helper method."""
+
+    def test_from_params_with_all_arguments(
+        self, sample_workflow_id: WorkflowId
+    ) -> None:
+        """Test from_params with params and aux_source_names."""
+
+        class ParamsModel(BaseModel):
+            param1: int = 10
+            param2: str = "value"
+
+        params = ParamsModel(param1=20, param2="custom")
+        aux_sources = {"monitor": "monitor1"}
+
+        config = WorkflowConfig.from_params(
+            workflow_id=sample_workflow_id,
+            params=params,
+            aux_source_names=aux_sources,
+        )
+
+        assert config.identifier == sample_workflow_id
+        assert config.params == {"param1": 20, "param2": "custom"}
+        assert config.aux_source_names == {"monitor": "monitor1"}
+        assert config.job_number is not None  # Should be auto-generated
+
+    def test_from_params_with_none_params(self, sample_workflow_id: WorkflowId) -> None:
+        """Test from_params with no params (None)."""
+        config = WorkflowConfig.from_params(
+            workflow_id=sample_workflow_id,
+            params=None,
+            aux_source_names=None,
+        )
+
+        assert config.identifier == sample_workflow_id
+        assert config.params == {}
+        assert config.aux_source_names == {}
+        assert config.job_number is not None
+
+    def test_from_params_with_custom_job_number(
+        self, sample_workflow_id: WorkflowId
+    ) -> None:
+        """Test from_params with explicit job_number."""
+        import uuid
+
+        custom_job_number = uuid.uuid4()
+
+        config = WorkflowConfig.from_params(
+            workflow_id=sample_workflow_id,
+            params=None,
+            job_number=custom_job_number,
+        )
+
+        assert config.job_number == custom_job_number
+
+    def test_from_params_serializes_pydantic_model(
+        self, sample_workflow_id: WorkflowId
+    ) -> None:
+        """Test that from_params correctly serializes Pydantic model to dict."""
+
+        class ComplexParams(BaseModel):
+            nested_value: int = 5
+            string_list: list[str] = ["a", "b"]
+
+        params = ComplexParams(nested_value=10, string_list=["x", "y", "z"])
+
+        config = WorkflowConfig.from_params(
+            workflow_id=sample_workflow_id,
+            params=params,
+        )
+
+        # Should be serialized to dict
+        assert isinstance(config.params, dict)
+        assert config.params == {"nested_value": 10, "string_list": ["x", "y", "z"]}
+
+
 class TestPersistentWorkflowConfigWithAuxSources:
     """Tests for PersistentWorkflowConfig with aux_source_names."""
 
