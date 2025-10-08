@@ -5,57 +5,14 @@ from __future__ import annotations
 from collections import UserDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any
 
 import scipp as sc
 import scippnexus as snx
-from pydantic import BaseModel, Field
 
 from ess.livedata.handlers.workflow_factory import Workflow, WorkflowFactory
 
 from .workflow_spec import WorkflowSpec
-
-
-def _create_aux_sources_model_from_list(
-    aux_source_names: Sequence[str],
-) -> type[BaseModel]:
-    """
-    Create an aux_sources Pydantic model from a list of aux source names.
-
-    This is for backward compatibility with the old aux_source_names parameter.
-    Each aux source name becomes a field with a single choice (Literal type).
-
-    Parameters
-    ----------
-    aux_source_names:
-        List of auxiliary source names.
-
-    Returns
-    -------
-    :
-        A Pydantic model class with fields for each aux source.
-    """
-    # Create enum for each aux source name (single value for backward compat)
-    fields = {}
-    for source_name in aux_source_names:
-        # Create an Enum with a single value
-        enum_class = Enum(f'{source_name}_Choice', {source_name.upper(): source_name})
-        # Add field with the enum type and default value
-        fields[source_name] = (
-            enum_class,
-            Field(default=getattr(enum_class, source_name.upper()), title=source_name),
-        )
-
-    # Create the Pydantic model dynamically
-    return type(
-        'AuxSources',
-        (BaseModel,),
-        {
-            '__annotations__': {k: v[0] for k, v in fields.items()},
-            **{k: v[1] for k, v in fields.items()},
-        },
-    )
 
 
 class InstrumentRegistry(UserDict[str, 'Instrument']):
@@ -165,7 +122,6 @@ class Instrument:
         title: str,
         description: str = '',
         source_names: Sequence[str] | None = None,
-        aux_source_names: Sequence[str] | None = None,
     ) -> Callable[[Callable[..., Workflow]], Callable[..., Workflow]]:
         """
         Decorator to register a factory function for creating StreamProcessors.
@@ -198,20 +154,11 @@ class Instrument:
         source_names:
             Optional list of source names that the factory can handle. This is used to
             create a workflow specification.
-        aux_source_names:
-            DEPRECATED: Use type hints on the factory function's `aux_sources` parameter
-            instead. This parameter is kept for backward compatibility and will
-            automatically convert to the new aux_sources schema.
 
         Returns
         -------
         Decorator function that registers the factory and returns it unchanged.
         """
-        # Backward compatibility: convert old aux_source_names list to new aux_sources
-        aux_sources = None
-        if aux_source_names:
-            aux_sources = _create_aux_sources_model_from_list(aux_source_names)
-
         spec = WorkflowSpec(
             instrument=self.name,
             namespace=namespace,
@@ -221,7 +168,7 @@ class Instrument:
             description=description,
             source_names=list(source_names or []),
             params=None,  # placeholder, filled in from type hint later
-            aux_sources=aux_sources,  # may be set from backward compat or type hint
+            aux_sources=None,  # filled in from type hint later
         )
         return self.workflow_factory.register(spec)
 

@@ -74,7 +74,7 @@ def make_workflow_spec(ndim: int) -> WorkflowSpec:
         version=1,
         description=f'{ndim}D correlation histogram workflow',
         source_names=[],
-        aux_source_names=[],
+        aux_sources=None,
         params=params[ndim],
     )
 

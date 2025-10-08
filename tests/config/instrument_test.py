@@ -209,23 +209,29 @@ class TestInstrument:
         assert spec.source_names == []  # default
         assert spec.aux_sources is None  # default
 
-    def test_register_workflow_with_aux_source_names_backward_compat(self):
-        """Test backward compatibility for aux_source_names parameter."""
+    def test_register_workflow_with_aux_sources_type_hint(self):
+        """Test that aux_sources can be extracted from type hints."""
+        from typing import Literal
+
+        import pydantic
+
         instrument = Instrument(name="test_instrument")
 
-        def simple_factory() -> Workflow:
+        class AuxSourcesModel(pydantic.BaseModel):
+            monitor1: Literal['monitor1'] = 'monitor1'
+            aux_stream: Literal['aux_stream'] = 'aux_stream'
+
+        def simple_factory(aux_sources: AuxSourcesModel) -> Workflow:
             class MockProcessor(Workflow):
                 def __call__(self, *args, **kwargs):
                     return {}
 
             return MockProcessor()
 
-        # Use the deprecated aux_source_names parameter
         decorator = instrument.register_workflow(
-            name="compat_workflow",
+            name="workflow_with_aux",
             version=1,
-            title="Compat Workflow",
-            aux_source_names=["monitor1", "aux_stream"],
+            title="Workflow with Aux Sources",
         )
 
         registered_factory = decorator(simple_factory)
@@ -235,8 +241,8 @@ class TestInstrument:
         assert len(specs) == 1
         spec = next(iter(specs.values()))
 
-        # aux_sources should be auto-created from aux_source_names
-        assert spec.aux_sources is not None
+        # aux_sources should be extracted from type hint
+        assert spec.aux_sources is AuxSourcesModel
 
         # Verify it's a Pydantic model with the expected fields
         model_instance = spec.aux_sources()
@@ -244,8 +250,8 @@ class TestInstrument:
         assert hasattr(model_instance, 'aux_stream')
 
         # The default values should match the source names
-        assert model_instance.monitor1.value == 'monitor1'
-        assert model_instance.aux_stream.value == 'aux_stream'
+        assert model_instance.monitor1 == 'monitor1'
+        assert model_instance.aux_stream == 'aux_stream'
 
     def test_multiple_workflow_registrations(self):
         """Test registering multiple workflows."""

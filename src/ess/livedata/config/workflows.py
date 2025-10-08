@@ -115,7 +115,6 @@ def register_monitor_timeseries_workflows(
         description='Timeseries of counts in a monitor within a specified '
         'time-of-arrival range.',
         source_names=source_names,
-        aux_source_names=[],
     )
     def monitor_timeseries_workflow(
         source_name: str, params: MonitorTimeseriesParams
