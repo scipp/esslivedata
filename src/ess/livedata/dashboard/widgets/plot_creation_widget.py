@@ -81,7 +81,12 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
             return self._persisted_config.config.params
         return {}
 
-    def start_action(self, selected_sources: list[str], parameter_values: Any) -> bool:
+    def start_action(
+        self,
+        selected_sources: list[str],
+        parameter_values: Any,
+        aux_source_names: dict[str, str] | None = None,
+    ) -> bool:
         try:
             dmap = self._plotting_controller.create_plot(
                 job_number=self._job_number,
