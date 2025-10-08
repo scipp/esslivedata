@@ -7,7 +7,6 @@ Workflow controller implementation backed by a config service.
 from __future__ import annotations
 
 import logging
-import uuid
 from collections.abc import Callable, Mapping
 
 import pydantic
@@ -165,13 +164,12 @@ class WorkflowController:
             )
             return False
 
-        # We generate a new job number for the workflow. This will allow for associating
-        # multiple jobs with the same workflow run for different sources.
-        workflow_config = WorkflowConfig(
-            identifier=workflow_id,
-            job_number=uuid.uuid4(),
-            aux_source_names=aux_source_names or {},
-            params=config.model_dump(),
+        # Create workflow config. A new job number is generated to allow associating
+        # multiple jobs with the same workflow run across different sources.
+        workflow_config = WorkflowConfig.from_params(
+            workflow_id=workflow_id,
+            params=config,
+            aux_source_names=aux_source_names,
         )
 
         # Update the config for this workflow, used for restoring widget state

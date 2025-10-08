@@ -20,7 +20,7 @@ from ess.livedata.handlers.monitor_data_handler import register_monitor_workflow
 from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 from ess.reduce.nexus.types import NeXusData, NeXusDetectorName, SampleRun
-from ess.sans import types as params
+from ess.sans import types as sans_types
 from ess.sans.types import (
     Filename,
     Incident,
@@ -128,8 +128,10 @@ _xy_projection = DetectorProjection(
 
 
 def _transmission_from_current_run(
-    data: params.CleanMonitor[SampleRun, params.MonitorType],
-) -> params.CleanMonitor[params.TransmissionRun[SampleRun], params.MonitorType]:
+    data: sans_types.CleanMonitor[SampleRun, sans_types.MonitorType],
+) -> sans_types.CleanMonitor[
+    sans_types.TransmissionRun[SampleRun], sans_types.MonitorType
+]:
     return data
 
 
@@ -143,8 +145,8 @@ def _dynamic_keys(source_name: str) -> dict[str, sciline.typing.Key]:
 
 _accumulators = (
     ReducedQ[SampleRun, Numerator],
-    params.CleanMonitor[SampleRun, Incident],
-    params.CleanMonitor[SampleRun, Transmission],
+    sans_types.CleanMonitor[SampleRun, Incident],
+    sans_types.CleanMonitor[SampleRun, Transmission],
 )
 
 
@@ -178,11 +180,11 @@ def _i_of_q_with_params(
     wf = _base_workflow.copy()
     wf[NeXusDetectorName] = source_name
 
-    wf[params.QBins] = params.q_edges.get_edges()
-    wf[params.WavelengthBins] = params.wavelength_edges.get_edges()
+    wf[sans_types.QBins] = params.q_edges.get_edges()
+    wf[sans_types.WavelengthBins] = params.wavelength_edges.get_edges()
 
     if not params.options.use_transmission_run:
-        target_keys = (IofQ[SampleRun], params.TransmissionFraction[SampleRun])
+        target_keys = (IofQ[SampleRun], sans_types.TransmissionFraction[SampleRun])
         wf.insert(_transmission_from_current_run)
     else:
         # Transmission fraction is static, do not display

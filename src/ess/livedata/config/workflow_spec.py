@@ -171,6 +171,43 @@ class WorkflowConfig(BaseModel):
         description="Parameters for the workflow, as JSON-serialized Pydantic model.",
     )
 
+    @classmethod
+    def from_params(
+        cls,
+        workflow_id: WorkflowId,
+        params: BaseModel | None = None,
+        aux_source_names: dict[str, str] | None = None,
+        job_number: JobNumber | None = None,
+    ) -> WorkflowConfig:
+        """
+        Create a WorkflowConfig from validated Pydantic models.
+
+        This is a convenience constructor that handles the serialization of params
+        from a Pydantic model to a dict, matching what the controller does.
+
+        Parameters
+        ----------
+        workflow_id
+            Identifier for the workflow
+        params
+            Validated Pydantic model with workflow parameters, or None if no params
+        aux_source_names
+            Selected auxiliary source names, or None if no aux sources
+        job_number
+            Optional job number (generated if not provided)
+
+        Returns
+        -------
+        :
+            WorkflowConfig instance ready to be sent to backend
+        """
+        return cls(
+            identifier=workflow_id,
+            job_number=job_number if job_number is not None else uuid.uuid4(),
+            aux_source_names=aux_source_names or {},
+            params=params.model_dump() if params is not None else {},
+        )
+
 
 class PersistentWorkflowConfig(BaseModel):
     """
