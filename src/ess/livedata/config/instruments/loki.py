@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+from typing import Literal
+
 import pydantic
 import sciline
 import sciline.typing
@@ -50,6 +52,19 @@ class SansWorkflowOptions(pydantic.BaseModel):
         title='Use transmission run',
         description='Use transmission run instead of monitor readings of sample run',
         default=False,
+    )
+
+
+class LokiAuxSources(pydantic.BaseModel):
+    """Auxiliary source names for LOKI SANS workflows."""
+
+    incident_monitor: Literal['monitor1'] = pydantic.Field(
+        default='monitor1',
+        description='Incident beam monitor stream for normalization.',
+    )
+    transmission_monitor: Literal['monitor2'] = pydantic.Field(
+        default='monitor2',
+        description='Transmission monitor stream for sample transmission calculation.',
     )
 
 
@@ -121,8 +136,8 @@ def _transmission_from_current_run(
 def _dynamic_keys(source_name: str) -> dict[str, sciline.typing.Key]:
     return {
         source_name: NeXusData[NXdetector, SampleRun],
-        'monitor1': NeXusData[Incident, SampleRun],
-        'monitor2': NeXusData[Transmission, SampleRun],
+        'incident_monitor': NeXusData[Incident, SampleRun],
+        'transmission_monitor': NeXusData[Transmission, SampleRun],
     }
 
 
@@ -138,9 +153,8 @@ _accumulators = (
     version=1,
     title='I(Q)',
     source_names=instrument.detector_names,
-    aux_source_names=['monitor1', 'monitor2'],
 )
-def _i_of_q(source_name: str) -> StreamProcessorWorkflow:
+def _i_of_q(source_name: str, aux_sources: LokiAuxSources) -> StreamProcessorWorkflow:
     wf = _base_workflow.copy()
     wf[NeXusDetectorName] = source_name
     return StreamProcessorWorkflow(
@@ -157,10 +171,9 @@ def _i_of_q(source_name: str) -> StreamProcessorWorkflow:
     title='I(Q) with params',
     description='I(Q) reduction with configurable parameters.',
     source_names=instrument.detector_names,
-    aux_source_names=['monitor1', 'monitor2'],
 )
 def _i_of_q_with_params(
-    source_name: str, params: SansWorkflowParams
+    source_name: str, params: SansWorkflowParams, aux_sources: LokiAuxSources
 ) -> StreamProcessorWorkflow:
     wf = _base_workflow.copy()
     wf[NeXusDetectorName] = source_name

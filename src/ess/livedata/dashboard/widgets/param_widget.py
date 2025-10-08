@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args, get_origin
 
 import panel as pn
 import pydantic
@@ -118,6 +118,15 @@ class ParamWidget:
             default_widget_value = (
                 default_value if default_value else next(iter(options.values()))
             )
+            return pn.widgets.Select(
+                options=options, value=default_widget_value, **shared_options
+            )
+        elif get_origin(field_type) is Literal:
+            # Handle Literal types (e.g., Literal['a', 'b', 'c'])
+            literal_values = get_args(field_type)
+            options = {str(val): val for val in literal_values}
+
+            default_widget_value = default_value if default_value else literal_values[0]
             return pn.widgets.Select(
                 options=options, value=default_widget_value, **shared_options
             )
