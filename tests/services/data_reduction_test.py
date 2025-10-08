@@ -126,7 +126,13 @@ def test_can_configure_and_stop_workflow_with_detector_and_monitors(
     config_key = ConfigKey(
         source_name=source_name, service_name="data_reduction", key="workflow_config"
     )
-    workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
+    # Get default aux_source_names from the workflow spec
+    aux_source_names = {}
+    if spec.aux_sources is not None:
+        aux_source_names = spec.aux_sources().model_dump()
+    workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, aux_source_names=aux_source_names
+    )
     # Trigger workflow start
     app.publish_config_message(key=config_key, value=workflow_config.model_dump())
     service.step()

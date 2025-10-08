@@ -4,6 +4,7 @@
 
 from enum import StrEnum
 from functools import cache
+from typing import Literal
 
 import pydantic
 import sciline
@@ -166,6 +167,19 @@ class BifrostCustomElasticQMapParams(pydantic.BaseModel):
         return CutAxis.from_q_vector(output=name, vec=vec, bins=edges)
 
 
+class BifrostAuxSources(pydantic.BaseModel):
+    """Auxiliary source names for Bifrost Q-map workflows."""
+
+    detector_rotation: Literal['detector_rotation'] = pydantic.Field(
+        default='detector_rotation',
+        description='Detector rotation angle stream for instrument geometry.',
+    )
+    sample_rotation: Literal['sample_rotation'] = pydantic.Field(
+        default='sample_rotation',
+        description='Sample rotation angle stream for instrument geometry.',
+    )
+
+
 def register_qmap_workflows(
     instrument: Instrument,
 ) -> None:
@@ -175,9 +189,10 @@ def register_qmap_workflows(
         title='Q map',
         description='Map of scattering intensity as function of Q and energy transfer.',
         source_names=['unified_detector'],
-        aux_source_names=['detector_rotation', 'sample_rotation'],
     )
-    def _qmap_workflow(params: BifrostQMapParams) -> StreamProcessorWorkflow:
+    def _qmap_workflow(
+        params: BifrostQMapParams, aux_sources: BifrostAuxSources
+    ) -> StreamProcessorWorkflow:
         wf = _get_q_cut_workflow()
         wf[CutAxis1] = params.get_q_cut()
         wf[CutAxis2] = params.get_energy_cut()
@@ -189,10 +204,9 @@ def register_qmap_workflows(
         title='Elastic Q map',
         description='Elastic Q map with predefined axes.',
         source_names=['unified_detector'],
-        aux_source_names=['detector_rotation', 'sample_rotation'],
     )
     def _elastic_qmap_workflow(
-        params: BifrostElasticQMapParams,
+        params: BifrostElasticQMapParams, aux_sources: BifrostAuxSources
     ) -> StreamProcessorWorkflow:
         wf = _get_q_cut_workflow()
         wf[CutAxis1] = params.axis1.to_cut_axis()
@@ -205,10 +219,9 @@ def register_qmap_workflows(
         title='Elastic Q map (custom)',
         description='Elastic Q map with custom axes.',
         source_names=['unified_detector'],
-        aux_source_names=['detector_rotation', 'sample_rotation'],
     )
     def _custom_elastic_qmap_workflow(
-        params: BifrostCustomElasticQMapParams,
+        params: BifrostCustomElasticQMapParams, aux_sources: BifrostAuxSources
     ) -> StreamProcessorWorkflow:
         wf = _get_q_cut_workflow()
         wf[CutAxis1] = params.get_cut_axis1()
