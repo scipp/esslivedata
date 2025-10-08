@@ -77,7 +77,7 @@ class JobFactory:
             raise DifferentInstrument()
 
         factory = self._instrument.workflow_factory
-        if (workflow_spec := factory.get(workflow_id)) is None:
+        if factory.get(workflow_id) is None:
             raise WorkflowNotFoundError(f"WorkflowSpec with Id {workflow_id} not found")
         # Note that this initializes the job immediately, i.e., we pay startup cost now.
         stream_processor = factory.create(source_name=job_id.source_name, config=config)
@@ -86,7 +86,9 @@ class JobFactory:
             workflow_id=workflow_id,
             processor=stream_processor,
             source_names=[job_id.source_name],
-            aux_source_names=workflow_spec.aux_source_names,
+            # Pass aux source names as dict (field name -> stream name mapping)
+            # Job will use values for routing and remap keys for workflow
+            aux_source_names=config.aux_source_names,
         )
 
 

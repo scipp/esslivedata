@@ -162,7 +162,6 @@ class TestInstrument:
             title="Test Workflow",
             description="A test workflow",
             source_names=["source1", "source2"],
-            aux_source_names=["aux1"],
         )
 
         # Apply decorator
@@ -182,7 +181,7 @@ class TestInstrument:
         assert spec.title == "Test Workflow"
         assert spec.description == "A test workflow"
         assert spec.source_names == ["source1", "source2"]
-        assert spec.aux_source_names == ["aux1"]
+        assert spec.aux_sources is None  # Will be filled from type hint in Phase 2
 
     def test_register_workflow_with_defaults(self):
         """Test workflow registration with default values."""
@@ -208,7 +207,45 @@ class TestInstrument:
         assert spec.namespace == "data_reduction"  # default
         assert spec.description == ""  # default
         assert spec.source_names == []  # default
-        assert spec.aux_source_names == []  # default
+        assert spec.aux_sources is None  # default
+
+    def test_register_workflow_with_aux_source_names_backward_compat(self):
+        """Test backward compatibility for aux_source_names parameter."""
+        instrument = Instrument(name="test_instrument")
+
+        def simple_factory() -> Workflow:
+            class MockProcessor(Workflow):
+                def __call__(self, *args, **kwargs):
+                    return {}
+
+            return MockProcessor()
+
+        # Use the deprecated aux_source_names parameter
+        decorator = instrument.register_workflow(
+            name="compat_workflow",
+            version=1,
+            title="Compat Workflow",
+            aux_source_names=["monitor1", "aux_stream"],
+        )
+
+        registered_factory = decorator(simple_factory)
+        assert registered_factory is simple_factory
+
+        specs = instrument.workflow_factory
+        assert len(specs) == 1
+        spec = next(iter(specs.values()))
+
+        # aux_sources should be auto-created from aux_source_names
+        assert spec.aux_sources is not None
+
+        # Verify it's a Pydantic model with the expected fields
+        model_instance = spec.aux_sources()
+        assert hasattr(model_instance, 'monitor1')
+        assert hasattr(model_instance, 'aux_stream')
+
+        # The default values should match the source names
+        assert model_instance.monitor1.value == 'monitor1'
+        assert model_instance.aux_stream.value == 'aux_stream'
 
     def test_multiple_workflow_registrations(self):
         """Test registering multiple workflows."""

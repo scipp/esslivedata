@@ -83,9 +83,14 @@ class WorkflowSpec(BaseModel):
         default_factory=list,
         description="List of detector/other streams the workflow can be applied to.",
     )
-    aux_source_names: list[str] = Field(
-        default_factory=list,
-        description="List of auxiliary data streams the workflow needs.",
+    aux_sources: type[BaseModel] | None = Field(
+        default=None,
+        description=(
+            "Pydantic model defining auxiliary data sources with their configuration. "
+            "Field names define the aux source identifiers, and field types (typically "
+            "Literal or Enum) define the available stream choices. Field metadata "
+            "(title, description) provides UI information."
+        ),
     )
     params: type[BaseModel] | None = Field(description="Model for workflow param.")
 
@@ -153,6 +158,13 @@ class WorkflowConfig(BaseModel):
     )
     schedule: JobSchedule = Field(
         default_factory=JobSchedule, description="Schedule for the workflow."
+    )
+    aux_source_names: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Selected auxiliary source names as a mapping from field name (as defined "
+            "in WorkflowSpec.aux_sources) to the selected stream name."
+        ),
     )
     params: dict[str, Any] = Field(
         default_factory=dict,
