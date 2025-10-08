@@ -39,7 +39,27 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
     @property
     def aux_source_names(self) -> dict[str, list[str]]:
         """Get auxiliary source names with unique options."""
-        return {key: [key] for key in self._spec.aux_source_names}
+        if self._spec.aux_sources is None:
+            return {}
+
+        # Extract field names and their possible values from the aux_sources Pydantic
+        # model. This is temporary until we can directly return the aux_sources model
+        # to auto-gen the aux-sources-widget using ParamWidget.
+        result = {}
+        for field_name, field_info in self._spec.aux_sources.model_fields.items():
+            # Get the annotation (type) of the field
+            field_type = field_info.annotation
+
+            # Extract enum values if the field is an Enum
+            if hasattr(field_type, '__members__'):
+                # It's an Enum, extract the values
+                result[field_name] = [member.value for member in field_type]
+            else:
+                # For other types, use the field name as the only option
+                # (This handles backward compatibility with the old schema)
+                result[field_name] = [field_name]
+
+        return result
 
     def model_class(
         self, aux_source_names: dict[str, str]
