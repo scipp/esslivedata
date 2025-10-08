@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from enum import StrEnum
 from typing import Any, TypeVar
 
 import numpy as np
@@ -92,6 +93,46 @@ def _make_edges_field(name: str, coord: sc.DataArray) -> Any:
 Model = TypeVar('Model', bound=CorrelationHistogramParams)
 
 
+def _create_dynamic_aux_sources_model(
+    field_names: list[str], available_options: list[str]
+) -> type[pydantic.BaseModel]:
+    """
+    Dynamically create a Pydantic model for aux sources with StrEnum fields.
+
+    Parameters
+    ----------
+    field_names
+        Names of the fields (e.g., ['x_param', 'y_param'])
+    available_options
+        Available values for each field (e.g., list of timeseries names)
+
+    Returns
+    -------
+    type[pydantic.BaseModel]
+        Dynamically created Pydantic model class with StrEnum fields
+    """
+    # Create a dynamic StrEnum with all available options
+    TimeseriesEnum = StrEnum(  # type: ignore[misc]
+        'TimeseriesEnum', {option: option for option in available_options}
+    )
+
+    # Create fields dict for the Pydantic model
+    fields: dict[str, Any] = {}
+    for field_name in field_names:
+        fields[field_name] = (
+            TimeseriesEnum,
+            pydantic.Field(
+                description=f"Select timeseries for {field_name.replace('_', ' ')}"
+            ),
+        )
+
+    # Dynamically create the Pydantic model
+    DynamicAuxSources = pydantic.create_model(  # type: ignore[call-overload]
+        'DynamicAuxSources', **fields
+    )
+    return DynamicAuxSources
+
+
 class CorrelationHistogramConfigurationAdapter(ConfigurationAdapter[Model], ABC):
     """
     Combined configuration adapter and workflow controller for correlation histograms.
@@ -117,6 +158,8 @@ class CorrelationHistogramConfigurationAdapter(ConfigurationAdapter[Model], ABC)
                 self._format_full_result_key(key): key for key in timeseries
             }
         self._workflow_spec_template = make_workflow_spec(ndim=self.ndim)
+        # Cache for dynamically created aux_sources model
+        self._aux_sources_model: type[pydantic.BaseModel] | None = None
 
     def _format_brief_result_key(self, key: ResultKey) -> str:
         """Make a brief representation of a ResultKey."""
@@ -134,6 +177,15 @@ class CorrelationHistogramConfigurationAdapter(ConfigurationAdapter[Model], ABC)
     def ndim(self) -> int:
         """Dimensionality of the correlation histogram (1 or 2)."""
 
+    @property
+    @abstractmethod
+    def _aux_field_names(self) -> list[str]:
+        """
+        Field names for aux sources.
+
+        For example: ['x_param'] for 1D, ['x_param', 'y_param'] for 2D.
+        """
+
     @abstractmethod
     def _create_dynamic_model_class(
         self, coords: dict[str, sc.DataArray]
@@ -147,6 +199,19 @@ class CorrelationHistogramConfigurationAdapter(ConfigurationAdapter[Model], ABC)
     @property
     def description(self) -> str:
         return self._workflow_spec_template.description
+
+    @property
+    def aux_sources(self) -> type[pydantic.BaseModel] | None:
+        """Dynamically create aux_sources model from available timeseries."""
+        if self._aux_sources_model is None:
+            source_names = list(self._source_name_to_key.keys())
+            if len(source_names) < self.ndim:
+                # Not enough timeseries available yet
+                return None
+            self._aux_sources_model = _create_dynamic_aux_sources_model(
+                self._aux_field_names, source_names
+            )
+        return self._aux_sources_model
 
     def model_class(self, aux_source_names: dict[str, str]) -> type[Model] | None:
         if not aux_source_names:
@@ -182,7 +247,10 @@ class CorrelationHistogramConfigurationAdapter(ConfigurationAdapter[Model], ABC)
         """Convert parameter model to list of EdgesWithUnit."""
 
     def start_action(
-        self, selected_sources: list[str], parameter_values: Model
+        self,
+        selected_sources: list[str],
+        parameter_values: Model,
+        aux_source_names: dict[str, str] | None = None,
     ) -> bool:
         """
         Execute the correlation histogram workflow with the given parameters.
@@ -246,11 +314,8 @@ class CorrelationHistogram1dConfigurationAdapter(
         return 1
 
     @property
-    def aux_source_names(self) -> dict[str, list[str]]:
-        source_names = list(self._source_name_to_key.keys())
-        if len(source_names) < 1:
-            raise ValueError("At least one timeseries must be available.")
-        return {'x_param': source_names}
+    def _aux_field_names(self) -> list[str]:
+        return ['x_param']
 
     def _create_dynamic_model_class(
         self, coords: dict[str, sc.DataArray]
@@ -277,11 +342,8 @@ class CorrelationHistogram2dConfigurationAdapter(
         return 2
 
     @property
-    def aux_source_names(self) -> dict[str, list[str]]:
-        source_names = list(self._source_name_to_key.keys())
-        if len(source_names) < 2:
-            raise ValueError("At least two timeseries must be available.")
-        return {'x_param': source_names, 'y_param': source_names}
+    def _aux_field_names(self) -> list[str]:
+        return ['x_param', 'y_param']
 
     def _create_dynamic_model_class(
         self, coords: dict[str, sc.DataArray]
