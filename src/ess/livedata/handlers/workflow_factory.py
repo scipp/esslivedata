@@ -72,12 +72,14 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         def decorator(
             factory: Callable[..., Workflow],
         ) -> Callable[..., Workflow]:
-            # Try to get the type hint of the 'params' argument if it exists
-            # Use get_type_hints to resolve forward references, in case we used
-            # `from __future__ import annotations`.
+            # Try to get the type hints of the 'params' and 'aux_sources' arguments
+            # if they exist. Use get_type_hints to resolve forward references, in case
+            # we used `from __future__ import annotations`.
             type_hints = typing.get_type_hints(factory, globalns=factory.__globals__)
-            params_type = type_hints.get('params', None)
-            spec.params = params_type
+            if (params_type := type_hints.get('params', None)) is not None:
+                spec.params = params_type
+            if (aux_sources_type := type_hints.get('aux_sources', None)) is not None:
+                spec.aux_sources = aux_sources_type
             self._factories[spec_id] = factory
             self._workflow_specs[spec_id] = spec
             return factory
@@ -110,6 +112,16 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         else:
             workflow_params = model_cls.model_validate(config.params)
 
+        if (aux_model_cls := workflow_spec.aux_sources) is None:
+            if config.aux_source_names:
+                raise ValueError(
+                    f"Workflow '{workflow_id}' does not require auxiliary sources, "
+                    f"but received: {config.aux_source_names}"
+                )
+            workflow_aux_sources = None
+        else:
+            workflow_aux_sources = aux_model_cls.model_validate(config.aux_source_names)
+
         if workflow_spec.source_names and source_name not in workflow_spec.source_names:
             allowed_sources = ", ".join(workflow_spec.source_names)
             raise ValueError(
@@ -127,6 +139,8 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             kwargs['source_name'] = source_name
         if workflow_params and 'params' in sig.parameters:
             kwargs['params'] = workflow_params
+        if workflow_aux_sources and 'aux_sources' in sig.parameters:
+            kwargs['aux_sources'] = workflow_aux_sources
 
         # Call factory with appropriate arguments
         if kwargs:
