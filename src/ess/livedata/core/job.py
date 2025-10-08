@@ -105,7 +105,7 @@ class Job:
         workflow_id: WorkflowId,
         processor: Workflow,
         source_names: list[str],
-        aux_source_names: dict[str, str] | list[str] | None = None,
+        aux_source_names: dict[str, str] | None = None,
     ) -> None:
         """
         Initialize a Job with the given parameters.
@@ -121,10 +121,8 @@ class Job:
         source_names:
             The names of the primary data sources for this job.
         aux_source_names:
-            Auxiliary data sources for this job. Can be either:
-            - dict[str, str]: Mapping from field names to stream names (new schema)
-            - list[str]: Stream names only (backward compatibility)
-            - None: No auxiliary sources
+            Mapping from field names to stream names for auxiliary data sources.
+            None if no auxiliary sources are needed.
         """
         self._job_id = job_id
         self._workflow_id = workflow_id
@@ -132,15 +130,7 @@ class Job:
         self._start_time: int | None = None
         self._end_time: int | None = None
         self._source_names = source_names
-
-        # Handle both dict (new schema) and list (backward compat) formats
-        if aux_source_names is None:
-            self._aux_source_mapping: dict[str, str] = {}
-        elif isinstance(aux_source_names, dict):
-            self._aux_source_mapping = aux_source_names
-        else:
-            # Backward compatibility: list[str] means field names == stream names
-            self._aux_source_mapping = {name: name for name in aux_source_names}
+        self._aux_source_mapping: dict[str, str] = aux_source_names or {}
 
     @property
     def job_id(self) -> JobId:

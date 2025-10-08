@@ -98,7 +98,7 @@ def sample_job(fake_processor: FakeProcessor, sample_workflow_id: WorkflowId):
         workflow_id=sample_workflow_id,
         processor=fake_processor,
         source_names=["test_source"],
-        aux_source_names=["aux_source"],
+        aux_source_names={"aux_source": "aux_source"},
     )
 
 
@@ -432,17 +432,17 @@ class TestJobAuxSourceMapping:
         assert accumulated["incident_monitor"] == sc.scalar(10.0)
         assert accumulated["transmission_monitor"] == sc.scalar(20.0)
 
-    def test_aux_sources_list_backward_compat(
+    def test_aux_sources_when_field_names_equal_stream_names(
         self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
     ):
-        """Test backward compatibility: list means field names == stream names."""
+        """Test case where field names and stream names are identical."""
         job_id = JobId(source_name="detector1", job_number=1)
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
             processor=fake_processor,
             source_names=["detector1"],
-            aux_source_names=["monitor1", "monitor2"],  # Old list format
+            aux_source_names={"monitor1": "monitor1", "monitor2": "monitor2"},
         )
 
         # Send data with stream names
@@ -457,7 +457,7 @@ class TestJobAuxSourceMapping:
         )
         job.add(data)
 
-        # Verify workflow received data with same keys (backward compat)
+        # Verify workflow received data with same keys (field names == stream names)
         assert len(fake_processor.accumulate_calls) == 1
         accumulated = fake_processor.accumulate_calls[0]
         assert "monitor1" in accumulated
