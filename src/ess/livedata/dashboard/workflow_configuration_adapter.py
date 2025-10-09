@@ -19,12 +19,15 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         self,
         spec: WorkflowSpec,
         persistent_config: PersistentWorkflowConfig | None,
-        start_callback: Callable[[list[str], pydantic.BaseModel], bool],
+        start_callback: Callable[
+            [list[str], pydantic.BaseModel, pydantic.BaseModel | None], bool
+        ],
     ) -> None:
         """Initialize adapter with workflow spec, config, and start callback."""
         self._spec = spec
         self._persistent_config = persistent_config
         self._start_callback = start_callback
+        self._cached_aux_sources: pydantic.BaseModel | None = None
 
     @property
     def title(self) -> str:
@@ -48,9 +51,7 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
             return {}
         return self._persistent_config.config.aux_source_names
 
-    def model_class(
-        self, aux_source_names: pydantic.BaseModel | None
-    ) -> type[pydantic.BaseModel] | None:
+    def model_class(self) -> type[pydantic.BaseModel] | None:
         """Get workflow parameters model class."""
         return self._spec.params
 
@@ -75,11 +76,8 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         self,
         selected_sources: list[str],
         parameter_values: pydantic.BaseModel,
-        aux_source_names: pydantic.BaseModel | None = None,
     ) -> bool:
         """Start the workflow with given sources and parameters."""
-        # Serialize aux_source_names to dict for the callback
-        aux_dict = (
-            aux_source_names.model_dump(mode='json') if aux_source_names else None
+        return self._start_callback(
+            selected_sources, parameter_values, self._cached_aux_sources
         )
-        return self._start_callback(selected_sources, parameter_values, aux_dict)

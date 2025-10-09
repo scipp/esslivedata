@@ -44,17 +44,35 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         """
         return {}
 
-    @abstractmethod
-    def model_class(self, aux_source_names: BaseModel | None) -> type[Model] | None:
+    def set_aux_sources(self, aux_source_names: BaseModel | None) -> type[Model] | None:
         """
-        Pydantic model class for parameters.
+        Set auxiliary sources and return the parameter model class.
+
+        This method stores the aux sources internally and returns the model class
+        for parameters. Implementations can access the stored aux sources via
+        self._cached_aux_sources.
 
         Parameters
         ----------
         aux_source_names
             Selected auxiliary sources as a Pydantic model instance, or None if no
-            aux sources are selected. The adapter can serialize this using
-            model_dump() or model_dump(mode='json') as needed.
+            aux sources are selected.
+
+        Returns
+        -------
+        :
+            Pydantic model class for parameters, or None if no parameters.
+        """
+        self._cached_aux_sources = aux_source_names
+        return self.model_class()
+
+    @abstractmethod
+    def model_class(self) -> type[Model] | None:
+        """
+        Pydantic model class for parameters.
+
+        Implementations can access cached aux sources via self._cached_aux_sources
+        if needed to create dynamic parameter models.
         """
 
     @property
@@ -77,10 +95,12 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         self,
         selected_sources: list[str],
         parameter_values: Model,
-        aux_source_names: BaseModel | None = None,
     ) -> bool:
         """
         Execute the start action with selected sources and parameters.
+
+        Implementations can access cached aux sources via self._cached_aux_sources
+        if needed.
 
         Parameters
         ----------
@@ -88,9 +108,6 @@ class ConfigurationAdapter(ABC, Generic[Model]):
             Selected source names
         parameter_values
             Parameter values as a validated Pydantic model instance
-        aux_source_names
-            Selected auxiliary sources as a Pydantic model instance, or None if no
-            aux sources are selected
 
         Returns
         -------

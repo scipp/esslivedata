@@ -54,9 +54,7 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
     def description(self) -> str:
         return self._plot_spec.description
 
-    def model_class(
-        self, aux_source_names: pydantic.BaseModel | None
-    ) -> type[pydantic.BaseModel] | None:
+    def model_class(self) -> type[pydantic.BaseModel] | None:
         return self._plot_spec.params
 
     @property
@@ -85,7 +83,6 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         self,
         selected_sources: list[str],
         parameter_values: Any,
-        aux_source_names: pydantic.BaseModel | None = None,
     ) -> bool:
         try:
             dmap = self._plotting_controller.create_plot(

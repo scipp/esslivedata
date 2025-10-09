@@ -143,7 +143,7 @@ class WorkflowController:
         workflow_id: WorkflowId,
         source_names: list[str],
         config: pydantic.BaseModel,
-        aux_source_names: dict[str, str] | None = None,
+        aux_source_names: pydantic.BaseModel | None = None,
     ) -> bool:
         """Start a workflow with given configuration.
 
@@ -221,7 +221,7 @@ class WorkflowController:
         def start_callback(
             selected_sources: list[str],
             parameter_values: pydantic.BaseModel,
-            aux_source_names: dict[str, str] | None = None,
+            aux_source_names: pydantic.BaseModel | None = None,
         ) -> bool:
             """Bound callback to start this specific workflow."""
             return self.start_workflow(
