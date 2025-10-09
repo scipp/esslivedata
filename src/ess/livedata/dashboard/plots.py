@@ -18,6 +18,7 @@ from .plot_params import (
     PlotAspectType,
     PlotParams1d,
     PlotParams2d,
+    PlotParams3d,
     PlotScale,
     PlotScaleParams,
     PlotScaleParams2d,
@@ -241,3 +242,186 @@ class ImagePlotter(Plotter):
         # scale plot. The nan values will be shown as transparent.
         histogram = to_holoviews(plot_data)
         return histogram.opts(framewise=framewise, **self._base_opts)
+
+
+class SlicerPlotter(Plotter):
+    """Plotter for 3D data with interactive slicing."""
+
+    def __init__(
+        self,
+        slice_dim: str,
+        initial_slice_index: int,
+        scale_opts: PlotScaleParams2d,
+        **kwargs,
+    ):
+        """
+        Initialize the slicer plotter.
+
+        Parameters
+        ----------
+        slice_dim:
+            The dimension to slice along.
+        initial_slice_index:
+            Initial slice index to display.
+        scale_opts:
+            Scaling options for axes and color.
+        **kwargs:
+            Additional keyword arguments passed to the base class.
+        """
+        super().__init__(**kwargs)
+        self._slice_dim = slice_dim
+        self._scale_opts = scale_opts
+        self._max_slice_idx: dict[ResultKey, int] = {}
+
+        # Create custom stream for slice selection
+        # This will automatically create a slider widget
+        SliceIndex = hv.streams.Stream.define(
+            'SliceIndex', slice_index=initial_slice_index
+        )
+        self.slice_stream = SliceIndex()
+
+        # Base options for the image plot (similar to ImagePlotter)
+        self._base_opts = {
+            'colorbar': True,
+            'cmap': 'viridis',
+            'logx': scale_opts.x_scale == PlotScale.log,
+            'logy': scale_opts.y_scale == PlotScale.log,
+            'logz': scale_opts.color_scale == PlotScale.log,
+        }
+
+    @classmethod
+    def from_params(cls, params: PlotParams3d):
+        """Create SlicerPlotter from PlotParams3d."""
+        return cls(
+            slice_dim=params.slice_dimension,
+            initial_slice_index=params.initial_slice_index,
+            scale_opts=params.plot_scale,
+            value_margin_factor=0.1,
+            layout_params=params.layout,
+            aspect_params=params.plot_aspect,
+        )
+
+    def _validate_and_update_bounds(self, data: dict[ResultKey, sc.DataArray]) -> None:
+        """Validate slice dimension and update slider bounds if needed."""
+        for data_key, da in data.items():
+            # Validate that slice_dim exists in the data
+            if self._slice_dim not in da.dims:
+                raise ValueError(
+                    f"Slice dimension '{self._slice_dim}' not found in data. "
+                    f"Available dimensions: {da.dims}"
+                )
+
+            # Check if max slice index changed
+            new_max = da.sizes[self._slice_dim] - 1
+            if (
+                data_key not in self._max_slice_idx
+                or self._max_slice_idx[data_key] != new_max
+            ):
+                self._max_slice_idx[data_key] = new_max
+                # TODO: Update slider bounds - need to figure out how to do this
+                # The slider is created by HoloViews/Panel from the stream definition
+                # May need to recreate the stream or use a different approach
+
+    def _get_slice_index(self) -> int:
+        """Get current slice index, clipped to valid range."""
+        current_idx = self.slice_stream.slice_index
+        if not self._max_slice_idx:
+            return current_idx
+
+        # Clip to the minimum of all max indices across datasets
+        max_idx = min(self._max_slice_idx.values())
+        return min(current_idx, max_idx)
+
+    def _format_slice_label(self, data: sc.DataArray, slice_idx: int) -> str:
+        """Format a label showing the current slice position."""
+        max_idx = data.sizes[self._slice_dim] - 1
+
+        # Try to get coordinate value at this slice
+        if self._slice_dim in data.coords:
+            coord = data.coords[self._slice_dim]
+            # Handle both edge and point coordinates
+            if data.coords.is_edges(self._slice_dim):
+                # For edges, show the bin center
+                value = sc.midpoints(coord, dim=self._slice_dim)[slice_idx]
+            else:
+                value = coord[slice_idx]
+
+            # Format with unit if available
+            if value.unit:
+                label = f"{self._slice_dim}={value.value:.3g} {value.unit}"
+            else:
+                label = f"{self._slice_dim}={value.value:.3g}"
+            label += f" (slice {slice_idx}/{max_idx})"
+        else:
+            # No coordinate, just show index
+            label = f"{self._slice_dim}[{slice_idx}/{max_idx}]"
+
+        return label
+
+    def plot(self, data: sc.DataArray, data_key: ResultKey) -> hv.Image:
+        """
+        Create a 2D image from a slice of 3D data.
+
+        Parameters
+        ----------
+        data:
+            3D DataArray to slice.
+        data_key:
+            Key identifying this data.
+
+        Returns
+        -------
+        :
+            A HoloViews Image element showing the selected slice.
+        """
+        slice_idx = self._get_slice_index()
+
+        # Slice the 3D data to get 2D
+        sliced_data = data[self._slice_dim, slice_idx]
+
+        # Apply log masking if needed (same as ImagePlotter)
+        if self._scale_opts.color_scale == PlotScale.log:
+            plot_data = sliced_data.to(dtype='float64')
+            plot_data = plot_data.assign(
+                sc.where(
+                    plot_data.data <= sc.scalar(0.0, unit=plot_data.unit),
+                    sc.scalar(np.nan, unit=plot_data.unit, dtype=plot_data.dtype),
+                    plot_data.data,
+                )
+            )
+        else:
+            plot_data = sliced_data.to(dtype='float64')
+
+        # Update autoscaler and get framewise flag
+        framewise = self._update_autoscaler_and_get_framewise(plot_data, data_key)
+
+        # Create the image
+        image = to_holoviews(plot_data)
+
+        # Add slice information to title
+        slice_label = self._format_slice_label(data, slice_idx)
+        title = f"{data.name or 'Data'} - {slice_label}"
+
+        return image.opts(framewise=framewise, title=title, **self._base_opts)
+
+    def __call__(
+        self, data: dict[ResultKey, sc.DataArray]
+    ) -> hv.Overlay | hv.Layout | hv.Element:
+        """
+        Create plots from 3D data, slicing at the current index.
+
+        Parameters
+        ----------
+        data:
+            Dictionary of 3D DataArrays to plot.
+
+        Returns
+        -------
+        :
+            HoloViews element(s) showing the sliced data.
+        """
+        # Validate dimensions and update slider bounds
+        self._validate_and_update_bounds(data)
+
+        # Use parent implementation which calls self.plot() for each dataset
+        return super().__call__(data)

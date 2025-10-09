@@ -11,7 +11,12 @@ from holoviews.plotting.bokeh import BokehRenderer
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.dashboard import plots
-from ess.livedata.dashboard.plot_params import PlotParams2d, PlotScale
+from ess.livedata.dashboard.plot_params import (
+    PlotParams2d,
+    PlotParams3d,
+    PlotScale,
+    PlotScaleParams2d,
+)
 
 hv.extension('bokeh')
 
@@ -148,3 +153,154 @@ class TestImagePlotter:
                     render_to_bokeh(hv_element)
         else:
             render_to_bokeh(hv_element)
+
+
+class TestSlicerPlotter:
+    @pytest.fixture
+    def test_3d_coordinates(self):
+        """Create test coordinates for 3D data."""
+        x = sc.linspace('x', 0.0, 10.0, num=10, unit='m')
+        y = sc.linspace('y', 0.0, 8.0, num=8, unit='m')
+        z = sc.linspace('z', 0.0, 5.0, num=5, unit='s')
+        return {'x': x, 'y': y, 'z': z}
+
+    @pytest.fixture
+    def test_3d_data(self, test_3d_coordinates):
+        """Create 3D test data."""
+        data = sc.DataArray(
+            sc.arange('z', 0, 5 * 8 * 10, dtype='float64').fold(
+                dim='z', sizes={'z': 5, 'y': 8, 'x': 10}
+            ),
+            coords=test_3d_coordinates,
+        )
+        data.data.unit = 'counts'
+        return data
+
+    @pytest.fixture
+    def test_3d_data_no_coords(self):
+        """Create 3D test data without coordinates."""
+        return sc.DataArray(
+            sc.arange('z', 0, 5 * 8 * 10, dtype='float64').fold(
+                dim='z', sizes={'z': 5, 'y': 8, 'x': 10}
+            ),
+            coords={},
+        )
+
+    @pytest.fixture
+    def slicer_plotter(self):
+        """Create a SlicerPlotter instance."""
+        params = PlotParams3d(
+            slice_dimension='z',
+            initial_slice_index=0,
+            plot_scale=PlotScaleParams2d(),
+        )
+        return plots.SlicerPlotter.from_params(params)
+
+    def test_initialization(self, slicer_plotter):
+        """Test that SlicerPlotter initializes correctly."""
+        assert hasattr(slicer_plotter, 'slice_stream')
+        assert slicer_plotter.slice_stream is not None
+        assert slicer_plotter.slice_stream.slice_index == 0
+
+    def test_plot_slices_3d_data(self, slicer_plotter, test_3d_data, test_data_key):
+        """Test that SlicerPlotter correctly slices 3D data."""
+        result = slicer_plotter.plot(test_3d_data, test_data_key)
+        assert isinstance(result, hv.Image)
+        # The result should be a 2D image
+        assert result is not None
+
+    def test_plot_with_different_slice_index(self, test_3d_data, test_data_key):
+        """Test that changing slice index affects the plot."""
+        params = PlotParams3d(
+            slice_dimension='z',
+            initial_slice_index=2,
+            plot_scale=PlotScaleParams2d(),
+        )
+        plotter = plots.SlicerPlotter.from_params(params)
+        result = plotter.plot(test_3d_data, test_data_key)
+        assert isinstance(result, hv.Image)
+
+    def test_invalid_slice_dimension_raises(self, test_3d_data, test_data_key):
+        """Test that invalid slice dimension raises ValueError."""
+        params = PlotParams3d(
+            slice_dimension='invalid_dim',
+            initial_slice_index=0,
+            plot_scale=PlotScaleParams2d(),
+        )
+        plotter = plots.SlicerPlotter.from_params(params)
+        with pytest.raises(ValueError, match="Slice dimension 'invalid_dim' not found"):
+            plotter({test_data_key: test_3d_data})
+
+    def test_slice_label_with_coords(self, slicer_plotter, test_3d_data, test_data_key):
+        """Test that slice label includes coordinate values when available."""
+        label = slicer_plotter._format_slice_label(test_3d_data, 2)
+        assert 'z=' in label
+        assert 's' in label  # unit
+        assert 'slice 2/4' in label
+
+    def test_slice_label_without_coords(
+        self, slicer_plotter, test_3d_data_no_coords, test_data_key
+    ):
+        """Test that slice label works without coordinates."""
+        label = slicer_plotter._format_slice_label(test_3d_data_no_coords, 2)
+        assert 'z[2/4]' in label
+
+    def test_slice_index_clipping(self, test_3d_data, test_data_key):
+        """Test that slice index is clipped to valid range."""
+        # Create plotter with index beyond data range
+        params = PlotParams3d(
+            slice_dimension='z',
+            initial_slice_index=100,  # Beyond valid range
+            plot_scale=PlotScaleParams2d(),
+        )
+        plotter = plots.SlicerPlotter.from_params(params)
+        # Call __call__ to trigger validation
+        result = plotter({test_data_key: test_3d_data})
+        # Should not raise, should clip to valid range
+        assert result is not None
+
+    def test_multiple_datasets(self, test_3d_data, test_data_key):
+        """Test plotting multiple 3D datasets together."""
+        params = PlotParams3d(
+            slice_dimension='z',
+            initial_slice_index=0,
+            plot_scale=PlotScaleParams2d(),
+        )
+        plotter = plots.SlicerPlotter.from_params(params)
+
+        # Create second dataset
+        workflow_id2 = WorkflowId(
+            instrument='test_instrument',
+            namespace='test_namespace',
+            name='test_workflow',
+            version=1,
+        )
+        job_id2 = JobId(source_name='test_source2', job_number=uuid.uuid4())
+        test_data_key2 = ResultKey(
+            workflow_id=workflow_id2, job_id=job_id2, output_name='test_result'
+        )
+
+        data_dict = {test_data_key: test_3d_data, test_data_key2: test_3d_data}
+        result = plotter(data_dict)
+        assert result is not None
+
+    def test_edge_coordinates(self, test_data_key):
+        """Test handling of edge coordinates."""
+        # Create data with edge coordinates
+        x_edges = sc.linspace('x', 0.0, 10.0, num=11, unit='m')
+        y_edges = sc.linspace('y', 0.0, 8.0, num=9, unit='m')
+        z_edges = sc.linspace('z', 0.0, 5.0, num=6, unit='s')
+
+        data = sc.DataArray(
+            sc.ones(dims=['z', 'y', 'x'], shape=[5, 8, 10], unit='counts'),
+            coords={'x': x_edges, 'y': y_edges, 'z': z_edges},
+        )
+
+        params = PlotParams3d(
+            slice_dimension='z',
+            initial_slice_index=0,
+            plot_scale=PlotScaleParams2d(),
+        )
+        plotter = plots.SlicerPlotter.from_params(params)
+        result = plotter.plot(data, test_data_key)
+        assert isinstance(result, hv.Image)

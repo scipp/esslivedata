@@ -320,6 +320,14 @@ class PlottingController:
         }
         pipe = self._stream_manager.make_merging_stream(items)
         plotter = plotter_registry.create_plotter(plot_name, params=params)
-        return hv.DynamicMap(plotter, streams=[pipe], cache_size=1).opts(
+
+        # Collect all streams: data pipe + any plotter-specific streams
+        streams = [pipe]
+
+        # Check if plotter has additional streams (e.g., slice_stream for SlicerPlotter)
+        if hasattr(plotter, 'slice_stream'):
+            streams.append(plotter.slice_stream)
+
+        return hv.DynamicMap(plotter, streams=streams, cache_size=1).opts(
             shared_axes=False
         )

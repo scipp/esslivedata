@@ -10,7 +10,7 @@ from typing import Any, Generic, Protocol, TypeVar
 import pydantic
 import scipp as sc
 
-from .plots import ImagePlotter, LinePlotter, Plotter
+from .plots import ImagePlotter, LinePlotter, Plotter, SlicerPlotter
 
 
 @dataclass
@@ -150,4 +150,13 @@ plotter_registry.register_plotter(
     description='Plot the data as line plots.',
     data_requirements=DataRequirements(min_dims=1, max_dims=1, multiple_datasets=True),
     factory=LinePlotter.from_params,
+)
+
+
+plotter_registry.register_plotter(
+    name='slicer',
+    title='3D Slicer',
+    description='Interactively slice through 3D data along one dimension.',
+    data_requirements=DataRequirements(min_dims=3, max_dims=3),
+    factory=SlicerPlotter.from_params,
 )
