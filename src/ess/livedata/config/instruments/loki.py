@@ -60,11 +60,11 @@ class LokiAuxSources(pydantic.BaseModel):
 
     incident_monitor: Literal['monitor1'] = pydantic.Field(
         default='monitor1',
-        description='Incident beam monitor stream for normalization.',
+        description='Incident beam monitor for normalization.',
     )
     transmission_monitor: Literal['monitor2'] = pydantic.Field(
         default='monitor2',
-        description='Transmission monitor stream for sample transmission calculation.',
+        description='Transmission monitor for sample transmission calculation.',
     )
 
 

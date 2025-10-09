@@ -171,12 +171,10 @@ class BifrostAuxSources(pydantic.BaseModel):
     """Auxiliary source names for Bifrost Q-map workflows."""
 
     detector_rotation: Literal['detector_rotation'] = pydantic.Field(
-        default='detector_rotation',
-        description='Detector rotation angle stream for instrument geometry.',
+        default='detector_rotation', description='Detector bank rotation angle.'
     )
     sample_rotation: Literal['sample_rotation'] = pydantic.Field(
-        default='sample_rotation',
-        description='Sample rotation angle stream for instrument geometry.',
+        default='sample_rotation', description='Sample rotation angle.'
     )
 
 

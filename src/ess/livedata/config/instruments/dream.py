@@ -243,7 +243,7 @@ class DreamAuxSources(pydantic.BaseModel):
 
     cave_monitor: Literal['monitor1'] = pydantic.Field(
         default='monitor1',
-        description='Cave monitor stream for normalization.',
+        description='Cave monitor for normalization.',
     )
 
 
