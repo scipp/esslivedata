@@ -266,6 +266,7 @@ class SlicerPlotter(Plotter):
         self._scale_opts = scale_opts
         self._slice_dim: str | None = None
         self._max_slice_idx: int | None = None
+        self._current_slice_index: int = 0
 
         # Create custom stream for slice selection
         # This will automatically create a slider widget
@@ -304,12 +305,11 @@ class SlicerPlotter(Plotter):
 
     def _get_slice_index(self) -> int:
         """Get current slice index, clipped to valid range."""
-        current_idx = self.slice_stream.slice_index
         if self._max_slice_idx is None:
-            return current_idx
+            return self._current_slice_index
 
         # Clip to valid range
-        return min(current_idx, self._max_slice_idx)
+        return min(self._current_slice_index, self._max_slice_idx)
 
     def _format_slice_label(self, data: sc.DataArray, slice_idx: int) -> str:
         """Format a label showing the current slice position."""
@@ -398,3 +398,31 @@ class SlicerPlotter(Plotter):
         title = f"{data.name or 'Data'} - {slice_label}"
 
         return image.opts(framewise=framewise, title=title, **self._base_opts)
+
+    def __call__(
+        self, data: dict[ResultKey, sc.DataArray], slice_index: int = 0, **kwargs
+    ) -> hv.Overlay | hv.Layout | hv.Element:
+        """
+        Create plots from 3D data, slicing at the given index.
+
+        This method is called by HoloViews DynamicMap with stream parameters.
+
+        Parameters
+        ----------
+        data:
+            Dictionary of 3D DataArrays to plot.
+        slice_index:
+            Index of the slice to display (from slice_stream).
+        **kwargs:
+            Additional keyword arguments from other streams (ignored).
+
+        Returns
+        -------
+        :
+            HoloViews element(s) showing the sliced data.
+        """
+        # Store the slice index from the stream parameter
+        self._current_slice_index = slice_index
+
+        # Use parent implementation which calls self.plot() for each dataset
+        return super().__call__(data)

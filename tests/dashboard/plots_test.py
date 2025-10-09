@@ -209,8 +209,8 @@ class TestSlicerPlotter:
         """Test that changing slice index affects the plot."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
-        # Set slice index via stream
-        plotter.slice_stream.event(slice_index=2)
+        # Set slice index directly (as __call__ would do)
+        plotter._current_slice_index = 2
         result = plotter.plot(test_3d_data, test_data_key)
         assert isinstance(result, hv.Image)
 
@@ -319,3 +319,27 @@ class TestSlicerPlotter:
         # Should raise because 'z' not in dims
         with pytest.raises(ValueError, match="Slice dimension 'z' not found"):
             plotter.plot(data2, test_data_key2)
+
+    def test_call_accepts_slice_index_parameter(self, test_3d_data, test_data_key):
+        """Test that __call__ accepts slice_index parameter from stream."""
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        plotter = plots.SlicerPlotter.from_params(params)
+
+        # Call with slice_index as HoloViews would
+        result = plotter({test_data_key: test_3d_data}, slice_index=2)
+        assert result is not None
+
+        # Verify that slice_index was stored
+        assert plotter._current_slice_index == 2
+
+    def test_call_without_slice_index_uses_default(self, test_3d_data, test_data_key):
+        """Test that __call__ works without slice_index (backward compatibility)."""
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        plotter = plots.SlicerPlotter.from_params(params)
+
+        # Call without slice_index
+        result = plotter({test_data_key: test_3d_data})
+        assert result is not None
+
+        # Should use default value of 0
+        assert plotter._current_slice_index == 0
