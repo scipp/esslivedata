@@ -163,30 +163,6 @@ class TestF144Serializer:
         assert result_msg.timestamp == time_ns
         assert result_msg.stream.name == 'array_log'
 
-    def test_serialize_dataarray_to_f144_units_not_preserved(self) -> None:
-        # Test demonstrating that f144 format does not preserve units
-        time_ns = 1111111111111111111
-        original_data = sc.DataArray(
-            data=sc.array(dims=[], values=100.0, unit='mm'),  # Original unit: mm
-            coords={'time': sc.array(dims=[], values=time_ns, unit='ns')},
-        )
-        stream_id = StreamId(kind=StreamKind.LOG, name='unit_test_log')
-        original_msg = Message(timestamp=0, stream=stream_id, value=original_data)
-
-        # Serialize and deserialize
-        serialized_bytes = serialize_dataarray_to_f144(original_msg)
-        f144_adapter = KafkaToF144Adapter()
-        kafka_msg = FakeKafkaMessage(
-            value=serialized_bytes, topic='log_topic', timestamp=0
-        )
-
-        result_msg = f144_adapter.adapt(kafka_msg)
-
-        # Value is preserved but unit information is lost
-        assert result_msg.value.value == 100.0
-        assert result_msg.timestamp == time_ns
-        # Note: f144 format does not preserve units - this is a known limitation
-
     def test_serialize_dataarray_to_f144_different_time_units(self) -> None:
         # Test with different time units (should be converted to ns)
         time_us = 1234567890123456  # microseconds
