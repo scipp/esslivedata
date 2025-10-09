@@ -349,8 +349,12 @@ class PlotCreationWidget:
 
     def _on_plot_created(self, dmap, selected_sources: list[str]) -> None:
         """Handle successful plot creation."""
-        # Create HoloViews pane
-        plot_pane = pn.pane.HoloViews(dmap, sizing_mode='stretch_width')
+        # Wrap in pane if it's a HoloViews object, otherwise use directly
+        # (PlottingController may return pn.Column for plots with controls)
+        if isinstance(dmap, pn.layout.Panel):
+            plot_pane = dmap
+        else:
+            plot_pane = pn.pane.HoloViews(dmap, sizing_mode='stretch_width')
 
         # Generate tab name
         self._plot_counter += 1
