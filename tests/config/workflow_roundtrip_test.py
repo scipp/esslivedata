@@ -78,9 +78,9 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
         # Instantiate with defaults
         aux_sources_model = adapter.aux_sources()
 
-    # Get parameter model class from adapter (like ConfigurationWidget does)
+    # Set aux sources and get parameter model class (like ConfigurationWidget does)
     params_model = None
-    params_class = adapter.model_class(aux_sources_model)  # Pass aux sources model
+    params_class = adapter.set_aux_sources(aux_sources_model)
     if params_class is not None:
         # Instantiate with defaults (ConfigurationWidget uses initial_parameter_values
         # if available, otherwise creates with defaults)
@@ -246,7 +246,9 @@ def test_workflow_config_widget_adapter_compatibility(
     assert adapter.aux_sources == spec.aux_sources
 
     # Verify we can get the model class
-    model_class = adapter.model_class({})
+    # First set aux sources (instantiate if available, otherwise None)
+    aux_sources_model = adapter.aux_sources() if adapter.aux_sources else None
+    model_class = adapter.set_aux_sources(aux_sources_model)
     if spec.params is not None:
         assert model_class == spec.params
         # Verify we can instantiate with defaults
