@@ -295,14 +295,6 @@ class SlicerPlotter(Plotter):
         self._dim_names: list[str] | None = None
         self._dim_sizes: list[int] | None = None
 
-        # One autoscaler per possible 2D view (3 total for 3D data)
-        # Key is dimension index (0, 1, 2), value is dict of {data_key: autoscaler}
-        self.autoscalers_by_slice_dim: dict[int, dict[ResultKey, Autoscaler]] = {
-            0: {},
-            1: {},
-            2: {},
-        }
-
         # Base options for the image plot (similar to ImagePlotter)
         self._base_opts = {
             'colorbar': True,
@@ -451,9 +443,6 @@ class SlicerPlotter(Plotter):
                 f"Available dimensions: {data.dims}"
             )
 
-        # Get dimension index for autoscaler lookup
-        dim_idx = data.dims.index(slice_dim)
-
         # Clip slice index to valid range
         max_idx = data.sizes[slice_dim] - 1
         slice_idx = self._get_slice_index(slice_idx, max_idx)
@@ -474,16 +463,10 @@ class SlicerPlotter(Plotter):
         else:
             plot_data = sliced_data.to(dtype='float64')
 
-        # Get or create autoscaler for this slice dimension
-        if data_key not in self.autoscalers_by_slice_dim[dim_idx]:
-            self.autoscalers_by_slice_dim[dim_idx][data_key] = Autoscaler(
-                **self.autoscaler_kwargs
-            )
-
-        # Update autoscaler and get framewise flag
-        framewise = self.autoscalers_by_slice_dim[dim_idx][data_key].update_bounds(
-            plot_data
-        )
+        # Update autoscaler with full 3D data to establish global bounds.
+        # This ensures consistent color scale and axis ranges across all slices.
+        # Slice coords/values are subsets of 3D data, so one call suffices.
+        framewise = self._update_autoscaler_and_get_framewise(data, data_key)
 
         # Create the image
         image = to_holoviews(plot_data)

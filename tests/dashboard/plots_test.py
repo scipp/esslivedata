@@ -196,7 +196,8 @@ class TestSlicerPlotter:
         """Test that SlicerPlotter initializes correctly."""
         assert slicer_plotter._dim_names is None
         assert slicer_plotter._dim_sizes is None
-        assert len(slicer_plotter.autoscalers_by_slice_dim) == 3
+        # Uses base class autoscalers dict (initialized lazily)
+        assert slicer_plotter.autoscalers == {}
 
     def test_plot_slices_3d_data(self, slicer_plotter, test_3d_data, test_data_key):
         """Test that SlicerPlotter correctly slices 3D data."""
