@@ -292,8 +292,16 @@ class SlicerPlotter(Plotter):
         """
         super().__init__(**kwargs)
         self._scale_opts = scale_opts
-        self._slice_dim: str | None = None
-        self._max_slice_idx: int | None = None
+        self._dim_names: list[str] | None = None
+        self._dim_sizes: list[int] | None = None
+
+        # One autoscaler per possible 2D view (3 total for 3D data)
+        # Key is dimension index (0, 1, 2), value is dict of {data_key: autoscaler}
+        self.autoscalers_by_slice_dim: dict[int, dict[ResultKey, Autoscaler]] = {
+            0: {},
+            1: {},
+            2: {},
+        }
 
         # Base options for the image plot (similar to ImagePlotter)
         self._base_opts = {
@@ -318,8 +326,7 @@ class SlicerPlotter(Plotter):
         """
         Initialize the slicer from initial data.
 
-        Determines the slice dimension and maximum slice index from the first
-        data array in the dictionary.
+        Extracts dimension names and sizes from the first data array.
 
         Parameters
         ----------
@@ -332,47 +339,51 @@ class SlicerPlotter(Plotter):
         # Get the first data array to inspect its shape
         first_data = next(iter(data.values()))
 
-        # Determine and store the slice dimension
-        if self._slice_dim is None:
-            self._slice_dim = self._determine_slice_dim(first_data)
+        if first_data.ndim != 3:
+            raise ValueError(f"Expected 3D data, got {first_data.ndim}D")
 
-        # Set the maximum slice index
-        self._max_slice_idx = first_data.sizes[self._slice_dim] - 1
+        # Store dimension names and sizes
+        self._dim_names = list(first_data.dims)
+        self._dim_sizes = [first_data.sizes[dim] for dim in self._dim_names]
 
     @property
     def kdims(self) -> list[hv.Dimension] | None:
         """
-        Return the slice_index dimension for the slider widget.
+        Return kdims for interactive widgets: 1 dimension selector + 3 sliders.
 
         Returns
         -------
         :
-            List containing a single HoloViews Dimension for slice selection,
+            List containing 4 HoloViews Dimensions (selector + 3 sliders),
             or None if not yet initialized.
         """
-        if self._max_slice_idx is None:
+        if self._dim_names is None or self._dim_sizes is None:
             return None
 
-        return [hv.Dimension('slice_index', range=(0, self._max_slice_idx), default=0)]
+        # Create dimension selector with actual dimension names
+        dim_selector = hv.Dimension(
+            'slice_dim',
+            values=self._dim_names,
+            default=self._dim_names[0],
+            label='Slice Dimension',
+        )
 
-    def _determine_slice_dim(self, data: sc.DataArray) -> str:
-        """
-        Determine which dimension to slice along.
+        # Create 3 sliders, one for each dimension
+        sliders = [
+            hv.Dimension(
+                f'{dim_name}_index',
+                range=(0, size - 1),
+                default=0,
+                label=f'{dim_name} index',
+            )
+            for dim_name, size in zip(self._dim_names, self._dim_sizes, strict=True)
+        ]
 
-        Uses the first dimension of the data (typically the slowest varying).
-        """
-        if data.ndim != 3:
-            raise ValueError(f"Expected 3D data, got {data.ndim}D")
-        # Use the first dimension
-        return data.dims[0]
+        return [dim_selector, *sliders]
 
-    def _get_slice_index(self, requested_idx: int) -> int:
+    def _get_slice_index(self, requested_idx: int, max_idx: int) -> int:
         """Get slice index, clipped to valid range."""
-        if self._max_slice_idx is None:
-            return requested_idx
-
-        # Clip to valid range
-        return min(requested_idx, self._max_slice_idx)
+        return min(max(0, requested_idx), max_idx)
 
     def _format_value(self, value: sc.Variable) -> str:
         """Format a scipp Variable for display, showing value and unit."""
@@ -386,30 +397,34 @@ class SlicerPlotter(Plotter):
                 return str(value.value)
             return f"{value.value} {value.unit}"
 
-    def _format_slice_label(self, data: sc.DataArray, slice_idx: int) -> str:
+    def _format_slice_label(
+        self, data: sc.DataArray, slice_dim: str, slice_idx: int
+    ) -> str:
         """Format a label showing the current slice position."""
-        max_idx = data.sizes[self._slice_dim] - 1
+        max_idx = data.sizes[slice_dim] - 1
 
         # Try to get coordinate value at this slice
-        if self._slice_dim in data.coords:
-            coord = data.coords[self._slice_dim]
+        if slice_dim in data.coords:
+            coord = data.coords[slice_dim]
             # Handle both edge and point coordinates
-            if data.coords.is_edges(self._slice_dim):
+            if data.coords.is_edges(slice_dim):
                 # For edges, show the bin center
-                value = sc.midpoints(coord, dim=self._slice_dim)[slice_idx]
+                value = sc.midpoints(coord, dim=slice_dim)[slice_idx]
             else:
                 value = coord[slice_idx]
 
             # Format the value
             value_str = self._format_value(value)
-            label = f"{self._slice_dim}={value_str} (slice {slice_idx}/{max_idx})"
+            label = f"{slice_dim}={value_str} (slice {slice_idx}/{max_idx})"
         else:
             # No coordinate, just show index
-            label = f"{self._slice_dim}[{slice_idx}/{max_idx}]"
+            label = f"{slice_dim}[{slice_idx}/{max_idx}]"
 
         return label
 
-    def plot(self, data: sc.DataArray, data_key: ResultKey, slice_idx: int) -> hv.Image:
+    def plot(
+        self, data: sc.DataArray, data_key: ResultKey, slice_dim: str, slice_idx: int
+    ) -> hv.Image:
         """
         Create a 2D image from a slice of 3D data.
 
@@ -419,6 +434,8 @@ class SlicerPlotter(Plotter):
             3D DataArray to slice.
         data_key:
             Key identifying this data.
+        slice_dim:
+            Name of the dimension to slice along.
         slice_idx:
             Index of the slice to display.
 
@@ -427,26 +444,22 @@ class SlicerPlotter(Plotter):
         :
             A HoloViews Image element showing the selected slice.
         """
-        # Determine slice dimension on first call
-        if self._slice_dim is None:
-            self._slice_dim = self._determine_slice_dim(data)
-
         # Validate that slice_dim exists in the data
-        if self._slice_dim not in data.dims:
+        if slice_dim not in data.dims:
             raise ValueError(
-                f"Slice dimension '{self._slice_dim}' not found in data. "
+                f"Slice dimension '{slice_dim}' not found in data. "
                 f"Available dimensions: {data.dims}"
             )
 
-        # Update max slice index
-        new_max = data.sizes[self._slice_dim] - 1
-        if self._max_slice_idx is None or self._max_slice_idx != new_max:
-            self._max_slice_idx = new_max
+        # Get dimension index for autoscaler lookup
+        dim_idx = data.dims.index(slice_dim)
 
-        slice_idx = self._get_slice_index(slice_idx)
+        # Clip slice index to valid range
+        max_idx = data.sizes[slice_dim] - 1
+        slice_idx = self._get_slice_index(slice_idx, max_idx)
 
         # Slice the 3D data to get 2D
-        sliced_data = data[self._slice_dim, slice_idx]
+        sliced_data = data[slice_dim, slice_idx]
 
         # Apply log masking if needed (same as ImagePlotter)
         if self._scale_opts.color_scale == PlotScale.log:
@@ -461,46 +474,57 @@ class SlicerPlotter(Plotter):
         else:
             plot_data = sliced_data.to(dtype='float64')
 
+        # Get or create autoscaler for this slice dimension
+        if data_key not in self.autoscalers_by_slice_dim[dim_idx]:
+            self.autoscalers_by_slice_dim[dim_idx][data_key] = Autoscaler(
+                **self.autoscaler_kwargs
+            )
+
         # Update autoscaler and get framewise flag
-        framewise = self._update_autoscaler_and_get_framewise(plot_data, data_key)
+        framewise = self.autoscalers_by_slice_dim[dim_idx][data_key].update_bounds(
+            plot_data
+        )
 
         # Create the image
         image = to_holoviews(plot_data)
 
         # Add slice information to title
-        slice_label = self._format_slice_label(data, slice_idx)
+        slice_label = self._format_slice_label(data, slice_dim, slice_idx)
         title = f"{data.name or 'Data'} - {slice_label}"
 
         return image.opts(framewise=framewise, title=title, **self._base_opts)
 
     def __call__(
-        self, data: dict[ResultKey, sc.DataArray], slice_index: int = 0
+        self, data: dict[ResultKey, sc.DataArray], slice_dim: str = '', **slice_indices
     ) -> hv.Overlay | hv.Layout | hv.Element:
         """
-        Create plots from 3D data, slicing at the given index.
+        Create plots from 3D data, slicing at the given index along selected dimension.
 
-        This method is called by HoloViews DynamicMap with kdims parameter.
+        This method is called by HoloViews DynamicMap with kdims parameters.
 
         Parameters
         ----------
         data:
             Dictionary of 3D DataArrays to plot.
-        slice_index:
-            Index of the slice to display (from kdims).
+        slice_dim:
+            Name of the dimension to slice along (from kdims selector).
+        **slice_indices:
+            Keyword arguments containing '{dim_name}_index' for each dimension.
+            Only the index corresponding to slice_dim is used.
 
         Returns
         -------
         :
             HoloViews element(s) showing the sliced data.
         """
-        # Store slice_index to be used by plot()
-        self._current_slice_index = slice_index
-
         # Build list of plots
         plots: list[hv.Element] = []
         try:
             for data_key, da in data.items():
-                plot_element = self.plot(da, data_key, slice_index)
+                # Get the slice index for the selected dimension
+                slice_idx = slice_indices.get(f'{slice_dim}_index', 0)
+
+                plot_element = self.plot(da, data_key, slice_dim, slice_idx)
                 # Add label from data_key if the plot supports it
                 if hasattr(plot_element, 'relabel'):
                     plot_element = plot_element.relabel(data_key.job_id.source_name)
