@@ -182,18 +182,15 @@ class WorkflowConfig(BaseModel):
         """
         Create a WorkflowConfig from validated Pydantic models.
 
-        This is a convenience constructor that handles the serialization of params
-        from a Pydantic model to a dict, matching what the controller does.
-
         Parameters
         ----------
-        workflow_id
+        workflow_id:
             Identifier for the workflow
-        params
+        params:
             Validated Pydantic model with workflow parameters, or None if no params
-        aux_source_names
+        aux_source_names:
             Selected auxiliary source names, or None if no aux sources
-        job_number
+        job_number:
             Optional job number (generated if not provided)
 
         Returns
