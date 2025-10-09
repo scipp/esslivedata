@@ -138,19 +138,6 @@ class PlotParams2d(PlotParamsBase):
 class PlotParams3d(PlotParamsBase):
     """Parameters for 3D slicer plots."""
 
-    slice_dimension: str = pydantic.Field(
-        description="Dimension to slice along. The other two dimensions will be "
-        "displayed as a 2D image.",
-        title="Slice Dimension",
-    )
-
-    initial_slice_index: int = pydantic.Field(
-        default=0,
-        ge=0,
-        description="Initial slice index to display.",
-        title="Initial Slice Index",
-    )
-
     plot_scale: PlotScaleParams2d = pydantic.Field(
         default_factory=PlotScaleParams2d,
         description="Scaling options for the plot axes and color.",

@@ -189,11 +189,7 @@ class TestSlicerPlotter:
     @pytest.fixture
     def slicer_plotter(self):
         """Create a SlicerPlotter instance."""
-        params = PlotParams3d(
-            slice_dimension='z',
-            initial_slice_index=0,
-            plot_scale=PlotScaleParams2d(),
-        )
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
         return plots.SlicerPlotter.from_params(params)
 
     def test_initialization(self, slicer_plotter):
@@ -211,28 +207,27 @@ class TestSlicerPlotter:
 
     def test_plot_with_different_slice_index(self, test_3d_data, test_data_key):
         """Test that changing slice index affects the plot."""
-        params = PlotParams3d(
-            slice_dimension='z',
-            initial_slice_index=2,
-            plot_scale=PlotScaleParams2d(),
-        )
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
+        # Set slice index via stream
+        plotter.slice_stream.event(slice_index=2)
         result = plotter.plot(test_3d_data, test_data_key)
         assert isinstance(result, hv.Image)
 
-    def test_invalid_slice_dimension_raises(self, test_3d_data, test_data_key):
-        """Test that invalid slice dimension raises ValueError."""
-        params = PlotParams3d(
-            slice_dimension='invalid_dim',
-            initial_slice_index=0,
-            plot_scale=PlotScaleParams2d(),
-        )
-        plotter = plots.SlicerPlotter.from_params(params)
-        with pytest.raises(ValueError, match="Slice dimension 'invalid_dim' not found"):
-            plotter({test_data_key: test_3d_data})
+    def test_auto_determines_slice_dimension(
+        self, slicer_plotter, test_3d_data, test_data_key
+    ):
+        """Test that slice dimension is automatically determined from data."""
+        # Before first plot, slice_dim is None
+        assert slicer_plotter._slice_dim is None
+        # After plotting, it should be set to first dimension
+        slicer_plotter.plot(test_3d_data, test_data_key)
+        assert slicer_plotter._slice_dim == 'z'
 
     def test_slice_label_with_coords(self, slicer_plotter, test_3d_data, test_data_key):
         """Test that slice label includes coordinate values when available."""
+        # Need to set slice_dim first
+        slicer_plotter._slice_dim = 'z'
         label = slicer_plotter._format_slice_label(test_3d_data, 2)
         assert 'z=' in label
         assert 's' in label  # unit
@@ -242,30 +237,24 @@ class TestSlicerPlotter:
         self, slicer_plotter, test_3d_data_no_coords, test_data_key
     ):
         """Test that slice label works without coordinates."""
+        # Need to set slice_dim first
+        slicer_plotter._slice_dim = 'z'
         label = slicer_plotter._format_slice_label(test_3d_data_no_coords, 2)
         assert 'z[2/4]' in label
 
     def test_slice_index_clipping(self, test_3d_data, test_data_key):
         """Test that slice index is clipped to valid range."""
-        # Create plotter with index beyond data range
-        params = PlotParams3d(
-            slice_dimension='z',
-            initial_slice_index=100,  # Beyond valid range
-            plot_scale=PlotScaleParams2d(),
-        )
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
-        # Call __call__ to trigger validation
-        result = plotter({test_data_key: test_3d_data})
+        # Set index beyond data range
+        plotter.slice_stream.event(slice_index=100)
         # Should not raise, should clip to valid range
+        result = plotter.plot(test_3d_data, test_data_key)
         assert result is not None
 
     def test_multiple_datasets(self, test_3d_data, test_data_key):
         """Test plotting multiple 3D datasets together."""
-        params = PlotParams3d(
-            slice_dimension='z',
-            initial_slice_index=0,
-            plot_scale=PlotScaleParams2d(),
-        )
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
 
         # Create second dataset
@@ -296,11 +285,37 @@ class TestSlicerPlotter:
             coords={'x': x_edges, 'y': y_edges, 'z': z_edges},
         )
 
-        params = PlotParams3d(
-            slice_dimension='z',
-            initial_slice_index=0,
-            plot_scale=PlotScaleParams2d(),
-        )
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
         result = plotter.plot(data, test_data_key)
         assert isinstance(result, hv.Image)
+
+    def test_inconsistent_dimensions_raises(self, test_data_key):
+        """Test that data with inconsistent slice dimensions raises error."""
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        plotter = plots.SlicerPlotter.from_params(params)
+
+        # First data has dims ['z', 'y', 'x']
+        data1 = sc.DataArray(
+            sc.ones(dims=['z', 'y', 'x'], shape=[5, 8, 10], unit='counts')
+        )
+        plotter.plot(data1, test_data_key)
+
+        # Second data has different first dimension
+        data2 = sc.DataArray(
+            sc.ones(dims=['a', 'b', 'c'], shape=[5, 8, 10], unit='counts')
+        )
+        workflow_id2 = WorkflowId(
+            instrument='test_instrument',
+            namespace='test_namespace',
+            name='test_workflow',
+            version=1,
+        )
+        job_id2 = JobId(source_name='test_source2', job_number=uuid.uuid4())
+        test_data_key2 = ResultKey(
+            workflow_id=workflow_id2, job_id=job_id2, output_name='test_result'
+        )
+
+        # Should raise because 'z' not in dims
+        with pytest.raises(ValueError, match="Slice dimension 'z' not found"):
+            plotter.plot(data2, test_data_key2)

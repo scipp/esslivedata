@@ -249,8 +249,6 @@ class SlicerPlotter(Plotter):
 
     def __init__(
         self,
-        slice_dim: str,
-        initial_slice_index: int,
         scale_opts: PlotScaleParams2d,
         **kwargs,
     ):
@@ -259,25 +257,19 @@ class SlicerPlotter(Plotter):
 
         Parameters
         ----------
-        slice_dim:
-            The dimension to slice along.
-        initial_slice_index:
-            Initial slice index to display.
         scale_opts:
             Scaling options for axes and color.
         **kwargs:
             Additional keyword arguments passed to the base class.
         """
         super().__init__(**kwargs)
-        self._slice_dim = slice_dim
         self._scale_opts = scale_opts
-        self._max_slice_idx: dict[ResultKey, int] = {}
+        self._slice_dim: str | None = None
+        self._max_slice_idx: int | None = None
 
         # Create custom stream for slice selection
         # This will automatically create a slider widget
-        SliceIndex = hv.streams.Stream.define(
-            'SliceIndex', slice_index=initial_slice_index
-        )
+        SliceIndex = hv.streams.Stream.define('SliceIndex', slice_index=0)
         self.slice_stream = SliceIndex()
 
         # Base options for the image plot (similar to ImagePlotter)
@@ -293,44 +285,31 @@ class SlicerPlotter(Plotter):
     def from_params(cls, params: PlotParams3d):
         """Create SlicerPlotter from PlotParams3d."""
         return cls(
-            slice_dim=params.slice_dimension,
-            initial_slice_index=params.initial_slice_index,
             scale_opts=params.plot_scale,
             value_margin_factor=0.1,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
         )
 
-    def _validate_and_update_bounds(self, data: dict[ResultKey, sc.DataArray]) -> None:
-        """Validate slice dimension and update slider bounds if needed."""
-        for data_key, da in data.items():
-            # Validate that slice_dim exists in the data
-            if self._slice_dim not in da.dims:
-                raise ValueError(
-                    f"Slice dimension '{self._slice_dim}' not found in data. "
-                    f"Available dimensions: {da.dims}"
-                )
+    def _determine_slice_dim(self, data: sc.DataArray) -> str:
+        """
+        Determine which dimension to slice along.
 
-            # Check if max slice index changed
-            new_max = da.sizes[self._slice_dim] - 1
-            if (
-                data_key not in self._max_slice_idx
-                or self._max_slice_idx[data_key] != new_max
-            ):
-                self._max_slice_idx[data_key] = new_max
-                # TODO: Update slider bounds - need to figure out how to do this
-                # The slider is created by HoloViews/Panel from the stream definition
-                # May need to recreate the stream or use a different approach
+        Uses the first dimension of the data (typically the slowest varying).
+        """
+        if data.ndim != 3:
+            raise ValueError(f"Expected 3D data, got {data.ndim}D")
+        # Use the first dimension
+        return data.dims[0]
 
     def _get_slice_index(self) -> int:
         """Get current slice index, clipped to valid range."""
         current_idx = self.slice_stream.slice_index
-        if not self._max_slice_idx:
+        if self._max_slice_idx is None:
             return current_idx
 
-        # Clip to the minimum of all max indices across datasets
-        max_idx = min(self._max_slice_idx.values())
-        return min(current_idx, max_idx)
+        # Clip to valid range
+        return min(current_idx, self._max_slice_idx)
 
     def _format_slice_label(self, data: sc.DataArray, slice_idx: int) -> str:
         """Format a label showing the current slice position."""
@@ -374,6 +353,22 @@ class SlicerPlotter(Plotter):
         :
             A HoloViews Image element showing the selected slice.
         """
+        # Determine slice dimension on first call
+        if self._slice_dim is None:
+            self._slice_dim = self._determine_slice_dim(data)
+
+        # Validate that slice_dim exists in the data
+        if self._slice_dim not in data.dims:
+            raise ValueError(
+                f"Slice dimension '{self._slice_dim}' not found in data. "
+                f"Available dimensions: {data.dims}"
+            )
+
+        # Update max slice index
+        new_max = data.sizes[self._slice_dim] - 1
+        if self._max_slice_idx is None or self._max_slice_idx != new_max:
+            self._max_slice_idx = new_max
+
         slice_idx = self._get_slice_index()
 
         # Slice the 3D data to get 2D
@@ -403,25 +398,3 @@ class SlicerPlotter(Plotter):
         title = f"{data.name or 'Data'} - {slice_label}"
 
         return image.opts(framewise=framewise, title=title, **self._base_opts)
-
-    def __call__(
-        self, data: dict[ResultKey, sc.DataArray]
-    ) -> hv.Overlay | hv.Layout | hv.Element:
-        """
-        Create plots from 3D data, slicing at the current index.
-
-        Parameters
-        ----------
-        data:
-            Dictionary of 3D DataArrays to plot.
-
-        Returns
-        -------
-        :
-            HoloViews element(s) showing the sliced data.
-        """
-        # Validate dimensions and update slider bounds
-        self._validate_and_update_bounds(data)
-
-        # Use parent implementation which calls self.plot() for each dataset
-        return super().__call__(data)
