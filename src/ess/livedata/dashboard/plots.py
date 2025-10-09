@@ -374,6 +374,18 @@ class SlicerPlotter(Plotter):
         # Clip to valid range
         return min(requested_idx, self._max_slice_idx)
 
+    def _format_value(self, value: sc.Variable) -> str:
+        """Format a scipp Variable for display, showing value and unit."""
+        try:
+            # Try compact format first (works for most dtypes)
+            return f"{value:c}"
+        except ValueError:
+            # Compact formatting not supported (e.g., datetime64)
+            # Format as "value unit" or just "value" if no unit or dimensionless
+            if value.unit is None or value.unit == sc.units.dimensionless:
+                return str(value.value)
+            return f"{value.value} {value.unit}"
+
     def _format_slice_label(self, data: sc.DataArray, slice_idx: int) -> str:
         """Format a label showing the current slice position."""
         max_idx = data.sizes[self._slice_dim] - 1
@@ -388,8 +400,9 @@ class SlicerPlotter(Plotter):
             else:
                 value = coord[slice_idx]
 
-            # Format using scipp's compact format syntax
-            label = f"{self._slice_dim}={value:c} (slice {slice_idx}/{max_idx})"
+            # Format the value
+            value_str = self._format_value(value)
+            label = f"{self._slice_dim}={value_str} (slice {slice_idx}/{max_idx})"
         else:
             # No coordinate, just show index
             label = f"{self._slice_dim}[{slice_idx}/{max_idx}]"
