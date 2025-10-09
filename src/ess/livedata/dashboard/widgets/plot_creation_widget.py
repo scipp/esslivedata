@@ -354,7 +354,14 @@ class PlotCreationWidget:
         if isinstance(dmap, pn.viewable.Viewable):
             plot_pane = dmap
         else:
-            plot_pane = pn.pane.HoloViews(dmap, sizing_mode='stretch_width')
+            # Use .layout to preserve widgets for DynamicMaps with kdims.
+            # When pn.pane.HoloViews wraps a DynamicMap with kdims, it generates
+            # widgets. However, these widgets don't render when the pane is placed
+            # in a Panel layout (Tabs, Column, etc.). The .layout property contains
+            # both the plot and widgets, which renders correctly in layouts.
+            # See: https://github.com/holoviz/panel/issues/5628
+            pane = pn.pane.HoloViews(dmap, sizing_mode='stretch_width')
+            plot_pane = pane.layout
 
         # Generate tab name
         self._plot_counter += 1
