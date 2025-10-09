@@ -145,6 +145,7 @@ class CorrelationHistogramConfigurationAdapter(ConfigurationAdapter[Model], ABC)
     def __init__(self, controller: CorrelationHistogramController) -> None:
         self._controller = controller
         self._selected_aux_sources: dict[str, str] | None = None
+        self._cached_aux_sources: pydantic.BaseModel | None = None
         # All timeseries except the axis keys can be used as dependent variables. These
         # will thus be shown by the widget in the "source selection" menu.
         timeseries = self._controller.get_timeseries()
@@ -213,15 +214,13 @@ class CorrelationHistogramConfigurationAdapter(ConfigurationAdapter[Model], ABC)
             )
         return self._aux_sources_model
 
-    def model_class(
-        self, aux_source_names: pydantic.BaseModel | None
-    ) -> type[Model] | None:
-        if aux_source_names is None:
+    def model_class(self) -> type[Model] | None:
+        if self._cached_aux_sources is None:
             self._selected_aux_sources = None
             return None
 
         # Serialize aux sources to get the selected stream names
-        aux_dict = aux_source_names.model_dump(mode='json')
+        aux_dict = self._cached_aux_sources.model_dump(mode='json')
 
         coords = {
             name: self._controller.get_data(self._source_name_to_key[name])
@@ -255,7 +254,6 @@ class CorrelationHistogramConfigurationAdapter(ConfigurationAdapter[Model], ABC)
         self,
         selected_sources: list[str],
         parameter_values: Model,
-        aux_source_names: pydantic.BaseModel | None = None,
     ) -> bool:
         """
         Execute the correlation histogram workflow with the given parameters.

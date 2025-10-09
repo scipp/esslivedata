@@ -84,7 +84,7 @@ class ConfigurationWidget:
             aux_selections = None
 
         try:
-            model_class = self._config.model_class(aux_selections)
+            model_class = self._config.set_aux_sources(aux_selections)
         except Exception as e:
             return ErrorWidget(str(e))
 
@@ -145,14 +145,6 @@ class ConfigurationWidget:
     def selected_sources(self) -> list[str]:
         """Get the selected source names."""
         return self._source_selector.value
-
-    @property
-    def selected_aux_sources(self):
-        """Get the selected auxiliary sources as a Pydantic model instance."""
-        if self._aux_sources_widget is None:
-            return None
-        # Create and return the validated Pydantic model
-        return self._aux_sources_widget.create_model()
 
     @property
     def parameter_values(self):
@@ -297,7 +289,6 @@ class ConfigurationModal:
         success = self._config.start_action(
             self._config_widget.selected_sources,
             self._config_widget.parameter_values,
-            self._config_widget.selected_aux_sources,
         )
 
         if not success:
