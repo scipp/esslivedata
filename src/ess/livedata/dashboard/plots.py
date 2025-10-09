@@ -267,6 +267,7 @@ class SlicerPlotter(Plotter):
         self._slice_dim: str | None = None
         self._max_slice_idx: int | None = None
         self._current_slice_index: int = 0
+        self.slider_widget = None  # Will be set by PlottingController
 
         # Create custom stream for slice selection
         # This will automatically create a slider widget
@@ -325,9 +326,9 @@ class SlicerPlotter(Plotter):
             else:
                 value = coord[slice_idx]
 
-            # Format with unit if available
-            if value.unit:
-                label = f"{self._slice_dim}={value.value:.3g} {value.unit}"
+            # Format with unit if available (and not dimensionless)
+            if str(value.unit) != 'dimensionless':
+                label = f"{self._slice_dim}={value.value:.3g} {value.unit!s}"
             else:
                 label = f"{self._slice_dim}={value.value:.3g}"
             label += f" (slice {slice_idx}/{max_idx})"
@@ -368,6 +369,9 @@ class SlicerPlotter(Plotter):
         new_max = data.sizes[self._slice_dim] - 1
         if self._max_slice_idx is None or self._max_slice_idx != new_max:
             self._max_slice_idx = new_max
+            # Update slider widget bounds if available
+            if self.slider_widget is not None:
+                self.slider_widget.end = new_max
 
         slice_idx = self._get_slice_index()
 

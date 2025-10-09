@@ -280,7 +280,7 @@ class PlottingController:
         output_name: str | None,
         plot_name: str,
         params: pydantic.BaseModel,
-    ) -> hv.DynamicMap:
+    ):
         """
         Create a plot from job data with the specified parameters.
 
@@ -303,7 +303,8 @@ class PlottingController:
         Returns
         -------
         :
-            A HoloViews dynamic map that updates with streaming data.
+            A HoloViews DynamicMap, or a Panel Column containing widgets and plot
+            for plotters that require interactive controls (e.g., SlicerPlotter).
         """
         self._save_plotting_config(
             workflow_id=self._job_service.job_info[job_number],
@@ -328,6 +329,31 @@ class PlottingController:
         if hasattr(plotter, 'slice_stream'):
             streams.append(plotter.slice_stream)
 
-        return hv.DynamicMap(plotter, streams=streams, cache_size=1).opts(
+        dmap = hv.DynamicMap(plotter, streams=streams, cache_size=1).opts(
             shared_axes=False
         )
+
+        # If plotter has a slice_stream, create a column with slider + plot
+        if hasattr(plotter, 'slice_stream'):
+            import panel as pn
+
+            # Create a slider widget linked to the stream
+            # The max value will be updated dynamically, start with reasonable default
+            slider = pn.widgets.IntSlider(
+                name='Slice Index',
+                start=0,
+                end=10,  # Will be updated dynamically by plotter
+                value=0,
+                step=1,
+            )
+
+            # Store reference to slider in plotter so it can update bounds
+            plotter.slider_widget = slider
+
+            # Link the slider to the stream parameter
+            slider.jslink(plotter.slice_stream, value='slice_index', bidirectional=True)
+
+            # Return a column with slider on top and plot below
+            return pn.Column(slider, dmap)
+
+        return dmap
