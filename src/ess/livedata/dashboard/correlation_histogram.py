@@ -213,19 +213,24 @@ class CorrelationHistogramConfigurationAdapter(ConfigurationAdapter[Model], ABC)
             )
         return self._aux_sources_model
 
-    def model_class(self, aux_source_names: dict[str, str]) -> type[Model] | None:
-        if not aux_source_names:
+    def model_class(
+        self, aux_source_names: pydantic.BaseModel | None
+    ) -> type[Model] | None:
+        if aux_source_names is None:
             self._selected_aux_sources = None
             return None
 
+        # Serialize aux sources to get the selected stream names
+        aux_dict = aux_source_names.model_dump(mode='json')
+
         coords = {
             name: self._controller.get_data(self._source_name_to_key[name])
-            for name in aux_source_names.values()
+            for name in aux_dict.values()
         }
         model_class = self._create_dynamic_model_class(coords)
 
-        # Store selected aux sources for use in start_action
-        self._selected_aux_sources = aux_source_names
+        # Store serialized aux sources for use in start_action
+        self._selected_aux_sources = aux_dict
         return model_class
 
     @property
@@ -250,7 +255,7 @@ class CorrelationHistogramConfigurationAdapter(ConfigurationAdapter[Model], ABC)
         self,
         selected_sources: list[str],
         parameter_values: Model,
-        aux_source_names: dict[str, str] | None = None,
+        aux_source_names: pydantic.BaseModel | None = None,
     ) -> bool:
         """
         Execute the correlation histogram workflow with the given parameters.

@@ -176,7 +176,7 @@ class WorkflowConfig(BaseModel):
         cls,
         workflow_id: WorkflowId,
         params: BaseModel | None = None,
-        aux_source_names: dict[str, str] | None = None,
+        aux_source_names: BaseModel | None = None,
         job_number: JobNumber | None = None,
     ) -> WorkflowConfig:
         """
@@ -189,7 +189,8 @@ class WorkflowConfig(BaseModel):
         params:
             Validated Pydantic model with workflow parameters, or None if no params
         aux_source_names:
-            Selected auxiliary source names, or None if no aux sources
+            Validated Pydantic model with auxiliary source selections, or None if no
+            aux sources
         job_number:
             Optional job number (generated if not provided)
 
@@ -201,7 +202,11 @@ class WorkflowConfig(BaseModel):
         return cls(
             identifier=workflow_id,
             job_number=job_number if job_number is not None else uuid.uuid4(),
-            aux_source_names=aux_source_names or {},
+            aux_source_names=(
+                aux_source_names.model_dump(mode='json')
+                if aux_source_names is not None
+                else {}
+            ),
             params=params.model_dump() if params is not None else {},
         )
 

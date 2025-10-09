@@ -72,27 +72,26 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
         start_callback=lambda *args, **kwargs: True,  # Dummy callback for testing
     )
 
+    # Get aux sources model first (like ConfigurationWidget does)
+    aux_sources_model = None
+    if adapter.aux_sources is not None:
+        # Instantiate with defaults
+        aux_sources_model = adapter.aux_sources()
+
     # Get parameter model class from adapter (like ConfigurationWidget does)
     params_model = None
-    params_class = adapter.model_class({})  # Pass empty aux_source_names
+    params_class = adapter.model_class(aux_sources_model)  # Pass aux sources model
     if params_class is not None:
         # Instantiate with defaults (ConfigurationWidget uses initial_parameter_values
         # if available, otherwise creates with defaults)
         params_model = params_class()
-
-    # Get aux sources from adapter (like ConfigurationWidget does)
-    aux_source_names = None
-    if adapter.aux_sources is not None:
-        # Instantiate with defaults
-        aux_sources_model = adapter.aux_sources()
-        aux_source_names = aux_sources_model.model_dump()
 
     # Step 3: Create WorkflowConfig using the helper method
     # This simulates what WorkflowController.start_workflow does
     workflow_config = WorkflowConfig.from_params(
         workflow_id=workflow_id,
         params=params_model,
-        aux_source_names=aux_source_names,
+        aux_source_names=aux_sources_model,
     )
 
     # Step 4: Instantiate workflow via backend path (JobFactory → WorkflowFactory)
@@ -210,7 +209,7 @@ def test_workflow_aux_sources_serialization_roundtrip(
     # Simulate WorkflowConfig.from_params storing aux sources
     workflow_config = WorkflowConfig.from_params(
         workflow_id=workflow_id,
-        aux_source_names=original.model_dump(),
+        aux_source_names=original,  # Pass model instance
     )
     serialized = workflow_config.aux_source_names
 

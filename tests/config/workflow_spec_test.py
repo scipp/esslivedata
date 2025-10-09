@@ -193,8 +193,11 @@ class TestWorkflowConfigFromParams:
             param1: int = 10
             param2: str = "value"
 
+        class AuxSourcesModel(BaseModel):
+            monitor: str = "monitor1"
+
         params = ParamsModel(param1=20, param2="custom")
-        aux_sources = {"monitor": "monitor1"}
+        aux_sources = AuxSourcesModel(monitor="monitor1")
 
         config = WorkflowConfig.from_params(
             workflow_id=sample_workflow_id,
