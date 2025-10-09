@@ -128,6 +128,34 @@ class Plotter(ABC):
             self.autoscalers[data_key] = Autoscaler(**self.autoscaler_kwargs)
         return self.autoscalers[data_key].update_bounds(data)
 
+    def initialize_from_data(self, data: dict[ResultKey, sc.DataArray]) -> None:
+        """
+        Initialize plotter state from initial data.
+
+        Called before creating the DynamicMap to allow plotters to
+        inspect the data and set up interactive dimensions.
+
+        Parameters
+        ----------
+        data:
+            Initial data dictionary.
+        """
+        # Default implementation does nothing; subclasses can override
+        return
+
+    @property
+    def kdims(self) -> list[hv.Dimension] | None:
+        """
+        Return key dimensions for interactive widgets.
+
+        Returns
+        -------
+        :
+            List of HoloViews Dimension objects for creating interactive widgets,
+            or None if the plotter doesn't require interactive dimensions.
+        """
+        return None
+
     @abstractmethod
     def plot(self, data: sc.DataArray, data_key: ResultKey) -> Any:
         """Create a plot from the given data. Must be implemented by subclasses."""
@@ -285,6 +313,47 @@ class SlicerPlotter(Plotter):
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
         )
+
+    def initialize_from_data(self, data: dict[ResultKey, sc.DataArray]) -> None:
+        """
+        Initialize the slicer from initial data.
+
+        Determines the slice dimension and maximum slice index from the first
+        data array in the dictionary.
+
+        Parameters
+        ----------
+        data:
+            Dictionary of initial data arrays.
+        """
+        if not data:
+            return
+
+        # Get the first data array to inspect its shape
+        first_data = next(iter(data.values()))
+
+        # Determine and store the slice dimension
+        if self._slice_dim is None:
+            self._slice_dim = self._determine_slice_dim(first_data)
+
+        # Set the maximum slice index
+        self._max_slice_idx = first_data.sizes[self._slice_dim] - 1
+
+    @property
+    def kdims(self) -> list[hv.Dimension] | None:
+        """
+        Return the slice_index dimension for the slider widget.
+
+        Returns
+        -------
+        :
+            List containing a single HoloViews Dimension for slice selection,
+            or None if not yet initialized.
+        """
+        if self._max_slice_idx is None:
+            return None
+
+        return [hv.Dimension('slice_index', range=(0, self._max_slice_idx), default=0)]
 
     def _determine_slice_dim(self, data: sc.DataArray) -> str:
         """

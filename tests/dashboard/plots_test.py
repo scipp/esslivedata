@@ -338,3 +338,38 @@ class TestSlicerPlotter:
 
         # Should use default value of 0
         assert plotter._current_slice_index == 0
+
+    def test_kdims_before_initialization(self):
+        """Test that kdims returns None before initialization."""
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        plotter = plots.SlicerPlotter.from_params(params)
+
+        assert plotter.kdims is None
+
+    def test_initialize_from_data_sets_kdims(self, test_3d_data, test_data_key):
+        """Test that initialize_from_data enables kdims."""
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        plotter = plots.SlicerPlotter.from_params(params)
+
+        # Initialize with data
+        plotter.initialize_from_data({test_data_key: test_3d_data})
+
+        # kdims should now be available
+        kdims = plotter.kdims
+        assert kdims is not None
+        assert len(kdims) == 1
+        assert kdims[0].name == 'slice_index'
+        # Data has shape [5, 8, 10], so z dimension has 5 slices (0-4)
+        assert kdims[0].range == (0, 4)
+        assert kdims[0].default == 0
+
+    def test_initialize_from_data_with_empty_dict(self):
+        """Test that initialize_from_data handles empty data gracefully."""
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        plotter = plots.SlicerPlotter.from_params(params)
+
+        # Initialize with empty dict
+        plotter.initialize_from_data({})
+
+        # kdims should still be None
+        assert plotter.kdims is None

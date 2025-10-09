@@ -322,16 +322,14 @@ class PlottingController:
         pipe = self._stream_manager.make_merging_stream(items)
         plotter = plotter_registry.create_plotter(plot_name, params=params)
 
-        # For SlicerPlotter, use kdims to automatically generate slider
-        if plot_name == 'slicer':
-            # kdims will automatically create a slider for the slice_index parameter
-            # The range will need to be determined from the data
-            dmap = hv.DynamicMap(
-                plotter, streams=[pipe], kdims=['slice_index'], cache_size=1
-            ).redim.range(slice_index=(0, 10))  # Initial range, will update dynamically
-            return dmap.opts(shared_axes=False)
+        # Initialize plotter with initial data to determine kdims
+        plotter.initialize_from_data(items)
 
-        # For other plotters, use standard DynamicMap with just the data pipe
-        return hv.DynamicMap(plotter, streams=[pipe], cache_size=1).opts(
-            shared_axes=False
-        )
+        # Create DynamicMap with kdims if the plotter provides them
+        kdims = plotter.kdims
+        if kdims is not None:
+            dmap = hv.DynamicMap(plotter, streams=[pipe], kdims=kdims, cache_size=1)
+        else:
+            dmap = hv.DynamicMap(plotter, streams=[pipe], cache_size=1)
+
+        return dmap.opts(shared_axes=False)
