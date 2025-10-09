@@ -94,7 +94,7 @@ class TestDa00Serializer:
 
 
 class TestF144Serializer:
-    def test_serialize_dataarray_to_f144_roundtrip_preserves_value_and_payload_timestamp(
+    def test_roundtrip_preserves_value_and_payload_timestamp(
         self,
     ) -> None:
         # Create test data with time coordinate
