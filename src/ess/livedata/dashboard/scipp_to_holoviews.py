@@ -66,6 +66,28 @@ def convert_curve_1d(data: sc.DataArray) -> hv.Curve:
     return hv.Curve(data=(coord.values, data.values), kdims=kdims, vdims=vdims)
 
 
+def convert_error_bars_1d(data: sc.DataArray) -> hv.ErrorBars:
+    """
+    Convert a 1D scipp DataArray to a Holoviews Curve.
+
+    Returns
+    -------
+    hv.ErrorBars
+        A Holoviews ErrorBars object.
+    """
+    data = _ensure_coords(data)
+    dim = data.dim
+    coord = data.coords[dim]
+    kdims = [coord_to_dimension(coord)]
+    vdims = [create_value_dimension(data)]
+
+    return hv.ErrorBars(
+        data=(coord.values, data.values, sc.stddevs(data).values),
+        kdims=kdims,
+        vdims=[*vdims, 'yerr'],
+    )
+
+
 def convert_quadmesh_2d(data: sc.DataArray) -> hv.QuadMesh:
     """
     Convert a 2D scipp DataArray to a Holoviews QuadMesh.
@@ -134,7 +156,7 @@ def _all_coords_evenly_spaced(data: sc.DataArray) -> bool:
 def to_holoviews(
     data: sc.DataArray,
     preserve_edges: bool = False,
-) -> hv.Histogram | hv.Curve | hv.QuadMesh | hv.Image:
+) -> hv.Histogram | hv.Curve | hv.ErrorBars | hv.QuadMesh | hv.Image:
     """
     Convert a scipp DataArray to a Holoviews object.
 
@@ -160,8 +182,10 @@ def to_holoviews(
     if len(data.dims) == 1:
         if _is_edges(data, data.dim):
             return convert_histogram_1d(data)
-        else:
+        elif data.variances is None:
             return convert_curve_1d(data)
+        else:
+            return convert_error_bars_1d(data)
     elif len(data.dims) == 2:
         # Check if we have bin edges and user favors QuadMesh
         has_bin_edges = any(_is_edges(data, dim) for dim in data.dims)

@@ -155,6 +155,10 @@ class ParamWidget:
                 field_type = self.model_class.model_fields[field_name].annotation
                 if isinstance(value, Path):
                     value = str(value)
+                elif field_type is bool:
+                    # Checkbox widget is wrapped in a Row
+                    self.widgets[field_name][0].value = value
+                    continue
                 elif isinstance(field_type, type) and issubclass(field_type, Enum):
                     value = field_type(value)
                 self.widgets[field_name].value = value

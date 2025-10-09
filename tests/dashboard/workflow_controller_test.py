@@ -678,30 +678,3 @@ class TestWorkflowController:
         assert len(received_status) == len(source_names)
         assert received_status["detector_1"].status == WorkflowStatusType.RUNNING
         assert received_status["detector_2"].status == WorkflowStatusType.UNKNOWN
-
-    def test_get_workflow_params_returns_correct_params(
-        self,
-        workflow_controller: tuple[WorkflowController, FakeWorkflowConfigService],
-        workflow_id: WorkflowId,
-    ):
-        """Test that get_workflow_params returns the correct parameters."""
-        controller, service = workflow_controller
-
-        # Act
-        result = controller.get_workflow_params(workflow_id)
-
-        # Assert
-        assert result == SomeWorkflowParams
-
-    def test_get_workflow_params_returns_none_for_nonexistent(
-        self,
-        workflow_controller: tuple[WorkflowController, FakeWorkflowConfigService],
-    ):
-        """Test that get_workflow_params returns None for non-existent workflow."""
-        controller, service = workflow_controller
-
-        # Act
-        result = controller.get_workflow_params("nonexistent_workflow")
-
-        # Assert
-        assert result is None

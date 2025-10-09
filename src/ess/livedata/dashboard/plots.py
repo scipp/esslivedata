@@ -3,7 +3,6 @@
 """This file contains utilities for creating plots in the dashboard."""
 
 from abc import ABC, abstractmethod
-from collections import defaultdict
 from typing import Any
 
 import holoviews as hv
@@ -12,6 +11,7 @@ import scipp as sc
 
 from ess.livedata.config.workflow_spec import ResultKey
 
+from .autoscaler import Autoscaler
 from .plot_params import (
     LayoutParams,
     PlotAspect,
@@ -28,98 +28,6 @@ from .scipp_to_holoviews import to_holoviews
 def remove_bokeh_logo(plot, element):
     """Remove Bokeh logo from plots."""
     plot.state.toolbar.logo = None
-
-
-class Autoscaler:
-    """
-    A helper class that automatically adjusts bounds based on data.
-
-    Maybe I missed something in the Holoviews docs, but looking, e.g., at
-    https://holoviews.org/FAQ.html we need framewise=True to autoscale for streaming
-    data. However, this leads to losing the current pan/zoom state when new data
-    arrives, making it unusable for interactive exploration.
-    Instead, we use this class to track the bounds of the data and update the plot with
-    framewise=True only when the bounds *increase*, i.e., new data extends the
-    existing bounds. This way, we keep the current pan/zoom state most of the time while
-    still allowing the plot to grow as new data comes in. This is especially important
-    since there seems to be no way of initializing holoviews.streams.Pipe without
-    initial dummy data (such as `None`), i.e., we need to return an empty plot with no
-    good starting guess of bounds.
-    """
-
-    def __init__(self, value_margin_factor: float = 0.01):
-        """
-        Initialize the autoscaler with empty bounds.
-
-        Parameters
-        ----------
-        value_margin_factor:
-            Factor by which to extend the value bounds when updating, by default 0.01.
-            This prevents the plot from jumping around when new data arrives that only
-            slightly extends the bounds. The value bounds are updated to be 99% of the
-            new minimum and 101% of the new maximum when set to 0.01, for example.
-        """
-        self._value_margin_factor = value_margin_factor
-        self.coord_bounds: dict[str, tuple[float | None, float | None]] = defaultdict(
-            lambda: (None, None)
-        )
-        self.value_bounds = (None, None)
-
-    def update_bounds(self, data: sc.DataArray) -> bool:
-        """Update bounds based on the data, return True if bounds changed."""
-        changed = False
-        for dim in data.dims:
-            if (coord := data.coords.get(dim)) is not None:
-                changed |= self._update_coord_bounds(coord)
-            else:
-                changed |= self._update_from_size(dim, data.sizes[dim])
-        changed |= self._update_value_bounds(data.data)
-        return changed
-
-    def _update_coord_bounds(self, coord: sc.Variable) -> bool:
-        """Update bounds for a single coordinate."""
-        name = coord.dim
-        low = coord[0].value
-        high = coord[-1].value
-        changed = False
-
-        if self.coord_bounds[name][0] is None or low < self.coord_bounds[name][0]:
-            self.coord_bounds[name] = (low, self.coord_bounds[name][1])
-            changed = True
-        if self.coord_bounds[name][1] is None or high > self.coord_bounds[name][1]:
-            self.coord_bounds[name] = (self.coord_bounds[name][0], high)
-            changed = True
-
-        return changed
-
-    def _update_from_size(self, dim: str, size: int) -> bool:
-        """Update bounds for a dimension without coordinates, using its size."""
-        changed = False
-        if self.coord_bounds[dim] != (0, size):
-            self.coord_bounds[dim] = (0, size)
-            changed = True
-        return changed
-
-    def _update_value_bounds(self, data: sc.Variable) -> bool:
-        """Update value bounds based on the data, return True if bounds changed."""
-        low = data.nanmin().value
-        high = data.nanmax().value
-        changed = False
-
-        if self.value_bounds[0] is None or low < self.value_bounds[0]:
-            self.value_bounds = (
-                low * (1 - self._value_margin_factor),
-                self.value_bounds[1],
-            )
-            changed = True
-        if self.value_bounds[1] is None or high > self.value_bounds[1]:
-            self.value_bounds = (
-                self.value_bounds[0],
-                high * (1 + self._value_margin_factor),
-            )
-            changed = True
-
-        return changed
 
 
 class Plotter(ABC):
@@ -287,12 +195,13 @@ class ImagePlotter(Plotter):
             Additional keyword arguments passed to the base class.
         """
         super().__init__(**kwargs)
+        self._scale_opts = scale_opts
         self._base_opts = {
             'colorbar': True,
             'cmap': 'viridis',
             'logx': True if scale_opts.x_scale == PlotScale.log else False,
             'logy': True if scale_opts.y_scale == PlotScale.log else False,
-            'logz': True,
+            'logz': True if scale_opts.color_scale == PlotScale.log else False,
         }
 
     @classmethod
@@ -307,22 +216,28 @@ class ImagePlotter(Plotter):
 
     def plot(self, data: sc.DataArray, data_key: ResultKey) -> hv.Image:
         """Create a 2D plot from a scipp DataArray."""
-        # With logz=True we need to exclude zero values:
-        # The value bounds calculation should properly adjust the color limits. Since
-        # zeros can never be included we want to adjust to the lowest positive value.
         data = data.to(dtype='float64')
-        masked = data.assign(
-            sc.where(
-                data.data <= sc.scalar(0.0, unit=data.unit),
-                sc.scalar(np.nan, unit=data.unit, dtype=data.dtype),
-                data.data,
-            )
-        )
 
-        framewise = self._update_autoscaler_and_get_framewise(masked, data_key)
+        # Only mask data when using log color scale
+        if self._scale_opts.color_scale == PlotScale.log:
+            # With logz=True we need to exclude zero values: The value bounds
+            # calculation should properly adjust the color limits. Since zeros can never
+            # be included we want to adjust to the lowest positive value.
+            masked = data.assign(
+                sc.where(
+                    data.data <= sc.scalar(0.0, unit=data.unit),
+                    sc.scalar(np.nan, unit=data.unit, dtype=data.dtype),
+                    data.data,
+                )
+            )
+            plot_data = masked
+        else:
+            plot_data = data
+
+        framewise = self._update_autoscaler_and_get_framewise(plot_data, data_key)
         # We are using the masked data here since Holoviews (at least with the Bokeh
         # backend) show values below the color limits with the same color as the lowest
         # value in the colormap, which is not what we want for, e.g., zeros on a log
         # scale plot. The nan values will be shown as transparent.
-        histogram = to_holoviews(masked)
+        histogram = to_holoviews(plot_data)
         return histogram.opts(framewise=framewise, **self._base_opts)

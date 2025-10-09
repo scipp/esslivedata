@@ -70,9 +70,16 @@ class TimeseriesAccumulator(streaming.Accumulator[sc.DataArray]):
 
     def _do_push(self, value: sc.DataArray) -> None:
         if self._to_nxlog is None:
-            self._to_nxlog = ToNXlog(attrs={'units': str(value.unit)})
+            self._to_nxlog = ToNXlog(
+                attrs={'units': str(value.unit)}, data_dims=tuple(value.dims)
+            )
         self._to_nxlog.add(
-            0, LogData(time=value.coords['time'].value, value=value.values)
+            0,
+            LogData(
+                time=value.coords['time'].value,
+                value=value.values,
+                variances=value.variances,
+            ),
         )
 
     def clear(self) -> None:
