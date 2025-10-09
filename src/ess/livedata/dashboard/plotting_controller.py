@@ -280,7 +280,7 @@ class PlottingController:
         output_name: str | None,
         plot_name: str,
         params: pydantic.BaseModel,
-    ):
+    ) -> hv.DynamicMap:
         """
         Create a plot from job data with the specified parameters.
 
@@ -303,8 +303,9 @@ class PlottingController:
         Returns
         -------
         :
-            A HoloViews DynamicMap, or a Panel Column containing widgets and plot
-            for plotters that require interactive controls (e.g., SlicerPlotter).
+            A HoloViews DynamicMap that updates with streaming data.
+            For plotters with kdims (e.g., SlicerPlotter), the DynamicMap
+            includes interactive dimensions that generate widgets when rendered.
         """
         self._save_plotting_config(
             workflow_id=self._job_service.job_info[job_number],
@@ -325,11 +326,7 @@ class PlottingController:
         # Initialize plotter with initial data to determine kdims
         plotter.initialize_from_data(items)
 
-        # Create DynamicMap with kdims if the plotter provides them
-        kdims = plotter.kdims
-        if kdims is not None:
-            dmap = hv.DynamicMap(plotter, streams=[pipe], kdims=kdims, cache_size=1)
-        else:
-            dmap = hv.DynamicMap(plotter, streams=[pipe], cache_size=1)
+        # Create DynamicMap with kdims (None if plotter doesn't use them)
+        dmap = hv.DynamicMap(plotter, streams=[pipe], kdims=plotter.kdims, cache_size=1)
 
         return dmap.opts(shared_axes=False)
