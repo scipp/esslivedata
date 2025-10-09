@@ -68,15 +68,32 @@ _xy_projection = DetectorProjection(
     resolution_scale=8,
 )
 
+_bank_sizes = {
+    'mantle_detector': {
+        'wire': 32,
+        'module': 5,
+        'segment': 6,
+        'strip': 256,
+        'counter': 2,
+    },
+}
+
 
 def _get_mantle_front_layer(da: sc.DataArray) -> sc.DataArray:
     return (
-        da.fold(
-            dim=da.dim,
-            sizes={'wire': 32, 'module': 5, 'segment': 6, 'strip': 256, 'counter': 2},
-        )
+        da.fold(dim=da.dim, sizes=_bank_sizes['mantle_detector'])
         .transpose(('wire', 'module', 'segment', 'counter', 'strip'))['wire', 0]
         .flatten(('module', 'segment', 'counter'), to='mod/seg/cntr')
+    )
+
+
+def _get_wire_view(da: sc.DataArray) -> sc.DataArray:
+    return (
+        da.fold(dim=da.dim, sizes=_bank_sizes['mantle_detector'])
+        .sum('strip')
+        .flatten(('module', 'segment', 'counter'), to='mod/seg/cntr')
+        # Transpose so that wire is the "x" dimension for more natural plotting.
+        .transpose()
     )
 
 
@@ -94,6 +111,16 @@ _logical_view = DetectorLogicalView(
     instrument=instrument, config=_mantle_front_layer_config
 )
 
+_mantle_wire_view_config = LogicalViewConfig(
+    name='mantle_wire_view',
+    title='Mantle wire view',
+    description='Sum over strips to show counts per wire in the mantle detector.',
+    source_names=['mantle_detector'],
+    transform=_get_wire_view,
+)
+_mantle_wire_view = DetectorLogicalView(
+    instrument=instrument, config=_mantle_wire_view_config
+)
 
 detectors_config = {
     'fakes': {

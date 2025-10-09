@@ -19,36 +19,26 @@ This will run the services with a simplified topic structure and make them compa
 Note also the `--sink png` argument, which will save the outputs as PNG files instead of publishing them to Kafka.
 This allows for testing the service outputs without running the dashboard.
 
-### Dashboard Services
+### Dashboard
 
 #### Development Mode
 
-The dashboard services can be run in development mode using:
+The dashboard can be run in development mode using:
 
 ```sh
-python -m ess.livedata.dashboard.monitors --instrument dummy
-python -m ess.livedata.dashboard.detectors --instrument dummy
 python -m ess.livedata.dashboard.reduction --instrument dummy
 ```
 
 #### Production Mode
 
-The dashboard services can be run in production mode using gunicorn:
+The dashboard can be run in production mode using gunicorn:
 
 ```sh
-# Monitors dashboard (runs on port 5007)
-LIVEDATA_INSTRUMENT=dummy gunicorn ess.livedata.dashboard.monitors_wsgi:application
-
-# Detectors dashboard (runs on port 5008)
-LIVEDATA_INSTRUMENT=dummy gunicorn ess.livedata.dashboard.detectors_wsgi:application
-
 # Reduction dashboard (runs on port 5009)
 LIVEDATA_INSTRUMENT=dummy gunicorn ess.livedata.dashboard.reduction_wsgi:application
 ```
 
-Navigate to `http://localhost:5007` for the monitors dashboard, `http://localhost:5008` for the detectors dashboard, or `http://localhost:5009` for the reduction dashboard.
-
-All three dashboards can run simultaneously on their respective ports.
+Navigate to `http://localhost:5009` for the reduction dashboard.
 
 ### Fake data services
 
@@ -79,17 +69,17 @@ Run the monitor data histogramming and accumulation service:
 python -m ess.livedata.services.monitor_data --instrument dummy
 ```
 
-Run the monitors dashboard service:
+Run the reduction dashboard:
 
 ```sh
-# Development mode (runs on port 5007)
-python -m ess.livedata.dashboard.monitors --instrument dummy
+# Development mode (runs on port 5009)
+python -m ess.livedata.dashboard.reduction --instrument dummy
 
 # Or production mode with gunicorn
-LIVEDATA_INSTRUMENT=dummy gunicorn ess.livedata.dashboard.monitors_wsgi:application
+LIVEDATA_INSTRUMENT=dummy gunicorn ess.livedata.dashboard.reduction_wsgi:application
 ```
 
-Navigate to `http://localhost:5007` to see the dashboard.
+Navigate to `http://localhost:5009` to see the dashboard.
 
 ## Running the services using Docker
 
@@ -108,28 +98,13 @@ This can be then used with the services run manually as described above.
 Alternatively, you can use profiles to start specific service groups:
 
 ```sh
-# Start monitor services (includes fake data, monitor processing, and monitors dashboard)
-LIVEDATA_INSTRUMENT=dummy docker-compose --profile monitor -f docker-compose.yml up
-
-# Start detector services (includes fake data and detector processing)
-LIVEDATA_INSTRUMENT=dummy docker-compose --profile detector -f docker-compose.yml up
-
 # Start reduction dashboard
 LIVEDATA_INSTRUMENT=dummy docker-compose --profile reduction -f docker-compose-ess.livedata.yml up
 ```
 
 It will take a minute or two for the services to start fully.
 
-When using the `monitor` profile, navigate to `http://localhost:5007` to see the monitors dashboard.
-When using the `detector` profile, navigate to `http://localhost:5008` to see the detectors dashboard.
 When using the `reduction` profile, navigate to `http://localhost:5009` to see the reduction dashboard.
-
-Both dashboard profiles can be run simultaneously:
-
-```sh
-# Run both monitors and reduction dashboards
-LIVEDATA_INSTRUMENT=dummy docker-compose --profile monitor --profile reduction -f docker-compose-ess.livedata.yml up
-```
 
 ### Kafka Configuration
 
