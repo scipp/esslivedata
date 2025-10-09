@@ -350,8 +350,11 @@ class PlottingController:
             # Store reference to slider in plotter so it can update bounds
             plotter.slider_widget = slider
 
-            # Link the slider to the stream parameter
-            slider.jslink(plotter.slice_stream, value='slice_index', bidirectional=True)
+            # Link the slider to the stream using param.watch
+            slider.param.watch(
+                lambda event: plotter.slice_stream.event(slice_index=event.new),
+                'value',
+            )
 
             # Return a column with slider on top and plot below
             return pn.Column(

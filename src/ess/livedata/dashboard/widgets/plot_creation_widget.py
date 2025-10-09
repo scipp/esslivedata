@@ -351,7 +351,7 @@ class PlotCreationWidget:
         """Handle successful plot creation."""
         # Wrap in pane if it's a HoloViews object, otherwise use directly
         # (PlottingController may return pn.Column for plots with controls)
-        if isinstance(dmap, pn.layout.Panel):
+        if isinstance(dmap, pn.viewable.Viewable):
             plot_pane = dmap
         else:
             plot_pane = pn.pane.HoloViews(dmap, sizing_mode='stretch_width')
