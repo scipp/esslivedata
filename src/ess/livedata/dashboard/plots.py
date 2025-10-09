@@ -266,13 +266,6 @@ class SlicerPlotter(Plotter):
         self._scale_opts = scale_opts
         self._slice_dim: str | None = None
         self._max_slice_idx: int | None = None
-        self._current_slice_index: int = 0
-        self.slider_widget = None  # Will be set by PlottingController
-
-        # Create custom stream for slice selection
-        # This will automatically create a slider widget
-        SliceIndex = hv.streams.Stream.define('SliceIndex', slice_index=0)
-        self.slice_stream = SliceIndex()
 
         # Base options for the image plot (similar to ImagePlotter)
         self._base_opts = {
@@ -304,13 +297,13 @@ class SlicerPlotter(Plotter):
         # Use the first dimension
         return data.dims[0]
 
-    def _get_slice_index(self) -> int:
-        """Get current slice index, clipped to valid range."""
+    def _get_slice_index(self, requested_idx: int) -> int:
+        """Get slice index, clipped to valid range."""
         if self._max_slice_idx is None:
-            return self._current_slice_index
+            return requested_idx
 
         # Clip to valid range
-        return min(self._current_slice_index, self._max_slice_idx)
+        return min(requested_idx, self._max_slice_idx)
 
     def _format_slice_label(self, data: sc.DataArray, slice_idx: int) -> str:
         """Format a label showing the current slice position."""
@@ -338,7 +331,7 @@ class SlicerPlotter(Plotter):
 
         return label
 
-    def plot(self, data: sc.DataArray, data_key: ResultKey) -> hv.Image:
+    def plot(self, data: sc.DataArray, data_key: ResultKey, slice_idx: int) -> hv.Image:
         """
         Create a 2D image from a slice of 3D data.
 
@@ -348,6 +341,8 @@ class SlicerPlotter(Plotter):
             3D DataArray to slice.
         data_key:
             Key identifying this data.
+        slice_idx:
+            Index of the slice to display.
 
         Returns
         -------
@@ -369,11 +364,8 @@ class SlicerPlotter(Plotter):
         new_max = data.sizes[self._slice_dim] - 1
         if self._max_slice_idx is None or self._max_slice_idx != new_max:
             self._max_slice_idx = new_max
-            # Update slider widget bounds if available
-            if self.slider_widget is not None:
-                self.slider_widget.end = new_max
 
-        slice_idx = self._get_slice_index()
+        slice_idx = self._get_slice_index(slice_idx)
 
         # Slice the 3D data to get 2D
         sliced_data = data[self._slice_dim, slice_idx]
@@ -404,29 +396,48 @@ class SlicerPlotter(Plotter):
         return image.opts(framewise=framewise, title=title, **self._base_opts)
 
     def __call__(
-        self, data: dict[ResultKey, sc.DataArray], slice_index: int = 0, **kwargs
+        self, data: dict[ResultKey, sc.DataArray], slice_index: int = 0
     ) -> hv.Overlay | hv.Layout | hv.Element:
         """
         Create plots from 3D data, slicing at the given index.
 
-        This method is called by HoloViews DynamicMap with stream parameters.
+        This method is called by HoloViews DynamicMap with kdims parameter.
 
         Parameters
         ----------
         data:
             Dictionary of 3D DataArrays to plot.
         slice_index:
-            Index of the slice to display (from slice_stream).
-        **kwargs:
-            Additional keyword arguments from other streams (ignored).
+            Index of the slice to display (from kdims).
 
         Returns
         -------
         :
             HoloViews element(s) showing the sliced data.
         """
-        # Store the slice index from the stream parameter
+        # Store slice_index to be used by plot()
         self._current_slice_index = slice_index
 
-        # Use parent implementation which calls self.plot() for each dataset
-        return super().__call__(data)
+        # Build list of plots
+        plots: list[hv.Element] = []
+        try:
+            for data_key, da in data.items():
+                plot_element = self.plot(da, data_key, slice_index)
+                # Add label from data_key if the plot supports it
+                if hasattr(plot_element, 'relabel'):
+                    plot_element = plot_element.relabel(data_key.job_id.source_name)
+                plots.append(plot_element)
+        except Exception as e:
+            plots = [
+                hv.Text(0.5, 0.5, f"Error: {e}").opts(
+                    text_align='center', text_baseline='middle'
+                )
+            ]
+
+        plots = [self._apply_generic_options(p) for p in plots]
+
+        if len(plots) == 1:
+            return plots[0]
+        if self.layout_params.combine_mode == 'overlay':
+            return hv.Overlay(plots)
+        return hv.Layout(plots).cols(self.layout_params.layout_columns)

@@ -194,13 +194,12 @@ class TestSlicerPlotter:
 
     def test_initialization(self, slicer_plotter):
         """Test that SlicerPlotter initializes correctly."""
-        assert hasattr(slicer_plotter, 'slice_stream')
-        assert slicer_plotter.slice_stream is not None
-        assert slicer_plotter.slice_stream.slice_index == 0
+        assert slicer_plotter._slice_dim is None
+        assert slicer_plotter._max_slice_idx is None
 
     def test_plot_slices_3d_data(self, slicer_plotter, test_3d_data, test_data_key):
         """Test that SlicerPlotter correctly slices 3D data."""
-        result = slicer_plotter.plot(test_3d_data, test_data_key)
+        result = slicer_plotter.plot(test_3d_data, test_data_key, slice_idx=0)
         assert isinstance(result, hv.Image)
         # The result should be a 2D image
         assert result is not None
@@ -209,9 +208,8 @@ class TestSlicerPlotter:
         """Test that changing slice index affects the plot."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
-        # Set slice index directly (as __call__ would do)
-        plotter._current_slice_index = 2
-        result = plotter.plot(test_3d_data, test_data_key)
+        # Plot with different slice index
+        result = plotter.plot(test_3d_data, test_data_key, slice_idx=2)
         assert isinstance(result, hv.Image)
 
     def test_auto_determines_slice_dimension(
@@ -221,7 +219,7 @@ class TestSlicerPlotter:
         # Before first plot, slice_dim is None
         assert slicer_plotter._slice_dim is None
         # After plotting, it should be set to first dimension
-        slicer_plotter.plot(test_3d_data, test_data_key)
+        slicer_plotter.plot(test_3d_data, test_data_key, slice_idx=0)
         assert slicer_plotter._slice_dim == 'z'
 
     def test_slice_label_with_coords(self, slicer_plotter, test_3d_data, test_data_key):
@@ -246,10 +244,9 @@ class TestSlicerPlotter:
         """Test that slice index is clipped to valid range."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
-        # Set index beyond data range
-        plotter.slice_stream.event(slice_index=100)
+        # Request index beyond data range
         # Should not raise, should clip to valid range
-        result = plotter.plot(test_3d_data, test_data_key)
+        result = plotter.plot(test_3d_data, test_data_key, slice_idx=100)
         assert result is not None
 
     def test_multiple_datasets(self, test_3d_data, test_data_key):
@@ -273,7 +270,7 @@ class TestSlicerPlotter:
         result = plotter(data_dict)
         assert result is not None
 
-    def test_edge_coordinates(self, test_data_key):
+    def test_edge_coordinates(self, slicer_plotter, test_data_key):
         """Test handling of edge coordinates."""
         # Create data with edge coordinates
         x_edges = sc.linspace('x', 0.0, 10.0, num=11, unit='m')
@@ -285,9 +282,7 @@ class TestSlicerPlotter:
             coords={'x': x_edges, 'y': y_edges, 'z': z_edges},
         )
 
-        params = PlotParams3d(plot_scale=PlotScaleParams2d())
-        plotter = plots.SlicerPlotter.from_params(params)
-        result = plotter.plot(data, test_data_key)
+        result = slicer_plotter.plot(data, test_data_key, slice_idx=0)
         assert isinstance(result, hv.Image)
 
     def test_inconsistent_dimensions_raises(self, test_data_key):
@@ -299,7 +294,7 @@ class TestSlicerPlotter:
         data1 = sc.DataArray(
             sc.ones(dims=['z', 'y', 'x'], shape=[5, 8, 10], unit='counts')
         )
-        plotter.plot(data1, test_data_key)
+        plotter.plot(data1, test_data_key, slice_idx=0)
 
         # Second data has different first dimension
         data2 = sc.DataArray(
@@ -318,7 +313,7 @@ class TestSlicerPlotter:
 
         # Should raise because 'z' not in dims
         with pytest.raises(ValueError, match="Slice dimension 'z' not found"):
-            plotter.plot(data2, test_data_key2)
+            plotter.plot(data2, test_data_key2, slice_idx=0)
 
     def test_call_accepts_slice_index_parameter(self, test_3d_data, test_data_key):
         """Test that __call__ accepts slice_index parameter from stream."""

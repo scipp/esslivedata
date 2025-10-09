@@ -322,43 +322,16 @@ class PlottingController:
         pipe = self._stream_manager.make_merging_stream(items)
         plotter = plotter_registry.create_plotter(plot_name, params=params)
 
-        # Collect all streams: data pipe + any plotter-specific streams
-        streams = [pipe]
+        # For SlicerPlotter, use kdims to automatically generate slider
+        if plot_name == 'slicer':
+            # kdims will automatically create a slider for the slice_index parameter
+            # The range will need to be determined from the data
+            dmap = hv.DynamicMap(
+                plotter, streams=[pipe], kdims=['slice_index'], cache_size=1
+            ).redim.range(slice_index=(0, 10))  # Initial range, will update dynamically
+            return dmap.opts(shared_axes=False)
 
-        # Check if plotter has additional streams (e.g., slice_stream for SlicerPlotter)
-        if hasattr(plotter, 'slice_stream'):
-            streams.append(plotter.slice_stream)
-
-        dmap = hv.DynamicMap(plotter, streams=streams, cache_size=1).opts(
+        # For other plotters, use standard DynamicMap with just the data pipe
+        return hv.DynamicMap(plotter, streams=[pipe], cache_size=1).opts(
             shared_axes=False
         )
-
-        # If plotter has a slice_stream, create a column with slider + plot
-        if hasattr(plotter, 'slice_stream'):
-            import panel as pn
-
-            # Create a slider widget linked to the stream
-            # The max value will be updated dynamically, start with reasonable default
-            slider = pn.widgets.IntSlider(
-                name='Slice Index',
-                start=0,
-                end=10,  # Will be updated dynamically by plotter
-                value=0,
-                step=1,
-            )
-
-            # Store reference to slider in plotter so it can update bounds
-            plotter.slider_widget = slider
-
-            # Link the slider to the stream using param.watch
-            slider.param.watch(
-                lambda event: plotter.slice_stream.event(slice_index=event.new),
-                'value',
-            )
-
-            # Return a column with slider on top and plot below
-            return pn.Column(
-                slider, pn.pane.HoloViews(dmap, sizing_mode='stretch_width')
-            )
-
-        return dmap
