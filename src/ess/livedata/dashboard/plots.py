@@ -319,12 +319,8 @@ class SlicerPlotter(Plotter):
             else:
                 value = coord[slice_idx]
 
-            # Format with unit if available (and not dimensionless)
-            if str(value.unit) != 'dimensionless':
-                label = f"{self._slice_dim}={value.value:.3g} {value.unit!s}"
-            else:
-                label = f"{self._slice_dim}={value.value:.3g}"
-            label += f" (slice {slice_idx}/{max_idx})"
+            # Format using scipp's compact format syntax
+            label = f"{self._slice_dim}={value:c} (slice {slice_idx}/{max_idx})"
         else:
             # No coordinate, just show index
             label = f"{self._slice_dim}[{slice_idx}/{max_idx}]"
