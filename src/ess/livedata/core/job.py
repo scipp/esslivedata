@@ -132,6 +132,17 @@ class Job:
         self._source_names = source_names
         self._aux_source_mapping: dict[str, str] = aux_source_names or {}
 
+        # Create reverse mapping: stream_name -> list of field_names
+        # This supports multiplexing where one stream maps to multiple fields. In most
+        # cases this is not desirable, but the pydantic model for the aux sources should
+        # perform such validation. Here is not the place to prevent this, since there
+        # may be valid use cases.
+        self._stream_to_fields: dict[str, list[str]] = {}
+        for field_name, stream_name in self._aux_source_mapping.items():
+            if stream_name not in self._stream_to_fields:
+                self._stream_to_fields[stream_name] = []
+            self._stream_to_fields[stream_name].append(field_name)
+
     @property
     def job_id(self) -> JobId:
         return self._job_id
@@ -165,17 +176,12 @@ class Job:
     def add(self, data: JobData) -> JobReply:
         try:
             # Remap aux_data keys from stream names to field names for the workflow
-            # Create reverse mapping: stream_name -> field_name
-            stream_to_field = {
-                stream_name: field_name
-                for field_name, stream_name in self._aux_source_mapping.items()
-            }
-
-            # Remap aux_data keys
-            remapped_aux_data = {
-                stream_to_field.get(stream_name, stream_name): value
-                for stream_name, value in data.aux_data.items()
-            }
+            # Handle multiplexing: one stream may map to multiple fields
+            remapped_aux_data = {}
+            for stream_name, value in data.aux_data.items():
+                field_names = self._stream_to_fields.get(stream_name, [stream_name])
+                for field_name in field_names:
+                    remapped_aux_data[field_name] = value
 
             # Pass data to workflow with field names (not stream names)
             self._processor.accumulate({**data.primary_data, **remapped_aux_data})
