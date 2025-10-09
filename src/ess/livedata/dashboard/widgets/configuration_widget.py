@@ -74,11 +74,14 @@ class ConfigurationWidget:
 
     def _create_model_widget(self) -> ModelWidget | NoParamsWidget | ErrorWidget:
         """Create model widget based on current aux source selections."""
-        # Get aux source selections from the ParamWidget
+        # Get aux source selections as a model instance
         if self._aux_sources_widget is not None:
-            aux_selections = self._aux_sources_widget.get_values()
+            try:
+                aux_selections = self._aux_sources_widget.create_model()
+            except Exception as e:
+                return ErrorWidget(f"Invalid aux source selection: {e}")
         else:
-            aux_selections = {}
+            aux_selections = None
 
         try:
             model_class = self._config.model_class(aux_selections)
@@ -144,12 +147,12 @@ class ConfigurationWidget:
         return self._source_selector.value
 
     @property
-    def selected_aux_sources(self) -> dict[str, str]:
-        """Get the selected auxiliary source names."""
+    def selected_aux_sources(self):
+        """Get the selected auxiliary sources as a Pydantic model instance."""
         if self._aux_sources_widget is None:
-            return {}
-        # Get values from ParamWidget and convert enum instances to their values
-        return self._aux_sources_widget.get_values()
+            return None
+        # Create and return the validated Pydantic model
+        return self._aux_sources_widget.create_model()
 
     @property
     def parameter_values(self):
@@ -294,7 +297,7 @@ class ConfigurationModal:
         success = self._config.start_action(
             self._config_widget.selected_sources,
             self._config_widget.parameter_values,
-            self._config_widget.selected_aux_sources or None,
+            self._config_widget.selected_aux_sources,
         )
 
         if not success:

@@ -49,7 +49,7 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         return self._persistent_config.config.aux_source_names
 
     def model_class(
-        self, aux_source_names: dict[str, str]
+        self, aux_source_names: pydantic.BaseModel | None
     ) -> type[pydantic.BaseModel] | None:
         """Get workflow parameters model class."""
         return self._spec.params
@@ -75,9 +75,11 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         self,
         selected_sources: list[str],
         parameter_values: pydantic.BaseModel,
-        aux_source_names: dict[str, str] | None = None,
+        aux_source_names: pydantic.BaseModel | None = None,
     ) -> bool:
         """Start the workflow with given sources and parameters."""
-        return self._start_callback(
-            selected_sources, parameter_values, aux_source_names
+        # Serialize aux_source_names to dict for the callback
+        aux_dict = (
+            aux_source_names.model_dump(mode='json') if aux_source_names else None
         )
+        return self._start_callback(selected_sources, parameter_values, aux_dict)

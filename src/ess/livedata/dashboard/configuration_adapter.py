@@ -45,14 +45,16 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         return {}
 
     @abstractmethod
-    def model_class(self, aux_source_names: dict[str, str]) -> type[Model] | None:
+    def model_class(self, aux_source_names: BaseModel | None) -> type[Model] | None:
         """
         Pydantic model class for parameters.
 
         Parameters
         ----------
         aux_source_names
-            Selected auxiliary source names by category
+            Selected auxiliary sources as a Pydantic model instance, or None if no
+            aux sources are selected. The adapter can serialize this using
+            model_dump() or model_dump(mode='json') as needed.
         """
 
     @property
@@ -75,7 +77,7 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         self,
         selected_sources: list[str],
         parameter_values: Model,
-        aux_source_names: dict[str, str] | None = None,
+        aux_source_names: BaseModel | None = None,
     ) -> bool:
         """
         Execute the start action with selected sources and parameters.
@@ -85,9 +87,10 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         selected_sources
             Selected source names
         parameter_values
-            Parameter values
+            Parameter values as a validated Pydantic model instance
         aux_source_names
-            Selected auxiliary source names (field name → stream name)
+            Selected auxiliary sources as a Pydantic model instance, or None if no
+            aux sources are selected
 
         Returns
         -------
