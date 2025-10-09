@@ -354,6 +354,8 @@ class PlottingController:
             slider.jslink(plotter.slice_stream, value='slice_index', bidirectional=True)
 
             # Return a column with slider on top and plot below
-            return pn.Column(slider, dmap)
+            return pn.Column(
+                slider, pn.pane.HoloViews(dmap, sizing_mode='stretch_width')
+            )
 
         return dmap
