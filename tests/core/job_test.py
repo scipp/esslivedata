@@ -559,3 +559,41 @@ class TestJobAuxSourceMapping:
         assert "incident_monitor" in accumulated
         assert "transmission_monitor" not in accumulated
         assert accumulated["incident_monitor"] == sc.scalar(10.0)
+
+    def test_stream_multiplexing_to_multiple_fields(
+        self, fake_processor: FakeProcessor, sample_workflow_id: WorkflowId
+    ):
+        """Test that one stream can be multiplexed to multiple field names."""
+        job_id = JobId(source_name="detector1", job_number=1)
+        job = Job(
+            job_id=job_id,
+            workflow_id=sample_workflow_id,
+            processor=fake_processor,
+            source_names=["detector1"],
+            aux_source_names={
+                "incident_monitor": "monitor1",  # Both fields map to same stream
+                "normalization_monitor": "monitor1",
+            },
+        )
+
+        # Send data with the multiplexed stream
+        data = JobData(
+            start_time=100,
+            end_time=200,
+            primary_data={"detector1": sc.scalar(100.0)},
+            aux_data={
+                "monitor1": sc.scalar(10.0),  # One stream
+            },
+        )
+        job.add(data)
+
+        # Verify workflow received data with both field names pointing to same value
+        assert len(fake_processor.accumulate_calls) == 1
+        accumulated = fake_processor.accumulate_calls[0]
+        assert "detector1" in accumulated
+        assert "incident_monitor" in accumulated
+        assert "normalization_monitor" in accumulated
+        assert "monitor1" not in accumulated  # Stream name should not appear
+        assert accumulated["incident_monitor"] == sc.scalar(10.0)
+        assert accumulated["normalization_monitor"] == sc.scalar(10.0)
+        assert len(accumulated) == 3  # detector1 + 2 field names
