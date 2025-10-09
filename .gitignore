@@ -29,6 +29,7 @@ docs/generated/
 # Editor settings
 .idea/
 .vscode/
+.claude/settings.local.json
 
 # Data files
 *.data

@@ -14,9 +14,9 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import JobId, JobNumber, ResultKey, WorkflowSpec
 from ess.livedata.parameter_models import EdgesModel, make_edges
 
+from .configuration_adapter import ConfigurationAdapter
 from .data_service import DataService
 from .data_subscriber import DataSubscriber, MergingStreamAssembler
-from .widgets.configuration_widget import ConfigurationAdapter
 
 
 class EdgesWithUnit(EdgesModel):
@@ -248,6 +248,8 @@ class CorrelationHistogram1dConfigurationAdapter(
     @property
     def aux_source_names(self) -> dict[str, list[str]]:
         source_names = list(self._source_name_to_key.keys())
+        if len(source_names) < 1:
+            raise ValueError("At least one timeseries must be available.")
         return {'x_param': source_names}
 
     def _create_dynamic_model_class(
@@ -277,6 +279,8 @@ class CorrelationHistogram2dConfigurationAdapter(
     @property
     def aux_source_names(self) -> dict[str, list[str]]:
         source_names = list(self._source_name_to_key.keys())
+        if len(source_names) < 2:
+            raise ValueError("At least two timeseries must be available.")
         return {'x_param': source_names, 'y_param': source_names}
 
     def _create_dynamic_model_class(
@@ -405,7 +409,12 @@ class CorrelationHistogrammer:
         # For now, if we expect timeseries to not update more than once per second, this
         # should be acceptable.
         for dim in self._edges:
-            lut = sc.lookup(sc.values(coords[dim]), mode='previous')
+            lut = sc.lookup(
+                sc.values(coords[dim])
+                if coords[dim].variances is not None
+                else coords[dim],
+                mode='previous',
+            )
             dependent.coords[dim] = lut[dependent.coords['time']]
         if self._normalize:
             return dependent.bin(**self._edges).bins.mean()
