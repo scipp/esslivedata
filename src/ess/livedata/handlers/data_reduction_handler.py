@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import scipp as sc
 
-from ..core.handler import Accumulator, JobBasedHandlerFactoryBase
+from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import Cumulative, DetectorEvents
 from .to_nxevent_data import ToNXevent_data
@@ -12,7 +12,7 @@ from .to_nxlog import ToNXlog
 
 
 class ReductionHandlerFactory(
-    JobBasedHandlerFactoryBase[DetectorEvents, sc.DataGroup[sc.DataArray]]
+    JobBasedPreprocessorFactoryBase[DetectorEvents, sc.DataGroup[sc.DataArray]]
 ):
     """Factory for data reduction handlers."""
 
