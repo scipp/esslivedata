@@ -202,7 +202,7 @@ class TestSlicerPlotter:
     def test_plot_slices_3d_data(self, slicer_plotter, test_3d_data, test_data_key):
         """Test that SlicerPlotter correctly slices 3D data."""
         result = slicer_plotter.plot(
-            test_3d_data, test_data_key, slice_dim='z', slice_idx=0
+            test_3d_data, test_data_key, slice_dim='z', z_index=0
         )
         assert isinstance(result, hv.Image)
         # The result should be a 2D image
@@ -213,7 +213,7 @@ class TestSlicerPlotter:
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
         # Plot with different slice index
-        result = plotter.plot(test_3d_data, test_data_key, slice_dim='z', slice_idx=2)
+        result = plotter.plot(test_3d_data, test_data_key, slice_dim='z', z_index=2)
         assert isinstance(result, hv.Image)
 
     def test_can_slice_along_different_dimensions(
@@ -222,19 +222,19 @@ class TestSlicerPlotter:
         """Test that we can slice along different dimensions."""
         # Can slice along z
         result_z = slicer_plotter.plot(
-            test_3d_data, test_data_key, slice_dim='z', slice_idx=0
+            test_3d_data, test_data_key, slice_dim='z', z_index=0
         )
         assert isinstance(result_z, hv.Image)
 
         # Can slice along y
         result_y = slicer_plotter.plot(
-            test_3d_data, test_data_key, slice_dim='y', slice_idx=0
+            test_3d_data, test_data_key, slice_dim='y', y_index=0
         )
         assert isinstance(result_y, hv.Image)
 
         # Can slice along x
         result_x = slicer_plotter.plot(
-            test_3d_data, test_data_key, slice_dim='x', slice_idx=0
+            test_3d_data, test_data_key, slice_dim='x', x_index=0
         )
         assert isinstance(result_x, hv.Image)
 
@@ -258,7 +258,7 @@ class TestSlicerPlotter:
         plotter = plots.SlicerPlotter.from_params(params)
         # Request index beyond data range
         # Should not raise, should clip to valid range
-        result = plotter.plot(test_3d_data, test_data_key, slice_dim='z', slice_idx=100)
+        result = plotter.plot(test_3d_data, test_data_key, slice_dim='z', z_index=100)
         assert result is not None
 
     def test_multiple_datasets(self, test_3d_data, test_data_key):
@@ -294,7 +294,7 @@ class TestSlicerPlotter:
             coords={'x': x_edges, 'y': y_edges, 'z': z_edges},
         )
 
-        result = slicer_plotter.plot(data, test_data_key, slice_dim='z', slice_idx=0)
+        result = slicer_plotter.plot(data, test_data_key, slice_dim='z', z_index=0)
         assert isinstance(result, hv.Image)
 
     def test_inconsistent_dimensions_raises(self, test_data_key):
@@ -308,7 +308,9 @@ class TestSlicerPlotter:
         )
         # Try slicing with invalid dimension
         with pytest.raises(ValueError, match="not found in data"):
-            plotter.plot(data1, test_data_key, slice_dim='invalid_dim', slice_idx=0)
+            plotter.plot(
+                data1, test_data_key, slice_dim='invalid_dim', invalid_dim_index=0
+            )
 
     def test_call_with_dimension_selector(self, test_3d_data, test_data_key):
         """Test that __call__ accepts slice_dim and index parameters."""

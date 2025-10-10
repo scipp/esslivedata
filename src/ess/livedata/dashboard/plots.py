@@ -141,13 +141,13 @@ class Plotter(ABC):
         return plot_data
 
     def __call__(
-        self, data: dict[ResultKey, sc.DataArray]
+        self, data: dict[ResultKey, sc.DataArray], **kwargs
     ) -> hv.Overlay | hv.Layout | hv.Element:
         """Create one or more plots from the given data."""
         plots: list[hv.Element] = []
         try:
             for data_key, da in data.items():
-                plot_element = self.plot(da, data_key)
+                plot_element = self.plot(da, data_key, **kwargs)
                 # Add label from data_key if the plot supports it
                 if hasattr(plot_element, 'relabel'):
                     plot_element = plot_element.relabel(data_key.job_id.source_name)
@@ -212,7 +212,7 @@ class Plotter(ABC):
         return None
 
     @abstractmethod
-    def plot(self, data: sc.DataArray, data_key: ResultKey) -> Any:
+    def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> Any:
         """Create a plot from the given data. Must be implemented by subclasses."""
 
 
@@ -248,7 +248,7 @@ class LinePlotter(Plotter):
             scale_opts=params.plot_scale,
         )
 
-    def plot(self, data: sc.DataArray, data_key: ResultKey) -> hv.Curve:
+    def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Curve:
         """Create a line plot from a scipp DataArray."""
         # TODO Currently we do not plot histograms or else we get a bar chart that is
         # not looking great if we have many bins.
@@ -292,7 +292,7 @@ class ImagePlotter(Plotter):
             scale_opts=params.plot_scale,
         )
 
-    def plot(self, data: sc.DataArray, data_key: ResultKey) -> hv.Image:
+    def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Image:
         """Create a 2D plot from a scipp DataArray."""
         # Prepare data with appropriate dtype and log scale masking
         use_log_scale = self._scale_opts.color_scale == PlotScale.log
@@ -442,7 +442,12 @@ class SlicerPlotter(Plotter):
         return label
 
     def plot(
-        self, data: sc.DataArray, data_key: ResultKey, slice_dim: str, slice_idx: int
+        self,
+        data: sc.DataArray,
+        data_key: ResultKey,
+        *,
+        slice_dim: str = '',
+        **kwargs,
     ) -> hv.Image:
         """
         Create a 2D image from a slice of 3D data.
@@ -455,14 +460,18 @@ class SlicerPlotter(Plotter):
             Key identifying this data.
         slice_dim:
             Name of the dimension to slice along.
-        slice_idx:
-            Index of the slice to display.
+        **kwargs:
+            Additional keyword arguments including '{slice_dim}_index'
+            for the slice index.
 
         Returns
         -------
         :
             A HoloViews Image element showing the selected slice.
         """
+        # Extract slice index from kwargs based on the selected dimension
+        slice_idx = kwargs.get(f'{slice_dim}_index', 0)
+
         # Validate that slice_dim exists in the data
         if slice_dim not in data.dims:
             raise ValueError(
@@ -493,53 +502,3 @@ class SlicerPlotter(Plotter):
         title = f"{data.name or 'Data'} - {slice_label}"
 
         return image.opts(framewise=framewise, title=title, **self._base_opts)
-
-    def __call__(
-        self, data: dict[ResultKey, sc.DataArray], slice_dim: str = '', **slice_indices
-    ) -> hv.Overlay | hv.Layout | hv.Element:
-        """
-        Create plots from 3D data, slicing at the given index along selected dimension.
-
-        This method is called by HoloViews DynamicMap with kdims parameters.
-
-        Parameters
-        ----------
-        data:
-            Dictionary of 3D DataArrays to plot.
-        slice_dim:
-            Name of the dimension to slice along (from kdims selector).
-        **slice_indices:
-            Keyword arguments containing '{dim_name}_index' for each dimension.
-            Only the index corresponding to slice_dim is used.
-
-        Returns
-        -------
-        :
-            HoloViews element(s) showing the sliced data.
-        """
-        # Build list of plots
-        plots: list[hv.Element] = []
-        try:
-            for data_key, da in data.items():
-                # Get the slice index for the selected dimension
-                slice_idx = slice_indices.get(f'{slice_dim}_index', 0)
-
-                plot_element = self.plot(da, data_key, slice_dim, slice_idx)
-                # Add label from data_key if the plot supports it
-                if hasattr(plot_element, 'relabel'):
-                    plot_element = plot_element.relabel(data_key.job_id.source_name)
-                plots.append(plot_element)
-        except Exception as e:
-            plots = [
-                hv.Text(0.5, 0.5, f"Error: {e}").opts(
-                    text_align='center', text_baseline='middle'
-                )
-            ]
-
-        plots = [self._apply_generic_options(p) for p in plots]
-
-        if len(plots) == 1:
-            return plots[0]
-        if self.layout_params.combine_mode == 'overlay':
-            return hv.Overlay(plots)
-        return hv.Layout(plots).cols(self.layout_params.layout_columns)
