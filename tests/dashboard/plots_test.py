@@ -194,15 +194,17 @@ class TestSlicerPlotter:
 
     def test_initialization(self, slicer_plotter):
         """Test that SlicerPlotter initializes correctly."""
-        assert slicer_plotter._dim_names is None
-        assert slicer_plotter._dim_sizes is None
+        # kdims should be None before initialization
+        assert slicer_plotter.kdims is None
         # Uses base class autoscalers dict (initialized lazily)
         assert slicer_plotter.autoscalers == {}
 
     def test_plot_slices_3d_data(self, slicer_plotter, test_3d_data, test_data_key):
         """Test that SlicerPlotter correctly slices 3D data."""
+        slicer_plotter.initialize_from_data({test_data_key: test_3d_data})
+        z_value = float(test_3d_data.coords['z'].values[0])
         result = slicer_plotter.plot(
-            test_3d_data, test_data_key, slice_dim='z', z_index=0
+            test_3d_data, test_data_key, slice_dim='z', z_value=z_value
         )
         assert isinstance(result, hv.Image)
         # The result should be a 2D image
@@ -212,53 +214,84 @@ class TestSlicerPlotter:
         """Test that changing slice index affects the plot."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
-        # Plot with different slice index
-        result = plotter.plot(test_3d_data, test_data_key, slice_dim='z', z_index=2)
+        plotter.initialize_from_data({test_data_key: test_3d_data})
+        # Plot with different slice value
+        z_value = float(test_3d_data.coords['z'].values[2])
+        result = plotter.plot(
+            test_3d_data, test_data_key, slice_dim='z', z_value=z_value
+        )
         assert isinstance(result, hv.Image)
 
     def test_can_slice_along_different_dimensions(
         self, slicer_plotter, test_3d_data, test_data_key
     ):
         """Test that we can slice along different dimensions."""
+        slicer_plotter.initialize_from_data({test_data_key: test_3d_data})
+
         # Can slice along z
+        z_value = float(test_3d_data.coords['z'].values[0])
         result_z = slicer_plotter.plot(
-            test_3d_data, test_data_key, slice_dim='z', z_index=0
+            test_3d_data, test_data_key, slice_dim='z', z_value=z_value
         )
         assert isinstance(result_z, hv.Image)
 
         # Can slice along y
+        y_value = float(test_3d_data.coords['y'].values[0])
         result_y = slicer_plotter.plot(
-            test_3d_data, test_data_key, slice_dim='y', y_index=0
+            test_3d_data, test_data_key, slice_dim='y', y_value=y_value
         )
         assert isinstance(result_y, hv.Image)
 
         # Can slice along x
+        x_value = float(test_3d_data.coords['x'].values[0])
         result_x = slicer_plotter.plot(
-            test_3d_data, test_data_key, slice_dim='x', x_index=0
+            test_3d_data, test_data_key, slice_dim='x', x_value=x_value
         )
         assert isinstance(result_x, hv.Image)
 
-    def test_slice_label_with_coords(self, slicer_plotter, test_3d_data, test_data_key):
-        """Test that slice label includes coordinate values when available."""
-        label = slicer_plotter._format_slice_label(test_3d_data, 'z', 2)
-        assert 'z=' in label
-        assert 's' in label  # unit
-        assert 'slice 2/4' in label
+    def test_kdims_with_coords(self, slicer_plotter, test_3d_data, test_data_key):
+        """Test that kdims use coordinate values when available."""
+        slicer_plotter.initialize_from_data({test_data_key: test_3d_data})
+        kdims = slicer_plotter.kdims
 
-    def test_slice_label_without_coords(
+        assert kdims is not None
+        assert len(kdims) == 4  # selector + 3 sliders
+
+        # Check dimension selector
+        assert kdims[0].name == 'slice_dim'
+
+        # Check that sliders use coord values for dimensions with coords
+        z_dim = next(d for d in kdims if 'z' in d.name)
+        assert z_dim.name == 'z_value'  # Uses value not index
+        assert z_dim.unit == 's'
+        assert hasattr(z_dim, 'values')  # Has discrete values
+
+    def test_kdims_without_coords(
         self, slicer_plotter, test_3d_data_no_coords, test_data_key
     ):
-        """Test that slice label works without coordinates."""
-        label = slicer_plotter._format_slice_label(test_3d_data_no_coords, 'z', 2)
-        assert 'z[2/4]' in label
+        """Test that kdims fall back to indices without coordinates."""
+        slicer_plotter.initialize_from_data({test_data_key: test_3d_data_no_coords})
+        kdims = slicer_plotter.kdims
 
-    def test_slice_index_clipping(self, test_3d_data, test_data_key):
-        """Test that slice index is clipped to valid range."""
+        assert kdims is not None
+        # Check that sliders use integer indices for dimensions without coords
+        z_dim = next(d for d in kdims if 'z' in d.name)
+        assert z_dim.name == 'z_index'  # Uses index not value
+        assert hasattr(z_dim, 'range')  # Has range not discrete values
+
+    def test_plot_with_coord_value(self, test_3d_data, test_data_key):
+        """Test plotting with coordinate value."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
-        # Request index beyond data range
-        # Should not raise, should clip to valid range
-        result = plotter.plot(test_3d_data, test_data_key, slice_dim='z', z_index=100)
+        plotter.initialize_from_data({test_data_key: test_3d_data})
+
+        # Get a valid coordinate value from the data
+        z_coord = test_3d_data.coords['z']
+        z_value = float(z_coord.values[2])
+
+        result = plotter.plot(
+            test_3d_data, test_data_key, slice_dim='z', z_value=z_value
+        )
         assert result is not None
 
     def test_multiple_datasets(self, test_3d_data, test_data_key):
@@ -294,7 +327,13 @@ class TestSlicerPlotter:
             coords={'x': x_edges, 'y': y_edges, 'z': z_edges},
         )
 
-        result = slicer_plotter.plot(data, test_data_key, slice_dim='z', z_index=0)
+        slicer_plotter.initialize_from_data({test_data_key: data})
+
+        # For edge coords, slider uses midpoints
+        z_midpoint = float(sc.midpoints(z_edges, dim='z').values[0])
+        result = slicer_plotter.plot(
+            data, test_data_key, slice_dim='z', z_value=z_midpoint
+        )
         assert isinstance(result, hv.Image)
 
     def test_inconsistent_dimensions_raises(self, test_data_key):
@@ -306,24 +345,29 @@ class TestSlicerPlotter:
         data1 = sc.DataArray(
             sc.ones(dims=['z', 'y', 'x'], shape=[5, 8, 10], unit='counts')
         )
-        # Try slicing with invalid dimension
-        with pytest.raises(ValueError, match="not found in data"):
+        # Try slicing with invalid dimension - scipp raises DimensionError
+        with pytest.raises(sc.DimensionError, match="Expected dimension"):
             plotter.plot(
                 data1, test_data_key, slice_dim='invalid_dim', invalid_dim_index=0
             )
 
     def test_call_with_dimension_selector(self, test_3d_data, test_data_key):
-        """Test that __call__ accepts slice_dim and index parameters."""
+        """Test that __call__ accepts slice_dim and value parameters."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
+        plotter.initialize_from_data({test_data_key: test_3d_data})
 
-        # Call with slice_dim and index as HoloViews would with multiple kdims
+        # Call with slice_dim and values as HoloViews would with multiple kdims
+        z_value = float(test_3d_data.coords['z'].values[2])
+        y_value = float(test_3d_data.coords['y'].values[0])
+        x_value = float(test_3d_data.coords['x'].values[0])
+
         result = plotter(
             {test_data_key: test_3d_data},
             slice_dim='z',
-            z_index=2,
-            y_index=0,
-            x_index=0,
+            z_value=z_value,
+            y_value=y_value,
+            x_value=x_value,
         )
         assert result is not None
 
@@ -331,23 +375,28 @@ class TestSlicerPlotter:
         """Test that __call__ uses the selected dimension."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
+        plotter.initialize_from_data({test_data_key: test_3d_data})
 
         # Call with different slice dimensions
+        z_value = float(test_3d_data.coords['z'].values[1])
+        y_value = float(test_3d_data.coords['y'].values[3])
+        x_value = float(test_3d_data.coords['x'].values[0])
+
         result_z = plotter(
             {test_data_key: test_3d_data},
             slice_dim='z',
-            z_index=1,
-            y_index=0,
-            x_index=0,
+            z_value=z_value,
+            y_value=y_value,
+            x_value=x_value,
         )
         assert result_z is not None
 
         result_y = plotter(
             {test_data_key: test_3d_data},
             slice_dim='y',
-            z_index=0,
-            y_index=3,
-            x_index=0,
+            z_value=z_value,
+            y_value=y_value,
+            x_value=x_value,
         )
         assert result_y is not None
 
@@ -377,15 +426,18 @@ class TestSlicerPlotter:
         assert kdims[0].default == 'z'
 
         # Next 3 kdims are the sliders for each dimension
-        # Data has shape [5, 8, 10] for dims ['z', 'y', 'x']
-        assert kdims[1].name == 'z_index'
-        assert kdims[1].range == (0, 4)  # 5 slices (0-4)
+        # Since test_3d_data has coords, they use coord values not indices
+        assert kdims[1].name == 'z_value'
+        assert kdims[1].unit == 's'
+        assert hasattr(kdims[1], 'values')
 
-        assert kdims[2].name == 'y_index'
-        assert kdims[2].range == (0, 7)  # 8 slices (0-7)
+        assert kdims[2].name == 'y_value'
+        assert kdims[2].unit == 'm'
+        assert hasattr(kdims[2], 'values')
 
-        assert kdims[3].name == 'x_index'
-        assert kdims[3].range == (0, 9)  # 10 slices (0-9)
+        assert kdims[3].name == 'x_value'
+        assert kdims[3].unit == 'm'
+        assert hasattr(kdims[3], 'values')
 
     def test_initialize_from_data_with_empty_dict(self):
         """Test that initialize_from_data handles empty data gracefully."""

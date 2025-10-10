@@ -327,8 +327,7 @@ class SlicerPlotter(Plotter):
         """
         super().__init__(**kwargs)
         self._scale_opts = scale_opts
-        self._dim_names: list[str] | None = None
-        self._dim_sizes: list[int] | None = None
+        self._kdims: list[hv.Dimension] | None = None
         self._base_opts = self._make_2d_base_opts(scale_opts)
 
     @classmethod
@@ -345,7 +344,7 @@ class SlicerPlotter(Plotter):
         """
         Initialize the slicer from initial data.
 
-        Extracts dimension names and sizes from the first data array.
+        Creates kdims from the first data array.
 
         Parameters
         ----------
@@ -355,15 +354,56 @@ class SlicerPlotter(Plotter):
         if not data:
             return
 
-        # Get the first data array to inspect its shape
+        # Get first data array to create kdims
         first_data = next(iter(data.values()))
 
         if first_data.ndim != 3:
             raise ValueError(f"Expected 3D data, got {first_data.ndim}D")
 
-        # Store dimension names and sizes
-        self._dim_names = list(first_data.dims)
-        self._dim_sizes = [first_data.sizes[dim] for dim in self._dim_names]
+        # Create kdims from the data
+        dim_names = list(first_data.dims)
+
+        # Create dimension selector with actual dimension names
+        dim_selector = hv.Dimension(
+            'slice_dim',
+            values=dim_names,
+            default=dim_names[0],
+            label='Slice Dimension',
+        )
+
+        # Create 3 sliders, one for each dimension
+        sliders = []
+        for dim_name in dim_names:
+            if dim_name in first_data.coords:
+                coord = first_data.coords[dim_name]
+                # Use coordinate values for the slider
+                # For bin-edge coordinates, use midpoints
+                if first_data.coords.is_edges(dim_name):
+                    coord_values = sc.midpoints(coord, dim=dim_name).values
+                else:
+                    coord_values = coord.values
+                sliders.append(
+                    hv.Dimension(
+                        f'{dim_name}_value',
+                        values=coord_values,
+                        default=coord_values[0],
+                        label=dim_name,
+                        unit=str(coord.unit),
+                    )
+                )
+            else:
+                # Fall back to integer indices
+                size = first_data.sizes[dim_name]
+                sliders.append(
+                    hv.Dimension(
+                        f'{dim_name}_index',
+                        range=(0, size - 1),
+                        default=0,
+                        label=f'{dim_name} index',
+                    )
+                )
+
+        self._kdims = [dim_selector, *sliders]
 
     @property
     def kdims(self) -> list[hv.Dimension] | None:
@@ -376,70 +416,7 @@ class SlicerPlotter(Plotter):
             List containing 4 HoloViews Dimensions (selector + 3 sliders),
             or None if not yet initialized.
         """
-        if self._dim_names is None or self._dim_sizes is None:
-            return None
-
-        # Create dimension selector with actual dimension names
-        dim_selector = hv.Dimension(
-            'slice_dim',
-            values=self._dim_names,
-            default=self._dim_names[0],
-            label='Slice Dimension',
-        )
-
-        # Create 3 sliders, one for each dimension
-        sliders = [
-            hv.Dimension(
-                f'{dim_name}_index',
-                range=(0, size - 1),
-                default=0,
-                label=f'{dim_name} index',
-            )
-            for dim_name, size in zip(self._dim_names, self._dim_sizes, strict=True)
-        ]
-
-        return [dim_selector, *sliders]
-
-    def _get_slice_index(self, requested_idx: int, max_idx: int) -> int:
-        """Get slice index, clipped to valid range."""
-        return min(max(0, requested_idx), max_idx)
-
-    def _format_value(self, value: sc.Variable) -> str:
-        """Format a scipp Variable for display, showing value and unit."""
-        try:
-            # Try compact format first (works for most dtypes)
-            return f"{value:c}"
-        except ValueError:
-            # Compact formatting not supported (e.g., datetime64)
-            # Format as "value unit" or just "value" if no unit or dimensionless
-            if value.unit is None or value.unit == sc.units.dimensionless:
-                return str(value.value)
-            return f"{value.value} {value.unit}"
-
-    def _format_slice_label(
-        self, data: sc.DataArray, slice_dim: str, slice_idx: int
-    ) -> str:
-        """Format a label showing the current slice position."""
-        max_idx = data.sizes[slice_dim] - 1
-
-        # Try to get coordinate value at this slice
-        if slice_dim in data.coords:
-            coord = data.coords[slice_dim]
-            # Handle both edge and point coordinates
-            if data.coords.is_edges(slice_dim):
-                # For edges, show the bin center
-                value = sc.midpoints(coord, dim=slice_dim)[slice_idx]
-            else:
-                value = coord[slice_idx]
-
-            # Format the value
-            value_str = self._format_value(value)
-            label = f"{slice_dim}={value_str} (slice {slice_idx}/{max_idx})"
-        else:
-            # No coordinate, just show index
-            label = f"{slice_dim}[{slice_idx}/{max_idx}]"
-
-        return label
+        return self._kdims
 
     def plot(
         self,
@@ -461,27 +438,24 @@ class SlicerPlotter(Plotter):
         slice_dim:
             Name of the dimension to slice along.
         **kwargs:
-            Additional keyword arguments including '{slice_dim}_index'
-            for the slice index.
+            Additional keyword arguments including either '{slice_dim}_value'
+            (coordinate) or '{slice_dim}_index' (integer) for the slice position.
 
         Returns
         -------
         :
             A HoloViews Image element showing the selected slice.
         """
-        # Extract slice index from kwargs based on the selected dimension
-        slice_idx = kwargs.get(f'{slice_dim}_index', 0)
 
-        # Validate that slice_dim exists in the data
-        if slice_dim not in data.dims:
-            raise ValueError(
-                f"Slice dimension '{slice_dim}' not found in data. "
-                f"Available dimensions: {data.dims}"
-            )
-
-        # Clip slice index to valid range
-        max_idx = data.sizes[slice_dim] - 1
-        slice_idx = self._get_slice_index(slice_idx, max_idx)
+        # Determine if we're using coordinate values or integer indices
+        if (coord_value := kwargs.get(f'{slice_dim}_value')) is not None:
+            # Use coordinate-based indexing with scipp's label-based indexing
+            # Get unit from the data's coordinate
+            coord = data.coords[slice_dim]
+            slice_idx = sc.scalar(coord_value, unit=coord.unit)
+        else:
+            # Fall back to integer index
+            slice_idx = kwargs.get(f'{slice_dim}_index', 0)
 
         # Slice the 3D data to get 2D
         sliced_data = data[slice_dim, slice_idx]
@@ -497,8 +471,4 @@ class SlicerPlotter(Plotter):
         # Create the image
         image = to_holoviews(plot_data)
 
-        # Add slice information to title
-        slice_label = self._format_slice_label(data, slice_dim, slice_idx)
-        title = f"{data.name or 'Data'} - {slice_label}"
-
-        return image.opts(framewise=framewise, title=title, **self._base_opts)
+        return image.opts(framewise=framewise, **self._base_opts)
