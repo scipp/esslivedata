@@ -23,9 +23,6 @@ from scippnexus import NXdetector
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.env import StreamingEnv
 from ess.livedata.config.workflows import (
-    CurrentRun,
-    CustomMonitor,
-    MonitorCountsInInterval,
     TimeseriesAccumulator,
     register_monitor_timeseries_workflows,
 )
@@ -38,18 +35,15 @@ from ess.livedata.handlers.monitor_data_handler import register_monitor_workflow
 from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 from ess.livedata.handlers.timeseries_handler import register_timeseries_workflows
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
-from ess.livedata.parameter_models import TOARange, WavelengthRange
 from ess.reduce.nexus.types import (
     CalibratedBeamline,
     DetectorData,
     Filename,
-    MonitorData,
     NeXusData,
     NeXusName,
     SampleRun,
 )
 from ess.reduce.streaming import EternalAccumulator
-from ess.reduce.time_of_flight import GenericTofWorkflow
 from ess.spectroscopy.indirect.time_of_flight import TofWorkflow
 
 from ._bifrost_qmap import register_qmap_workflows
@@ -285,67 +279,6 @@ def _detector_ratemeter(
     return DetectorRegionCounts(counts)
 
 
-# Bragg-peak monitor timeseries with wavelength or time-of-arrival selection
-
-
-class IntervalMode(str, Enum):
-    """Mode for selecting interval: time-of-arrival or wavelength."""
-
-    TIME_OF_ARRIVAL = 'time_of_arrival'
-    WAVELENGTH = 'wavelength'
-
-
-class BraggPeakMonitorParams(pydantic.BaseModel):
-    """Parameters for Bragg-peak monitor timeseries workflow."""
-
-    interval_mode: IntervalMode = pydantic.Field(
-        title='Interval Mode',
-        description='Select interval by time-of-arrival or wavelength.',
-        default=IntervalMode.TIME_OF_ARRIVAL,
-    )
-    toa_range: TOARange = pydantic.Field(
-        title='Time of Arrival Range',
-        description=(
-            'Time of arrival range to include (used when mode is time_of_arrival).'
-        ),
-        default_factory=TOARange,
-    )
-    wavelength_range: WavelengthRange = pydantic.Field(
-        title='Wavelength Range',
-        description='Wavelength range to include (used when mode is wavelength).',
-        default_factory=WavelengthRange,
-    )
-
-
-def _get_monitor_interval_by_toa(
-    data: MonitorData[CurrentRun, CustomMonitor], range: TOARange
-) -> MonitorCountsInInterval:
-    """Get monitor counts in a time-of-arrival interval."""
-    start, stop = range.range_ns
-    if data.bins is not None:
-        counts = data.bins['event_time_offset', start:stop].sum()
-        counts.coords['time'] = data.coords['event_time_zero'][0]
-    else:
-        counts = data['time', start:stop].sum()
-        counts.coords['time'] = data.coords['frame_time'][0]
-    return MonitorCountsInInterval(counts)
-
-
-def _get_monitor_interval_by_wavelength(
-    data: MonitorData[CurrentRun, CustomMonitor], range: WavelengthRange
-) -> MonitorCountsInInterval:
-    """Get monitor counts in a wavelength interval."""
-    start, stop = range.range_m
-    if data.bins is not None:
-        # Convert wavelength edges to meters for slicing
-        counts = data.bins['wavelength', start:stop].sum()
-        counts.coords['time'] = data.coords['event_time_zero'][0]
-    else:
-        counts = data['wavelength', start:stop].sum()
-        counts.coords['time'] = data.coords['frame_time'][0]
-    return MonitorCountsInInterval(counts)
-
-
 # Monitor names matching group names in Nexus files
 monitor_names = [
     '007_frame_0',
@@ -420,41 +353,6 @@ def _detector_ratemeter_workflow(
 
 register_qmap_workflows(instrument)
 register_monitor_timeseries_workflows(instrument, source_names=monitor_names)
-
-
-# Register Bragg-peak monitor workflow with wavelength support
-@instrument.register_workflow(
-    name='bragg_peak_monitor',
-    version=1,
-    title='Bragg-peak Monitor Rate',
-    description=(
-        'Monitor count rate with selectable time-of-arrival or wavelength interval.'
-    ),
-    source_names=monitor_names,
-    aux_source_names=[],
-)
-def _bragg_peak_monitor_workflow(
-    source_name: str, params: BraggPeakMonitorParams
-) -> StreamProcessorWorkflow:
-    """Bragg-peak monitor workflow supporting both TOA and wavelength selection."""
-    wf = GenericTofWorkflow(run_types=[CurrentRun], monitor_types=[CustomMonitor])
-    wf[Filename[CurrentRun]] = instrument.nexus_file
-    wf[NeXusName[CustomMonitor]] = source_name
-
-    # Insert the appropriate interval function based on mode
-    if params.interval_mode == IntervalMode.TIME_OF_ARRIVAL:
-        wf[TOARange] = params.toa_range
-        wf.insert(_get_monitor_interval_by_toa)
-    else:  # WAVELENGTH
-        wf[WavelengthRange] = params.wavelength_range
-        wf.insert(_get_monitor_interval_by_wavelength)
-
-    return StreamProcessorWorkflow(
-        base_workflow=wf,
-        dynamic_keys={source_name: NeXusData[CustomMonitor, CurrentRun]},
-        target_keys=(MonitorCountsInInterval,),
-        accumulators={MonitorCountsInInterval: TimeseriesAccumulator},
-    )
 
 
 def _make_bifrost_detectors() -> StreamLUT:

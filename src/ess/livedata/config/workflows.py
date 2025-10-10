@@ -4,10 +4,10 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any, NewType
 
 import pydantic
-import sciline
 import scipp as sc
 
 from ess.livedata import parameter_models
@@ -18,15 +18,35 @@ from ess.livedata.handlers.to_nxlog import ToNXlog
 from ess.reduce import streaming
 from ess.reduce.nexus.types import Filename, MonitorData, NeXusData, NeXusName
 from ess.reduce.time_of_flight import GenericTofWorkflow
+from ess.spectroscopy.types import WavelengthMonitor
+
+
+class IntervalMode(str, Enum):
+    """Mode for selecting interval: time-of-arrival or wavelength."""
+
+    TIME_OF_ARRIVAL = 'time_of_arrival'
+    WAVELENGTH = 'wavelength'
 
 
 class MonitorTimeseriesParams(pydantic.BaseModel):
     """Parameters for the monitor timeseries workflow."""
 
+    interval_mode: IntervalMode = pydantic.Field(
+        title='Interval Mode',
+        description='Select interval by time-of-arrival or wavelength.',
+        default=IntervalMode.TIME_OF_ARRIVAL,
+    )
     toa_range: parameter_models.TOARange = pydantic.Field(
         title="Time of Arrival Range",
-        description="Time of arrival range to include.",
+        description=(
+            "Time of arrival range to include (used when mode is time_of_arrival)."
+        ),
         default=parameter_models.TOARange(),
+    )
+    wavelength_range: parameter_models.WavelengthRange = pydantic.Field(
+        title='Wavelength Range',
+        description='Wavelength range to include (used when mode is wavelength).',
+        default_factory=parameter_models.WavelengthRange,
     )
 
 
@@ -48,6 +68,21 @@ def _get_interval(
         # Note the current ECDC convention: time is the time offset w.r.t. the frame,
         # i.e., the pulse, frame_time is the absolute time (since epoch).
         counts = data['time', start:stop].sum()
+        counts.coords['time'] = data.coords['frame_time'][0]
+    return MonitorCountsInInterval(counts)
+
+
+def _get_interval_by_wavelength(
+    data: WavelengthMonitor[CurrentRun, CustomMonitor],
+    range: parameter_models.WavelengthRange,
+) -> MonitorCountsInInterval:
+    """Get monitor counts in a wavelength interval."""
+    start, stop = range.range_m
+    if data.bins is not None:
+        counts = data.bins['wavelength', start:stop].sum()
+        counts.coords['time'] = data.coords['event_time_zero'][0]
+    else:
+        counts = data['wavelength', start:stop].sum()
         counts.coords['time'] = data.coords['frame_time'][0]
     return MonitorCountsInInterval(counts)
 
@@ -87,14 +122,6 @@ class TimeseriesAccumulator(streaming.Accumulator[sc.DataArray]):
             self._to_nxlog.clear()
 
 
-def _prepare_workflow(instrument: Instrument, monitor_name: str) -> sciline.Pipeline:
-    workflow = GenericTofWorkflow(run_types=[CurrentRun], monitor_types=[CustomMonitor])
-    workflow[Filename[CurrentRun]] = instrument.nexus_file
-    workflow[NeXusName[CustomMonitor]] = monitor_name
-    workflow.insert(_get_interval)
-    return workflow
-
-
 def register_monitor_timeseries_workflows(
     instrument: Instrument, source_names: list[str]
 ) -> None:
@@ -113,15 +140,25 @@ def register_monitor_timeseries_workflows(
         version=1,
         title='Monitor Interval Timeseries',
         description='Timeseries of counts in a monitor within a specified '
-        'time-of-arrival range.',
+        'time-of-arrival or wavelength range.',
         source_names=source_names,
         aux_source_names=[],
     )
     def monitor_timeseries_workflow(
         source_name: str, params: MonitorTimeseriesParams
     ) -> StreamProcessorWorkflow:
-        wf = _prepare_workflow(instrument, monitor_name=source_name)
-        wf[parameter_models.TOARange] = params.toa_range
+        wf = GenericTofWorkflow(run_types=[CurrentRun], monitor_types=[CustomMonitor])
+        wf[Filename[CurrentRun]] = instrument.nexus_file
+        wf[NeXusName[CustomMonitor]] = source_name
+
+        # Insert the appropriate interval function based on mode
+        if params.interval_mode == IntervalMode.TIME_OF_ARRIVAL:
+            wf[parameter_models.TOARange] = params.toa_range
+            wf.insert(_get_interval)
+        else:  # WAVELENGTH
+            wf[parameter_models.WavelengthRange] = params.wavelength_range
+            wf.insert(_get_interval_by_wavelength)
+
         return StreamProcessorWorkflow(
             base_workflow=wf,
             dynamic_keys={source_name: NeXusData[CustomMonitor, CurrentRun]},
