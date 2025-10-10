@@ -85,6 +85,61 @@ class Plotter(ABC):
             self._sizing_opts['frame_height'] = aspect_params.height
         self._sizing_opts['responsive'] = True
 
+    @staticmethod
+    def _make_2d_base_opts(scale_opts: PlotScaleParams2d) -> dict[str, Any]:
+        """
+        Create base options for 2D image plots.
+
+        Parameters
+        ----------
+        scale_opts:
+            Scaling options for axes and color.
+
+        Returns
+        -------
+        :
+            Dictionary of base options for HoloViews image plots.
+        """
+        return {
+            'colorbar': True,
+            'cmap': 'viridis',
+            'logx': scale_opts.x_scale == PlotScale.log,
+            'logy': scale_opts.y_scale == PlotScale.log,
+            'logz': scale_opts.color_scale == PlotScale.log,
+        }
+
+    @staticmethod
+    def _prepare_2d_image_data(data: sc.DataArray, use_log_scale: bool) -> sc.DataArray:
+        """
+        Convert to float64 and mask non-positive values for log scale.
+
+        With logz=True we need to exclude zero values: The value bounds
+        calculation should properly adjust the color limits. Since zeros can never
+        be included we want to adjust to the lowest positive value.
+
+        Parameters
+        ----------
+        data:
+            Input data array.
+        use_log_scale:
+            Whether to apply log scale masking.
+
+        Returns
+        -------
+        :
+            Prepared data array with appropriate dtype and masking.
+        """
+        plot_data = data.to(dtype='float64')
+        if use_log_scale:
+            plot_data = plot_data.assign(
+                sc.where(
+                    plot_data.data <= sc.scalar(0.0, unit=plot_data.unit),
+                    sc.scalar(np.nan, unit=plot_data.unit, dtype=plot_data.dtype),
+                    plot_data.data,
+                )
+            )
+        return plot_data
+
     def __call__(
         self, data: dict[ResultKey, sc.DataArray]
     ) -> hv.Overlay | hv.Layout | hv.Element:
@@ -225,13 +280,7 @@ class ImagePlotter(Plotter):
         """
         super().__init__(**kwargs)
         self._scale_opts = scale_opts
-        self._base_opts = {
-            'colorbar': True,
-            'cmap': 'viridis',
-            'logx': True if scale_opts.x_scale == PlotScale.log else False,
-            'logy': True if scale_opts.y_scale == PlotScale.log else False,
-            'logz': True if scale_opts.color_scale == PlotScale.log else False,
-        }
+        self._base_opts = self._make_2d_base_opts(scale_opts)
 
     @classmethod
     def from_params(cls, params: PlotParams2d):
@@ -245,23 +294,9 @@ class ImagePlotter(Plotter):
 
     def plot(self, data: sc.DataArray, data_key: ResultKey) -> hv.Image:
         """Create a 2D plot from a scipp DataArray."""
-        data = data.to(dtype='float64')
-
-        # Only mask data when using log color scale
-        if self._scale_opts.color_scale == PlotScale.log:
-            # With logz=True we need to exclude zero values: The value bounds
-            # calculation should properly adjust the color limits. Since zeros can never
-            # be included we want to adjust to the lowest positive value.
-            masked = data.assign(
-                sc.where(
-                    data.data <= sc.scalar(0.0, unit=data.unit),
-                    sc.scalar(np.nan, unit=data.unit, dtype=data.dtype),
-                    data.data,
-                )
-            )
-            plot_data = masked
-        else:
-            plot_data = data
+        # Prepare data with appropriate dtype and log scale masking
+        use_log_scale = self._scale_opts.color_scale == PlotScale.log
+        plot_data = self._prepare_2d_image_data(data, use_log_scale)
 
         framewise = self._update_autoscaler_and_get_framewise(plot_data, data_key)
         # We are using the masked data here since Holoviews (at least with the Bokeh
@@ -294,15 +329,7 @@ class SlicerPlotter(Plotter):
         self._scale_opts = scale_opts
         self._dim_names: list[str] | None = None
         self._dim_sizes: list[int] | None = None
-
-        # Base options for the image plot (similar to ImagePlotter)
-        self._base_opts = {
-            'colorbar': True,
-            'cmap': 'viridis',
-            'logx': scale_opts.x_scale == PlotScale.log,
-            'logy': scale_opts.y_scale == PlotScale.log,
-            'logz': scale_opts.color_scale == PlotScale.log,
-        }
+        self._base_opts = self._make_2d_base_opts(scale_opts)
 
     @classmethod
     def from_params(cls, params: PlotParams3d):
@@ -450,18 +477,9 @@ class SlicerPlotter(Plotter):
         # Slice the 3D data to get 2D
         sliced_data = data[slice_dim, slice_idx]
 
-        # Apply log masking if needed (same as ImagePlotter)
-        if self._scale_opts.color_scale == PlotScale.log:
-            plot_data = sliced_data.to(dtype='float64')
-            plot_data = plot_data.assign(
-                sc.where(
-                    plot_data.data <= sc.scalar(0.0, unit=plot_data.unit),
-                    sc.scalar(np.nan, unit=plot_data.unit, dtype=plot_data.dtype),
-                    plot_data.data,
-                )
-            )
-        else:
-            plot_data = sliced_data.to(dtype='float64')
+        # Prepare data with appropriate dtype and log scale masking
+        use_log_scale = self._scale_opts.color_scale == PlotScale.log
+        plot_data = self._prepare_2d_image_data(sliced_data, use_log_scale)
 
         # Update autoscaler with full 3D data to establish global bounds.
         # This ensures consistent color scale and axis ranges across all slices.
