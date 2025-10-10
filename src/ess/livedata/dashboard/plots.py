@@ -483,7 +483,6 @@ class SlicerPlotter(Plotter):
 
         # Update autoscaler with full 3D data to establish global bounds.
         # This ensures consistent color scale and axis ranges across all slices.
-        # Slice coords/values are subsets of 3D data, so one call suffices.
         framewise = self._update_autoscaler_and_get_framewise(data, data_key)
 
         # Create the image
