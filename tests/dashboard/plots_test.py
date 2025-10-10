@@ -5,6 +5,7 @@ import uuid
 import warnings
 
 import holoviews as hv
+import numpy as np
 import pytest
 import scipp as sc
 from holoviews.plotting.bokeh import BokehRenderer
@@ -188,8 +189,10 @@ class TestSlicerPlotter:
 
     @pytest.fixture
     def slicer_plotter(self):
-        """Create a SlicerPlotter instance."""
+        """Create SlicerPlotter with linear color scale for easier testing."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        # Use linear scale to avoid NaN masking of zeros in tests
+        params.plot_scale.color_scale = PlotScale.linear
         return plots.SlicerPlotter.from_params(params)
 
     def test_initialization(self, slicer_plotter):
@@ -208,15 +211,34 @@ class TestSlicerPlotter:
         # The result should be a 2D image
         assert result is not None
 
+        # Verify that the correct slice data is returned
+        expected_slice = data_3d['z', 0]
+        # HoloViews Image.data is a dictionary with keys 'x', 'y', 'values'
+        data_dict = result.data
+        # Compare with expected slice (HoloViews uses numpy arrays without units)
+        np.testing.assert_allclose(
+            data_dict['values'],
+            expected_slice.values,
+        )
+
     def test_plot_with_different_slice_index(self, data_3d, data_key):
         """Test that changing slice index affects the plot."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        params.plot_scale.color_scale = PlotScale.linear
         plotter = plots.SlicerPlotter.from_params(params)
         plotter.initialize_from_data({data_key: data_3d})
         # Plot with different slice value
         z_value = float(data_3d.coords['z'].values[2])
         result = plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value)
         assert isinstance(result, hv.Image)
+
+        # Verify that the correct slice data is returned
+        expected_slice = data_3d['z', 2]
+        data_dict = result.data
+        np.testing.assert_allclose(
+            data_dict['values'],
+            expected_slice.values,
+        )
 
     def test_can_slice_along_different_dimensions(
         self, slicer_plotter, data_3d, data_key
@@ -230,6 +252,13 @@ class TestSlicerPlotter:
             data_3d, data_key, slice_dim='z', z_value=z_value
         )
         assert isinstance(result_z, hv.Image)
+        # Verify correct slice data for z dimension
+        expected_z = data_3d['z', 0]
+        data_dict_z = result_z.data
+        np.testing.assert_allclose(
+            data_dict_z['values'],
+            expected_z.values,
+        )
 
         # Can slice along y
         y_value = float(data_3d.coords['y'].values[0])
@@ -237,6 +266,13 @@ class TestSlicerPlotter:
             data_3d, data_key, slice_dim='y', y_value=y_value
         )
         assert isinstance(result_y, hv.Image)
+        # Verify correct slice data for y dimension
+        expected_y = data_3d['y', 0]
+        data_dict_y = result_y.data
+        np.testing.assert_allclose(
+            data_dict_y['values'],
+            expected_y.values,
+        )
 
         # Can slice along x
         x_value = float(data_3d.coords['x'].values[0])
@@ -244,6 +280,13 @@ class TestSlicerPlotter:
             data_3d, data_key, slice_dim='x', x_value=x_value
         )
         assert isinstance(result_x, hv.Image)
+        # Verify correct slice data for x dimension
+        expected_x = data_3d['x', 0]
+        data_dict_x = result_x.data
+        np.testing.assert_allclose(
+            data_dict_x['values'],
+            expected_x.values,
+        )
 
     def test_kdims_with_coords(self, slicer_plotter, data_3d, data_key):
         """Test that kdims use coordinate values when available."""
@@ -442,3 +485,77 @@ class TestSlicerPlotter:
 
         # kdims should still be None
         assert plotter.kdims is None
+
+    def test_slice_returns_correct_coordinate_values(self, data_3d, data_key):
+        """Test that the slice has correct coordinate values."""
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        params.plot_scale.color_scale = PlotScale.linear
+        plotter = plots.SlicerPlotter.from_params(params)
+        plotter.initialize_from_data({data_key: data_3d})
+
+        # Slice along z at index 2
+        z_value = float(data_3d.coords['z'].values[2])
+        result = plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value)
+
+        # Extract coordinate values from HoloViews Image
+        data_dict = result.data
+
+        # Get expected coordinates (directly from sliced data, not midpoints)
+        sliced = data_3d['z', 2]
+        expected_x = sliced.coords['x'].values
+        expected_y = sliced.coords['y'].values
+
+        # Verify coordinate values match
+        np.testing.assert_allclose(data_dict['x'], expected_x)
+        np.testing.assert_allclose(data_dict['y'], expected_y)
+
+    def test_multiple_slices_have_different_values(self, data_3d, data_key):
+        """Test that different slice indices produce different data values."""
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        params.plot_scale.color_scale = PlotScale.linear
+        plotter = plots.SlicerPlotter.from_params(params)
+        plotter.initialize_from_data({data_key: data_3d})
+
+        # Get two different slices
+        z_value_0 = float(data_3d.coords['z'].values[0])
+        result_0 = plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value_0)
+
+        z_value_2 = float(data_3d.coords['z'].values[2])
+        result_2 = plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value_2)
+
+        # Extract values
+        data_dict_0 = result_0.data
+        data_dict_2 = result_2.data
+
+        # Values should be different (since data_3d uses arange)
+        with pytest.raises(AssertionError):
+            np.testing.assert_allclose(
+                data_dict_0['values'],
+                data_dict_2['values'],
+            )
+
+    def test_log_scale_masks_zeros_and_negatives(self, data_3d, data_key):
+        """Test that log scale correctly masks zero and negative values as NaN."""
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        # Explicitly use log scale (which is the default)
+        params.plot_scale.color_scale = PlotScale.log
+        plotter = plots.SlicerPlotter.from_params(params)
+        plotter.initialize_from_data({data_key: data_3d})
+
+        # Slice at z=0 which contains a zero value at position [0, 0]
+        z_value = float(data_3d.coords['z'].values[0])
+        result = plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value)
+
+        data_dict = result.data
+        expected_slice = data_3d['z', 0]
+
+        # First value should be NaN (masked zero) in the log scale plot
+        assert np.isnan(data_dict['values'][0, 0])
+        # Original value was zero
+        assert expected_slice.values[0, 0] == 0.0
+
+        # Other positive values should remain unchanged
+        np.testing.assert_allclose(
+            data_dict['values'][0, 1:],  # Skip the NaN at [0, 0]
+            expected_slice.values[0, 1:],
+        )
