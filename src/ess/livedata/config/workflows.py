@@ -55,20 +55,56 @@ CurrentRun = NewType('CurrentRun', int)
 MonitorCountsInInterval = NewType('MonitorCountsInInterval', sc.DataArray)
 
 
+def _extract_interval(
+    data: sc.DataArray,
+    dim: str,
+    interval: parameter_models.RangeModel,
+) -> sc.DataArray:
+    """Extract counts in an interval from monitor data.
+
+    Parameters
+    ----------
+    data
+        Monitor data to extract interval from.
+    dim
+        Dimension to slice along (e.g., 'event_time_offset', 'time', 'wavelength').
+    interval
+        Range model specifying the start and stop of the interval.
+
+    Returns
+    -------
+    :
+        Data array with counts in the interval and a 'time' coordinate.
+    """
+    # Get start/stop from the interval and convert to the unit of the dimension
+    start = interval.get_start()
+    stop = interval.get_stop()
+    if data.bins is not None:
+        coord = data.bins.coords[dim]
+    else:
+        coord = data.coords[dim]
+    start = start.to(unit=coord.unit, copy=False)
+    stop = stop.to(unit=coord.unit, copy=False)
+
+    # Note the current ECDC convention: time is the time offset w.r.t. the frame,
+    # i.e., the pulse, frame_time is the absolute time (since epoch).
+    time_coord = 'event_time_zero' if data.bins is not None else 'frame_time'
+
+    if data.bins is not None:
+        counts = data.bins[dim, start:stop].sum()
+        counts.coords['time'] = data.coords[time_coord][0]
+    else:
+        # Include the full bin at start and stop. Do we need more precision here?
+        counts = data[dim, start:stop].sum()
+        counts.coords['time'] = data.coords[time_coord][0]
+    return counts
+
+
 def _get_interval(
     data: MonitorData[CurrentRun, CustomMonitor], range: parameter_models.TOARange
 ) -> MonitorCountsInInterval:
-    start, stop = range.range_ns
-    if data.bins is not None:
-        counts = data.bins['event_time_offset', start:stop].sum()
-        counts.coords['time'] = data.coords['event_time_zero'][0]
-    else:
-        # Include the full time(of arrival) bin at start and stop. Do we need more
-        # precision here?
-        # Note the current ECDC convention: time is the time offset w.r.t. the frame,
-        # i.e., the pulse, frame_time is the absolute time (since epoch).
-        counts = data['time', start:stop].sum()
-        counts.coords['time'] = data.coords['frame_time'][0]
+    dim = 'event_time_offset' if data.bins is not None else 'time'
+    counts = _extract_interval(data, dim, range)
     return MonitorCountsInInterval(counts)
 
 
@@ -77,13 +113,7 @@ def _get_interval_by_wavelength(
     range: parameter_models.WavelengthRange,
 ) -> MonitorCountsInInterval:
     """Get monitor counts in a wavelength interval."""
-    start, stop = range.range_m
-    if data.bins is not None:
-        counts = data.bins['wavelength', start:stop].sum()
-        counts.coords['time'] = data.coords['event_time_zero'][0]
-    else:
-        counts = data['wavelength', start:stop].sum()
-        counts.coords['time'] = data.coords['frame_time'][0]
+    counts = _extract_interval(data, 'wavelength', range)
     return MonitorCountsInInterval(counts)
 
 
