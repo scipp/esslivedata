@@ -162,7 +162,6 @@ class TestInstrument:
             title="Test Workflow",
             description="A test workflow",
             source_names=["source1", "source2"],
-            aux_source_names=["aux1"],
         )
 
         # Apply decorator
@@ -182,7 +181,7 @@ class TestInstrument:
         assert spec.title == "Test Workflow"
         assert spec.description == "A test workflow"
         assert spec.source_names == ["source1", "source2"]
-        assert spec.aux_source_names == ["aux1"]
+        assert spec.aux_sources is None  # Will be filled from type hint in Phase 2
 
     def test_register_workflow_with_defaults(self):
         """Test workflow registration with default values."""
@@ -208,7 +207,51 @@ class TestInstrument:
         assert spec.namespace == "data_reduction"  # default
         assert spec.description == ""  # default
         assert spec.source_names == []  # default
-        assert spec.aux_source_names == []  # default
+        assert spec.aux_sources is None  # default
+
+    def test_register_workflow_with_aux_sources_type_hint(self):
+        """Test that aux_sources can be extracted from type hints."""
+        from typing import Literal
+
+        import pydantic
+
+        instrument = Instrument(name="test_instrument")
+
+        class AuxSourcesModel(pydantic.BaseModel):
+            monitor1: Literal['monitor1'] = 'monitor1'
+            aux_stream: Literal['aux_stream'] = 'aux_stream'
+
+        def simple_factory(aux_sources: AuxSourcesModel) -> Workflow:
+            class MockProcessor(Workflow):
+                def __call__(self, *args, **kwargs):
+                    return {}
+
+            return MockProcessor()
+
+        decorator = instrument.register_workflow(
+            name="workflow_with_aux",
+            version=1,
+            title="Workflow with Aux Sources",
+        )
+
+        registered_factory = decorator(simple_factory)
+        assert registered_factory is simple_factory
+
+        specs = instrument.workflow_factory
+        assert len(specs) == 1
+        spec = next(iter(specs.values()))
+
+        # aux_sources should be extracted from type hint
+        assert spec.aux_sources is AuxSourcesModel
+
+        # Verify it's a Pydantic model with the expected fields
+        model_instance = spec.aux_sources()
+        assert hasattr(model_instance, 'monitor1')
+        assert hasattr(model_instance, 'aux_stream')
+
+        # The default values should match the source names
+        assert model_instance.monitor1 == 'monitor1'
+        assert model_instance.aux_stream == 'aux_stream'
 
     def test_multiple_workflow_registrations(self):
         """Test registering multiple workflows."""

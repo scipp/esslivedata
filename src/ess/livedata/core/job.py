@@ -105,7 +105,7 @@ class Job:
         workflow_id: WorkflowId,
         processor: Workflow,
         source_names: list[str],
-        aux_source_names: list[str] | None = None,
+        aux_source_names: dict[str, str] | None = None,
     ) -> None:
         """
         Initialize a Job with the given parameters.
@@ -121,7 +121,8 @@ class Job:
         source_names:
             The names of the primary data sources for this job.
         aux_source_names:
-            The names of any auxiliary data sources for this job.
+            Mapping from field names to stream names for auxiliary data sources.
+            None if no auxiliary sources are needed.
         """
         self._job_id = job_id
         self._workflow_id = workflow_id
@@ -129,7 +130,18 @@ class Job:
         self._start_time: int | None = None
         self._end_time: int | None = None
         self._source_names = source_names
-        self._aux_source_names = aux_source_names or []
+        self._aux_source_mapping: dict[str, str] = aux_source_names or {}
+
+        # Create reverse mapping: stream_name -> list of field_names
+        # This supports multiplexing where one stream maps to multiple fields. In most
+        # cases this is not desirable, but the pydantic model for the aux sources should
+        # perform such validation. Here is not the place to prevent this, since there
+        # may be valid use cases.
+        self._stream_to_fields: dict[str, list[str]] = {}
+        for field_name, stream_name in self._aux_source_mapping.items():
+            if stream_name not in self._stream_to_fields:
+                self._stream_to_fields[stream_name] = []
+            self._stream_to_fields[stream_name].append(field_name)
 
     @property
     def job_id(self) -> JobId:
@@ -153,11 +165,26 @@ class Job:
 
     @property
     def aux_source_names(self) -> list[str]:
-        return self._aux_source_names
+        """
+        Get the list of auxiliary stream names for routing purposes.
+
+        Returns the stream names (values from the mapping) that JobManager
+        should use to route incoming data to this job.
+        """
+        return list(self._aux_source_mapping.values())
 
     def add(self, data: JobData) -> JobReply:
         try:
-            self._processor.accumulate({**data.primary_data, **data.aux_data})
+            # Remap aux_data keys from stream names to field names for the workflow
+            # Handle multiplexing: one stream may map to multiple fields
+            remapped_aux_data = {}
+            for stream_name, value in data.aux_data.items():
+                field_names = self._stream_to_fields.get(stream_name, [stream_name])
+                for field_name in field_names:
+                    remapped_aux_data[field_name] = value
+
+            # Pass data to workflow with field names (not stream names)
+            self._processor.accumulate({**data.primary_data, **remapped_aux_data})
             if data.is_active():
                 if self._start_time is None:
                     self._start_time = data.start_time

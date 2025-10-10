@@ -122,7 +122,6 @@ class Instrument:
         title: str,
         description: str = '',
         source_names: Sequence[str] | None = None,
-        aux_source_names: Sequence[str] | None = None,
     ) -> Callable[[Callable[..., Workflow]], Callable[..., Workflow]]:
         """
         Decorator to register a factory function for creating StreamProcessors.
@@ -132,11 +131,14 @@ class Instrument:
         registers the factory with the processor factory and returns the factory
         function unchanged.
 
-        The factory function may have two parameters:
+        The factory function may have up to three parameters:
         - `source_name`: The name of the source to process.
         - `params`: A Pydantic model containing parameters for the workflow. The factory
           inspects the type hint of the `params` parameter to determine the correct
           model that the frontend uses to create workflow configuration widgets.
+        - `aux_sources`: A Pydantic model containing auxiliary source selections. The
+          factory inspects the type hint of the `aux_sources` parameter to determine
+          the available auxiliary sources and their configuration options.
 
         Parameters
         ----------
@@ -152,8 +154,6 @@ class Instrument:
         source_names:
             Optional list of source names that the factory can handle. This is used to
             create a workflow specification.
-        aux_source_names:
-            List of auxiliary source names that the workflow needs.
 
         Returns
         -------
@@ -168,7 +168,7 @@ class Instrument:
             description=description,
             source_names=list(source_names or []),
             params=None,  # placeholder, filled in from type hint later
-            aux_source_names=list(aux_source_names or []),
+            aux_sources=None,  # filled in from type hint later
         )
         return self.workflow_factory.register(spec)
 

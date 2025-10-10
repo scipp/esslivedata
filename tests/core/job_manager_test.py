@@ -28,7 +28,7 @@ class FakeJobFactory(JobFactory):
             workflow_id=config.identifier,
             processor=processor,
             source_names=[job_id.source_name],
-            aux_source_names=["aux_source"],
+            aux_source_names=config.aux_source_names,
         )
 
         self.created_jobs.append((job_id, config))

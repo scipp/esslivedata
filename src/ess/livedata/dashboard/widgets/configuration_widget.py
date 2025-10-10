@@ -10,6 +10,7 @@ import pydantic
 from ess.livedata.dashboard.configuration_adapter import ConfigurationAdapter
 
 from .model_widget import ModelWidget
+from .param_widget import ParamWidget
 
 
 class ConfigurationWidget:
@@ -26,7 +27,7 @@ class ConfigurationWidget:
         """
         self._config = config
         self._source_selector = self._create_source_selector()
-        self._aux_source_selectors = self._create_aux_source_selectors()
+        self._aux_sources_widget = self._create_aux_sources_widget()
         self._model_widget = self._create_model_widget()
         self._source_error_pane = pn.pane.HTML("", sizing_mode='stretch_width')
         self._widget = self._create_widget()
@@ -49,38 +50,41 @@ class ConfigurationWidget:
             margin=(0, 0, 0, 0),
         )
 
-    def _create_aux_source_selectors(self) -> dict[str, pn.widgets.Select]:
-        """Create auxiliary source selection widgets."""
-        selectors = {}
-        size = len(self._config.aux_source_names)
-        for i, (category, options) in enumerate(self._config.aux_source_names.items()):
-            if not options:
-                raise ValueError(
-                    f"Empty options list for aux source category '{category}'"
-                )
+    def _create_aux_sources_widget(self) -> ParamWidget | None:
+        """Create auxiliary sources widget using ParamWidget."""
+        aux_sources_model = self._config.aux_sources
+        if aux_sources_model is None:
+            return None
 
-            selector = pn.widgets.Select(
-                name=category,
-                options=options,
-                value=options[0],  # Default to first entry
-                sizing_mode='stretch_width',
-                # No left margin and no right margin for last item: Align with source
-                # selector above.
-                margin=(0, 0 if i == size - 1 else 10, 10, 0),
-            )
-            selector.param.watch(self._on_aux_source_changed, 'value')
-            selectors[category] = selector
-        return selectors
+        # Create ParamWidget for the aux_sources model
+        aux_widget = ParamWidget(aux_sources_model)
+
+        # Set initial values if available
+        initial_values = self._config.initial_aux_source_names
+        if initial_values:
+            aux_widget.set_values(initial_values)
+
+        # Watch for changes to trigger model_widget recreation
+        for widget in aux_widget.widgets.values():
+            # Handle both wrapped (bool) and unwrapped widgets
+            actual_widget = widget[0] if isinstance(widget, pn.Row) else widget
+            actual_widget.param.watch(self._on_aux_source_changed, 'value')
+
+        return aux_widget
 
     def _create_model_widget(self) -> ModelWidget | NoParamsWidget | ErrorWidget:
         """Create model widget based on current aux source selections."""
-        aux_selections = {
-            category: selector.value
-            for category, selector in self._aux_source_selectors.items()
-        }
+        # Get aux source selections as a model instance
+        if self._aux_sources_widget is not None:
+            try:
+                aux_selections = self._aux_sources_widget.create_model()
+            except Exception as e:
+                return ErrorWidget(f"Invalid aux source selection: {e}")
+        else:
+            aux_selections = None
 
         try:
-            model_class = self._config.model_class(aux_selections)
+            model_class = self._config.set_aux_sources(aux_selections)
         except Exception as e:
             return ErrorWidget(str(e))
 
@@ -124,12 +128,9 @@ class ConfigurationWidget:
             self._source_error_pane,
         ]
 
-        # Add auxiliary source selectors if any exist
-        if self._aux_source_selectors:
-            aux_row = pn.Row(
-                *self._aux_source_selectors.values(), sizing_mode='stretch_width'
-            )
-            components.append(aux_row)
+        # Add auxiliary sources widget if it exists
+        if self._aux_sources_widget is not None:
+            components.append(self._aux_sources_widget.panel())
 
         components.append(self._model_widget.widget)
 
@@ -144,14 +145,6 @@ class ConfigurationWidget:
     def selected_sources(self) -> list[str]:
         """Get the selected source names."""
         return self._source_selector.value
-
-    @property
-    def selected_aux_sources(self) -> dict[str, str]:
-        """Get the selected auxiliary source names."""
-        return {
-            category: selector.value
-            for category, selector in self._aux_source_selectors.items()
-        }
 
     @property
     def parameter_values(self):
