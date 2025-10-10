@@ -4,13 +4,15 @@
 
 import typing
 from collections import UserDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Generic, Protocol, TypeVar
 
 import pydantic
 import scipp as sc
 
-from .plots import ImagePlotter, LinePlotter, Plotter
+from .plots import ImagePlotter, LinePlotter, Plotter, SlicerPlotter
+from .scipp_to_holoviews import _all_coords_evenly_spaced
 
 
 @dataclass
@@ -21,6 +23,9 @@ class DataRequirements:
     max_dims: int
     required_coords: list[str] = field(default_factory=list)
     multiple_datasets: bool = True
+    custom_validators: list[Callable[[sc.DataArray], bool]] = field(
+        default_factory=list
+    )
 
     def validate_data(self, data: dict[Any, sc.DataArray]) -> bool:
         """Validate that the data meets these requirements."""
@@ -45,6 +50,11 @@ class DataRequirements:
         # Check required coordinates
         for coord in self.required_coords:
             if coord not in dataset.coords:
+                return False
+
+        # Run custom validators
+        for validator in self.custom_validators:
+            if not validator(dataset):
                 return False
 
         return True
@@ -150,4 +160,18 @@ plotter_registry.register_plotter(
     description='Plot the data as line plots.',
     data_requirements=DataRequirements(min_dims=1, max_dims=1, multiple_datasets=True),
     factory=LinePlotter.from_params,
+)
+
+
+plotter_registry.register_plotter(
+    name='slicer',
+    title='3D Slicer',
+    description='Interactively slice through 3D data along one dimension.',
+    data_requirements=DataRequirements(
+        min_dims=3,
+        max_dims=3,
+        multiple_datasets=False,
+        custom_validators=[_all_coords_evenly_spaced],
+    ),
+    factory=SlicerPlotter.from_params,
 )

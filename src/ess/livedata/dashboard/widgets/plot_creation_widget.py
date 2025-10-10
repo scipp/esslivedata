@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import holoviews as hv
 import pandas as pd
 import panel as pn
 import pydantic
@@ -83,14 +84,14 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
 
     def start_action(self, selected_sources: list[str], parameter_values: Any) -> bool:
         try:
-            dmap = self._plotting_controller.create_plot(
+            plot = self._plotting_controller.create_plot(
                 job_number=self._job_number,
                 source_names=selected_sources,
                 output_name=self._output_name,
                 plot_name=self._plot_spec.name,
                 params=parameter_values,
             )
-            self._success_callback(dmap, selected_sources)
+            self._success_callback(plot, selected_sources)
             return True
         except Exception:
             return False
@@ -347,10 +348,18 @@ class PlotCreationWidget:
         self._modal_container.append(modal.modal)
         modal.show()
 
-    def _on_plot_created(self, dmap, selected_sources: list[str]) -> None:
+    def _on_plot_created(
+        self, plot: hv.DynamicMap, selected_sources: list[str]
+    ) -> None:
         """Handle successful plot creation."""
-        # Create HoloViews pane
-        plot_pane = pn.pane.HoloViews(dmap, sizing_mode='stretch_width')
+        # Use .layout to preserve widgets for DynamicMaps with kdims.
+        # When pn.pane.HoloViews wraps a DynamicMap with kdims, it generates
+        # widgets. However, these widgets don't render when the pane is placed
+        # in a Panel layout (Tabs, Column, etc.). The .layout property contains
+        # both the plot and widgets, which renders correctly in layouts.
+        # See: https://github.com/holoviz/panel/issues/5628
+        pane = pn.pane.HoloViews(plot, sizing_mode='stretch_width')
+        plot_pane = pane.layout
 
         # Generate tab name
         self._plot_counter += 1
