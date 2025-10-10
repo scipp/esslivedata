@@ -170,6 +170,7 @@ plotter_registry.register_plotter(
     data_requirements=DataRequirements(
         min_dims=3,
         max_dims=3,
+        multiple_datasets=False,
         custom_validators=[_all_coords_evenly_spaced],
     ),
     factory=SlicerPlotter.from_params,

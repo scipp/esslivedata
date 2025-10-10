@@ -294,10 +294,9 @@ class TestSlicerPlotter:
         )
         assert result is not None
 
-    def test_multiple_datasets(self, test_3d_data, test_data_key):
-        """Test plotting multiple 3D datasets together."""
-        params = PlotParams3d(plot_scale=PlotScaleParams2d())
-        plotter = plots.SlicerPlotter.from_params(params)
+    def test_multiple_datasets_rejected_by_registry(self, test_3d_data, test_data_key):
+        """Test slicer plotter is rejected for multiple datasets by the registry."""
+        from ess.livedata.dashboard.plotting import plotter_registry
 
         # Create second dataset
         workflow_id2 = WorkflowId(
@@ -311,9 +310,15 @@ class TestSlicerPlotter:
             workflow_id=workflow_id2, job_id=job_id2, output_name='test_result'
         )
 
-        data_dict = {test_data_key: test_3d_data, test_data_key2: test_3d_data}
-        result = plotter(data_dict)
-        assert result is not None
+        # Single dataset should be compatible
+        single_data = {test_data_key: test_3d_data}
+        compatible = plotter_registry.get_compatible_plotters(single_data)
+        assert 'slicer' in compatible
+
+        # Multiple datasets should not be compatible
+        multiple_data = {test_data_key: test_3d_data, test_data_key2: test_3d_data}
+        compatible = plotter_registry.get_compatible_plotters(multiple_data)
+        assert 'slicer' not in compatible
 
     def test_edge_coordinates(self, slicer_plotter, test_data_key):
         """Test handling of edge coordinates."""
