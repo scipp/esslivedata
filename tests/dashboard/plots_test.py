@@ -22,7 +22,7 @@ hv.extension('bokeh')
 
 
 @pytest.fixture
-def test_coordinates():
+def coordinates_2d():
     """Create test coordinates for 2D data."""
     x = sc.arange('x', 10, dtype='float64')
     y = sc.arange('y', 8, dtype='float64')
@@ -30,7 +30,7 @@ def test_coordinates():
 
 
 @pytest.fixture
-def test_data_key():
+def data_key():
     """Create a test ResultKey."""
     workflow_id = WorkflowId(
         instrument='test_instrument',
@@ -57,28 +57,28 @@ def image_plotter(color_scale):
 
 
 @pytest.fixture
-def zero_data(test_coordinates):
+def zero_data(coordinates_2d):
     """Create test data with all zeros."""
     return sc.DataArray(
-        sc.zeros(dims=['y', 'x'], shape=[8, 10], unit='counts'), coords=test_coordinates
+        sc.zeros(dims=['y', 'x'], shape=[8, 10], unit='counts'), coords=coordinates_2d
     )
 
 
 @pytest.fixture
-def constant_nonzero_data(test_coordinates):
+def constant_nonzero_data(coordinates_2d):
     """Create test data with constant non-zero values."""
     return sc.DataArray(
         sc.full(dims=['y', 'x'], shape=[8, 10], value=42.0, unit='counts'),
-        coords=test_coordinates,
+        coords=coordinates_2d,
     )
 
 
 @pytest.fixture
-def negative_data(test_coordinates):
+def negative_data(coordinates_2d):
     """Create test data with negative values."""
     return sc.DataArray(
         sc.full(dims=['y', 'x'], shape=[8, 10], value=-5.0, unit='counts'),
-        coords=test_coordinates,
+        coords=coordinates_2d,
     )
 
 
@@ -93,17 +93,17 @@ def render_to_bokeh(hv_element):
 
 class TestImagePlotter:
     def test_plot_with_all_zeros_does_not_raise(
-        self, image_plotter, zero_data, test_data_key
+        self, image_plotter, zero_data, data_key
     ):
         """Test that plotting image data with all zeros does not raise an exception."""
-        result = image_plotter.plot(zero_data, test_data_key)
+        result = image_plotter.plot(zero_data, data_key)
         assert result is not None
 
     def test_plot_with_all_zeros_renders_to_bokeh(
-        self, image_plotter, zero_data, test_data_key, color_scale
+        self, image_plotter, zero_data, data_key, color_scale
     ):
         """Test that image data with all zeros can be rendered to a Bokeh plot."""
-        hv_element = image_plotter.plot(zero_data, test_data_key)
+        hv_element = image_plotter.plot(zero_data, data_key)
         if color_scale == PlotScale.log:
             with warnings.catch_warnings():
                 warnings.filterwarnings(
@@ -117,31 +117,31 @@ class TestImagePlotter:
             render_to_bokeh(hv_element)
 
     def test_plot_with_constant_nonzero_values_does_not_raise(
-        self, image_plotter, constant_nonzero_data, test_data_key
+        self, image_plotter, constant_nonzero_data, data_key
     ):
         """Test image data with constant non-zero values does not raise an exception."""
-        result = image_plotter.plot(constant_nonzero_data, test_data_key)
+        result = image_plotter.plot(constant_nonzero_data, data_key)
         assert result is not None
 
     def test_plot_with_constant_nonzero_values_renders_to_bokeh(
-        self, image_plotter, constant_nonzero_data, test_data_key
+        self, image_plotter, constant_nonzero_data, data_key
     ):
         """Test image with constant non-zero values can be rendered to a Bokeh plot."""
-        hv_element = image_plotter.plot(constant_nonzero_data, test_data_key)
+        hv_element = image_plotter.plot(constant_nonzero_data, data_key)
         render_to_bokeh(hv_element)
 
     def test_plot_with_negative_values_does_not_raise(
-        self, image_plotter, negative_data, test_data_key
+        self, image_plotter, negative_data, data_key
     ):
         """Test plotting image data with negative values does not raise an exception."""
-        result = image_plotter.plot(negative_data, test_data_key)
+        result = image_plotter.plot(negative_data, data_key)
         assert result is not None
 
     def test_plot_with_negative_values_renders_to_bokeh(
-        self, image_plotter, negative_data, test_data_key, color_scale
+        self, image_plotter, negative_data, data_key, color_scale
     ):
         """Test that image data with negative values can be rendered to a Bokeh plot."""
-        hv_element = image_plotter.plot(negative_data, test_data_key)
+        hv_element = image_plotter.plot(negative_data, data_key)
         if color_scale == PlotScale.log:
             with warnings.catch_warnings():
                 warnings.filterwarnings(
@@ -157,7 +157,7 @@ class TestImagePlotter:
 
 class TestSlicerPlotter:
     @pytest.fixture
-    def test_3d_coordinates(self):
+    def coordinates_3d(self):
         """Create test coordinates for 3D data."""
         x = sc.linspace('x', 0.0, 10.0, num=10, unit='m')
         y = sc.linspace('y', 0.0, 8.0, num=8, unit='m')
@@ -165,19 +165,19 @@ class TestSlicerPlotter:
         return {'x': x, 'y': y, 'z': z}
 
     @pytest.fixture
-    def test_3d_data(self, test_3d_coordinates):
+    def data_3d(self, coordinates_3d):
         """Create 3D test data."""
         data = sc.DataArray(
             sc.arange('z', 0, 5 * 8 * 10, dtype='float64').fold(
                 dim='z', sizes={'z': 5, 'y': 8, 'x': 10}
             ),
-            coords=test_3d_coordinates,
+            coords=coordinates_3d,
         )
         data.data.unit = 'counts'
         return data
 
     @pytest.fixture
-    def test_3d_data_no_coords(self):
+    def data_3d_no_coords(self):
         """Create 3D test data without coordinates."""
         return sc.DataArray(
             sc.arange('z', 0, 5 * 8 * 10, dtype='float64').fold(
@@ -199,59 +199,55 @@ class TestSlicerPlotter:
         # Uses base class autoscalers dict (initialized lazily)
         assert slicer_plotter.autoscalers == {}
 
-    def test_plot_slices_3d_data(self, slicer_plotter, test_3d_data, test_data_key):
+    def test_plot_slices_3d_data(self, slicer_plotter, data_3d, data_key):
         """Test that SlicerPlotter correctly slices 3D data."""
-        slicer_plotter.initialize_from_data({test_data_key: test_3d_data})
-        z_value = float(test_3d_data.coords['z'].values[0])
-        result = slicer_plotter.plot(
-            test_3d_data, test_data_key, slice_dim='z', z_value=z_value
-        )
+        slicer_plotter.initialize_from_data({data_key: data_3d})
+        z_value = float(data_3d.coords['z'].values[0])
+        result = slicer_plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value)
         assert isinstance(result, hv.Image)
         # The result should be a 2D image
         assert result is not None
 
-    def test_plot_with_different_slice_index(self, test_3d_data, test_data_key):
+    def test_plot_with_different_slice_index(self, data_3d, data_key):
         """Test that changing slice index affects the plot."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
-        plotter.initialize_from_data({test_data_key: test_3d_data})
+        plotter.initialize_from_data({data_key: data_3d})
         # Plot with different slice value
-        z_value = float(test_3d_data.coords['z'].values[2])
-        result = plotter.plot(
-            test_3d_data, test_data_key, slice_dim='z', z_value=z_value
-        )
+        z_value = float(data_3d.coords['z'].values[2])
+        result = plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value)
         assert isinstance(result, hv.Image)
 
     def test_can_slice_along_different_dimensions(
-        self, slicer_plotter, test_3d_data, test_data_key
+        self, slicer_plotter, data_3d, data_key
     ):
         """Test that we can slice along different dimensions."""
-        slicer_plotter.initialize_from_data({test_data_key: test_3d_data})
+        slicer_plotter.initialize_from_data({data_key: data_3d})
 
         # Can slice along z
-        z_value = float(test_3d_data.coords['z'].values[0])
+        z_value = float(data_3d.coords['z'].values[0])
         result_z = slicer_plotter.plot(
-            test_3d_data, test_data_key, slice_dim='z', z_value=z_value
+            data_3d, data_key, slice_dim='z', z_value=z_value
         )
         assert isinstance(result_z, hv.Image)
 
         # Can slice along y
-        y_value = float(test_3d_data.coords['y'].values[0])
+        y_value = float(data_3d.coords['y'].values[0])
         result_y = slicer_plotter.plot(
-            test_3d_data, test_data_key, slice_dim='y', y_value=y_value
+            data_3d, data_key, slice_dim='y', y_value=y_value
         )
         assert isinstance(result_y, hv.Image)
 
         # Can slice along x
-        x_value = float(test_3d_data.coords['x'].values[0])
+        x_value = float(data_3d.coords['x'].values[0])
         result_x = slicer_plotter.plot(
-            test_3d_data, test_data_key, slice_dim='x', x_value=x_value
+            data_3d, data_key, slice_dim='x', x_value=x_value
         )
         assert isinstance(result_x, hv.Image)
 
-    def test_kdims_with_coords(self, slicer_plotter, test_3d_data, test_data_key):
+    def test_kdims_with_coords(self, slicer_plotter, data_3d, data_key):
         """Test that kdims use coordinate values when available."""
-        slicer_plotter.initialize_from_data({test_data_key: test_3d_data})
+        slicer_plotter.initialize_from_data({data_key: data_3d})
         kdims = slicer_plotter.kdims
 
         assert kdims is not None
@@ -266,11 +262,9 @@ class TestSlicerPlotter:
         assert z_dim.unit == 's'
         assert hasattr(z_dim, 'values')  # Has discrete values
 
-    def test_kdims_without_coords(
-        self, slicer_plotter, test_3d_data_no_coords, test_data_key
-    ):
+    def test_kdims_without_coords(self, slicer_plotter, data_3d_no_coords, data_key):
         """Test that kdims fall back to indices without coordinates."""
-        slicer_plotter.initialize_from_data({test_data_key: test_3d_data_no_coords})
+        slicer_plotter.initialize_from_data({data_key: data_3d_no_coords})
         kdims = slicer_plotter.kdims
 
         assert kdims is not None
@@ -279,22 +273,20 @@ class TestSlicerPlotter:
         assert z_dim.name == 'z_index'  # Uses index not value
         assert hasattr(z_dim, 'range')  # Has range not discrete values
 
-    def test_plot_with_coord_value(self, test_3d_data, test_data_key):
+    def test_plot_with_coord_value(self, data_3d, data_key):
         """Test plotting with coordinate value."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
-        plotter.initialize_from_data({test_data_key: test_3d_data})
+        plotter.initialize_from_data({data_key: data_3d})
 
         # Get a valid coordinate value from the data
-        z_coord = test_3d_data.coords['z']
+        z_coord = data_3d.coords['z']
         z_value = float(z_coord.values[2])
 
-        result = plotter.plot(
-            test_3d_data, test_data_key, slice_dim='z', z_value=z_value
-        )
+        result = plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value)
         assert result is not None
 
-    def test_multiple_datasets_rejected_by_registry(self, test_3d_data, test_data_key):
+    def test_multiple_datasets_rejected_by_registry(self, data_3d, data_key):
         """Test slicer plotter is rejected for multiple datasets by the registry."""
         from ess.livedata.dashboard.plotting import plotter_registry
 
@@ -306,21 +298,21 @@ class TestSlicerPlotter:
             version=1,
         )
         job_id2 = JobId(source_name='test_source2', job_number=uuid.uuid4())
-        test_data_key2 = ResultKey(
+        data_key2 = ResultKey(
             workflow_id=workflow_id2, job_id=job_id2, output_name='test_result'
         )
 
         # Single dataset should be compatible
-        single_data = {test_data_key: test_3d_data}
+        single_data = {data_key: data_3d}
         compatible = plotter_registry.get_compatible_plotters(single_data)
         assert 'slicer' in compatible
 
         # Multiple datasets should not be compatible
-        multiple_data = {test_data_key: test_3d_data, test_data_key2: test_3d_data}
+        multiple_data = {data_key: data_3d, data_key2: data_3d}
         compatible = plotter_registry.get_compatible_plotters(multiple_data)
         assert 'slicer' not in compatible
 
-    def test_edge_coordinates(self, slicer_plotter, test_data_key):
+    def test_edge_coordinates(self, slicer_plotter, data_key):
         """Test handling of edge coordinates."""
         # Create data with edge coordinates
         x_edges = sc.linspace('x', 0.0, 10.0, num=11, unit='m')
@@ -332,16 +324,14 @@ class TestSlicerPlotter:
             coords={'x': x_edges, 'y': y_edges, 'z': z_edges},
         )
 
-        slicer_plotter.initialize_from_data({test_data_key: data})
+        slicer_plotter.initialize_from_data({data_key: data})
 
         # For edge coords, slider uses midpoints
         z_midpoint = float(sc.midpoints(z_edges, dim='z').values[0])
-        result = slicer_plotter.plot(
-            data, test_data_key, slice_dim='z', z_value=z_midpoint
-        )
+        result = slicer_plotter.plot(data, data_key, slice_dim='z', z_value=z_midpoint)
         assert isinstance(result, hv.Image)
 
-    def test_inconsistent_dimensions_raises(self, test_data_key):
+    def test_inconsistent_dimensions_raises(self, data_key):
         """Test that data with inconsistent slice dimensions raises error."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
@@ -352,23 +342,21 @@ class TestSlicerPlotter:
         )
         # Try slicing with invalid dimension - scipp raises DimensionError
         with pytest.raises(sc.DimensionError, match="Expected dimension"):
-            plotter.plot(
-                data1, test_data_key, slice_dim='invalid_dim', invalid_dim_index=0
-            )
+            plotter.plot(data1, data_key, slice_dim='invalid_dim', invalid_dim_index=0)
 
-    def test_call_with_dimension_selector(self, test_3d_data, test_data_key):
+    def test_call_with_dimension_selector(self, data_3d, data_key):
         """Test that __call__ accepts slice_dim and value parameters."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
-        plotter.initialize_from_data({test_data_key: test_3d_data})
+        plotter.initialize_from_data({data_key: data_3d})
 
         # Call with slice_dim and values as HoloViews would with multiple kdims
-        z_value = float(test_3d_data.coords['z'].values[2])
-        y_value = float(test_3d_data.coords['y'].values[0])
-        x_value = float(test_3d_data.coords['x'].values[0])
+        z_value = float(data_3d.coords['z'].values[2])
+        y_value = float(data_3d.coords['y'].values[0])
+        x_value = float(data_3d.coords['x'].values[0])
 
         result = plotter(
-            {test_data_key: test_3d_data},
+            {data_key: data_3d},
             slice_dim='z',
             z_value=z_value,
             y_value=y_value,
@@ -376,19 +364,19 @@ class TestSlicerPlotter:
         )
         assert result is not None
 
-    def test_call_slices_along_selected_dimension(self, test_3d_data, test_data_key):
+    def test_call_slices_along_selected_dimension(self, data_3d, data_key):
         """Test that __call__ uses the selected dimension."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
-        plotter.initialize_from_data({test_data_key: test_3d_data})
+        plotter.initialize_from_data({data_key: data_3d})
 
         # Call with different slice dimensions
-        z_value = float(test_3d_data.coords['z'].values[1])
-        y_value = float(test_3d_data.coords['y'].values[3])
-        x_value = float(test_3d_data.coords['x'].values[0])
+        z_value = float(data_3d.coords['z'].values[1])
+        y_value = float(data_3d.coords['y'].values[3])
+        x_value = float(data_3d.coords['x'].values[0])
 
         result_z = plotter(
-            {test_data_key: test_3d_data},
+            {data_key: data_3d},
             slice_dim='z',
             z_value=z_value,
             y_value=y_value,
@@ -397,7 +385,7 @@ class TestSlicerPlotter:
         assert result_z is not None
 
         result_y = plotter(
-            {test_data_key: test_3d_data},
+            {data_key: data_3d},
             slice_dim='y',
             z_value=z_value,
             y_value=y_value,
@@ -412,13 +400,13 @@ class TestSlicerPlotter:
 
         assert plotter.kdims is None
 
-    def test_initialize_from_data_sets_kdims(self, test_3d_data, test_data_key):
+    def test_initialize_from_data_sets_kdims(self, data_3d, data_key):
         """Test that initialize_from_data enables kdims."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
 
         # Initialize with data
-        plotter.initialize_from_data({test_data_key: test_3d_data})
+        plotter.initialize_from_data({data_key: data_3d})
 
         # kdims should now be available (1 selector + 3 sliders = 4 kdims)
         kdims = plotter.kdims
@@ -431,7 +419,7 @@ class TestSlicerPlotter:
         assert kdims[0].default == 'z'
 
         # Next 3 kdims are the sliders for each dimension
-        # Since test_3d_data has coords, they use coord values not indices
+        # Since data_3d has coords, they use coord values not indices
         assert kdims[1].name == 'z_value'
         assert kdims[1].unit == 's'
         assert hasattr(kdims[1], 'values')
