@@ -7,7 +7,7 @@
 ```sh
 python -m venv dream-demo
 source dream-demo/bin/activate
-pip install "git+https://github.com/scipp/beamlime.git@dream-v2#egg=beamlime[dream,dashboard]"
+pip install "git+https://github.com/scipp/esslivedata.git@main#egg=esslivedata[dream,dashboard]"
 ```
 
 ### Data
@@ -20,7 +20,7 @@ scp login.esss.dk:'/dmsc/scipp/dream/268227_00024779_*' .
 
 ### Docker
 
-Clone the repository and checkout the `dream-v2` branch.
+Clone the repository (main branch).
 I usually run the Docker containers in a detached screen session, so I can reattach later if needed, but this is optional.
 
 ```sh
@@ -50,14 +50,13 @@ You can also run the monitor-related services:
 ```sh
 python -m ess.livedata.services.fake_monitors --instrument dream --mode da00
 python -m ess.livedata.services.monitor_data --instrument=dream --dev
-python -m ess.livedata.dashboard.monitors --instrument=dream
 ```
 
 ## Usage
 
 ### Connecting
 
-Navigate to `http://localhost:5009` for the data-reduction dashboard and `http://localhost:5007` for the monitors dashboard.
+Navigate to `http://localhost:5009` for the dashboard.
 IDEs such as VScode with remote extensions will automatically forward this port to the host machine if you click on the link in the terminal when starting the dashboard.
 
 ### Data reduction
@@ -80,7 +79,6 @@ You can see/demonstrate artifacts from (incorrect) WFM frame merging by selectin
 - The `logarithmic` bin settings work in the backend, but the UI plotting cannot deal with it.
 - Changing units of edges probably does not work everywhere either.
 - There is no indication of stopped workflows in the plots.
-  Click "Remove" to remove a plot item.
 
 ### Monitors
 
