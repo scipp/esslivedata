@@ -67,17 +67,15 @@ def test_updates_are_published_immediately(
 
     app.publish_log_message(source_name=source_name, time=1, value=1.5)
     service.step()
-    # Each workflow call returns two results, cumulative and current
-    assert len(sink.messages) == 2
-    assert sink.messages[-2].value.values.sum() == 1.5
+    # Each workflow call returns one result, cumulative
+    assert len(sink.messages) == 1
     assert sink.messages[-1].value.values.sum() == 1.5
     # No data -> no data published
     service.step()
-    assert len(sink.messages) == 2
+    assert len(sink.messages) == 1
 
     # Just a tiny bit later, but batcher does not delay processing this.
     app.publish_log_message(source_name=source_name, time=1.0001, value=0.5)
     service.step()
-    assert len(sink.messages) == 4
-    assert sink.messages[-2].value.values.sum() == 2.0
+    assert len(sink.messages) == 2
     assert sink.messages[-1].value.values.sum() == 2.0

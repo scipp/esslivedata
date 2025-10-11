@@ -29,7 +29,7 @@ class TimeseriesStreamProcessor(Workflow):
     def finalize(self) -> dict[str, sc.DataArray]:
         if self._data is None:
             raise ValueError("No data has been added")
-        return {'cumulative': self._data, 'current': self._data}
+        return {'cumulative': self._data}
 
     def clear(self) -> None:
         self._data = None
