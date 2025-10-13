@@ -183,49 +183,6 @@ def _make_spectrum_view(
     )
 
 
-_reduction_workflow = TofWorkflow(run_types=(SampleRun,), monitor_types=())
-_reduction_workflow[Filename[SampleRun]] = get_nexus_geometry_filename('bifrost')
-_reduction_workflow[CalibratedBeamline[SampleRun]] = (
-    _reduction_workflow[CalibratedBeamline[SampleRun]]
-    .map({NeXusName[NXdetector]: _detector_names})
-    .reduce(func=_combine_banks)
-)
-
-_reduction_workflow[SpectrumViewTimeBins] = 500
-_reduction_workflow[SpectrumViewPixelsPerTube] = 10
-_reduction_workflow.insert(_make_spectrum_view)
-
-_source_names = ('unified_detector',)
-
-
-class SpectrumViewParams(pydantic.BaseModel):
-    time_bins: int = pydantic.Field(
-        title='Time bins',
-        description='Number of time bins for the spectrum view.',
-        default=500,
-        ge=1,
-        le=10000,
-    )
-    pixels_per_tube: int = pydantic.Field(
-        title='Pixels per tube',
-        description='Number of pixels per tube for the spectrum view.',
-        default=10,
-    )
-
-    @pydantic.field_validator('pixels_per_tube')
-    @classmethod
-    def pixels_per_tube_must_be_divisor_of_100(cls, v):
-        if 100 % v != 0:
-            raise ValueError('pixels_per_tube must be a divisor of 100')
-        return v
-
-
-class BifrostWorkflowParams(pydantic.BaseModel):
-    spectrum_view: SpectrumViewParams = pydantic.Field(
-        title='Spectrum view parameters', default_factory=SpectrumViewParams
-    )
-
-
 # Arc energies in meV
 class ArcEnergy(str, Enum):
     """Arc energy transfer values."""
@@ -276,15 +233,6 @@ class DetectorRatemeterRegionParams(pydantic.BaseModel):
         return self
 
 
-class DetectorRatemeterParams(pydantic.BaseModel):
-    """Parameters for detector ratemeter workflow."""
-
-    region: DetectorRatemeterRegionParams = pydantic.Field(
-        title='Ratemeter region parameters',
-        default_factory=DetectorRatemeterRegionParams,
-    )
-
-
 DetectorRegionCounts = NewType('DetectorRegionCounts', sc.DataArray)
 
 
@@ -305,6 +253,59 @@ def _detector_ratemeter(
     counts.coords['time'] = time
     counts.variances = counts.values  # Poisson statistics
     return DetectorRegionCounts(counts)
+
+
+reduction_workflow = TofWorkflow(run_types=(SampleRun,), monitor_types=())
+reduction_workflow[Filename[SampleRun]] = get_nexus_geometry_filename('bifrost')
+reduction_workflow[CalibratedBeamline[SampleRun]] = (
+    reduction_workflow[CalibratedBeamline[SampleRun]]
+    .map({NeXusName[NXdetector]: _detector_names})
+    .reduce(func=_combine_banks)
+)
+
+reduction_workflow[SpectrumViewTimeBins] = 500
+reduction_workflow[SpectrumViewPixelsPerTube] = 10
+reduction_workflow.insert(_make_spectrum_view)
+reduction_workflow.insert(_detector_ratemeter)
+
+_source_names = ('unified_detector',)
+
+
+class SpectrumViewParams(pydantic.BaseModel):
+    time_bins: int = pydantic.Field(
+        title='Time bins',
+        description='Number of time bins for the spectrum view.',
+        default=500,
+        ge=1,
+        le=10000,
+    )
+    pixels_per_tube: int = pydantic.Field(
+        title='Pixels per tube',
+        description='Number of pixels per tube for the spectrum view.',
+        default=10,
+    )
+
+    @pydantic.field_validator('pixels_per_tube')
+    @classmethod
+    def pixels_per_tube_must_be_divisor_of_100(cls, v):
+        if 100 % v != 0:
+            raise ValueError('pixels_per_tube must be a divisor of 100')
+        return v
+
+
+class BifrostWorkflowParams(pydantic.BaseModel):
+    spectrum_view: SpectrumViewParams = pydantic.Field(
+        title='Spectrum view parameters', default_factory=SpectrumViewParams
+    )
+
+
+class DetectorRatemeterParams(pydantic.BaseModel):
+    """Parameters for detector ratemeter workflow."""
+
+    region: DetectorRatemeterRegionParams = pydantic.Field(
+        title='Ratemeter region parameters',
+        default_factory=DetectorRatemeterRegionParams,
+    )
 
 
 # Monitor names matching group names in Nexus files
@@ -343,7 +344,7 @@ _logical_view = DetectorLogicalView(
     source_names=_source_names,
 )
 def _spectrum_view(params: BifrostWorkflowParams) -> StreamProcessorWorkflow:
-    wf = _reduction_workflow.copy()
+    wf = reduction_workflow.copy()
     view_params = params.spectrum_view
     wf[SpectrumViewTimeBins] = view_params.time_bins
     wf[SpectrumViewPixelsPerTube] = view_params.pixels_per_tube
@@ -365,9 +366,8 @@ def _spectrum_view(params: BifrostWorkflowParams) -> StreamProcessorWorkflow:
 def _detector_ratemeter_workflow(
     params: DetectorRatemeterParams,
 ) -> StreamProcessorWorkflow:
-    wf = _reduction_workflow.copy()
+    wf = reduction_workflow.copy()
     wf[DetectorRatemeterRegionParams] = params.region
-    wf.insert(_detector_ratemeter)
     return StreamProcessorWorkflow(
         wf,
         dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
