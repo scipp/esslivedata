@@ -47,8 +47,9 @@ dynamic = ["version"]
 test = [
     "essdiffraction>=25.08.0",
     "esssans",
-    "essspectroscopy>=25.09.0",
+    "essspectroscopy>=25.10.0",
     "holoviews",
+    "markdown-it-py==3.0.0",  # Work around myst-parser upper bound
     "panel",
     "param",
     "pytest",
@@ -56,7 +57,7 @@ test = [
     "scippneutron>=25.07.0",
 ]
 bifrost = [
-    "essspectroscopy>=25.09.0",
+    "essspectroscopy>=25.10.0",
 ]
 dream = [
     "essdiffraction>=25.08.0",
