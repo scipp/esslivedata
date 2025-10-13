@@ -181,7 +181,7 @@ class TestInstrument:
         assert spec.title == "Test Workflow"
         assert spec.description == "A test workflow"
         assert spec.source_names == ["source1", "source2"]
-        assert spec.aux_sources is None  # Will be filled from type hint in Phase 2
+        assert spec.aux_sources is None
 
     def test_register_workflow_with_defaults(self):
         """Test workflow registration with default values."""
@@ -209,8 +209,8 @@ class TestInstrument:
         assert spec.source_names == []  # default
         assert spec.aux_sources is None  # default
 
-    def test_register_workflow_with_aux_sources_type_hint(self):
-        """Test that aux_sources can be extracted from type hints."""
+    def test_register_workflow_with_aux_sources_explicit(self):
+        """Test that aux_sources can be set explicitly."""
         from typing import Literal
 
         import pydantic
@@ -221,7 +221,7 @@ class TestInstrument:
             monitor1: Literal['monitor1'] = 'monitor1'
             aux_stream: Literal['aux_stream'] = 'aux_stream'
 
-        def simple_factory(aux_sources: AuxSourcesModel) -> Workflow:
+        def simple_factory() -> Workflow:
             class MockProcessor(Workflow):
                 def __call__(self, *args, **kwargs):
                     return {}
@@ -232,6 +232,7 @@ class TestInstrument:
             name="workflow_with_aux",
             version=1,
             title="Workflow with Aux Sources",
+            aux_sources=AuxSourcesModel,
         )
 
         registered_factory = decorator(simple_factory)
@@ -241,7 +242,7 @@ class TestInstrument:
         assert len(specs) == 1
         spec = next(iter(specs.values()))
 
-        # aux_sources should be extracted from type hint
+        # aux_sources should be set explicitly
         assert spec.aux_sources is AuxSourcesModel
 
         # Verify it's a Pydantic model with the expected fields

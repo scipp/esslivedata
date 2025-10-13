@@ -155,8 +155,9 @@ _accumulators = (
     version=1,
     title='I(Q)',
     source_names=instrument.detector_names,
+    aux_sources=LokiAuxSources,
 )
-def _i_of_q(source_name: str, aux_sources: LokiAuxSources) -> StreamProcessorWorkflow:
+def _i_of_q(source_name: str) -> StreamProcessorWorkflow:
     wf = _base_workflow.copy()
     wf[NeXusDetectorName] = source_name
     return StreamProcessorWorkflow(
@@ -173,9 +174,10 @@ def _i_of_q(source_name: str, aux_sources: LokiAuxSources) -> StreamProcessorWor
     title='I(Q) with params',
     description='I(Q) reduction with configurable parameters.',
     source_names=instrument.detector_names,
+    aux_sources=LokiAuxSources,
 )
 def _i_of_q_with_params(
-    source_name: str, params: SansWorkflowParams, aux_sources: LokiAuxSources
+    source_name: str, params: SansWorkflowParams
 ) -> StreamProcessorWorkflow:
     wf = _base_workflow.copy()
     wf[NeXusDetectorName] = source_name

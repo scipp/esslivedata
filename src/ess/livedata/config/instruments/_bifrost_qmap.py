@@ -187,10 +187,9 @@ def register_qmap_workflows(
         title='Q map',
         description='Map of scattering intensity as function of Q and energy transfer.',
         source_names=['unified_detector'],
+        aux_sources=BifrostAuxSources,
     )
-    def _qmap_workflow(
-        params: BifrostQMapParams, aux_sources: BifrostAuxSources
-    ) -> StreamProcessorWorkflow:
+    def _qmap_workflow(params: BifrostQMapParams) -> StreamProcessorWorkflow:
         wf = _get_q_cut_workflow()
         wf[CutAxis1] = params.get_q_cut()
         wf[CutAxis2] = params.get_energy_cut()
@@ -202,9 +201,10 @@ def register_qmap_workflows(
         title='Elastic Q map',
         description='Elastic Q map with predefined axes.',
         source_names=['unified_detector'],
+        aux_sources=BifrostAuxSources,
     )
     def _elastic_qmap_workflow(
-        params: BifrostElasticQMapParams, aux_sources: BifrostAuxSources
+        params: BifrostElasticQMapParams,
     ) -> StreamProcessorWorkflow:
         wf = _get_q_cut_workflow()
         wf[CutAxis1] = params.axis1.to_cut_axis()
@@ -217,9 +217,10 @@ def register_qmap_workflows(
         title='Elastic Q map (custom)',
         description='Elastic Q map with custom axes.',
         source_names=['unified_detector'],
+        aux_sources=BifrostAuxSources,
     )
     def _custom_elastic_qmap_workflow(
-        params: BifrostCustomElasticQMapParams, aux_sources: BifrostAuxSources
+        params: BifrostCustomElasticQMapParams,
     ) -> StreamProcessorWorkflow:
         wf = _get_q_cut_workflow()
         wf[CutAxis1] = params.get_cut_axis1()

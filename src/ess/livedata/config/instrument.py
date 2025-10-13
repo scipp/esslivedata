@@ -122,6 +122,7 @@ class Instrument:
         title: str,
         description: str = '',
         source_names: Sequence[str] | None = None,
+        aux_sources: type[Any] | None = None,
     ) -> Callable[[Callable[..., Workflow]], Callable[..., Workflow]]:
         """
         Decorator to register a factory function for creating StreamProcessors.
@@ -131,14 +132,11 @@ class Instrument:
         registers the factory with the processor factory and returns the factory
         function unchanged.
 
-        The factory function may have up to three parameters:
+        The factory function may have up to two parameters:
         - `source_name`: The name of the source to process.
         - `params`: A Pydantic model containing parameters for the workflow. The factory
           inspects the type hint of the `params` parameter to determine the correct
           model that the frontend uses to create workflow configuration widgets.
-        - `aux_sources`: A Pydantic model containing auxiliary source selections. The
-          factory inspects the type hint of the `aux_sources` parameter to determine
-          the available auxiliary sources and their configuration options.
 
         Parameters
         ----------
@@ -154,6 +152,11 @@ class Instrument:
         source_names:
             Optional list of source names that the factory can handle. This is used to
             create a workflow specification.
+        aux_sources:
+            Optional Pydantic model class defining auxiliary data sources. If provided,
+            this will be used for validation and UI generation. The auxiliary source
+            configuration is handled by the Job layer and is not passed to the workflow
+            factory function.
 
         Returns
         -------
@@ -168,7 +171,7 @@ class Instrument:
             description=description,
             source_names=list(source_names or []),
             params=None,  # placeholder, filled in from type hint later
-            aux_sources=None,  # filled in from type hint later
+            aux_sources=aux_sources,
         )
         return self.workflow_factory.register(spec)
 

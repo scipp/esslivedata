@@ -84,9 +84,7 @@ def make_dummy_workflow_with_params(*, params: MyParams) -> StreamProcessor:
     )
 
 
-def make_dummy_workflow_with_aux_sources(
-    *, aux_sources: MyAuxSources
-) -> StreamProcessor:
+def make_dummy_workflow_with_aux_sources() -> StreamProcessor:
     """Fixture to create a mock StreamProcessor that uses aux_sources."""
     workflow = sciline.Pipeline()
     return StreamProcessor(
@@ -524,12 +522,12 @@ class TestWorkflowFactory:
             title="test-workflow",
             description="Test",
             params=None,
-            aux_sources=None,  # Will be auto-detected
+            aux_sources=MyAuxSources,
         )
 
         @factory.register(spec)
-        def factory_func(*, aux_sources: MyAuxSources):
-            return make_dummy_workflow_with_aux_sources(aux_sources=aux_sources)
+        def factory_func():
+            return make_dummy_workflow_with_aux_sources()
 
         config = WorkflowConfig(
             identifier=workflow_id,
@@ -616,11 +614,12 @@ class TestWorkflowFactory:
             title="test-workflow",
             description="Test",
             params=None,
+            aux_sources=MyAuxSources,
         )
 
         @factory.register(spec)
-        def factory_func(*, aux_sources: MyAuxSources):
-            return make_dummy_workflow_with_aux_sources(aux_sources=aux_sources)
+        def factory_func():
+            return make_dummy_workflow_with_aux_sources()
 
         # Missing required field 'rotation'
         config = WorkflowConfig(
@@ -631,8 +630,8 @@ class TestWorkflowFactory:
         with pytest.raises(ValidationError):
             factory.create(source_name="any-source", config=config)
 
-    def test_register_auto_detects_aux_sources_type(self):
-        """Test that the register decorator auto-detects aux_sources type hint."""
+    def test_register_sets_aux_sources_type_explicitly(self):
+        """Test that the register decorator sets aux_sources type explicitly in spec."""
         factory = WorkflowFactory()
         workflow_id = WorkflowId(
             instrument="test-instrument",
@@ -648,13 +647,13 @@ class TestWorkflowFactory:
             title="test-workflow",
             description="Test",
             params=None,
-            aux_sources=None,  # Should be auto-detected
+            aux_sources=MyAuxSources,
         )
 
         @factory.register(spec)
-        def factory_func(*, aux_sources: MyAuxSources):
-            return make_dummy_workflow_with_aux_sources(aux_sources=aux_sources)
+        def factory_func():
+            return make_dummy_workflow_with_aux_sources()
 
-        # Check that aux_sources type was auto-detected
+        # Check that aux_sources type was set in spec
         stored_spec = factory[workflow_id]
         assert stored_spec.aux_sources is MyAuxSources

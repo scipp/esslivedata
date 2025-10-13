@@ -285,10 +285,9 @@ class PowderWorkflowParams(pydantic.BaseModel):
     title='Powder reduction',
     description='Powder reduction without vanadium normalization.',
     source_names=_source_names,
+    aux_sources=DreamAuxSources,
 )
-def _powder_workflow(
-    source_name: str, params: PowderWorkflowParams, aux_sources: DreamAuxSources
-) -> Workflow:
+def _powder_workflow(source_name: str, params: PowderWorkflowParams) -> Workflow:
     wf = _reduction_workflow.copy()
     wf[NeXusName[NXdetector]] = source_name
     wf[dream.InstrumentConfiguration] = params.instrument_configuration.value
@@ -320,9 +319,10 @@ def _powder_workflow(
     title='Powder reduction (with vanadium)',
     description='Powder reduction with vanadium normalization.',
     source_names=_source_names,
+    aux_sources=DreamAuxSources,
 )
 def _powder_workflow_with_vanadium(
-    source_name: str, params: PowderWorkflowParams, aux_sources: DreamAuxSources
+    source_name: str, params: PowderWorkflowParams
 ) -> StreamProcessorWorkflow:
     wf = _reduction_workflow.copy()
     wf[NeXusName[NXdetector]] = source_name
