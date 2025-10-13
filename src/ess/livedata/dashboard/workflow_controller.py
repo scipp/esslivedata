@@ -164,8 +164,10 @@ class WorkflowController:
             )
             return False
 
-        # Create workflow config. A new job number is generated to allow associating
-        # multiple jobs with the same workflow run across different sources.
+        # Create a SINGLE workflow config which will be used for ALL source names (see
+        # loop below). WorkflowConfig.from_params generates a new job number which
+        # allows for associating multiple jobs with the same workflow run across the
+        # different sources.
         workflow_config = WorkflowConfig.from_params(
             workflow_id=workflow_id,
             params=config,
