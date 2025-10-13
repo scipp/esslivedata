@@ -83,9 +83,14 @@ class WorkflowSpec(BaseModel):
         default_factory=list,
         description="List of detector/other streams the workflow can be applied to.",
     )
-    aux_source_names: list[str] = Field(
-        default_factory=list,
-        description="List of auxiliary data streams the workflow needs.",
+    aux_sources: type[BaseModel] | None = Field(
+        default=None,
+        description=(
+            "Pydantic model defining auxiliary data sources with their configuration. "
+            "Field names define the aux source identifiers, and field types (typically "
+            "Literal or Enum) define the available stream choices. Field metadata "
+            "(title, description) provides UI information."
+        ),
     )
     params: type[BaseModel] | None = Field(description="Model for workflow param.")
 
@@ -154,10 +159,56 @@ class WorkflowConfig(BaseModel):
     schedule: JobSchedule = Field(
         default_factory=JobSchedule, description="Schedule for the workflow."
     )
+    aux_source_names: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Selected auxiliary source names as a mapping from field name (as defined "
+            "in WorkflowSpec.aux_sources) to the selected stream name."
+        ),
+    )
     params: dict[str, Any] = Field(
         default_factory=dict,
         description="Parameters for the workflow, as JSON-serialized Pydantic model.",
     )
+
+    @classmethod
+    def from_params(
+        cls,
+        workflow_id: WorkflowId,
+        params: BaseModel | None = None,
+        aux_source_names: BaseModel | None = None,
+        job_number: JobNumber | None = None,
+    ) -> WorkflowConfig:
+        """
+        Create a WorkflowConfig from validated Pydantic models.
+
+        Parameters
+        ----------
+        workflow_id:
+            Identifier for the workflow
+        params:
+            Validated Pydantic model with workflow parameters, or None if no params
+        aux_source_names:
+            Validated Pydantic model with auxiliary source selections, or None if no
+            aux sources
+        job_number:
+            Optional job number (generated if not provided)
+
+        Returns
+        -------
+        :
+            WorkflowConfig instance ready to be sent to backend
+        """
+        return cls(
+            identifier=workflow_id,
+            job_number=job_number if job_number is not None else uuid.uuid4(),
+            aux_source_names=(
+                aux_source_names.model_dump(mode='json')
+                if aux_source_names is not None
+                else {}
+            ),
+            params=params.model_dump() if params is not None else {},
+        )
 
 
 class PersistentWorkflowConfig(BaseModel):

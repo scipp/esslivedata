@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
-from typing import NewType
+from typing import Literal, NewType
 
 import pydantic
 import scipp as sc
@@ -238,6 +238,15 @@ class InstrumentConfiguration(pydantic.BaseModel):
         return self
 
 
+class DreamAuxSources(pydantic.BaseModel):
+    """Auxiliary source names for DREAM powder workflows."""
+
+    cave_monitor: Literal['monitor1'] = pydantic.Field(
+        default='monitor1',
+        description='Cave monitor for normalization.',
+    )
+
+
 class PowderWorkflowParams(pydantic.BaseModel):
     dspacing_edges: parameter_models.DspacingEdges = pydantic.Field(
         title='d-spacing bins',
@@ -276,7 +285,7 @@ class PowderWorkflowParams(pydantic.BaseModel):
     title='Powder reduction',
     description='Powder reduction without vanadium normalization.',
     source_names=_source_names,
-    aux_source_names=['monitor1'],
+    aux_sources=DreamAuxSources,
 )
 def _powder_workflow(source_name: str, params: PowderWorkflowParams) -> Workflow:
     wf = _reduction_workflow.copy()
@@ -291,7 +300,7 @@ def _powder_workflow(source_name: str, params: PowderWorkflowParams) -> Workflow
         wf,
         dynamic_keys={
             source_name: NeXusData[NXdetector, SampleRun],
-            'monitor1': NeXusData[powder.types.CaveMonitor, SampleRun],
+            'cave_monitor': NeXusData[powder.types.CaveMonitor, SampleRun],
         },
         target_keys=(
             powder.types.FocussedDataDspacing[SampleRun],
@@ -310,7 +319,7 @@ def _powder_workflow(source_name: str, params: PowderWorkflowParams) -> Workflow
     title='Powder reduction (with vanadium)',
     description='Powder reduction with vanadium normalization.',
     source_names=_source_names,
-    aux_source_names=['monitor1'],
+    aux_sources=DreamAuxSources,
 )
 def _powder_workflow_with_vanadium(
     source_name: str, params: PowderWorkflowParams
@@ -328,7 +337,7 @@ def _powder_workflow_with_vanadium(
         wf,
         dynamic_keys={
             source_name: NeXusData[NXdetector, SampleRun],
-            'monitor1': NeXusData[powder.types.CaveMonitor, SampleRun],
+            'cave_monitor': NeXusData[powder.types.CaveMonitor, SampleRun],
         },
         target_keys=(
             powder.types.FocussedDataDspacing[SampleRun],
