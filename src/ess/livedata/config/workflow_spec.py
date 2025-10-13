@@ -48,6 +48,42 @@ class JobId:
     job_number: JobNumber
 
 
+class AuxSourcesBase(BaseModel):
+    """
+    Base class for auxiliary source models.
+
+    Auxiliary source models define the available auxiliary data streams that a workflow
+    can consume. Subclasses should define fields with Literal or Enum types to specify
+    the available stream choices.
+
+    The `render()` method can be overridden to transform field values into job-specific
+    or source-specific stream names for routing purposes.
+    """
+
+    def render(self, job_id: JobId) -> dict[str, str]:
+        """
+        Render auxiliary source stream names for a specific job.
+
+        The default implementation returns the model values unchanged, preserving
+        backward compatibility with existing workflows.
+
+        Parameters
+        ----------
+        job_id:
+            The job identifier, containing both source_name and job_number.
+            Subclasses can use this to create job-specific or source-specific
+            stream names (e.g., "{job_id.job_number}/roi_rectangle").
+
+        Returns
+        -------
+        :
+            Mapping from field names to stream names for routing. The keys are the
+            field names defined in the model, and the values are the stream names
+            that the job should subscribe to.
+        """
+        return self.model_dump(mode='json')
+
+
 class ResultKey(BaseModel, frozen=True):
     # If the job produced a DataGroup then it will be serialized as multiple da00
     # messages. Each message corresponds to a single DataArray value the DataGroup.

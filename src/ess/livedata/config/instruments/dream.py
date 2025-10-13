@@ -13,6 +13,7 @@ from ess.dream import DreamPowderWorkflow
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.env import StreamingEnv
+from ess.livedata.config.workflow_spec import AuxSourcesBase
 from ess.livedata.handlers.detector_data_handler import (
     DetectorLogicalView,
     DetectorProjection,
@@ -238,7 +239,7 @@ class InstrumentConfiguration(pydantic.BaseModel):
         return self
 
 
-class DreamAuxSources(pydantic.BaseModel):
+class DreamAuxSources(AuxSourcesBase):
     """Auxiliary source names for DREAM powder workflows."""
 
     cave_monitor: Literal['monitor1'] = pydantic.Field(
