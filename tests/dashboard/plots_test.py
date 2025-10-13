@@ -208,9 +208,6 @@ class TestSlicerPlotter:
         z_value = float(data_3d.coords['z'].values[0])
         result = slicer_plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value)
         assert isinstance(result, hv.Image)
-        # The result should be a 2D image
-        assert result is not None
-
         # Verify that the correct slice data is returned
         expected_slice = data_3d['z', 0]
         # HoloViews Image.data is a dictionary with keys 'x', 'y', 'values'
@@ -240,52 +237,32 @@ class TestSlicerPlotter:
             expected_slice.values,
         )
 
+    @pytest.mark.parametrize('slice_dim', ['z', 'y', 'x'])
     def test_can_slice_along_different_dimensions(
-        self, slicer_plotter, data_3d, data_key
+        self, slicer_plotter, data_3d, data_key, slice_dim
     ):
         """Test that we can slice along different dimensions."""
         slicer_plotter.initialize_from_data({data_key: data_3d})
 
-        # Can slice along z
-        z_value = float(data_3d.coords['z'].values[0])
-        result_z = slicer_plotter.plot(
-            data_3d, data_key, slice_dim='z', z_value=z_value
-        )
-        assert isinstance(result_z, hv.Image)
-        # Verify correct slice data for z dimension
-        expected_z = data_3d['z', 0]
-        data_dict_z = result_z.data
-        np.testing.assert_allclose(
-            data_dict_z['values'],
-            expected_z.values,
+        # Get the coordinate value for the slice dimension
+        slice_value = float(data_3d.coords[slice_dim].values[0])
+
+        # Perform the slice
+        result = slicer_plotter.plot(
+            data_3d,
+            data_key,
+            slice_dim=slice_dim,
+            **{f'{slice_dim}_value': slice_value},
         )
 
-        # Can slice along y
-        y_value = float(data_3d.coords['y'].values[0])
-        result_y = slicer_plotter.plot(
-            data_3d, data_key, slice_dim='y', y_value=y_value
-        )
-        assert isinstance(result_y, hv.Image)
-        # Verify correct slice data for y dimension
-        expected_y = data_3d['y', 0]
-        data_dict_y = result_y.data
-        np.testing.assert_allclose(
-            data_dict_y['values'],
-            expected_y.values,
-        )
+        assert isinstance(result, hv.Image)
 
-        # Can slice along x
-        x_value = float(data_3d.coords['x'].values[0])
-        result_x = slicer_plotter.plot(
-            data_3d, data_key, slice_dim='x', x_value=x_value
-        )
-        assert isinstance(result_x, hv.Image)
-        # Verify correct slice data for x dimension
-        expected_x = data_3d['x', 0]
-        data_dict_x = result_x.data
+        # Verify correct slice data
+        expected = data_3d[slice_dim, 0]
+        data_dict = result.data
         np.testing.assert_allclose(
-            data_dict_x['values'],
-            expected_x.values,
+            data_dict['values'],
+            expected.values,
         )
 
     def test_kdims_with_coords(self, slicer_plotter, data_3d, data_key):
