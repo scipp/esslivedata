@@ -116,15 +116,46 @@ _detector_names = [
 ]
 
 
+def _transpose_with_coords(data: sc.DataArray, dims: tuple[str, ...]) -> sc.DataArray:
+    """
+    Transpose data array and all its coordinates.
+
+    Unlike scipp.DataArray.transpose, this function also transposes all coordinates
+    that have more than one dimension. Each coordinate is transposed to match the
+    order of dimensions specified in `dims`, considering only the intersection of
+    the coordinate's dimensions with `dims`.
+
+    Parameters
+    ----------
+    data:
+        Data array to transpose.
+    dims:
+        Target dimension order.
+
+    Returns
+    -------
+    :
+        Transposed data array with transposed coordinates.
+    """
+    result = data.transpose(dims)
+    # Transpose all multi-dimensional coordinates
+    for name, coord in data.coords.items():
+        if coord.ndim > 1:
+            # Only transpose dimensions that exist in both the coord and target dims
+            coord_dims = coord.dims
+            ordered_dims = tuple(d for d in dims if d in coord_dims)
+            result.coords[name] = coord.transpose(ordered_dims)
+    return result
+
+
 def _combine_banks(*bank: sc.DataArray) -> sc.DataArray:
-    return (
+    combined = (
         sc.concat(bank, dim='')
         .fold('', sizes={'arc': 5, 'channel': 9})
         .rename_dims(dim_0='tube', dim_1='pixel')
-        # Order with consecutive detector_number
-        .transpose(('arc', 'tube', 'channel', 'pixel'))
-        .copy()
     )
+    # Order with consecutive detector_number
+    return _transpose_with_coords(combined, ('arc', 'tube', 'channel', 'pixel')).copy()
 
 
 SpectrumView = NewType('SpectrumView', sc.DataArray)
