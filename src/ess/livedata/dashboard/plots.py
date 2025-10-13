@@ -352,8 +352,7 @@ class SlicerPlotter(Plotter):
             Dictionary of initial data arrays.
         """
         if not data:
-            return
-
+            raise ValueError("No data provided to initialize_from_data")
         # Get first data array to create kdims
         first_data = next(iter(data.values()))
 

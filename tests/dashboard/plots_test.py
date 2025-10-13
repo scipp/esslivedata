@@ -351,6 +351,44 @@ class TestSlicerPlotter:
         result = slicer_plotter.plot(data, data_key, slice_dim='z', z_value=z_midpoint)
         assert isinstance(result, hv.Image)
 
+    def test_mixed_edge_and_bin_center_coordinates(self, slicer_plotter, data_key):
+        """Test handling of mixed edge and bin-center coordinates."""
+        # Create data with mixed coordinate types
+        x_edges = sc.linspace('x', 0.0, 10.0, num=11, unit='m')  # edges
+        y_centers = sc.linspace('y', 0.5, 7.5, num=8, unit='m')  # bin centers
+        z_edges = sc.linspace('z', 0.0, 5.0, num=6, unit='s')  # edges
+
+        data = sc.DataArray(
+            sc.ones(dims=['z', 'y', 'x'], shape=[5, 8, 10], unit='counts'),
+            coords={'x': x_edges, 'y': y_centers, 'z': z_edges},
+        )
+
+        slicer_plotter.initialize_from_data({data_key: data})
+        kdims = slicer_plotter.kdims
+
+        assert kdims is not None
+        # Check that kdims are created correctly for mixed coords
+        z_dim = next(d for d in kdims if 'z' in d.name)
+        assert z_dim.name == 'z_value'
+        assert z_dim.unit == 's'
+
+        y_dim = next(d for d in kdims if 'y' in d.name)
+        assert y_dim.name == 'y_value'
+        assert y_dim.unit == 'm'
+
+        # Slice along z using midpoint (since z has edges)
+        z_midpoint = float(sc.midpoints(z_edges, dim='z').values[2])
+        result = slicer_plotter.plot(data, data_key, slice_dim='z', z_value=z_midpoint)
+        assert isinstance(result, hv.Image)
+
+        # Verify the slice has correct data
+        expected_slice = data['z', 2]
+        data_dict = result.data
+        np.testing.assert_allclose(
+            data_dict['values'],
+            expected_slice.values,
+        )
+
     def test_inconsistent_dimensions_raises(self, data_key):
         """Test that data with inconsistent slice dimensions raises error."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
@@ -413,13 +451,6 @@ class TestSlicerPlotter:
         )
         assert result_y is not None
 
-    def test_kdims_before_initialization(self):
-        """Test that kdims returns None before initialization."""
-        params = PlotParams3d(plot_scale=PlotScaleParams2d())
-        plotter = plots.SlicerPlotter.from_params(params)
-
-        assert plotter.kdims is None
-
     def test_initialize_from_data_sets_kdims(self, data_3d, data_key):
         """Test that initialize_from_data enables kdims."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
@@ -452,16 +483,14 @@ class TestSlicerPlotter:
         assert kdims[3].unit == 'm'
         assert hasattr(kdims[3], 'values')
 
-    def test_initialize_from_data_with_empty_dict(self):
-        """Test that initialize_from_data handles empty data gracefully."""
+    def test_initialize_from_data_raises_if_no_data_given(self):
+        """Test that initialize_from_data rejects empty data."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         plotter = plots.SlicerPlotter.from_params(params)
 
         # Initialize with empty dict
-        plotter.initialize_from_data({})
-
-        # kdims should still be None
-        assert plotter.kdims is None
+        with pytest.raises(ValueError, match='No data provided'):
+            plotter.initialize_from_data({})
 
     def test_slice_returns_correct_coordinate_values(self, data_3d, data_key):
         """Test that the slice has correct coordinate values."""
