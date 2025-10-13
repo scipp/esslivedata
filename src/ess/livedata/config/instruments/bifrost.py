@@ -230,11 +230,11 @@ class BifrostWorkflowParams(pydantic.BaseModel):
 class ArcEnergy(str, Enum):
     """Arc energy transfer values."""
 
-    ARC_2_7 = '2.7'
-    ARC_3_2 = '3.2'
-    ARC_3_8 = '3.8'
-    ARC_4_4 = '4.4'
-    ARC_5_0 = '5.0'
+    ARC_2_7 = '2.7 meV'
+    ARC_3_2 = '3.2 meV'
+    ARC_3_8 = '3.8 meV'
+    ARC_4_4 = '4.4 meV'
+    ARC_5_0 = '5.0 meV'
 
 
 _arc_energy_to_index = {
