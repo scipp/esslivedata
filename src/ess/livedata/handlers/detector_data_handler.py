@@ -11,6 +11,7 @@ from typing import Literal
 
 import pydantic
 import scipp as sc
+from pydantic import field_validator
 
 from ess.reduce.live import raw
 
@@ -31,10 +32,20 @@ class DetectorROIAuxSources(AuxSourcesBase):
     ROI configuration streams, since each job instance needs its own ROI.
     """
 
-    roi_config: Literal['roi_rectangle', 'roi_polygon', 'roi_ellipse'] = pydantic.Field(
-        default='roi_rectangle',
-        description='ROI shape configuration stream for defining regions of interest.',
+    roi: Literal['rectangle', 'polygon', 'ellipse'] = pydantic.Field(
+        default='rectangle',
+        description='Shape to use for the region of interest (ROI).',
     )
+
+    @field_validator('roi')
+    @classmethod
+    def validate_roi_shape(cls, v: str) -> str:
+        """Validate that only rectangle is currently supported."""
+        if v != 'rectangle':
+            raise ValueError(
+                f"Currently only 'rectangle' ROI shape is supported, got '{v}'"
+            )
+        return v
 
     def render(self, job_id: JobId) -> dict[str, str]:
         """
@@ -48,12 +59,12 @@ class DetectorROIAuxSources(AuxSourcesBase):
         Returns
         -------
         :
-            Mapping from field name 'roi_config' to job-specific stream name
-            in the format '{job_number}/{roi_shape}' (e.g., 'abc-123/roi_rectangle').
+            Mapping from field name 'roi' to job-specific stream name
+            in the format '{job_number}/roi_{shape}' (e.g., 'abc-123/roi_rectangle').
         """
         base = self.model_dump(mode='json')
         return {
-            field: f"{job_id.job_number}/{stream}" for field, stream in base.items()
+            field: f"{job_id.job_number}/roi_{stream}" for field, stream in base.items()
         }
 
 

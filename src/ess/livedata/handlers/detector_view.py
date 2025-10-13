@@ -158,7 +158,7 @@ class DetectorView(Workflow):
         )
         self._roi_cumulative: sc.DataArray | None = None
         self._roi_model: models.ROI | None = None
-        self._roi_config_updated = False
+        self._roi_updated = False
 
     def apply_toa_range(self, data: sc.DataArray) -> sc.DataArray:
         if not self._use_toa_range:
@@ -181,14 +181,14 @@ class DetectorView(Workflow):
             passed through :py:class:`GroupIntoPixels`.
         """
         # Check for ROI configuration update (auxiliary data)
-        roi_config_key = 'roi_config'
-        if roi_config_key in data:
-            roi_data_array = data[roi_config_key]
+        roi_key = 'roi'
+        if roi_key in data:
+            roi_data_array = data[roi_key]
             # Convert DataArray to ROI model
             self._roi_model = models.ROI.from_data_array(roi_data_array)
             # Configure the ROI accumulator with the new model
             self._roi_accumulator.configure_from_roi_model(self._roi_model)
-            self._roi_config_updated = True
+            self._roi_updated = True
             # Reset cumulative histogram when ROI changes
             # (otherwise we'd be mixing events from different ROI regions)
             self._roi_cumulative = None
@@ -197,9 +197,9 @@ class DetectorView(Workflow):
                 return
 
         # Process detector event data
-        detector_data = {k: v for k, v in data.items() if k != roi_config_key}
+        detector_data = {k: v for k, v in data.items() if k != roi_key}
         if len(detector_data) == 0:
-            # No detector data to process (e.g., empty dict or only roi_config)
+            # No detector data to process (e.g., empty dict or only roi)
             return
         if len(detector_data) != 1:
             raise ValueError(
@@ -237,9 +237,12 @@ class DetectorView(Workflow):
             }
 
             # Publish ROI configuration when it's been updated
-            if self._roi_config_updated:
-                roi_result['roi_config'] = self._roi_model.to_data_array()
-                self._roi_config_updated = False
+            if self._roi_updated:
+                roi_data = self._roi_model.to_data_array()
+                # Use ROI type in stream name (e.g., 'roi_rectangle', 'roi_polygon')
+                roi_stream_name = f'roi_{roi_data.name}'
+                roi_result[roi_stream_name] = roi_data
+                self._roi_updated = False
 
         # Merge detector view and ROI results
         return {**view_result, **roi_result}
