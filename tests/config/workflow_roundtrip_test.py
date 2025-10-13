@@ -179,7 +179,7 @@ def test_workflow_params_serialization_roundtrip(
     )
     serialized = workflow_config.params
 
-    # Simulate backend deserialization (WorkflowFactory.create line 113)
+    # Simulate backend deserialization (WorkflowFactory.create)
     deserialized = spec.params.model_validate(serialized)
 
     # Should be identical after roundtrip
@@ -213,7 +213,7 @@ def test_workflow_aux_sources_serialization_roundtrip(
     )
     serialized = workflow_config.aux_source_names
 
-    # Simulate backend deserialization (WorkflowFactory.create line 123)
+    # Simulate backend deserialization (WorkflowFactory.create)
     deserialized = spec.aux_sources.model_validate(serialized)
 
     # Should be identical after roundtrip
