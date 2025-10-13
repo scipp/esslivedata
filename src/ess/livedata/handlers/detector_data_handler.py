@@ -9,15 +9,52 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
+import pydantic
 import scipp as sc
 
 from ess.reduce.live import raw
 
 from ..config.instrument import Instrument
+from ..config.workflow_spec import AuxSourcesBase, JobId
 from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import DetectorEvents, GroupIntoPixels
 from .detector_view import DetectorView, DetectorViewParams
+
+
+class DetectorROIAuxSources(AuxSourcesBase):
+    """
+    Auxiliary source model for ROI configuration in detector workflows.
+
+    Allows users to select between different ROI shapes (rectangle, polygon, ellipse).
+    The render() method prefixes stream names with the job number to create job-specific
+    ROI configuration streams, since each job instance needs its own ROI.
+    """
+
+    roi_config: Literal['roi_rectangle', 'roi_polygon', 'roi_ellipse'] = pydantic.Field(
+        default='roi_rectangle',
+        description='ROI shape configuration stream for defining regions of interest.',
+    )
+
+    def render(self, job_id: JobId) -> dict[str, str]:
+        """
+        Render ROI stream name with job-specific prefix.
+
+        Parameters
+        ----------
+        job_id:
+            Job identifier containing source_name and job_number.
+
+        Returns
+        -------
+        :
+            Mapping from field name 'roi_config' to job-specific stream name
+            in the format '{job_number}/{roi_shape}' (e.g., 'abc-123/roi_rectangle').
+        """
+        base = self.model_dump(mode='json')
+        return {
+            field: f"{job_id.job_number}/{stream}" for field, stream in base.items()
+        }
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -49,7 +86,7 @@ class DetectorProcessorFactory(ABC):
             title=self._config.title,
             description=self._config.description,
             source_names=self._config.source_names,
-            aux_source_names=['roi_config'],
+            aux_sources=DetectorROIAuxSources,
         )(self.make_view)
 
     @abstractmethod
