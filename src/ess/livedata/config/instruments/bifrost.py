@@ -128,9 +128,6 @@ def _combine_banks(*bank: sc.DataArray) -> sc.DataArray:
 
 
 SpectrumView = NewType('SpectrumView', sc.DataArray)
-DetectorCounts = NewType('DetectorCounts', sc.DataArray)
-BankCounts = NewType('BankCounts', sc.DataArray)
-AnalyzerCounts = NewType('AnalyzerCounts', sc.DataArray)
 SpectrumViewTimeBins = NewType('SpectrumViewTimeBins', int)
 SpectrumViewPixelsPerTube = NewType('SpectrumViewPixelsPerTube', int)
 
@@ -322,11 +319,8 @@ def _spectrum_view(params: BifrostWorkflowParams) -> StreamProcessorWorkflow:
     return StreamProcessorWorkflow(
         wf,
         dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
-        target_keys=(SpectrumView, AnalyzerCounts, BankCounts, DetectorCounts),
-        accumulators={
-            SpectrumView: EternalAccumulator,
-            AnalyzerCounts: TimeseriesAccumulator,
-        },
+        target_keys=(SpectrumView,),
+        accumulators={SpectrumView: EternalAccumulator},
     )
 
 
@@ -334,7 +328,7 @@ def _spectrum_view(params: BifrostWorkflowParams) -> StreamProcessorWorkflow:
     name='detector_ratemeter',
     version=1,
     title='Detector Ratemeter',
-    description='Count rate for a selected arc and pixel range.',
+    description='Counts for a selected arc and pixel range.',
     source_names=_source_names,
 )
 def _detector_ratemeter_workflow(

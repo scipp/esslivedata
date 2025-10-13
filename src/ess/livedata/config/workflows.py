@@ -18,7 +18,6 @@ from ess.livedata.handlers.to_nxlog import ToNXlog
 from ess.reduce import streaming
 from ess.reduce.nexus.types import Filename, MonitorData, NeXusData, NeXusName
 from ess.reduce.time_of_flight import GenericTofWorkflow
-from ess.spectroscopy.types import WavelengthMonitor
 
 
 class IntervalMode(str, Enum):
@@ -109,7 +108,7 @@ def _get_interval(
 
 
 def _get_interval_by_wavelength(
-    data: WavelengthMonitor[CurrentRun, CustomMonitor],
+    data: MonitorData[CurrentRun, CustomMonitor],
     range: parameter_models.WavelengthRange,
 ) -> MonitorCountsInInterval:
     """Get monitor counts in a wavelength interval."""
