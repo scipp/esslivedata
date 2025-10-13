@@ -1,17 +1,16 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import logging
-from typing import NoReturn, TypeVar
+from typing import NoReturn
 
 import numpy as np
 import scipp as sc
 
-from ess.livedata import Handler, Message, MessageSource, Service, StreamId, StreamKind
+from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
-from ess.livedata.core.handler import CommonHandlerFactory
+from ess.livedata.core import IdentityProcessor
 from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_f144
-from ess.livedata.service_factory import DataServiceBuilder
 
 
 def _make_ramp(size: int) -> sc.DataArray:
@@ -113,29 +112,20 @@ class FakeLogdataSource(MessageSource[sc.DataArray]):
         )
 
 
-T = TypeVar('T')
-
-
-class IdentityHandler(Handler[T, T]):
-    def handle(self, messages: list[Message[T]]) -> list[Message[T]]:
-        # We know the message does not originate from Kafka, so we can keep the key
-        return messages
-
-
 def run_service(*, instrument: str, log_level: int = logging.INFO) -> NoReturn:
     kafka_config = load_config(namespace=config_names.kafka_upstream)
     serializer = serialize_dataarray_to_f144
-    builder = DataServiceBuilder(
-        instrument=instrument,
-        name='fake_f144_producer',
-        log_level=log_level,
-        handler_factory=CommonHandlerFactory(handler_cls=IdentityHandler),
-    )
-    service = builder.from_source(
+
+    processor = IdentityProcessor(
         source=FakeLogdataSource(instrument=instrument),
         sink=KafkaSink(
             instrument=instrument, kafka_config=kafka_config, serializer=serializer
         ),
+    )
+    service = Service(
+        processor=processor,
+        name=f'{instrument}_fake_f144_producer',
+        log_level=log_level,
     )
     service.start()
 

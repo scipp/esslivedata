@@ -9,8 +9,9 @@ pydantic>=2
 pooch
 essdiffraction>=25.08.0
 esssans
-essspectroscopy>=25.09.0
+essspectroscopy>=25.10.0
 holoviews
+markdown-it-py==3.0.0
 panel
 param
 pytest

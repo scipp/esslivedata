@@ -11,7 +11,7 @@ from streaming_data_types import logdata_f144
 
 from ess.reduce.live.roi import ROIFilter
 
-from ..core.handler import Accumulator, Config
+from ..core.handler import Accumulator
 from ..parameter_models import RangeModel
 from .to_nxevent_data import DetectorEvents, MonitorEvents
 
@@ -89,7 +89,7 @@ class _CumulativeAccumulationMixin:
 
 
 class Cumulative(_CumulativeAccumulationMixin, Accumulator[sc.DataArray, sc.DataArray]):
-    def __init__(self, config: Config | None = None, clear_on_get: bool = False):
+    def __init__(self, config: dict | None = None, clear_on_get: bool = False):
         super().__init__(clear_on_get=clear_on_get)
         self._config = config or {}
 

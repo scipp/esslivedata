@@ -4,20 +4,19 @@
 
 import logging
 import time
-from typing import NoReturn, TypeVar
+from typing import NoReturn
 
 import numpy as np
 import scipp as sc
 import scippnexus as snx
 from streaming_data_types import eventdata_ev44
 
-from ess.livedata import Handler, Message, MessageSource, Service, StreamId, StreamKind
+from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.config.instruments import get_config
-from ess.livedata.core.handler import CommonHandlerFactory
+from ess.livedata.core import IdentityProcessor
 from ess.livedata.kafka.sink import KafkaSink, SerializationError
-from ess.livedata.service_factory import DataServiceBuilder
 
 
 def events_from_nexus(file_path: str) -> dict[str, sc.DataGroup]:
@@ -152,15 +151,6 @@ class FakeDetectorSource(MessageSource[sc.Dataset]):
         )
 
 
-T = TypeVar('T')
-
-
-class IdentityHandler(Handler[T, T]):
-    def handle(self, messages: list[Message[T]]) -> list[Message[T]]:
-        # We know the message does not originate from Kafka, so we can keep the key
-        return messages
-
-
 def serialize_detector_events_to_ev44(
     msg: Message[tuple[sc.Variable, sc.Variable]],
 ) -> bytes:
@@ -186,21 +176,21 @@ def run_service(
     kafka_config = load_config(namespace=config_names.kafka_upstream)
     serializer = serialize_detector_events_to_ev44
     name = 'fake_producer'
-    builder = DataServiceBuilder(
-        instrument=instrument,
-        name=name,
-        log_level=log_level,
-        handler_factory=CommonHandlerFactory(handler_cls=IdentityHandler),
-    )
     Service.configure_logging(log_level)
     logger = logging.getLogger(f'{instrument}_{name}')
-    service = builder.from_source(
+
+    processor = IdentityProcessor(
         source=FakeDetectorSource(
             instrument=instrument, nexus_file=nexus_file, logger=logger
         ),
         sink=KafkaSink(
             instrument=instrument, kafka_config=kafka_config, serializer=serializer
         ),
+    )
+    service = Service(
+        processor=processor,
+        name=f'{instrument}_{name}',
+        log_level=log_level,
     )
     service.start()
 
