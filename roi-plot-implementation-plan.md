@@ -1,5 +1,29 @@
 # Implementation Plan: ROI Plot with Interactive Editing
 
+## Implementation Status Summary
+
+**Last updated**: 2025-10-14 (after commit 9ece12b4)
+
+### Completed ✅
+1. **ROIDetectorPlotter foundation** (commit 090f6379): Created plotter class with BoxEdit overlay, Layout support, and graceful degradation
+2. **Backend ROI infrastructure** (commit da120d72): Added LIVEDATA_ROI topic, StreamKind, routing, and detector_data subscription
+3. **Plotter registration** (commits 090f6379, a80e5c6f): Registered roi_detector plotter with data requirements
+4. **Test coverage**: 93 passing tests (5 plotter tests + 88 infrastructure tests)
+
+### In Progress 🔄
+1. **BoxEdit integration**: Stream created but not yet connected to publishing mechanism
+2. **ROI shape display**: Request overlay done, readback overlay not yet implemented
+
+### Not Started ❌
+1. **Publishing ROI updates**: Dashboard publishing infrastructure for aux data
+2. **Readback shape overlays**: Static shape display from backend `roi_rectangle` stream
+3. **BoxEdit change detection**: Subscribe to BoxEdit data parameter and serialize to RectangleROI
+
+### Next Steps
+The primary blocker is **section 6: Publishing ROI Updates**. Once dashboard can publish ROI changes to the LIVEDATA_ROI topic, the backend will automatically process them (infrastructure is ready). After that, implement readback overlays (section 3) to close the feedback loop.
+
+---
+
 ## Understanding Summary
 
 **Backend (already implemented):**
@@ -18,86 +42,95 @@
 
 ## Implementation Plan
 
-### **1. Create ROIDetectorPlotter**
-- New plotter class in `dashboard/plots.py`
-- Consumes **2 data outputs and 3 ROI shape outputs from same job**:
-  - **Data**: `current` (or `cumulative`), `roi_current` (or `roi_cumulative`)
-  - **Readback shapes**: `roi_rectangle`, `roi_polygon`, `roi_ellipse`
-- Subscribe to all 3 shape streams (future-proof), but only display/enable rectangle tool for MVP
-- Data requirements:
-  - Single dataset only (`multiple_datasets: False`)
-  - Must be from `detector_data` namespace
-  - Must have exactly 2D detector image data
-- Returns `hv.Layout` with:
-  - Left: 2D detector image with (1) BoxEdit overlay for "request" ROI (2) static shape overlays for "readback" ROI from `roi_*` streams
-  - Right: 1D TOA spectrum from `roi_current`/`roi_cumulative`
+### **1. Create ROIDetectorPlotter** ✅ DONE (commit 090f6379)
+- ✅ New plotter class in `dashboard/plots.py` (ROIDetectorPlotter)
+- ✅ Returns `hv.Layout` with detector image and ROI spectrum
+- ✅ BoxEdit overlay for interactive rectangle editing (red, 0.3 alpha)
+- ✅ Gracefully handles missing ROI spectrum data
+- ✅ Registered as 'roi_detector' plotter with validator
+- ✅ Comprehensive test coverage (5 tests)
+- 🔄 **Partially complete**: Consumes detector data and roi_spectrum, but not yet subscribing to all ROI shape streams
+  - Currently: Only displays BoxEdit overlay (user "request" ROI)
+  - **TODO**: Subscribe to `roi_rectangle`, `roi_polygon`, `roi_ellipse` readback streams
+  - **TODO**: Display static shape overlays for backend "readback" ROI
+  - **TODO**: Implement dual overlay system (request vs readback)
 
-### **2. BoxEdit Integration Strategy**
-- BoxEdit stream attached to the 2D detector image element (user-editable "request" ROI)
-- Subscribe to BoxEdit `data` parameter changes (for now we only implement the rectangle case, i.e., BoxEdit!)
-- See `git diff bdcd3b2c roi-stream` for a POC to get started!
-- On change: Serialize rectangle to `RectangleROI` model → publish to aux data topic
-- Target stream: `{job_number}/roi_rectangle` (extract job_number from `ResultKey.job_id.job_number`)
+### **2. BoxEdit Integration Strategy** 🔄 IN PROGRESS
+- ✅ BoxEdit stream attached to the 2D detector image element (commit 090f6379)
+- ✅ BoxEdit stream accessible via `roi_plotter.box_stream` attribute
+- ✅ Configured for single rectangle editing (see `git diff bdcd3b2c roi-stream` for POC reference)
+- ❌ **TODO**: Subscribe to BoxEdit `data` parameter changes to detect user edits
+- ❌ **TODO**: On change: Serialize rectangle to `RectangleROI` model → publish to aux data topic
+- ❌ **TODO**: Target stream: `{job_number}/roi_rectangle` (extract job_number from `ResultKey.job_id.job_number`)
+- ❌ **TODO**: Integrate with publishing infrastructure (see section 6 below)
 
-### **3. ROI Shape Display (Readback + Request)**
+### **3. ROI Shape Display (Readback + Request)** ❌ NOT STARTED
 - **Two separate visual overlays**:
-  1. **Request ROI**: BoxEdit overlay (user-editable, shown as dashed lines)
-  2. **Readback ROI**: Static shape overlay from `roi_rectangle` backend output (solid lines)
-- Subscribe to `roi_rectangle` output stream from backend
-- When received: Parse `RectangleROI` from DataArray → create static shape overlay (not BoxEdit)
+  1. **Request ROI**: BoxEdit overlay (user-editable, shown as dashed lines) ✅ DONE (commit 090f6379)
+  2. **Readback ROI**: Static shape overlay from `roi_rectangle` backend output (solid lines) ❌ TODO
+- ❌ **TODO**: Subscribe to `roi_rectangle` output stream from backend
+- ❌ **TODO**: When received: Parse `RectangleROI` from DataArray → create static shape overlay (not BoxEdit)
+- ❌ **TODO**: Implement separate visual styling for request vs readback (dashed vs solid)
 - **Why two overlays**: BoxEdit reflects user's immediate edits; readback shows backend's accepted ROI. After a brief period they converge to the same location/shape.
 - BoxEdit should **not** update its position when readback arrives (user remains in control of the "request")
 
-### **4. Handling Missing ROI Data**
-- On first plot creation, `roi_cumulative`/`roi_current`/`roi_rectangle` may not exist in DataService
-- Keep it minimal and simple:
-  - Show detector image immediately
-  - Show empty/minimal spectrum plot (expect to iterate on this later)
-  - Enable BoxEdit tool for user to draw ROI
-  - Update automatically when backend starts publishing ROI data
+### **4. Handling Missing ROI Data** ✅ DONE (commit 090f6379)
+- ✅ On first plot creation, gracefully handles missing `roi_spectrum` data
+- ✅ Keep it minimal and simple:
+  - ✅ Show detector image immediately
+  - ✅ Enable BoxEdit tool for user to draw ROI
+  - ✅ Show detector-only view if ROI spectrum missing (returns Overlay instead of Layout)
+  - ✅ Update automatically when backend starts publishing ROI data (handled by HoloViews reactivity)
 
-### **5. Plotter Registration**
-- Register in `dashboard/plotting.py` with `plotter_registry`
-- Data requirements validator:
-  - Check `workflow_id.namespace == 'detector_data'`
-  - Check data is exactly 2D
-  - Single dataset only
+### **5. Plotter Registration** ✅ DONE (commits 090f6379, a80e5c6f)
+- ✅ Registered in `dashboard/plotting.py` with `plotter_registry`
+- ✅ Registered as 'roi_detector' plotter type
+- ✅ Data requirements:
+  - ✅ min_dims=2, max_dims=2 (exactly 2D)
+  - ✅ multiple_datasets=False (single dataset only)
+  - ✅ Custom validator placeholder (commit a80e5c6f simplified validator)
+- ⚠️ **Note**: Validator currently returns True (does not check namespace). May need enhancement later to validate `detector_data` namespace.
 
-### **6. Publishing ROI Updates**
-- Need new infrastructure for auxiliary data publishing (separate from config)
-- Implementation approach: Let the implementer decide the best location (may not be `KafkaTransport` which was designed for config messages)
-- Functionality needed: `publish_aux_data(stream_name, dataarray)` method
-- Serialize `RectangleROI` → `DataArray` → DA00 → publish to `LIVEDATA_AUX_DATA` topic
-- Stream name: `{job_number}/roi_rectangle` (extract job_number from `ResultKey.job_id.job_number`)
+### **6. Publishing ROI Updates** ❌ NOT STARTED
+- ❌ **TODO**: Need new infrastructure for auxiliary data publishing (separate from config)
+- ❌ **TODO**: Implementation approach: Let the implementer decide the best location (may not be `KafkaTransport` which was designed for config messages)
+- ❌ **TODO**: Functionality needed: `publish_aux_data(stream_name, dataarray)` method
+- ❌ **TODO**: Serialize `RectangleROI` → `DataArray` → DA00 → publish to `LIVEDATA_ROI` topic
+- ❌ **TODO**: Stream name: `{job_number}/roi_rectangle` (extract job_number from `ResultKey.job_id.job_number`)
+- ⚠️ **Note**: Backend infrastructure ready (see section on Q1 below) - ROI topic exists and detector_data service subscribes to it
 
 ## Open Questions
 
-**Q1: New Kafka topic for auxiliary input data (RESOLVED)**
-- ✅ **Decision**: Need new `LIVEDATA_AUX_DATA` topic separate from config and data topics
+**Q1: New Kafka topic for auxiliary input data** ✅ **RESOLVED & IMPLEMENTED** (commit da120d72)
+- ✅ **Decision**: Need new `LIVEDATA_ROI` topic separate from config and data topics
 - ✅ ROI updates are auxiliary **input** to jobs (not output, not config)
 - ✅ Use DA00 schema for serialization (same as data topic)
-- ❓ **Need to implement**:
-  - Add `LIVEDATA_AUX_DATA` to `StreamKind` enum
-  - Create aux data topic in config (default.yaml)
-  - Backend: Subscribe orchestrating processor to aux data topic
-  - Backend: Route aux data messages to correct job via stream name matching
-  - Dashboard: New publishing mechanism for aux data
+- ✅ **Implemented** (commit da120d72):
+  - ✅ Added `LIVEDATA_ROI` to `StreamKind` enum ([message.py:25](src/ess/livedata/core/message.py#L25))
+  - ✅ Created ROI topic mapping in config ([streams.py:39-40](src/ess/livedata/config/streams.py#L39-L40))
+  - ✅ Added `livedata_roi_topic` property to `StreamMapping` ([stream_mapping.py:48,61-63](src/ess/livedata/kafka/stream_mapping.py#L48))
+  - ✅ Implemented `RoutingAdapterBuilder.with_livedata_roi_route()` ([routes.py:93-100](src/ess/livedata/kafka/routes.py#L93-L100))
+  - ✅ Backend: detector_data service subscribes to ROI topic ([detector_data.py:24](src/ess/livedata/services/detector_data.py#L24))
+  - ✅ Backend: Route aux data messages via existing stream name matching (already in JobManager)
+  - ❌ Dashboard: New publishing mechanism for aux data (NOT YET IMPLEMENTED - see section 6)
 
-**Q2: Backend subscription to aux data (RESOLVED)**
+**Q2: Backend subscription to aux data** ✅ **RESOLVED & IMPLEMENTED** (commit da120d72)
 - ✅ **How routing works**: `JobManager.push_data()` receives all messages in `WorkflowData.data`
 - ✅ `JobManager._push_data_to_job()` filters by checking if `stream.name` matches:
   - `job.source_names` → goes to `JobData.primary_data`
   - `job.aux_source_names` → goes to `JobData.aux_data`
-- ✅ **What we need**: Service must subscribe to aux data topic so messages flow into `WorkflowData`
-- ✅ **How to implement**: Add aux data topic subscription in `reduction.py` entry point (service configuration)
+- ✅ **Implemented**: detector_data service subscribes to ROI topic via `with_livedata_roi_route()` ([detector_data.py:24](src/ess/livedata/services/detector_data.py#L24))
+- ✅ Messages now flow: LIVEDATA_ROI topic → RoutingAdapter → JobManager → correct job's `aux_data`
 
-**Q3: Graceful degradation (RESOLVED)**
+**Q3: Graceful degradation** ✅ **RESOLVED & IMPLEMENTED** (commit 090f6379)
 - ✅ **Decision**: Keep it minimal and simple for now
-- ✅ Show empty/minimal spectrum plot when ROI data doesn't exist yet
+- ✅ **Implemented**: Shows detector-only view when ROI spectrum data doesn't exist yet
+- ✅ Returns `Overlay` (detector + BoxEdit) instead of `Layout` when spectrum missing
 - ✅ Expect to iterate on this behavior later based on user feedback
 
-**Q4: Hard-coding rectangle for now (RESOLVED)**
+**Q4: Hard-coding rectangle for now** ✅ **RESOLVED & PARTIALLY IMPLEMENTED** (commit 090f6379)
 - ✅ **Decision**: For MVP, hard-code `hv.streams.BoxEdit` (rectangle only)
-- ✅ Subscribe to all 3 readback streams (`roi_rectangle`, `roi_polygon`, `roi_ellipse`) for future-proofing
-- ✅ Only display rectangle tool and readback overlay in MVP
+- ✅ **Implemented**: BoxEdit stream created and attached to detector image
+- ❌ **TODO**: Subscribe to all 3 readback streams (`roi_rectangle`, `roi_polygon`, `roi_ellipse`) for future-proofing
+- ✅ Only display rectangle tool in MVP (readback overlay not yet implemented)
 - ⏭️ **Future work**: Read aux_sources config to determine which tool to show
