@@ -173,13 +173,21 @@ def _make_spectrum_view(
     )
     # Combine, e.g., 10 pixels into 1, so we have tubes with 10 pixels each
     # Preserve arc dimension to allow per-arc visualization
+    per_arc = 3 * 900
+    detector_number_step = 100 // pixels_per_tube
+    detector_number_offset = sc.arange(
+        'detector_number_offset', 0, per_arc, step=detector_number_step, unit=None
+    )
     return SpectrumView(
         data.fold('pixel', sizes={'pixel': pixels_per_tube, 'subpixel': -1})
         .drop_coords(tuple(data.coords))
         .bins.concat('subpixel')
-        .flatten(dims=('tube', 'channel', 'pixel'), to='position')
+        .flatten(dims=('tube', 'channel', 'pixel'), to='detector_number_offset')
         .hist(event_time_offset=edges)
-        .assign_coords(event_time_offset=edges.to(unit='ms'))
+        .assign_coords(
+            event_time_offset=edges.to(unit='ms'),
+            detector_number_offset=detector_number_offset,
+        )
     )
 
 
