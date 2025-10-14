@@ -10,6 +10,7 @@ import holoviews as hv
 import pydantic
 
 import ess.livedata.config.keys as keys
+from ess.livedata.config.models import RectangleROI
 from ess.livedata.config.workflow_spec import (
     JobId,
     JobNumber,
@@ -25,6 +26,7 @@ from .job_service import JobService
 from .plot_params import PlotParams2d
 from .plots import ImagePlotter, LinePlotter
 from .plotting import PlotterSpec, plotter_registry
+from .roi_publisher import boxes_to_rois
 from .stream_manager import StreamManager
 
 K = TypeVar('K', bound=Hashable)
@@ -67,6 +69,7 @@ class PlottingController:
         logger: logging.Logger | None = None,
         max_persistent_configs: int = 100,
         cleanup_fraction: float = 0.2,
+        roi_publisher=None,
     ) -> None:
         self._job_service = job_service
         self._stream_manager = stream_manager
@@ -75,6 +78,8 @@ class PlottingController:
         self._max_persistent_configs = max_persistent_configs
         self._cleanup_fraction = cleanup_fraction
         self._box_streams: dict[ResultKey, hv.streams.BoxEdit] = {}
+        self._roi_publisher = roi_publisher
+        self._last_published_rois: dict[ResultKey, dict[int, RectangleROI]] = {}
 
     def get_available_plotters(
         self, job_number: JobNumber, output_name: str | None
@@ -276,6 +281,62 @@ class PlottingController:
         self._cleanup_old_configs(current_configs)
         self._config_service.update_config(self._plotter_config_key, current_configs)
 
+    def _setup_roi_watcher(
+        self,
+        box_stream: hv.streams.BoxEdit,
+        result_key: ResultKey,
+        job_number: JobNumber,
+    ) -> None:
+        """
+        Set up a watcher on BoxEdit stream to publish ROI updates.
+
+        Parameters
+        ----------
+        box_stream:
+            The BoxEdit stream to watch.
+        result_key:
+            The result key for tracking published ROIs.
+        job_number:
+            The job number to publish ROIs for.
+        """
+
+        def on_box_change(event):
+            """Callback when BoxEdit data changes."""
+            # Extract data from the event object
+            data = event.new if hasattr(event, 'new') else event
+            if not data:
+                return
+
+            try:
+                # Convert BoxEdit data to ROI dictionary
+                current_rois = boxes_to_rois(data)
+
+                # Get previously published ROIs for this result key
+                last_rois = self._last_published_rois.get(result_key, {})
+
+                # Publish only changed ROIs
+                changed_rois = {
+                    roi_index: roi
+                    for roi_index, roi in current_rois.items()
+                    if roi_index not in last_rois or last_rois[roi_index] != roi
+                }
+
+                if changed_rois:
+                    self._roi_publisher.publish_rois(job_number, changed_rois)
+                    # Update tracking
+                    self._last_published_rois[result_key] = current_rois
+                    self._logger.info(
+                        "Published %d ROI update(s) for job %s",
+                        len(changed_rois),
+                        job_number,
+                    )
+
+            except Exception as e:
+                self._logger.error("Failed to publish ROI update: %s", e)
+
+        # Watch the 'data' parameter of the BoxEdit stream
+        box_stream.param.watch(on_box_change, 'data')
+
     def _create_roi_detector_plot(
         self,
         job_number: JobNumber,
@@ -374,14 +435,18 @@ class PlottingController:
             boxes = hv.Rectangles([])
             box_stream = hv.streams.BoxEdit(
                 source=boxes,
-                num_objects=3,
-                styles={'fill_color': ['red', 'green', 'blue']},
+                num_objects=1,  # Limit to single ROI rectangle
+                styles={'fill_color': ['red']},
             )
 
             # Store box stream for later access (e.g., publishing to backend)
             # Use the first detector item's key as the reference
             first_detector_key = next(iter(detector_items.keys()))
             self._box_streams[first_detector_key] = box_stream
+
+            # Set up ROI publishing if publisher is available
+            if self._roi_publisher:
+                self._setup_roi_watcher(box_stream, first_detector_key, job_number)
 
             # Overlay boxes on DynamicMap (not inside callback - this is crucial!)
             interactive_boxes = boxes.opts(fill_alpha=0.3, line_width=2)
