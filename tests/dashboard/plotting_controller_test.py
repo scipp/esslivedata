@@ -102,15 +102,16 @@ class TestPlottingControllerROIDetector:
     ):
         """Test that _create_roi_detector_plot returns a Layout."""
         # Create result keys for detector and spectrum
+        # Using 'current' as the output_name, which will look for 'roi_current'
         detector_key = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='detector_data', job_number=job_number),
-            output_name='detector_image',
+            output_name='current',
         )
         spectrum_key = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='detector_data', job_number=job_number),
-            output_name='roi_spectrum',
+            output_name='roi_current',
         )
 
         # Add data to data service (job service will pick it up automatically)
@@ -124,6 +125,7 @@ class TestPlottingControllerROIDetector:
         result = plotting_controller._create_roi_detector_plot(
             job_number=job_number,
             source_names=['detector_data'],
+            output_name='current',
             params=params,
         )
 
@@ -142,11 +144,11 @@ class TestPlottingControllerROIDetector:
         detector_data,
     ):
         """Test ROI detector plot with only detector data (no spectrum)."""
-        # Create result key for detector only
+        # Create result key for detector only (spectrum doesn't exist yet)
         detector_key = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='detector_data', job_number=job_number),
-            output_name='detector_image',
+            output_name='current',
         )
 
         # Add data to data service
@@ -159,10 +161,11 @@ class TestPlottingControllerROIDetector:
         result = plotting_controller._create_roi_detector_plot(
             job_number=job_number,
             source_names=['detector_data'],
+            output_name='current',
             params=params,
         )
 
-        # Should return a Layout with 1 element (detector only)
+        # Should return a Layout with 1 element (detector only, no spectrum yet)
         assert isinstance(result, hv.Layout)
         assert len(result) == 1
 
@@ -181,12 +184,12 @@ class TestPlottingControllerROIDetector:
         detector_key = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='detector_data', job_number=job_number),
-            output_name='detector_image',
+            output_name='current',
         )
         spectrum_key = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='detector_data', job_number=job_number),
-            output_name='roi_spectrum',
+            output_name='roi_current',
         )
 
         # Add data to data service
@@ -203,6 +206,7 @@ class TestPlottingControllerROIDetector:
         plotting_controller._create_roi_detector_plot(
             job_number=job_number,
             source_names=['detector_data'],
+            output_name='current',
             params=params,
         )
 
@@ -228,12 +232,12 @@ class TestPlottingControllerROIDetector:
         detector_key = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='detector_data', job_number=job_number),
-            output_name='detector_image',
+            output_name='cumulative',
         )
         spectrum_key = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='detector_data', job_number=job_number),
-            output_name='roi_spectrum',
+            output_name='roi_cumulative',
         )
 
         # Add data to data service
@@ -247,7 +251,7 @@ class TestPlottingControllerROIDetector:
         result = plotting_controller.create_plot(
             job_number=job_number,
             source_names=['detector_data'],
-            output_name=None,
+            output_name='cumulative',
             plot_name='roi_detector',
             params=params,
         )
@@ -270,7 +274,7 @@ class TestPlottingControllerROIDetector:
         detector_key = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='detector_data', job_number=job_number),
-            output_name='detector_image',
+            output_name='current',
         )
         data_service[detector_key] = detector_data
 
@@ -287,7 +291,7 @@ class TestPlottingControllerROIDetector:
             plotting_controller.create_plot(
                 job_number=job_number,
                 source_names=['detector_data'],
-                output_name=None,
+                output_name='current',
                 plot_name='roi_detector',
                 params=wrong_params,
             )
@@ -307,12 +311,12 @@ class TestPlottingControllerROIDetector:
         detector_key = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='detector_data', job_number=job_number),
-            output_name='detector_image',
+            output_name='cumulative',
         )
         spectrum_key = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='detector_data', job_number=job_number),
-            output_name='roi_spectrum',
+            output_name='roi_cumulative',
         )
 
         # Add data to data service
@@ -326,6 +330,7 @@ class TestPlottingControllerROIDetector:
         result = plotting_controller._create_roi_detector_plot(
             job_number=job_number,
             source_names=['detector_data'],
+            output_name='cumulative',
             params=params,
         )
 
@@ -348,8 +353,9 @@ class TestPlottingControllerROIDetector:
     ):
         """Test ROI detector plot with no data returns placeholder."""
         # Don't add any data - just create empty job data structure
-        # We need to ensure the job_number is in job_data
+        # We need to ensure the job_number is in job_data and job_info
         job_service._job_data[job_number] = {'detector_data': {}}
+        job_service._job_info[job_number] = workflow_id
 
         # Create plot params
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
@@ -358,6 +364,7 @@ class TestPlottingControllerROIDetector:
         result = plotting_controller._create_roi_detector_plot(
             job_number=job_number,
             source_names=['detector_data'],
+            output_name='current',
             params=params,
         )
 

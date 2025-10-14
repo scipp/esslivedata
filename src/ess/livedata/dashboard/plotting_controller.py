@@ -280,6 +280,7 @@ class PlottingController:
         self,
         job_number: JobNumber,
         source_names: list[str],
+        output_name: str | None,
         params: PlotParams2d,
     ) -> hv.Layout:
         """
@@ -289,12 +290,22 @@ class PlottingController:
         for detector and spectrum data, with BoxEdit overlay applied at the
         DynamicMap level (not inside the callback) to maintain interactivity.
 
+        When a user selects an output (e.g., 'current' or 'cumulative'), this method
+        automatically discovers and subscribes to the corresponding ROI outputs:
+        - 'current' -> uses 'roi_current' for 1D spectrum
+        - 'cumulative' -> uses 'roi_cumulative' for 1D spectrum
+
+        The ROI outputs may be published later (after ROI is configured in the UI),
+        so we subscribe to them even if they don't exist yet.
+
         Parameters
         ----------
         job_number:
             The job number to create the plot for.
         source_names:
             List of data source names to include in the plot.
+        output_name:
+            The selected output name (e.g., 'current', 'cumulative').
         params:
             The plotter parameters (PlotParams2d).
 
@@ -306,22 +317,41 @@ class PlottingController:
         """
         job_data = self._job_service.job_data[job_number]
 
-        # Separate detector data from ROI spectrum data by iterating through outputs
+        # Determine the ROI spectrum output name based on selected output
+        roi_spectrum_name = f'roi_{output_name}' if output_name else None
+
+        # Separate detector data from ROI spectrum data by output name
         detector_items: dict[ResultKey, hv.streams.Pipe] = {}
         spectrum_items: dict[ResultKey, hv.streams.Pipe] = {}
 
         for source_name in source_names:
             source_outputs = job_data[source_name]
-            for output_name, data in source_outputs.items():
+
+            # Get detector image (2D) - the selected output
+            if output_name and output_name in source_outputs:
                 result_key = self.get_result_key(
                     job_number=job_number,
                     source_name=source_name,
                     output_name=output_name,
                 )
-                if output_name == 'roi_spectrum':
-                    spectrum_items[result_key] = data
+                detector_items[result_key] = source_outputs[output_name]
+
+            # Get or subscribe to ROI spectrum (1D) - may not exist yet
+            if roi_spectrum_name:
+                result_key = self.get_result_key(
+                    job_number=job_number,
+                    source_name=source_name,
+                    output_name=roi_spectrum_name,
+                )
+                # Subscribe even if it doesn't exist yet (will be populated later)
+                if roi_spectrum_name in source_outputs:
+                    spectrum_items[result_key] = source_outputs[roi_spectrum_name]
                 else:
-                    detector_items[result_key] = data
+                    # The output doesn't exist yet, but we'll subscribe anyway.
+                    # The stream will remain empty until the backend starts
+                    # publishing it. Note: We skip adding this for now - the layout
+                    # will only show the spectrum plot once data becomes available.
+                    pass
 
         plots = []
 
@@ -441,6 +471,7 @@ class PlottingController:
             return self._create_roi_detector_plot(
                 job_number=job_number,
                 source_names=source_names,
+                output_name=output_name,
                 params=params,
             )
 

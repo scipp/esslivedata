@@ -11,6 +11,7 @@ from typing import Any, Generic, Protocol, TypeVar
 import pydantic
 import scipp as sc
 
+from .plot_params import PlotParams2d
 from .plots import ImagePlotter, LinePlotter, Plotter, SlicerPlotter
 from .scipp_to_holoviews import _all_coords_evenly_spaced
 
@@ -174,4 +175,32 @@ plotter_registry.register_plotter(
         custom_validators=[_all_coords_evenly_spaced],
     ),
     factory=SlicerPlotter.from_params,
+)
+
+
+def _roi_detector_plotter_factory(params: PlotParams2d) -> Plotter:
+    """
+    Dummy factory for ROI detector plotter.
+
+    This plotter is handled as a special case in PlottingController.create_plot()
+    and does not use the standard Plotter interface. This factory exists only
+    for registration purposes to enable UI integration.
+    """
+    raise NotImplementedError(
+        "ROI detector plotter is handled specially in PlottingController"
+    )
+
+
+plotter_registry.register_plotter(
+    name='roi_detector',
+    title='ROI Detector',
+    description=(
+        'Plot 2D detector image with interactive ROI selection and 1D spectrum.'
+    ),
+    data_requirements=DataRequirements(
+        min_dims=2,
+        max_dims=2,
+        multiple_datasets=False,
+    ),
+    factory=_roi_detector_plotter_factory,
 )
