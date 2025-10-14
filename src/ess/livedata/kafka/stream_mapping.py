@@ -34,6 +34,7 @@ class StreamMapping:
         log_topics: set[KafkaTopic] | None = None,
         livedata_config_topic: str,
         livedata_data_topic: str,
+        livedata_roi_topic: str,
         livedata_status_topic: str,
     ) -> None:
         self.instrument = instrument
@@ -44,6 +45,7 @@ class StreamMapping:
         self._log_topics = log_topics or set()
         self._livedata_config_topic = livedata_config_topic
         self._livedata_data_topic = livedata_data_topic
+        self._livedata_roi_topic = livedata_roi_topic
         self._livedata_status_topic = livedata_status_topic
 
     @property
@@ -55,6 +57,11 @@ class StreamMapping:
     def livedata_data_topic(self) -> KafkaTopic:
         """Returns the livedata data topic."""
         return self._livedata_data_topic
+
+    @property
+    def livedata_roi_topic(self) -> KafkaTopic:
+        """Returns the livedata ROI topic."""
+        return self._livedata_roi_topic
 
     @property
     def livedata_status_topic(self) -> KafkaTopic:

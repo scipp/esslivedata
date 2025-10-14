@@ -63,6 +63,9 @@ def make_dev_stream_mapping(
         livedata_data_topic=stream_kind_to_topic(
             instrument=instrument, kind=StreamKind.LIVEDATA_DATA
         ),
+        livedata_roi_topic=stream_kind_to_topic(
+            instrument=instrument, kind=StreamKind.LIVEDATA_ROI
+        ),
         livedata_status_topic=stream_kind_to_topic(
             instrument=instrument, kind=StreamKind.LIVEDATA_STATUS
         ),
@@ -81,6 +84,9 @@ def make_common_stream_mapping_inputs(
         ),
         'livedata_data_topic': stream_kind_to_topic(
             instrument=instrument, kind=StreamKind.LIVEDATA_DATA
+        ),
+        'livedata_roi_topic': stream_kind_to_topic(
+            instrument=instrument, kind=StreamKind.LIVEDATA_ROI
         ),
         'livedata_status_topic': stream_kind_to_topic(
             instrument=instrument, kind=StreamKind.LIVEDATA_STATUS
