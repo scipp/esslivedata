@@ -11,7 +11,7 @@ from typing import Any, Generic, Protocol, TypeVar
 import pydantic
 import scipp as sc
 
-from .plots import ImagePlotter, LinePlotter, Plotter, ROIDetectorPlotter, SlicerPlotter
+from .plots import ImagePlotter, LinePlotter, Plotter, SlicerPlotter
 from .scipp_to_holoviews import _all_coords_evenly_spaced
 
 
@@ -174,25 +174,4 @@ plotter_registry.register_plotter(
         custom_validators=[_all_coords_evenly_spaced],
     ),
     factory=SlicerPlotter.from_params,
-)
-
-
-def _validate_roi_detector_data(data: sc.DataArray) -> bool:
-    """Validate data for ROI detector plotter."""
-    # TODO Need to validate the associated ResultKey namespace, but not passed to
-    # validator currently!
-    return True
-
-
-plotter_registry.register_plotter(
-    name='roi_detector',
-    title='ROI Detector',
-    description='Plot detector data with interactive ROI selection and spectrum.',
-    data_requirements=DataRequirements(
-        min_dims=2,
-        max_dims=2,
-        multiple_datasets=False,
-        custom_validators=[_validate_roi_detector_data],
-    ),
-    factory=ROIDetectorPlotter.from_params,
 )

@@ -22,6 +22,8 @@ from ess.livedata.config.workflow_spec import (
 
 from .config_service import ConfigService
 from .job_service import JobService
+from .plot_params import PlotParams2d
+from .plots import ImagePlotter, LinePlotter
 from .plotting import PlotterSpec, plotter_registry
 from .stream_manager import StreamManager
 
@@ -72,6 +74,7 @@ class PlottingController:
         self._logger = logger or logging.getLogger(__name__)
         self._max_persistent_configs = max_persistent_configs
         self._cleanup_fraction = cleanup_fraction
+        self._box_streams: dict[ResultKey, hv.streams.BoxEdit] = {}
 
     def get_available_plotters(
         self, job_number: JobNumber, output_name: str | None
@@ -273,6 +276,118 @@ class PlottingController:
         self._cleanup_old_configs(current_configs)
         self._config_service.update_config(self._plotter_config_key, current_configs)
 
+    def _create_roi_detector_plot(
+        self,
+        job_number: JobNumber,
+        source_names: list[str],
+        params: PlotParams2d,
+    ) -> hv.Layout:
+        """
+        Create ROI detector plot with interactive BoxEdit.
+
+        This is a special-case implementation that creates separate DynamicMaps
+        for detector and spectrum data, with BoxEdit overlay applied at the
+        DynamicMap level (not inside the callback) to maintain interactivity.
+
+        Parameters
+        ----------
+        job_number:
+            The job number to create the plot for.
+        source_names:
+            List of data source names to include in the plot.
+        params:
+            The plotter parameters (PlotParams2d).
+
+        Returns
+        -------
+        :
+            A HoloViews Layout with detector image (with BoxEdit overlay) and
+            ROI spectrum plot.
+        """
+        job_data = self._job_service.job_data[job_number]
+
+        # Separate detector data from ROI spectrum data by iterating through outputs
+        detector_items: dict[ResultKey, hv.streams.Pipe] = {}
+        spectrum_items: dict[ResultKey, hv.streams.Pipe] = {}
+
+        for source_name in source_names:
+            source_outputs = job_data[source_name]
+            for output_name, data in source_outputs.items():
+                result_key = self.get_result_key(
+                    job_number=job_number,
+                    source_name=source_name,
+                    output_name=output_name,
+                )
+                if output_name == 'roi_spectrum':
+                    spectrum_items[result_key] = data
+                else:
+                    detector_items[result_key] = data
+
+        plots = []
+
+        # Create detector plot with BoxEdit overlay
+        if detector_items:
+            detector_pipe = self._stream_manager.make_merging_stream(detector_items)
+            detector_plotter = ImagePlotter(
+                value_margin_factor=0.1,
+                layout_params=params.layout,
+                aspect_params=params.plot_aspect,
+                scale_opts=params.plot_scale,
+            )
+            detector_plotter.initialize_from_data(detector_items)
+
+            detector_dmap = hv.DynamicMap(
+                detector_plotter, streams=[detector_pipe], cache_size=1
+            ).opts(shared_axes=False)
+
+            # Create BoxEdit overlay at DynamicMap level (critical for interactivity)
+            boxes = hv.Rectangles([])
+            box_stream = hv.streams.BoxEdit(
+                source=boxes,
+                num_objects=3,
+                styles={'fill_color': ['red', 'green', 'blue']},
+            )
+
+            # Store box stream for later access (e.g., publishing to backend)
+            # Use the first detector item's key as the reference
+            first_detector_key = next(iter(detector_items.keys()))
+            self._box_streams[first_detector_key] = box_stream
+
+            # Overlay boxes on DynamicMap (not inside callback - this is crucial!)
+            interactive_boxes = boxes.opts(fill_alpha=0.3, line_width=2)
+            detector_with_boxes = detector_dmap * interactive_boxes
+            plots.append(detector_with_boxes)
+
+        # Create ROI spectrum plot
+        if spectrum_items:
+            spectrum_pipe = self._stream_manager.make_merging_stream(spectrum_items)
+            # PlotScaleParams2d is subclass of PlotScaleParams
+            spectrum_plotter = LinePlotter(
+                value_margin_factor=0.1,
+                layout_params=params.layout,
+                aspect_params=params.plot_aspect,
+                scale_opts=params.plot_scale,
+            )
+            spectrum_plotter.initialize_from_data(spectrum_items)
+
+            spectrum_dmap = hv.DynamicMap(
+                spectrum_plotter, streams=[spectrum_pipe], cache_size=1
+            ).opts(shared_axes=False)
+            plots.append(spectrum_dmap)
+
+        if len(plots) == 0:
+            return hv.Layout(
+                [
+                    hv.Text(0.5, 0.5, "No data").opts(
+                        text_align='center', text_baseline='middle'
+                    )
+                ]
+            )
+        elif len(plots) == 1:
+            return hv.Layout(plots)
+        else:
+            return hv.Layout(plots).cols(2)
+
     def create_plot(
         self,
         job_number: JobNumber,
@@ -280,7 +395,7 @@ class PlottingController:
         output_name: str | None,
         plot_name: str,
         params: pydantic.BaseModel,
-    ) -> hv.DynamicMap:
+    ) -> hv.DynamicMap | hv.Layout:
         """
         Create a plot from job data with the specified parameters.
 
@@ -306,6 +421,7 @@ class PlottingController:
             A HoloViews DynamicMap that updates with streaming data.
             For plotters with kdims (e.g., SlicerPlotter), the DynamicMap
             includes interactive dimensions that generate widgets when rendered.
+            For roi_detector, returns a Layout with separate DynamicMaps.
         """
         self._save_plotting_config(
             workflow_id=self._job_service.job_info[job_number],
@@ -314,6 +430,20 @@ class PlottingController:
             plot_name=plot_name,
             params=params,
         )
+
+        # Special case for roi_detector: requires separate DynamicMaps
+        # to maintain BoxEdit interactivity
+        if plot_name == 'roi_detector':
+            if not isinstance(params, PlotParams2d):
+                raise TypeError(
+                    f"roi_detector requires PlotParams2d, got {type(params).__name__}"
+                )
+            return self._create_roi_detector_plot(
+                job_number=job_number,
+                source_names=source_names,
+                params=params,
+            )
+
         items = {
             self.get_result_key(
                 job_number=job_number, source_name=source_name, output_name=output_name
