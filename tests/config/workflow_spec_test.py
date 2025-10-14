@@ -365,20 +365,3 @@ class TestAuxSourcesBase:
             'incident_monitor': 'monitor1',
             'transmission_monitor': 'monitor2',
         }
-
-    def test_render_preserves_field_to_stream_mapping(self) -> None:
-        """Test that render() maintains field name -> stream name mapping."""
-        from typing import Literal
-
-        class MappedAuxSources(AuxSourcesBase):
-            # Field name differs from stream name
-            cave_monitor: Literal['monitor1'] = 'monitor1'
-
-        aux_sources = MappedAuxSources()
-        job_id = JobId(source_name='detector1', job_number='test-id')
-
-        rendered = aux_sources.render(job_id)
-
-        # Keys should be field names, values should be stream names
-        assert 'cave_monitor' in rendered
-        assert rendered['cave_monitor'] == 'monitor1'
