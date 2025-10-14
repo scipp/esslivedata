@@ -7,33 +7,38 @@
 - Each has a predictable `ResultKey`: `{workflow_id, job_id: {job_number, source_name}, output_name}`
 - ROI config flows: Dashboard → `WORKFLOW_CONFIG` topic → Backend (via `aux_source_names` in WorkflowConfig)
 - ROI data flows: Backend → `DATA` topic → Dashboard (as regular job outputs)
+- Auxiliary input flows: **New AUX_DATA topic** → Backend job (via `aux_data` parameter in `JobData`)
 
 **Frontend publishing path:**
-- ROI updates should go through `ConfigService` → `KafkaTransport` → `WORKFLOW_CONFIG` topic
-- Need to publish to a stream matching the job's aux source name: `{job_number}/roi_rectangle`
+- ROI updates are **auxiliary input data** (not config), so they need a **new Kafka topic**
+- Dashboard publishes ROI → **New `LIVEDATA_AUX_DATA` topic** (da00 schema with ROI models) → Backend job
+- Stream name in aux data: `{job_number}/roi_rectangle` (matches `DetectorROIAuxSources.render()`). Since the shape tool in the plot produces the data for this topic there must be a mechanism to either (a) tie the plotter to the concrete DetectorROIAuxSources or (b) use the JobNumber from the ResultKey. The latter might be simpler.
+- Backend job receives aux data via `Job.add(JobData(aux_data={stream_name: roi_dataarray}))`. The mechanism for this is fully in place, we just need to subscribe to the additional topic (detector_data.py is the entry point for this).
+- **Message schema**: da00 (DataArray serialization using `scipp_to_da00`).
 
 ## Implementation Plan
 
 ### **1. Create ROIDetectorPlotter**
 - New plotter class in `dashboard/plots.py`
-- Consumes **3 outputs from same job**: `current` (or `cumulative`), `roi_current` (or `roi_cumulative`), `roi_rectangle`
+- Consumes **2 data outputs and 3 roi shape outputs from same job**: `current` (or `cumulative`), `roi_current` (or `roi_cumulative`), `roi_rectangle`, `roi_polygon`, `roi_ellipse`.
 - Data requirements:
   - Single dataset only (`multiple_datasets: False`)
   - Must be from `detector_data` namespace
   - Must have 2D detector image data
 - Returns `hv.Layout` with:
-  - Left: 2D detector image with BoxEdit overlay
+  - Left: 2D detector image with (1) BoxEdit overlay (2) shapes from `roi_*` streams.
   - Right: 1D TOA spectrum
 
 ### **2. BoxEdit Integration Strategy**
 - BoxEdit stream attached to the 2D detector image element
-- Subscribe to BoxEdit `data` parameter changes
+- Subscribe to BoxEdit `data` parameter changes (for now we only implement the rectangle case, i.e., BoxEdit!)
 - On change: Serialize rectangle to `RectangleROI` model → publish to config service
 - Target stream: `{job_number}/roi_rectangle` (extract job_number from ResultKey)
 
 ### **3. ROI Shape Display**
 - Subscribe to `roi_rectangle` output stream from backend
-- When received: Parse `RectangleROI` from DataArray → update BoxEdit overlay
+- When received: Parse `RectangleROI` from DataArray → update BoxEdit overlay (or equivalent, boxes drawn from stream? We want the "readback" ROI, i.e., the ROI that is actually corresponding to the current data *not user editable*, the "request" ROI is user-editable).
+- Show "readback" as solid lines, "request" as dashed.
 - This shows the backend's "accepted" ROI (handles lag between user edit and backend update)
 
 ### **4. Handling Missing ROI Data**
@@ -52,21 +57,31 @@
   - Single dataset only
 
 ### **6. Publishing ROI Updates**
-- PlottingController needs access to `ConfigService` (may already have?)
-- Create method: `publish_roi_update(job_number, roi_model)`
-- Serialize `RectangleROI` → `DataArray` → publish to stream `{job_number}/roi_rectangle`
-- Use existing Kafka infrastructure (same as workflow configs)
+- Need new infrastructure for auxiliary data publishing (separate from config)
+- Create method: `publish_aux_data(stream_name, dataarray)` in dashboard transport layer
+- Serialize `RectangleROI` → `DataArray` → DA00 → publish to `LIVEDATA_AUX_DATA` topic
+- Stream name: `{job_number}/roi_rectangle` (extract job_number from ResultKey)
 
 ## Open Questions
 
-**Q1: Publishing mechanism details**
-- Should we publish ROI updates through `ConfigService.update_config()` or a different mechanism?
-- What's the exact ConfigKey format for aux source streams `{job_number}/roi_rectangle`?
-- Or should we use a different Kafka topic entirely (data topic vs config topic)?
+**Q1: New Kafka topic for auxiliary input data (RESOLVED)**
+- ✅ **Decision**: Need new `LIVEDATA_AUX_DATA` topic separate from config and data topics
+- ✅ ROI updates are auxiliary **input** to jobs (not output, not config)
+- ✅ Use DA00 schema for serialization (same as data topic)
+- ❓ **Need to implement**:
+  - Add `LIVEDATA_AUX_DATA` to `StreamKind` enum
+  - Create aux data topic in config (default.yaml)
+  - Backend: Subscribe orchestrating processor to aux data topic
+  - Backend: Route aux data messages to correct job via stream name matching
+  - Dashboard: New publishing mechanism for aux data
 
-**Q2: ConfigService access in PlottingController**
-- Does `PlottingController` currently have access to `ConfigService`?
-- If not, should we inject it as a dependency?
+**Q2: Backend subscription to aux data (RESOLVED)**
+- ✅ **How routing works**: `JobManager.push_data()` receives all messages in `WorkflowData.data`
+- ✅ `JobManager._push_data_to_job()` filters by checking if `stream.name` matches:
+  - `job.source_names` → goes to `JobData.primary_data`
+  - `job.aux_source_names` → goes to `JobData.aux_data`
+- ✅ **What we need**: Service must subscribe to aux data topic so messages flow into `WorkflowData`
+- ❓ **Need to check**: How to add aux data topic to `DataServiceBuilder` / service configuration
 
 **Q3: Graceful degradation**
 - When ROI outputs don't exist yet, should we:
@@ -74,18 +89,6 @@
   - Show error message?
   - Hide 1D plot until data arrives?
 
-**Q4: Multiple detector images**
-- You mentioned the Layout/Overlay restriction is fine - so ROI plotter only accepts **single source selection**, correct?
-- Should we enforce this in the data requirements or let the configuration widget handle it?
-
-**Q5: Hard-coding rectangle for now**
-- Confirm: For MVP, we hard-code `hv.streams.BoxEdit` and ignore polygon/ellipse options?
+**Q4: Hard-coding rectangle for now**
+- For MVP, we hard-code `hv.streams.BoxEdit` and ignore polygon/ellipse options?
 - Future work: Read aux_sources config to determine which tool to show?
-
-## Next Steps
-
-Once you clarify the open questions above, I can proceed with:
-1. Implementing `ROIDetectorPlotter` class
-2. Setting up BoxEdit integration and Kafka publishing
-3. Handling subscription to ROI shape updates from backend
-4. Testing with the existing detector view workflows
