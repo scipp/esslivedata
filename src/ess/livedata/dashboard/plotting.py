@@ -11,7 +11,7 @@ from typing import Any, Generic, Protocol, TypeVar
 import pydantic
 import scipp as sc
 
-from .plots import ImagePlotter, LinePlotter, Plotter, SlicerPlotter
+from .plots import ImagePlotter, LinePlotter, Plotter, ROIDetectorPlotter, SlicerPlotter
 from .scipp_to_holoviews import _all_coords_evenly_spaced
 
 
@@ -174,4 +174,43 @@ plotter_registry.register_plotter(
         custom_validators=[_all_coords_evenly_spaced],
     ),
     factory=SlicerPlotter.from_params,
+)
+
+
+def _validate_roi_detector_data(data: dict[Any, sc.DataArray]) -> bool:
+    """
+    Validate data for ROI detector plotter.
+
+    Expects:
+    - One or more 2D datasets (detector data)
+    - Optionally one 1D dataset with output_name 'roi_spectrum'
+    """
+    detector_count = 0
+    roi_spectrum_count = 0
+
+    for key, da in data.items():
+        if hasattr(key, 'output_name') and key.output_name == 'roi_spectrum':
+            if da.ndim != 1:
+                return False
+            roi_spectrum_count += 1
+        else:
+            if da.ndim != 2:
+                return False
+            detector_count += 1
+
+    # Must have at least one detector, at most one ROI spectrum
+    return detector_count >= 1 and roi_spectrum_count <= 1
+
+
+plotter_registry.register_plotter(
+    name='roi_detector',
+    title='ROI Detector',
+    description='Plot detector data with interactive ROI selection and spectrum.',
+    data_requirements=DataRequirements(
+        min_dims=1,
+        max_dims=2,
+        multiple_datasets=True,
+        custom_validators=[_validate_roi_detector_data],
+    ),
+    factory=ROIDetectorPlotter.from_params,
 )

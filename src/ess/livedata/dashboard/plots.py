@@ -8,6 +8,7 @@ from typing import Any
 import holoviews as hv
 import numpy as np
 import scipp as sc
+from holoviews import streams
 
 from ess.livedata.config.workflow_spec import ResultKey
 
@@ -303,6 +304,107 @@ class ImagePlotter(Plotter):
         # backend) show values below the color limits with the same color as the lowest
         # value in the colormap, which is not what we want for, e.g., zeros on a log
         # scale plot. The nan values will be shown as transparent.
+        histogram = to_holoviews(plot_data)
+        return histogram.opts(framewise=framewise, **self._base_opts)
+
+
+class ROIDetectorPlotter(Plotter):
+    """Plotter for detector data with ROI spectrum overlay."""
+
+    def __init__(
+        self,
+        scale_opts: PlotScaleParams2d,
+        **kwargs,
+    ):
+        """
+        Initialize the ROI detector plotter.
+
+        Parameters
+        ----------
+        scale_opts:
+            Scaling options for axes and color.
+        **kwargs:
+            Additional keyword arguments passed to the base class.
+        """
+        super().__init__(**kwargs)
+        self._scale_opts = scale_opts
+        self._base_opts = self._make_2d_base_opts(scale_opts)
+
+        # Create BoxEdit stream for ROI editing
+        # Initialize with one empty rectangle
+        boxes = hv.Rectangles([(0, 0, 1, 1)])
+        self.box_stream = streams.BoxEdit(
+            source=boxes, num_objects=1, styles={'fill_color': ['red']}
+        )
+        self._boxes = boxes
+
+    @classmethod
+    def from_params(cls, params: PlotParams2d):
+        """Create ROIDetectorPlotter from PlotParams2d."""
+        return cls(
+            value_margin_factor=0.1,
+            layout_params=params.layout,
+            aspect_params=params.plot_aspect,
+            scale_opts=params.plot_scale,
+        )
+
+    def __call__(
+        self, data: dict[ResultKey, sc.DataArray], **kwargs
+    ) -> hv.Layout | hv.Element:
+        """
+        Create layout with detector image and ROI spectrum.
+
+        Expects data dict to contain:
+        - One 2D detector data array (output_name != 'roi_spectrum')
+        - Optionally one 1D ROI spectrum (output_name == 'roi_spectrum')
+        """
+        # Separate detector data from ROI spectrum
+        detector_data = {}
+        roi_spectrum_data = {}
+
+        for key, da in data.items():
+            if key.output_name == 'roi_spectrum':
+                roi_spectrum_data[key] = da
+            else:
+                detector_data[key] = da
+
+        plots = []
+
+        # Create detector image with BoxEdit overlay
+        if detector_data:
+            for data_key, da in detector_data.items():
+                detector_plot = self.plot(da, data_key, **kwargs)
+                detector_plot = self._apply_generic_options(detector_plot)
+                # Add BoxEdit overlay for ROI editing
+                interactive_boxes = self._boxes.opts(
+                    fill_alpha=0.3, line_width=2, tools=['box_edit']
+                )
+                detector_with_boxes = detector_plot * interactive_boxes
+                plots.append(detector_with_boxes)
+
+        # Create ROI spectrum plot
+        if roi_spectrum_data:
+            for da in roi_spectrum_data.values():
+                spectrum_plot = to_holoviews(da)
+                spectrum_plot = self._apply_generic_options(spectrum_plot)
+                plots.append(spectrum_plot)
+
+        if len(plots) == 0:
+            return hv.Text(0.5, 0.5, "No data").opts(
+                text_align='center', text_baseline='middle'
+            )
+        elif len(plots) == 1:
+            return plots[0]
+        else:
+            return hv.Layout(plots).cols(2)
+
+    def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Image:
+        """Create a 2D detector image plot."""
+        # Prepare data with appropriate dtype and log scale masking
+        use_log_scale = self._scale_opts.color_scale == PlotScale.log
+        plot_data = self._prepare_2d_image_data(data, use_log_scale)
+
+        framewise = self._update_autoscaler_and_get_framewise(plot_data, data_key)
         histogram = to_holoviews(plot_data)
         return histogram.opts(framewise=framewise, **self._base_opts)
 
