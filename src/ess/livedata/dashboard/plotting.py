@@ -177,29 +177,11 @@ plotter_registry.register_plotter(
 )
 
 
-def _validate_roi_detector_data(data: dict[Any, sc.DataArray]) -> bool:
-    """
-    Validate data for ROI detector plotter.
-
-    Expects:
-    - One or more 2D datasets (detector data)
-    - Optionally one 1D dataset with output_name 'roi_spectrum'
-    """
-    detector_count = 0
-    roi_spectrum_count = 0
-
-    for key, da in data.items():
-        if hasattr(key, 'output_name') and key.output_name == 'roi_spectrum':
-            if da.ndim != 1:
-                return False
-            roi_spectrum_count += 1
-        else:
-            if da.ndim != 2:
-                return False
-            detector_count += 1
-
-    # Must have at least one detector, at most one ROI spectrum
-    return detector_count >= 1 and roi_spectrum_count <= 1
+def _validate_roi_detector_data(data: sc.DataArray) -> bool:
+    """Validate data for ROI detector plotter."""
+    # TODO Need to validate the associated ResultKey namespace, but not passed to
+    # validator currently!
+    return True
 
 
 plotter_registry.register_plotter(
@@ -207,9 +189,9 @@ plotter_registry.register_plotter(
     title='ROI Detector',
     description='Plot detector data with interactive ROI selection and spectrum.',
     data_requirements=DataRequirements(
-        min_dims=1,
+        min_dims=2,
         max_dims=2,
-        multiple_datasets=True,
+        multiple_datasets=False,
         custom_validators=[_validate_roi_detector_data],
     ),
     factory=ROIDetectorPlotter.from_params,
