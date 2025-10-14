@@ -35,6 +35,7 @@
 ### **2. BoxEdit Integration Strategy**
 - BoxEdit stream attached to the 2D detector image element (user-editable "request" ROI)
 - Subscribe to BoxEdit `data` parameter changes (for now we only implement the rectangle case, i.e., BoxEdit!)
+- See `git diff bdcd3b2c roi-stream` for a POC to get started!
 - On change: Serialize rectangle to `RectangleROI` model → publish to aux data topic
 - Target stream: `{job_number}/roi_rectangle` (extract job_number from `ResultKey.job_id.job_number`)
 
