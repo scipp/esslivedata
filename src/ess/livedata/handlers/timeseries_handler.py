@@ -9,7 +9,7 @@ from typing import Any
 import scipp as sc
 
 from ..config.instrument import Instrument
-from ..core.handler import JobBasedHandlerFactoryBase
+from ..core.handler import JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId
 from .accumulators import LogData
 from .to_nxlog import ToNXlog
@@ -54,7 +54,7 @@ def register_timeseries_workflows(
     register(_timeseries_workflow)
 
 
-class LogdataHandlerFactory(JobBasedHandlerFactoryBase[LogData, sc.DataArray]):
+class LogdataHandlerFactory(JobBasedPreprocessorFactoryBase[LogData, sc.DataArray]):
     """
     Factory for creating handlers for log data.
 

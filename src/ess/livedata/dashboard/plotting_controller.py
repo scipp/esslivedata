@@ -303,7 +303,9 @@ class PlottingController:
         Returns
         -------
         :
-            A HoloViews dynamic map that updates with streaming data.
+            A HoloViews DynamicMap that updates with streaming data.
+            For plotters with kdims (e.g., SlicerPlotter), the DynamicMap
+            includes interactive dimensions that generate widgets when rendered.
         """
         self._save_plotting_config(
             workflow_id=self._job_service.job_info[job_number],
@@ -320,6 +322,11 @@ class PlottingController:
         }
         pipe = self._stream_manager.make_merging_stream(items)
         plotter = plotter_registry.create_plotter(plot_name, params=params)
-        return hv.DynamicMap(plotter, streams=[pipe], cache_size=1).opts(
-            shared_axes=False
-        )
+
+        # Initialize plotter with initial data to determine kdims
+        plotter.initialize_from_data(items)
+
+        # Create DynamicMap with kdims (None if plotter doesn't use them)
+        dmap = hv.DynamicMap(plotter, streams=[pipe], kdims=plotter.kdims, cache_size=1)
+
+        return dmap.opts(shared_axes=False)

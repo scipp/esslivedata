@@ -10,9 +10,10 @@ from typing import Any, Generic, NoReturn, TypeVar
 
 from .config import config_names
 from .config.config_loader import load_config
-from .core import MessageSink, Processor, StreamProcessor
-from .core.handler import HandlerFactory, HandlerRegistry, JobBasedHandlerFactoryBase
-from .core.message import Message, MessageSource, StreamId
+from .core import MessageSink, Processor
+from .core.handler import JobBasedPreprocessorFactoryBase, PreprocessorFactory
+from .core.message import Message, MessageSource
+from .core.orchestrating_processor import OrchestratingProcessor
 from .core.service import Service
 from .kafka import KafkaTopic
 from .kafka import consumer as kafka_consumer
@@ -39,9 +40,9 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         name: str,
         log_level: int = logging.INFO,
         adapter: MessageAdapter | None = None,
-        handler_factory: HandlerFactory[Tin, Tout],
+        preprocessor_factory: PreprocessorFactory[Tin, Tout],
         startup_messages: list[Message[Tout]] | None = None,
-        processor_cls: type[Processor] = StreamProcessor,
+        processor_cls: type[Processor] = OrchestratingProcessor,
     ) -> None:
         """
         Parameters
@@ -54,35 +55,30 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
             The log level to use for the service.
         adapter:
             The message adapter to use for incoming messages.
-        handler_factory:
-            The factory to use for creating handlers for messages.
+        preprocessor_factory:
+            The factory to use for creating preprocessors for messages.
         startup_messages:
             A list of messages to publish before starting the service.
         processor_cls:
             The processor class to use for processing messages. Defaults to
-            `StreamProcessor`, but can be set to `OrchestratingProcessor` for
-            orchestrated processing.
+            `OrchestratingProcessor`.
         """
         self._name = f'{instrument}_{name}'
         self._log_level = log_level
         self._topics: list[KafkaTopic] | None = None
         self._instrument = instrument
         self._adapter = adapter
-        self._handler_registry = HandlerRegistry(factory=handler_factory)
+        self._preprocessor_factory = preprocessor_factory
         self._startup_messages = startup_messages or []
         self._processor_cls = processor_cls
-        if isinstance(handler_factory, JobBasedHandlerFactoryBase):
+        if isinstance(preprocessor_factory, JobBasedPreprocessorFactoryBase):
             # Ensure only jobs from the active namespace can be created by JobFactory.
-            handler_factory.instrument.active_namespace = name
+            preprocessor_factory.instrument.active_namespace = name
 
     @property
     def instrument(self) -> str:
         """Returns the instrument name."""
         return self._instrument
-
-    def add_handler(self, key: StreamId, handler: HandlerFactory[Tin, Tout]) -> None:
-        """Add specific handler to use for given key, instead of using the factory."""
-        self._handler_registry.register_handler(key=key, handler=handler)
 
     def from_consumer_config(
         self,
@@ -163,7 +159,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
                 raise_on_error=raise_on_adapter_error,
             ),
             sink=sink,
-            handler_registry=self._handler_registry,
+            preprocessor_factory=self._preprocessor_factory,
         )
         sink.publish_messages(self._startup_messages)
         return Service(

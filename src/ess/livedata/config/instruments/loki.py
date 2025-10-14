@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+from typing import Literal
+
 import pydantic
 import sciline
 import sciline.typing
@@ -18,7 +20,7 @@ from ess.livedata.handlers.monitor_data_handler import register_monitor_workflow
 from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 from ess.reduce.nexus.types import NeXusData, NeXusDetectorName, SampleRun
-from ess.sans import types as params
+from ess.sans import types as sans_types
 from ess.sans.types import (
     Filename,
     Incident,
@@ -50,6 +52,19 @@ class SansWorkflowOptions(pydantic.BaseModel):
         title='Use transmission run',
         description='Use transmission run instead of monitor readings of sample run',
         default=False,
+    )
+
+
+class LokiAuxSources(pydantic.BaseModel):
+    """Auxiliary source names for LOKI SANS workflows."""
+
+    incident_monitor: Literal['monitor1'] = pydantic.Field(
+        default='monitor1',
+        description='Incident beam monitor for normalization.',
+    )
+    transmission_monitor: Literal['monitor2'] = pydantic.Field(
+        default='monitor2',
+        description='Transmission monitor for sample transmission calculation.',
     )
 
 
@@ -113,23 +128,25 @@ _xy_projection = DetectorProjection(
 
 
 def _transmission_from_current_run(
-    data: params.CleanMonitor[SampleRun, params.MonitorType],
-) -> params.CleanMonitor[params.TransmissionRun[SampleRun], params.MonitorType]:
+    data: sans_types.CleanMonitor[SampleRun, sans_types.MonitorType],
+) -> sans_types.CleanMonitor[
+    sans_types.TransmissionRun[SampleRun], sans_types.MonitorType
+]:
     return data
 
 
 def _dynamic_keys(source_name: str) -> dict[str, sciline.typing.Key]:
     return {
         source_name: NeXusData[NXdetector, SampleRun],
-        'monitor1': NeXusData[Incident, SampleRun],
-        'monitor2': NeXusData[Transmission, SampleRun],
+        'incident_monitor': NeXusData[Incident, SampleRun],
+        'transmission_monitor': NeXusData[Transmission, SampleRun],
     }
 
 
 _accumulators = (
     ReducedQ[SampleRun, Numerator],
-    params.CleanMonitor[SampleRun, Incident],
-    params.CleanMonitor[SampleRun, Transmission],
+    sans_types.CleanMonitor[SampleRun, Incident],
+    sans_types.CleanMonitor[SampleRun, Transmission],
 )
 
 
@@ -138,7 +155,7 @@ _accumulators = (
     version=1,
     title='I(Q)',
     source_names=instrument.detector_names,
-    aux_source_names=['monitor1', 'monitor2'],
+    aux_sources=LokiAuxSources,
 )
 def _i_of_q(source_name: str) -> StreamProcessorWorkflow:
     wf = _base_workflow.copy()
@@ -157,7 +174,7 @@ def _i_of_q(source_name: str) -> StreamProcessorWorkflow:
     title='I(Q) with params',
     description='I(Q) reduction with configurable parameters.',
     source_names=instrument.detector_names,
-    aux_source_names=['monitor1', 'monitor2'],
+    aux_sources=LokiAuxSources,
 )
 def _i_of_q_with_params(
     source_name: str, params: SansWorkflowParams
@@ -165,11 +182,11 @@ def _i_of_q_with_params(
     wf = _base_workflow.copy()
     wf[NeXusDetectorName] = source_name
 
-    wf[params.QBins] = params.q_edges.get_edges()
-    wf[params.WavelengthBins] = params.wavelength_edges.get_edges()
+    wf[sans_types.QBins] = params.q_edges.get_edges()
+    wf[sans_types.WavelengthBins] = params.wavelength_edges.get_edges()
 
     if not params.options.use_transmission_run:
-        target_keys = (IofQ[SampleRun], params.TransmissionFraction[SampleRun])
+        target_keys = (IofQ[SampleRun], sans_types.TransmissionFraction[SampleRun])
         wf.insert(_transmission_from_current_run)
     else:
         # Transmission fraction is static, do not display

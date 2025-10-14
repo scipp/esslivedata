@@ -3,17 +3,10 @@
 import logging
 from typing import NoReturn
 
-import scipp as sc
-
-from ess.livedata import (
-    CommonHandlerFactory,
-    Handler,
-    Message,
-    Service,
-    StreamProcessor,
-)
+from ess.livedata import Service
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
+from ess.livedata.core import IdentityProcessor
 from ess.livedata.kafka import consumer as kafka_consumer
 from ess.livedata.kafka.message_adapter import (
     AdaptingMessageSource,
@@ -25,14 +18,7 @@ from ess.livedata.kafka.source import KafkaMessageSource
 from ess.livedata.sinks import PlotToPngSink
 
 
-class IdentityHandler(Handler[sc.DataArray, sc.DataArray]):
-    def handle(self, message: Message[sc.DataArray]) -> list[Message[sc.DataArray]]:
-        # We know the message is not put back into Kafka, so we can keep the key
-        return [message]
-
-
 def run_service(*, instrument: str, log_level: int = logging.INFO) -> NoReturn:
-    handler_config = {}
     consumer_config = load_config(namespace=config_names.reduced_data_consumer, env='')
     kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
     config = load_config(namespace=config_names.visualization, env='')
@@ -42,7 +28,7 @@ def run_service(*, instrument: str, log_level: int = logging.INFO) -> NoReturn:
         instrument=instrument,
         group='visualization',
     ) as consumer:
-        processor = StreamProcessor(
+        processor = IdentityProcessor(
             source=AdaptingMessageSource(
                 source=KafkaMessageSource(consumer=consumer),
                 adapter=ChainedAdapter(
@@ -50,9 +36,6 @@ def run_service(*, instrument: str, log_level: int = logging.INFO) -> NoReturn:
                 ),
             ),
             sink=PlotToPngSink(),
-            handler_factory=CommonHandlerFactory(
-                config_handler=handler_config, handler_cls=IdentityHandler
-            ),
         )
         service = Service(
             processor=processor,

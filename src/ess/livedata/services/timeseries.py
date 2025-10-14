@@ -33,7 +33,7 @@ def make_timeseries_service_builder(
     )
     _ = get_config(instrument)  # Load the module to register the instrument
     service_name = 'timeseries'
-    handler_factory = LogdataHandlerFactory(
+    preprocessor_factory = LogdataHandlerFactory(
         instrument=instrument_registry[instrument],
         attribute_registry=attribute_registry,
     )
@@ -51,7 +51,7 @@ def make_timeseries_service_builder(
         name=service_name,
         log_level=log_level,
         adapter=adapter,
-        handler_factory=handler_factory,
+        preprocessor_factory=preprocessor_factory,
         processor_cls=processor,  # type: ignore[arg-type]
     )
 

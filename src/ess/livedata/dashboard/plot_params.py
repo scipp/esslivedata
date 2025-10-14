@@ -133,3 +133,12 @@ class PlotParams2d(PlotParamsBase):
         default_factory=PlotScaleParams2d,
         description="Scaling options for the plot and color axes.",
     )
+
+
+class PlotParams3d(PlotParamsBase):
+    """Parameters for 3D slicer plots."""
+
+    plot_scale: PlotScaleParams2d = pydantic.Field(
+        default_factory=PlotScaleParams2d,
+        description="Scaling options for the plot axes and color.",
+    )

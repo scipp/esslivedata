@@ -12,6 +12,7 @@ uv.lock
 # Environments
 venv
 .venv
+.devcontainer
 
 # Caches
 *.DS_Store
