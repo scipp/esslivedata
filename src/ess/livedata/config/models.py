@@ -238,7 +238,11 @@ class ROI(BaseModel, ABC):
             plural form of ROI type (e.g., 'rectangles', 'polygons', 'ellipses').
         """
         if not rois:
-            return cls._empty_concatenated_data_array()
+            template = cls._empty_data_array_template()
+            template.coords['roi_index'] = sc.empty(
+                dims=[template.dim], shape=[0], dtype='int32'
+            )
+            return template
 
         roi_das = []
         for idx in sorted(rois.keys()):
@@ -295,17 +299,17 @@ class ROI(BaseModel, ABC):
 
     @classmethod
     @abstractmethod
-    def _empty_concatenated_data_array(cls) -> sc.DataArray:
+    def _empty_data_array_template(cls) -> sc.DataArray:
         """
-        Return empty concatenated DataArray with correct structure.
+        Return empty DataArray template without roi_index coordinate.
 
-        Each ROI subclass must implement this to define the dimension name
-        and coordinate structure for empty case.
+        Each ROI subclass must implement this to define the dimension name,
+        coordinate structure, and plural name for empty case.
 
         Returns
         -------
         :
-            Empty DataArray with appropriate dimension and coordinates.
+            Empty DataArray with ROI-specific coordinates (without roi_index).
         """
         ...
 
@@ -423,14 +427,13 @@ class RectangleROI(ROI):
         )
 
     @classmethod
-    def _empty_concatenated_data_array(cls) -> sc.DataArray:
-        """Return empty concatenated DataArray with correct structure."""
+    def _empty_data_array_template(cls) -> sc.DataArray:
+        """Return empty DataArray template without roi_index."""
         return sc.DataArray(
             sc.empty(dims=['bounds'], shape=[0], dtype='int32', unit=''),
             coords={
                 'x': sc.empty(dims=['bounds'], shape=[0]),
                 'y': sc.empty(dims=['bounds'], shape=[0]),
-                'roi_index': sc.empty(dims=['bounds'], shape=[0], dtype='int32'),
             },
             name='rectangles',
         )
@@ -487,14 +490,13 @@ class PolygonROI(ROI):
         )
 
     @classmethod
-    def _empty_concatenated_data_array(cls) -> sc.DataArray:
-        """Return empty concatenated DataArray with correct structure."""
+    def _empty_data_array_template(cls) -> sc.DataArray:
+        """Return empty DataArray template without roi_index."""
         return sc.DataArray(
             sc.empty(dims=['vertex'], shape=[0], dtype='int32', unit=''),
             coords={
                 'x': sc.empty(dims=['vertex'], shape=[0]),
                 'y': sc.empty(dims=['vertex'], shape=[0]),
-                'roi_index': sc.empty(dims=['vertex'], shape=[0], dtype='int32'),
             },
             name='polygons',
         )
@@ -566,15 +568,14 @@ class EllipseROI(ROI):
         )
 
     @classmethod
-    def _empty_concatenated_data_array(cls) -> sc.DataArray:
-        """Return empty concatenated DataArray with correct structure."""
+    def _empty_data_array_template(cls) -> sc.DataArray:
+        """Return empty DataArray template without roi_index."""
         return sc.DataArray(
             sc.empty(dims=['dim'], shape=[0], dtype='int32', unit=''),
             coords={
                 'center': sc.empty(dims=['dim'], shape=[0]),
                 'radius': sc.empty(dims=['dim'], shape=[0]),
                 'rotation': sc.empty(dims=['dim'], shape=[0], unit='deg'),
-                'roi_index': sc.empty(dims=['dim'], shape=[0], dtype='int32'),
             },
             name='ellipses',
         )
