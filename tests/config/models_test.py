@@ -711,6 +711,193 @@ class TestMultipleRectangleROI:
         assert rois == restored
 
 
+class TestMultiplePolygonROI:
+    """Test serialization of multiple polygons into single DataArray."""
+
+    def test_concatenate_multiple_polygons(self):
+        """Multiple polygons should be concatenated along vertex dimension."""
+        rois = {
+            0: models.PolygonROI(
+                x=[0.0, 10.0, 5.0], y=[0.0, 0.0, 10.0], x_unit='mm', y_unit='mm'
+            ),
+            1: models.PolygonROI(
+                x=[20.0, 30.0, 25.0, 20.0],
+                y=[20.0, 20.0, 30.0, 25.0],
+                x_unit='mm',
+                y_unit='mm',
+            ),
+        }
+
+        da = models.PolygonROI.to_concatenated_data_array(rois)
+
+        # Should have vertex dimension with 7 elements (3 + 4 vertices)
+        assert list(da.dims) == ['vertex']
+        assert da.shape == (7,)
+
+        # Should have roi_index coordinate mapping vertices to polygons
+        assert 'roi_index' in da.coords
+        np.testing.assert_array_equal(
+            da.coords['roi_index'].values, [0, 0, 0, 1, 1, 1, 1]
+        )
+
+        # Name should indicate collection
+        assert da.name == 'polygons'
+
+    def test_concatenate_empty_dict(self):
+        """Empty dict should produce empty DataArray."""
+        rois = {}
+        da = models.PolygonROI.to_concatenated_data_array(rois)
+
+        assert list(da.dims) == ['vertex']
+        assert da.shape == (0,)
+        assert 'roi_index' in da.coords
+        assert len(da.coords['roi_index']) == 0
+
+    def test_from_concatenated_data_array(self):
+        """Should reconstruct dict of polygons from concatenated DataArray."""
+        data = sc.ones(dims=['vertex'], shape=[7], dtype='int32', unit='')
+        coords = {
+            'x': sc.array(
+                dims=['vertex'],
+                values=[0.0, 10.0, 5.0, 20.0, 30.0, 25.0, 20.0],
+                unit='mm',
+            ),
+            'y': sc.array(
+                dims=['vertex'],
+                values=[0.0, 0.0, 10.0, 20.0, 20.0, 30.0, 25.0],
+                unit='mm',
+            ),
+            'roi_index': sc.array(
+                dims=['vertex'], values=[0, 0, 0, 1, 1, 1, 1], dtype='int32'
+            ),
+        }
+        da = sc.DataArray(data, coords=coords, name='polygons')
+
+        rois = models.PolygonROI.from_concatenated_data_array(da)
+
+        assert len(rois) == 2
+        assert len(rois[0].x) == 3
+        assert len(rois[1].x) == 4
+
+    def test_roundtrip_concatenated_polygons(self):
+        """Roundtrip: dict → concatenated DataArray → dict."""
+        original = {
+            0: models.PolygonROI(
+                x=[0.0, 10.0, 5.0], y=[0.0, 0.0, 10.0], x_unit='mm', y_unit='mm'
+            ),
+            2: models.PolygonROI(
+                x=[20.0, 30.0, 25.0, 20.0],
+                y=[20.0, 20.0, 30.0, 25.0],
+                x_unit='mm',
+                y_unit='mm',
+            ),
+        }
+
+        da = models.PolygonROI.to_concatenated_data_array(original)
+        restored = models.PolygonROI.from_concatenated_data_array(da)
+
+        assert original == restored
+
+
+class TestMultipleEllipseROI:
+    """Test serialization of multiple ellipses into single DataArray."""
+
+    def test_concatenate_multiple_ellipses(self):
+        """Multiple ellipses should be concatenated along dim dimension."""
+        rois = {
+            0: models.EllipseROI(
+                center_x=10.0,
+                center_y=20.0,
+                radius_x=5.0,
+                radius_y=3.0,
+                rotation=45.0,
+                unit='mm',
+            ),
+            1: models.EllipseROI(
+                center_x=50.0,
+                center_y=60.0,
+                radius_x=8.0,
+                radius_y=4.0,
+                rotation=90.0,
+                unit='mm',
+            ),
+        }
+
+        da = models.EllipseROI.to_concatenated_data_array(rois)
+
+        # Should have dim dimension with 4 elements (2 ROIs x 2 dims each)
+        assert list(da.dims) == ['dim']
+        assert da.shape == (4,)
+
+        # Should have roi_index coordinate mapping dims to ellipses
+        assert 'roi_index' in da.coords
+        np.testing.assert_array_equal(da.coords['roi_index'].values, [0, 0, 1, 1])
+
+        # Name should indicate collection
+        assert da.name == 'ellipses'
+
+    def test_concatenate_empty_dict(self):
+        """Empty dict should produce empty DataArray."""
+        rois = {}
+        da = models.EllipseROI.to_concatenated_data_array(rois)
+
+        assert list(da.dims) == ['dim']
+        assert da.shape == (0,)
+        assert 'roi_index' in da.coords
+        assert len(da.coords['roi_index']) == 0
+
+    def test_from_concatenated_data_array(self):
+        """Should reconstruct dict of ellipses from concatenated DataArray."""
+        data = sc.ones(dims=['dim'], shape=[4], dtype='int32', unit='')
+        coords = {
+            'center': sc.array(
+                dims=['dim'], values=[10.0, 20.0, 50.0, 60.0], unit='mm'
+            ),
+            'radius': sc.array(dims=['dim'], values=[5.0, 3.0, 8.0, 4.0], unit='mm'),
+            'rotation': sc.array(
+                dims=['dim'], values=[45.0, 45.0, 90.0, 90.0], unit='deg'
+            ),
+            'roi_index': sc.array(dims=['dim'], values=[0, 0, 1, 1], dtype='int32'),
+        }
+        da = sc.DataArray(data, coords=coords, name='ellipses')
+
+        rois = models.EllipseROI.from_concatenated_data_array(da)
+
+        assert len(rois) == 2
+        assert rois[0].center_x == 10.0
+        assert rois[0].center_y == 20.0
+        assert rois[0].rotation == 45.0
+        assert rois[1].center_x == 50.0
+        assert rois[1].center_y == 60.0
+        assert rois[1].rotation == 90.0
+
+    def test_roundtrip_concatenated_ellipses(self):
+        """Roundtrip: dict → concatenated DataArray → dict."""
+        original = {
+            0: models.EllipseROI(
+                center_x=10.0,
+                center_y=20.0,
+                radius_x=5.0,
+                radius_y=3.0,
+                rotation=45.0,
+                unit='mm',
+            ),
+            2: models.EllipseROI(
+                center_x=50.0,
+                center_y=60.0,
+                radius_x=8.0,
+                radius_y=4.0,
+                rotation=90.0,
+                unit='mm',
+            ),
+        }
+
+        da = models.EllipseROI.to_concatenated_data_array(original)
+        restored = models.EllipseROI.from_concatenated_data_array(da)
+
+        assert original == restored
+
+
 class TestROIWithDa00:
     """Test ROI roundtrip through da00 serialization."""
 

@@ -212,6 +212,113 @@ class ROI(BaseModel, ABC):
         """
         ...
 
+    @classmethod
+    def to_concatenated_data_array(cls, rois: dict[int, ROI]) -> sc.DataArray:
+        """
+        Convert multiple ROIs to single concatenated DataArray.
+
+        Generic implementation that works for all ROI types by:
+        1. Converting each ROI to its individual DataArray
+        2. Adding roi_index coordinate to track which elements belong to which ROI
+        3. Concatenating along the ROI type's natural dimension
+
+        This enables efficient Kafka transmission and deletion detection on the
+        consumer side (missing indices indicate deleted ROIs).
+
+        Parameters
+        ----------
+        rois:
+            Dictionary mapping ROI index to ROI instance. Empty dict returns
+            empty DataArray with appropriate structure.
+
+        Returns
+        -------
+        :
+            Concatenated DataArray with roi_index coordinate. Name is set to
+            plural form of ROI type (e.g., 'rectangles', 'polygons', 'ellipses').
+        """
+        if not rois:
+            return cls._empty_concatenated_data_array()
+
+        roi_das = []
+        for idx in sorted(rois.keys()):
+            roi_da = rois[idx].to_data_array()
+            roi_da = roi_da.assign_coords(
+                roi_index=sc.full_like(roi_da.data, value=idx, dtype='int32')
+            )
+            roi_das.append(roi_da)
+
+        concat_dim = roi_das[0].dims[0]
+        concatenated = sc.concat(roi_das, dim=concat_dim)
+
+        # Use plural form of ROI type name
+        singular_name = roi_das[0].name
+        concatenated.name = cls._get_plural_name(singular_name)
+
+        return concatenated
+
+    @classmethod
+    def from_concatenated_data_array(cls, da: sc.DataArray) -> dict[int, ROI]:
+        """
+        Convert concatenated DataArray back to dict of ROIs.
+
+        Generic implementation that works for all ROI types.
+
+        Parameters
+        ----------
+        da:
+            DataArray with concatenated ROIs and roi_index coordinate.
+
+        Returns
+        -------
+        :
+            Dictionary mapping ROI indices to ROI instances.
+            Empty DataArray returns empty dict.
+        """
+        if len(da) == 0:
+            return {}
+
+        roi_indices = np.unique(da.coords['roi_index'].values)
+        rois = {}
+
+        for idx in roi_indices:
+            mask = da.coords['roi_index'] == idx
+            roi_da = da[mask].drop_coords('roi_index')
+
+            # Restore singular name
+            roi_da.name = cls._get_singular_name(da.name)
+
+            # Use existing dispatcher
+            rois[int(idx)] = ROI.from_data_array(roi_da)
+
+        return rois
+
+    @classmethod
+    @abstractmethod
+    def _empty_concatenated_data_array(cls) -> sc.DataArray:
+        """
+        Return empty concatenated DataArray with correct structure.
+
+        Each ROI subclass must implement this to define the dimension name
+        and coordinate structure for empty case.
+
+        Returns
+        -------
+        :
+            Empty DataArray with appropriate dimension and coordinates.
+        """
+        ...
+
+    @staticmethod
+    def _get_plural_name(singular: str) -> str:
+        """Convert ROI type name to plural form."""
+        return singular + 's'
+
+    @staticmethod
+    def _get_singular_name(plural: str) -> str:
+        """Convert plural ROI type name to singular form."""
+        return plural.rstrip('s') if plural.endswith('s') else plural
+
 
 class Interval(BaseModel):
     """
@@ -316,115 +423,17 @@ class RectangleROI(ROI):
         )
 
     @classmethod
-    def to_concatenated_data_array(cls, rois: dict[int, RectangleROI]) -> sc.DataArray:
-        """
-        Convert multiple rectangles to single concatenated DataArray.
-
-        Multiple rectangles are concatenated along the bounds dimension,
-        with an roi_index coordinate to map each bound pair to its ROI.
-
-        Parameters
-        ----------
-        rois:
-            Dictionary mapping ROI indices to RectangleROI instances.
-
-        Returns
-        -------
-        :
-            DataArray with concatenated rectangles. Has 'bounds' dimension
-            with size = 2 * len(rois), and 'roi_index' coordinate identifying
-            which ROI each bound belongs to.
-        """
-        if not rois:
-            # Empty case: return empty DataArray with correct structure
-            return sc.DataArray(
-                sc.empty(dims=['bounds'], shape=[0], dtype='int32', unit=''),
-                coords={
-                    'x': sc.empty(dims=['bounds'], shape=[0]),
-                    'y': sc.empty(dims=['bounds'], shape=[0]),
-                    'roi_index': sc.empty(dims=['bounds'], shape=[0], dtype='int32'),
-                },
-                name='rectangles',
-            )
-
-        # Concatenate all rectangles
-        all_x = []
-        all_y = []
-        all_roi_indices = []
-        x_unit = None
-        y_unit = None
-
-        for idx in sorted(rois.keys()):
-            roi = rois[idx]
-            all_x.extend([roi.x.min, roi.x.max])
-            all_y.extend([roi.y.min, roi.y.max])
-            all_roi_indices.extend([idx, idx])
-
-            # Capture unit from first ROI
-            if x_unit is None:
-                x_unit = roi.x.unit
-                y_unit = roi.y.unit
-
-        coords = {
-            'x': sc.array(dims=['bounds'], values=all_x, unit=x_unit),
-            'y': sc.array(dims=['bounds'], values=all_y, unit=y_unit),
-            'roi_index': sc.array(
-                dims=['bounds'], values=all_roi_indices, dtype='int32'
-            ),
-        }
-
-        data = sc.ones(dims=['bounds'], shape=[len(all_x)], dtype='int32', unit='')
-        return sc.DataArray(data, coords=coords, name='rectangles')
-
-    @classmethod
-    def from_concatenated_data_array(cls, da: sc.DataArray) -> dict[int, RectangleROI]:
-        """
-        Convert concatenated DataArray back to dict of rectangles.
-
-        Parameters
-        ----------
-        da:
-            DataArray with concatenated rectangles (from to_concatenated_data_array).
-
-        Returns
-        -------
-        :
-            Dictionary mapping ROI indices to RectangleROI instances.
-        """
-        if len(da) == 0:
-            return {}
-
-        x_vals = da.coords['x'].values
-        y_vals = da.coords['y'].values
-        roi_indices = da.coords['roi_index'].values
-        x_unit = _unit_to_str(da.coords['x'].unit)
-        y_unit = _unit_to_str(da.coords['y'].unit)
-
-        # Group bounds by ROI index
-        rois_data: dict[int, list[tuple[float, float]]] = {}
-        for i in range(len(da)):
-            idx = int(roi_indices[i])
-            if idx not in rois_data:
-                rois_data[idx] = []
-            rois_data[idx].append((float(x_vals[i]), float(y_vals[i])))
-
-        # Reconstruct rectangles from bound pairs
-        rois = {}
-        for idx, bounds in rois_data.items():
-            if len(bounds) != 2:
-                raise ValueError(
-                    f"Rectangle ROI {idx} must have exactly 2 bounds, got {len(bounds)}"
-                )
-
-            x_bounds = [b[0] for b in bounds]
-            y_bounds = [b[1] for b in bounds]
-
-            rois[idx] = cls(
-                x=Interval(min=min(x_bounds), max=max(x_bounds), unit=x_unit),
-                y=Interval(min=min(y_bounds), max=max(y_bounds), unit=y_unit),
-            )
-
-        return rois
+    def _empty_concatenated_data_array(cls) -> sc.DataArray:
+        """Return empty concatenated DataArray with correct structure."""
+        return sc.DataArray(
+            sc.empty(dims=['bounds'], shape=[0], dtype='int32', unit=''),
+            coords={
+                'x': sc.empty(dims=['bounds'], shape=[0]),
+                'y': sc.empty(dims=['bounds'], shape=[0]),
+                'roi_index': sc.empty(dims=['bounds'], shape=[0], dtype='int32'),
+            },
+            name='rectangles',
+        )
 
 
 class PolygonROI(ROI):
@@ -477,6 +486,19 @@ class PolygonROI(ROI):
             y_unit=_unit_to_str(da.coords['y'].unit),
         )
 
+    @classmethod
+    def _empty_concatenated_data_array(cls) -> sc.DataArray:
+        """Return empty concatenated DataArray with correct structure."""
+        return sc.DataArray(
+            sc.empty(dims=['vertex'], shape=[0], dtype='int32', unit=''),
+            coords={
+                'x': sc.empty(dims=['vertex'], shape=[0]),
+                'y': sc.empty(dims=['vertex'], shape=[0]),
+                'roi_index': sc.empty(dims=['vertex'], shape=[0], dtype='int32'),
+            },
+            name='polygons',
+        )
+
 
 class EllipseROI(ROI):
     """
@@ -521,9 +543,19 @@ class EllipseROI(ROI):
         """Create from scipp DataArray."""
         center = da.coords['center'].values
         radius = da.coords['radius'].values
-        rotation = (
-            float(da.coords['rotation'].value) if 'rotation' in da.coords else 0.0
-        )
+
+        # Handle rotation coordinate (can be scalar or dimensional after concatenation)
+        if 'rotation' not in da.coords:
+            rotation = 0.0
+        else:
+            rot_coord = da.coords['rotation']
+            if rot_coord.ndim == 0:
+                # Scalar rotation (single ellipse)
+                rotation = float(rot_coord.value)
+            else:
+                # Dimensional rotation (from concatenation) - take first value
+                rotation = float(rot_coord.values[0])
+
         return cls(
             center_x=float(center[0]),
             center_y=float(center[1]),
@@ -531,4 +563,18 @@ class EllipseROI(ROI):
             radius_y=float(radius[1]),
             rotation=rotation,
             unit=_unit_to_str(da.coords['center'].unit),
+        )
+
+    @classmethod
+    def _empty_concatenated_data_array(cls) -> sc.DataArray:
+        """Return empty concatenated DataArray with correct structure."""
+        return sc.DataArray(
+            sc.empty(dims=['dim'], shape=[0], dtype='int32', unit=''),
+            coords={
+                'center': sc.empty(dims=['dim'], shape=[0]),
+                'radius': sc.empty(dims=['dim'], shape=[0]),
+                'rotation': sc.empty(dims=['dim'], shape=[0], unit='deg'),
+                'roi_index': sc.empty(dims=['dim'], shape=[0], dtype='int32'),
+            },
+            name='ellipses',
         )
