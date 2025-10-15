@@ -255,6 +255,7 @@ class DetectorView(Workflow):
         roi_result = {}
         for idx, accumulator in self._roi_accumulators.items():
             roi_delta = accumulator.get()
+            roi_delta.name = f'ROI {idx}'
 
             # Update cumulative
             if idx not in self._roi_cumulatives:
@@ -264,7 +265,7 @@ class DetectorView(Workflow):
 
             # Publish current and cumulative with index suffix
             roi_result[f'roi_current_{idx}'] = roi_delta
-            roi_result[f'roi_cumulative_{idx}'] = self._roi_cumulatives[idx]
+            roi_result[f'roi_cumulative_{idx}'] = self._roi_cumulatives[idx].copy()
 
             # Echo back ROI configuration when updated
             if idx in self._roi_updated:
