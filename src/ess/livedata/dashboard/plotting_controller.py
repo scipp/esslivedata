@@ -22,7 +22,6 @@ from ess.livedata.config.workflow_spec import (
 
 from .config_service import ConfigService
 from .job_service import JobService
-from .plot_params import PlotParams2d
 from .plotting import PlotterSpec, plotter_registry
 from .roi_detector_plot_factory import ROIDetectorPlotFactory
 from .roi_publisher import ROIPublisher
@@ -326,7 +325,36 @@ class PlottingController:
             params=params,
         )
 
-        # Prepare items dict for all plotters (including roi_detector)
+        # Special case for roi_detector: call factory once per detector
+        # and compose into a Column
+        if plot_name == 'roi_detector':
+            import panel as pn
+
+            layouts = []
+            for source_name in source_names:
+                detector_key = self.get_result_key(
+                    job_number=job_number,
+                    source_name=source_name,
+                    output_name=output_name,
+                )
+                detector_pipe = self._job_service.job_data[job_number][source_name][
+                    output_name
+                ]
+                factory_method = self._roi_detector_plot_factory
+                layout = factory_method.create_single_roi_detector_plot(
+                    detector_key=detector_key,
+                    detector_pipe=detector_pipe,
+                    params=params,
+                )
+                layouts.append(layout)
+
+            # Return Column of layouts (one per detector)
+            if len(layouts) == 1:
+                return layouts[0]
+            else:
+                return pn.Column(*layouts)
+
+        # Prepare items dict for regular plotters
         items = {
             self.get_result_key(
                 job_number=job_number, source_name=source_name, output_name=output_name
@@ -334,13 +362,6 @@ class PlottingController:
             for source_name in source_names
         }
 
-        # Special case for roi_detector: delegate to factory
-        # to maintain BoxEdit interactivity
-        if plot_name == 'roi_detector':
-            return self._roi_detector_plot_factory.create_roi_detector_plot(
-                detector_items=items,
-                params=params,
-            )
         pipe = self._stream_manager.make_merging_stream(items)
         plotter = plotter_registry.create_plotter(plot_name, params=params)
 

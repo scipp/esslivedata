@@ -88,33 +88,31 @@ def spectrum_data():
     )
 
 
-def build_detector_items(
-    data_service: DataService, detector_keys: list[ResultKey]
-) -> dict[ResultKey, hv.streams.Pipe]:
+def get_detector_pipe(
+    data_service: DataService, detector_key: ResultKey
+) -> hv.streams.Pipe:
     """
-    Build detector_items dict from data_service for testing.
+    Get detector pipe from data_service for testing.
 
     Parameters
     ----------
     data_service:
         The data service containing the data.
-    detector_keys:
-        List of ResultKeys for detector outputs.
+    detector_key:
+        ResultKey for the detector output.
 
     Returns
     -------
     :
-        Dictionary mapping ResultKeys to Pipe streams with data.
+        Pipe stream with detector data.
     """
-    items = {}
-    for key in detector_keys:
-        if key in data_service:
-            items[key] = data_service[key]
-    return items
+    if detector_key in data_service:
+        return data_service[detector_key]
+    raise KeyError(f"Key {detector_key} not found in data service")
 
 
 class TestROIDetectorPlotFactory:
-    def test_create_roi_detector_plot_returns_layout(
+    def test_create_single_roi_detector_plot_returns_layout(
         self,
         roi_plot_factory,
         data_service,
@@ -123,7 +121,7 @@ class TestROIDetectorPlotFactory:
         detector_data,
         spectrum_data,
     ):
-        """Test that create_roi_detector_plot returns a Layout."""
+        """Test that create_single_roi_detector_plot returns a Layout."""
         # Create result keys for detector and spectrum
         # Using 'current' as the output_name, which will look for 'roi_current'
         detector_key = ResultKey(
@@ -141,15 +139,16 @@ class TestROIDetectorPlotFactory:
         data_service[detector_key] = detector_data
         data_service[spectrum_key] = spectrum_data
 
-        # Build detector items
-        detector_items = build_detector_items(data_service, [detector_key])
+        # Get detector pipe
+        detector_pipe = get_detector_pipe(data_service, detector_key)
 
         # Create plot params
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot
-        result = roi_plot_factory.create_roi_detector_plot(
-            detector_items=detector_items,
+        result = roi_plot_factory.create_single_roi_detector_plot(
+            detector_key=detector_key,
+            detector_pipe=detector_pipe,
             params=params,
         )
 
@@ -158,7 +157,7 @@ class TestROIDetectorPlotFactory:
         # Should have 2 elements: detector image + spectrum
         assert len(result) == 2
 
-    def test_create_roi_detector_plot_with_only_detector(
+    def test_create_single_roi_detector_plot_with_only_detector(
         self,
         roi_plot_factory,
         data_service,
@@ -177,15 +176,16 @@ class TestROIDetectorPlotFactory:
         # Add data to data service
         data_service[detector_key] = detector_data
 
-        # Build detector items
-        detector_items = build_detector_items(data_service, [detector_key])
+        # Get detector pipe
+        detector_pipe = get_detector_pipe(data_service, detector_key)
 
         # Create plot params
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot
-        result = roi_plot_factory.create_roi_detector_plot(
-            detector_items=detector_items,
+        result = roi_plot_factory.create_single_roi_detector_plot(
+            detector_key=detector_key,
+            detector_pipe=detector_pipe,
             params=params,
         )
 
@@ -193,7 +193,7 @@ class TestROIDetectorPlotFactory:
         assert isinstance(result, hv.Layout)
         assert len(result) == 2
 
-    def test_create_roi_detector_plot_stores_box_stream(
+    def test_create_single_roi_detector_plot_stores_box_stream(
         self,
         roi_plot_factory,
         data_service,
@@ -219,8 +219,8 @@ class TestROIDetectorPlotFactory:
         data_service[detector_key] = detector_data
         data_service[spectrum_key] = spectrum_data
 
-        # Build detector items
-        detector_items = build_detector_items(data_service, [detector_key])
+        # Get detector pipe
+        detector_pipe = get_detector_pipe(data_service, detector_key)
 
         # Create plot params
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
@@ -229,8 +229,9 @@ class TestROIDetectorPlotFactory:
         assert len(roi_plot_factory._box_streams) == 0
 
         # Create ROI detector plot
-        roi_plot_factory.create_roi_detector_plot(
-            detector_items=detector_items,
+        roi_plot_factory.create_single_roi_detector_plot(
+            detector_key=detector_key,
+            detector_pipe=detector_pipe,
             params=params,
         )
 
@@ -241,7 +242,7 @@ class TestROIDetectorPlotFactory:
             roi_plot_factory._box_streams[detector_key], hv.streams.BoxEdit
         )
 
-    def test_create_roi_detector_plot_separates_detector_and_spectrum(
+    def test_create_single_roi_detector_plot_separates_detector_and_spectrum(
         self,
         roi_plot_factory,
         data_service,
@@ -267,15 +268,16 @@ class TestROIDetectorPlotFactory:
         data_service[detector_key] = detector_data
         data_service[spectrum_key] = spectrum_data
 
-        # Build detector items
-        detector_items = build_detector_items(data_service, [detector_key])
+        # Get detector pipe
+        detector_pipe = get_detector_pipe(data_service, detector_key)
 
         # Create plot params
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot
-        result = roi_plot_factory.create_roi_detector_plot(
-            detector_items=detector_items,
+        result = roi_plot_factory.create_single_roi_detector_plot(
+            detector_key=detector_key,
+            detector_pipe=detector_pipe,
             params=params,
         )
 
@@ -287,31 +289,6 @@ class TestROIDetectorPlotFactory:
         # Both should be wrapped in overlays or be DynamicMaps
         assert isinstance(result[0], hv.Overlay | hv.DynamicMap)
         assert isinstance(result[1], hv.DynamicMap)
-
-    def test_create_roi_detector_plot_with_empty_data(
-        self,
-        roi_plot_factory,
-        workflow_id,
-        job_number,
-    ):
-        """Test ROI detector plot with no data returns placeholder."""
-        # Pass empty detector_items dict (no data)
-        detector_items = {}
-
-        # Create plot params
-        params = PlotParams2d(plot_scale=PlotScaleParams2d())
-
-        # Create ROI detector plot with no data
-        result = roi_plot_factory.create_roi_detector_plot(
-            detector_items=detector_items,
-            params=params,
-        )
-
-        # Should return a Layout with "No data" text
-        assert isinstance(result, hv.Layout)
-        assert len(result) == 1
-        # The element should be a Text element with "No data"
-        assert isinstance(result[0], hv.Text)
 
 
 def test_roi_detector_plot_publishes_roi_on_box_edit(
@@ -336,15 +313,16 @@ def test_roi_detector_plot_publishes_roi_on_box_edit(
     )
     data_service[detector_key] = detector_data
 
-    # Build detector items
-    detector_items = build_detector_items(data_service, [detector_key])
+    # Get detector pipe
+    detector_pipe = get_detector_pipe(data_service, detector_key)
 
     # Create plot params
     params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
     # Create ROI detector plot
-    roi_plot_factory.create_roi_detector_plot(
-        detector_items=detector_items,
+    roi_plot_factory.create_single_roi_detector_plot(
+        detector_key=detector_key,
+        detector_pipe=detector_pipe,
         params=params,
     )
 
@@ -390,13 +368,14 @@ def test_roi_detector_plot_only_publishes_changed_rois(
     )
     data_service[detector_key] = detector_data
 
-    # Build detector items
-    detector_items = build_detector_items(data_service, [detector_key])
+    # Get detector pipe
+    detector_pipe = get_detector_pipe(data_service, detector_key)
 
     # Create plot
     params = PlotParams2d(plot_scale=PlotScaleParams2d())
-    roi_plot_factory.create_roi_detector_plot(
-        detector_items=detector_items,
+    roi_plot_factory.create_single_roi_detector_plot(
+        detector_key=detector_key,
+        detector_pipe=detector_pipe,
         params=params,
     )
 
@@ -435,13 +414,14 @@ def test_roi_detector_plot_without_publisher_does_not_crash(
     )
     data_service[detector_key] = detector_data
 
-    # Build detector items
-    detector_items = build_detector_items(data_service, [detector_key])
+    # Get detector pipe
+    detector_pipe = get_detector_pipe(data_service, detector_key)
 
     # Create plot - should not crash
     params = PlotParams2d(plot_scale=PlotScaleParams2d())
-    result = roi_plot_factory.create_roi_detector_plot(
-        detector_items=detector_items,
+    result = roi_plot_factory.create_single_roi_detector_plot(
+        detector_key=detector_key,
+        detector_pipe=detector_pipe,
         params=params,
     )
 

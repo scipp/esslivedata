@@ -200,7 +200,7 @@ plotter_registry.register_plotter(
     data_requirements=DataRequirements(
         min_dims=2,
         max_dims=2,
-        multiple_datasets=False,
+        multiple_datasets=True,
     ),
     factory=_roi_detector_plotter_factory,
 )

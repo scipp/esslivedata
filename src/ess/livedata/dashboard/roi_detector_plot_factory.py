@@ -50,17 +50,18 @@ class ROIDetectorPlotFactory:
         # Track which ROI indices are currently active for each job
         self._active_roi_indices: dict[JobId, set[int]] = {}
 
-    def create_roi_detector_plot(
+    def create_single_roi_detector_plot(
         self,
-        detector_items: dict[ResultKey, hv.streams.Pipe],
+        detector_key: ResultKey,
+        detector_pipe: hv.streams.Pipe,
         params: PlotParams2d,
     ) -> hv.Layout:
         """
-        Create ROI detector plot with interactive BoxEdit.
+        Create ROI detector plot with interactive BoxEdit for a single detector.
 
-        This is a special-case implementation that creates separate DynamicMaps
-        for detector and spectrum data, with BoxEdit overlay applied at the
-        DynamicMap level (not inside the callback) to maintain interactivity.
+        This creates a Layout containing two DynamicMaps side-by-side:
+        1. Detector image with BoxEdit overlay for ROI selection
+        2. ROI spectrum plot that overlays all active ROI spectra
 
         When a user selects an output (e.g., 'current' or 'cumulative'), this method
         automatically discovers and subscribes to the corresponding ROI outputs:
@@ -72,8 +73,10 @@ class ROIDetectorPlotFactory:
 
         Parameters
         ----------
-        detector_items:
-            Dictionary mapping ResultKeys to data pipes for detector outputs.
+        detector_key:
+            ResultKey identifying the detector output.
+        detector_pipe:
+            Data pipe for the detector output.
         params:
             The plotter parameters (PlotParams2d).
 
@@ -81,7 +84,7 @@ class ROIDetectorPlotFactory:
         -------
         :
             A HoloViews Layout with detector image (with BoxEdit overlay) and
-            ROI spectrum plot.
+            ROI spectrum plot, arranged in 2 columns.
         """
         # Validate params type
         if not isinstance(params, PlotParams2d):
@@ -90,91 +93,103 @@ class ROIDetectorPlotFactory:
         # Maximum number of ROIs to support (subscribe upfront for dynamic addition)
         max_roi_count = 3
 
-        # Derive spectrum keys from detector items
-        # For each detector ResultKey with output_name='current', subscribe to
+        # Derive spectrum keys from detector key
+        # For detector ResultKey with output_name='current', subscribe to
         # 'roi_current_0', 'roi_current_1', etc.
         spectrum_keys: list[ResultKey] = []
-        for detector_key in detector_items.keys():
-            if detector_key.output_name:
-                # Subscribe to multiple ROI indices upfront
-                # (roi_current_0, roi_current_1, etc.)
-                # This allows ROIs to be added dynamically after plot creation
-                roi_base_name = f'roi_{detector_key.output_name}'
+        if detector_key.output_name:
+            # Subscribe to multiple ROI indices upfront
+            # (roi_current_0, roi_current_1, etc.)
+            # This allows ROIs to be added dynamically after plot creation
+            roi_base_name = f'roi_{detector_key.output_name}'
 
-                # Subscribe to all ROI indices (0 through max_roi_count-1)
-                for roi_idx in range(max_roi_count):
-                    roi_spectrum_name = f'{roi_base_name}_{roi_idx}'
-                    spectrum_key = detector_key.model_copy(
-                        update={'output_name': roi_spectrum_name}
-                    )
-                    # Subscribe to the key regardless of whether data exists yet
-                    spectrum_keys.append(spectrum_key)
+            # Subscribe to all ROI indices (0 through max_roi_count-1)
+            for roi_idx in range(max_roi_count):
+                roi_spectrum_name = f'{roi_base_name}_{roi_idx}'
+                spectrum_key = detector_key.model_copy(
+                    update={'output_name': roi_spectrum_name}
+                )
+                # Subscribe to the key regardless of whether data exists yet
+                spectrum_keys.append(spectrum_key)
 
         plots = []
 
         # Create detector plot with BoxEdit overlay
-        if detector_items:
-            detector_pipe = self._stream_manager.make_merging_stream(detector_items)
-            detector_plotter = ImagePlotter(
-                value_margin_factor=0.1,
-                layout_params=params.layout,
-                aspect_params=params.plot_aspect,
-                scale_opts=params.plot_scale,
-            )
-            detector_plotter.initialize_from_data(detector_items)
+        # detector_pipe is a Pipe stream - wrap in single-item dict for compatibility
+        detector_items = {detector_key: detector_pipe}
 
-            detector_dmap = hv.DynamicMap(
-                detector_plotter, streams=[detector_pipe], cache_size=1
-            ).opts(shared_axes=False)
+        # Create a merging stream (even for single detector, to be consistent)
+        merged_detector_pipe = self._stream_manager.make_merging_stream(detector_items)
 
-            # Create BoxEdit overlay at DynamicMap level (critical for interactivity)
-            boxes = hv.Rectangles([])
-            # Use HoloViews default color cycle to match LinePlotter's automatic colors
-            default_colors = hv.Cycle.default_cycles['default_colors']
-            box_stream = hv.streams.BoxEdit(
-                source=boxes,
-                num_objects=max_roi_count,
-                styles={'fill_color': default_colors[:max_roi_count]},
-            )
+        detector_plotter = ImagePlotter(
+            value_margin_factor=0.1,
+            layout_params=params.layout,
+            aspect_params=params.plot_aspect,
+            scale_opts=params.plot_scale,
+        )
+        detector_plotter.initialize_from_data(detector_items)
 
-            # Store box stream for later access (e.g., publishing to backend)
-            # Use the first detector item's key as the reference
-            first_detector_key = next(iter(detector_items.keys()))
-            self._box_streams[first_detector_key] = box_stream
+        detector_dmap = hv.DynamicMap(
+            detector_plotter, streams=[merged_detector_pipe], cache_size=1
+        ).opts(shared_axes=False)
 
-            # Set up ROI publishing if publisher is available
-            if self._roi_publisher:
-                # Extract coordinate units from the detector data
-                first_detector_data = next(iter(detector_items.values()))
-                x_dim, y_dim = first_detector_data.dims[1], first_detector_data.dims[0]
+        # Create BoxEdit overlay at DynamicMap level (critical for interactivity)
+        boxes = hv.Rectangles([])
+        # Use HoloViews default color cycle to match LinePlotter's automatic colors
+        default_colors = hv.Cycle.default_cycles['default_colors']
+        box_stream = hv.streams.BoxEdit(
+            source=boxes,
+            num_objects=max_roi_count,
+            styles={'fill_color': default_colors[:max_roi_count]},
+        )
 
-                # Check each coordinate independently and extract unit if present
-                x_unit = None
-                if x_dim in first_detector_data.coords:
-                    x_coord_unit = first_detector_data.coords[x_dim].unit
-                    x_unit = str(x_coord_unit) if x_coord_unit is not None else None
+        # Store box stream for this detector
+        self._box_streams[detector_key] = box_stream
 
-                y_unit = None
-                if y_dim in first_detector_data.coords:
-                    y_coord_unit = first_detector_data.coords[y_dim].unit
-                    y_unit = str(y_coord_unit) if y_coord_unit is not None else None
+        # Set up ROI publishing if publisher is available
+        if self._roi_publisher:
+            # Extract coordinate units from the detector data
+            # Access data from dict (works for both Pipe streams and raw DataArrays)
+            data_source = detector_items[detector_key]
+            # Handle Pipe streams (have .data attribute with a DataArray)
+            # and raw DataArrays (from tests)
+            has_data_attr = hasattr(data_source, 'data')
+            if has_data_attr and hasattr(data_source.data, 'coords'):
+                detector_data = data_source.data
+            elif hasattr(data_source, 'coords'):
+                # It's already a DataArray
+                detector_data = data_source
+            else:
+                # Fallback: try to get data attribute (it might be a Variable)
+                detector_data = data_source
 
-                self._setup_roi_watcher(box_stream, first_detector_key, x_unit, y_unit)
+            x_dim, y_dim = detector_data.dims[1], detector_data.dims[0]
 
-            # Overlay boxes on DynamicMap (not inside callback - this is crucial!)
-            interactive_boxes = boxes.opts(fill_alpha=0.3, line_width=2)
-            detector_with_boxes = detector_dmap * interactive_boxes
-            plots.append(detector_with_boxes)
+            # Check each coordinate independently and extract unit if present
+            x_unit = None
+            if hasattr(detector_data, 'coords') and x_dim in detector_data.coords:
+                x_coord_unit = detector_data.coords[x_dim].unit
+                x_unit = str(x_coord_unit) if x_coord_unit is not None else None
 
-        # Create single ROI spectrum plot (overlays all ROIs)
+            y_unit = None
+            if hasattr(detector_data, 'coords') and y_dim in detector_data.coords:
+                y_coord_unit = detector_data.coords[y_dim].unit
+                y_unit = str(y_coord_unit) if y_coord_unit is not None else None
+
+            self._setup_roi_watcher(box_stream, detector_key, x_unit, y_unit)
+
+        # Overlay boxes on DynamicMap (not inside callback - this is crucial!)
+        interactive_boxes = boxes.opts(fill_alpha=0.3, line_width=2)
+        detector_with_boxes = detector_dmap * interactive_boxes
+        plots.append(detector_with_boxes)
+
+        # Create single ROI spectrum plot (overlays all ROIs for this detector)
         if spectrum_keys:
             # Override layout params to use overlay mode
             overlay_layout = LayoutParams(combine_mode='overlay')
 
             # Create filtered stream that only shows active ROI indices
-            # Get the job_id from the first spectrum key
-            first_spectrum_key = spectrum_keys[0]
-            job_id = first_spectrum_key.job_id
+            job_id = detector_key.job_id
 
             # Create filter function that checks if ROI index is active
             def is_roi_active(key: ResultKey) -> bool:
