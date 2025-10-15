@@ -24,7 +24,7 @@ from ess.livedata.config.workflow_spec import (
 
 from .config_service import ConfigService
 from .job_service import JobService
-from .plot_params import PlotParams2d
+from .plot_params import LayoutParams, PlotParams2d
 from .plots import ImagePlotter, LinePlotter
 from .plotting import PlotterSpec, plotter_registry
 from .roi_publisher import ROIPublisher, boxes_to_rois
@@ -383,8 +383,11 @@ class PlottingController:
 
         # Separate detector data from ROI spectrum data by output name
         detector_items: dict[ResultKey, hv.streams.Pipe] = {}
-        # Multiple spectrum items, one dict per ROI index
-        spectrum_items_by_roi: dict[int, dict[ResultKey, hv.streams.Pipe]] = {}
+        # Single dict with all ROI spectrum items (overlaid by LinePlotter)
+        spectrum_items: dict[ResultKey, hv.streams.Pipe] = {}
+
+        # Maximum number of ROIs to support (subscribe upfront for dynamic addition)
+        max_roi_count = 10
 
         for source_name in source_names:
             source_outputs = job_data[source_name]
@@ -403,25 +406,14 @@ class PlottingController:
             # Get or subscribe to ROI spectra (1D) - may not exist yet
             # Only create spectrum plot if we have detector data
             if output_name and has_detector_data:
-                # Scan for all numbered ROI outputs (roi_current_0, roi_current_1, etc.)
-                # Also subscribe to roi_current_0 even if it doesn't exist yet
+                # Subscribe to multiple ROI indices upfront
+                # (roi_current_0, roi_current_1, etc.)
+                # This allows ROIs to be added dynamically after plot creation
+                # LinePlotter will overlay all of them on a single plot
                 roi_base_name = f'roi_{output_name}'
 
-                # Always subscribe to at least roi_current_0 (first/only ROI)
-                roi_indices = {0}
-
-                # Discover additional ROI outputs that already exist
-                for key in source_outputs.keys():
-                    if key.startswith(f'{roi_base_name}_'):
-                        try:
-                            idx = int(key.split('_')[-1])
-                            roi_indices.add(idx)
-                        except ValueError:
-                            # Not a numbered ROI output
-                            pass
-
-                # Subscribe to each ROI spectrum
-                for roi_idx in sorted(roi_indices):
+                # Subscribe to all ROI indices (0 through max_roi_count-1)
+                for roi_idx in range(max_roi_count):
                     roi_spectrum_name = f'{roi_base_name}_{roi_idx}'
                     result_key = self.get_result_key(
                         job_number=job_number,
@@ -429,23 +421,18 @@ class PlottingController:
                         output_name=roi_spectrum_name,
                     )
 
-                    if roi_idx not in spectrum_items_by_roi:
-                        spectrum_items_by_roi[roi_idx] = {}
-
                     if roi_spectrum_name in source_outputs:
-                        spectrum_items_by_roi[roi_idx][result_key] = source_outputs[
-                            roi_spectrum_name
-                        ]
+                        # Output already exists
+                        spectrum_items[result_key] = source_outputs[roi_spectrum_name]
                     else:
-                        # The output doesn't exist yet, but we subscribe anyway by
-                        # providing a placeholder DataArray. This ensures the subscriber
-                        # watches this ResultKey and will update when data arrives.
+                        # The output doesn't exist yet, subscribe with placeholder
+                        # LinePlotter will show it as empty until data arrives
                         dim = 'time_of_arrival'
                         placeholder = sc.DataArray(
                             data=sc.array(dims=[dim], values=[0], unit='counts'),
                             coords={dim: sc.array(dims=[dim], values=[0], unit='ns')},
                         )
-                        spectrum_items_by_roi[roi_idx][result_key] = placeholder
+                        spectrum_items[result_key] = placeholder
 
         plots = []
 
@@ -509,24 +496,23 @@ class PlottingController:
             detector_with_boxes = detector_dmap * interactive_boxes
             plots.append(detector_with_boxes)
 
-        # Create ROI spectrum plots (one per ROI index)
-        for roi_idx in sorted(spectrum_items_by_roi.keys()):
-            spectrum_items = spectrum_items_by_roi[roi_idx]
-            if spectrum_items:
-                spectrum_pipe = self._stream_manager.make_merging_stream(spectrum_items)
-                # PlotScaleParams2d is subclass of PlotScaleParams
-                spectrum_plotter = LinePlotter(
-                    value_margin_factor=0.1,
-                    layout_params=params.layout,
-                    aspect_params=params.plot_aspect,
-                    scale_opts=params.plot_scale,
-                )
-                spectrum_plotter.initialize_from_data(spectrum_items)
+        # Create single ROI spectrum plot (overlays all ROIs)
+        if spectrum_items:
+            # Override layout params to use overlay mode
+            overlay_layout = LayoutParams(combine_mode='overlay')
+            spectrum_pipe = self._stream_manager.make_merging_stream(spectrum_items)
+            spectrum_plotter = LinePlotter(
+                value_margin_factor=0.1,
+                layout_params=overlay_layout,
+                aspect_params=params.plot_aspect,
+                scale_opts=params.plot_scale,
+            )
+            spectrum_plotter.initialize_from_data(spectrum_items)
 
-                spectrum_dmap = hv.DynamicMap(
-                    spectrum_plotter, streams=[spectrum_pipe], cache_size=1
-                ).opts(shared_axes=False, title=f'ROI {roi_idx}')
-                plots.append(spectrum_dmap)
+            spectrum_dmap = hv.DynamicMap(
+                spectrum_plotter, streams=[spectrum_pipe], cache_size=1
+            ).opts(shared_axes=False)
+            plots.append(spectrum_dmap)
 
         if len(plots) == 0:
             return hv.Layout(
