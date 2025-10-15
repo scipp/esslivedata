@@ -16,6 +16,7 @@ from ess.livedata.handlers.detector_view import (
     DetectorView,
     DetectorViewParams,
     ROIBasedTOAHistogram,
+    ROIHistogram,
 )
 from ess.livedata.handlers.to_nxevent_data import DetectorEvents
 from ess.livedata.parameter_models import TOAEdges
@@ -111,7 +112,11 @@ class TestDetectorViewBasics:
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         assert view is not None
-        assert len(view._roi_models) == 0  # No ROI configured initially
+        # Verify no ROI results are present when no ROI configured
+        result = view.finalize()
+        assert 'cumulative' in result
+        assert 'current' in result
+        assert not any(key.startswith('roi_') for key in result)
 
     def test_accumulate_detector_data_without_roi(
         self,
@@ -150,13 +155,16 @@ class TestDetectorViewBasics:
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         view.accumulate({'detector': sample_detector_events})
-        view.finalize()
+        result1 = view.finalize()
+        assert sc.sum(result1['current']).value == 8
 
         # Clear the view
         view.clear()
 
-        assert view._previous is None
-        assert len(view._roi_cumulatives) == 0
+        # After clear, finalize should return zero counts
+        result2 = view.finalize()
+        assert sc.sum(result2['current']).value == 0
+        assert sc.sum(result2['cumulative']).value == 0
 
 
 class TestDetectorViewROIMechanism:
@@ -183,16 +191,26 @@ class TestDetectorViewROIMechanism:
         # Send ROI configuration
         view.accumulate({'roi': roi_data})
 
-        # ROI model should be configured (at index 0)
-        assert 0 in view._roi_models
-        assert isinstance(view._roi_models[0], RectangleROI)
-        assert view._roi_models[0].x.min == 5.0
-        assert view._roi_models[0].x.max == 25.0
+        # Verify ROI configuration is active via finalize output
+        result = view.finalize()
+        # ROI streams should be present (current, cumulative, and the config echo)
+        assert 'roi_current_0' in result
+        assert 'roi_cumulative_0' in result
+        assert 'roi_rectangle_0' in result
+        # Verify the echoed ROI config matches what we sent
+        echoed_roi_data = result['roi_rectangle_0']
+        # The echoed data should have x and y coordinates with the ROI bounds
+        assert 'x' in echoed_roi_data.coords
+        assert 'y' in echoed_roi_data.coords
+        assert sc.min(echoed_roi_data.coords['x']).value == 5.0
+        assert sc.max(echoed_roi_data.coords['x']).value == 25.0
+        assert sc.min(echoed_roi_data.coords['y']).value == 5.0
+        assert sc.max(echoed_roi_data.coords['y']).value == 25.0
 
     def test_roi_only_does_not_process_events(
         self, mock_rolling_view: RollingDetectorView
     ) -> None:
-        """Test that sending only ROI (no detector data) returns early."""
+        """Test that sending only ROI (no detector data) produces empty histograms."""
         params = DetectorViewParams()
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
@@ -205,11 +223,10 @@ class TestDetectorViewROIMechanism:
             y_unit='mm',
         )
 
-        # This should return early without processing events
+        # Send ROI configuration without detector data
         view.accumulate({'roi': RectangleROI.to_concatenated_data_array({0: roi})})
 
         # ROI should be configured but no histogram data accumulated yet
-        assert 0 in view._roi_models
         result = view.finalize()
         # ROI results should be present (even if empty/zero) once ROI is configured
         # Results are now indexed: roi_current_0, roi_cumulative_0, roi_rectangle_0
@@ -368,14 +385,19 @@ class TestDetectorViewROIMechanism:
         )
         view.accumulate({'roi': RectangleROI.to_concatenated_data_array({0: roi})})
         view.accumulate({'detector': sample_detector_events})
-        view.finalize()
+        result1 = view.finalize()
+
+        # Verify we accumulated some events
+        assert sc.sum(result1['roi_cumulative_0']).value > 0
 
         # Clear should reset cumulative
         view.clear()
 
-        assert len(view._roi_cumulatives) == 0
-        # Note: ROI model configuration persists after clear
-        assert 0 in view._roi_models
+        # After clear, ROI cumulative should be reset to zero
+        result2 = view.finalize()
+        assert 'roi_cumulative_0' in result2  # ROI config still active
+        assert sc.sum(result2['roi_cumulative_0']).value == 0
+        assert sc.sum(result2['roi_current_0']).value == 0
 
     def test_roi_change_resets_cumulative(
         self,
@@ -605,6 +627,189 @@ class TestROIBasedTOAHistogramIntegration:
 
         # Verify the ROI was configured (by checking that _selection was updated)
         assert len(roi_filter._selection) > 0
+
+
+class TestROIHistogram:
+    """Unit tests for the merged ROIHistogram class."""
+
+    def test_initialization_with_model(self, detector_indices: sc.DataArray) -> None:
+        """Test that ROIHistogram can be initialized with a model."""
+        roi = make_rectangle_roi(
+            x_min=5.0, x_max=25.0, y_min=5.0, y_max=25.0, x_unit='mm', y_unit='mm'
+        )
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+        roi_filter = ROIFilter(detector_indices)
+
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=roi
+        )
+
+        assert roi_histogram.model == roi
+        assert not roi_histogram.updated
+        assert roi_histogram.cumulative is None
+
+    def test_cumulative_accumulation_across_multiple_periods(
+        self, detector_number: sc.Variable, detector_indices: sc.DataArray
+    ) -> None:
+        """Test that cumulative correctly sums across multiple get_delta() calls."""
+        roi = make_rectangle_roi(
+            x_min=5.0, x_max=25.0, y_min=5.0, y_max=25.0, x_unit='mm', y_unit='mm'
+        )
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+        roi_filter = ROIFilter(detector_indices)
+
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=roi
+        )
+
+        # First period: 4 events
+        events1 = DetectorEvents(
+            pixel_id=[5, 6, 9, 10],
+            time_of_arrival=[100, 200, 300, 400],
+            unit='ns',
+        )
+        grouper = GroupIntoPixels(detector_number=detector_number)
+        grouper.add(0, events1)
+        grouped1 = grouper.get()
+
+        roi_histogram.add_data(grouped1)
+        delta1 = roi_histogram.get_delta()
+
+        assert sc.sum(delta1).value == 4
+        assert sc.sum(roi_histogram.cumulative).value == 4
+
+        # Second period: 3 events
+        events2 = DetectorEvents(
+            pixel_id=[5, 6, 9], time_of_arrival=[150, 250, 350], unit='ns'
+        )
+        grouper2 = GroupIntoPixels(detector_number=detector_number)
+        grouper2.add(0, events2)
+        grouped2 = grouper2.get()
+
+        roi_histogram.add_data(grouped2)
+        delta2 = roi_histogram.get_delta()
+
+        assert sc.sum(delta2).value == 3
+        assert sc.sum(roi_histogram.cumulative).value == 7  # Accumulated!
+
+    def test_roi_reconfiguration_resets_cumulative(
+        self, detector_number: sc.Variable, detector_indices: sc.DataArray
+    ) -> None:
+        """Test that changing ROI configuration resets cumulative histogram."""
+        roi1 = make_rectangle_roi(
+            x_min=5.0, x_max=25.0, y_min=5.0, y_max=25.0, x_unit='mm', y_unit='mm'
+        )
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+        roi_filter = ROIFilter(detector_indices)
+
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=roi1
+        )
+
+        # Accumulate some data
+        events = DetectorEvents(
+            pixel_id=[5, 6, 9, 10],
+            time_of_arrival=[100, 200, 300, 400],
+            unit='ns',
+        )
+        grouper = GroupIntoPixels(detector_number=detector_number)
+        grouper.add(0, events)
+        grouped = grouper.get()
+
+        roi_histogram.add_data(grouped)
+        roi_histogram.get_delta()
+        assert sc.sum(roi_histogram.cumulative).value == 4
+
+        # Change ROI configuration
+        roi2 = make_rectangle_roi(
+            x_min=10.0, x_max=20.0, y_min=10.0, y_max=20.0, x_unit='mm', y_unit='mm'
+        )
+        roi_histogram.configure_from_roi_model(roi2)
+
+        # Cumulative should reset
+        assert roi_histogram.updated
+        assert roi_histogram.cumulative is None
+
+    def test_updated_flag_lifecycle(self, detector_indices: sc.DataArray) -> None:
+        """Test that updated flag is set on config change and clearable."""
+        roi1 = make_rectangle_roi(
+            x_min=5.0, x_max=25.0, y_min=5.0, y_max=25.0, x_unit='mm', y_unit='mm'
+        )
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+        roi_filter = ROIFilter(detector_indices)
+
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=roi1
+        )
+
+        assert not roi_histogram.updated
+
+        # Reconfigure should set updated flag
+        roi2 = make_rectangle_roi(
+            x_min=10.0, x_max=20.0, y_min=10.0, y_max=20.0, x_unit='mm', y_unit='mm'
+        )
+        roi_histogram.configure_from_roi_model(roi2)
+        assert roi_histogram.updated
+        assert roi_histogram.model == roi2
+
+        # Clear flag
+        roi_histogram.clear_updated_flag()
+        assert not roi_histogram.updated
+
+    def test_clear_resets_all_state(
+        self, detector_number: sc.Variable, detector_indices: sc.DataArray
+    ) -> None:
+        """Test that clear() resets cumulative and chunks but preserves config."""
+        roi = make_rectangle_roi(
+            x_min=5.0, x_max=25.0, y_min=5.0, y_max=25.0, x_unit='mm', y_unit='mm'
+        )
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+        roi_filter = ROIFilter(detector_indices)
+
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=roi
+        )
+
+        # Accumulate some data
+        events = DetectorEvents(
+            pixel_id=[5, 6, 9, 10],
+            time_of_arrival=[100, 200, 300, 400],
+            unit='ns',
+        )
+        grouper = GroupIntoPixels(detector_number=detector_number)
+        grouper.add(0, events)
+        grouped = grouper.get()
+
+        roi_histogram.add_data(grouped)
+        roi_histogram.get_delta()
+        assert sc.sum(roi_histogram.cumulative).value == 4
+
+        # Clear should reset everything
+        roi_histogram.clear()
+
+        assert roi_histogram.cumulative is None
+        # Model should be preserved
+        assert roi_histogram.model == roi
+
+    def test_empty_histogram_when_no_data(self, detector_indices: sc.DataArray) -> None:
+        """Test that get_delta returns empty histogram when no data accumulated."""
+        roi = make_rectangle_roi(
+            x_min=5.0, x_max=25.0, y_min=5.0, y_max=25.0, x_unit='mm', y_unit='mm'
+        )
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+        roi_filter = ROIFilter(detector_indices)
+
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=roi
+        )
+
+        # Get without adding data
+        delta = roi_histogram.get_delta()
+
+        assert isinstance(delta, sc.DataArray)
+        assert 'time_of_arrival' in delta.coords
+        assert sc.sum(delta).value == 0
+        assert sc.sum(roi_histogram.cumulative).value == 0
 
 
 class TestDetectorViewBothROIAndDetectorData:
