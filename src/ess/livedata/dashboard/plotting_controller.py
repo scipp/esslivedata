@@ -316,16 +316,13 @@ class PlottingController:
             includes interactive dimensions that generate widgets when rendered.
             For roi_detector, returns a Layout with separate DynamicMaps.
         """
-        workflow_id = self._job_service.job_info[job_number]
         self._save_plotting_config(
-            workflow_id=workflow_id,
+            workflow_id=self._job_service.job_info[job_number],
             source_names=source_names,
             output_name=output_name,
             plot_name=plot_name,
             params=params,
         )
-
-        # Prepare items dict
         items = {
             self.get_result_key(
                 job_number=job_number, source_name=source_name, output_name=output_name
