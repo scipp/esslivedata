@@ -416,10 +416,12 @@ def test_roi_detector_plot_publishes_roi_on_box_edit(
 
     # Check that ROI was published
     assert len(fake_publisher.published_rois) == 1
-    published_job_id, roi_index, roi = fake_publisher.published_rois[0]
+    published_job_id, rois_dict = fake_publisher.published_rois[0]
     assert published_job_id.job_number == job_number
     assert published_job_id.source_name == 'detector_data'
-    assert roi_index == 0
+    assert len(rois_dict) == 1
+    assert 0 in rois_dict
+    roi = rois_dict[0]
     assert roi.x.min == 1.0
     assert roi.x.max == 5.0
     assert roi.y.min == 2.0
