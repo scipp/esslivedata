@@ -423,15 +423,10 @@ class PlottingController:
                     # The output doesn't exist yet, but we subscribe anyway by
                     # providing a placeholder DataArray. This ensures the subscriber
                     # watches this ResultKey and will update when data arrives.
+                    dim = 'time_of_arrival'
                     placeholder = sc.DataArray(
-                        data=sc.array(
-                            dims=['time_of_arrival'], values=[], unit='counts'
-                        ),
-                        coords={
-                            'time_of_arrival': sc.array(
-                                dims=['time_of_arrival'], values=[], unit='ns'
-                            )
-                        },
+                        data=sc.array(dims=[dim], values=[0], unit='counts'),
+                        coords={dim: sc.array(dims=[dim], values=[0], unit='ns')},
                     )
                     spectrum_items[result_key] = placeholder
 
