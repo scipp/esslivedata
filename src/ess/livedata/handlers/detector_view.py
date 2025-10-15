@@ -188,8 +188,8 @@ class DetectorView(Workflow):
             # 1. New format: concatenated with roi_index coordinate (multi-ROI)
             # 2. Old format: single ROI without roi_index (backward compat)
             if 'roi_index' in roi_data_array.coords:
-                # New multi-ROI format
-                rois = models.RectangleROI.from_concatenated_data_array(roi_data_array)
+                # New multi-ROI format - use generic ROI dispatcher
+                rois = models.ROI.from_concatenated_data_array(roi_data_array)
             else:
                 # Old single-ROI format - convert to dict with index 0
                 single_roi = models.ROI.from_data_array(roi_data_array)
