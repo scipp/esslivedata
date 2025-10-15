@@ -389,6 +389,13 @@ class PlottingController:
         # Maximum number of ROIs to support (subscribe upfront for dynamic addition)
         max_roi_count = 10
 
+        # Single placeholder for initialization (only used for first ROI)
+        dim = 'time_of_arrival'
+        placeholder = sc.DataArray(
+            data=sc.array(dims=[dim], values=[0.0], unit='counts'),
+            coords={dim: sc.array(dims=[dim], values=[0.0], unit='ns')},
+        )
+
         for source_name in source_names:
             source_outputs = job_data[source_name]
 
@@ -425,13 +432,8 @@ class PlottingController:
                         # Output already exists
                         spectrum_items[result_key] = source_outputs[roi_spectrum_name]
                     else:
-                        # The output doesn't exist yet, subscribe with placeholder
-                        # LinePlotter will show it as empty until data arrives
-                        dim = 'time_of_arrival'
-                        placeholder = sc.DataArray(
-                            data=sc.array(dims=[dim], values=[0], unit='counts'),
-                            coords={dim: sc.array(dims=[dim], values=[0], unit='ns')},
-                        )
+                        # The output doesn't exist yet, subscribe anyway
+                        # Stream will update when data arrives
                         spectrum_items[result_key] = placeholder
 
         plots = []
@@ -507,7 +509,10 @@ class PlottingController:
                 aspect_params=params.plot_aspect,
                 scale_opts=params.plot_scale,
             )
-            spectrum_plotter.initialize_from_data(spectrum_items)
+            # Initialize with just first ROI (placeholder)
+            # This is sufficient for determining dimensions
+            first_roi_key = next(iter(spectrum_items.keys()))
+            spectrum_plotter.initialize_from_data({first_roi_key: placeholder})
 
             spectrum_dmap = hv.DynamicMap(
                 spectrum_plotter, streams=[spectrum_pipe], cache_size=1
