@@ -387,7 +387,7 @@ class PlottingController:
         spectrum_items: dict[ResultKey, hv.streams.Pipe] = {}
 
         # Maximum number of ROIs to support (subscribe upfront for dynamic addition)
-        max_roi_count = 10
+        max_roi_count = 3
 
         # Single placeholder for initialization (only used for first ROI)
         dim = 'time_of_arrival'
@@ -455,10 +455,12 @@ class PlottingController:
 
             # Create BoxEdit overlay at DynamicMap level (critical for interactivity)
             boxes = hv.Rectangles([])
+            # Use HoloViews default color cycle to match LinePlotter's automatic colors
+            default_colors = hv.Cycle.default_cycles['default_colors']
             box_stream = hv.streams.BoxEdit(
                 source=boxes,
-                num_objects=3,
-                styles={'fill_color': ['red', 'green', 'blue']},
+                num_objects=max_roi_count,
+                styles={'fill_color': default_colors[:max_roi_count]},
             )
 
             # Store box stream for later access (e.g., publishing to backend)
