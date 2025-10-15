@@ -338,8 +338,6 @@ class PlottingController:
         # to maintain BoxEdit interactivity
         if plot_name == 'roi_detector':
             return self._roi_detector_plot_factory.create_roi_detector_plot(
-                workflow_id=workflow_id,
-                job_number=job_number,
                 detector_items=items,
                 params=params,
             )

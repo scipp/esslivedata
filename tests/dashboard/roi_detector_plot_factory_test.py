@@ -149,8 +149,6 @@ class TestROIDetectorPlotFactory:
 
         # Create ROI detector plot
         result = roi_plot_factory.create_roi_detector_plot(
-            workflow_id=workflow_id,
-            job_number=job_number,
             detector_items=detector_items,
             params=params,
         )
@@ -187,8 +185,6 @@ class TestROIDetectorPlotFactory:
 
         # Create ROI detector plot
         result = roi_plot_factory.create_roi_detector_plot(
-            workflow_id=workflow_id,
-            job_number=job_number,
             detector_items=detector_items,
             params=params,
         )
@@ -234,8 +230,6 @@ class TestROIDetectorPlotFactory:
 
         # Create ROI detector plot
         roi_plot_factory.create_roi_detector_plot(
-            workflow_id=workflow_id,
-            job_number=job_number,
             detector_items=detector_items,
             params=params,
         )
@@ -281,8 +275,6 @@ class TestROIDetectorPlotFactory:
 
         # Create ROI detector plot
         result = roi_plot_factory.create_roi_detector_plot(
-            workflow_id=workflow_id,
-            job_number=job_number,
             detector_items=detector_items,
             params=params,
         )
@@ -311,8 +303,6 @@ class TestROIDetectorPlotFactory:
 
         # Create ROI detector plot with no data
         result = roi_plot_factory.create_roi_detector_plot(
-            workflow_id=workflow_id,
-            job_number=job_number,
             detector_items=detector_items,
             params=params,
         )
@@ -354,8 +344,6 @@ def test_roi_detector_plot_publishes_roi_on_box_edit(
 
     # Create ROI detector plot
     roi_plot_factory.create_roi_detector_plot(
-        workflow_id=workflow_id,
-        job_number=job_number,
         detector_items=detector_items,
         params=params,
     )
@@ -408,8 +396,6 @@ def test_roi_detector_plot_only_publishes_changed_rois(
     # Create plot
     params = PlotParams2d(plot_scale=PlotScaleParams2d())
     roi_plot_factory.create_roi_detector_plot(
-        workflow_id=workflow_id,
-        job_number=job_number,
         detector_items=detector_items,
         params=params,
     )
@@ -455,8 +441,6 @@ def test_roi_detector_plot_without_publisher_does_not_crash(
     # Create plot - should not crash
     params = PlotParams2d(plot_scale=PlotScaleParams2d())
     result = roi_plot_factory.create_roi_detector_plot(
-        workflow_id=workflow_id,
-        job_number=job_number,
         detector_items=detector_items,
         params=params,
     )

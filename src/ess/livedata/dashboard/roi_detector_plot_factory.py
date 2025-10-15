@@ -10,7 +10,7 @@ from functools import partial
 import holoviews as hv
 
 from ess.livedata.config.models import RectangleROI
-from ess.livedata.config.workflow_spec import JobId, JobNumber, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import JobId, ResultKey
 
 from .data_subscriber import FilteredMergingStreamAssembler
 from .plot_params import LayoutParams, PlotParams2d
@@ -52,7 +52,6 @@ class ROIDetectorPlotFactory:
 
     def create_roi_detector_plot(
         self,
-        workflow_id: WorkflowId,
         detector_items: dict[ResultKey, hv.streams.Pipe],
         params: PlotParams2d,
     ) -> hv.Layout:
@@ -73,8 +72,6 @@ class ROIDetectorPlotFactory:
 
         Parameters
         ----------
-        workflow_id:
-            The workflow ID for creating ResultKeys.
         detector_items:
             Dictionary mapping ResultKeys to data pipes for detector outputs.
         params:
@@ -86,6 +83,9 @@ class ROIDetectorPlotFactory:
             A HoloViews Layout with detector image (with BoxEdit overlay) and
             ROI spectrum plot.
         """
+        # Validate params type
+        if not isinstance(params, PlotParams2d):
+            raise TypeError("roi_detector requires PlotParams2d")
 
         # Maximum number of ROIs to support (subscribe upfront for dynamic addition)
         max_roi_count = 3
@@ -104,10 +104,8 @@ class ROIDetectorPlotFactory:
                 # Subscribe to all ROI indices (0 through max_roi_count-1)
                 for roi_idx in range(max_roi_count):
                     roi_spectrum_name = f'{roi_base_name}_{roi_idx}'
-                    spectrum_key = ResultKey(
-                        workflow_id=workflow_id,
-                        job_id=detector_key.job_id,
-                        output_name=roi_spectrum_name,
+                    spectrum_key = detector_key.model_copy(
+                        update={'output_name': roi_spectrum_name}
                     )
                     # Subscribe to the key regardless of whether data exists yet
                     spectrum_keys.append(spectrum_key)
