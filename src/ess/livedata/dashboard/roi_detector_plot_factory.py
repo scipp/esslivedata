@@ -15,7 +15,7 @@ from ess.livedata.config.workflow_spec import JobId, ResultKey
 
 from .data_subscriber import FilteredMergingStreamAssembler
 from .plot_params import LayoutParams, PlotParams2d
-from .plots import ImagePlotter, LinePlotter
+from .plots import ImagePlotter, LinePlotter, PlotAspect
 from .roi_publisher import ROIPublisher, boxes_to_rois
 from .stream_manager import StreamManager
 
@@ -225,7 +225,8 @@ class ROIDetectorPlotFactory:
             spectrum_plotter = LinePlotter(
                 value_margin_factor=0.1,
                 layout_params=overlay_layout,
-                aspect_params=params.plot_aspect,
+                # Should we provide independent params for spectrum or just hard-code?
+                aspect_params=PlotAspect(fix_width=True),
                 scale_opts=params.plot_scale,
             )
 
