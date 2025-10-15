@@ -162,6 +162,13 @@ class Plotter(ABC):
                 )
             ]
 
+        if len(plots) == 0:
+            plots = [
+                hv.Text(0.5, 0.5, 'No data').opts(
+                    text_align='center', text_baseline='middle'
+                )
+            ]
+
         plots = [self._apply_generic_options(p) for p in plots]
 
         if self.layout_params.combine_mode == 'overlay':

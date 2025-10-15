@@ -8,7 +8,6 @@ from typing import TypeVar
 
 import holoviews as hv
 import pydantic
-import scipp as sc
 
 import ess.livedata.config.keys as keys
 from ess.livedata.config.models import RectangleROI
@@ -383,18 +382,11 @@ class PlottingController:
 
         # Separate detector data from ROI spectrum data by output name
         detector_items: dict[ResultKey, hv.streams.Pipe] = {}
-        # Single dict with all ROI spectrum items (overlaid by LinePlotter)
-        spectrum_items: dict[ResultKey, hv.streams.Pipe] = {}
+        # Collect ROI spectrum keys (will subscribe even if data doesn't exist yet)
+        spectrum_keys: list[ResultKey] = []
 
         # Maximum number of ROIs to support (subscribe upfront for dynamic addition)
         max_roi_count = 3
-
-        # Single placeholder for initialization (only used for first ROI)
-        dim = 'time_of_arrival'
-        placeholder = sc.DataArray(
-            data=sc.array(dims=[dim], values=[0.0], unit='counts'),
-            coords={dim: sc.array(dims=[dim], values=[0.0], unit='ns')},
-        )
 
         for source_name in source_names:
             source_outputs = job_data[source_name]
@@ -427,14 +419,8 @@ class PlottingController:
                         source_name=source_name,
                         output_name=roi_spectrum_name,
                     )
-
-                    if roi_spectrum_name in source_outputs:
-                        # Output already exists
-                        spectrum_items[result_key] = source_outputs[roi_spectrum_name]
-                    else:
-                        # The output doesn't exist yet, subscribe anyway
-                        # Stream will update when data arrives
-                        spectrum_items[result_key] = placeholder
+                    # Subscribe to the key regardless of whether data exists yet
+                    spectrum_keys.append(result_key)
 
         plots = []
 
@@ -502,17 +488,18 @@ class PlottingController:
             plots.append(detector_with_boxes)
 
         # Create single ROI spectrum plot (overlays all ROIs)
-        if spectrum_items:
+        if spectrum_keys:
             # Override layout params to use overlay mode
             overlay_layout = LayoutParams(combine_mode='overlay')
-            spectrum_pipe = self._stream_manager.make_merging_stream(spectrum_items)
+            spectrum_pipe = self._stream_manager.make_merging_stream_from_keys(
+                spectrum_keys
+            )
             spectrum_plotter = LinePlotter(
                 value_margin_factor=0.1,
                 layout_params=overlay_layout,
                 aspect_params=params.plot_aspect,
                 scale_opts=params.plot_scale,
             )
-            spectrum_plotter.initialize_from_data(spectrum_items)
 
             spectrum_dmap = hv.DynamicMap(
                 spectrum_plotter, streams=[spectrum_pipe], cache_size=1

@@ -34,3 +34,27 @@ class StreamManager(Generic[P]):
         subscriber = DataSubscriber(assembler, pipe)
         self.data_service.register_subscriber(subscriber)
         return pipe
+
+    def make_merging_stream_from_keys(self, keys: list[ResultKey]) -> P:
+        """
+        Create a merging stream for the given result keys, starting with no data.
+
+        This is useful when you want to subscribe to keys that may not have data yet.
+        The pipe is initialized with an empty dictionary, and will receive updates
+        as data becomes available for the subscribed keys.
+
+        Parameters
+        ----------
+        keys:
+            List of result keys to subscribe to.
+
+        Returns
+        -------
+        :
+            A pipe that will receive merged data updates for the given keys.
+        """
+        assembler = MergingStreamAssembler(set(keys))
+        pipe = self._pipe_factory({})
+        subscriber = DataSubscriber(assembler, pipe)
+        self.data_service.register_subscriber(subscriber)
+        return pipe
