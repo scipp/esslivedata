@@ -51,7 +51,7 @@ class ROIDetectorPlotFactory:
         # Track which ROI indices are currently active for each job
         self._active_roi_indices: dict[JobId, set[int]] = {}
 
-    def create_single_roi_detector_plot(
+    def create_roi_detector_plot(
         self,
         detector_key: ResultKey,
         detector_data: sc.DataArray,

@@ -333,12 +333,10 @@ class PlottingController:
         # Special case for roi_detector: call factory once per detector
         if plot_name == 'roi_detector':
             layouts = [
-                self._roi_detector_plot_factory.create_single_roi_detector_plot(
-                    detector_key=detector_key,
-                    detector_data=detector_data,
-                    params=params,
+                self._roi_detector_plot_factory.create_roi_detector_plot(
+                    detector_key=key, detector_data=data, params=params
                 )
-                for detector_key, detector_data in items.items()
+                for key, data in items.items()
             ]
             # Return as column (one row per detector). ROI plot is already using two
             # columns internally but for some reason this has to be repeated here for

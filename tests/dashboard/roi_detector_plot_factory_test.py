@@ -112,7 +112,7 @@ def get_detector_pipe(
 
 
 class TestROIDetectorPlotFactory:
-    def test_create_single_roi_detector_plot_returns_layout(
+    def test_create_roi_detector_plot_returns_layout(
         self,
         roi_plot_factory,
         data_service,
@@ -121,7 +121,7 @@ class TestROIDetectorPlotFactory:
         detector_data,
         spectrum_data,
     ):
-        """Test that create_single_roi_detector_plot returns a Layout."""
+        """Test that create_roi_detector_plot returns a Layout."""
         # Create result keys for detector and spectrum
         # Using 'current' as the output_name, which will look for 'roi_current'
         detector_key = ResultKey(
@@ -143,7 +143,7 @@ class TestROIDetectorPlotFactory:
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot
-        result = roi_plot_factory.create_single_roi_detector_plot(
+        result = roi_plot_factory.create_roi_detector_plot(
             detector_key=detector_key,
             detector_data=detector_data,
             params=params,
@@ -154,7 +154,7 @@ class TestROIDetectorPlotFactory:
         # Should have 2 elements: detector image + spectrum
         assert len(result) == 2
 
-    def test_create_single_roi_detector_plot_with_only_detector(
+    def test_create_roi_detector_plot_with_only_detector(
         self,
         roi_plot_factory,
         data_service,
@@ -177,7 +177,7 @@ class TestROIDetectorPlotFactory:
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot
-        result = roi_plot_factory.create_single_roi_detector_plot(
+        result = roi_plot_factory.create_roi_detector_plot(
             detector_key=detector_key,
             detector_data=detector_data,
             params=params,
@@ -187,7 +187,7 @@ class TestROIDetectorPlotFactory:
         assert isinstance(result, hv.Layout)
         assert len(result) == 2
 
-    def test_create_single_roi_detector_plot_stores_box_stream(
+    def test_create_roi_detector_plot_stores_box_stream(
         self,
         roi_plot_factory,
         data_service,
@@ -220,7 +220,7 @@ class TestROIDetectorPlotFactory:
         assert len(roi_plot_factory._box_streams) == 0
 
         # Create ROI detector plot
-        roi_plot_factory.create_single_roi_detector_plot(
+        roi_plot_factory.create_roi_detector_plot(
             detector_key=detector_key,
             detector_data=detector_data,
             params=params,
@@ -233,7 +233,7 @@ class TestROIDetectorPlotFactory:
             roi_plot_factory._box_streams[detector_key], hv.streams.BoxEdit
         )
 
-    def test_create_single_roi_detector_plot_separates_detector_and_spectrum(
+    def test_create_roi_detector_plot_separates_detector_and_spectrum(
         self,
         roi_plot_factory,
         data_service,
@@ -263,7 +263,7 @@ class TestROIDetectorPlotFactory:
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot
-        result = roi_plot_factory.create_single_roi_detector_plot(
+        result = roi_plot_factory.create_roi_detector_plot(
             detector_key=detector_key,
             detector_data=detector_data,
             params=params,
@@ -305,7 +305,7 @@ def test_roi_detector_plot_publishes_roi_on_box_edit(
     params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
     # Create ROI detector plot
-    roi_plot_factory.create_single_roi_detector_plot(
+    roi_plot_factory.create_roi_detector_plot(
         detector_key=detector_key,
         detector_data=detector_data,
         params=params,
@@ -355,7 +355,7 @@ def test_roi_detector_plot_only_publishes_changed_rois(
 
     # Create plot
     params = PlotParams2d(plot_scale=PlotScaleParams2d())
-    roi_plot_factory.create_single_roi_detector_plot(
+    roi_plot_factory.create_roi_detector_plot(
         detector_key=detector_key,
         detector_data=detector_data,
         params=params,
@@ -398,7 +398,7 @@ def test_roi_detector_plot_without_publisher_does_not_crash(
 
     # Create plot - should not crash
     params = PlotParams2d(plot_scale=PlotScaleParams2d())
-    result = roi_plot_factory.create_single_roi_detector_plot(
+    result = roi_plot_factory.create_roi_detector_plot(
         detector_key=detector_key,
         detector_data=detector_data,
         params=params,
