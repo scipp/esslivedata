@@ -134,31 +134,21 @@ def test_roi_publisher_publishes_single_roi():
     assert len(sink.messages) == 1
     msg = sink.messages[0]
     assert msg.stream.kind == StreamKind.LIVEDATA_ROI
-    assert msg.stream.name == f"{job_number}/roi_rectangle_0"
+    assert msg.stream.name == f"{job_number}/roi_rectangle"
     assert isinstance(msg.value, sc.DataArray)
 
 
-def test_roi_publisher_publishes_multiple_rois():
+def test_roi_publisher_raises_for_multiple_rois():
     sink = FakeMessageSink()
     publisher = ROIPublisher(sink=sink)
     job_number = uuid.uuid4()
-    rois = {
-        0: RectangleROI(
-            x=Interval(min=1.0, max=5.0, unit=None),
-            y=Interval(min=2.0, max=6.0, unit=None),
-        ),
-        1: RectangleROI(
-            x=Interval(min=10.0, max=15.0, unit=None),
-            y=Interval(min=12.0, max=16.0, unit=None),
-        ),
-    }
+    roi = RectangleROI(
+        x=Interval(min=1.0, max=5.0, unit=None),
+        y=Interval(min=2.0, max=6.0, unit=None),
+    )
 
-    publisher.publish_rois(job_number, rois)
-
-    assert len(sink.messages) == 2
-    stream_names = {msg.stream.name for msg in sink.messages}
-    assert f"{job_number}/roi_rectangle_0" in stream_names
-    assert f"{job_number}/roi_rectangle_1" in stream_names
+    with pytest.raises(NotImplementedError, match="Multiple ROIs are not implemented"):
+        publisher.publish_roi(job_number, roi_index=1, roi=roi)
 
 
 def test_roi_publisher_serializes_to_dataarray():

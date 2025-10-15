@@ -48,7 +48,9 @@ class ROIPublisher:
         roi:
             The rectangle ROI to publish.
         """
-        stream_name = f"{job_number}/roi_rectangle_{roi_index}"
+        if roi_index != 0:
+            raise NotImplementedError("Multiple ROIs are not implemented")
+        stream_name = f"{job_number}/roi_rectangle"
         stream_id = StreamId(kind=StreamKind.LIVEDATA_ROI, name=stream_name)
 
         # Convert ROI to DataArray (includes ROI type in the name field)

@@ -65,7 +65,7 @@ def test_factory_creates_latest_value_accumulator_for_roi_messages() -> None:
 
     # Create a stream ID for an ROI message
     roi_stream_id = StreamId(
-        kind=StreamKind.LIVEDATA_ROI, name='test-job-123/roi_rectangle_0'
+        kind=StreamKind.LIVEDATA_ROI, name='test-job-123/roi_rectangle'
     )
 
     preprocessor = factory.make_preprocessor(roi_stream_id)
