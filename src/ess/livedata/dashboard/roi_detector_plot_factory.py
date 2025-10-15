@@ -8,6 +8,7 @@ import logging
 from functools import partial
 
 import holoviews as hv
+import scipp as sc
 
 from ess.livedata.config.models import RectangleROI
 from ess.livedata.config.workflow_spec import JobId, ResultKey
@@ -53,7 +54,7 @@ class ROIDetectorPlotFactory:
     def create_single_roi_detector_plot(
         self,
         detector_key: ResultKey,
-        detector_pipe: hv.streams.Pipe,
+        detector_data: sc.DataArray,
         params: PlotParams2d,
     ) -> hv.Layout:
         """
@@ -75,8 +76,8 @@ class ROIDetectorPlotFactory:
         ----------
         detector_key:
             ResultKey identifying the detector output.
-        detector_pipe:
-            Data pipe for the detector output.
+        detector_data:
+            Initial data for the detector plot.
         params:
             The plotter parameters (PlotParams2d).
 
@@ -116,7 +117,7 @@ class ROIDetectorPlotFactory:
 
         # Create detector plot with BoxEdit overlay
         # detector_pipe is a Pipe stream - wrap in single-item dict for compatibility
-        detector_items = {detector_key: detector_pipe}
+        detector_items = {detector_key: detector_data}
 
         # Create a merging stream (even for single detector, to be consistent)
         merged_detector_pipe = self._stream_manager.make_merging_stream(detector_items)

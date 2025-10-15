@@ -139,16 +139,13 @@ class TestROIDetectorPlotFactory:
         data_service[detector_key] = detector_data
         data_service[spectrum_key] = spectrum_data
 
-        # Get detector pipe
-        detector_pipe = get_detector_pipe(data_service, detector_key)
-
         # Create plot params
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot
         result = roi_plot_factory.create_single_roi_detector_plot(
             detector_key=detector_key,
-            detector_pipe=detector_pipe,
+            detector_data=detector_data,
             params=params,
         )
 
@@ -176,16 +173,13 @@ class TestROIDetectorPlotFactory:
         # Add data to data service
         data_service[detector_key] = detector_data
 
-        # Get detector pipe
-        detector_pipe = get_detector_pipe(data_service, detector_key)
-
         # Create plot params
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot
         result = roi_plot_factory.create_single_roi_detector_plot(
             detector_key=detector_key,
-            detector_pipe=detector_pipe,
+            detector_data=detector_data,
             params=params,
         )
 
@@ -219,9 +213,6 @@ class TestROIDetectorPlotFactory:
         data_service[detector_key] = detector_data
         data_service[spectrum_key] = spectrum_data
 
-        # Get detector pipe
-        detector_pipe = get_detector_pipe(data_service, detector_key)
-
         # Create plot params
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
@@ -231,7 +222,7 @@ class TestROIDetectorPlotFactory:
         # Create ROI detector plot
         roi_plot_factory.create_single_roi_detector_plot(
             detector_key=detector_key,
-            detector_pipe=detector_pipe,
+            detector_data=detector_data,
             params=params,
         )
 
@@ -268,16 +259,13 @@ class TestROIDetectorPlotFactory:
         data_service[detector_key] = detector_data
         data_service[spectrum_key] = spectrum_data
 
-        # Get detector pipe
-        detector_pipe = get_detector_pipe(data_service, detector_key)
-
         # Create plot params
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot
         result = roi_plot_factory.create_single_roi_detector_plot(
             detector_key=detector_key,
-            detector_pipe=detector_pipe,
+            detector_data=detector_data,
             params=params,
         )
 
@@ -313,16 +301,13 @@ def test_roi_detector_plot_publishes_roi_on_box_edit(
     )
     data_service[detector_key] = detector_data
 
-    # Get detector pipe
-    detector_pipe = get_detector_pipe(data_service, detector_key)
-
     # Create plot params
     params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
     # Create ROI detector plot
     roi_plot_factory.create_single_roi_detector_plot(
         detector_key=detector_key,
-        detector_pipe=detector_pipe,
+        detector_data=detector_data,
         params=params,
     )
 
@@ -368,14 +353,11 @@ def test_roi_detector_plot_only_publishes_changed_rois(
     )
     data_service[detector_key] = detector_data
 
-    # Get detector pipe
-    detector_pipe = get_detector_pipe(data_service, detector_key)
-
     # Create plot
     params = PlotParams2d(plot_scale=PlotScaleParams2d())
     roi_plot_factory.create_single_roi_detector_plot(
         detector_key=detector_key,
-        detector_pipe=detector_pipe,
+        detector_data=detector_data,
         params=params,
     )
 
@@ -414,14 +396,11 @@ def test_roi_detector_plot_without_publisher_does_not_crash(
     )
     data_service[detector_key] = detector_data
 
-    # Get detector pipe
-    detector_pipe = get_detector_pipe(data_service, detector_key)
-
     # Create plot - should not crash
     params = PlotParams2d(plot_scale=PlotScaleParams2d())
     result = roi_plot_factory.create_single_roi_detector_plot(
         detector_key=detector_key,
-        detector_pipe=detector_pipe,
+        detector_data=detector_data,
         params=params,
     )
 
