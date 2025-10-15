@@ -255,7 +255,6 @@ class DetectorView(Workflow):
         roi_result = {}
         for idx, accumulator in self._roi_accumulators.items():
             roi_delta = accumulator.get()
-            roi_delta.name = f'ROI {idx}'
 
             # Update cumulative
             if idx not in self._roi_cumulatives:
