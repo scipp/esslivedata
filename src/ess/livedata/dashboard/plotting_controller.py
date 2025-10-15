@@ -343,9 +343,10 @@ class PlottingController:
                 )
                 for detector_key, detector_data in items.items()
             ]
-            # Return as column (one row per detector). Single column because # ROI plot
-            # is already using two columns internally.
-            return hv.Layout(layouts).cols(1)
+            # Return as column (one row per detector). ROI plot is already using two
+            # columns internally but for some reason this has to be repeated here for
+            # the outer layout.
+            return hv.Layout(layouts).cols(2).opts(shared_axes=False)
 
         pipe = self._stream_manager.make_merging_stream(items)
         plotter = plotter_registry.create_plotter(plot_name, params=params)
