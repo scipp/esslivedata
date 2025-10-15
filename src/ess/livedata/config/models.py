@@ -248,7 +248,7 @@ class ROI(BaseModel, ABC):
         for idx in sorted(rois.keys()):
             roi_da = rois[idx].to_data_array()
             roi_da = roi_da.assign_coords(
-                roi_index=sc.full_like(roi_da.data, value=idx, dtype='int32')
+                roi_index=sc.full(sizes=roi_da.data.sizes, value=idx, dtype='int32')
             )
             roi_das.append(roi_da)
 
