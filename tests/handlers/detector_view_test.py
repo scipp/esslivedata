@@ -111,7 +111,7 @@ class TestDetectorViewBasics:
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         assert view is not None
-        assert view._roi_model is None  # No ROI configured initially
+        assert len(view._roi_models) == 0  # No ROI configured initially
 
     def test_accumulate_detector_data_without_roi(
         self,
@@ -131,8 +131,8 @@ class TestDetectorViewBasics:
         assert 'cumulative' in result
         assert 'current' in result
         # ROI results should not be present without ROI configuration
-        assert 'roi_cumulative' not in result
-        assert 'roi_current' not in result
+        assert 'roi_cumulative_0' not in result
+        assert 'roi_current_0' not in result
 
         # Verify that events were actually accumulated
         # Sample has 8 events across all pixels
@@ -156,7 +156,7 @@ class TestDetectorViewBasics:
         view.clear()
 
         assert view._previous is None
-        assert view._roi_cumulative is None
+        assert len(view._roi_cumulatives) == 0
 
 
 class TestDetectorViewROIMechanism:
@@ -183,11 +183,11 @@ class TestDetectorViewROIMechanism:
         # Send ROI configuration
         view.accumulate({'roi': roi_data})
 
-        # ROI model should be configured
-        assert view._roi_model is not None
-        assert isinstance(view._roi_model, RectangleROI)
-        assert view._roi_model.x.min == 5.0
-        assert view._roi_model.x.max == 25.0
+        # ROI model should be configured (at index 0)
+        assert 0 in view._roi_models
+        assert isinstance(view._roi_models[0], RectangleROI)
+        assert view._roi_models[0].x.min == 5.0
+        assert view._roi_models[0].x.max == 25.0
 
     def test_roi_only_does_not_process_events(
         self, mock_rolling_view: RollingDetectorView
@@ -209,15 +209,16 @@ class TestDetectorViewROIMechanism:
         view.accumulate({'roi': roi.to_data_array()})
 
         # ROI should be configured but no histogram data accumulated yet
-        assert view._roi_model is not None
+        assert 0 in view._roi_models
         result = view.finalize()
         # ROI results should be present (even if empty/zero) once ROI is configured
-        assert 'roi_cumulative' in result
-        assert 'roi_current' in result
-        assert 'roi_rectangle' in result  # ROI shape published with shape name
+        # Results are now indexed: roi_current_0, roi_cumulative_0, roi_rectangle_0
+        assert 'roi_cumulative_0' in result
+        assert 'roi_current_0' in result
+        assert 'roi_rectangle_0' in result  # ROI shape published with index
         # All counts should be zero since no events were accumulated
-        assert sc.sum(result['roi_cumulative']).value == 0
-        assert sc.sum(result['roi_current']).value == 0
+        assert sc.sum(result['roi_cumulative_0']).value == 0
+        assert sc.sum(result['roi_current_0']).value == 0
 
     def test_accumulate_with_roi_produces_histogram(
         self,
@@ -249,12 +250,12 @@ class TestDetectorViewROIMechanism:
         # Should have both detector view and ROI results
         assert 'cumulative' in result
         assert 'current' in result
-        assert 'roi_cumulative' in result
-        assert 'roi_current' in result
-        assert 'roi_rectangle' in result  # Config should be published on first update
+        assert 'roi_cumulative_0' in result
+        assert 'roi_current_0' in result
+        assert 'roi_rectangle_0' in result  # Config should be published on first update
 
         # Verify histogram structure
-        roi_histogram = result['roi_current']
+        roi_histogram = result['roi_current_0']
         assert isinstance(roi_histogram, sc.DataArray)
         assert 'time_of_arrival' in roi_histogram.coords
         assert roi_histogram.ndim == 1  # Histogram is 1D
@@ -293,7 +294,7 @@ class TestDetectorViewROIMechanism:
         # First accumulation
         view.accumulate({'detector': sample_detector_events})
         result1 = view.finalize()
-        first_current = result1['roi_current']
+        first_current = result1['roi_current_0']
         first_total = sc.sum(first_current).value
 
         # Verify expected event count based on ROI
@@ -309,8 +310,8 @@ class TestDetectorViewROIMechanism:
         # Second accumulation with same events
         view.accumulate({'detector': sample_detector_events})
         result2 = view.finalize()
-        second_cumulative = result2['roi_cumulative']
-        second_current = result2['roi_current']
+        second_cumulative = result2['roi_cumulative_0']
+        second_current = result2['roi_current_0']
         second_current_total = sc.sum(second_current).value
 
         # Both should have same current counts
@@ -340,7 +341,7 @@ class TestDetectorViewROIMechanism:
         view.accumulate({'detector': sample_detector_events})
 
         result1 = view.finalize()
-        assert 'roi_rectangle' in result1  # Published on first finalize after update
+        assert 'roi_rectangle_0' in result1  # Published on first finalize after update
 
         # Second accumulation without ROI update
         view.accumulate({'detector': sample_detector_events})
@@ -372,9 +373,9 @@ class TestDetectorViewROIMechanism:
         # Clear should reset cumulative
         view.clear()
 
-        assert view._roi_cumulative is None
+        assert len(view._roi_cumulatives) == 0
         # Note: ROI model configuration persists after clear
-        assert view._roi_model is not None
+        assert 0 in view._roi_models
 
     def test_roi_change_resets_cumulative(
         self,
@@ -403,8 +404,8 @@ class TestDetectorViewROIMechanism:
         # Sample has pixels [0, 1, 2, 5, 6, 10, 11, 15]
         # ROI1 covers x=[5,25]mm, y=[5,25]mm which includes pixels 5, 6, 10
         expected_roi1_events = 3
-        assert sc.sum(result1['roi_current']).value == expected_roi1_events
-        assert sc.sum(result1['roi_cumulative']).value == expected_roi1_events
+        assert sc.sum(result1['roi_current_0']).value == expected_roi1_events
+        assert sc.sum(result1['roi_cumulative_0']).value == expected_roi1_events
 
         # Now change ROI to cover different pixels (1, 2, 5, 6)
         # Pixel 1 at (10,0), Pixel 2 at (20,0), Pixel 5 at (10,10), Pixel 6 at (20,10)mm
@@ -422,14 +423,14 @@ class TestDetectorViewROIMechanism:
 
         # ROI2 should have 4 events (pixels 1, 2, 5, 6)
         expected_roi2_events = 4
-        assert sc.sum(result2['roi_current']).value == expected_roi2_events
+        assert sc.sum(result2['roi_current_0']).value == expected_roi2_events
 
         # CRITICAL: Cumulative should reset when ROI changes
         # It should NOT be roi1_events + roi2_events (which would be 7)
         # It should be just roi2_events since we changed the ROI
-        assert sc.sum(result2['roi_cumulative']).value == expected_roi2_events, (
+        assert sc.sum(result2['roi_cumulative_0']).value == expected_roi2_events, (
             f"Expected cumulative to reset to {expected_roi2_events} when ROI changes, "
-            f"got {sc.sum(result2['roi_cumulative']).value}. "
+            f"got {sc.sum(result2['roi_cumulative_0']).value}. "
             "Cumulative should not mix events from different ROI regions."
         )
 
@@ -639,15 +640,15 @@ class TestDetectorViewBothROIAndDetectorData:
         # Should have both detector view and ROI results
         assert 'cumulative' in result
         assert 'current' in result
-        assert 'roi_cumulative' in result
-        assert 'roi_current' in result
-        assert 'roi_rectangle' in result
+        assert 'roi_cumulative_0' in result
+        assert 'roi_current_0' in result
+        assert 'roi_rectangle_0' in result
 
         # Verify histogram has expected events
         # Sample has pixels [0, 1, 2, 5, 6, 10, 11, 15]
         # ROI covers x=[5,25]mm, y=[5,25]mm which includes pixels 5, 6, 10
         expected_events_in_roi = 3
-        assert sc.sum(result['roi_current']).value == expected_events_in_roi
+        assert sc.sum(result['roi_current_0']).value == expected_events_in_roi
 
     def test_accumulate_both_then_detector_only(
         self,
@@ -675,15 +676,15 @@ class TestDetectorViewBothROIAndDetectorData:
         result1 = view.finalize()
 
         expected_events_in_roi = 3
-        assert sc.sum(result1['roi_current']).value == expected_events_in_roi
-        assert 'roi_rectangle' in result1  # Published on first update
+        assert sc.sum(result1['roi_current_0']).value == expected_events_in_roi
+        assert 'roi_rectangle_0' in result1  # Published on first update
 
         # Second call: detector data only (ROI should persist)
         view.accumulate({'detector': sample_detector_events})
         result2 = view.finalize()
 
-        assert sc.sum(result2['roi_current']).value == expected_events_in_roi
-        assert sc.sum(result2['roi_cumulative']).value == 2 * expected_events_in_roi
+        assert sc.sum(result2['roi_current_0']).value == expected_events_in_roi
+        assert sc.sum(result2['roi_cumulative_0']).value == 2 * expected_events_in_roi
         assert 'roi_rectangle' not in result2  # Not published again
 
     def test_accumulate_detector_then_both_roi_and_detector(
@@ -719,10 +720,10 @@ class TestDetectorViewBothROIAndDetectorData:
         result2 = view.finalize()
 
         expected_events_in_roi = 3
-        assert 'roi_cumulative' in result2
-        assert 'roi_current' in result2
-        assert sc.sum(result2['roi_current']).value == expected_events_in_roi
-        assert sc.sum(result2['roi_cumulative']).value == expected_events_in_roi
+        assert 'roi_cumulative_0' in result2
+        assert 'roi_current_0' in result2
+        assert sc.sum(result2['roi_current_0']).value == expected_events_in_roi
+        assert sc.sum(result2['roi_cumulative_0']).value == expected_events_in_roi
 
     def test_accumulate_roi_change_with_detector_in_same_call(
         self,
@@ -750,8 +751,8 @@ class TestDetectorViewBothROIAndDetectorData:
         result1 = view.finalize()
 
         expected_roi1_events = 3
-        assert sc.sum(result1['roi_current']).value == expected_roi1_events
-        assert sc.sum(result1['roi_cumulative']).value == expected_roi1_events
+        assert sc.sum(result1['roi_current_0']).value == expected_roi1_events
+        assert sc.sum(result1['roi_cumulative_0']).value == expected_roi1_events
 
         # Change ROI and accumulate in same call
         roi2 = make_rectangle_roi(
@@ -768,10 +769,10 @@ class TestDetectorViewBothROIAndDetectorData:
         result2 = view.finalize()
 
         expected_roi2_events = 4
-        assert sc.sum(result2['roi_current']).value == expected_roi2_events
+        assert sc.sum(result2['roi_current_0']).value == expected_roi2_events
         # Cumulative should reset when ROI changes
-        assert sc.sum(result2['roi_cumulative']).value == expected_roi2_events
-        assert 'roi_rectangle' in result2  # Config published on update
+        assert sc.sum(result2['roi_cumulative_0']).value == expected_roi2_events
+        assert 'roi_rectangle_0' in result2  # Config published on update
 
 
 class TestDetectorViewEdgeCases:
@@ -835,11 +836,11 @@ class TestDetectorViewEdgeCases:
         result = view.finalize()
 
         # Should have ROI configured but with zero events
-        assert 'roi_cumulative' in result
-        assert 'roi_current' in result
-        assert 'roi_rectangle' in result
-        assert sc.sum(result['roi_cumulative']).value == 0
-        assert sc.sum(result['roi_current']).value == 0
+        assert 'roi_cumulative_0' in result
+        assert 'roi_current_0' in result
+        assert 'roi_rectangle_0' in result
+        assert sc.sum(result['roi_cumulative_0']).value == 0
+        assert sc.sum(result['roi_current_0']).value == 0
 
     def test_detector_data_with_no_events_in_roi(
         self,
@@ -869,11 +870,11 @@ class TestDetectorViewEdgeCases:
         result = view.finalize()
 
         # Should have histogram structure but with limited events
-        assert 'roi_cumulative' in result
-        assert 'roi_current' in result
+        assert 'roi_cumulative_0' in result
+        assert 'roi_current_0' in result
         # Only pixel 15 at (30mm, 30mm) is in ROI
         expected_events_in_roi = 1
-        assert sc.sum(result['roi_current']).value == expected_events_in_roi
+        assert sc.sum(result['roi_current_0']).value == expected_events_in_roi
 
     def test_roi_published_when_updated_with_detector_data(
         self,
@@ -892,7 +893,7 @@ class TestDetectorViewEdgeCases:
             {'roi': roi1.to_data_array(), 'detector': sample_detector_events}
         )
         result1 = view.finalize()
-        assert 'roi_rectangle' in result1
+        assert 'roi_rectangle_0' in result1
 
         # Just detector (no ROI update)
         view.accumulate({'detector': sample_detector_events})
@@ -907,9 +908,9 @@ class TestDetectorViewEdgeCases:
             {'roi': roi2.to_data_array(), 'detector': sample_detector_events}
         )
         result3 = view.finalize()
-        assert 'roi_rectangle' in result3
+        assert 'roi_rectangle_0' in result3
 
         # Verify the published config is the new one
-        published_roi = RectangleROI.from_data_array(result3['roi_rectangle'])
+        published_roi = RectangleROI.from_data_array(result3['roi_rectangle_0'])
         assert published_roi.x.min == 10.0
         assert published_roi.x.max == 20.0

@@ -315,6 +315,117 @@ class RectangleROI(ROI):
             ),
         )
 
+    @classmethod
+    def to_concatenated_data_array(cls, rois: dict[int, RectangleROI]) -> sc.DataArray:
+        """
+        Convert multiple rectangles to single concatenated DataArray.
+
+        Multiple rectangles are concatenated along the bounds dimension,
+        with an roi_index coordinate to map each bound pair to its ROI.
+
+        Parameters
+        ----------
+        rois:
+            Dictionary mapping ROI indices to RectangleROI instances.
+
+        Returns
+        -------
+        :
+            DataArray with concatenated rectangles. Has 'bounds' dimension
+            with size = 2 * len(rois), and 'roi_index' coordinate identifying
+            which ROI each bound belongs to.
+        """
+        if not rois:
+            # Empty case: return empty DataArray with correct structure
+            return sc.DataArray(
+                sc.empty(dims=['bounds'], shape=[0], dtype='int32', unit=''),
+                coords={
+                    'x': sc.empty(dims=['bounds'], shape=[0]),
+                    'y': sc.empty(dims=['bounds'], shape=[0]),
+                    'roi_index': sc.empty(dims=['bounds'], shape=[0], dtype='int32'),
+                },
+                name='rectangles',
+            )
+
+        # Concatenate all rectangles
+        all_x = []
+        all_y = []
+        all_roi_indices = []
+        x_unit = None
+        y_unit = None
+
+        for idx in sorted(rois.keys()):
+            roi = rois[idx]
+            all_x.extend([roi.x.min, roi.x.max])
+            all_y.extend([roi.y.min, roi.y.max])
+            all_roi_indices.extend([idx, idx])
+
+            # Capture unit from first ROI
+            if x_unit is None:
+                x_unit = roi.x.unit
+                y_unit = roi.y.unit
+
+        coords = {
+            'x': sc.array(dims=['bounds'], values=all_x, unit=x_unit),
+            'y': sc.array(dims=['bounds'], values=all_y, unit=y_unit),
+            'roi_index': sc.array(
+                dims=['bounds'], values=all_roi_indices, dtype='int32'
+            ),
+        }
+
+        data = sc.ones(dims=['bounds'], shape=[len(all_x)], dtype='int32', unit='')
+        return sc.DataArray(data, coords=coords, name='rectangles')
+
+    @classmethod
+    def from_concatenated_data_array(cls, da: sc.DataArray) -> dict[int, RectangleROI]:
+        """
+        Convert concatenated DataArray back to dict of rectangles.
+
+        Parameters
+        ----------
+        da:
+            DataArray with concatenated rectangles (from to_concatenated_data_array).
+
+        Returns
+        -------
+        :
+            Dictionary mapping ROI indices to RectangleROI instances.
+        """
+        if len(da) == 0:
+            return {}
+
+        x_vals = da.coords['x'].values
+        y_vals = da.coords['y'].values
+        roi_indices = da.coords['roi_index'].values
+        x_unit = _unit_to_str(da.coords['x'].unit)
+        y_unit = _unit_to_str(da.coords['y'].unit)
+
+        # Group bounds by ROI index
+        rois_data: dict[int, list[tuple[float, float]]] = {}
+        for i in range(len(da)):
+            idx = int(roi_indices[i])
+            if idx not in rois_data:
+                rois_data[idx] = []
+            rois_data[idx].append((float(x_vals[i]), float(y_vals[i])))
+
+        # Reconstruct rectangles from bound pairs
+        rois = {}
+        for idx, bounds in rois_data.items():
+            if len(bounds) != 2:
+                raise ValueError(
+                    f"Rectangle ROI {idx} must have exactly 2 bounds, got {len(bounds)}"
+                )
+
+            x_bounds = [b[0] for b in bounds]
+            y_bounds = [b[1] for b in bounds]
+
+            rois[idx] = cls(
+                x=Interval(min=min(x_bounds), max=max(x_bounds), unit=x_unit),
+                y=Interval(min=min(y_bounds), max=max(y_bounds), unit=y_unit),
+            )
+
+        return rois
+
 
 class PolygonROI(ROI):
     """

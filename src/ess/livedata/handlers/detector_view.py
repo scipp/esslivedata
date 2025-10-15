@@ -151,14 +151,12 @@ class DetectorView(Workflow):
         self._inv_weights = sc.reciprocal(detector_view.transform_weights())
         self._previous: sc.DataArray | None = None
 
-        # ROI histogram accumulator
-        self._roi_accumulator = ROIBasedTOAHistogram(
-            toa_edges=params.toa_edges.get_edges(),
-            roi_filter=detector_view.make_roi_filter(),
-        )
-        self._roi_cumulative: sc.DataArray | None = None
-        self._roi_model: models.ROI | None = None
-        self._roi_updated = False
+        # ROI histogram accumulators (support multiple ROIs)
+        self._roi_accumulators: dict[int, ROIBasedTOAHistogram] = {}
+        self._roi_cumulatives: dict[int, sc.DataArray] = {}
+        self._roi_models: dict[int, models.ROI] = {}
+        self._roi_updated: set[int] = set()  # Track which ROIs were updated
+        self._toa_edges = params.toa_edges.get_edges()  # Store for later use
 
     def apply_toa_range(self, data: sc.DataArray) -> sc.DataArray:
         if not self._use_toa_range:
@@ -181,17 +179,47 @@ class DetectorView(Workflow):
             passed through :py:class:`GroupIntoPixels`.
         """
         # Check for ROI configuration update (auxiliary data)
+        # Stream name is 'roi' (from 'roi_rectangle' after job_id prefix stripped)
         roi_key = 'roi'
         if roi_key in data:
             roi_data_array = data[roi_key]
-            # Convert DataArray to ROI model
-            self._roi_model = models.ROI.from_data_array(roi_data_array)
-            # Configure the ROI accumulator with the new model
-            self._roi_accumulator.configure_from_roi_model(self._roi_model)
-            self._roi_updated = True
-            # Reset cumulative histogram when ROI changes
-            # (otherwise we'd be mixing events from different ROI regions)
-            self._roi_cumulative = None
+            # Convert DataArray to dict of ROI models
+            # Support both formats:
+            # 1. New format: concatenated with roi_index coordinate (multi-ROI)
+            # 2. Old format: single ROI without roi_index (backward compat)
+            if 'roi_index' in roi_data_array.coords:
+                # New multi-ROI format
+                rois = models.RectangleROI.from_concatenated_data_array(roi_data_array)
+            else:
+                # Old single-ROI format - convert to dict with index 0
+                single_roi = models.ROI.from_data_array(roi_data_array)
+                rois = {0: single_roi}
+
+            # Determine which ROIs were added/updated/deleted
+            current_indices = set(rois.keys())
+            previous_indices = set(self._roi_models.keys())
+
+            # Remove deleted ROIs
+            for idx in previous_indices - current_indices:
+                del self._roi_accumulators[idx]
+                del self._roi_models[idx]
+                self._roi_cumulatives.pop(idx, None)
+
+            # Add/update ROIs
+            for idx, roi in rois.items():
+                if idx not in self._roi_accumulators:
+                    # New ROI: create accumulator
+                    self._roi_accumulators[idx] = ROIBasedTOAHistogram(
+                        toa_edges=self._toa_edges,
+                        roi_filter=self._view.make_roi_filter(),
+                    )
+                # Update ROI configuration
+                self._roi_models[idx] = roi
+                self._roi_accumulators[idx].configure_from_roi_model(roi)
+                self._roi_updated.add(idx)
+                # Reset cumulative for updated ROI
+                self._roi_cumulatives.pop(idx, None)
+
             # If only ROI config was sent (no detector data), return early
             if len(data) == 1:
                 return
@@ -199,7 +227,7 @@ class DetectorView(Workflow):
         # Process detector event data
         detector_data = {k: v for k, v in data.items() if k != roi_key}
         if len(detector_data) == 0:
-            # No detector data to process (e.g., empty dict or only roi)
+            # No detector data to process (e.g., empty dict or only rois)
             return
         if len(detector_data) != 1:
             raise ValueError(
@@ -208,9 +236,9 @@ class DetectorView(Workflow):
         raw = next(iter(detector_data.values()))
         filtered = self.apply_toa_range(raw)
         self._view.add_events(filtered)
-        # Also accumulate for ROI histogram (only if ROI is configured)
-        if self._roi_model is not None:
-            self._roi_accumulator.add(0, raw)  # Timestamp not used.
+        # Also accumulate for all configured ROI histograms
+        for accumulator in self._roi_accumulators.values():
+            accumulator.add(0, raw)  # Timestamp not used.
 
     def finalize(self) -> dict[str, sc.DataArray]:
         cumulative = self._view.cumulative.copy()
@@ -223,26 +251,30 @@ class DetectorView(Workflow):
         result = sc.DataGroup(cumulative=cumulative, current=current)
         view_result = dict(result * self._inv_weights if self._use_weights else result)
 
-        # Add ROI histogram results (only if ROI is configured)
+        # Add ROI histogram results for all configured ROIs
         roi_result = {}
-        if self._roi_model is not None:
-            roi_delta = self._roi_accumulator.get()
-            if self._roi_cumulative is None:
-                self._roi_cumulative = roi_delta.copy()
-            else:
-                self._roi_cumulative += roi_delta
-            roi_result = {
-                'roi_cumulative': self._roi_cumulative,
-                'roi_current': roi_delta,
-            }
+        for idx, accumulator in self._roi_accumulators.items():
+            roi_delta = accumulator.get()
 
-            # Publish ROI configuration when it's been updated
-            if self._roi_updated:
-                roi_data = self._roi_model.to_data_array()
-                # Use ROI type in stream name (e.g., 'roi_rectangle', 'roi_polygon')
-                roi_stream_name = f'roi_{roi_data.name}'
+            # Update cumulative
+            if idx not in self._roi_cumulatives:
+                self._roi_cumulatives[idx] = roi_delta.copy()
+            else:
+                self._roi_cumulatives[idx] += roi_delta
+
+            # Publish current and cumulative with index suffix
+            roi_result[f'roi_current_{idx}'] = roi_delta
+            roi_result[f'roi_cumulative_{idx}'] = self._roi_cumulatives[idx]
+
+            # Echo back ROI configuration when updated
+            if idx in self._roi_updated:
+                roi_data = self._roi_models[idx].to_data_array()
+                # Include index in stream name (e.g., 'roi_rectangle_0')
+                roi_stream_name = f'roi_{roi_data.name}_{idx}'
                 roi_result[roi_stream_name] = roi_data
-                self._roi_updated = False
+
+        # Clear updated flags
+        self._roi_updated.clear()
 
         # Merge detector view and ROI results
         return {**view_result, **roi_result}
@@ -250,6 +282,7 @@ class DetectorView(Workflow):
     def clear(self) -> None:
         self._view.clear_counts()
         self._previous = None
-        if self._roi_cumulative is not None:
-            self._roi_cumulative = None
-        self._roi_accumulator.clear()
+        # Clear all ROI cumulatives and accumulators
+        self._roi_cumulatives.clear()
+        for accumulator in self._roi_accumulators.values():
+            accumulator.clear()

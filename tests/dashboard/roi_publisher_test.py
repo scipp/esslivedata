@@ -130,69 +130,114 @@ def test_roi_publisher_publishes_single_roi():
         y=Interval(min=2.0, max=6.0, unit=None),
     )
 
-    publisher.publish_roi(job_id, roi_index=0, roi=roi)
+    publisher.publish_rois(job_id, rois={0: roi})
 
     assert len(sink.messages) == 1
     msg = sink.messages[0]
     assert msg.stream.kind == StreamKind.LIVEDATA_ROI
     assert msg.stream.name == f"detector1/{job_id.job_number}/roi_rectangle"
     assert isinstance(msg.value, sc.DataArray)
+    # Verify concatenated format
+    assert 'roi_index' in msg.value.coords
 
 
-def test_roi_publisher_raises_for_multiple_rois():
+def test_roi_publisher_publishes_multiple_rois():
     sink = FakeMessageSink()
     publisher = ROIPublisher(sink=sink)
     job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
-    roi = RectangleROI(
-        x=Interval(min=1.0, max=5.0, unit=None),
-        y=Interval(min=2.0, max=6.0, unit=None),
-    )
+    rois = {
+        0: RectangleROI(
+            x=Interval(min=1.0, max=5.0, unit=None),
+            y=Interval(min=2.0, max=6.0, unit=None),
+        ),
+        1: RectangleROI(
+            x=Interval(min=10.0, max=15.0, unit=None),
+            y=Interval(min=12.0, max=16.0, unit=None),
+        ),
+        2: RectangleROI(
+            x=Interval(min=20.0, max=25.0, unit=None),
+            y=Interval(min=22.0, max=26.0, unit=None),
+        ),
+    }
 
-    with pytest.raises(NotImplementedError, match="Multiple ROIs are not implemented"):
-        publisher.publish_roi(job_id, roi_index=1, roi=roi)
+    publisher.publish_rois(job_id, rois=rois)
+
+    assert len(sink.messages) == 1
+    msg = sink.messages[0]
+    assert msg.stream.kind == StreamKind.LIVEDATA_ROI
+    assert msg.stream.name == f"detector1/{job_id.job_number}/roi_rectangle"
+
+    # Verify all 3 ROIs are in concatenated DataArray
+    da = msg.value
+    import numpy as np
+
+    np.testing.assert_array_equal(da.coords['roi_index'].values, [0, 0, 1, 1, 2, 2])
+
+
+def test_roi_publisher_publishes_empty_to_clear():
+    """Empty dict should publish empty DataArray to clear all ROIs."""
+    sink = FakeMessageSink()
+    publisher = ROIPublisher(sink=sink)
+    job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+
+    publisher.publish_rois(job_id, rois={})
+
+    assert len(sink.messages) == 1
+    msg = sink.messages[0]
+    assert len(msg.value) == 0  # Empty DataArray
 
 
 def test_roi_publisher_serializes_to_dataarray():
     sink = FakeMessageSink()
     publisher = ROIPublisher(sink=sink)
     job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
-    roi = RectangleROI(
-        x=Interval(min=1.5, max=5.5, unit=None),
-        y=Interval(min=2.5, max=6.5, unit=None),
-    )
+    rois = {
+        0: RectangleROI(
+            x=Interval(min=1.5, max=5.5, unit='mm'),
+            y=Interval(min=2.5, max=6.5, unit='mm'),
+        ),
+        1: RectangleROI(
+            x=Interval(min=10.5, max=15.5, unit='mm'),
+            y=Interval(min=12.5, max=16.5, unit='mm'),
+        ),
+    }
 
-    publisher.publish_roi(job_id, roi_index=0, roi=roi)
+    publisher.publish_rois(job_id, rois=rois)
 
     msg = sink.messages[0]
     da = msg.value
-    # Check that DataArray can be converted back to RectangleROI
-    recovered_roi = RectangleROI.from_data_array(da)
-    assert recovered_roi == roi
+    # Check that DataArray can be converted back to dict of ROIs
+    recovered_rois = RectangleROI.from_concatenated_data_array(da)
+    assert recovered_rois == rois
 
 
 def test_fake_roi_publisher_records_publishes():
     publisher = FakeROIPublisher()
     job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
-    roi = RectangleROI(
-        x=Interval(min=1.0, max=5.0, unit=None),
-        y=Interval(min=2.0, max=6.0, unit=None),
-    )
+    rois = {
+        0: RectangleROI(
+            x=Interval(min=1.0, max=5.0, unit=None),
+            y=Interval(min=2.0, max=6.0, unit=None),
+        ),
+    }
 
-    publisher.publish_roi(job_id, roi_index=0, roi=roi)
+    publisher.publish_rois(job_id, rois=rois)
 
     assert len(publisher.published_rois) == 1
-    assert publisher.published_rois[0] == (job_id, 0, roi)
+    assert publisher.published_rois[0] == (job_id, rois)
 
 
 def test_fake_roi_publisher_reset():
     publisher = FakeROIPublisher()
     job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
-    roi = RectangleROI(
-        x=Interval(min=1.0, max=5.0, unit=None),
-        y=Interval(min=2.0, max=6.0, unit=None),
-    )
+    rois = {
+        0: RectangleROI(
+            x=Interval(min=1.0, max=5.0, unit=None),
+            y=Interval(min=2.0, max=6.0, unit=None),
+        ),
+    }
 
-    publisher.publish_roi(job_id, roi_index=0, roi=roi)
+    publisher.publish_rois(job_id, rois=rois)
     publisher.reset()
 
     assert len(publisher.published_rois) == 0
@@ -213,18 +258,22 @@ def test_roi_publisher_isolates_streams_per_detector_in_multi_detector_workflow(
     job_id_mantle = JobId(source_name='mantle', job_number=shared_job_number)
     job_id_high_res = JobId(source_name='high_resolution', job_number=shared_job_number)
 
-    roi_mantle = RectangleROI(
-        x=Interval(min=1.0, max=5.0, unit=None),
-        y=Interval(min=2.0, max=6.0, unit=None),
-    )
-    roi_high_res = RectangleROI(
-        x=Interval(min=10.0, max=20.0, unit=None),
-        y=Interval(min=15.0, max=25.0, unit=None),
-    )
+    rois_mantle = {
+        0: RectangleROI(
+            x=Interval(min=1.0, max=5.0, unit=None),
+            y=Interval(min=2.0, max=6.0, unit=None),
+        ),
+    }
+    rois_high_res = {
+        0: RectangleROI(
+            x=Interval(min=10.0, max=20.0, unit=None),
+            y=Interval(min=15.0, max=25.0, unit=None),
+        ),
+    }
 
     # Publish ROIs for both detectors
-    publisher.publish_roi(job_id_mantle, roi_index=0, roi=roi_mantle)
-    publisher.publish_roi(job_id_high_res, roi_index=0, roi=roi_high_res)
+    publisher.publish_rois(job_id_mantle, rois=rois_mantle)
+    publisher.publish_rois(job_id_high_res, rois=rois_high_res)
 
     assert len(sink.messages) == 2
 
@@ -238,6 +287,8 @@ def test_roi_publisher_isolates_streams_per_detector_in_multi_detector_workflow(
     )
     assert mantle_msg.stream.name != high_res_msg.stream.name
 
-    # Verify each message contains the correct ROI
-    assert RectangleROI.from_data_array(mantle_msg.value) == roi_mantle
-    assert RectangleROI.from_data_array(high_res_msg.value) == roi_high_res
+    # Verify each message contains the correct ROIs
+    assert RectangleROI.from_concatenated_data_array(mantle_msg.value) == rois_mantle
+    assert (
+        RectangleROI.from_concatenated_data_array(high_res_msg.value) == rois_high_res
+    )

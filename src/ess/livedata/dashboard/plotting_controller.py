@@ -310,8 +310,9 @@ class PlottingController:
             """Callback when BoxEdit data changes."""
             # Extract data from the event object
             data = event.new if hasattr(event, 'new') else event
-            if not data:
-                return
+            if data is None:
+                # Empty dict means clear all ROIs
+                data = {}
 
             try:
                 # Convert BoxEdit data to ROI dictionary
@@ -320,20 +321,16 @@ class PlottingController:
                 # Get previously published ROIs for this result key
                 last_rois = self._last_published_rois.get(result_key, {})
 
-                # Publish only changed ROIs
-                changed_rois = {
-                    roi_index: roi
-                    for roi_index, roi in current_rois.items()
-                    if roi_index not in last_rois or last_rois[roi_index] != roi
-                }
-
-                if changed_rois:
-                    self._roi_publisher.publish_rois(result_key.job_id, changed_rois)
+                # Only publish if ROIs actually changed
+                if current_rois != last_rois:
+                    # Always publish ALL ROIs (not just changed ones)
+                    # Backend needs full set to detect deletions
+                    self._roi_publisher.publish_rois(result_key.job_id, current_rois)
                     # Update tracking
                     self._last_published_rois[result_key] = current_rois
                     self._logger.info(
-                        "Published %d ROI update(s) for job %s",
-                        len(changed_rois),
+                        "Published %d ROI(s) for job %s",
+                        len(current_rois),
                         result_key.job_id,
                     )
 
@@ -384,12 +381,10 @@ class PlottingController:
         """
         job_data = self._job_service.job_data[job_number]
 
-        # Determine the ROI spectrum output name based on selected output
-        roi_spectrum_name = f'roi_{output_name}' if output_name else None
-
         # Separate detector data from ROI spectrum data by output name
         detector_items: dict[ResultKey, hv.streams.Pipe] = {}
-        spectrum_items: dict[ResultKey, hv.streams.Pipe] = {}
+        # Multiple spectrum items, one dict per ROI index
+        spectrum_items_by_roi: dict[int, dict[ResultKey, hv.streams.Pipe]] = {}
 
         for source_name in source_names:
             source_outputs = job_data[source_name]
@@ -405,27 +400,52 @@ class PlottingController:
                 detector_items[result_key] = source_outputs[output_name]
                 has_detector_data = True
 
-            # Get or subscribe to ROI spectrum (1D) - may not exist yet
+            # Get or subscribe to ROI spectra (1D) - may not exist yet
             # Only create spectrum plot if we have detector data
-            if roi_spectrum_name and has_detector_data:
-                result_key = self.get_result_key(
-                    job_number=job_number,
-                    source_name=source_name,
-                    output_name=roi_spectrum_name,
-                )
-                # Subscribe even if it doesn't exist yet (will be populated later)
-                if roi_spectrum_name in source_outputs:
-                    spectrum_items[result_key] = source_outputs[roi_spectrum_name]
-                else:
-                    # The output doesn't exist yet, but we subscribe anyway by
-                    # providing a placeholder DataArray. This ensures the subscriber
-                    # watches this ResultKey and will update when data arrives.
-                    dim = 'time_of_arrival'
-                    placeholder = sc.DataArray(
-                        data=sc.array(dims=[dim], values=[0], unit='counts'),
-                        coords={dim: sc.array(dims=[dim], values=[0], unit='ns')},
+            if output_name and has_detector_data:
+                # Scan for all numbered ROI outputs (roi_current_0, roi_current_1, etc.)
+                # Also subscribe to roi_current_0 even if it doesn't exist yet
+                roi_base_name = f'roi_{output_name}'
+
+                # Always subscribe to at least roi_current_0 (first/only ROI)
+                roi_indices = {0}
+
+                # Discover additional ROI outputs that already exist
+                for key in source_outputs.keys():
+                    if key.startswith(f'{roi_base_name}_'):
+                        try:
+                            idx = int(key.split('_')[-1])
+                            roi_indices.add(idx)
+                        except ValueError:
+                            # Not a numbered ROI output
+                            pass
+
+                # Subscribe to each ROI spectrum
+                for roi_idx in sorted(roi_indices):
+                    roi_spectrum_name = f'{roi_base_name}_{roi_idx}'
+                    result_key = self.get_result_key(
+                        job_number=job_number,
+                        source_name=source_name,
+                        output_name=roi_spectrum_name,
                     )
-                    spectrum_items[result_key] = placeholder
+
+                    if roi_idx not in spectrum_items_by_roi:
+                        spectrum_items_by_roi[roi_idx] = {}
+
+                    if roi_spectrum_name in source_outputs:
+                        spectrum_items_by_roi[roi_idx][result_key] = source_outputs[
+                            roi_spectrum_name
+                        ]
+                    else:
+                        # The output doesn't exist yet, but we subscribe anyway by
+                        # providing a placeholder DataArray. This ensures the subscriber
+                        # watches this ResultKey and will update when data arrives.
+                        dim = 'time_of_arrival'
+                        placeholder = sc.DataArray(
+                            data=sc.array(dims=[dim], values=[0], unit='counts'),
+                            coords={dim: sc.array(dims=[dim], values=[0], unit='ns')},
+                        )
+                        spectrum_items_by_roi[roi_idx][result_key] = placeholder
 
         plots = []
 
@@ -448,7 +468,6 @@ class PlottingController:
             boxes = hv.Rectangles([])
             box_stream = hv.streams.BoxEdit(
                 source=boxes,
-                num_objects=1,  # Limit to single ROI rectangle
                 styles={'fill_color': ['red']},
             )
 
@@ -490,22 +509,24 @@ class PlottingController:
             detector_with_boxes = detector_dmap * interactive_boxes
             plots.append(detector_with_boxes)
 
-        # Create ROI spectrum plot (always created if roi_spectrum_name is set)
-        if roi_spectrum_name and spectrum_items:
-            spectrum_pipe = self._stream_manager.make_merging_stream(spectrum_items)
-            # PlotScaleParams2d is subclass of PlotScaleParams
-            spectrum_plotter = LinePlotter(
-                value_margin_factor=0.1,
-                layout_params=params.layout,
-                aspect_params=params.plot_aspect,
-                scale_opts=params.plot_scale,
-            )
-            spectrum_plotter.initialize_from_data(spectrum_items)
+        # Create ROI spectrum plots (one per ROI index)
+        for roi_idx in sorted(spectrum_items_by_roi.keys()):
+            spectrum_items = spectrum_items_by_roi[roi_idx]
+            if spectrum_items:
+                spectrum_pipe = self._stream_manager.make_merging_stream(spectrum_items)
+                # PlotScaleParams2d is subclass of PlotScaleParams
+                spectrum_plotter = LinePlotter(
+                    value_margin_factor=0.1,
+                    layout_params=params.layout,
+                    aspect_params=params.plot_aspect,
+                    scale_opts=params.plot_scale,
+                )
+                spectrum_plotter.initialize_from_data(spectrum_items)
 
-            spectrum_dmap = hv.DynamicMap(
-                spectrum_plotter, streams=[spectrum_pipe], cache_size=1
-            ).opts(shared_axes=False)
-            plots.append(spectrum_dmap)
+                spectrum_dmap = hv.DynamicMap(
+                    spectrum_plotter, streams=[spectrum_pipe], cache_size=1
+                ).opts(shared_axes=False, title=f'ROI {roi_idx}')
+                plots.append(spectrum_dmap)
 
         if len(plots) == 0:
             return hv.Layout(

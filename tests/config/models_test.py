@@ -566,6 +566,151 @@ class TestROIDispatch:
             models.ROI.from_data_array(da)
 
 
+class TestMultipleRectangleROI:
+    """Test serialization of multiple rectangles into single DataArray."""
+
+    def test_concatenate_multiple_rectangles(self):
+        """Multiple rectangles should be concatenated along bounds dimension."""
+        rois = {
+            0: models.RectangleROI(
+                x=models.Interval(min=10.0, max=20.0, unit='mm'),
+                y=models.Interval(min=30.0, max=40.0, unit='mm'),
+            ),
+            1: models.RectangleROI(
+                x=models.Interval(min=50.0, max=60.0, unit='mm'),
+                y=models.Interval(min=70.0, max=80.0, unit='mm'),
+            ),
+            2: models.RectangleROI(
+                x=models.Interval(min=100.0, max=110.0, unit='mm'),
+                y=models.Interval(min=120.0, max=130.0, unit='mm'),
+            ),
+        }
+
+        da = models.RectangleROI.to_concatenated_data_array(rois)
+
+        # Should have bounds dimension with 6 elements (3 ROIs x 2 bounds each)
+        assert list(da.dims) == ['bounds']
+        assert da.shape == (6,)
+
+        # Should have roi_index coordinate mapping bounds to ROIs
+        assert 'roi_index' in da.coords
+        np.testing.assert_array_equal(da.coords['roi_index'].values, [0, 0, 1, 1, 2, 2])
+
+        # x and y coordinates should be concatenated
+        np.testing.assert_array_equal(
+            da.coords['x'].values, [10.0, 20.0, 50.0, 60.0, 100.0, 110.0]
+        )
+        np.testing.assert_array_equal(
+            da.coords['y'].values, [30.0, 40.0, 70.0, 80.0, 120.0, 130.0]
+        )
+
+        # Name should indicate collection
+        assert da.name == 'rectangles'
+
+    def test_concatenate_empty_dict(self):
+        """Empty dict should produce empty DataArray."""
+        rois = {}
+        da = models.RectangleROI.to_concatenated_data_array(rois)
+
+        assert list(da.dims) == ['bounds']
+        assert da.shape == (0,)
+        assert 'roi_index' in da.coords
+        assert len(da.coords['roi_index']) == 0
+
+    def test_concatenate_single_rectangle(self):
+        """Single rectangle should work (edge case)."""
+        rois = {
+            0: models.RectangleROI(
+                x=models.Interval(min=10.0, max=20.0, unit='mm'),
+                y=models.Interval(min=30.0, max=40.0, unit='mm'),
+            ),
+        }
+
+        da = models.RectangleROI.to_concatenated_data_array(rois)
+
+        assert da.shape == (2,)
+        np.testing.assert_array_equal(da.coords['roi_index'].values, [0, 0])
+        np.testing.assert_array_equal(da.coords['x'].values, [10.0, 20.0])
+
+    def test_from_concatenated_data_array(self):
+        """Should reconstruct dict of ROIs from concatenated DataArray."""
+        # Create concatenated DataArray manually
+        data = sc.ones(dims=['bounds'], shape=[4], dtype='int32', unit='')
+        coords = {
+            'x': sc.array(dims=['bounds'], values=[10.0, 20.0, 50.0, 60.0], unit='mm'),
+            'y': sc.array(dims=['bounds'], values=[30.0, 40.0, 70.0, 80.0], unit='mm'),
+            'roi_index': sc.array(dims=['bounds'], values=[0, 0, 1, 1], dtype='int32'),
+        }
+        da = sc.DataArray(data, coords=coords, name='rectangles')
+
+        rois = models.RectangleROI.from_concatenated_data_array(da)
+
+        assert len(rois) == 2
+        assert 0 in rois
+        assert 1 in rois
+
+        assert rois[0].x.min == 10.0
+        assert rois[0].x.max == 20.0
+        assert rois[0].y.min == 30.0
+        assert rois[0].y.max == 40.0
+
+        assert rois[1].x.min == 50.0
+        assert rois[1].x.max == 60.0
+        assert rois[1].y.min == 70.0
+        assert rois[1].y.max == 80.0
+
+    def test_from_concatenated_empty_data_array(self):
+        """Empty DataArray should produce empty dict."""
+        data = sc.empty(dims=['bounds'], shape=[0], dtype='int32', unit='')
+        coords = {
+            'x': sc.empty(dims=['bounds'], shape=[0], unit='mm'),
+            'y': sc.empty(dims=['bounds'], shape=[0], unit='mm'),
+            'roi_index': sc.empty(dims=['bounds'], shape=[0], dtype='int32'),
+        }
+        da = sc.DataArray(data, coords=coords, name='rectangles')
+
+        rois = models.RectangleROI.from_concatenated_data_array(da)
+        assert rois == {}
+
+    def test_roundtrip_concatenated_rectangles(self):
+        """Roundtrip: dict → concatenated DataArray → dict."""
+        original = {
+            0: models.RectangleROI(
+                x=models.Interval(min=10.0, max=20.0, unit='mm'),
+                y=models.Interval(min=30.0, max=40.0, unit='mm'),
+            ),
+            2: models.RectangleROI(
+                x=models.Interval(min=50.0, max=60.0, unit='mm'),
+                y=models.Interval(min=70.0, max=80.0, unit='mm'),
+            ),
+        }
+
+        da = models.RectangleROI.to_concatenated_data_array(original)
+        restored = models.RectangleROI.from_concatenated_data_array(da)
+
+        assert original == restored
+
+    def test_concatenated_rectangles_none_units(self):
+        """Should handle None units (pixel coordinates)."""
+        rois = {
+            0: models.RectangleROI(
+                x=models.Interval(min=10.0, max=20.0, unit=None),
+                y=models.Interval(min=30.0, max=40.0, unit=None),
+            ),
+            1: models.RectangleROI(
+                x=models.Interval(min=50.0, max=60.0, unit=None),
+                y=models.Interval(min=70.0, max=80.0, unit=None),
+            ),
+        }
+
+        da = models.RectangleROI.to_concatenated_data_array(rois)
+        restored = models.RectangleROI.from_concatenated_data_array(da)
+
+        assert restored[0].x.unit is None
+        assert restored[0].y.unit is None
+        assert rois == restored
+
+
 class TestROIWithDa00:
     """Test ROI roundtrip through da00 serialization."""
 
@@ -589,6 +734,33 @@ class TestROIWithDa00:
         restored_roi = models.ROI.from_data_array(da_restored)
 
         assert original_roi == restored_roi
+
+    def test_concatenated_rectangles_through_da00(self):
+        """Test that concatenated rectangles roundtrip through da00."""
+        from ess.livedata.kafka.scipp_da00_compat import da00_to_scipp, scipp_to_da00
+
+        original_rois = {
+            0: models.RectangleROI(
+                x=models.Interval(min=10.0, max=20.0, unit='mm'),
+                y=models.Interval(min=30.0, max=40.0, unit='mm'),
+            ),
+            1: models.RectangleROI(
+                x=models.Interval(min=50.0, max=60.0, unit='mm'),
+                y=models.Interval(min=70.0, max=80.0, unit='mm'),
+            ),
+        }
+
+        # Convert to concatenated DataArray
+        da = models.RectangleROI.to_concatenated_data_array(original_rois)
+
+        # Serialize through da00
+        da00_vars = scipp_to_da00(da)
+        da_restored = da00_to_scipp(da00_vars)
+
+        # Convert back to ROIs
+        restored_rois = models.RectangleROI.from_concatenated_data_array(da_restored)
+
+        assert original_rois == restored_rois
 
     def test_polygon_through_da00(self):
         from ess.livedata.kafka.scipp_da00_compat import da00_to_scipp, scipp_to_da00
