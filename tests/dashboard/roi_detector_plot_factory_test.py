@@ -216,8 +216,8 @@ class TestROIDetectorPlotFactory:
         # Create plot params
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
-        # Verify no box streams initially
-        assert len(roi_plot_factory._box_streams) == 0
+        # Verify no plot states initially
+        assert len(roi_plot_factory._plot_states) == 0
 
         # Create ROI detector plot
         roi_plot_factory.create_roi_detector_plot(
@@ -226,12 +226,11 @@ class TestROIDetectorPlotFactory:
             params=params,
         )
 
-        # Should have stored box stream
-        assert len(roi_plot_factory._box_streams) == 1
-        assert detector_key in roi_plot_factory._box_streams
-        assert isinstance(
-            roi_plot_factory._box_streams[detector_key], hv.streams.BoxEdit
-        )
+        # Should have stored plot state with box stream
+        assert len(roi_plot_factory._plot_states) == 1
+        assert detector_key in roi_plot_factory._plot_states
+        plot_state = roi_plot_factory._plot_states[detector_key]
+        assert isinstance(plot_state.box_stream, hv.streams.BoxEdit)
 
     def test_create_roi_detector_plot_separates_detector_and_spectrum(
         self,
@@ -311,8 +310,9 @@ def test_roi_detector_plot_publishes_roi_on_box_edit(
         params=params,
     )
 
-    # Get the BoxEdit stream (stored with detector_key)
-    box_stream = roi_plot_factory._box_streams[detector_key]
+    # Get the BoxEdit stream from plot state
+    plot_state = roi_plot_factory._plot_states[detector_key]
+    box_stream = plot_state.box_stream
 
     # Simulate user drawing a box
     box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
@@ -361,8 +361,9 @@ def test_roi_detector_plot_only_publishes_changed_rois(
         params=params,
     )
 
-    # Get the BoxEdit stream
-    box_stream = roi_plot_factory._box_streams[detector_key]
+    # Get the BoxEdit stream from plot state
+    plot_state = roi_plot_factory._plot_states[detector_key]
+    box_stream = plot_state.box_stream
 
     # First box edit
     box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
