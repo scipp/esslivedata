@@ -165,9 +165,9 @@ class TestPlottingControllerROIDetector:
             params=params,
         )
 
-        # Should return a Layout with 1 element (detector only, no spectrum yet)
+        # Should return a Layout with 2 elements (detector + empty spectrum placeholder)
         assert isinstance(result, hv.Layout)
-        assert len(result) == 1
+        assert len(result) == 2
 
     def test_create_roi_detector_plot_stores_box_stream(
         self,

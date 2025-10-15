@@ -8,6 +8,7 @@ from typing import TypeVar
 
 import holoviews as hv
 import pydantic
+import scipp as sc
 
 import ess.livedata.config.keys as keys
 from ess.livedata.config.models import RectangleROI
@@ -391,6 +392,7 @@ class PlottingController:
             source_outputs = job_data[source_name]
 
             # Get detector image (2D) - the selected output
+            has_detector_data = False
             if output_name and output_name in source_outputs:
                 result_key = self.get_result_key(
                     job_number=job_number,
@@ -398,9 +400,11 @@ class PlottingController:
                     output_name=output_name,
                 )
                 detector_items[result_key] = source_outputs[output_name]
+                has_detector_data = True
 
             # Get or subscribe to ROI spectrum (1D) - may not exist yet
-            if roi_spectrum_name:
+            # Only create spectrum plot if we have detector data
+            if roi_spectrum_name and has_detector_data:
                 result_key = self.get_result_key(
                     job_number=job_number,
                     source_name=source_name,
@@ -410,11 +414,20 @@ class PlottingController:
                 if roi_spectrum_name in source_outputs:
                     spectrum_items[result_key] = source_outputs[roi_spectrum_name]
                 else:
-                    # The output doesn't exist yet, but we'll subscribe anyway.
-                    # The stream will remain empty until the backend starts
-                    # publishing it. Note: We skip adding this for now - the layout
-                    # will only show the spectrum plot once data becomes available.
-                    pass
+                    # The output doesn't exist yet, but we subscribe anyway by
+                    # providing a placeholder DataArray. This ensures the subscriber
+                    # watches this ResultKey and will update when data arrives.
+                    placeholder = sc.DataArray(
+                        data=sc.array(
+                            dims=['time_of_arrival'], values=[], unit='counts'
+                        ),
+                        coords={
+                            'time_of_arrival': sc.array(
+                                dims=['time_of_arrival'], values=[], unit='ns'
+                            )
+                        },
+                    )
+                    spectrum_items[result_key] = placeholder
 
         plots = []
 
@@ -455,8 +468,8 @@ class PlottingController:
             detector_with_boxes = detector_dmap * interactive_boxes
             plots.append(detector_with_boxes)
 
-        # Create ROI spectrum plot
-        if spectrum_items:
+        # Create ROI spectrum plot (always created if roi_spectrum_name is set)
+        if roi_spectrum_name and spectrum_items:
             spectrum_pipe = self._stream_manager.make_merging_stream(spectrum_items)
             # PlotScaleParams2d is subclass of PlotScaleParams
             spectrum_plotter = LinePlotter(
