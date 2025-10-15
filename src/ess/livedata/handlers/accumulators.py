@@ -42,6 +42,31 @@ class NullAccumulator(Accumulator[Any, None]):
         pass
 
 
+class LatestValue(Accumulator[sc.DataArray, sc.DataArray]):
+    """
+    Accumulator that keeps only the latest value.
+
+    Unlike Cumulative, this does not add values together - it simply replaces
+    the stored value with each new addition. Useful for configuration data like ROI
+    where only the current state matters.
+    """
+
+    def __init__(self):
+        self._latest: sc.DataArray | None = None
+
+    def add(self, timestamp: int, data: sc.DataArray) -> None:
+        _ = timestamp
+        self._latest = data.copy()
+
+    def get(self) -> sc.DataArray:
+        if self._latest is None:
+            raise ValueError("No data has been added")
+        return self._latest
+
+    def clear(self) -> None:
+        self._latest = None
+
+
 class _CumulativeAccumulationMixin:
     """Mixin providing cumulative data accumulation functionality."""
 

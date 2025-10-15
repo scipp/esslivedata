@@ -11,6 +11,7 @@ from ess.livedata.config.instrument import Instrument
 from ess.livedata.config.instruments import available_instruments, get_config
 from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.handler import StreamId
+from ess.livedata.handlers.accumulators import LatestValue
 from ess.livedata.handlers.detector_data_handler import (
     DetectorHandlerFactory,
     DetectorROIAuxSources,
@@ -55,6 +56,38 @@ def test_factory_can_create_preprocessor(instrument_name: str) -> None:
         _ = factory.make_preprocessor(
             StreamId(kind=StreamKind.DETECTOR_EVENTS, name=name)
         )
+
+
+def test_factory_creates_latest_value_accumulator_for_roi_messages() -> None:
+    """Test that DetectorHandlerFactory creates a LatestValue accumulator for ROI."""
+    instrument = get_instrument('dummy')
+    factory = DetectorHandlerFactory(instrument=instrument)
+
+    # Create a stream ID for an ROI message
+    roi_stream_id = StreamId(
+        kind=StreamKind.LIVEDATA_ROI, name='test-job-123/roi_rectangle_0'
+    )
+
+    preprocessor = factory.make_preprocessor(roi_stream_id)
+
+    # Should return a LatestValue accumulator
+    assert preprocessor is not None
+    assert isinstance(preprocessor, LatestValue)
+
+
+def test_factory_returns_none_for_unknown_stream_kinds() -> None:
+    """Test that DetectorHandlerFactory returns None for unknown stream kinds."""
+    instrument = get_instrument('dummy')
+    factory = DetectorHandlerFactory(instrument=instrument)
+
+    # Try various stream kinds that should not be handled
+    unknown_stream_id = StreamId(kind=StreamKind.LOG, name='some_log')
+    preprocessor = factory.make_preprocessor(unknown_stream_id)
+    assert preprocessor is None
+
+    config_stream_id = StreamId(kind=StreamKind.LIVEDATA_CONFIG, name='config')
+    preprocessor = factory.make_preprocessor(config_stream_id)
+    assert preprocessor is None
 
 
 class TestDetectorROIAuxSources:

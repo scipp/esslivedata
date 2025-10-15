@@ -19,7 +19,7 @@ from ..config.instrument import Instrument
 from ..config.workflow_spec import AuxSourcesBase, JobId
 from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
-from .accumulators import DetectorEvents, GroupIntoPixels
+from .accumulators import DetectorEvents, GroupIntoPixels, LatestValue
 from .detector_view import DetectorView, DetectorViewParams
 
 
@@ -190,6 +190,8 @@ class DetectorHandlerFactory(
             case StreamKind.DETECTOR_EVENTS:
                 detector_number = self._instrument.get_detector_number(key.name)
                 return GroupIntoPixels(detector_number=detector_number)
+            case StreamKind.LIVEDATA_ROI:
+                return LatestValue()
             case _:
                 return None
 
