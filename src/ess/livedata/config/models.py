@@ -415,14 +415,10 @@ class RectangleROI(ROI):
         y_vals = da.coords['y'].values
         return cls(
             x=Interval(
-                min=float(x_vals[0]),
-                max=float(x_vals[1]),
-                unit=_unit_to_str(da.coords['x'].unit),
+                min=x_vals[0], max=x_vals[1], unit=_unit_to_str(da.coords['x'].unit)
             ),
             y=Interval(
-                min=float(y_vals[0]),
-                max=float(y_vals[1]),
-                unit=_unit_to_str(da.coords['y'].unit),
+                min=y_vals[0], max=y_vals[1], unit=_unit_to_str(da.coords['y'].unit)
             ),
         )
 
