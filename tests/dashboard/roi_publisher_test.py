@@ -88,6 +88,38 @@ def test_boxes_to_rois_raises_on_inconsistent_lengths():
         boxes_to_rois(box_data)
 
 
+def test_boxes_to_rois_with_units():
+    box_data = {'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]}
+
+    rois = boxes_to_rois(box_data, x_unit='m', y_unit='mm')
+
+    assert len(rois) == 1
+    roi = rois[0]
+    assert roi.x.min == 1.0
+    assert roi.x.max == 5.0
+    assert roi.y.min == 2.0
+    assert roi.y.max == 6.0
+    assert roi.x.unit == 'm'
+    assert roi.y.unit == 'mm'
+
+
+def test_boxes_to_rois_preserves_units_across_multiple_boxes():
+    box_data = {
+        'x0': [1.0, 10.0],
+        'x1': [5.0, 15.0],
+        'y0': [2.0, 12.0],
+        'y1': [6.0, 16.0],
+    }
+
+    rois = boxes_to_rois(box_data, x_unit='angstrom', y_unit='angstrom')
+
+    assert len(rois) == 2
+    assert rois[0].x.unit == 'angstrom'
+    assert rois[0].y.unit == 'angstrom'
+    assert rois[1].x.unit == 'angstrom'
+    assert rois[1].y.unit == 'angstrom'
+
+
 def test_roi_publisher_publishes_single_roi():
     sink = FakeMessageSink()
     publisher = ROIPublisher(sink=sink)

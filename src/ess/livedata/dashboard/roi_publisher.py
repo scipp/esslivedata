@@ -102,7 +102,11 @@ class FakeROIPublisher:
         self.published_rois.clear()
 
 
-def boxes_to_rois(box_data: dict[str, Any]) -> dict[int, RectangleROI]:
+def boxes_to_rois(
+    box_data: dict[str, Any],
+    x_unit: str | None = None,
+    y_unit: str | None = None,
+) -> dict[int, RectangleROI]:
     """
     Convert BoxEdit data dictionary to RectangleROI instances.
 
@@ -113,6 +117,10 @@ def boxes_to_rois(box_data: dict[str, Any]) -> dict[int, RectangleROI]:
     ----------
     box_data:
         Dictionary from BoxEdit stream with keys x0, x1, y0, y1.
+    x_unit:
+        Unit for x coordinates (from the detector data coordinates).
+    y_unit:
+        Unit for y coordinates (from the detector data coordinates).
 
     Returns
     -------
@@ -151,8 +159,8 @@ def boxes_to_rois(box_data: dict[str, Any]) -> dict[int, RectangleROI]:
         from ..config.models import Interval
 
         rois[i] = RectangleROI(
-            x=Interval(min=float(x_min), max=float(x_max), unit=None),
-            y=Interval(min=float(y_min), max=float(y_max), unit=None),
+            x=Interval(min=float(x_min), max=float(x_max), unit=x_unit),
+            y=Interval(min=float(y_min), max=float(y_max), unit=y_unit),
         )
 
     return rois

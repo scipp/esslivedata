@@ -289,6 +289,8 @@ class PlottingController:
         box_stream: hv.streams.BoxEdit,
         result_key: ResultKey,
         job_number: JobNumber,
+        x_unit: str | None,
+        y_unit: str | None,
     ) -> None:
         """
         Set up a watcher on BoxEdit stream to publish ROI updates.
@@ -301,6 +303,10 @@ class PlottingController:
             The result key for tracking published ROIs.
         job_number:
             The job number to publish ROIs for.
+        x_unit:
+            Unit for x coordinates, extracted from the detector data.
+        y_unit:
+            Unit for y coordinates, extracted from the detector data.
         """
 
         def on_box_change(event):
@@ -312,7 +318,7 @@ class PlottingController:
 
             try:
                 # Convert BoxEdit data to ROI dictionary
-                current_rois = boxes_to_rois(data)
+                current_rois = boxes_to_rois(data, x_unit=x_unit, y_unit=y_unit)
 
                 # Get previously published ROIs for this result key
                 last_rois = self._last_published_rois.get(result_key, {})
@@ -461,7 +467,33 @@ class PlottingController:
 
             # Set up ROI publishing if publisher is available
             if self._roi_publisher:
-                self._setup_roi_watcher(box_stream, first_detector_key, job_number)
+                # Extract coordinate units from the detector data
+                first_detector_data = next(iter(detector_items.values()))
+                coord_names = list(first_detector_data.dims)
+                if len(coord_names) != 2:
+                    self._logger.warning(
+                        "Expected 2D detector data, got %dD data. "
+                        "ROI coordinates may lack units.",
+                        len(coord_names),
+                    )
+                    x_unit, y_unit = None, None
+                else:
+                    # Extract units from the coordinates
+                    x_dim, y_dim = coord_names[1], coord_names[0]
+                    x_unit = (
+                        str(first_detector_data.coords[x_dim].unit)
+                        if x_dim in first_detector_data.coords
+                        else None
+                    )
+                    y_unit = (
+                        str(first_detector_data.coords[y_dim].unit)
+                        if y_dim in first_detector_data.coords
+                        else None
+                    )
+
+                self._setup_roi_watcher(
+                    box_stream, first_detector_key, job_number, x_unit, y_unit
+                )
 
             # Overlay boxes on DynamicMap (not inside callback - this is crucial!)
             interactive_boxes = boxes.opts(fill_alpha=0.3, line_width=2)
