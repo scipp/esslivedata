@@ -5,7 +5,7 @@
 import logging
 from typing import Any
 
-from ..config.models import ROI, RectangleROI
+from ..config.models import RectangleROI
 from ..config.workflow_spec import JobId
 from ..core.message import Message, StreamId, StreamKind
 from ..kafka.sink import KafkaSink
@@ -51,7 +51,7 @@ class ROIPublisher:
         stream_id = StreamId(kind=StreamKind.LIVEDATA_ROI, name=stream_name)
 
         # Convert all ROIs to single concatenated DataArray
-        data_array = ROI.to_concatenated_data_array(rois)
+        data_array = RectangleROI.to_concatenated_data_array(rois)
 
         msg = Message(value=data_array, stream=stream_id)
         self._sink.publish_messages([msg])
