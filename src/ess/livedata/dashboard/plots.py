@@ -161,10 +161,10 @@ class Plotter(ABC):
 
         plots = [self._apply_generic_options(p) for p in plots]
 
-        if len(plots) == 1:
-            return plots[0]
         if self.layout_params.combine_mode == 'overlay':
             return hv.Overlay(plots)
+        if len(plots) == 1:
+            return plots[0]
         return hv.Layout(plots).cols(self.layout_params.layout_columns)
 
     def _apply_generic_options(self, plot_element: hv.Element) -> hv.Element:
