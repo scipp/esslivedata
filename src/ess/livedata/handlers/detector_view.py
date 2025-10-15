@@ -183,17 +183,8 @@ class DetectorView(Workflow):
         roi_key = 'roi'
         if roi_key in data:
             roi_data_array = data[roi_key]
-            # Convert DataArray to dict of ROI models
-            # Support both formats:
-            # 1. New format: concatenated with roi_index coordinate (multi-ROI)
-            # 2. Old format: single ROI without roi_index (backward compat)
-            if 'roi_index' in roi_data_array.coords:
-                # New multi-ROI format - use generic ROI dispatcher
-                rois = models.ROI.from_concatenated_data_array(roi_data_array)
-            else:
-                # Old single-ROI format - convert to dict with index 0
-                single_roi = models.ROI.from_data_array(roi_data_array)
-                rois = {0: single_roi}
+            # Convert concatenated DataArray to dict of ROI models
+            rois = models.ROI.from_concatenated_data_array(roi_data_array)
 
             # Determine which ROIs were added/updated/deleted
             current_indices = set(rois.keys())
