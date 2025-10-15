@@ -150,7 +150,10 @@ class Plotter(ABC):
                 plot_element = self.plot(da, data_key, **kwargs)
                 # Add label from data_key if the plot supports it
                 if hasattr(plot_element, 'relabel'):
-                    plot_element = plot_element.relabel(data_key.job_id.source_name)
+                    label = data_key.job_id.source_name
+                    if data_key.output_name is not None:
+                        label = f'{label}/{data_key.output_name}'
+                    plot_element = plot_element.relabel(label)
                 plots.append(plot_element)
         except Exception as e:
             plots = [

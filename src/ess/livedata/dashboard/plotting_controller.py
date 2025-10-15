@@ -512,10 +512,7 @@ class PlottingController:
                 aspect_params=params.plot_aspect,
                 scale_opts=params.plot_scale,
             )
-            # Initialize with just first ROI (placeholder)
-            # This is sufficient for determining dimensions
-            first_roi_key = next(iter(spectrum_items.keys()))
-            spectrum_plotter.initialize_from_data({first_roi_key: placeholder})
+            spectrum_plotter.initialize_from_data(spectrum_items)
 
             spectrum_dmap = hv.DynamicMap(
                 spectrum_plotter, streams=[spectrum_pipe], cache_size=1
