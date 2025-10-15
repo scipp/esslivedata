@@ -5,7 +5,7 @@
 import logging
 from typing import Any
 
-from ..config.models import RectangleROI
+from ..config.models import ROI, RectangleROI
 from ..config.workflow_spec import JobId
 from ..core.message import Message, StreamId, StreamKind
 from ..kafka.sink import KafkaSink
@@ -16,8 +16,7 @@ class ROIPublisher:
     Publishes ROI updates to Kafka.
 
     This class provides a simple interface for publishing ROI rectangles to the
-    LIVEDATA_ROI Kafka topic. It follows the same pattern as LogProducerWidget
-    for unidirectional publishing.
+    LIVEDATA_ROI Kafka topic.
 
     Parameters
     ----------
@@ -27,11 +26,7 @@ class ROIPublisher:
         Logger instance. If None, creates a logger using the module name.
     """
 
-    def __init__(
-        self,
-        sink: KafkaSink,
-        logger: logging.Logger | None = None,
-    ):
+    def __init__(self, sink: KafkaSink, logger: logging.Logger | None = None):
         self._sink = sink
         self._logger = logger or logging.getLogger(__name__)
 
@@ -56,7 +51,7 @@ class ROIPublisher:
         stream_id = StreamId(kind=StreamKind.LIVEDATA_ROI, name=stream_name)
 
         # Convert all ROIs to single concatenated DataArray
-        data_array = RectangleROI.to_concatenated_data_array(rois)
+        data_array = ROI.to_concatenated_data_array(rois)
 
         msg = Message(value=data_array, stream=stream_id)
         self._sink.publish_messages([msg])
@@ -150,8 +145,8 @@ def boxes_to_rois(
         from ..config.models import Interval
 
         rois[i] = RectangleROI(
-            x=Interval(min=float(x_min), max=float(x_max), unit=x_unit),
-            y=Interval(min=float(y_min), max=float(y_max), unit=y_unit),
+            x=Interval(min=x_min, max=x_max, unit=x_unit),
+            y=Interval(min=y_min, max=y_max, unit=y_unit),
         )
 
     return rois
