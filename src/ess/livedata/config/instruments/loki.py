@@ -12,6 +12,7 @@ from ess import loki
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.env import StreamingEnv
+from ess.livedata.config.workflow_spec import AuxSourcesBase
 from ess.livedata.handlers.detector_data_handler import (
     DetectorProjection,
     get_nexus_geometry_filename,
@@ -55,7 +56,7 @@ class SansWorkflowOptions(pydantic.BaseModel):
     )
 
 
-class LokiAuxSources(pydantic.BaseModel):
+class LokiAuxSources(AuxSourcesBase):
     """Auxiliary source names for LOKI SANS workflows."""
 
     incident_monitor: Literal['monitor1'] = pydantic.Field(
