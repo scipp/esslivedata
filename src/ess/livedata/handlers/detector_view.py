@@ -211,10 +211,6 @@ class DetectorView(Workflow):
                 # Reset cumulative for updated ROI
                 self._roi_cumulatives.pop(idx, None)
 
-            # If only ROI config was sent (no detector data), return early
-            if len(data) == 1:
-                return
-
         # Process detector event data
         detector_data = {k: v for k, v in data.items() if k != roi_key}
         if len(detector_data) == 0:
