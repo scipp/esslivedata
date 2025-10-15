@@ -35,7 +35,11 @@ class StreamManager(Generic[P]):
         self.data_service.register_subscriber(subscriber)
         return pipe
 
-    def make_merging_stream_from_keys(self, keys: list[ResultKey]) -> P:
+    def make_merging_stream_from_keys(
+        self,
+        keys: list[ResultKey],
+        assembler_factory: Callable[[set[ResultKey]], Any] = MergingStreamAssembler,
+    ) -> P:
         """
         Create a merging stream for the given result keys, starting with no data.
 
@@ -47,13 +51,16 @@ class StreamManager(Generic[P]):
         ----------
         keys:
             List of result keys to subscribe to.
+        assembler_factory:
+            Optional callable that creates an assembler from a set of keys.
+            Use functools.partial to bind additional arguments (e.g., filter_fn).
 
         Returns
         -------
         :
             A pipe that will receive merged data updates for the given keys.
         """
-        assembler = MergingStreamAssembler(set(keys))
+        assembler = assembler_factory(set(keys))
         pipe = self._pipe_factory({})
         subscriber = DataSubscriber(assembler, pipe)
         self.data_service.register_subscriber(subscriber)

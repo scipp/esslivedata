@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 import logging
+from functools import partial
 
 import holoviews as hv
 
 from ess.livedata.config.models import RectangleROI
-from ess.livedata.config.workflow_spec import JobNumber, ResultKey
+from ess.livedata.config.workflow_spec import JobId, JobNumber, ResultKey
 
+from .data_subscriber import FilteredMergingStreamAssembler
 from .job_service import JobService
 from .plot_params import LayoutParams, PlotParams2d
 from .plots import ImagePlotter, LinePlotter
@@ -50,6 +52,8 @@ class ROIDetectorPlotFactory:
         self._logger = logger or logging.getLogger(__name__)
         self._box_streams: dict[ResultKey, hv.streams.BoxEdit] = {}
         self._last_published_rois: dict[ResultKey, dict[int, RectangleROI]] = {}
+        # Track which ROI indices are currently active for each job
+        self._active_roi_indices: dict[JobId, set[int]] = {}
 
     def create_roi_detector_plot(
         self,
@@ -194,9 +198,42 @@ class ROIDetectorPlotFactory:
         if spectrum_keys:
             # Override layout params to use overlay mode
             overlay_layout = LayoutParams(combine_mode='overlay')
-            spectrum_pipe = self._stream_manager.make_merging_stream_from_keys(
-                spectrum_keys
+
+            # Create filtered stream that only shows active ROI indices
+            # Get the job_id from the first spectrum key
+            first_spectrum_key = spectrum_keys[0]
+            job_id = first_spectrum_key.job_id
+
+            # Create filter function that checks if ROI index is active
+            def is_roi_active(key: ResultKey) -> bool:
+                """Check if the ROI index for this key is currently active."""
+                # Extract ROI index from output_name (e.g., 'roi_current_0' -> 0)
+                if key.output_name is None:
+                    return False
+
+                # Parse the ROI index from the output name
+                # Format: 'roi_{output_name}_{index}'
+                parts = key.output_name.rsplit('_', 1)
+                if len(parts) != 2:
+                    return False
+
+                try:
+                    roi_index = int(parts[1])
+                except ValueError:
+                    return False
+
+                # Check if this ROI index is in the active set
+                active_indices = self._active_roi_indices.get(job_id, set())
+                return roi_index in active_indices
+
+            # Create filtered assembler factory using partial
+            assembler_factory = partial(
+                FilteredMergingStreamAssembler, filter_fn=is_roi_active
             )
+            spectrum_pipe = self._stream_manager.make_merging_stream_from_keys(
+                spectrum_keys, assembler_factory=assembler_factory
+            )
+
             spectrum_plotter = LinePlotter(
                 value_margin_factor=0.1,
                 layout_params=overlay_layout,
@@ -242,8 +279,6 @@ class ROIDetectorPlotFactory:
         :
             The result key identifying the specific job output.
         """
-        from ess.livedata.config.workflow_spec import JobId
-
         workflow_id = self._job_service.job_info[job_number]
         return ResultKey(
             workflow_id=workflow_id,
@@ -284,6 +319,9 @@ class ROIDetectorPlotFactory:
             try:
                 # Convert BoxEdit data to ROI dictionary
                 current_rois = boxes_to_rois(data, x_unit=x_unit, y_unit=y_unit)
+
+                # Update active ROI indices for filtering
+                self._active_roi_indices[result_key.job_id] = set(current_rois.keys())
 
                 # Get previously published ROIs for this result key
                 last_rois = self._last_published_rois.get(result_key, {})
