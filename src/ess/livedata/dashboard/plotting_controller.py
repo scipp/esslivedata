@@ -457,7 +457,8 @@ class PlottingController:
             boxes = hv.Rectangles([])
             box_stream = hv.streams.BoxEdit(
                 source=boxes,
-                styles={'fill_color': ['red']},
+                num_objects=3,
+                styles={'fill_color': ['red', 'green', 'blue']},
             )
 
             # Store box stream for later access (e.g., publishing to backend)
