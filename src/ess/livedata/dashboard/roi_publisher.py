@@ -4,10 +4,11 @@
 
 import logging
 from typing import Any
-from uuid import UUID
 
 from ..config.models import RectangleROI
+from ..config.workflow_spec import JobId
 from ..core.message import Message, StreamId, StreamKind
+from ..handlers.detector_data_handler import DetectorROIAuxSources
 from ..kafka.sink import KafkaSink
 
 
@@ -35,14 +36,14 @@ class ROIPublisher:
         self._sink = sink
         self._logger = logger or logging.getLogger(__name__)
 
-    def publish_roi(self, job_number: UUID, roi_index: int, roi: RectangleROI) -> None:
+    def publish_roi(self, job_id: JobId, roi_index: int, roi: RectangleROI) -> None:
         """
         Publish a single ROI rectangle update.
 
         Parameters
         ----------
-        job_number:
-            The job number this ROI applies to.
+        job_id:
+            The full job identifier (source_name and job_number).
         roi_index:
             The index of the ROI rectangle (0-based).
         roi:
@@ -50,7 +51,12 @@ class ROIPublisher:
         """
         if roi_index != 0:
             raise NotImplementedError("Multiple ROIs are not implemented")
-        stream_name = f"{job_number}/roi_rectangle"
+
+        # Create the aux sources model and use it to render the stream name
+        aux_model = DetectorROIAuxSources(roi='rectangle')
+        rendered = aux_model.render(job_id)
+        stream_name = rendered['roi']
+
         stream_id = StreamId(kind=StreamKind.LIVEDATA_ROI, name=stream_name)
 
         # Convert ROI to DataArray (includes ROI type in the name field)
@@ -62,42 +68,42 @@ class ROIPublisher:
         self._logger.debug(
             "Published ROI rectangle %d for job %s: x=[%s, %s], y=[%s, %s]",
             roi_index,
-            job_number,
+            job_id,
             roi.x.min,
             roi.x.max,
             roi.y.min,
             roi.y.max,
         )
 
-    def publish_rois(self, job_number: UUID, rois: dict[int, RectangleROI]) -> None:
+    def publish_rois(self, job_id: JobId, rois: dict[int, RectangleROI]) -> None:
         """
         Publish multiple ROI rectangles.
 
         Parameters
         ----------
-        job_number:
-            The job number these ROIs apply to.
+        job_id:
+            The full job identifier (source_name and job_number).
         rois:
             Dictionary mapping ROI index to RectangleROI.
         """
         for roi_index, roi in rois.items():
-            self.publish_roi(job_number, roi_index, roi)
+            self.publish_roi(job_id, roi_index, roi)
 
 
 class FakeROIPublisher:
     """Fake ROI publisher for testing."""
 
     def __init__(self):
-        self.published_rois: list[tuple[UUID, int, RectangleROI]] = []
+        self.published_rois: list[tuple[JobId, int, RectangleROI]] = []
 
-    def publish_roi(self, job_number: UUID, roi_index: int, roi: RectangleROI) -> None:
+    def publish_roi(self, job_id: JobId, roi_index: int, roi: RectangleROI) -> None:
         """Record published ROI."""
-        self.published_rois.append((job_number, roi_index, roi))
+        self.published_rois.append((job_id, roi_index, roi))
 
-    def publish_rois(self, job_number: UUID, rois: dict[int, RectangleROI]) -> None:
+    def publish_rois(self, job_id: JobId, rois: dict[int, RectangleROI]) -> None:
         """Record multiple published ROIs."""
         for roi_index, roi in rois.items():
-            self.publish_roi(job_number, roi_index, roi)
+            self.publish_roi(job_id, roi_index, roi)
 
     def reset(self) -> None:
         """Clear all recorded publishes."""

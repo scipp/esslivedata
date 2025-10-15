@@ -6,6 +6,7 @@ import pytest
 import scipp as sc
 
 from ess.livedata.config.models import Interval, RectangleROI
+from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.message import StreamKind
 from ess.livedata.dashboard.roi_publisher import (
     FakeROIPublisher,
@@ -123,44 +124,44 @@ def test_boxes_to_rois_preserves_units_across_multiple_boxes():
 def test_roi_publisher_publishes_single_roi():
     sink = FakeMessageSink()
     publisher = ROIPublisher(sink=sink)
-    job_number = uuid.uuid4()
+    job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
     roi = RectangleROI(
         x=Interval(min=1.0, max=5.0, unit=None),
         y=Interval(min=2.0, max=6.0, unit=None),
     )
 
-    publisher.publish_roi(job_number, roi_index=0, roi=roi)
+    publisher.publish_roi(job_id, roi_index=0, roi=roi)
 
     assert len(sink.messages) == 1
     msg = sink.messages[0]
     assert msg.stream.kind == StreamKind.LIVEDATA_ROI
-    assert msg.stream.name == f"{job_number}/roi_rectangle"
+    assert msg.stream.name == f"detector1/{job_id.job_number}/roi_rectangle"
     assert isinstance(msg.value, sc.DataArray)
 
 
 def test_roi_publisher_raises_for_multiple_rois():
     sink = FakeMessageSink()
     publisher = ROIPublisher(sink=sink)
-    job_number = uuid.uuid4()
+    job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
     roi = RectangleROI(
         x=Interval(min=1.0, max=5.0, unit=None),
         y=Interval(min=2.0, max=6.0, unit=None),
     )
 
     with pytest.raises(NotImplementedError, match="Multiple ROIs are not implemented"):
-        publisher.publish_roi(job_number, roi_index=1, roi=roi)
+        publisher.publish_roi(job_id, roi_index=1, roi=roi)
 
 
 def test_roi_publisher_serializes_to_dataarray():
     sink = FakeMessageSink()
     publisher = ROIPublisher(sink=sink)
-    job_number = uuid.uuid4()
+    job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
     roi = RectangleROI(
         x=Interval(min=1.5, max=5.5, unit=None),
         y=Interval(min=2.5, max=6.5, unit=None),
     )
 
-    publisher.publish_roi(job_number, roi_index=0, roi=roi)
+    publisher.publish_roi(job_id, roi_index=0, roi=roi)
 
     msg = sink.messages[0]
     da = msg.value
@@ -171,27 +172,72 @@ def test_roi_publisher_serializes_to_dataarray():
 
 def test_fake_roi_publisher_records_publishes():
     publisher = FakeROIPublisher()
-    job_number = uuid.uuid4()
+    job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
     roi = RectangleROI(
         x=Interval(min=1.0, max=5.0, unit=None),
         y=Interval(min=2.0, max=6.0, unit=None),
     )
 
-    publisher.publish_roi(job_number, roi_index=0, roi=roi)
+    publisher.publish_roi(job_id, roi_index=0, roi=roi)
 
     assert len(publisher.published_rois) == 1
-    assert publisher.published_rois[0] == (job_number, 0, roi)
+    assert publisher.published_rois[0] == (job_id, 0, roi)
 
 
 def test_fake_roi_publisher_reset():
     publisher = FakeROIPublisher()
-    job_number = uuid.uuid4()
+    job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
     roi = RectangleROI(
         x=Interval(min=1.0, max=5.0, unit=None),
         y=Interval(min=2.0, max=6.0, unit=None),
     )
 
-    publisher.publish_roi(job_number, roi_index=0, roi=roi)
+    publisher.publish_roi(job_id, roi_index=0, roi=roi)
     publisher.reset()
 
     assert len(publisher.published_rois) == 0
+
+
+def test_roi_publisher_isolates_streams_per_detector_in_multi_detector_workflow():
+    """
+    Test that ROI streams are unique per detector in multi-detector workflows.
+
+    When the same workflow runs on multiple detectors (same job_number),
+    each detector must get its own unique ROI stream to prevent cross-talk.
+    """
+    sink = FakeMessageSink()
+    publisher = ROIPublisher(sink=sink)
+
+    # Same job_number, different source_names (real multi-detector scenario)
+    shared_job_number = uuid.uuid4()
+    job_id_mantle = JobId(source_name='mantle', job_number=shared_job_number)
+    job_id_high_res = JobId(source_name='high_resolution', job_number=shared_job_number)
+
+    roi_mantle = RectangleROI(
+        x=Interval(min=1.0, max=5.0, unit=None),
+        y=Interval(min=2.0, max=6.0, unit=None),
+    )
+    roi_high_res = RectangleROI(
+        x=Interval(min=10.0, max=20.0, unit=None),
+        y=Interval(min=15.0, max=25.0, unit=None),
+    )
+
+    # Publish ROIs for both detectors
+    publisher.publish_roi(job_id_mantle, roi_index=0, roi=roi_mantle)
+    publisher.publish_roi(job_id_high_res, roi_index=0, roi=roi_high_res)
+
+    assert len(sink.messages) == 2
+
+    # Verify stream names are unique per detector
+    mantle_msg = sink.messages[0]
+    high_res_msg = sink.messages[1]
+
+    assert mantle_msg.stream.name == f"mantle/{shared_job_number}/roi_rectangle"
+    assert (
+        high_res_msg.stream.name == f"high_resolution/{shared_job_number}/roi_rectangle"
+    )
+    assert mantle_msg.stream.name != high_res_msg.stream.name
+
+    # Verify each message contains the correct ROI
+    assert RectangleROI.from_data_array(mantle_msg.value) == roi_mantle
+    assert RectangleROI.from_data_array(high_res_msg.value) == roi_high_res

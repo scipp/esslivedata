@@ -47,6 +47,15 @@ class JobId:
     source_name: str
     job_number: JobNumber
 
+    def __str__(self) -> str:
+        """
+        String representation for use in stream names and identifiers.
+
+        Returns '{source_name}/{job_number}' to ensure unique identification
+        across detectors in multi-detector workflows.
+        """
+        return f"{self.source_name}/{self.job_number}"
+
 
 class AuxSourcesBase(BaseModel):
     """

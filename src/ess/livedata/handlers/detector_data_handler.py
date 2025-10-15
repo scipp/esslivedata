@@ -59,13 +59,14 @@ class DetectorROIAuxSources(AuxSourcesBase):
         Returns
         -------
         :
-            Mapping from field name 'roi' to job-specific stream name
-            in the format '{job_number}/roi_{shape}' (e.g., 'abc-123/roi_rectangle').
+            Mapping from field name 'roi' to job-specific stream name in the
+            format '{source_name}/{job_number}/roi_{shape}' (e.g.,
+            'mantle/abc-123/roi_rectangle'). The source_name ensures ROI
+            streams are unique per detector in multi-detector workflows where
+            the same job_number is shared across detectors.
         """
         base = self.model_dump(mode='json')
-        return {
-            field: f"{job_id.job_number}/roi_{stream}" for field, stream in base.items()
-        }
+        return {field: f"{job_id}/roi_{stream}" for field, stream in base.items()}
 
 
 @dataclass(frozen=True, kw_only=True)

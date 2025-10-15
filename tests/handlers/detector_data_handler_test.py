@@ -113,15 +113,15 @@ class TestDetectorROIAuxSources:
         with pytest.raises(ValueError, match="Currently only 'rectangle' ROI shape"):
             DetectorROIAuxSources(roi='ellipse')
 
-    def test_render_prefixes_stream_name_with_job_number_and_roi(self) -> None:
-        """Test that render() prefixes stream name with job_number and roi_ prefix."""
+    def test_render_prefixes_stream_name_with_job_id_and_roi(self) -> None:
+        """Test that render() prefixes stream name with full job_id and roi_ prefix."""
         aux_sources = DetectorROIAuxSources(roi='rectangle')
         job_id = JobId(source_name='detector1', job_number=uuid.UUID(int=123))
 
         rendered = aux_sources.render(job_id)
 
-        # Should prefix with job number and roi_ prefix
-        expected_stream = f"{job_id.job_number}/roi_rectangle"
+        # Should prefix with source_name/job_number and roi_ prefix
+        expected_stream = f"detector1/{job_id.job_number}/roi_rectangle"
         assert rendered == {'roi': expected_stream}
 
     def test_render_creates_unique_streams_for_different_jobs(self) -> None:
@@ -135,8 +135,8 @@ class TestDetectorROIAuxSources:
 
         # Each job should get its own unique stream name
         assert rendered_1['roi'] != rendered_2['roi']
-        assert rendered_1['roi'] == f"{job_id_1.job_number}/roi_rectangle"
-        assert rendered_2['roi'] == f"{job_id_2.job_number}/roi_rectangle"
+        assert rendered_1['roi'] == f"detector1/{job_id_1.job_number}/roi_rectangle"
+        assert rendered_2['roi'] == f"detector1/{job_id_2.job_number}/roi_rectangle"
 
     def test_render_field_name_is_roi(self) -> None:
         """Test that the field name in rendered dict is 'roi'."""
@@ -154,3 +154,34 @@ class TestDetectorROIAuxSources:
         aux_sources = DetectorROIAuxSources(roi='rectangle')
         dumped = aux_sources.model_dump(mode='json')
         assert dumped == {'roi': 'rectangle'}
+
+    def test_render_isolates_roi_streams_per_detector_in_multi_detector_workflow(
+        self,
+    ) -> None:
+        """
+        Test that ROI streams are unique per detector in multi-detector workflows.
+
+        When the same workflow runs on multiple detectors (same job_number),
+        each detector must get its own unique ROI stream to prevent cross-talk.
+        This is critical because job_number is shared across all detectors in
+        the same workflow run.
+        """
+        aux_sources = DetectorROIAuxSources(roi='rectangle')
+        shared_job_number = uuid.uuid4()
+
+        # Same job_number, different source_names (real multi-detector scenario)
+        job_id_mantle = JobId(source_name='mantle', job_number=shared_job_number)
+        job_id_high_res = JobId(
+            source_name='high_resolution', job_number=shared_job_number
+        )
+
+        rendered_mantle = aux_sources.render(job_id_mantle)
+        rendered_high_res = aux_sources.render(job_id_high_res)
+
+        # Each detector should get its own unique stream
+        assert rendered_mantle['roi'] != rendered_high_res['roi']
+        assert rendered_mantle['roi'] == f"mantle/{shared_job_number}/roi_rectangle"
+        assert (
+            rendered_high_res['roi']
+            == f"high_resolution/{shared_job_number}/roi_rectangle"
+        )

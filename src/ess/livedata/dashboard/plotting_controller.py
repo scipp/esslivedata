@@ -288,7 +288,6 @@ class PlottingController:
         self,
         box_stream: hv.streams.BoxEdit,
         result_key: ResultKey,
-        job_number: JobNumber,
         x_unit: str | None,
         y_unit: str | None,
     ) -> None:
@@ -300,9 +299,7 @@ class PlottingController:
         box_stream:
             The BoxEdit stream to watch.
         result_key:
-            The result key for tracking published ROIs.
-        job_number:
-            The job number to publish ROIs for.
+            The result key for tracking published ROIs (contains job_id).
         x_unit:
             Unit for x coordinates, extracted from the detector data.
         y_unit:
@@ -331,13 +328,13 @@ class PlottingController:
                 }
 
                 if changed_rois:
-                    self._roi_publisher.publish_rois(job_number, changed_rois)
+                    self._roi_publisher.publish_rois(result_key.job_id, changed_rois)
                     # Update tracking
                     self._last_published_rois[result_key] = current_rois
                     self._logger.info(
                         "Published %d ROI update(s) for job %s",
                         len(changed_rois),
-                        job_number,
+                        result_key.job_id,
                     )
 
             except Exception as e:
@@ -486,9 +483,7 @@ class PlottingController:
                         else None
                     )
 
-                self._setup_roi_watcher(
-                    box_stream, first_detector_key, job_number, x_unit, y_unit
-                )
+                self._setup_roi_watcher(box_stream, first_detector_key, x_unit, y_unit)
 
             # Overlay boxes on DynamicMap (not inside callback - this is crucial!)
             interactive_boxes = boxes.opts(fill_alpha=0.3, line_width=2)
