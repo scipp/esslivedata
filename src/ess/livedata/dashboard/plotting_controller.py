@@ -26,7 +26,7 @@ from .job_service import JobService
 from .plot_params import PlotParams2d
 from .plots import ImagePlotter, LinePlotter
 from .plotting import PlotterSpec, plotter_registry
-from .roi_publisher import boxes_to_rois
+from .roi_publisher import ROIPublisher, boxes_to_rois
 from .stream_manager import StreamManager
 
 K = TypeVar('K', bound=Hashable)
@@ -57,6 +57,8 @@ class PlottingController:
     cleanup_fraction:
         Fraction of configurations to remove when cleanup is triggered. The oldest
         configurations are removed first.
+    roi_publisher:
+        Publisher for ROI updates to Kafka. If None, ROI publishing is disabled.
     """
 
     _plotter_config_key = keys.PERSISTENT_PLOTTING_CONFIGS.create_key()
@@ -69,7 +71,7 @@ class PlottingController:
         logger: logging.Logger | None = None,
         max_persistent_configs: int = 100,
         cleanup_fraction: float = 0.2,
-        roi_publisher=None,
+        roi_publisher: ROIPublisher | None = None,
     ) -> None:
         self._job_service = job_service
         self._stream_manager = stream_manager
