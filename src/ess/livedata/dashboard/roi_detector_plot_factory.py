@@ -10,10 +10,9 @@ from functools import partial
 import holoviews as hv
 
 from ess.livedata.config.models import RectangleROI
-from ess.livedata.config.workflow_spec import JobId, JobNumber, ResultKey
+from ess.livedata.config.workflow_spec import JobId, JobNumber, ResultKey, WorkflowId
 
 from .data_subscriber import FilteredMergingStreamAssembler
-from .job_service import JobService
 from .plot_params import LayoutParams, PlotParams2d
 from .plots import ImagePlotter, LinePlotter
 from .roi_publisher import ROIPublisher, boxes_to_rois
@@ -29,8 +28,6 @@ class ROIDetectorPlotFactory:
 
     Parameters
     ----------
-    job_service:
-        Service for accessing job data and information.
     stream_manager:
         Manager for creating data streams.
     roi_publisher:
@@ -41,12 +38,10 @@ class ROIDetectorPlotFactory:
 
     def __init__(
         self,
-        job_service: JobService,
         stream_manager: StreamManager,
         roi_publisher: ROIPublisher | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
-        self._job_service = job_service
         self._stream_manager = stream_manager
         self._roi_publisher = roi_publisher
         self._logger = logger or logging.getLogger(__name__)
@@ -57,9 +52,9 @@ class ROIDetectorPlotFactory:
 
     def create_roi_detector_plot(
         self,
+        workflow_id: WorkflowId,
         job_number: JobNumber,
-        source_names: list[str],
-        output_name: str | None,
+        detector_items: dict[ResultKey, hv.streams.Pipe],
         params: PlotParams2d,
     ) -> hv.Layout:
         """
@@ -79,12 +74,12 @@ class ROIDetectorPlotFactory:
 
         Parameters
         ----------
+        workflow_id:
+            The workflow ID for creating ResultKeys.
         job_number:
             The job number to create the plot for.
-        source_names:
-            List of data source names to include in the plot.
-        output_name:
-            The selected output name (e.g., 'current', 'cumulative').
+        detector_items:
+            Dictionary mapping ResultKeys to data pipes for detector outputs.
         params:
             The plotter parameters (PlotParams2d).
 
@@ -94,49 +89,31 @@ class ROIDetectorPlotFactory:
             A HoloViews Layout with detector image (with BoxEdit overlay) and
             ROI spectrum plot.
         """
-        job_data = self._job_service.job_data[job_number]
-
-        # Separate detector data from ROI spectrum data by output name
-        detector_items: dict[ResultKey, hv.streams.Pipe] = {}
-        # Collect ROI spectrum keys (will subscribe even if data doesn't exist yet)
-        spectrum_keys: list[ResultKey] = []
 
         # Maximum number of ROIs to support (subscribe upfront for dynamic addition)
         max_roi_count = 3
 
-        for source_name in source_names:
-            source_outputs = job_data[source_name]
-
-            # Get detector image (2D) - the selected output
-            has_detector_data = False
-            if output_name and output_name in source_outputs:
-                result_key = self._get_result_key(
-                    job_number=job_number,
-                    source_name=source_name,
-                    output_name=output_name,
-                )
-                detector_items[result_key] = source_outputs[output_name]
-                has_detector_data = True
-
-            # Get or subscribe to ROI spectra (1D) - may not exist yet
-            # Only create spectrum plot if we have detector data
-            if output_name and has_detector_data:
+        # Derive spectrum keys from detector items
+        # For each detector ResultKey with output_name='current', subscribe to
+        # 'roi_current_0', 'roi_current_1', etc.
+        spectrum_keys: list[ResultKey] = []
+        for detector_key in detector_items.keys():
+            if detector_key.output_name:
                 # Subscribe to multiple ROI indices upfront
                 # (roi_current_0, roi_current_1, etc.)
                 # This allows ROIs to be added dynamically after plot creation
-                # LinePlotter will overlay all of them on a single plot
-                roi_base_name = f'roi_{output_name}'
+                roi_base_name = f'roi_{detector_key.output_name}'
 
                 # Subscribe to all ROI indices (0 through max_roi_count-1)
                 for roi_idx in range(max_roi_count):
                     roi_spectrum_name = f'{roi_base_name}_{roi_idx}'
-                    result_key = self._get_result_key(
-                        job_number=job_number,
-                        source_name=source_name,
+                    spectrum_key = ResultKey(
+                        workflow_id=workflow_id,
+                        job_id=detector_key.job_id,
                         output_name=roi_spectrum_name,
                     )
                     # Subscribe to the key regardless of whether data exists yet
-                    spectrum_keys.append(result_key)
+                    spectrum_keys.append(spectrum_key)
 
         plots = []
 
@@ -258,33 +235,6 @@ class ROIDetectorPlotFactory:
             return hv.Layout(plots)
         else:
             return hv.Layout(plots).cols(2)
-
-    def _get_result_key(
-        self, job_number: JobNumber, source_name: str, output_name: str | None
-    ) -> ResultKey:
-        """
-        Get the ResultKey for a given job number and source name.
-
-        Parameters
-        ----------
-        job_number:
-            The job number.
-        source_name:
-            The name of the data source.
-        output_name:
-            The name of the output.
-
-        Returns
-        -------
-        :
-            The result key identifying the specific job output.
-        """
-        workflow_id = self._job_service.job_info[job_number]
-        return ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(job_number=job_number, source_name=source_name),
-            output_name=output_name,
-        )
 
     def _setup_roi_watcher(
         self,

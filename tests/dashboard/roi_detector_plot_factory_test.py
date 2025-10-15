@@ -63,10 +63,9 @@ def stream_manager(data_service):
 
 
 @pytest.fixture
-def roi_plot_factory(job_service, stream_manager):
+def roi_plot_factory(stream_manager):
     """Create a ROIDetectorPlotFactory for testing."""
     return ROIDetectorPlotFactory(
-        job_service=job_service,
         stream_manager=stream_manager,
     )
 
@@ -89,11 +88,35 @@ def spectrum_data():
     )
 
 
+def build_detector_items(
+    data_service: DataService, detector_keys: list[ResultKey]
+) -> dict[ResultKey, hv.streams.Pipe]:
+    """
+    Build detector_items dict from data_service for testing.
+
+    Parameters
+    ----------
+    data_service:
+        The data service containing the data.
+    detector_keys:
+        List of ResultKeys for detector outputs.
+
+    Returns
+    -------
+    :
+        Dictionary mapping ResultKeys to Pipe streams with data.
+    """
+    items = {}
+    for key in detector_keys:
+        if key in data_service:
+            items[key] = data_service[key]
+    return items
+
+
 class TestROIDetectorPlotFactory:
     def test_create_roi_detector_plot_returns_layout(
         self,
         roi_plot_factory,
-        job_service,
         data_service,
         workflow_id,
         job_number,
@@ -114,18 +137,21 @@ class TestROIDetectorPlotFactory:
             output_name='roi_current_0',
         )
 
-        # Add data to data service (job service will pick it up automatically)
+        # Add data to data service
         data_service[detector_key] = detector_data
         data_service[spectrum_key] = spectrum_data
+
+        # Build detector items
+        detector_items = build_detector_items(data_service, [detector_key])
 
         # Create plot params
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot
         result = roi_plot_factory.create_roi_detector_plot(
+            workflow_id=workflow_id,
             job_number=job_number,
-            source_names=['detector_data'],
-            output_name='current',
+            detector_items=detector_items,
             params=params,
         )
 
@@ -137,7 +163,6 @@ class TestROIDetectorPlotFactory:
     def test_create_roi_detector_plot_with_only_detector(
         self,
         roi_plot_factory,
-        job_service,
         data_service,
         workflow_id,
         job_number,
@@ -154,14 +179,17 @@ class TestROIDetectorPlotFactory:
         # Add data to data service
         data_service[detector_key] = detector_data
 
+        # Build detector items
+        detector_items = build_detector_items(data_service, [detector_key])
+
         # Create plot params
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot
         result = roi_plot_factory.create_roi_detector_plot(
+            workflow_id=workflow_id,
             job_number=job_number,
-            source_names=['detector_data'],
-            output_name='current',
+            detector_items=detector_items,
             params=params,
         )
 
@@ -172,7 +200,6 @@ class TestROIDetectorPlotFactory:
     def test_create_roi_detector_plot_stores_box_stream(
         self,
         roi_plot_factory,
-        job_service,
         data_service,
         workflow_id,
         job_number,
@@ -196,6 +223,9 @@ class TestROIDetectorPlotFactory:
         data_service[detector_key] = detector_data
         data_service[spectrum_key] = spectrum_data
 
+        # Build detector items
+        detector_items = build_detector_items(data_service, [detector_key])
+
         # Create plot params
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
@@ -204,9 +234,9 @@ class TestROIDetectorPlotFactory:
 
         # Create ROI detector plot
         roi_plot_factory.create_roi_detector_plot(
+            workflow_id=workflow_id,
             job_number=job_number,
-            source_names=['detector_data'],
-            output_name='current',
+            detector_items=detector_items,
             params=params,
         )
 
@@ -220,7 +250,6 @@ class TestROIDetectorPlotFactory:
     def test_create_roi_detector_plot_separates_detector_and_spectrum(
         self,
         roi_plot_factory,
-        job_service,
         data_service,
         workflow_id,
         job_number,
@@ -244,14 +273,17 @@ class TestROIDetectorPlotFactory:
         data_service[detector_key] = detector_data
         data_service[spectrum_key] = spectrum_data
 
+        # Build detector items
+        detector_items = build_detector_items(data_service, [detector_key])
+
         # Create plot params
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot
         result = roi_plot_factory.create_roi_detector_plot(
+            workflow_id=workflow_id,
             job_number=job_number,
-            source_names=['detector_data'],
-            output_name='cumulative',
+            detector_items=detector_items,
             params=params,
         )
 
@@ -267,25 +299,21 @@ class TestROIDetectorPlotFactory:
     def test_create_roi_detector_plot_with_empty_data(
         self,
         roi_plot_factory,
-        job_service,
-        data_service,
         workflow_id,
         job_number,
     ):
         """Test ROI detector plot with no data returns placeholder."""
-        # Don't add any data - just create empty job data structure
-        # We need to ensure the job_number is in job_data and job_info
-        job_service._job_data[job_number] = {'detector_data': {}}
-        job_service._job_info[job_number] = workflow_id
+        # Pass empty detector_items dict (no data)
+        detector_items = {}
 
         # Create plot params
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot with no data
         result = roi_plot_factory.create_roi_detector_plot(
+            workflow_id=workflow_id,
             job_number=job_number,
-            source_names=['detector_data'],
-            output_name='current',
+            detector_items=detector_items,
             params=params,
         )
 
@@ -318,14 +346,17 @@ def test_roi_detector_plot_publishes_roi_on_box_edit(
     )
     data_service[detector_key] = detector_data
 
+    # Build detector items
+    detector_items = build_detector_items(data_service, [detector_key])
+
     # Create plot params
     params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
     # Create ROI detector plot
     roi_plot_factory.create_roi_detector_plot(
+        workflow_id=workflow_id,
         job_number=job_number,
-        source_names=['detector_data'],
-        output_name='current',
+        detector_items=detector_items,
         params=params,
     )
 
@@ -371,12 +402,15 @@ def test_roi_detector_plot_only_publishes_changed_rois(
     )
     data_service[detector_key] = detector_data
 
+    # Build detector items
+    detector_items = build_detector_items(data_service, [detector_key])
+
     # Create plot
     params = PlotParams2d(plot_scale=PlotScaleParams2d())
     roi_plot_factory.create_roi_detector_plot(
+        workflow_id=workflow_id,
         job_number=job_number,
-        source_names=['detector_data'],
-        output_name='current',
+        detector_items=detector_items,
         params=params,
     )
 
@@ -415,12 +449,15 @@ def test_roi_detector_plot_without_publisher_does_not_crash(
     )
     data_service[detector_key] = detector_data
 
+    # Build detector items
+    detector_items = build_detector_items(data_service, [detector_key])
+
     # Create plot - should not crash
     params = PlotParams2d(plot_scale=PlotScaleParams2d())
     result = roi_plot_factory.create_roi_detector_plot(
+        workflow_id=workflow_id,
         job_number=job_number,
-        source_names=['detector_data'],
-        output_name='current',
+        detector_items=detector_items,
         params=params,
     )
 

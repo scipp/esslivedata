@@ -79,7 +79,6 @@ class PlottingController:
         self._max_persistent_configs = max_persistent_configs
         self._cleanup_fraction = cleanup_fraction
         self._roi_detector_plot_factory = ROIDetectorPlotFactory(
-            job_service=job_service,
             stream_manager=stream_manager,
             roi_publisher=roi_publisher,
             logger=logger,
@@ -320,13 +319,22 @@ class PlottingController:
             includes interactive dimensions that generate widgets when rendered.
             For roi_detector, returns a Layout with separate DynamicMaps.
         """
+        workflow_id = self._job_service.job_info[job_number]
         self._save_plotting_config(
-            workflow_id=self._job_service.job_info[job_number],
+            workflow_id=workflow_id,
             source_names=source_names,
             output_name=output_name,
             plot_name=plot_name,
             params=params,
         )
+
+        # Prepare items dict for all plotters (including roi_detector)
+        items = {
+            self.get_result_key(
+                job_number=job_number, source_name=source_name, output_name=output_name
+            ): self._job_service.job_data[job_number][source_name][output_name]
+            for source_name in source_names
+        }
 
         # Special case for roi_detector: delegate to factory
         # to maintain BoxEdit interactivity
@@ -336,18 +344,11 @@ class PlottingController:
                     f"roi_detector requires PlotParams2d, got {type(params).__name__}"
                 )
             return self._roi_detector_plot_factory.create_roi_detector_plot(
+                workflow_id=workflow_id,
                 job_number=job_number,
-                source_names=source_names,
-                output_name=output_name,
+                detector_items=items,
                 params=params,
             )
-
-        items = {
-            self.get_result_key(
-                job_number=job_number, source_name=source_name, output_name=output_name
-            ): self._job_service.job_data[job_number][source_name][output_name]
-            for source_name in source_names
-        }
         pipe = self._stream_manager.make_merging_stream(items)
         plotter = plotter_registry.create_plotter(plot_name, params=params)
 
