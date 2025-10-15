@@ -79,9 +79,7 @@ class PlottingController:
         self._max_persistent_configs = max_persistent_configs
         self._cleanup_fraction = cleanup_fraction
         self._roi_detector_plot_factory = ROIDetectorPlotFactory(
-            stream_manager=stream_manager,
-            roi_publisher=roi_publisher,
-            logger=logger,
+            stream_manager=stream_manager, roi_publisher=roi_publisher, logger=logger
         )
 
     def get_available_plotters(
@@ -339,10 +337,6 @@ class PlottingController:
         # Special case for roi_detector: delegate to factory
         # to maintain BoxEdit interactivity
         if plot_name == 'roi_detector':
-            if not isinstance(params, PlotParams2d):
-                raise TypeError(
-                    f"roi_detector requires PlotParams2d, got {type(params).__name__}"
-                )
             return self._roi_detector_plot_factory.create_roi_detector_plot(
                 workflow_id=workflow_id,
                 job_number=job_number,

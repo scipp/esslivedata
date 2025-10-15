@@ -53,7 +53,6 @@ class ROIDetectorPlotFactory:
     def create_roi_detector_plot(
         self,
         workflow_id: WorkflowId,
-        job_number: JobNumber,
         detector_items: dict[ResultKey, hv.streams.Pipe],
         params: PlotParams2d,
     ) -> hv.Layout:
@@ -76,8 +75,6 @@ class ROIDetectorPlotFactory:
         ----------
         workflow_id:
             The workflow ID for creating ResultKeys.
-        job_number:
-            The job number to create the plot for.
         detector_items:
             Dictionary mapping ResultKeys to data pipes for detector outputs.
         params:
