@@ -458,27 +458,18 @@ class PlottingController:
             if self._roi_publisher:
                 # Extract coordinate units from the detector data
                 first_detector_data = next(iter(detector_items.values()))
-                coord_names = list(first_detector_data.dims)
-                if len(coord_names) != 2:
-                    self._logger.warning(
-                        "Expected 2D detector data, got %dD data. "
-                        "ROI coordinates may lack units.",
-                        len(coord_names),
-                    )
-                    x_unit, y_unit = None, None
-                else:
-                    # Extract units from the coordinates
-                    x_dim, y_dim = coord_names[1], coord_names[0]
-                    x_unit = (
-                        str(first_detector_data.coords[x_dim].unit)
-                        if x_dim in first_detector_data.coords
-                        else None
-                    )
-                    y_unit = (
-                        str(first_detector_data.coords[y_dim].unit)
-                        if y_dim in first_detector_data.coords
-                        else None
-                    )
+                x_dim, y_dim = first_detector_data.dims[1], first_detector_data.dims[0]
+
+                # Check each coordinate independently and extract unit if present
+                x_unit = None
+                if x_dim in first_detector_data.coords:
+                    x_coord_unit = first_detector_data.coords[x_dim].unit
+                    x_unit = str(x_coord_unit) if x_coord_unit is not None else None
+
+                y_unit = None
+                if y_dim in first_detector_data.coords:
+                    y_coord_unit = first_detector_data.coords[y_dim].unit
+                    y_unit = str(y_coord_unit) if y_coord_unit is not None else None
 
                 self._setup_roi_watcher(box_stream, first_detector_key, x_unit, y_unit)
 
