@@ -20,7 +20,6 @@ from ess.reduce.live.roi import ROIFilter
 
 from .. import parameter_models
 from ..config import models
-from ..core.handler import Accumulator
 from .workflow_factory import Workflow
 
 
@@ -49,79 +48,6 @@ class DetectorViewParams(pydantic.BaseModel):
             unit=parameter_models.TimeUnit.MS,
         ),
     )
-
-
-class ROIBasedTOAHistogram(Accumulator[sc.DataArray, sc.DataArray]):
-    def __init__(
-        self,
-        *,
-        toa_edges: sc.Variable,
-        roi_filter: ROIFilter,
-    ):
-        self._roi_filter = roi_filter
-        self._chunks: list[sc.DataArray] = []
-        self._nbin = -1
-        self._edges = toa_edges
-        self._edges_ns = toa_edges.to(unit='ns')
-
-    def configure_from_roi_model(
-        self, roi: models.RectangleROI | models.PolygonROI | models.EllipseROI
-    ) -> None:
-        """
-        Configure the ROI filter from an ROI model (RectangleROI, PolygonROI, etc.).
-
-        Parameters
-        ----------
-        roi:
-            An ROI model from config.models (RectangleROI, PolygonROI, or EllipseROI).
-        """
-        if isinstance(roi, models.RectangleROI):
-            y, x = self._roi_filter._indices.dims
-            intervals = roi.get_bounds(x_dim=x, y_dim=y)
-            self._roi_filter.set_roi_from_intervals(sc.DataGroup(intervals))
-        else:
-            roi_type = type(roi).__name__
-            raise ValueError(
-                f"Only rectangle ROI is currently supported, got {roi_type}"
-            )
-
-    def _add_weights(self, data: sc.DataArray) -> None:
-        constituents = data.bins.constituents
-        content = constituents['data']
-        content.coords['time_of_arrival'] = content.data
-        content.data = sc.ones(
-            dims=content.dims, shape=content.shape, dtype='float32', unit='counts'
-        )
-        data.data = sc.bins(**constituents, validate_indices=False)
-
-    def add(self, timestamp: int, data: sc.DataArray) -> None:
-        # Note that the preprocessor does *not* add weights of 1 (unlike NeXus loaders).
-        # Instead, the data column of the content corresponds to the time of arrival.
-        filtered, scale = self._roi_filter.apply(data)
-        self._add_weights(filtered)
-        filtered *= scale
-        chunk = filtered.hist(time_of_arrival=self._edges_ns, dim=filtered.dim)
-        self._chunks.append(chunk)
-
-    def get(self) -> sc.DataArray:
-        if not self._chunks:
-            # Return empty histogram if no data
-            da = sc.DataArray(
-                data=sc.zeros(
-                    dims=['time_of_arrival'],
-                    shape=[len(self._edges) - 1],
-                    unit='counts',
-                ),
-                coords={'time_of_arrival': self._edges},
-            )
-        else:
-            da = sc.reduce(self._chunks).sum()
-            self._chunks.clear()
-            da.coords['time_of_arrival'] = self._edges
-        return da
-
-    def clear(self) -> None:
-        self._chunks.clear()
 
 
 class ROIHistogram:
