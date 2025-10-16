@@ -123,6 +123,14 @@ class KafkaToDa00Adapter(KafkaAdapter[list[dataarray_da00.Variable]]):
         return Message(timestamp=timestamp, stream=key, value=da00.data)
 
 
+# class KafkaToAd00Adapter(KafkaAdapter[area_detector_ad00.ADArray]):
+#     def adapt(self, message: KafkaMessage) -> Message[area_detector_ad00.ADArray]:
+#         ad00 = area_detector_ad00.deserialise_ad00(message.value())
+#         key = self.get_stream_id(topic=message.topic(), source_name=ad00.source_name)
+#         timestamp = ad00.timestamp_ns
+#         return Message(timestamp=timestamp, stream=key, value=ad00)
+
+
 class KafkaToF144Adapter(KafkaAdapter[logdata_f144.ExtractedLogData]):
     def __init__(self, *, stream_lut: StreamLUT | None = None):
         super().__init__(stream_lut=stream_lut, stream_kind=StreamKind.LOG)
