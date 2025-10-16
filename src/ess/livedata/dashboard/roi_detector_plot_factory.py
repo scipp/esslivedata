@@ -83,7 +83,9 @@ def boxes_to_rois(
     return rois
 
 
-def rois_to_rectangles(rois: dict[int, RectangleROI]) -> list[tuple[float, ...]]:
+def rois_to_rectangles(
+    rois: dict[int, RectangleROI], colors: list[str] | None = None
+) -> list[tuple[float, ...]]:
     """
     Convert RectangleROI instances to HoloViews Rectangles format.
 
@@ -91,26 +93,32 @@ def rois_to_rectangles(rois: dict[int, RectangleROI]) -> list[tuple[float, ...]]
     ----------
     rois:
         Dictionary mapping ROI index to RectangleROI.
+    colors:
+        Optional list of colors to assign to rectangles based on ROI index.
+        If provided, each rectangle tuple will include the color as a fifth element.
 
     Returns
     -------
     :
-        List of (x0, y0, x1, y1) tuples for HoloViews Rectangles.
-        Returned in sorted order by ROI index.
+        List of (x0, y0, x1, y1) or (x0, y0, x1, y1, color) tuples for HoloViews
+        Rectangles. Returned in sorted order by ROI index.
         All coordinates are explicitly cast to float to ensure compatibility
         with BoxEdit drag operations.
     """
     rectangles = []
     for idx in sorted(rois.keys()):
         roi = rois[idx]
-        rectangles.append(
-            (
-                float(roi.x.min),
-                float(roi.y.min),
-                float(roi.x.max),
-                float(roi.y.max),
-            )
+        rect_tuple = (
+            float(roi.x.min),
+            float(roi.y.min),
+            float(roi.x.max),
+            float(roi.y.max),
         )
+        if colors is not None:
+            # Add color based on ROI index (cycle if necessary)
+            color = colors[idx % len(colors)]
+            rect_tuple = (*rect_tuple, color)
+        rectangles.append(rect_tuple)
     return rectangles
 
 
@@ -164,6 +172,8 @@ class ROIPlotState:
         Publisher for ROI updates. If None, publishing is disabled.
     logger:
         Logger instance.
+    colors:
+        List of colors to use for ROI rectangles, indexed by ROI number.
     initial_active_indices:
         Optional set of ROI indices that should be active initially.
         If None, no ROIs are active initially. This must be set before
@@ -182,6 +192,7 @@ class ROIPlotState:
         y_unit: str | None,
         roi_publisher: ROIPublisher | None,
         logger: logging.Logger,
+        colors: list[str],
         initial_active_indices: set[int] | None = None,
         initial_rois: dict[int, RectangleROI] | None = None,
     ) -> None:
@@ -192,6 +203,7 @@ class ROIPlotState:
         self.y_unit = y_unit
         self._roi_publisher = roi_publisher
         self._logger = logger
+        self._colors = colors
 
         # Single source of truth for current ROI state
         # Initialize from initial_rois to establish baseline
@@ -285,7 +297,7 @@ class ROIPlotState:
                 box_data = rois_to_box_data(backend_rois)
 
                 # Update Pipe to refresh visual representation (via DynamicMap)
-                rectangles = rois_to_rectangles(backend_rois)
+                rectangles = rois_to_rectangles(backend_rois, colors=self._colors)
                 self.boxes_pipe.send(rectangles)
 
                 # Update BoxEdit stream to enable drag operations
@@ -536,11 +548,16 @@ class ROIDetectorPlotFactory:
             detector_plotter, streams=[merged_detector_pipe], cache_size=1
         ).opts(shared_axes=False)
 
+        # Get color cycle for ROI styling
+        default_colors = hv.Cycle.default_cycles["default_colors"]
+        max_roi_count = params.roi_options.max_roi_count
+        colors_list = default_colors[:max_roi_count]
+
         # Initialize Rectangles with existing ROI shapes if available
         initial_rectangles = []
         initial_box_data = {}
         if initial_rois:
-            initial_rectangles = rois_to_rectangles(initial_rois)
+            initial_rectangles = rois_to_rectangles(initial_rois, colors=colors_list)
             initial_box_data = rois_to_box_data(initial_rois)
 
         # Create Pipe for programmatic updates to rectangles
@@ -548,16 +565,11 @@ class ROIDetectorPlotFactory:
 
         # Create DynamicMap that wraps Rectangles
         # This allows programmatic updates via boxes_pipe.send()
-        # Get color cycle for ROI styling
-        default_colors = hv.Cycle.default_cycles["default_colors"]
-        max_roi_count = params.roi_options.max_roi_count
-
+        # Rectangles include color as a vdim to preserve per-rectangle colors
         def make_boxes(data):
             if not data:
                 data = []
-            return hv.Rectangles(data, vdims=[]).opts(
-                color=hv.Cycle(values=default_colors[:max_roi_count])
-            )
+            return hv.Rectangles(data, vdims=['color']).opts(color='color')
 
         boxes_dmap = hv.DynamicMap(make_boxes, streams=[boxes_pipe])
 
@@ -593,6 +605,7 @@ class ROIDetectorPlotFactory:
             y_unit=y_unit,
             roi_publisher=self._roi_publisher,
             logger=self._logger,
+            colors=colors_list,
             initial_active_indices=initial_active_indices,
             initial_rois=initial_rois,
         )

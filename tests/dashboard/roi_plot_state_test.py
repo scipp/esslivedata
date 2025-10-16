@@ -62,6 +62,9 @@ def fake_publisher():
 @pytest.fixture
 def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
     """Create a ROIPlotState for testing."""
+    import holoviews as hv
+
+    default_colors = hv.Cycle.default_cycles["default_colors"]
     return ROIPlotState(
         result_key=result_key,
         box_stream=box_stream,
@@ -70,6 +73,7 @@ def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
         y_unit='m',
         roi_publisher=fake_publisher,
         logger=logging.getLogger(__name__),
+        colors=default_colors[:10],
     )
 
 
@@ -82,6 +86,7 @@ class TestROIPlotState:
         """Test that ROIPlotState attaches callback to box_stream on init."""
         boxes_pipe = hv.streams.Pipe(data=[])
         box_stream = hv.streams.BoxEdit()
+        default_colors = hv.Cycle.default_cycles["default_colors"]
         ROIPlotState(
             result_key=result_key,
             box_stream=box_stream,
@@ -90,6 +95,7 @@ class TestROIPlotState:
             y_unit='m',
             roi_publisher=fake_publisher,
             logger=logging.getLogger(__name__),
+            colors=default_colors[:10],
         )
 
         # Trigger an event to verify callback is attached
@@ -273,6 +279,7 @@ class TestROIPlotState:
         """Test that no publishing happens when publisher is None."""
         boxes_pipe = hv.streams.Pipe(data=[])
         box_stream = hv.streams.BoxEdit()
+        default_colors = hv.Cycle.default_cycles["default_colors"]
         state = ROIPlotState(
             result_key=result_key,
             box_stream=box_stream,
@@ -281,6 +288,7 @@ class TestROIPlotState:
             y_unit='m',
             roi_publisher=None,  # No publisher
             logger=logging.getLogger(__name__),
+            colors=default_colors[:10],
         )
 
         # Simulate box edit
@@ -301,6 +309,7 @@ class TestROIPlotState:
         boxes_pipe = hv.streams.Pipe(data=[])
         box_stream = hv.streams.BoxEdit()
         failing_publisher = FailingPublisher()
+        default_colors = hv.Cycle.default_cycles["default_colors"]
         ROIPlotState(
             result_key=result_key,
             box_stream=box_stream,
@@ -309,6 +318,7 @@ class TestROIPlotState:
             y_unit='m',
             roi_publisher=failing_publisher,
             logger=logging.getLogger(__name__),
+            colors=default_colors[:10],
         )
 
         with caplog.at_level(logging.ERROR):

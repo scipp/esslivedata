@@ -78,6 +78,9 @@ def fake_publisher():
 @pytest.fixture
 def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
     """Create a ROIPlotState for testing."""
+    import holoviews as hv
+
+    default_colors = hv.Cycle.default_cycles["default_colors"]
     return ROIPlotState(
         result_key=result_key,
         box_stream=box_stream,
@@ -86,6 +89,7 @@ def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
         y_unit='m',
         roi_publisher=fake_publisher,
         logger=logging.getLogger(__name__),
+        colors=default_colors[:10],
     )
 
 
@@ -113,9 +117,12 @@ class TestBackendROIUpdate:
 
         roi_plot_state.on_backend_roi_update(backend_rois)
 
-        # Verify pipe was updated
+        # Verify pipe was updated with color included
         assert len(pipe_updates) == 1
-        assert pipe_updates[0] == [(1.0, 2.0, 3.0, 4.0)]
+        assert len(pipe_updates[0]) == 1
+        assert pipe_updates[0][0][:4] == (1.0, 2.0, 3.0, 4.0)
+        # Fifth element should be the color (from colors list at index 0)
+        assert isinstance(pipe_updates[0][0][4], str)  # Color is a string
 
     def test_backend_update_updates_box_stream(self, roi_plot_state, box_stream):
         """Test that backend update triggers BoxEdit event with dict format."""
