@@ -22,6 +22,21 @@ from ess.livedata.parameter_models import TOAEdges
 from ess.reduce.live.raw import RollingDetectorView
 from ess.reduce.live.roi import ROIFilter
 
+# Detector layout constants
+# 4x4 detector grid with 10mm spacing (coordinates in mm):
+#   Row 0 (y=0):  [0: (0,0),   1: (10,0),  2: (20,0),  3: (30,0)]
+#   Row 1 (y=10): [4: (0,10),  5: (10,10), 6: (20,10), 7: (30,10)]
+#   Row 2 (y=20): [8: (0,20),  9: (10,20), 10:(20,20), 11:(30,20)]
+#   Row 3 (y=30): [12:(0,30),  13:(10,30), 14:(20,30), 15:(30,30)]
+#
+# Sample events are at pixels: [0, 1, 2, 5, 6, 10, 11, 15]
+
+# Expected event counts for various ROI configurations
+TOTAL_SAMPLE_EVENTS = 8  # All events in sample_detector_events
+STANDARD_ROI_EVENTS = 3  # Pixels 5, 6, 10 in x=[5,25]mm, y=[5,25]mm
+WIDE_ROI_EVENTS = 4  # Pixels 1, 2, 5, 6 in x=[5,25]mm, y=[-5,15]mm
+CORNER_ROI_EVENTS = 1  # Pixel 15 only in x=[25,35]mm, y=[25,35]mm
+
 
 def make_rectangle_roi(
     x_min: float,
@@ -36,6 +51,39 @@ def make_rectangle_roi(
         x=Interval(min=x_min, max=x_max, unit=x_unit),
         y=Interval(min=y_min, max=y_max, unit=y_unit),
     )
+
+
+def roi_to_accumulate_data(
+    roi: RectangleROI, index: int = 0
+) -> dict[str, sc.DataArray]:
+    """Convert ROI to accumulate data format."""
+    return {'roi': RectangleROI.to_concatenated_data_array({index: roi})}
+
+
+def assert_has_detector_view_results(result: dict) -> None:
+    """Assert result contains standard detector view outputs."""
+    assert 'cumulative' in result
+    assert 'current' in result
+
+
+def assert_has_roi_results(result: dict, roi_index: int = 0) -> None:
+    """Assert result contains ROI histogram outputs for given index."""
+    assert f'roi_cumulative_{roi_index}' in result
+    assert f'roi_current_{roi_index}' in result
+
+
+def assert_roi_config_published(result: dict) -> None:
+    """Assert ROI configuration was published in result."""
+    assert 'roi_rectangle' in result
+
+
+def assert_roi_event_count(
+    result: dict, expected: int, roi_index: int = 0, view: str = 'current'
+) -> None:
+    """Assert ROI histogram has expected event count."""
+    key = f'roi_{view}_{roi_index}'
+    actual = sc.sum(result[key]).value
+    assert actual == expected, f"Expected {expected} events in {key}, got {actual}"
 
 
 @pytest.fixture
@@ -100,6 +148,51 @@ def sample_detector_events(detector_number: sc.Variable) -> sc.DataArray:
     return grouper.get()
 
 
+@pytest.fixture
+def standard_roi() -> RectangleROI:
+    """Standard ROI covering pixels 5, 6, 10 (x=[5,25]mm, y=[5,25]mm)."""
+    return make_rectangle_roi(5.0, 25.0, 5.0, 25.0, 'mm', 'mm')
+
+
+@pytest.fixture
+def wide_roi() -> RectangleROI:
+    """Wide ROI covering pixels 1, 2, 5, 6 (x=[5,25]mm, y=[-5,15]mm)."""
+    return make_rectangle_roi(5.0, 25.0, -5.0, 15.0, 'mm', 'mm')
+
+
+@pytest.fixture
+def corner_roi() -> RectangleROI:
+    """Corner ROI covering only pixel 15 (x=[25,35]mm, y=[25,35]mm)."""
+    return make_rectangle_roi(25.0, 35.0, 25.0, 35.0, 'mm', 'mm')
+
+
+@pytest.fixture
+def standard_toa_edges() -> TOAEdges:
+    """Standard TOA edges for histogram tests (0-1000ns, 10 bins)."""
+    return TOAEdges(start=0.0, stop=1000.0, num_bins=10, unit='ns')
+
+
+@pytest.fixture
+def toa_linspace() -> sc.Variable:
+    """Linspace version of standard TOA edges for direct use."""
+    return sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+
+
+@pytest.fixture
+def make_grouped_events(detector_number: sc.Variable):
+    """Factory fixture to create grouped detector events."""
+
+    def _make(pixel_ids: list[int], toa_values: list[int]) -> sc.DataArray:
+        events = DetectorEvents(
+            pixel_id=pixel_ids, time_of_arrival=toa_values, unit='ns'
+        )
+        grouper = GroupIntoPixels(detector_number=detector_number)
+        grouper.add(0, events)
+        return grouper.get()
+
+    return _make
+
+
 class TestDetectorViewBasics:
     """Basic tests for DetectorView without ROI."""
 
@@ -132,17 +225,13 @@ class TestDetectorViewBasics:
         # Finalize should return cumulative and current counts
         result = view.finalize()
 
-        assert 'cumulative' in result
-        assert 'current' in result
+        assert_has_detector_view_results(result)
         # ROI results should not be present without ROI configuration
         assert 'roi_cumulative_0' not in result
         assert 'roi_current_0' not in result
 
         # Verify that events were actually accumulated
-        # Sample has 8 events across all pixels
-        assert (
-            sc.sum(result['current']).value == 8
-        ), "Expected all 8 sample events to be accumulated"
+        assert sc.sum(result['current']).value == TOTAL_SAMPLE_EVENTS
 
     def test_clear_resets_state(
         self,
@@ -155,7 +244,7 @@ class TestDetectorViewBasics:
 
         view.accumulate({'detector': sample_detector_events})
         result1 = view.finalize()
-        assert sc.sum(result1['current']).value == 8
+        assert sc.sum(result1['current']).value == TOTAL_SAMPLE_EVENTS
 
         # Clear the view
         view.clear()
@@ -170,32 +259,20 @@ class TestDetectorViewROIMechanism:
     """Tests for ROI configuration and histogram accumulation."""
 
     def test_roi_configuration_via_accumulate(
-        self, mock_rolling_view: RollingDetectorView
+        self, mock_rolling_view: RollingDetectorView, standard_roi: RectangleROI
     ) -> None:
         """Test that ROI configuration can be set via accumulate."""
         params = DetectorViewParams()
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
-        # Create ROI configuration
-        roi = make_rectangle_roi(
-            x_min=5.0,
-            x_max=25.0,
-            y_min=5.0,
-            y_max=25.0,
-            x_unit='mm',
-            y_unit='mm',
-        )
-        roi_data = RectangleROI.to_concatenated_data_array({0: roi})
-
         # Send ROI configuration
-        view.accumulate({'roi': roi_data})
+        view.accumulate(roi_to_accumulate_data(standard_roi))
 
         # Verify ROI configuration is active via finalize output
         result = view.finalize()
         # ROI streams should be present (current, cumulative, and concatenated config)
-        assert 'roi_current_0' in result
-        assert 'roi_cumulative_0' in result
-        assert 'roi_rectangle' in result
+        assert_has_roi_results(result)
+        assert_roi_config_published(result)
         # Verify the echoed ROI config matches what we sent
         concatenated_roi_data = result['roi_rectangle']
         assert 'roi_index' in concatenated_roi_data.coords
@@ -211,30 +288,20 @@ class TestDetectorViewROIMechanism:
         assert echoed_roi.y.max == 25.0
 
     def test_roi_only_does_not_process_events(
-        self, mock_rolling_view: RollingDetectorView
+        self, mock_rolling_view: RollingDetectorView, standard_roi: RectangleROI
     ) -> None:
         """Test that sending only ROI (no detector data) produces empty histograms."""
         params = DetectorViewParams()
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
-        roi = make_rectangle_roi(
-            x_min=5.0,
-            x_max=25.0,
-            y_min=5.0,
-            y_max=25.0,
-            x_unit='mm',
-            y_unit='mm',
-        )
-
         # Send ROI configuration without detector data
-        view.accumulate({'roi': RectangleROI.to_concatenated_data_array({0: roi})})
+        view.accumulate(roi_to_accumulate_data(standard_roi))
 
         # ROI should be configured but no histogram data accumulated yet
         result = view.finalize()
         # ROI results should be present (even if empty/zero) once ROI is configured
-        assert 'roi_cumulative_0' in result
-        assert 'roi_current_0' in result
-        assert 'roi_rectangle' in result  # Concatenated ROI config published
+        assert_has_roi_results(result)
+        assert_roi_config_published(result)
         # All counts should be zero since no events were accumulated
         assert sc.sum(result['roi_cumulative_0']).value == 0
         assert sc.sum(result['roi_current_0']).value == 0
@@ -243,23 +310,15 @@ class TestDetectorViewROIMechanism:
         self,
         mock_rolling_view: RollingDetectorView,
         sample_detector_events: sc.DataArray,
+        standard_roi: RectangleROI,
+        standard_toa_edges: TOAEdges,
     ) -> None:
         """Test that ROI configuration enables histogram accumulation."""
-        params = DetectorViewParams(
-            toa_edges=TOAEdges(start=0.0, stop=1000.0, num_bins=10, unit='ns')
-        )
+        params = DetectorViewParams(toa_edges=standard_toa_edges)
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         # Configure ROI first
-        roi = make_rectangle_roi(
-            x_min=5.0,
-            x_max=25.0,
-            y_min=5.0,
-            y_max=25.0,
-            x_unit='mm',
-            y_unit='mm',
-        )
-        view.accumulate({'roi': RectangleROI.to_concatenated_data_array({0: roi})})
+        view.accumulate(roi_to_accumulate_data(standard_roi))
 
         # Now accumulate detector events
         view.accumulate({'detector': sample_detector_events})
@@ -267,13 +326,9 @@ class TestDetectorViewROIMechanism:
         result = view.finalize()
 
         # Should have both detector view and ROI results
-        assert 'cumulative' in result
-        assert 'current' in result
-        assert 'roi_cumulative_0' in result
-        assert 'roi_current_0' in result
-        assert (
-            'roi_rectangle' in result
-        )  # Concatenated config published on first update
+        assert_has_detector_view_results(result)
+        assert_has_roi_results(result)
+        assert_roi_config_published(result)
 
         # Verify histogram structure
         roi_histogram = result['roi_current_0']
@@ -282,87 +337,52 @@ class TestDetectorViewROIMechanism:
         assert roi_histogram.ndim == 1  # Histogram is 1D
 
         # Verify expected event count
-        # Sample has pixels [0, 1, 2, 5, 6, 10, 11, 15]
-        # ROI covers x=[5,25]mm, y=[5,25]mm which includes pixels 5, 6, 10
-        expected_events_in_roi = 3
-        assert sc.sum(roi_histogram).value == expected_events_in_roi, (
-            f"Expected {expected_events_in_roi} events in ROI histogram, "
-            f"got {sc.sum(roi_histogram).value}"
-        )
+        assert_roi_event_count(result, STANDARD_ROI_EVENTS)
 
     def test_roi_cumulative_accumulation(
         self,
         mock_rolling_view: RollingDetectorView,
         sample_detector_events: sc.DataArray,
+        standard_roi: RectangleROI,
+        standard_toa_edges: TOAEdges,
     ) -> None:
         """Test that ROI histograms accumulate correctly over multiple updates."""
-        params = DetectorViewParams(
-            toa_edges=TOAEdges(start=0.0, stop=1000.0, num_bins=10, unit='ns')
-        )
+        params = DetectorViewParams(toa_edges=standard_toa_edges)
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         # Configure ROI
-        roi = make_rectangle_roi(
-            x_min=5.0,
-            x_max=25.0,
-            y_min=5.0,
-            y_max=25.0,
-            x_unit='mm',
-            y_unit='mm',
-        )
-        view.accumulate({'roi': RectangleROI.to_concatenated_data_array({0: roi})})
+        view.accumulate(roi_to_accumulate_data(standard_roi))
 
         # First accumulation
         view.accumulate({'detector': sample_detector_events})
         result1 = view.finalize()
-        first_current = result1['roi_current_0']
-        first_total = sc.sum(first_current).value
-
-        # Verify expected event count based on ROI
-        # Sample has pixels [0, 1, 2, 5, 6, 10, 11, 15]
-        # ROI covers x=[5,25]mm, y=[5,25]mm which includes:
-        #   Pixel 5 at (10, 10)mm, Pixel 6 at (20, 10)mm, Pixel 10 at (20, 20)mm
-        # Expected: 3 events in ROI
-        expected_events_in_roi = 3
-        assert (
-            first_total == expected_events_in_roi
-        ), f"Expected {expected_events_in_roi} events in ROI, got {first_total}"
+        assert_roi_event_count(result1, STANDARD_ROI_EVENTS)
 
         # Second accumulation with same events
         view.accumulate({'detector': sample_detector_events})
         result2 = view.finalize()
-        second_cumulative = result2['roi_cumulative_0']
-        second_current = result2['roi_current_0']
-        second_current_total = sc.sum(second_current).value
 
         # Both should have same current counts
-        assert second_current_total == expected_events_in_roi
+        assert_roi_event_count(result2, STANDARD_ROI_EVENTS, view='current')
         # Cumulative should be the sum of both accumulations
-        assert sc.sum(second_cumulative).value == 2 * expected_events_in_roi
+        assert_roi_event_count(result2, 2 * STANDARD_ROI_EVENTS, view='cumulative')
 
     def test_roi_published_only_on_update(
         self,
         mock_rolling_view: RollingDetectorView,
         sample_detector_events: sc.DataArray,
+        standard_roi: RectangleROI,
     ) -> None:
         """Test that ROI is only published when updated."""
         params = DetectorViewParams()
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         # Configure ROI
-        roi = make_rectangle_roi(
-            x_min=5.0,
-            x_max=25.0,
-            y_min=5.0,
-            y_max=25.0,
-            x_unit='mm',
-            y_unit='mm',
-        )
-        view.accumulate({'roi': RectangleROI.to_concatenated_data_array({0: roi})})
+        view.accumulate(roi_to_accumulate_data(standard_roi))
         view.accumulate({'detector': sample_detector_events})
 
         result1 = view.finalize()
-        assert 'roi_rectangle' in result1  # Published on first finalize after update
+        assert_roi_config_published(result1)
 
         # Second accumulation without ROI update
         view.accumulate({'detector': sample_detector_events})
@@ -373,21 +393,14 @@ class TestDetectorViewROIMechanism:
         self,
         mock_rolling_view: RollingDetectorView,
         sample_detector_events: sc.DataArray,
+        standard_roi: RectangleROI,
     ) -> None:
         """Test that clear() resets ROI cumulative state."""
         params = DetectorViewParams()
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         # Configure ROI and accumulate
-        roi = make_rectangle_roi(
-            x_min=5.0,
-            x_max=25.0,
-            y_min=5.0,
-            y_max=25.0,
-            x_unit='mm',
-            y_unit='mm',
-        )
-        view.accumulate({'roi': RectangleROI.to_concatenated_data_array({0: roi})})
+        view.accumulate(roi_to_accumulate_data(standard_roi))
         view.accumulate({'detector': sample_detector_events})
         result1 = view.finalize()
 
@@ -399,7 +412,7 @@ class TestDetectorViewROIMechanism:
 
         # After clear, ROI cumulative should be reset to zero
         result2 = view.finalize()
-        assert 'roi_cumulative_0' in result2  # ROI config still active
+        assert_has_roi_results(result2)  # ROI config still active
         assert sc.sum(result2['roi_cumulative_0']).value == 0
         assert sc.sum(result2['roi_current_0']).value == 0
 
@@ -407,102 +420,75 @@ class TestDetectorViewROIMechanism:
         self,
         mock_rolling_view: RollingDetectorView,
         sample_detector_events: sc.DataArray,
+        standard_roi: RectangleROI,
+        wide_roi: RectangleROI,
+        standard_toa_edges: TOAEdges,
     ) -> None:
         """Test that changing ROI resets cumulative histogram."""
-        params = DetectorViewParams(
-            toa_edges=TOAEdges(start=0.0, stop=1000.0, num_bins=10, unit='ns')
-        )
+        params = DetectorViewParams(toa_edges=standard_toa_edges)
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         # Configure first ROI covering pixels 5, 6, 10
-        roi1 = make_rectangle_roi(
-            x_min=5.0,
-            x_max=25.0,
-            y_min=5.0,
-            y_max=25.0,
-            x_unit='mm',
-            y_unit='mm',
-        )
-        view.accumulate({'roi': RectangleROI.to_concatenated_data_array({0: roi1})})
+        view.accumulate(roi_to_accumulate_data(standard_roi))
         view.accumulate({'detector': sample_detector_events})
         result1 = view.finalize()
 
-        # Sample has pixels [0, 1, 2, 5, 6, 10, 11, 15]
-        # ROI1 covers x=[5,25]mm, y=[5,25]mm which includes pixels 5, 6, 10
-        expected_roi1_events = 3
-        assert sc.sum(result1['roi_current_0']).value == expected_roi1_events
-        assert sc.sum(result1['roi_cumulative_0']).value == expected_roi1_events
+        assert_roi_event_count(result1, STANDARD_ROI_EVENTS, view='current')
+        assert_roi_event_count(result1, STANDARD_ROI_EVENTS, view='cumulative')
 
         # Now change ROI to cover different pixels (1, 2, 5, 6)
-        # Pixel 1 at (10,0), Pixel 2 at (20,0), Pixel 5 at (10,10), Pixel 6 at (20,10)mm
-        roi2 = make_rectangle_roi(
-            x_min=5.0,
-            x_max=25.0,
-            y_min=-5.0,  # Include y=0mm pixels
-            y_max=15.0,  # Exclude y=20mm and y=30mm pixels
-            x_unit='mm',
-            y_unit='mm',
-        )
-        view.accumulate({'roi': RectangleROI.to_concatenated_data_array({0: roi2})})
+        view.accumulate(roi_to_accumulate_data(wide_roi))
         view.accumulate({'detector': sample_detector_events})
         result2 = view.finalize()
 
-        # ROI2 should have 4 events (pixels 1, 2, 5, 6)
-        expected_roi2_events = 4
-        assert sc.sum(result2['roi_current_0']).value == expected_roi2_events
+        assert_roi_event_count(result2, WIDE_ROI_EVENTS, view='current')
 
         # CRITICAL: Cumulative should reset when ROI changes
         # It should NOT be roi1_events + roi2_events (which would be 7)
         # It should be just roi2_events since we changed the ROI
-        assert sc.sum(result2['roi_cumulative_0']).value == expected_roi2_events, (
-            f"Expected cumulative to reset to {expected_roi2_events} when ROI changes, "
+        assert sc.sum(result2['roi_cumulative_0']).value == WIDE_ROI_EVENTS, (
+            f"Expected cumulative to reset to {WIDE_ROI_EVENTS} when ROI changes, "
             f"got {sc.sum(result2['roi_cumulative_0']).value}. "
             "Cumulative should not mix events from different ROI regions."
         )
 
 
 class TestROIHistogram:
-    """Unit tests for the merged ROIHistogram class."""
+    """Unit tests for the ROIHistogram class."""
 
-    def test_initialization_with_model(self, detector_indices: sc.DataArray) -> None:
+    def test_initialization_with_model(
+        self,
+        detector_indices: sc.DataArray,
+        standard_roi: RectangleROI,
+        toa_linspace: sc.Variable,
+    ) -> None:
         """Test that ROIHistogram can be initialized with a model."""
-        roi = make_rectangle_roi(
-            x_min=5.0, x_max=25.0, y_min=5.0, y_max=25.0, x_unit='mm', y_unit='mm'
-        )
-        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
         roi_filter = ROIFilter(detector_indices)
 
         roi_histogram = ROIHistogram(
-            toa_edges=toa_edges, roi_filter=roi_filter, model=roi
+            toa_edges=toa_linspace, roi_filter=roi_filter, model=standard_roi
         )
 
-        assert roi_histogram.model == roi
+        assert roi_histogram.model == standard_roi
         assert not roi_histogram.updated
         assert roi_histogram.cumulative is None
 
     def test_cumulative_accumulation_across_multiple_periods(
-        self, detector_number: sc.Variable, detector_indices: sc.DataArray
+        self,
+        detector_indices: sc.DataArray,
+        standard_roi: RectangleROI,
+        toa_linspace: sc.Variable,
+        make_grouped_events,
     ) -> None:
         """Test that cumulative correctly sums across multiple get_delta() calls."""
-        roi = make_rectangle_roi(
-            x_min=5.0, x_max=25.0, y_min=5.0, y_max=25.0, x_unit='mm', y_unit='mm'
-        )
-        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
         roi_filter = ROIFilter(detector_indices)
 
         roi_histogram = ROIHistogram(
-            toa_edges=toa_edges, roi_filter=roi_filter, model=roi
+            toa_edges=toa_linspace, roi_filter=roi_filter, model=standard_roi
         )
 
         # First period: 4 events
-        events1 = DetectorEvents(
-            pixel_id=[5, 6, 9, 10],
-            time_of_arrival=[100, 200, 300, 400],
-            unit='ns',
-        )
-        grouper = GroupIntoPixels(detector_number=detector_number)
-        grouper.add(0, events1)
-        grouped1 = grouper.get()
+        grouped1 = make_grouped_events([5, 6, 9, 10], [100, 200, 300, 400])
 
         roi_histogram.add_data(grouped1)
         delta1 = roi_histogram.get_delta()
@@ -511,12 +497,7 @@ class TestROIHistogram:
         assert sc.sum(roi_histogram.cumulative).value == 4
 
         # Second period: 3 events
-        events2 = DetectorEvents(
-            pixel_id=[5, 6, 9], time_of_arrival=[150, 250, 350], unit='ns'
-        )
-        grouper2 = GroupIntoPixels(detector_number=detector_number)
-        grouper2.add(0, events2)
-        grouped2 = grouper2.get()
+        grouped2 = make_grouped_events([5, 6, 9], [150, 250, 350])
 
         roi_histogram.add_data(grouped2)
         delta2 = roi_histogram.get_delta()
@@ -651,26 +632,17 @@ class TestDetectorViewBothROIAndDetectorData:
         self,
         mock_rolling_view: RollingDetectorView,
         sample_detector_events: sc.DataArray,
+        standard_roi: RectangleROI,
+        standard_toa_edges: TOAEdges,
     ) -> None:
         """Test accumulate with both ROI and detector data in one call."""
-        params = DetectorViewParams(
-            toa_edges=TOAEdges(start=0.0, stop=1000.0, num_bins=10, unit='ns')
-        )
+        params = DetectorViewParams(toa_edges=standard_toa_edges)
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         # Configure ROI and send detector data in same call
-        roi = make_rectangle_roi(
-            x_min=5.0,
-            x_max=25.0,
-            y_min=5.0,
-            y_max=25.0,
-            x_unit='mm',
-            y_unit='mm',
-        )
-
         view.accumulate(
             {
-                'roi': RectangleROI.to_concatenated_data_array({0: roi}),
+                **roi_to_accumulate_data(standard_roi),
                 'detector': sample_detector_events,
             }
         )
@@ -678,17 +650,12 @@ class TestDetectorViewBothROIAndDetectorData:
         result = view.finalize()
 
         # Should have both detector view and ROI results
-        assert 'cumulative' in result
-        assert 'current' in result
-        assert 'roi_cumulative_0' in result
-        assert 'roi_current_0' in result
-        assert 'roi_rectangle' in result
+        assert_has_detector_view_results(result)
+        assert_has_roi_results(result)
+        assert_roi_config_published(result)
 
         # Verify histogram has expected events
-        # Sample has pixels [0, 1, 2, 5, 6, 10, 11, 15]
-        # ROI covers x=[5,25]mm, y=[5,25]mm which includes pixels 5, 6, 10
-        expected_events_in_roi = 3
-        assert sc.sum(result['roi_current_0']).value == expected_events_in_roi
+        assert_roi_event_count(result, STANDARD_ROI_EVENTS)
 
     def test_accumulate_both_then_detector_only(
         self,
@@ -898,35 +865,22 @@ class TestDetectorViewEdgeCases:
         self,
         mock_rolling_view: RollingDetectorView,
         sample_detector_events: sc.DataArray,
+        corner_roi: RectangleROI,
+        standard_toa_edges: TOAEdges,
     ) -> None:
         """Test that ROI with no matching events produces zero histogram."""
-        params = DetectorViewParams(
-            toa_edges=TOAEdges(start=0.0, stop=1000.0, num_bins=10, unit='ns')
-        )
+        params = DetectorViewParams(toa_edges=standard_toa_edges)
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
-        # Configure ROI that doesn't overlap with any events
-        # Sample has pixels [0, 1, 2, 5, 6, 10, 11, 15]
-        # Use ROI that covers pixels at (30mm, 30mm) only - pixel 15
-        roi = make_rectangle_roi(
-            x_min=25.0,
-            x_max=35.0,
-            y_min=25.0,
-            y_max=35.0,
-            x_unit='mm',
-            y_unit='mm',
-        )
-        view.accumulate({'roi': RectangleROI.to_concatenated_data_array({0: roi})})
+        # Configure ROI that covers only pixel 15 at (30mm, 30mm)
+        view.accumulate(roi_to_accumulate_data(corner_roi))
         view.accumulate({'detector': sample_detector_events})
 
         result = view.finalize()
 
-        # Should have histogram structure but with limited events
-        assert 'roi_cumulative_0' in result
-        assert 'roi_current_0' in result
-        # Only pixel 15 at (30mm, 30mm) is in ROI
-        expected_events_in_roi = 1
-        assert sc.sum(result['roi_current_0']).value == expected_events_in_roi
+        # Should have histogram structure with only pixel 15 in ROI
+        assert_has_roi_results(result)
+        assert_roi_event_count(result, CORNER_ROI_EVENTS)
 
     def test_roi_published_when_updated_with_detector_data(
         self,
