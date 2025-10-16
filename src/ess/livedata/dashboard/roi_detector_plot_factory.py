@@ -194,13 +194,10 @@ class ROIPlotState:
         Logger instance.
     colors:
         List of colors to use for ROI rectangles, indexed by ROI number.
-    initial_active_indices:
-        Optional set of ROI indices that should be active initially.
-        If None, no ROIs are active initially. This must be set before
-        attaching the watcher to prevent race conditions.
     initial_rois:
         Optional dictionary of initial ROI configurations. Used to establish
-        the baseline state for cycle prevention.
+        the baseline state for cycle prevention and to determine which ROI
+        indices are initially active.
     """
 
     def __init__(
@@ -213,7 +210,6 @@ class ROIPlotState:
         roi_publisher: ROIPublisher | None,
         logger: logging.Logger,
         colors: list[str],
-        initial_active_indices: set[int] | None = None,
         initial_rois: dict[int, RectangleROI] | None = None,
     ) -> None:
         self.result_key = result_key
@@ -233,7 +229,7 @@ class ROIPlotState:
 
         # Initialize active indices before attaching watcher to prevent race condition
         self._active_roi_indices: set[int] = (
-            initial_active_indices if initial_active_indices is not None else set()
+            set(initial_rois.keys()) if initial_rois else set()
         )
 
         # Attach the callback to the stream AFTER initializing state
@@ -638,16 +634,11 @@ class ROIDetectorPlotFactory:
         x_unit = self._extract_unit_for_dim(detector_data, x_dim)
         y_unit = self._extract_unit_for_dim(detector_data, y_dim)
 
-        # Determine initial active indices from initial_rois
-        initial_active_indices = set(initial_rois.keys()) if initial_rois else None
-
         # Create plot state (which will attach the watcher to box_stream)
         # Note: plot_state is kept alive by references from the returned plot:
         # - box_stream holds a callback reference to plot_state.on_box_change
         # - The spectrum assembler (created below) holds plot_state.is_roi_active
         # - roi_readback_pipe (below) holds plot_state.on_backend_roi_update
-        # We pass initial_active_indices to prevent race condition where watcher
-        # triggers before we set the active indices manually.
         plot_state = ROIPlotState(
             result_key=detector_key,
             box_stream=box_stream,
@@ -657,7 +648,6 @@ class ROIDetectorPlotFactory:
             roi_publisher=self._roi_publisher,
             logger=self._logger,
             colors=colors_list,
-            initial_active_indices=initial_active_indices,
             initial_rois=initial_rois,
         )
 
