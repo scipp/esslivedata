@@ -14,7 +14,11 @@ import scipp as sc
 from ess.livedata.config.models import ROI, Interval, RectangleROI
 from ess.livedata.config.workflow_spec import ResultKey
 
-from .data_subscriber import FilteredMergingStreamAssembler
+from .data_subscriber import (
+    DataSubscriber,
+    FilteredMergingStreamAssembler,
+    MergingStreamAssembler,
+)
 from .plot_params import LayoutParams, PlotParamsROIDetector
 from .plots import ImagePlotter, LinePlotter, PlotAspect, PlotAspectType
 from .roi_publisher import ROIPublisher
@@ -430,29 +434,6 @@ class ROIDetectorPlotFactory:
             for idx in range(max_roi_count)
         ]
 
-    def _extract_initial_rois_from_data_service(
-        self, roi_readback_key: ResultKey
-    ) -> dict[int, RectangleROI]:
-        """
-        Extract initial ROI state from DataService if available.
-
-        Parameters
-        ----------
-        roi_readback_key:
-            ResultKey for the roi_rectangle stream.
-
-        Returns
-        -------
-        :
-            Dictionary mapping ROI index to RectangleROI. Returns empty dict
-            if no ROI readback data is available.
-        """
-        if roi_readback_key not in self._stream_manager.data_service:
-            return {}
-
-        roi_data = self._stream_manager.data_service[roi_readback_key]
-        return parse_roi_readback_data(roi_data, self._logger)
-
     @staticmethod
     def _extract_unit_for_dim(detector_data: sc.DataArray, dim: str) -> str | None:
         """
@@ -522,9 +503,6 @@ class ROIDetectorPlotFactory:
 
         roi_pipe = ROIReadbackPipe(on_roi_data_update)
 
-        # Subscribe via DataService
-        from .data_subscriber import DataSubscriber, MergingStreamAssembler
-
         assembler = MergingStreamAssembler({roi_readback_key})
         subscriber = DataSubscriber(assembler, roi_pipe)
         self._stream_manager.data_service.register_subscriber(subscriber)
@@ -534,7 +512,6 @@ class ROIDetectorPlotFactory:
         detector_key: ResultKey,
         detector_data: sc.DataArray,
         params: PlotParamsROIDetector,
-        initial_rois: dict[int, RectangleROI] | None = None,
     ) -> tuple[hv.DynamicMap, hv.DynamicMap, ROIPlotState]:
         """
         Create ROI detector plot components without layout assembly.
@@ -547,6 +524,9 @@ class ROIDetectorPlotFactory:
         The plot_state is not stored internally - it's kept alive by references
         from the returned plot components (via callbacks and stream filters).
 
+        Initial ROI configurations are automatically loaded from DataService via
+        the ROI readback subscription if available.
+
         Parameters
         ----------
         detector_key:
@@ -555,16 +535,15 @@ class ROIDetectorPlotFactory:
             Initial data for the detector plot.
         params:
             The plotter parameters (PlotParamsROIDetector).
-        initial_rois:
-            Optional dictionary of initial ROI configurations to display.
-            If provided, the Rectangles will be initialized with these shapes
-            and the BoxEdit stream will be populated accordingly.
 
         Returns
         -------
         :
             Tuple of (detector_dmap, roi_dmap, plot_state).
         """
+        if not isinstance(params, PlotParamsROIDetector):
+            raise TypeError("roi_detector requires PlotParamsROIDetector")
+
         detector_items = {detector_key: detector_data}
         # FIXME: Memory leak - subscribers registered via stream_manager are never
         # unregistered. When this plot is closed, the subscriber remains in
@@ -588,12 +567,10 @@ class ROIDetectorPlotFactory:
         max_roi_count = params.roi_options.max_roi_count
         colors_list = default_colors[:max_roi_count]
 
-        # Initialize Rectangles with existing ROI shapes if available
+        # Initialize with empty rectangles - actual ROI data will be loaded by
+        # _subscribe_to_roi_readback if available in DataService
         initial_rectangles = []
         initial_box_data = {}
-        if initial_rois:
-            initial_rectangles = rois_to_rectangles(initial_rois, colors=colors_list)
-            initial_box_data = rois_to_box_data(initial_rois)
 
         # There is a very particular way these components must be created, or else the
         # interactiveity will not work. In particular:
@@ -648,10 +625,12 @@ class ROIDetectorPlotFactory:
             roi_publisher=self._roi_publisher,
             logger=self._logger,
             colors=colors_list,
-            initial_rois=initial_rois,
+            initial_rois=None,
         )
 
-        # Subscribe to ROI readback stream from backend for bidirectional sync
+        # Subscribe to ROI readback stream from backend for bidirectional sync.
+        # This will automatically initialize the plot with existing ROI data if
+        # available in DataService.
         roi_readback_key = detector_key.model_copy(
             update={"output_name": "roi_rectangle"}
         )
@@ -719,67 +698,6 @@ class ROIDetectorPlotFactory:
             scale_opts=params.plot_scale,
         )
 
-        spectrum_dmap = hv.DynamicMap(
+        return hv.DynamicMap(
             spectrum_plotter, streams=[spectrum_pipe], cache_size=1
         ).opts(shared_axes=False)
-
-        return spectrum_dmap
-
-    def create_roi_detector_plot(
-        self,
-        detector_key: ResultKey,
-        detector_data: sc.DataArray,
-        params: PlotParamsROIDetector,
-    ) -> hv.Layout:
-        """
-        Create ROI detector plot with interactive BoxEdit for a single detector.
-
-        This creates a Layout containing two DynamicMaps side-by-side:
-        1. Detector image with BoxEdit overlay for ROI selection
-        2. ROI spectrum plot that overlays all active ROI spectra
-
-        When a user selects an output (e.g., 'current' or 'cumulative'), this method
-        automatically discovers and subscribes to the corresponding ROI outputs:
-        - 'current' -> uses 'roi_current' for 1D spectrum
-        - 'cumulative' -> uses 'roi_cumulative' for 1D spectrum
-
-        The ROI outputs may be published later (after ROI is configured in the UI),
-        so we subscribe to them even if they don't exist yet.
-
-        Initial ROI configurations are automatically extracted from DataService if
-        available (e.g., from previous configurations published by backend).
-
-        For testing or custom layouts, use `create_roi_detector_plot_components()`
-        to get the individual components without the layout wrapper.
-
-        Parameters
-        ----------
-        detector_key:
-            ResultKey identifying the detector output.
-        detector_data:
-            Initial data for the detector plot.
-        params:
-            The plotter parameters (PlotParamsROIDetector).
-
-        Returns
-        -------
-        :
-            A HoloViews Layout with detector image (with BoxEdit overlay) and
-            ROI spectrum plot, arranged in 2 columns.
-        """
-        if not isinstance(params, PlotParamsROIDetector):
-            raise TypeError("roi_detector requires PlotParamsROIDetector")
-
-        # Extract initial ROIs from DataService if available
-        roi_readback_key = detector_key.model_copy(
-            update={"output_name": "roi_rectangle"}
-        )
-        initial_rois = self._extract_initial_rois_from_data_service(roi_readback_key)
-
-        detector_with_boxes, roi_spectrum_dmap, _plot_state = (
-            self.create_roi_detector_plot_components(
-                detector_key, detector_data, params, initial_rois=initial_rois
-            )
-        )
-
-        return hv.Layout([detector_with_boxes, roi_spectrum_dmap]).cols(2)

@@ -120,7 +120,7 @@ def get_detector_pipe(
 
 
 class TestROIDetectorPlotFactory:
-    def test_create_roi_detector_plot_returns_layout(
+    def test_create_roi_detector_plot_components_returns_detector_and_spectrum(
         self,
         roi_plot_factory,
         data_service,
@@ -129,7 +129,7 @@ class TestROIDetectorPlotFactory:
         detector_data,
         spectrum_data,
     ):
-        """Test that create_roi_detector_plot returns a Layout."""
+        """Test create_roi_detector_plot_components returns detector and spectrum."""
         # Create result keys for detector and spectrum
         # Using 'current' as the output_name, which will look for 'roi_current'
         detector_key = ResultKey(
@@ -150,19 +150,21 @@ class TestROIDetectorPlotFactory:
         # Create plot params
         params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
-        # Create ROI detector plot
-        result = roi_plot_factory.create_roi_detector_plot(
-            detector_key=detector_key,
-            detector_data=detector_data,
-            params=params,
+        # Create ROI detector plot components
+        detector_with_boxes, roi_spectrum, plot_state = (
+            roi_plot_factory.create_roi_detector_plot_components(
+                detector_key=detector_key,
+                detector_data=detector_data,
+                params=params,
+            )
         )
 
-        # Should return a Layout
-        assert isinstance(result, hv.Layout)
-        # Should have 2 elements: detector image + spectrum
-        assert len(result) == 2
+        # Should return detector and spectrum components
+        assert isinstance(detector_with_boxes, hv.Overlay | hv.DynamicMap)
+        assert isinstance(roi_spectrum, hv.DynamicMap)
+        assert plot_state is not None
 
-    def test_create_roi_detector_plot_with_only_detector(
+    def test_create_roi_detector_plot_components_with_only_detector(
         self,
         roi_plot_factory,
         data_service,
@@ -170,7 +172,7 @@ class TestROIDetectorPlotFactory:
         job_number,
         detector_data,
     ):
-        """Test ROI detector plot with only detector data (no spectrum)."""
+        """Test ROI detector plot components with only detector data (no spectrum)."""
         # Create result key for detector only (spectrum doesn't exist yet)
         detector_key = ResultKey(
             workflow_id=workflow_id,
@@ -184,16 +186,19 @@ class TestROIDetectorPlotFactory:
         # Create plot params
         params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
-        # Create ROI detector plot
-        result = roi_plot_factory.create_roi_detector_plot(
-            detector_key=detector_key,
-            detector_data=detector_data,
-            params=params,
+        # Create ROI detector plot components
+        detector_with_boxes, roi_spectrum, plot_state = (
+            roi_plot_factory.create_roi_detector_plot_components(
+                detector_key=detector_key,
+                detector_data=detector_data,
+                params=params,
+            )
         )
 
-        # Should return a Layout with 2 elements (detector + empty spectrum placeholder)
-        assert isinstance(result, hv.Layout)
-        assert len(result) == 2
+        # Should create components even without spectrum data
+        assert isinstance(detector_with_boxes, hv.Overlay | hv.DynamicMap)
+        assert isinstance(roi_spectrum, hv.DynamicMap)
+        assert plot_state is not None
 
     def test_create_roi_detector_plot_components_returns_valid_components(
         self,
@@ -238,51 +243,6 @@ class TestROIDetectorPlotFactory:
         assert isinstance(roi_dmap, hv.DynamicMap)
         assert plot_state is not None
         assert isinstance(plot_state.box_stream, hv.streams.BoxEdit)
-
-    def test_create_roi_detector_plot_separates_detector_and_spectrum(
-        self,
-        roi_plot_factory,
-        data_service,
-        workflow_id,
-        job_number,
-        detector_data,
-        spectrum_data,
-    ):
-        """Test that detector and spectrum data are properly separated."""
-        # Create result keys
-        detector_key = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(source_name='detector_data', job_number=job_number),
-            output_name='cumulative',
-        )
-        spectrum_key = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(source_name='detector_data', job_number=job_number),
-            output_name='roi_cumulative_0',
-        )
-
-        # Add data to data service
-        data_service[detector_key] = detector_data
-        data_service[spectrum_key] = spectrum_data
-
-        # Create plot params
-        params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
-
-        # Create ROI detector plot
-        result = roi_plot_factory.create_roi_detector_plot(
-            detector_key=detector_key,
-            detector_data=detector_data,
-            params=params,
-        )
-
-        # Layout should have 2 elements
-        assert len(result) == 2
-
-        # First element should be detector (DynamicMap overlaid with Rectangles)
-        # Second element should be spectrum (DynamicMap)
-        # Both should be wrapped in overlays or be DynamicMaps
-        assert isinstance(result[0], hv.Overlay | hv.DynamicMap)
-        assert isinstance(result[1], hv.DynamicMap)
 
 
 def test_roi_detector_plot_publishes_roi_on_box_edit(
@@ -404,16 +364,20 @@ def test_roi_detector_plot_without_publisher_does_not_crash(
     )
     data_service[detector_key] = detector_data
 
-    # Create plot - should not crash
+    # Create plot components - should not crash
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
-    result = roi_plot_factory.create_roi_detector_plot(
-        detector_key=detector_key,
-        detector_data=detector_data,
-        params=params,
+    detector_with_boxes, roi_spectrum, plot_state = (
+        roi_plot_factory.create_roi_detector_plot_components(
+            detector_key=detector_key,
+            detector_data=detector_data,
+            params=params,
+        )
     )
 
-    # Should create plot successfully
-    assert isinstance(result, hv.Layout)
+    # Should create components successfully
+    assert isinstance(detector_with_boxes, hv.Overlay | hv.DynamicMap)
+    assert isinstance(roi_spectrum, hv.DynamicMap)
+    assert plot_state is not None
 
 
 def test_boxes_to_rois_converts_single_box():
@@ -572,9 +536,11 @@ def test_rois_to_rectangles_sorts_by_index():
 
 
 def test_create_roi_plot_with_initial_rois(
-    roi_plot_factory, workflow_id, job_number, detector_data
+    roi_plot_factory, data_service, workflow_id, job_number, detector_data
 ):
     """Test that ROI plot can be initialized with existing ROI configurations."""
+    from ess.livedata.config.models import ROI
+
     detector_key = ResultKey(
         workflow_id=workflow_id,
         job_id=JobId(source_name='detector_data', job_number=job_number),
@@ -586,6 +552,11 @@ def test_create_roi_plot_with_initial_rois(
         1: RectangleROI(x=Interval(min=7.0, max=9.0), y=Interval(min=4.0, max=6.0)),
     }
 
+    # Inject ROI readback data into DataService - this simulates backend publishing ROIs
+    roi_readback_key = detector_key.model_copy(update={"output_name": "roi_rectangle"})
+    roi_readback_data = ROI.to_concatenated_data_array(initial_rois)
+    data_service[roi_readback_key] = roi_readback_data
+
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
     _detector_with_boxes, _roi_dmap, plot_state = (
@@ -593,7 +564,6 @@ def test_create_roi_plot_with_initial_rois(
             detector_key=detector_key,
             detector_data=detector_data,
             params=params,
-            initial_rois=initial_rois,
         )
     )
 

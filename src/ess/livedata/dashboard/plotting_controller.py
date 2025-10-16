@@ -332,16 +332,18 @@ class PlottingController:
 
         # Special case for roi_detector: call factory once per detector
         if plot_name == 'roi_detector':
-            layouts = [
-                self._roi_detector_plot_factory.create_roi_detector_plot(
+            plot_components = [
+                self._roi_detector_plot_factory.create_roi_detector_plot_components(
                     detector_key=key, detector_data=data, params=params
                 )
                 for key, data in items.items()
             ]
-            # Return as column (one row per detector). ROI plot is already using two
-            # columns internally but for some reason this has to be repeated here for
-            # the outer layout.
-            return hv.Layout(layouts).cols(2).opts(shared_axes=False)
+            # Each component returns (detector_with_boxes, roi_spectrum, plot_state)
+            # Flatten detector and spectrum plots into a layout with 2 columns
+            plots = []
+            for detector_with_boxes, roi_spectrum, _plot_state in plot_components:
+                plots.extend([detector_with_boxes, roi_spectrum])
+            return hv.Layout(plots).cols(2).opts(shared_axes=False)
 
         pipe = self._stream_manager.make_merging_stream(items)
         plotter = plotter_registry.create_plotter(plot_name, params=params)
