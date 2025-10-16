@@ -68,7 +68,7 @@ class RoutingAdapterBuilder:
                 'ad00': ChainedAdapter(
                     first=KafkaToAd00Adapter(
                         stream_lut=self._stream_mapping.detectors,
-                        stream_kind=StreamKind.DETECTOR_EVENTS,
+                        stream_kind=StreamKind.DETECTOR_COUNTS,
                     ),
                     second=Ad00ToScippAdapter(),
                 ),
