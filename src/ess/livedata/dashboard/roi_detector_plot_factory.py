@@ -548,17 +548,21 @@ class ROIDetectorPlotFactory:
 
         # Create DynamicMap that wraps Rectangles
         # This allows programmatic updates via boxes_pipe.send()
+        # Get color cycle for ROI styling
+        default_colors = hv.Cycle.default_cycles["default_colors"]
+        max_roi_count = params.roi_options.max_roi_count
+
         def make_boxes(data):
             if not data:
                 data = []
-            return hv.Rectangles(data)
+            return hv.Rectangles(data, vdims=[]).opts(
+                color=hv.Cycle(values=default_colors[:max_roi_count])
+            )
 
         boxes_dmap = hv.DynamicMap(make_boxes, streams=[boxes_pipe])
 
         # Create BoxEdit stream with DynamicMap as source
         # This enables user interaction (drag, create, delete)
-        default_colors = hv.Cycle.default_cycles["default_colors"]
-        max_roi_count = params.roi_options.max_roi_count
         box_stream = hv.streams.BoxEdit(
             source=boxes_dmap,
             num_objects=max_roi_count,
