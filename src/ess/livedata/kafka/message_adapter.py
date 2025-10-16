@@ -260,7 +260,13 @@ class Da00ToScippAdapter(
 
 
 def _ad00_to_scipp(ad00: area_detector_ad00.ADArray) -> sc.DataArray:
-    data = sc.array(dims=ad00.dimensions, values=ad00.data, unit=None)
+    import numpy as np
+
+    values = ad00.data
+    if values.dtype == np.uint16:
+        values = values.astype(np.int32)
+
+    data = sc.array(dims=ad00.dimensions, values=values, unit=None)
     return sc.DataArray(data)
 
 
