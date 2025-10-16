@@ -254,6 +254,11 @@ class ROIPlotState:
             if current_rois != self._last_known_rois:
                 self._last_known_rois = current_rois
 
+                # Update pipe to assign colors to user-drawn rectangles
+                # This ensures newly drawn rectangles get colors immediately
+                rectangles = rois_to_rectangles(current_rois, colors=self._colors)
+                self.boxes_pipe.send(rectangles)
+
                 if self._roi_publisher:
                     self._roi_publisher.publish_rois(
                         self.result_key.job_id, current_rois
