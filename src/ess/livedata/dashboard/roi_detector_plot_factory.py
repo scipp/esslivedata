@@ -11,7 +11,7 @@ from typing import Any
 import holoviews as hv
 import scipp as sc
 
-from ess.livedata.config.models import Interval, RectangleROI
+from ess.livedata.config.models import ROI, Interval, RectangleROI
 from ess.livedata.config.workflow_spec import ResultKey
 
 from .data_subscriber import FilteredMergingStreamAssembler
@@ -105,6 +105,33 @@ def rois_to_rectangles(rois: dict[int, RectangleROI]) -> list[tuple[float, ...]]
     return rectangles
 
 
+def rois_to_box_data(rois: dict[int, RectangleROI]) -> dict[str, list[float]]:
+    """
+    Convert RectangleROI instances to BoxEdit data format.
+
+    Parameters
+    ----------
+    rois:
+        Dictionary mapping ROI index to RectangleROI.
+
+    Returns
+    -------
+    :
+        Dictionary with keys 'x0', 'x1', 'y0', 'y1' in BoxEdit format.
+        Empty dict with empty lists if no ROIs.
+    """
+    if not rois:
+        return {"x0": [], "y0": [], "x1": [], "y1": []}
+
+    sorted_indices = sorted(rois.keys())
+    return {
+        "x0": [rois[i].x.min for i in sorted_indices],
+        "y0": [rois[i].y.min for i in sorted_indices],
+        "x1": [rois[i].x.max for i in sorted_indices],
+        "y1": [rois[i].y.max for i in sorted_indices],
+    }
+
+
 class ROIPlotState:
     """
     Per-plot state for ROI detector plots.
@@ -130,6 +157,9 @@ class ROIPlotState:
         Optional set of ROI indices that should be active initially.
         If None, no ROIs are active initially. This must be set before
         attaching the watcher to prevent race conditions.
+    initial_rois:
+        Optional dictionary of initial ROI configurations. Used to establish
+        the baseline state for cycle prevention.
     """
 
     def __init__(
@@ -141,6 +171,7 @@ class ROIPlotState:
         roi_publisher: ROIPublisher | None,
         logger: logging.Logger,
         initial_active_indices: set[int] | None = None,
+        initial_rois: dict[int, RectangleROI] | None = None,
     ) -> None:
         self.result_key = result_key
         self.box_stream = box_stream
@@ -148,18 +179,27 @@ class ROIPlotState:
         self.y_unit = y_unit
         self._roi_publisher = roi_publisher
         self._logger = logger
+
+        # Single source of truth for current ROI state
+        # Initialize from initial_rois to establish baseline
+        self._last_known_rois: dict[int, RectangleROI] = (
+            initial_rois.copy() if initial_rois else {}
+        )
+
         # Initialize active indices before attaching watcher to prevent race condition
         self._active_roi_indices: set[int] = (
             initial_active_indices if initial_active_indices is not None else set()
         )
-        self._last_published_rois: dict[int, RectangleROI] = {}
 
-        # Attach the callback to the stream AFTER initializing active indices
+        # Attach the callback to the stream AFTER initializing state
         self.box_stream.param.watch(self.on_box_change, "data")
 
     def on_box_change(self, event) -> None:
         """
-        Handle BoxEdit data changes.
+        Handle BoxEdit data changes from UI.
+
+        Only publishes to backend if ROIs differ from the last known state,
+        preventing redundant publishes when backend updates trigger UI changes.
 
         Parameters
         ----------
@@ -175,7 +215,6 @@ class ROIPlotState:
             current_indices = set(current_rois.keys())
 
             # Update active ROI indices for filtering
-            # Log changes to help debug race conditions
             if current_indices != self._active_roi_indices:
                 self._logger.debug(
                     "Active ROI indices changing from %s to %s for job %s",
@@ -185,18 +224,61 @@ class ROIPlotState:
                 )
             self._active_roi_indices = current_indices
 
-            # Only publish if ROIs actually changed and publisher is available
-            if self._roi_publisher and current_rois != self._last_published_rois:
-                self._roi_publisher.publish_rois(self.result_key.job_id, current_rois)
-                self._last_published_rois = current_rois
-                self._logger.info(
-                    "Published %d ROI(s) for job %s",
-                    len(current_rois),
-                    self.result_key.job_id,
-                )
+            # Only publish if ROIs changed from last known state
+            # This prevents republishing when backend updates trigger UI changes
+            if current_rois != self._last_known_rois:
+                self._last_known_rois = current_rois
+
+                if self._roi_publisher:
+                    self._roi_publisher.publish_rois(
+                        self.result_key.job_id, current_rois
+                    )
+                    self._logger.info(
+                        "Published %d ROI(s) for job %s",
+                        len(current_rois),
+                        self.result_key.job_id,
+                    )
 
         except Exception as e:
             self._logger.error("Failed to publish ROI update: %s", e)
+
+    def on_backend_roi_update(self, backend_rois: dict[int, RectangleROI]) -> None:
+        """
+        Handle ROI updates from the backend stream.
+
+        Updates the UI only if the backend state differs from the current state.
+        Updates _last_known_rois BEFORE updating the BoxEdit stream to prevent
+        infinite cycles when on_box_change is triggered.
+
+        Parameters
+        ----------
+        backend_rois:
+            Dictionary mapping ROI index to RectangleROI from backend.
+        """
+        try:
+            # Only update UI if backend state differs from current state
+            if backend_rois != self._last_known_rois:
+                self._logger.debug(
+                    "Backend ROI update differs from current state for job %s, "
+                    "updating UI",
+                    self.result_key.job_id,
+                )
+
+                # Update state BEFORE updating UI to break potential cycles
+                self._last_known_rois = backend_rois
+                self._active_roi_indices = set(backend_rois.keys())
+
+                # Convert to BoxEdit format and update stream
+                box_data = rois_to_box_data(backend_rois)
+                self.box_stream.event(data=box_data)
+
+                self._logger.info(
+                    "UI updated with %d ROI(s) from backend for job %s",
+                    len(backend_rois),
+                    self.result_key.job_id,
+                )
+        except Exception as e:
+            self._logger.error("Failed to update UI from backend ROI data: %s", e)
 
     def is_roi_active(self, key: ResultKey) -> bool:
         """
@@ -318,6 +400,68 @@ class ROIDetectorPlotFactory:
         coord_unit = detector_data.coords[dim].unit
         return str(coord_unit) if coord_unit is not None else None
 
+    def _subscribe_to_roi_readback(
+        self, roi_readback_key: ResultKey, plot_state: ROIPlotState
+    ) -> None:
+        """
+        Subscribe to ROI readback stream from backend.
+
+        Creates a subscription that updates the plot's ROI rectangles when
+        the backend publishes ROI readback data, enabling bidirectional sync.
+
+        Parameters
+        ----------
+        roi_readback_key:
+            ResultKey for the roi_rectangle stream.
+        plot_state:
+            ROIPlotState to update when backend publishes ROIs.
+        """
+
+        def on_roi_data_update(data: dict[ResultKey, sc.DataArray]) -> None:
+            """Callback for ROI readback data updates."""
+            if roi_readback_key not in data:
+                return
+
+            try:
+                roi_data = data[roi_readback_key]
+                # Parse concatenated ROI data (has roi_index coordinate)
+                rois = ROI.from_concatenated_data_array(roi_data)
+                # Filter to only RectangleROI (other types not supported yet)
+                rectangle_rois = {
+                    idx: roi
+                    for idx, roi in rois.items()
+                    if isinstance(roi, RectangleROI)
+                }
+                plot_state.on_backend_roi_update(rectangle_rois)
+            except Exception as e:
+                self._logger.debug("Failed to parse ROI readback data: %s", e)
+
+        # Subscribe to roi_rectangle stream if it exists in DataService
+        # Note: This only triggers if the stream has data available
+        if roi_readback_key in self._stream_manager.data_service:
+            # Initialize with current data
+            initial_data = {
+                roi_readback_key: self._stream_manager.data_service[roi_readback_key]
+            }
+            on_roi_data_update(initial_data)
+
+        # Create a custom pipe that calls our callback
+        class ROIReadbackPipe:
+            def __init__(self, callback):
+                self.callback = callback
+
+            def send(self, data):
+                self.callback(data)
+
+        roi_pipe = ROIReadbackPipe(on_roi_data_update)
+
+        # Subscribe via DataService
+        from .data_subscriber import DataSubscriber, MergingStreamAssembler
+
+        assembler = MergingStreamAssembler({roi_readback_key})
+        subscriber = DataSubscriber(assembler, roi_pipe)
+        self._stream_manager.data_service.register_subscriber(subscriber)
+
     def create_roi_detector_plot_components(
         self,
         detector_key: ResultKey,
@@ -408,6 +552,7 @@ class ROIDetectorPlotFactory:
         # Note: plot_state is kept alive by references from the returned plot:
         # - box_stream holds a callback reference to plot_state.on_box_change
         # - The spectrum assembler (created below) holds plot_state.is_roi_active
+        # - roi_readback_pipe (below) holds plot_state.on_backend_roi_update
         # We pass initial_active_indices to prevent race condition where watcher
         # triggers before we set the active indices manually.
         plot_state = ROIPlotState(
@@ -418,7 +563,14 @@ class ROIDetectorPlotFactory:
             roi_publisher=self._roi_publisher,
             logger=self._logger,
             initial_active_indices=initial_active_indices,
+            initial_rois=initial_rois,
         )
+
+        # Subscribe to ROI readback stream from backend for bidirectional sync
+        roi_readback_key = detector_key.model_copy(
+            update={"output_name": "roi_rectangle"}
+        )
+        self._subscribe_to_roi_readback(roi_readback_key, plot_state)
 
         # Create the detector plot with interactive boxes overlay
         interactive_boxes = boxes.opts(fill_alpha=0.3, line_width=2)
