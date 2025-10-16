@@ -142,3 +142,24 @@ class PlotParams3d(PlotParamsBase):
         default_factory=PlotScaleParams2d,
         description="Scaling options for the plot axes and color.",
     )
+
+
+class ROIOptions(pydantic.BaseModel):
+    """Options for ROI detector plots."""
+
+    max_roi_count: int = pydantic.Field(
+        default=3,
+        description="Maximum number of regions of interest (ROIs) that can be defined.",
+        title="Max ROI Count",
+        ge=1,
+        le=10,
+    )
+
+
+class PlotParamsROIDetector(PlotParams2d):
+    """Parameters for ROI detector plots."""
+
+    roi_options: ROIOptions = pydantic.Field(
+        default_factory=ROIOptions,
+        description="Options for ROI selection and display.",
+    )

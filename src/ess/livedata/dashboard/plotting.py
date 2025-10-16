@@ -11,7 +11,7 @@ from typing import Any, Generic, Protocol, TypeVar
 import pydantic
 import scipp as sc
 
-from .plot_params import PlotParams2d
+from .plot_params import PlotParamsROIDetector
 from .plots import ImagePlotter, LinePlotter, Plotter, SlicerPlotter
 from .scipp_to_holoviews import _all_coords_evenly_spaced
 
@@ -178,7 +178,7 @@ plotter_registry.register_plotter(
 )
 
 
-def _roi_detector_plotter_factory(params: PlotParams2d) -> Plotter:
+def _roi_detector_plotter_factory(params: PlotParamsROIDetector) -> Plotter:
     """
     Dummy factory for ROI detector plotter.
 

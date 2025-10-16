@@ -15,8 +15,8 @@ from ess.livedata.config.models import Interval, RectangleROI
 from ess.livedata.config.workflow_spec import ResultKey
 
 from .data_subscriber import FilteredMergingStreamAssembler
-from .plot_params import LayoutParams, PlotParams2d
 from .plots import ImagePlotter, LinePlotter, PlotAspect, PlotAspectType
+from .plot_params import LayoutParams, PlotParamsROIDetector
 from .roi_publisher import ROIPublisher
 from .stream_manager import StreamManager
 
@@ -46,13 +46,13 @@ def boxes_to_rois(
     :
         Dictionary mapping box index to RectangleROI. Empty boxes are skipped.
     """
-    if not box_data or not box_data.get('x0'):
+    if not box_data or not box_data.get("x0"):
         return {}
 
-    x0_list = box_data.get('x0', [])
-    x1_list = box_data.get('x1', [])
-    y0_list = box_data.get('y0', [])
-    y1_list = box_data.get('y1', [])
+    x0_list = box_data.get("x0", [])
+    x1_list = box_data.get("x1", [])
+    y0_list = box_data.get("y0", [])
+    y1_list = box_data.get("y1", [])
 
     # Validate all lists have the same length
     lengths = {len(x0_list), len(x1_list), len(y0_list), len(y1_list)}
@@ -147,7 +147,7 @@ class ROIPlotState:
         self._last_published_rois: dict[int, RectangleROI] = {}
 
         # Attach the callback to the stream
-        self.box_stream.param.watch(self.on_box_change, 'data')
+        self.box_stream.param.watch(self.on_box_change, "data")
 
     def on_box_change(self, event) -> None:
         """
@@ -158,7 +158,7 @@ class ROIPlotState:
         event:
             Event object from BoxEdit stream.
         """
-        data = event.new if hasattr(event, 'new') else event
+        data = event.new if hasattr(event, "new") else event
         if data is None:
             data = {}
 
@@ -216,8 +216,6 @@ class ROIDetectorPlotFactory:
         Logger instance. If None, creates a logger using the module name.
     """
 
-    _MAX_ROI_COUNT = 3
-
     def __init__(
         self,
         stream_manager: StreamManager,
@@ -246,7 +244,7 @@ class ROIDetectorPlotFactory:
         if output_name is None:
             return None
 
-        parts = output_name.rsplit('_', 1)
+        parts = output_name.rsplit("_", 1)
         if len(parts) != 2:
             return None
 
@@ -274,9 +272,9 @@ class ROIDetectorPlotFactory:
         :
             List of ResultKeys for ROI spectrum outputs.
         """
-        roi_base_name = f'roi_{detector_key.output_name}'
+        roi_base_name = f"roi_{detector_key.output_name}"
         return [
-            detector_key.model_copy(update={'output_name': f'{roi_base_name}_{idx}'})
+            detector_key.model_copy(update={"output_name": f"{roi_base_name}_{idx}"})
             for idx in range(max_roi_count)
         ]
 
@@ -307,7 +305,7 @@ class ROIDetectorPlotFactory:
         self,
         detector_key: ResultKey,
         detector_data: sc.DataArray,
-        params: PlotParams2d,
+        params: PlotParamsROIDetector,
         initial_rois: dict[int, RectangleROI] | None = None,
     ) -> tuple[hv.DynamicMap, hv.DynamicMap, ROIPlotState]:
         """
@@ -328,7 +326,7 @@ class ROIDetectorPlotFactory:
         detector_data:
             Initial data for the detector plot.
         params:
-            The plotter parameters.
+            The plotter parameters (PlotParamsROIDetector).
         initial_rois:
             Optional dictionary of initial ROI configurations to display.
             If provided, the Rectangles will be initialized with these shapes
@@ -365,18 +363,19 @@ class ROIDetectorPlotFactory:
             # Convert rectangles to BoxEdit format
             if initial_rectangles:
                 initial_box_data = {
-                    'x0': [r[0] for r in initial_rectangles],
-                    'y0': [r[1] for r in initial_rectangles],
-                    'x1': [r[2] for r in initial_rectangles],
-                    'y1': [r[3] for r in initial_rectangles],
+                    "x0": [r[0] for r in initial_rectangles],
+                    "y0": [r[1] for r in initial_rectangles],
+                    "x1": [r[2] for r in initial_rectangles],
+                    "y1": [r[3] for r in initial_rectangles],
                 }
 
         boxes = hv.Rectangles(initial_rectangles)
-        default_colors = hv.Cycle.default_cycles['default_colors']
+        default_colors = hv.Cycle.default_cycles["default_colors"]
+        max_roi_count = params.roi_options.max_roi_count
         box_stream = hv.streams.BoxEdit(
             source=boxes,
-            num_objects=self._MAX_ROI_COUNT,
-            styles={'fill_color': default_colors[: self._MAX_ROI_COUNT]},
+            num_objects=max_roi_count,
+            styles={"fill_color": default_colors[:max_roi_count]},
             data=initial_box_data,
         )
 
@@ -411,7 +410,7 @@ class ROIDetectorPlotFactory:
             raise ValueError(
                 "detector_key.output_name must be set for ROI detector plots"
             )
-        spectrum_keys = self._generate_spectrum_keys(detector_key, self._MAX_ROI_COUNT)
+        spectrum_keys = self._generate_spectrum_keys(detector_key, max_roi_count)
         roi_spectrum_dmap = self._create_roi_spectrum_plot(
             spectrum_keys, plot_state, params
         )
@@ -422,7 +421,7 @@ class ROIDetectorPlotFactory:
         self,
         spectrum_keys: list[ResultKey],
         plot_state: ROIPlotState,
-        params: PlotParams2d,
+        params: PlotParamsROIDetector,
     ) -> hv.DynamicMap:
         """
         Create ROI spectrum plot that overlays all active ROI spectra.
@@ -434,14 +433,14 @@ class ROIDetectorPlotFactory:
         plot_state:
             ROI plot state for filtering active ROIs.
         params:
-            The plotter parameters.
+            The plotter parameters (PlotParamsROIDetector).
 
         Returns
         -------
         :
             DynamicMap for the ROI spectrum plot.
         """
-        overlay_layout = LayoutParams(combine_mode='overlay')
+        overlay_layout = LayoutParams(combine_mode="overlay")
 
         assembler_factory = partial(
             FilteredMergingStreamAssembler, filter_fn=plot_state.is_roi_active
@@ -474,7 +473,7 @@ class ROIDetectorPlotFactory:
         self,
         detector_key: ResultKey,
         detector_data: sc.DataArray,
-        params: PlotParams2d,
+        params: PlotParamsROIDetector,
         initial_rois: dict[int, RectangleROI] | None = None,
     ) -> hv.Layout:
         """
@@ -502,7 +501,7 @@ class ROIDetectorPlotFactory:
         detector_data:
             Initial data for the detector plot.
         params:
-            The plotter parameters (PlotParams2d).
+            The plotter parameters (PlotParamsROIDetector).
         initial_rois:
             Optional dictionary of initial ROI configurations to display.
             If provided, the Rectangles will be initialized with these shapes
@@ -514,8 +513,8 @@ class ROIDetectorPlotFactory:
             A HoloViews Layout with detector image (with BoxEdit overlay) and
             ROI spectrum plot, arranged in 2 columns.
         """
-        if not isinstance(params, PlotParams2d):
-            raise TypeError("roi_detector requires PlotParams2d")
+        if not isinstance(params, PlotParamsROIDetector):
+            raise TypeError("roi_detector requires PlotParamsROIDetector")
 
         detector_with_boxes, roi_spectrum_dmap, _plot_state = (
             self.create_roi_detector_plot_components(

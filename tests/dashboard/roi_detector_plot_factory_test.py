@@ -10,7 +10,10 @@ from ess.livedata.config.models import Interval, RectangleROI
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
-from ess.livedata.dashboard.plot_params import PlotParams2d, PlotScaleParams2d
+from ess.livedata.dashboard.plot_params import (
+    PlotParamsROIDetector,
+    PlotScaleParams2d,
+)
 from ess.livedata.dashboard.roi_detector_plot_factory import (
     ROIDetectorPlotFactory,
     boxes_to_rois,
@@ -145,7 +148,7 @@ class TestROIDetectorPlotFactory:
         data_service[spectrum_key] = spectrum_data
 
         # Create plot params
-        params = PlotParams2d(plot_scale=PlotScaleParams2d())
+        params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot
         result = roi_plot_factory.create_roi_detector_plot(
@@ -179,7 +182,7 @@ class TestROIDetectorPlotFactory:
         data_service[detector_key] = detector_data
 
         # Create plot params
-        params = PlotParams2d(plot_scale=PlotScaleParams2d())
+        params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot
         result = roi_plot_factory.create_roi_detector_plot(
@@ -219,7 +222,7 @@ class TestROIDetectorPlotFactory:
         data_service[spectrum_key] = spectrum_data
 
         # Create plot params
-        params = PlotParams2d(plot_scale=PlotScaleParams2d())
+        params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
         # Create components using public API
         detector_dmap, roi_dmap, plot_state = (
@@ -263,7 +266,7 @@ class TestROIDetectorPlotFactory:
         data_service[spectrum_key] = spectrum_data
 
         # Create plot params
-        params = PlotParams2d(plot_scale=PlotScaleParams2d())
+        params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot
         result = roi_plot_factory.create_roi_detector_plot(
@@ -305,7 +308,7 @@ def test_roi_detector_plot_publishes_roi_on_box_edit(
     data_service[detector_key] = detector_data
 
     # Create plot params
-    params = PlotParams2d(plot_scale=PlotScaleParams2d())
+    params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
     # Create ROI detector plot components using public API
     _detector_dmap, _roi_dmap, plot_state = (
@@ -357,7 +360,7 @@ def test_roi_detector_plot_only_publishes_changed_rois(
     data_service[detector_key] = detector_data
 
     # Create plot components using public API
-    params = PlotParams2d(plot_scale=PlotScaleParams2d())
+    params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
     _detector_dmap, _roi_dmap, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
@@ -402,7 +405,7 @@ def test_roi_detector_plot_without_publisher_does_not_crash(
     data_service[detector_key] = detector_data
 
     # Create plot - should not crash
-    params = PlotParams2d(plot_scale=PlotScaleParams2d())
+    params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
     result = roi_plot_factory.create_roi_detector_plot(
         detector_key=detector_key,
         detector_data=detector_data,
@@ -581,7 +584,7 @@ def test_create_roi_plot_with_initial_rois(
         1: RectangleROI(x=Interval(min=7.0, max=9.0), y=Interval(min=4.0, max=6.0)),
     }
 
-    params = PlotParams2d(plot_scale=PlotScaleParams2d())
+    params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
     _detector_with_boxes, _roi_dmap, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
@@ -602,3 +605,29 @@ def test_create_roi_plot_with_initial_rois(
     assert box_data['x1'][0] == 6.0
     assert box_data['y0'][0] == 3.0
     assert box_data['y1'][0] == 5.0
+
+
+def test_custom_max_roi_count(roi_plot_factory, detector_data, workflow_id, job_number):
+    """Test that max_roi_count parameter is correctly applied to BoxEdit."""
+    detector_key = ResultKey(
+        workflow_id=workflow_id,
+        job_id=JobId(source_name='detector_data', job_number=job_number),
+        output_name='current',
+    )
+
+    # Create params with custom max_roi_count
+    params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
+    params.roi_options.max_roi_count = 5
+
+    _detector_with_boxes, _roi_dmap, plot_state = (
+        roi_plot_factory.create_roi_detector_plot_components(
+            detector_key=detector_key,
+            detector_data=detector_data,
+            params=params,
+        )
+    )
+
+    # Verify the BoxEdit was configured with the custom max_roi_count
+    box_stream = plot_state.box_stream
+    assert box_stream.num_objects == 5
+    assert len(box_stream.styles['fill_color']) == 5
