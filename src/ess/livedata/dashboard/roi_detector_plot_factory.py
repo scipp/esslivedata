@@ -54,15 +54,6 @@ def boxes_to_rois(
     y0_list = box_data.get("y0", [])
     y1_list = box_data.get("y1", [])
 
-    # Validate all lists have the same length
-    lengths = {len(x0_list), len(x1_list), len(y0_list), len(y1_list)}
-    if len(lengths) != 1:
-        raise ValueError(
-            f"BoxEdit data has inconsistent lengths: "
-            f"x0={len(x0_list)}, x1={len(x1_list)}, "
-            f"y0={len(y0_list)}, y1={len(y1_list)}"
-        )
-
     rois = {}
     for i, (x0, x1, y0, y1) in enumerate(
         zip(x0_list, x1_list, y0_list, y1_list, strict=True)

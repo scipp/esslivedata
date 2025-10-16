@@ -485,7 +485,9 @@ def test_boxes_to_rois_empty_data():
 def test_boxes_to_rois_raises_on_inconsistent_lengths():
     box_data = {'x0': [1.0, 2.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]}
 
-    with pytest.raises(ValueError, match="inconsistent lengths"):
+    with pytest.raises(
+        ValueError, match="zip\\(\\) argument .* is (shorter|longer) than argument"
+    ):
         boxes_to_rois(box_data)
 
 
