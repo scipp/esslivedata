@@ -275,7 +275,7 @@ class ROIDetectorPlotFactory:
         :
             Unit as string, or None if not present.
         """
-        if not hasattr(detector_data, 'coords') or dim not in detector_data.coords:
+        if dim not in detector_data.coords:
             return None
 
         coord_unit = detector_data.coords[dim].unit
@@ -339,17 +339,9 @@ class ROIDetectorPlotFactory:
         )
 
         # Extract coordinate units
-        data_source = detector_items[detector_key]
-        if hasattr(data_source, 'data') and hasattr(data_source.data, 'coords'):
-            actual_data = data_source.data
-        elif hasattr(data_source, 'coords'):
-            actual_data = data_source
-        else:
-            actual_data = data_source
-
-        x_dim, y_dim = actual_data.dims[1], actual_data.dims[0]
-        x_unit = self._extract_unit_for_dim(actual_data, x_dim)
-        y_unit = self._extract_unit_for_dim(actual_data, y_dim)
+        x_dim, y_dim = detector_data.dims[1], detector_data.dims[0]
+        x_unit = self._extract_unit_for_dim(detector_data, x_dim)
+        y_unit = self._extract_unit_for_dim(detector_data, y_dim)
 
         # Create plot state (which will attach the watcher to box_stream)
         # Note: plot_state is kept alive by references from the returned plot:
