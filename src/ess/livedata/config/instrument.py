@@ -93,12 +93,12 @@ class Instrument:
         *,
         detector_group_name: str | None = None,
     ) -> None:
-        if detector_number is not None:
-            self._detector_numbers[name] = detector_number
-            # return
         if detector_group_name is not None:
             group_name = f'{detector_group_name}/{name}'
             self._detector_group_names[name] = group_name
+        if detector_number is not None:
+            self._detector_numbers[name] = detector_number
+            return
         candidate = snx.load(
             self.nexus_file,
             root=f'entry/instrument/{self.get_detector_group_name(name)}/detector_number',
