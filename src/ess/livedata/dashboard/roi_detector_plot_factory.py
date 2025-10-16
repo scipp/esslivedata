@@ -97,11 +97,20 @@ def rois_to_rectangles(rois: dict[int, RectangleROI]) -> list[tuple[float, ...]]
     :
         List of (x0, y0, x1, y1) tuples for HoloViews Rectangles.
         Returned in sorted order by ROI index.
+        All coordinates are explicitly cast to float to ensure compatibility
+        with BoxEdit drag operations.
     """
     rectangles = []
     for idx in sorted(rois.keys()):
         roi = rois[idx]
-        rectangles.append((roi.x.min, roi.y.min, roi.x.max, roi.y.max))
+        rectangles.append(
+            (
+                float(roi.x.min),
+                float(roi.y.min),
+                float(roi.x.max),
+                float(roi.y.max),
+            )
+        )
     return rectangles
 
 
@@ -145,9 +154,8 @@ class ROIPlotState:
         ResultKey identifying this detector plot.
     box_stream:
         HoloViews BoxEdit stream for this plot.
-    boxes_element:
-        HoloViews Rectangles element that displays the ROI boxes.
-        This element's data must be updated to change visual representation.
+    boxes_pipe:
+        HoloViews Pipe stream for programmatically updating ROI rectangles.
     x_unit:
         Unit for x coordinates.
     y_unit:
@@ -169,7 +177,7 @@ class ROIPlotState:
         self,
         result_key: ResultKey,
         box_stream: hv.streams.BoxEdit,
-        boxes_element: hv.Rectangles,
+        boxes_pipe: hv.streams.Pipe,
         x_unit: str | None,
         y_unit: str | None,
         roi_publisher: ROIPublisher | None,
@@ -179,7 +187,7 @@ class ROIPlotState:
     ) -> None:
         self.result_key = result_key
         self.box_stream = box_stream
-        self.boxes_element = boxes_element
+        self.boxes_pipe = boxes_pipe
         self.x_unit = x_unit
         self.y_unit = y_unit
         self._roi_publisher = roi_publisher
@@ -273,13 +281,15 @@ class ROIPlotState:
                 self._last_known_rois = backend_rois
                 self._active_roi_indices = set(backend_rois.keys())
 
-                # Convert to rectangle tuples and update boxes element's data
-                # This updates the visual representation on the plot
-                rectangles = rois_to_rectangles(backend_rois)
-                self.boxes_element.data = rectangles
-
-                # Also update the BoxEdit stream to keep it in sync
+                # Convert to BoxEdit format (dict with float arrays)
                 box_data = rois_to_box_data(backend_rois)
+
+                # Update Pipe to refresh visual representation (via DynamicMap)
+                rectangles = rois_to_rectangles(backend_rois)
+                self.boxes_pipe.send(rectangles)
+
+                # Update BoxEdit stream to enable drag operations
+                # This must be done AFTER pipe.send() to ensure BoxEdit has correct data
                 self.box_stream.event(data=box_data)
 
                 self._logger.info(
@@ -531,20 +541,26 @@ class ROIDetectorPlotFactory:
         initial_box_data = {}
         if initial_rois:
             initial_rectangles = rois_to_rectangles(initial_rois)
-            # Convert rectangles to BoxEdit format
-            if initial_rectangles:
-                initial_box_data = {
-                    "x0": [r[0] for r in initial_rectangles],
-                    "y0": [r[1] for r in initial_rectangles],
-                    "x1": [r[2] for r in initial_rectangles],
-                    "y1": [r[3] for r in initial_rectangles],
-                }
+            initial_box_data = rois_to_box_data(initial_rois)
 
-        boxes = hv.Rectangles(initial_rectangles)
+        # Create Pipe for programmatic updates to rectangles
+        boxes_pipe = hv.streams.Pipe(data=initial_rectangles)
+
+        # Create DynamicMap that wraps Rectangles
+        # This allows programmatic updates via boxes_pipe.send()
+        def make_boxes(data):
+            if not data:
+                data = []
+            return hv.Rectangles(data)
+
+        boxes_dmap = hv.DynamicMap(make_boxes, streams=[boxes_pipe])
+
+        # Create BoxEdit stream with DynamicMap as source
+        # This enables user interaction (drag, create, delete)
         default_colors = hv.Cycle.default_cycles["default_colors"]
         max_roi_count = params.roi_options.max_roi_count
         box_stream = hv.streams.BoxEdit(
-            source=boxes,
+            source=boxes_dmap,
             num_objects=max_roi_count,
             styles={"fill_color": default_colors[:max_roi_count]},
             data=initial_box_data,
@@ -568,7 +584,7 @@ class ROIDetectorPlotFactory:
         plot_state = ROIPlotState(
             result_key=detector_key,
             box_stream=box_stream,
-            boxes_element=boxes,
+            boxes_pipe=boxes_pipe,
             x_unit=x_unit,
             y_unit=y_unit,
             roi_publisher=self._roi_publisher,
@@ -584,7 +600,7 @@ class ROIDetectorPlotFactory:
         self._subscribe_to_roi_readback(roi_readback_key, plot_state)
 
         # Create the detector plot with interactive boxes overlay
-        interactive_boxes = boxes.opts(fill_alpha=0.3, line_width=2)
+        interactive_boxes = boxes_dmap.opts(fill_alpha=0.3, line_width=2)
         detector_with_boxes = detector_dmap * interactive_boxes
 
         # Generate spectrum keys and create ROI spectrum plot
