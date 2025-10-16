@@ -9,7 +9,10 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
-from ess.livedata.dashboard.plot_params import PlotParams2d, PlotScaleParams2d
+from ess.livedata.dashboard.plot_params import (
+    PlotParamsROIDetector,
+    PlotScaleParams2d,
+)
 from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.stream_manager import StreamManager
 
@@ -120,7 +123,7 @@ class TestPlottingControllerROIDetectorIntegration:
         data_service[spectrum_key] = spectrum_data
 
         # Create plot params
-        params = PlotParams2d(plot_scale=PlotScaleParams2d())
+        params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
         # Create plot using create_plot method with roi_detector plot_name
         result = plotting_controller.create_plot(
@@ -144,7 +147,7 @@ class TestPlottingControllerROIDetectorIntegration:
         job_number,
         detector_data,
     ):
-        """Test that roi_detector validates params is PlotParams2d."""
+        """Test that roi_detector validates params is PlotParamsROIDetector."""
         # Add detector data
         detector_key = ResultKey(
             workflow_id=workflow_id,
@@ -162,7 +165,9 @@ class TestPlottingControllerROIDetectorIntegration:
         wrong_params = WrongParams()
 
         # Should raise TypeError
-        with pytest.raises(TypeError, match="roi_detector requires PlotParams2d"):
+        with pytest.raises(
+            TypeError, match="roi_detector requires PlotParamsROIDetector"
+        ):
             plotting_controller.create_plot(
                 job_number=job_number,
                 source_names=['detector_data'],

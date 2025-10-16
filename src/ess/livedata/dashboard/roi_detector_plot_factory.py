@@ -126,6 +126,10 @@ class ROIPlotState:
         Publisher for ROI updates. If None, publishing is disabled.
     logger:
         Logger instance.
+    initial_active_indices:
+        Optional set of ROI indices that should be active initially.
+        If None, no ROIs are active initially. This must be set before
+        attaching the watcher to prevent race conditions.
     """
 
     def __init__(
@@ -136,6 +140,7 @@ class ROIPlotState:
         y_unit: str | None,
         roi_publisher: ROIPublisher | None,
         logger: logging.Logger,
+        initial_active_indices: set[int] | None = None,
     ) -> None:
         self.result_key = result_key
         self.box_stream = box_stream
@@ -143,10 +148,13 @@ class ROIPlotState:
         self.y_unit = y_unit
         self._roi_publisher = roi_publisher
         self._logger = logger
-        self._active_roi_indices: set[int] = set()
+        # Initialize active indices before attaching watcher to prevent race condition
+        self._active_roi_indices: set[int] = (
+            initial_active_indices if initial_active_indices is not None else set()
+        )
         self._last_published_rois: dict[int, RectangleROI] = {}
 
-        # Attach the callback to the stream
+        # Attach the callback to the stream AFTER initializing active indices
         self.box_stream.param.watch(self.on_box_change, "data")
 
     def on_box_change(self, event) -> None:
@@ -164,9 +172,18 @@ class ROIPlotState:
 
         try:
             current_rois = boxes_to_rois(data, x_unit=self.x_unit, y_unit=self.y_unit)
+            current_indices = set(current_rois.keys())
 
             # Update active ROI indices for filtering
-            self._active_roi_indices = set(current_rois.keys())
+            # Log changes to help debug race conditions
+            if current_indices != self._active_roi_indices:
+                self._logger.debug(
+                    "Active ROI indices changing from %s to %s for job %s",
+                    self._active_roi_indices,
+                    current_indices,
+                    self.result_key.job_id,
+                )
+            self._active_roi_indices = current_indices
 
             # Only publish if ROIs actually changed and publisher is available
             if self._roi_publisher and current_rois != self._last_published_rois:
@@ -384,10 +401,15 @@ class ROIDetectorPlotFactory:
         x_unit = self._extract_unit_for_dim(detector_data, x_dim)
         y_unit = self._extract_unit_for_dim(detector_data, y_dim)
 
+        # Determine initial active indices from initial_rois
+        initial_active_indices = set(initial_rois.keys()) if initial_rois else None
+
         # Create plot state (which will attach the watcher to box_stream)
         # Note: plot_state is kept alive by references from the returned plot:
         # - box_stream holds a callback reference to plot_state.on_box_change
         # - The spectrum assembler (created below) holds plot_state.is_roi_active
+        # We pass initial_active_indices to prevent race condition where watcher
+        # triggers before we set the active indices manually.
         plot_state = ROIPlotState(
             result_key=detector_key,
             box_stream=box_stream,
@@ -395,11 +417,8 @@ class ROIDetectorPlotFactory:
             y_unit=y_unit,
             roi_publisher=self._roi_publisher,
             logger=self._logger,
+            initial_active_indices=initial_active_indices,
         )
-
-        # Initialize active ROI indices from initial_rois if provided
-        if initial_rois:
-            plot_state._active_roi_indices = set(initial_rois.keys())
 
         # Create the detector plot with interactive boxes overlay
         interactive_boxes = boxes.opts(fill_alpha=0.3, line_width=2)

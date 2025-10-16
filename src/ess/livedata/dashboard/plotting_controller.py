@@ -270,7 +270,7 @@ class PlottingController:
             return {}
 
         # Look for ROI readback streams (e.g., 'roi_rectangle_0', 'roi_rectangle_1')
-        # We need to find concatenated ROI data with roi_index coordinate
+        # DetectorView publishes individual ROI streams like 'roi_rectangle_0'
         roi_readback_keys = [
             k for k in source_data.keys() if k and k.startswith('roi_')
         ]
@@ -278,7 +278,7 @@ class PlottingController:
         if not roi_readback_keys:
             return {}
 
-        # Try to find concatenated ROI data (has roi_index coordinate)
+        # First, try to find concatenated ROI data (has roi_index coordinate)
         for key in roi_readback_keys:
             try:
                 roi_data = source_data[key]
@@ -293,11 +293,36 @@ class PlottingController:
                     }
             except Exception as e:
                 self._logger.debug(
-                    "Failed to parse ROI readback from key %s: %s", key, e
+                    "Failed to parse concatenated ROI from key %s: %s", key, e
                 )
                 continue
 
-        return {}
+        # If no concatenated data found, parse individual ROI streams
+        # Format: 'roi_{roi_type}_{index}' (e.g., 'roi_rectangle_0')
+        rois: dict[int, RectangleROI] = {}
+        for key in roi_readback_keys:
+            try:
+                # Extract index from key name (e.g., 'roi_rectangle_0' -> 0)
+                parts = key.rsplit('_', 1)
+                if len(parts) != 2:
+                    continue
+                try:
+                    idx = int(parts[1])
+                except ValueError:
+                    continue
+
+                roi_data = source_data[key]
+                # Parse individual ROI (no roi_index coordinate)
+                roi = ROI.from_data_array(roi_data)
+                if isinstance(roi, RectangleROI):
+                    rois[idx] = roi
+            except Exception as e:
+                self._logger.debug(
+                    "Failed to parse individual ROI from key %s: %s", key, e
+                )
+                continue
+
+        return rois
 
     def _save_plotting_config(
         self,
