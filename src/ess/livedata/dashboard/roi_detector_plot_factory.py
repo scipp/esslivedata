@@ -145,6 +145,9 @@ class ROIPlotState:
         ResultKey identifying this detector plot.
     box_stream:
         HoloViews BoxEdit stream for this plot.
+    boxes_element:
+        HoloViews Rectangles element that displays the ROI boxes.
+        This element's data must be updated to change visual representation.
     x_unit:
         Unit for x coordinates.
     y_unit:
@@ -166,6 +169,7 @@ class ROIPlotState:
         self,
         result_key: ResultKey,
         box_stream: hv.streams.BoxEdit,
+        boxes_element: hv.Rectangles,
         x_unit: str | None,
         y_unit: str | None,
         roi_publisher: ROIPublisher | None,
@@ -175,6 +179,7 @@ class ROIPlotState:
     ) -> None:
         self.result_key = result_key
         self.box_stream = box_stream
+        self.boxes_element = boxes_element
         self.x_unit = x_unit
         self.y_unit = y_unit
         self._roi_publisher = roi_publisher
@@ -268,7 +273,12 @@ class ROIPlotState:
                 self._last_known_rois = backend_rois
                 self._active_roi_indices = set(backend_rois.keys())
 
-                # Convert to BoxEdit format and update stream
+                # Convert to rectangle tuples and update boxes element's data
+                # This updates the visual representation on the plot
+                rectangles = rois_to_rectangles(backend_rois)
+                self.boxes_element.data = rectangles
+
+                # Also update the BoxEdit stream to keep it in sync
                 box_data = rois_to_box_data(backend_rois)
                 self.box_stream.event(data=box_data)
 
@@ -558,6 +568,7 @@ class ROIDetectorPlotFactory:
         plot_state = ROIPlotState(
             result_key=detector_key,
             box_stream=box_stream,
+            boxes_element=boxes,
             x_unit=x_unit,
             y_unit=y_unit,
             roi_publisher=self._roi_publisher,

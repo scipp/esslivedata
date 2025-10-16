@@ -42,6 +42,12 @@ def result_key(workflow_id, job_id):
 
 
 @pytest.fixture
+def boxes_element():
+    """Create a Rectangles element for testing."""
+    return hv.Rectangles([])
+
+
+@pytest.fixture
 def box_stream():
     """Create a real BoxEdit stream for testing."""
     return hv.streams.BoxEdit()
@@ -54,11 +60,12 @@ def fake_publisher():
 
 
 @pytest.fixture
-def roi_plot_state(result_key, box_stream, fake_publisher):
+def roi_plot_state(result_key, box_stream, boxes_element, fake_publisher):
     """Create a ROIPlotState for testing."""
     return ROIPlotState(
         result_key=result_key,
         box_stream=box_stream,
+        boxes_element=boxes_element,
         x_unit='m',
         y_unit='m',
         roi_publisher=fake_publisher,
@@ -73,10 +80,12 @@ class TestROIPlotState:
         self, result_key, fake_publisher
     ):
         """Test that ROIPlotState attaches callback to box_stream on init."""
+        boxes_element = hv.Rectangles([])
         box_stream = hv.streams.BoxEdit()
         ROIPlotState(
             result_key=result_key,
             box_stream=box_stream,
+            boxes_element=boxes_element,
             x_unit='m',
             y_unit='m',
             roi_publisher=fake_publisher,
@@ -262,10 +271,12 @@ class TestROIPlotState:
 
     def test_no_publishing_when_publisher_is_none(self, result_key):
         """Test that no publishing happens when publisher is None."""
+        boxes_element = hv.Rectangles([])
         box_stream = hv.streams.BoxEdit()
         state = ROIPlotState(
             result_key=result_key,
             box_stream=box_stream,
+            boxes_element=boxes_element,
             x_unit='m',
             y_unit='m',
             roi_publisher=None,  # No publisher
@@ -287,11 +298,13 @@ class TestROIPlotState:
             def publish_rois(self, job_id, rois):
                 raise RuntimeError("Test error")
 
+        boxes_element = hv.Rectangles([])
         box_stream = hv.streams.BoxEdit()
         failing_publisher = FailingPublisher()
         ROIPlotState(
             result_key=result_key,
             box_stream=box_stream,
+            boxes_element=boxes_element,
             x_unit='m',
             y_unit='m',
             roi_publisher=failing_publisher,
