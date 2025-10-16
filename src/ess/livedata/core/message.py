@@ -19,6 +19,7 @@ class StreamKind(str, Enum):
     MONITOR_COUNTS = "monitor_counts"
     MONITOR_EVENTS = "monitor_events"
     DETECTOR_EVENTS = "detector_events"
+    DETECTOR_COUNTS = "detector_counts"
     LOG = "log"
     LIVEDATA_CONFIG = "livedata_config"
     LIVEDATA_DATA = "livedata_data"

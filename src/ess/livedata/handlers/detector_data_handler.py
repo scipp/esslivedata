@@ -19,7 +19,12 @@ from ..config import models
 from ..config.instrument import Instrument
 from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
-from .accumulators import DetectorEvents, GroupIntoPixels, ROIBasedTOAHistogram
+from .accumulators import (
+    Cumulative,
+    DetectorEvents,
+    GroupIntoPixels,
+    ROIBasedTOAHistogram,
+)
 from .workflow_factory import Workflow
 
 
@@ -241,6 +246,8 @@ class DetectorHandlerFactory(
             case StreamKind.DETECTOR_EVENTS:
                 detector_number = self._instrument.get_detector_number(key.name)
                 return GroupIntoPixels(detector_number=detector_number)
+            case StreamKind.DETECTOR_COUNTS:
+                return Cumulative()
             case _:
                 return None
 
