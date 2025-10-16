@@ -30,16 +30,30 @@ with h5py.File(instrument.nexus_file, 'r+') as f:
     trans[...] = 1.0
     det.attrs['axes'] = ['x_pixel_offset', 'y_pixel_offset']
     det.attrs['detector_number_indices'] = [0, 1]
+    orca_det = f['entry/instrument/histogram_mode_detectors/orca']
+    orca_trans = orca_det['transformations/translation']
+    orca_trans[...] = 1.0
+
 
 register_monitor_workflows(
     instrument=instrument, source_names=['monitor1', 'monitor2']
 )  # Monitor names - in the streaming module
 
 instrument.add_detector('timepix3', detector_group_name='event_mode_detectors')
+
+instrument.add_detector(
+    'orca',
+    detector_number=sc.arange('yx', 1, 2048**2 + 1, unit=None).fold(
+        dim='yx',
+        sizes={'y': -1, 'x': 2048},
+    ),
+    detector_group_name='histogram_mode_detectors',
+)
+
 _xy_projection = DetectorProjection(
     instrument=instrument,
     projection='xy_plane',
-    resolution={'timepix3': {'y': 512, 'x': 512}},
+    resolution={'timepix3': {'y': 512, 'x': 512}, 'orca': {'y': 2048, 'x': 2048}},
 )
 
 
@@ -66,7 +80,7 @@ _panel_0_config = LogicalViewConfig(
 # )  # Instantiating the DetectorLogicalView itself registers it.
 
 
-detectors_config = {'fakes': {'timepix3': (1, 4096**2)}}
+detectors_config = {'fakes': {'timepix3': (1, 4096**2), 'orca': (1, 2048**2)}}
 
 
 def _make_odin_detectors() -> StreamLUT:
@@ -78,7 +92,12 @@ def _make_odin_detectors() -> StreamLUT:
     """
     # return {InputStreamKey(topic='odin_detector', source_name='timepix3'): 'timepix3'}
     return {
-        InputStreamKey(topic='odin_detector_tpx3_empir', source_name='test'): 'timepix3'
+        InputStreamKey(
+            topic='odin_detector_tpx3_empir', source_name='test'
+        ): 'timepix3',
+        InputStreamKey(
+            topic='odin_area_detector_orca', source_name='hama_kfk1'
+        ): 'orca',
     }
 
 
