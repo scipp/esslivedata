@@ -149,6 +149,35 @@ def rois_to_box_data(rois: dict[int, RectangleROI]) -> dict[str, list[float]]:
     }
 
 
+def parse_roi_readback_data(
+    roi_data: sc.DataArray, logger: logging.Logger | None = None
+) -> dict[int, RectangleROI]:
+    """
+    Parse ROI readback data from backend into RectangleROI instances.
+
+    Parameters
+    ----------
+    roi_data:
+        Concatenated ROI data array with roi_index coordinate.
+    logger:
+        Optional logger for debug messages.
+
+    Returns
+    -------
+    :
+        Dictionary mapping ROI index to RectangleROI. Only rectangle ROIs
+        are included. Returns empty dict if parsing fails.
+    """
+    try:
+        rois = ROI.from_concatenated_data_array(roi_data)
+        # Filter to only RectangleROI (other types not supported yet)
+        return {idx: roi for idx, roi in rois.items() if isinstance(roi, RectangleROI)}
+    except Exception as e:
+        if logger:
+            logger.debug("Failed to parse ROI readback data: %s", e)
+        return {}
+
+
 class ROIPlotState:
     """
     Per-plot state for ROI detector plots.
@@ -414,6 +443,29 @@ class ROIDetectorPlotFactory:
             for idx in range(max_roi_count)
         ]
 
+    def _extract_initial_rois_from_data_service(
+        self, roi_readback_key: ResultKey
+    ) -> dict[int, RectangleROI]:
+        """
+        Extract initial ROI state from DataService if available.
+
+        Parameters
+        ----------
+        roi_readback_key:
+            ResultKey for the roi_rectangle stream.
+
+        Returns
+        -------
+        :
+            Dictionary mapping ROI index to RectangleROI. Returns empty dict
+            if no ROI readback data is available.
+        """
+        if roi_readback_key not in self._stream_manager.data_service:
+            return {}
+
+        roi_data = self._stream_manager.data_service[roi_readback_key]
+        return parse_roi_readback_data(roi_data, self._logger)
+
     @staticmethod
     def _extract_unit_for_dim(detector_data: sc.DataArray, dim: str) -> str | None:
         """
@@ -459,19 +511,10 @@ class ROIDetectorPlotFactory:
             if roi_readback_key not in data:
                 return
 
-            try:
-                roi_data = data[roi_readback_key]
-                # Parse concatenated ROI data (has roi_index coordinate)
-                rois = ROI.from_concatenated_data_array(roi_data)
-                # Filter to only RectangleROI (other types not supported yet)
-                rectangle_rois = {
-                    idx: roi
-                    for idx, roi in rois.items()
-                    if isinstance(roi, RectangleROI)
-                }
+            roi_data = data[roi_readback_key]
+            rectangle_rois = parse_roi_readback_data(roi_data, self._logger)
+            if rectangle_rois:
                 plot_state.on_backend_roi_update(rectangle_rois)
-            except Exception as e:
-                self._logger.debug("Failed to parse ROI readback data: %s", e)
 
         # Subscribe to roi_rectangle stream if it exists in DataService
         # Note: This only triggers if the stream has data available
@@ -706,7 +749,6 @@ class ROIDetectorPlotFactory:
         detector_key: ResultKey,
         detector_data: sc.DataArray,
         params: PlotParamsROIDetector,
-        initial_rois: dict[int, RectangleROI] | None = None,
     ) -> hv.Layout:
         """
         Create ROI detector plot with interactive BoxEdit for a single detector.
@@ -723,6 +765,9 @@ class ROIDetectorPlotFactory:
         The ROI outputs may be published later (after ROI is configured in the UI),
         so we subscribe to them even if they don't exist yet.
 
+        Initial ROI configurations are automatically extracted from DataService if
+        available (e.g., from previous configurations published by backend).
+
         For testing or custom layouts, use `create_roi_detector_plot_components()`
         to get the individual components without the layout wrapper.
 
@@ -734,10 +779,6 @@ class ROIDetectorPlotFactory:
             Initial data for the detector plot.
         params:
             The plotter parameters (PlotParamsROIDetector).
-        initial_rois:
-            Optional dictionary of initial ROI configurations to display.
-            If provided, the Rectangles will be initialized with these shapes
-            and the BoxEdit stream will be populated accordingly.
 
         Returns
         -------
@@ -747,6 +788,12 @@ class ROIDetectorPlotFactory:
         """
         if not isinstance(params, PlotParamsROIDetector):
             raise TypeError("roi_detector requires PlotParamsROIDetector")
+
+        # Extract initial ROIs from DataService if available
+        roi_readback_key = detector_key.model_copy(
+            update={"output_name": "roi_rectangle"}
+        )
+        initial_rois = self._extract_initial_rois_from_data_service(roi_readback_key)
 
         detector_with_boxes, roi_spectrum_dmap, _plot_state = (
             self.create_roi_detector_plot_components(

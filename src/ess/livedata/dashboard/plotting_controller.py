@@ -10,7 +10,6 @@ import holoviews as hv
 import pydantic
 
 import ess.livedata.config.keys as keys
-from ess.livedata.config.models import ROI, RectangleROI
 from ess.livedata.config.workflow_spec import (
     JobId,
     JobNumber,
@@ -242,54 +241,6 @@ class PlottingController:
             len(configs.configs),
         )
 
-    def _extract_roi_readback(
-        self, job_number: JobNumber, source_name: str
-    ) -> dict[int, RectangleROI]:
-        """
-        Extract ROI readback data from job_service.
-
-        Parameters
-        ----------
-        job_number:
-            The job number.
-        source_name:
-            The name of the data source.
-
-        Returns
-        -------
-        :
-            Dictionary mapping ROI index to RectangleROI. Returns empty dict
-            if no ROI readback data is found.
-        """
-        job_data = self._job_service.job_data.get(job_number)
-        if not job_data:
-            return {}
-
-        source_data = job_data.get(source_name)
-        if not source_data:
-            return {}
-
-        # Look for concatenated ROI readback stream (e.g., 'roi_rectangle')
-        # DetectorView publishes all ROIs as a single concatenated message
-        roi_readback_key = 'roi_rectangle'
-
-        if roi_readback_key not in source_data:
-            return {}
-
-        try:
-            roi_data = source_data[roi_readback_key]
-            # Parse concatenated ROI data (has roi_index coordinate)
-            rois = ROI.from_concatenated_data_array(roi_data)
-            # Filter to only RectangleROI (other types not supported yet)
-            return {
-                idx: roi for idx, roi in rois.items() if isinstance(roi, RectangleROI)
-            }
-        except Exception as e:
-            self._logger.debug(
-                "Failed to parse ROI readback from key %s: %s", roi_readback_key, e
-            )
-            return {}
-
     def _save_plotting_config(
         self,
         workflow_id: WorkflowId,
@@ -383,15 +334,11 @@ class PlottingController:
         if plot_name == 'roi_detector':
             layouts = []
             for key, data in items.items():
-                # Extract ROI readback for this source
-                initial_rois = self._extract_roi_readback(
-                    job_number, key.job_id.source_name
-                )
+                # Factory handles ROI initialization internally
                 layout = self._roi_detector_plot_factory.create_roi_detector_plot(
                     detector_key=key,
                     detector_data=data,
                     params=params,
-                    initial_rois=initial_rois,
                 )
                 layouts.append(layout)
             # Return as column (one row per detector). ROI plot is already using two
