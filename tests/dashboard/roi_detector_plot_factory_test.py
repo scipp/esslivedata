@@ -6,6 +6,7 @@ import holoviews as hv
 import pytest
 import scipp as sc
 
+from ess.livedata.config.models import Interval, RectangleROI
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
@@ -13,6 +14,7 @@ from ess.livedata.dashboard.plot_params import PlotParams2d, PlotScaleParams2d
 from ess.livedata.dashboard.roi_detector_plot_factory import (
     ROIDetectorPlotFactory,
     boxes_to_rois,
+    rois_to_rectangles,
 )
 from ess.livedata.dashboard.stream_manager import StreamManager
 
@@ -514,3 +516,89 @@ def test_boxes_to_rois_preserves_units_across_multiple_boxes():
     assert rois[0].y.unit == 'angstrom'
     assert rois[1].x.unit == 'angstrom'
     assert rois[1].y.unit == 'angstrom'
+
+
+def test_rois_to_rectangles_converts_single_roi():
+    rois = {
+        0: RectangleROI(
+            x=Interval(min=1.0, max=5.0, unit='m'),
+            y=Interval(min=2.0, max=6.0, unit='mm'),
+        )
+    }
+
+    rectangles = rois_to_rectangles(rois)
+
+    assert len(rectangles) == 1
+    assert rectangles[0] == (1.0, 2.0, 5.0, 6.0)
+
+
+def test_rois_to_rectangles_converts_multiple_rois():
+    rois = {
+        0: RectangleROI(x=Interval(min=1.0, max=5.0), y=Interval(min=2.0, max=6.0)),
+        1: RectangleROI(x=Interval(min=10.0, max=15.0), y=Interval(min=12.0, max=16.0)),
+        2: RectangleROI(x=Interval(min=20.0, max=25.0), y=Interval(min=22.0, max=26.0)),
+    }
+
+    rectangles = rois_to_rectangles(rois)
+
+    assert len(rectangles) == 3
+    assert rectangles[0] == (1.0, 2.0, 5.0, 6.0)
+    assert rectangles[1] == (10.0, 12.0, 15.0, 16.0)
+    assert rectangles[2] == (20.0, 22.0, 25.0, 26.0)
+
+
+def test_rois_to_rectangles_empty():
+    assert rois_to_rectangles({}) == []
+
+
+def test_rois_to_rectangles_sorts_by_index():
+    rois = {
+        2: RectangleROI(x=Interval(min=20.0, max=25.0), y=Interval(min=22.0, max=26.0)),
+        0: RectangleROI(x=Interval(min=1.0, max=5.0), y=Interval(min=2.0, max=6.0)),
+        1: RectangleROI(x=Interval(min=10.0, max=15.0), y=Interval(min=12.0, max=16.0)),
+    }
+
+    rectangles = rois_to_rectangles(rois)
+
+    # Should be in sorted order by index (0, 1, 2)
+    assert rectangles[0] == (1.0, 2.0, 5.0, 6.0)
+    assert rectangles[1] == (10.0, 12.0, 15.0, 16.0)
+    assert rectangles[2] == (20.0, 22.0, 25.0, 26.0)
+
+
+def test_create_roi_plot_with_initial_rois(
+    roi_plot_factory, workflow_id, job_number, detector_data
+):
+    """Test that ROI plot can be initialized with existing ROI configurations."""
+    detector_key = ResultKey(
+        workflow_id=workflow_id,
+        job_id=JobId(source_name='detector_data', job_number=job_number),
+        output_name='current',
+    )
+
+    initial_rois = {
+        0: RectangleROI(x=Interval(min=2.0, max=6.0), y=Interval(min=3.0, max=5.0)),
+        1: RectangleROI(x=Interval(min=7.0, max=9.0), y=Interval(min=4.0, max=6.0)),
+    }
+
+    params = PlotParams2d(plot_scale=PlotScaleParams2d())
+
+    _detector_with_boxes, _roi_dmap, plot_state = (
+        roi_plot_factory.create_roi_detector_plot_components(
+            detector_key=detector_key,
+            detector_data=detector_data,
+            params=params,
+            initial_rois=initial_rois,
+        )
+    )
+
+    # Verify the plot state has the correct active ROI indices
+    assert plot_state._active_roi_indices == {0, 1}
+
+    # Verify the BoxEdit stream was initialized with the rectangles
+    box_data = plot_state.box_stream.data
+    assert len(box_data['x0']) == 2
+    assert box_data['x0'][0] == 2.0
+    assert box_data['x1'][0] == 6.0
+    assert box_data['y0'][0] == 3.0
+    assert box_data['y1'][0] == 5.0

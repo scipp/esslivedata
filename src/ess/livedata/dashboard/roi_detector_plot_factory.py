@@ -83,6 +83,28 @@ def boxes_to_rois(
     return rois
 
 
+def rois_to_rectangles(rois: dict[int, RectangleROI]) -> list[tuple[float, ...]]:
+    """
+    Convert RectangleROI instances to HoloViews Rectangles format.
+
+    Parameters
+    ----------
+    rois:
+        Dictionary mapping ROI index to RectangleROI.
+
+    Returns
+    -------
+    :
+        List of (x0, y0, x1, y1) tuples for HoloViews Rectangles.
+        Returned in sorted order by ROI index.
+    """
+    rectangles = []
+    for idx in sorted(rois.keys()):
+        roi = rois[idx]
+        rectangles.append((roi.x.min, roi.y.min, roi.x.max, roi.y.max))
+    return rectangles
+
+
 class ROIPlotState:
     """
     Per-plot state for ROI detector plots.
@@ -286,6 +308,7 @@ class ROIDetectorPlotFactory:
         detector_key: ResultKey,
         detector_data: sc.DataArray,
         params: PlotParams2d,
+        initial_rois: dict[int, RectangleROI] | None = None,
     ) -> tuple[hv.DynamicMap, hv.DynamicMap, ROIPlotState]:
         """
         Create ROI detector plot components without layout assembly.
@@ -306,6 +329,10 @@ class ROIDetectorPlotFactory:
             Initial data for the detector plot.
         params:
             The plotter parameters.
+        initial_rois:
+            Optional dictionary of initial ROI configurations to display.
+            If provided, the Rectangles will be initialized with these shapes
+            and the BoxEdit stream will be populated accordingly.
 
         Returns
         -------
@@ -330,12 +357,27 @@ class ROIDetectorPlotFactory:
             detector_plotter, streams=[merged_detector_pipe], cache_size=1
         ).opts(shared_axes=False)
 
-        boxes = hv.Rectangles([])
+        # Initialize Rectangles with existing ROI shapes if available
+        initial_rectangles = []
+        initial_box_data = {}
+        if initial_rois:
+            initial_rectangles = rois_to_rectangles(initial_rois)
+            # Convert rectangles to BoxEdit format
+            if initial_rectangles:
+                initial_box_data = {
+                    'x0': [r[0] for r in initial_rectangles],
+                    'y0': [r[1] for r in initial_rectangles],
+                    'x1': [r[2] for r in initial_rectangles],
+                    'y1': [r[3] for r in initial_rectangles],
+                }
+
+        boxes = hv.Rectangles(initial_rectangles)
         default_colors = hv.Cycle.default_cycles['default_colors']
         box_stream = hv.streams.BoxEdit(
             source=boxes,
             num_objects=self._MAX_ROI_COUNT,
             styles={'fill_color': default_colors[: self._MAX_ROI_COUNT]},
+            data=initial_box_data,
         )
 
         # Extract coordinate units
@@ -355,6 +397,10 @@ class ROIDetectorPlotFactory:
             roi_publisher=self._roi_publisher,
             logger=self._logger,
         )
+
+        # Initialize active ROI indices from initial_rois if provided
+        if initial_rois:
+            plot_state._active_roi_indices = set(initial_rois.keys())
 
         # Create the detector plot with interactive boxes overlay
         interactive_boxes = boxes.opts(fill_alpha=0.3, line_width=2)
@@ -429,6 +475,7 @@ class ROIDetectorPlotFactory:
         detector_key: ResultKey,
         detector_data: sc.DataArray,
         params: PlotParams2d,
+        initial_rois: dict[int, RectangleROI] | None = None,
     ) -> hv.Layout:
         """
         Create ROI detector plot with interactive BoxEdit for a single detector.
@@ -456,6 +503,10 @@ class ROIDetectorPlotFactory:
             Initial data for the detector plot.
         params:
             The plotter parameters (PlotParams2d).
+        initial_rois:
+            Optional dictionary of initial ROI configurations to display.
+            If provided, the Rectangles will be initialized with these shapes
+            and the BoxEdit stream will be populated accordingly.
 
         Returns
         -------
@@ -468,7 +519,7 @@ class ROIDetectorPlotFactory:
 
         detector_with_boxes, roi_spectrum_dmap, _plot_state = (
             self.create_roi_detector_plot_components(
-                detector_key, detector_data, params
+                detector_key, detector_data, params, initial_rois=initial_rois
             )
         )
 
