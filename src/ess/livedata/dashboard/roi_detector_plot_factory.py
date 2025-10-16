@@ -565,6 +565,18 @@ class ROIDetectorPlotFactory:
             initial_rectangles = rois_to_rectangles(initial_rois, colors=colors_list)
             initial_box_data = rois_to_box_data(initial_rois)
 
+        # There is a very particular way these components must be created, or else the
+        # interactiveity will not work. In particular:
+        # - Naively composing and wrapping DynamicMap(Image * Rectangles) will lead to a
+        #   defunct BoxEdit that does not respond to clicks.
+        # - Wrapping only the image, DynamicMap(Image) * Rectangles, makes the BoxEdit
+        #   work, but updating the rectangles programmatically does not work.
+        # - The only way we have found that works is to create a Pipe for the rectangles
+        #   and use a DynamicMap to wrap the Rectangles, and then compose that with
+        #   the DynamicMap for the image. This allows both programmatic updates and
+        #   user interaction to work correctly. The key insight is to use the
+        #   DynamicMap(Rectangles) as source for BoxEdit, not the Rectangles element.
+
         # Create Pipe for programmatic updates to rectangles
         boxes_pipe = hv.streams.Pipe(data=initial_rectangles)
 
