@@ -142,8 +142,6 @@ class ROIDetectorPlotFactory:
         self._stream_manager = stream_manager
         self._roi_publisher = roi_publisher
         self._logger = logger or logging.getLogger(__name__)
-        # Per-plot state is managed by ROIPlotState instances
-        self._plot_states: dict[ResultKey, ROIPlotState] = {}
 
     @staticmethod
     def _parse_roi_index(output_name: str | None) -> int | None:
@@ -220,14 +218,22 @@ class ROIDetectorPlotFactory:
         coord_unit = detector_data.coords[dim].unit
         return str(coord_unit) if coord_unit is not None else None
 
-    def _create_detector_plot_with_boxes(
+    def create_roi_detector_plot_components(
         self,
         detector_key: ResultKey,
         detector_data: sc.DataArray,
         params: PlotParams2d,
-    ) -> tuple[hv.Overlay, ROIPlotState]:
+    ) -> tuple[hv.DynamicMap, hv.DynamicMap, ROIPlotState]:
         """
-        Create detector plot with BoxEdit overlay.
+        Create ROI detector plot components without layout assembly.
+
+        This is the testable public API that creates the individual components
+        for an ROI detector plot. It returns the detector DynamicMap, ROI spectrum
+        DynamicMap, and the plot state, allowing the caller to control layout
+        or access components for testing.
+
+        The plot_state is not stored internally - it's kept alive by references
+        from the returned plot components (via callbacks and stream filters).
 
         Parameters
         ----------
@@ -241,9 +247,12 @@ class ROIDetectorPlotFactory:
         Returns
         -------
         :
-            Tuple of (detector_with_boxes overlay, plot_state).
+            Tuple of (detector_dmap, roi_dmap, plot_state).
         """
         detector_items = {detector_key: detector_data}
+        # FIXME: Memory leak - subscribers registered via stream_manager are never
+        # unregistered. When this plot is closed, the subscriber remains in
+        # DataService._subscribers, preventing garbage collection of plot components.
         merged_detector_pipe = self._stream_manager.make_merging_stream(detector_items)
 
         detector_plotter = ImagePlotter(
@@ -280,6 +289,9 @@ class ROIDetectorPlotFactory:
         y_unit = self._extract_unit_for_dim(actual_data, y_dim)
 
         # Create plot state (which will attach the watcher to box_stream)
+        # Note: plot_state is kept alive by references from the returned plot:
+        # - box_stream holds a callback reference to plot_state.on_box_change
+        # - The spectrum assembler (created below) holds plot_state.is_roi_active
         plot_state = ROIPlotState(
             result_key=detector_key,
             box_stream=box_stream,
@@ -288,12 +300,22 @@ class ROIDetectorPlotFactory:
             roi_publisher=self._roi_publisher,
             logger=self._logger,
         )
-        self._plot_states[detector_key] = plot_state
 
+        # Create the detector plot with interactive boxes overlay
         interactive_boxes = boxes.opts(fill_alpha=0.3, line_width=2)
         detector_with_boxes = detector_dmap * interactive_boxes
 
-        return detector_with_boxes, plot_state
+        # Generate spectrum keys and create ROI spectrum plot
+        if detector_key.output_name is None:
+            raise ValueError(
+                "detector_key.output_name must be set for ROI detector plots"
+            )
+        spectrum_keys = self._generate_spectrum_keys(detector_key, self._MAX_ROI_COUNT)
+        roi_spectrum_dmap = self._create_roi_spectrum_plot(
+            spectrum_keys, plot_state, params
+        )
+
+        return detector_with_boxes, roi_spectrum_dmap, plot_state
 
     def _create_roi_spectrum_plot(
         self,
@@ -323,6 +345,9 @@ class ROIDetectorPlotFactory:
         assembler_factory = partial(
             FilteredMergingStreamAssembler, filter_fn=plot_state.is_roi_active
         )
+        # FIXME: Memory leak - subscribers registered via stream_manager are never
+        # unregistered. When this plot is closed, the subscriber remains in
+        # DataService._subscribers, preventing garbage collection of plot components.
         spectrum_pipe = self._stream_manager.make_merging_stream_from_keys(
             spectrum_keys, assembler_factory=assembler_factory
         )
@@ -361,6 +386,9 @@ class ROIDetectorPlotFactory:
         The ROI outputs may be published later (after ROI is configured in the UI),
         so we subscribe to them even if they don't exist yet.
 
+        For testing or custom layouts, use `create_roi_detector_plot_components()`
+        to get the individual components without the layout wrapper.
+
         Parameters
         ----------
         detector_key:
@@ -379,18 +407,10 @@ class ROIDetectorPlotFactory:
         if not isinstance(params, PlotParams2d):
             raise TypeError("roi_detector requires PlotParams2d")
 
-        if detector_key.output_name is None:
-            raise ValueError(
-                "detector_key.output_name must be set for ROI detector plots"
+        detector_with_boxes, roi_spectrum_dmap, _plot_state = (
+            self.create_roi_detector_plot_components(
+                detector_key, detector_data, params
             )
-
-        spectrum_keys = self._generate_spectrum_keys(detector_key, self._MAX_ROI_COUNT)
-
-        detector_with_boxes, plot_state = self._create_detector_plot_with_boxes(
-            detector_key, detector_data, params
         )
 
-        spectrum_dmap = self._create_roi_spectrum_plot(
-            spectrum_keys, plot_state, params
-        )
-        return hv.Layout([detector_with_boxes, spectrum_dmap]).cols(2)
+        return hv.Layout([detector_with_boxes, roi_spectrum_dmap]).cols(2)

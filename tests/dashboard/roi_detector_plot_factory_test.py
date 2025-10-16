@@ -187,7 +187,7 @@ class TestROIDetectorPlotFactory:
         assert isinstance(result, hv.Layout)
         assert len(result) == 2
 
-    def test_create_roi_detector_plot_stores_box_stream(
+    def test_create_roi_detector_plot_components_returns_valid_components(
         self,
         roi_plot_factory,
         data_service,
@@ -196,7 +196,7 @@ class TestROIDetectorPlotFactory:
         detector_data,
         spectrum_data,
     ):
-        """Test that BoxEdit stream is stored in factory."""
+        """Test that create_roi_detector_plot_components returns valid components."""
         # Create result keys
         detector_key = ResultKey(
             workflow_id=workflow_id,
@@ -216,20 +216,19 @@ class TestROIDetectorPlotFactory:
         # Create plot params
         params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
-        # Verify no plot states initially
-        assert len(roi_plot_factory._plot_states) == 0
-
-        # Create ROI detector plot
-        roi_plot_factory.create_roi_detector_plot(
-            detector_key=detector_key,
-            detector_data=detector_data,
-            params=params,
+        # Create components using public API
+        detector_dmap, roi_dmap, plot_state = (
+            roi_plot_factory.create_roi_detector_plot_components(
+                detector_key=detector_key,
+                detector_data=detector_data,
+                params=params,
+            )
         )
 
-        # Should have stored plot state with box stream
-        assert len(roi_plot_factory._plot_states) == 1
-        assert detector_key in roi_plot_factory._plot_states
-        plot_state = roi_plot_factory._plot_states[detector_key]
+        # Verify components are returned correctly
+        assert isinstance(detector_dmap, hv.Overlay | hv.DynamicMap)
+        assert isinstance(roi_dmap, hv.DynamicMap)
+        assert plot_state is not None
         assert isinstance(plot_state.box_stream, hv.streams.BoxEdit)
 
     def test_create_roi_detector_plot_separates_detector_and_spectrum(
@@ -281,7 +280,7 @@ class TestROIDetectorPlotFactory:
 def test_roi_detector_plot_publishes_roi_on_box_edit(
     roi_plot_factory, data_service, workflow_id, job_number
 ):
-    """Test that BoxEdit changes trigger ROI publishing."""
+    """Integration test: BoxEdit changes trigger ROI publishing."""
     from ess.livedata.dashboard.roi_publisher import FakeROIPublisher
 
     # Set up fake publisher
@@ -303,18 +302,17 @@ def test_roi_detector_plot_publishes_roi_on_box_edit(
     # Create plot params
     params = PlotParams2d(plot_scale=PlotScaleParams2d())
 
-    # Create ROI detector plot
-    roi_plot_factory.create_roi_detector_plot(
-        detector_key=detector_key,
-        detector_data=detector_data,
-        params=params,
+    # Create ROI detector plot components using public API
+    _detector_dmap, _roi_dmap, plot_state = (
+        roi_plot_factory.create_roi_detector_plot_components(
+            detector_key=detector_key,
+            detector_data=detector_data,
+            params=params,
+        )
     )
 
-    # Get the BoxEdit stream from plot state
-    plot_state = roi_plot_factory._plot_states[detector_key]
+    # Simulate user drawing a box via the box stream
     box_stream = plot_state.box_stream
-
-    # Simulate user drawing a box
     box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
 
     # Check that ROI was published
@@ -334,7 +332,7 @@ def test_roi_detector_plot_publishes_roi_on_box_edit(
 def test_roi_detector_plot_only_publishes_changed_rois(
     roi_plot_factory, data_service, workflow_id, job_number
 ):
-    """Test that ROI publishing only happens when ROI changes."""
+    """Integration test: ROI publishing only happens when ROI changes."""
     from ess.livedata.dashboard.roi_publisher import FakeROIPublisher
 
     # Set up fake publisher
@@ -353,16 +351,17 @@ def test_roi_detector_plot_only_publishes_changed_rois(
     )
     data_service[detector_key] = detector_data
 
-    # Create plot
+    # Create plot components using public API
     params = PlotParams2d(plot_scale=PlotScaleParams2d())
-    roi_plot_factory.create_roi_detector_plot(
-        detector_key=detector_key,
-        detector_data=detector_data,
-        params=params,
+    _detector_dmap, _roi_dmap, plot_state = (
+        roi_plot_factory.create_roi_detector_plot_components(
+            detector_key=detector_key,
+            detector_data=detector_data,
+            params=params,
+        )
     )
 
-    # Get the BoxEdit stream from plot state
-    plot_state = roi_plot_factory._plot_states[detector_key]
+    # Get the box stream
     box_stream = plot_state.box_stream
 
     # First box edit
