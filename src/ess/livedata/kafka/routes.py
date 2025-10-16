@@ -4,10 +4,12 @@ from typing import Self
 
 from ..core.message import StreamKind
 from .message_adapter import (
+    Ad00ToScippAdapter,
     ChainedAdapter,
     Da00ToScippAdapter,
     Ev44ToDetectorEventsAdapter,
     F144ToLogDataAdapter,
+    KafkaToAd00Adapter,
     KafkaToDa00Adapter,
     KafkaToEv44Adapter,
     KafkaToF144Adapter,
@@ -52,14 +54,25 @@ class RoutingAdapterBuilder:
 
     def with_detector_route(self) -> Self:
         """Adds the detector route."""
-        adapter = ChainedAdapter(
-            first=KafkaToEv44Adapter(
-                stream_lut=self._stream_mapping.detectors,
-                stream_kind=StreamKind.DETECTOR_EVENTS,
-            ),
-            second=Ev44ToDetectorEventsAdapter(
-                merge_detectors=self._stream_mapping.instrument == 'bifrost'
-            ),
+        adapter = RouteBySchemaAdapter(
+            routes={
+                'ev44': ChainedAdapter(
+                    first=KafkaToEv44Adapter(
+                        stream_lut=self._stream_mapping.detectors,
+                        stream_kind=StreamKind.DETECTOR_EVENTS,
+                    ),
+                    second=Ev44ToDetectorEventsAdapter(
+                        merge_detectors=self._stream_mapping.instrument == 'bifrost'
+                    ),
+                ),
+                'ad00': ChainedAdapter(
+                    first=KafkaToAd00Adapter(
+                        stream_lut=self._stream_mapping.detectors,
+                        stream_kind=StreamKind.DETECTOR_EVENTS,
+                    ),
+                    second=Ad00ToScippAdapter(),
+                ),
+            }
         )
         for topic in self._stream_mapping.detector_topics:
             self._routes[topic] = adapter

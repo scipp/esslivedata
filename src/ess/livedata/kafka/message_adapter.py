@@ -8,7 +8,12 @@ from typing import Any, Generic, Protocol, TypeVar
 import scipp as sc
 import streaming_data_types
 import streaming_data_types.exceptions
-from streaming_data_types import dataarray_da00, eventdata_ev44, logdata_f144
+from streaming_data_types import (
+    area_detector_ad00,
+    dataarray_da00,
+    eventdata_ev44,
+    logdata_f144,
+)
 from streaming_data_types.fbschemas.eventdata_ev44 import Event44Message
 
 from ess.livedata.core.job import JobStatus
@@ -123,12 +128,12 @@ class KafkaToDa00Adapter(KafkaAdapter[list[dataarray_da00.Variable]]):
         return Message(timestamp=timestamp, stream=key, value=da00.data)
 
 
-# class KafkaToAd00Adapter(KafkaAdapter[area_detector_ad00.ADArray]):
-#     def adapt(self, message: KafkaMessage) -> Message[area_detector_ad00.ADArray]:
-#         ad00 = area_detector_ad00.deserialise_ad00(message.value())
-#         key = self.get_stream_id(topic=message.topic(), source_name=ad00.source_name)
-#         timestamp = ad00.timestamp_ns
-#         return Message(timestamp=timestamp, stream=key, value=ad00)
+class KafkaToAd00Adapter(KafkaAdapter[area_detector_ad00.ADArray]):
+    def adapt(self, message: KafkaMessage) -> Message[area_detector_ad00.ADArray]:
+        ad00 = area_detector_ad00.deserialise_ad00(message.value())
+        key = self.get_stream_id(topic=message.topic(), source_name=ad00.source_name)
+        timestamp = ad00.timestamp_ns
+        return Message(timestamp=timestamp, stream=key, value=ad00)
 
 
 class KafkaToF144Adapter(KafkaAdapter[logdata_f144.ExtractedLogData]):
@@ -251,6 +256,24 @@ class Da00ToScippAdapter(
             timestamp=message.timestamp,
             stream=message.stream,
             value=da00_to_scipp(message.value),
+        )
+
+
+def _ad00_to_scipp(ad00: area_detector_ad00.ADArray) -> sc.DataArray:
+    data = sc.array(dims=ad00.dimensions, values=ad00.data, unit=None)
+    return sc.DataArray(data)
+
+
+class Ad00ToScippAdapter(
+    MessageAdapter[Message[area_detector_ad00.ADArray], Message[sc.DataArray]]
+):
+    def adapt(
+        self, message: Message[area_detector_ad00.ADArray]
+    ) -> Message[sc.DataArray]:
+        return Message(
+            timestamp=message.timestamp,
+            stream=message.stream,
+            value=_ad00_to_scipp(message.value),
         )
 
 
