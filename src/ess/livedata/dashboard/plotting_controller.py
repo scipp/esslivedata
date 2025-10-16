@@ -269,60 +269,26 @@ class PlottingController:
         if not source_data:
             return {}
 
-        # Look for ROI readback streams (e.g., 'roi_rectangle_0', 'roi_rectangle_1')
-        # DetectorView publishes individual ROI streams like 'roi_rectangle_0'
-        roi_readback_keys = [
-            k for k in source_data.keys() if k and k.startswith('roi_')
-        ]
+        # Look for concatenated ROI readback stream (e.g., 'roi_rectangle')
+        # DetectorView publishes all ROIs as a single concatenated message
+        roi_readback_key = 'roi_rectangle'
 
-        if not roi_readback_keys:
+        if roi_readback_key not in source_data:
             return {}
 
-        # First, try to find concatenated ROI data (has roi_index coordinate)
-        for key in roi_readback_keys:
-            try:
-                roi_data = source_data[key]
-                if 'roi_index' in roi_data.coords:
-                    # Found concatenated ROI data
-                    rois = ROI.from_concatenated_data_array(roi_data)
-                    # Filter to only RectangleROI (other types not supported yet)
-                    return {
-                        idx: roi
-                        for idx, roi in rois.items()
-                        if isinstance(roi, RectangleROI)
-                    }
-            except Exception as e:
-                self._logger.debug(
-                    "Failed to parse concatenated ROI from key %s: %s", key, e
-                )
-                continue
-
-        # If no concatenated data found, parse individual ROI streams
-        # Format: 'roi_{roi_type}_{index}' (e.g., 'roi_rectangle_0')
-        rois: dict[int, RectangleROI] = {}
-        for key in roi_readback_keys:
-            try:
-                # Extract index from key name (e.g., 'roi_rectangle_0' -> 0)
-                parts = key.rsplit('_', 1)
-                if len(parts) != 2:
-                    continue
-                try:
-                    idx = int(parts[1])
-                except ValueError:
-                    continue
-
-                roi_data = source_data[key]
-                # Parse individual ROI (no roi_index coordinate)
-                roi = ROI.from_data_array(roi_data)
-                if isinstance(roi, RectangleROI):
-                    rois[idx] = roi
-            except Exception as e:
-                self._logger.debug(
-                    "Failed to parse individual ROI from key %s: %s", key, e
-                )
-                continue
-
-        return rois
+        try:
+            roi_data = source_data[roi_readback_key]
+            # Parse concatenated ROI data (has roi_index coordinate)
+            rois = ROI.from_concatenated_data_array(roi_data)
+            # Filter to only RectangleROI (other types not supported yet)
+            return {
+                idx: roi for idx, roi in rois.items() if isinstance(roi, RectangleROI)
+            }
+        except Exception as e:
+            self._logger.debug(
+                "Failed to parse ROI readback from key %s: %s", roi_readback_key, e
+            )
+            return {}
 
     def _save_plotting_config(
         self,

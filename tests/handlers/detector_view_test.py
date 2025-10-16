@@ -193,19 +193,23 @@ class TestDetectorViewROIMechanism:
 
         # Verify ROI configuration is active via finalize output
         result = view.finalize()
-        # ROI streams should be present (current, cumulative, and the config echo)
+        # ROI streams should be present (current, cumulative, and concatenated config)
         assert 'roi_current_0' in result
         assert 'roi_cumulative_0' in result
-        assert 'roi_rectangle_0' in result
+        assert 'roi_rectangle' in result
         # Verify the echoed ROI config matches what we sent
-        echoed_roi_data = result['roi_rectangle_0']
-        # The echoed data should have x and y coordinates with the ROI bounds
-        assert 'x' in echoed_roi_data.coords
-        assert 'y' in echoed_roi_data.coords
-        assert sc.min(echoed_roi_data.coords['x']).value == 5.0
-        assert sc.max(echoed_roi_data.coords['x']).value == 25.0
-        assert sc.min(echoed_roi_data.coords['y']).value == 5.0
-        assert sc.max(echoed_roi_data.coords['y']).value == 25.0
+        concatenated_roi_data = result['roi_rectangle']
+        assert 'roi_index' in concatenated_roi_data.coords
+        # Parse back to individual ROIs
+        from ess.livedata.config.models import ROI
+
+        echoed_rois = ROI.from_concatenated_data_array(concatenated_roi_data)
+        assert 0 in echoed_rois
+        echoed_roi = echoed_rois[0]
+        assert echoed_roi.x.min == 5.0
+        assert echoed_roi.x.max == 25.0
+        assert echoed_roi.y.min == 5.0
+        assert echoed_roi.y.max == 25.0
 
     def test_roi_only_does_not_process_events(
         self, mock_rolling_view: RollingDetectorView
@@ -229,10 +233,9 @@ class TestDetectorViewROIMechanism:
         # ROI should be configured but no histogram data accumulated yet
         result = view.finalize()
         # ROI results should be present (even if empty/zero) once ROI is configured
-        # Results are now indexed: roi_current_0, roi_cumulative_0, roi_rectangle_0
         assert 'roi_cumulative_0' in result
         assert 'roi_current_0' in result
-        assert 'roi_rectangle_0' in result  # ROI shape published with index
+        assert 'roi_rectangle' in result  # Concatenated ROI config published
         # All counts should be zero since no events were accumulated
         assert sc.sum(result['roi_cumulative_0']).value == 0
         assert sc.sum(result['roi_current_0']).value == 0
@@ -269,7 +272,9 @@ class TestDetectorViewROIMechanism:
         assert 'current' in result
         assert 'roi_cumulative_0' in result
         assert 'roi_current_0' in result
-        assert 'roi_rectangle_0' in result  # Config should be published on first update
+        assert (
+            'roi_rectangle' in result
+        )  # Concatenated config published on first update
 
         # Verify histogram structure
         roi_histogram = result['roi_current_0']
@@ -358,7 +363,7 @@ class TestDetectorViewROIMechanism:
         view.accumulate({'detector': sample_detector_events})
 
         result1 = view.finalize()
-        assert 'roi_rectangle_0' in result1  # Published on first finalize after update
+        assert 'roi_rectangle' in result1  # Published on first finalize after update
 
         # Second accumulation without ROI update
         view.accumulate({'detector': sample_detector_events})
@@ -850,7 +855,7 @@ class TestDetectorViewBothROIAndDetectorData:
         assert 'current' in result
         assert 'roi_cumulative_0' in result
         assert 'roi_current_0' in result
-        assert 'roi_rectangle_0' in result
+        assert 'roi_rectangle' in result
 
         # Verify histogram has expected events
         # Sample has pixels [0, 1, 2, 5, 6, 10, 11, 15]
@@ -888,7 +893,7 @@ class TestDetectorViewBothROIAndDetectorData:
 
         expected_events_in_roi = 3
         assert sc.sum(result1['roi_current_0']).value == expected_events_in_roi
-        assert 'roi_rectangle_0' in result1  # Published on first update
+        assert 'roi_rectangle' in result1  # Published on first update
 
         # Second call: detector data only (ROI should persist)
         view.accumulate({'detector': sample_detector_events})
@@ -992,7 +997,7 @@ class TestDetectorViewBothROIAndDetectorData:
         assert sc.sum(result2['roi_current_0']).value == expected_roi2_events
         # Cumulative should reset when ROI changes
         assert sc.sum(result2['roi_cumulative_0']).value == expected_roi2_events
-        assert 'roi_rectangle_0' in result2  # Config published on update
+        assert 'roi_rectangle' in result2  # Config published on update
 
 
 class TestDetectorViewEdgeCases:
@@ -1058,7 +1063,7 @@ class TestDetectorViewEdgeCases:
         # Should have ROI configured but with zero events
         assert 'roi_cumulative_0' in result
         assert 'roi_current_0' in result
-        assert 'roi_rectangle_0' in result
+        assert 'roi_rectangle' in result
         assert sc.sum(result['roi_cumulative_0']).value == 0
         assert sc.sum(result['roi_current_0']).value == 0
 
@@ -1116,7 +1121,7 @@ class TestDetectorViewEdgeCases:
             }
         )
         result1 = view.finalize()
-        assert 'roi_rectangle_0' in result1
+        assert 'roi_rectangle' in result1
 
         # Just detector (no ROI update)
         view.accumulate({'detector': sample_detector_events})
@@ -1134,9 +1139,13 @@ class TestDetectorViewEdgeCases:
             }
         )
         result3 = view.finalize()
-        assert 'roi_rectangle_0' in result3
+        assert 'roi_rectangle' in result3
 
         # Verify the published config is the new one
-        published_roi = RectangleROI.from_data_array(result3['roi_rectangle_0'])
+        from ess.livedata.config.models import ROI
+
+        published_rois = ROI.from_concatenated_data_array(result3['roi_rectangle'])
+        assert 0 in published_rois
+        published_roi = published_rois[0]
         assert published_roi.x.min == 10.0
         assert published_roi.x.max == 20.0

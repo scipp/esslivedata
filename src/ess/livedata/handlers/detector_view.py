@@ -368,10 +368,19 @@ class DetectorView(Workflow):
             roi_result[f'roi_current_{idx}'] = roi_delta
             roi_result[f'roi_cumulative_{idx}'] = roi_state.cumulative.copy()
 
-            if roi_state.updated:
-                roi_data = roi_state.model.to_data_array()
-                roi_stream_name = f'roi_{roi_data.name}_{idx}'
-                roi_result[roi_stream_name] = roi_data
+        # Publish all ROIs as single concatenated message for readback, but only if
+        # any ROI was updated. This mirrors the frontend's publishing behavior and
+        # enables proper deletion detection.
+        if any(roi_state.updated for roi_state in self._rois.values()):
+            # Extract ROI models from all active ROI states
+            roi_models = {idx: roi_state.model for idx, roi_state in self._rois.items()}
+            # Convert to concatenated DataArray with roi_index coordinate
+            concatenated_rois = models.ROI.to_concatenated_data_array(roi_models)
+            # Use singular 'rectangle' to match stream naming convention
+            roi_result['roi_rectangle'] = concatenated_rois
+
+            # Clear updated flags after publishing
+            for roi_state in self._rois.values():
                 roi_state.clear_updated_flag()
 
         return {**view_result, **roi_result}
