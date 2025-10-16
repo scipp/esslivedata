@@ -2,123 +2,13 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import uuid
 
-import pytest
 import scipp as sc
 
 from ess.livedata.config.models import Interval, RectangleROI
 from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.message import StreamKind
-from ess.livedata.dashboard.roi_publisher import (
-    FakeROIPublisher,
-    ROIPublisher,
-    boxes_to_rois,
-)
+from ess.livedata.dashboard.roi_publisher import FakeROIPublisher, ROIPublisher
 from ess.livedata.fakes import FakeMessageSink
-
-
-def test_boxes_to_rois_converts_single_box():
-    box_data = {'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]}
-
-    rois = boxes_to_rois(box_data)
-
-    assert len(rois) == 1
-    assert 0 in rois
-    roi = rois[0]
-    assert roi.x.min == 1.0
-    assert roi.x.max == 5.0
-    assert roi.y.min == 2.0
-    assert roi.y.max == 6.0
-    assert roi.x.unit is None
-    assert roi.y.unit is None
-
-
-def test_boxes_to_rois_converts_multiple_boxes():
-    box_data = {
-        'x0': [1.0, 10.0, 20.0],
-        'x1': [5.0, 15.0, 25.0],
-        'y0': [2.0, 12.0, 22.0],
-        'y1': [6.0, 16.0, 26.0],
-    }
-
-    rois = boxes_to_rois(box_data)
-
-    assert len(rois) == 3
-    assert rois[0].x.min == 1.0
-    assert rois[1].x.min == 10.0
-    assert rois[2].x.min == 20.0
-
-
-def test_boxes_to_rois_handles_inverted_coordinates():
-    # BoxEdit can return boxes with x0 > x1 or y0 > y1
-    box_data = {'x0': [5.0], 'x1': [1.0], 'y0': [6.0], 'y1': [2.0]}
-
-    rois = boxes_to_rois(box_data)
-
-    roi = rois[0]
-    assert roi.x.min == 1.0
-    assert roi.x.max == 5.0
-    assert roi.y.min == 2.0
-    assert roi.y.max == 6.0
-
-
-def test_boxes_to_rois_skips_degenerate_boxes():
-    # Boxes with zero width or height should be skipped
-    box_data = {
-        'x0': [1.0, 5.0, 10.0],
-        'x1': [5.0, 5.0, 15.0],  # Second box has zero width
-        'y0': [2.0, 6.0, 10.0],
-        'y1': [6.0, 10.0, 10.0],  # Third box has zero height
-    }
-
-    rois = boxes_to_rois(box_data)
-
-    assert len(rois) == 1
-    assert 0 in rois
-    assert rois[0].x.min == 1.0
-
-
-def test_boxes_to_rois_empty_data():
-    assert boxes_to_rois({}) == {}
-    assert boxes_to_rois({'x0': []}) == {}
-
-
-def test_boxes_to_rois_raises_on_inconsistent_lengths():
-    box_data = {'x0': [1.0, 2.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]}
-
-    with pytest.raises(ValueError, match="inconsistent lengths"):
-        boxes_to_rois(box_data)
-
-
-def test_boxes_to_rois_with_units():
-    box_data = {'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]}
-
-    rois = boxes_to_rois(box_data, x_unit='m', y_unit='mm')
-
-    assert len(rois) == 1
-    roi = rois[0]
-    assert roi.x.min == 1.0
-    assert roi.x.max == 5.0
-    assert roi.y.min == 2.0
-    assert roi.y.max == 6.0
-    assert roi.x.unit == 'm'
-    assert roi.y.unit == 'mm'
-
-
-def test_boxes_to_rois_preserves_units_across_multiple_boxes():
-    box_data = {
-        'x0': [1.0, 10.0],
-        'x1': [5.0, 15.0],
-        'y0': [2.0, 12.0],
-        'y1': [6.0, 16.0],
-    }
-
-    rois = boxes_to_rois(box_data, x_unit='angstrom', y_unit='angstrom')
-
-    assert len(rois) == 2
-    assert rois[0].x.unit == 'angstrom'
-    assert rois[0].y.unit == 'angstrom'
-    assert rois[1].x.unit == 'angstrom'
-    assert rois[1].y.unit == 'angstrom'
 
 
 def test_roi_publisher_publishes_single_roi():
