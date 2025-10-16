@@ -15,8 +15,8 @@ from ess.livedata.config.models import Interval, RectangleROI
 from ess.livedata.config.workflow_spec import ResultKey
 
 from .data_subscriber import FilteredMergingStreamAssembler
-from .plots import ImagePlotter, LinePlotter, PlotAspect, PlotAspectType
 from .plot_params import LayoutParams, PlotParamsROIDetector
+from .plots import ImagePlotter, LinePlotter, PlotAspect, PlotAspectType
 from .roi_publisher import ROIPublisher
 from .stream_manager import StreamManager
 
