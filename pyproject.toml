@@ -159,3 +159,6 @@ ignore-words-list = [
     # Let's not modify it if we don't have to.
     "socio-economic",
 ]
+
+[tool.pylint.main]
+load-plugins = ["pylint_pydantic"]
