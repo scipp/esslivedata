@@ -195,7 +195,8 @@ plotter_registry.register_plotter(
     name='roi_detector',
     title='ROI Detector',
     description=(
-        'Plot 2D detector image with interactive ROI selection and 1D spectrum.'
+        'Plot 2D detector image with interactive ROI selection and 1D spectrum. '
+        '<strong>First, activate the BoxEdit tool from the plot toolbar.</strong>'
         '<ul>'
         '<li><strong>Add ROI:</strong> Click and hold for 300 ms to start one corner, '
         'then move the pointer to the other corner and hold for 300 ms. '
