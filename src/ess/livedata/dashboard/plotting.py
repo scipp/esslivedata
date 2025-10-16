@@ -196,6 +196,15 @@ plotter_registry.register_plotter(
     title='ROI Detector',
     description=(
         'Plot 2D detector image with interactive ROI selection and 1D spectrum.'
+        '<ul>'
+        '<li><strong>Add ROI:</strong> Click and hold for 300 ms to start one corner, '
+        'then move the pointer to the other corner and hold for 300 ms. '
+        'Alternatively, hold Shift then click and drag anywhere on the plot.</li>'
+        '<li><strong>Move ROI:</strong> Click and drag an existing ROI. '
+        'The ROI will be dropped once you let go of the mouse button.</li>'
+        '<li><strong>Delete ROI:</strong> Tap an ROI to select it, then press '
+        'Backspace while the mouse is within the plot area.</li>'
+        '</ul>'
     ),
     data_requirements=DataRequirements(
         min_dims=2,
