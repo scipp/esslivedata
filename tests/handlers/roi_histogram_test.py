@@ -5,7 +5,7 @@
 import pytest
 import scipp as sc
 
-from ess.livedata.config.models import Interval, RectangleROI
+from ess.livedata.config.models import EllipseROI, Interval, PolygonROI, RectangleROI
 from ess.livedata.handlers.accumulators import GroupIntoPixels
 from ess.livedata.handlers.roi_histogram import ROIHistogram
 from ess.livedata.handlers.to_nxevent_data import DetectorEvents
@@ -174,3 +174,268 @@ class TestROIHistogram:
         assert 'time_of_arrival' in delta.coords
         assert sc.sum(delta).value == 0
         assert sc.sum(roi_histogram.cumulative).value == 0
+
+    def test_polygon_roi_raises_value_error(
+        self, detector_indices: sc.DataArray
+    ) -> None:
+        """Test that PolygonROI raises ValueError (not yet supported)."""
+        polygon_roi = PolygonROI(
+            x=[5.0, 25.0, 25.0, 5.0],
+            y=[5.0, 5.0, 25.0, 25.0],
+            x_unit='mm',
+            y_unit='mm',
+        )
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+        roi_filter = ROIFilter(detector_indices)
+
+        with pytest.raises(
+            ValueError, match='Only rectangle ROI is currently supported'
+        ):
+            ROIHistogram(toa_edges=toa_edges, roi_filter=roi_filter, model=polygon_roi)
+
+    def test_ellipse_roi_raises_value_error(
+        self, detector_indices: sc.DataArray
+    ) -> None:
+        """Test that EllipseROI raises ValueError (not yet supported)."""
+        ellipse_roi = EllipseROI(
+            center_x=15.0,
+            center_y=15.0,
+            radius_x=10.0,
+            radius_y=10.0,
+            rotation=0.0,
+            unit='mm',
+        )
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+        roi_filter = ROIFilter(detector_indices)
+
+        with pytest.raises(
+            ValueError, match='Only rectangle ROI is currently supported'
+        ):
+            ROIHistogram(toa_edges=toa_edges, roi_filter=roi_filter, model=ellipse_roi)
+
+    def test_toa_edges_unit_conversion_from_microseconds(
+        self,
+        detector_indices: sc.DataArray,
+        make_grouped_events,
+    ) -> None:
+        """Test that TOA edges in microseconds are converted correctly to ns."""
+        roi = make_rectangle_roi(5.0, 25.0, 5.0, 25.0, 'mm', 'mm')
+        roi_filter = ROIFilter(detector_indices)
+
+        # TOA edges in microseconds
+        toa_edges_us = sc.linspace('time_of_arrival', 0, 1, num=11, unit='us')
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges_us, roi_filter=roi_filter, model=roi
+        )
+
+        # Add events with TOA in range [0, 1000 ns] = [0, 1 us]
+        grouped = make_grouped_events([5, 6], [100, 900])
+        roi_histogram.add_data(grouped)
+        delta = roi_histogram.get_delta()
+
+        # Should have 2 events
+        assert sc.sum(delta).value == 2
+        # Edges should be in original unit (us)
+        assert delta.coords['time_of_arrival'].unit == 'us'
+
+    def test_histogram_bins_match_toa_values(
+        self,
+        detector_indices: sc.DataArray,
+        make_grouped_events,
+    ) -> None:
+        """Test that events end up in the correct TOA bins."""
+        roi = make_rectangle_roi(5.0, 25.0, 5.0, 25.0, 'mm', 'mm')
+        roi_filter = ROIFilter(detector_indices)
+
+        # Create edges with clear bin boundaries: [0-100), [100-200), [200-300) ns
+        toa_edges = sc.array(
+            dims=['time_of_arrival'], values=[0, 100, 200, 300], unit='ns'
+        )
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=roi
+        )
+
+        # Add events: 1 in first bin, 2 in second bin, 1 in third bin
+        grouped = make_grouped_events(
+            [5, 6, 9, 10],  # All within ROI
+            [50, 150, 150, 250],  # TOA values
+        )
+        roi_histogram.add_data(grouped)
+        delta = roi_histogram.get_delta()
+
+        # Check bin counts
+        assert delta.values[0] == 1  # [0-100) ns
+        assert delta.values[1] == 2  # [100-200) ns
+        assert delta.values[2] == 1  # [200-300) ns
+
+    def test_events_outside_roi_are_filtered(
+        self,
+        detector_indices: sc.DataArray,
+        make_grouped_events,
+    ) -> None:
+        """Test that events outside ROI boundaries don't contribute to histogram."""
+        # Small ROI covering only center pixels (x: 10-20, y: 10-20)
+        roi = make_rectangle_roi(10.0, 20.0, 10.0, 20.0, 'mm', 'mm')
+        roi_filter = ROIFilter(detector_indices)
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=roi
+        )
+
+        # Pixels: 0 (0,0), 5 (10,10), 10 (20,20), 15 (30,30)
+        # Only pixel 5 (10,10) is inside ROI [10-20, 10-20]
+        grouped = make_grouped_events(
+            [0, 5, 10, 15],  # Mix of inside and outside ROI
+            [100, 200, 300, 400],
+        )
+        roi_histogram.add_data(grouped)
+        delta = roi_histogram.get_delta()
+
+        # Only 1 event should be counted (pixel 5 at 10,10)
+        assert sc.sum(delta).value == 1
+
+    def test_consecutive_add_data_without_get_delta(
+        self,
+        detector_indices: sc.DataArray,
+        make_grouped_events,
+    ) -> None:
+        """Test that multiple add_data calls accumulate correctly before get_delta."""
+        roi = make_rectangle_roi(5.0, 25.0, 5.0, 25.0, 'mm', 'mm')
+        roi_filter = ROIFilter(detector_indices)
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=roi
+        )
+
+        # Add data three times without calling get_delta
+        grouped1 = make_grouped_events([5, 6], [100, 200])
+        grouped2 = make_grouped_events([9, 10], [300, 400])
+        grouped3 = make_grouped_events([5], [500])
+
+        roi_histogram.add_data(grouped1)
+        roi_histogram.add_data(grouped2)
+        roi_histogram.add_data(grouped3)
+
+        # All 5 events should be in the delta
+        delta = roi_histogram.get_delta()
+        assert sc.sum(delta).value == 5
+
+    def test_multiple_get_delta_without_add_data(
+        self,
+        detector_indices: sc.DataArray,
+        make_grouped_events,
+    ) -> None:
+        """Test that consecutive get_delta calls return empty histograms after first."""
+        roi = make_rectangle_roi(5.0, 25.0, 5.0, 25.0, 'mm', 'mm')
+        roi_filter = ROIFilter(detector_indices)
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=roi
+        )
+
+        # Add some data and get delta
+        grouped = make_grouped_events([5, 6], [100, 200])
+        roi_histogram.add_data(grouped)
+        delta1 = roi_histogram.get_delta()
+        assert sc.sum(delta1).value == 2
+
+        # Subsequent get_delta calls should return empty histograms
+        delta2 = roi_histogram.get_delta()
+        assert sc.sum(delta2).value == 0
+        delta3 = roi_histogram.get_delta()
+        assert sc.sum(delta3).value == 0
+
+        # But cumulative should still have the original data
+        assert sc.sum(roi_histogram.cumulative).value == 2
+
+    def test_add_data_after_clear(
+        self,
+        detector_indices: sc.DataArray,
+        make_grouped_events,
+    ) -> None:
+        """Test that adding data after clear works correctly."""
+        roi = make_rectangle_roi(5.0, 25.0, 5.0, 25.0, 'mm', 'mm')
+        roi_filter = ROIFilter(detector_indices)
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=roi
+        )
+
+        # Add data, get delta, clear
+        grouped1 = make_grouped_events([5, 6], [100, 200])
+        roi_histogram.add_data(grouped1)
+        roi_histogram.get_delta()
+        assert sc.sum(roi_histogram.cumulative).value == 2
+
+        roi_histogram.clear()
+        assert roi_histogram.cumulative is None
+
+        # Add new data after clear
+        grouped2 = make_grouped_events([9, 10], [300, 400])
+        roi_histogram.add_data(grouped2)
+        delta = roi_histogram.get_delta()
+
+        # Should only have the new data
+        assert sc.sum(delta).value == 2
+        assert sc.sum(roi_histogram.cumulative).value == 2
+
+    def test_histogram_coordinates_and_units(
+        self,
+        detector_indices: sc.DataArray,
+    ) -> None:
+        """Test that output histogram has correct coordinates and units."""
+        roi = make_rectangle_roi(5.0, 25.0, 5.0, 25.0, 'mm', 'mm')
+        roi_filter = ROIFilter(detector_indices)
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=roi
+        )
+
+        delta = roi_histogram.get_delta()
+
+        # Check structure
+        assert 'time_of_arrival' in delta.coords
+        assert delta.data.unit == 'counts'
+        assert delta.coords['time_of_arrival'].unit == 'ns'
+
+        # Check that edges match input
+        assert sc.identical(delta.coords['time_of_arrival'], toa_edges)
+
+        # Check number of bins
+        assert len(delta.data) == len(toa_edges) - 1
+
+    def test_model_property_getter(
+        self,
+        detector_indices: sc.DataArray,
+    ) -> None:
+        """Test the model property returns the ROI model."""
+        roi = make_rectangle_roi(5.0, 25.0, 5.0, 25.0, 'mm', 'mm')
+        roi_filter = ROIFilter(detector_indices)
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=roi
+        )
+
+        # Model property should return the same object
+        assert roi_histogram.model is roi
+
+    def test_cumulative_property_returns_none_initially(
+        self,
+        detector_indices: sc.DataArray,
+    ) -> None:
+        """Test that cumulative property returns None before first get_delta."""
+        roi = make_rectangle_roi(5.0, 25.0, 5.0, 25.0, 'mm', 'mm')
+        roi_filter = ROIFilter(detector_indices)
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=roi
+        )
+
+        assert roi_histogram.cumulative is None

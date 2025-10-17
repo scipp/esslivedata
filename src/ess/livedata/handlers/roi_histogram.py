@@ -87,6 +87,8 @@ class ROIHistogram:
         chunk = filtered_with_weights.hist(
             time_of_arrival=self._edges_ns, dim=filtered.dim
         )
+        # Set unit to counts (histogram of weighted events represents counts)
+        chunk.data.unit = 'counts'
         self._chunks.append(chunk)
 
     def _empty_histogram(self) -> sc.DataArray:
