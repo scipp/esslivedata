@@ -5,6 +5,7 @@
 import logging
 
 from ..config.models import RectangleROI
+from ..config.roi_names import get_roi_mapper
 from ..config.workflow_spec import JobId
 from ..core.message import Message, StreamId, StreamKind
 from ..kafka.sink import KafkaSink
@@ -28,6 +29,7 @@ class ROIPublisher:
     def __init__(self, sink: KafkaSink, logger: logging.Logger | None = None):
         self._sink = sink
         self._logger = logger or logging.getLogger(__name__)
+        self._roi_mapper = get_roi_mapper()
 
     def publish_rois(self, job_id: JobId, rois: dict[int, RectangleROI]) -> None:
         """
@@ -44,9 +46,9 @@ class ROIPublisher:
         rois:
             Dictionary mapping ROI index to RectangleROI. Empty dict clears all ROIs.
         """
-        # Use singular 'rectangle' to match DetectorROIAuxSources field name
-        # (the concatenated DataArray is what makes it plural conceptually)
-        stream_name = f"{job_id}/roi_rectangle"
+        # Get readback key from mapper (e.g., 'roi_rectangle')
+        readback_key = self._roi_mapper.readback_keys[0]
+        stream_name = f"{job_id}/{readback_key}"
         stream_id = StreamId(kind=StreamKind.LIVEDATA_ROI, name=stream_name)
 
         # Convert all ROIs to single concatenated DataArray
