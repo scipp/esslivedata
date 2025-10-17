@@ -521,32 +521,6 @@ class ROIDetectorPlotFactory:
             # Always update, even if empty dict - this is needed to sync
             # ROI deletion across multiple plots
             if rectangle_rois is not None:
-                # Detect deleted ROIs by comparing with previous state
-                previous_indices = set(plot_state._last_known_rois.keys())
-                current_indices = set(rectangle_rois.keys())
-                deleted_indices = previous_indices - current_indices
-
-                # Delete spectrum data for removed ROIs from DataService
-                # This triggers subscribers to update, removing curves from plots
-                if deleted_indices:
-                    detector_key_base = plot_state.result_key
-                    for roi_idx in deleted_indices:
-                        # Delete both current and cumulative spectrum data
-                        for view in ['current', 'cumulative']:
-                            roi_output = plot_state._roi_mapper.roi_output_name(
-                                roi_idx, view
-                            )
-                            spectrum_key = detector_key_base.model_copy(
-                                update={'output_name': roi_output}
-                            )
-                            if spectrum_key in self._stream_manager.data_service:
-                                del self._stream_manager.data_service[spectrum_key]
-                                self._logger.debug(
-                                    "Deleted spectrum data for ROI %d (%s)",
-                                    roi_idx,
-                                    view,
-                                )
-
                 plot_state.on_backend_roi_update(rectangle_rois)
 
         # Subscribe to roi_rectangle stream if it exists in DataService
