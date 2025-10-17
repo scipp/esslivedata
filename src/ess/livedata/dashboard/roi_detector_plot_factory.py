@@ -518,7 +518,9 @@ class ROIDetectorPlotFactory:
 
             roi_data = data[roi_readback_key]
             rectangle_rois = parse_roi_readback_data(roi_data, self._logger)
-            if rectangle_rois:
+            # Always update, even if empty dict - this is needed to sync
+            # ROI deletion across multiple plots
+            if rectangle_rois is not None:
                 plot_state.on_backend_roi_update(rectangle_rois)
 
         # Subscribe to roi_rectangle stream if it exists in DataService
