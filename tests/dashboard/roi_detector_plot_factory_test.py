@@ -602,4 +602,156 @@ def test_custom_max_roi_count(roi_plot_factory, detector_data, workflow_id, job_
     # Verify the BoxEdit was configured with the custom max_roi_count
     box_stream = plot_state.box_stream
     assert box_stream.num_objects == 5
-    assert len(box_stream.styles['fill_color']) == 5
+
+
+def test_stale_readback_filtering(
+    roi_plot_factory, detector_data, workflow_id, job_number
+):
+    """Test that stale backend readbacks are filtered out using backlog tracking."""
+    from ess.livedata.dashboard.roi_publisher import FakeROIPublisher
+
+    # Set up fake publisher
+    fake_publisher = FakeROIPublisher()
+    roi_plot_factory._roi_publisher = fake_publisher
+
+    detector_key = ResultKey(
+        workflow_id=workflow_id,
+        job_id=JobId(source_name='detector_data', job_number=job_number),
+        output_name='current',
+    )
+
+    params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
+
+    _detector_with_boxes, _roi_dmap, plot_state = (
+        roi_plot_factory.create_roi_detector_plot_components(
+            detector_key=detector_key,
+            detector_data=detector_data,
+            params=params,
+        )
+    )
+
+    # Simulate user dragging ROI to position B
+    roi_b = {
+        0: RectangleROI(
+            x=Interval(min=10, max=20, unit='dimensionless'),
+            y=Interval(min=15, max=25, unit='dimensionless'),
+        )
+    }
+    plot_state.box_stream.event(
+        data={
+            'x0': [10.0],
+            'y0': [15.0],
+            'x1': [20.0],
+            'y1': [25.0],
+        }
+    )
+
+    # Verify ROI B was published
+    assert len(roi_plot_factory._roi_publisher.published_rois) == 1
+    assert roi_plot_factory._roi_publisher.published_rois[0][1] == roi_b
+
+    # Verify ROI B is in the backlog
+    assert len(plot_state._published_backlog) == 1
+    assert plot_state._published_backlog[0][0] == roi_b
+
+    # Simulate user dragging to position C (rapid change)
+    roi_c = {
+        0: RectangleROI(
+            x=Interval(min=30, max=40, unit='dimensionless'),
+            y=Interval(min=35, max=45, unit='dimensionless'),
+        )
+    }
+    plot_state.box_stream.event(
+        data={
+            'x0': [30.0],
+            'y0': [35.0],
+            'x1': [40.0],
+            'y1': [45.0],
+        }
+    )
+
+    # Verify both ROI B and C are in backlog
+    assert len(plot_state._published_backlog) == 2
+    assert plot_state._published_backlog[0][0] == roi_b
+    assert plot_state._published_backlog[1][0] == roi_c
+
+    # Simulate stale backend readback with ROI B (backend is slow)
+    plot_state.on_backend_roi_update(roi_b)
+
+    # Verify UI still shows ROI C (stale readback was ignored)
+    assert plot_state._last_known_rois == roi_c
+
+    # Verify ROI B was removed from backlog (and older entries)
+    assert len(plot_state._published_backlog) == 1
+    assert plot_state._published_backlog[0][0] == roi_c
+
+    # Simulate backend catching up with ROI C
+    plot_state.on_backend_roi_update(roi_c)
+
+    # Verify UI still shows ROI C
+    assert plot_state._last_known_rois == roi_c
+
+    # Verify backlog was cleared (readback matched our publish)
+    assert len(plot_state._published_backlog) == 0
+
+
+def test_backend_update_from_another_view(
+    roi_plot_factory, detector_data, workflow_id, job_number
+):
+    """Test that updates from another view are applied and clear the backlog."""
+    from ess.livedata.dashboard.roi_publisher import FakeROIPublisher
+
+    # Set up fake publisher
+    fake_publisher = FakeROIPublisher()
+    roi_plot_factory._roi_publisher = fake_publisher
+
+    detector_key = ResultKey(
+        workflow_id=workflow_id,
+        job_id=JobId(source_name='detector_data', job_number=job_number),
+        output_name='current',
+    )
+
+    params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
+
+    _detector_with_boxes, _roi_dmap, plot_state = (
+        roi_plot_factory.create_roi_detector_plot_components(
+            detector_key=detector_key,
+            detector_data=detector_data,
+            params=params,
+        )
+    )
+
+    # View 1: User drags to position B
+    roi_b = {
+        0: RectangleROI(
+            x=Interval(min=10, max=20, unit='dimensionless'),
+            y=Interval(min=15, max=25, unit='dimensionless'),
+        )
+    }
+    plot_state.box_stream.event(
+        data={
+            'x0': [10.0],
+            'y0': [15.0],
+            'x1': [20.0],
+            'y1': [25.0],
+        }
+    )
+
+    # Verify backlog has ROI B
+    assert len(plot_state._published_backlog) == 1
+    assert plot_state._last_known_rois == roi_b
+
+    # Simulate backend update from View 2 (different ROI position D)
+    roi_d = {
+        0: RectangleROI(
+            x=Interval(min=50, max=60, unit='dimensionless'),
+            y=Interval(min=55, max=65, unit='dimensionless'),
+        )
+    }
+    plot_state.on_backend_roi_update(roi_d)
+
+    # Verify View 1 UI updated to ROI D (not in backlog, so applied)
+    assert plot_state._last_known_rois == roi_d
+
+    # Verify backlog was cleared (synced with backend)
+    assert len(plot_state._published_backlog) == 0

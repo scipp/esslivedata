@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import logging
+import time
+from collections import deque
 from functools import partial
 from typing import Any
 
@@ -231,6 +233,14 @@ class ROIPlotState:
             initial_rois.copy() if initial_rois else {}
         )
 
+        # Track recently published ROI states to filter stale backend readbacks
+        # Stores (rois, timestamp) tuples for last 50 publishes
+        self._published_backlog: deque[tuple[dict[int, RectangleROI], float]] = deque(
+            maxlen=50
+        )
+        # Drop backlog entries older than this timeout
+        self._backlog_timeout: float = 5.0
+
         # Attach the callback to the stream AFTER initializing state
         self.box_stream.param.watch(self.on_box_change, "data")
 
@@ -269,6 +279,11 @@ class ROIPlotState:
                 self.boxes_pipe.send(rectangles)
 
                 if self._roi_publisher:
+                    # Add to backlog before publishing to track this state
+                    self._published_backlog.append(
+                        (current_rois.copy(), time.monotonic())
+                    )
+
                     self._roi_publisher.publish_rois(
                         self.result_key.job_id, current_rois
                     )
@@ -285,9 +300,9 @@ class ROIPlotState:
         """
         Handle ROI updates from the backend stream.
 
-        Updates the UI only if the backend state differs from the current state.
-        Updates _last_known_rois BEFORE updating the BoxEdit stream to prevent
-        infinite cycles when on_box_change is triggered.
+        Filters out stale readbacks by checking against recently published states.
+        Only applies backend updates that represent new information (from other
+        views or initial state).
 
         Parameters
         ----------
@@ -295,13 +310,38 @@ class ROIPlotState:
             Dictionary mapping ROI index to RectangleROI from backend.
         """
         try:
-            # Only update UI if backend state differs from current state
+            now = time.monotonic()
+
+            # Clean old entries from backlog
+            while (
+                self._published_backlog
+                and now - self._published_backlog[0][1] > self._backlog_timeout
+            ):
+                self._published_backlog.popleft()
+
+            # Check if this readback matches something we recently published
+            for i, (published_rois, _timestamp) in enumerate(self._published_backlog):
+                if backend_rois == published_rois:
+                    # This is a readback of our own publish - ignore it
+                    # Remove this entry and all older ones from backlog
+                    for _ in range(i + 1):
+                        self._published_backlog.popleft()
+                    self._logger.debug(
+                        "Ignoring backend readback matching own publish for job %s",
+                        self.result_key.job_id,
+                    )
+                    return
+
+            # Not in our backlog - must be from another view or initial state
+            # Apply it only if different from current state
             if backend_rois != self._last_known_rois:
                 self._logger.debug(
-                    "Backend ROI update differs from current state for job %s, "
-                    "updating UI",
+                    "Applying backend ROI update (not in backlog) for job %s",
                     self.result_key.job_id,
                 )
+
+                # Clear backlog since we're syncing with backend state
+                self._published_backlog.clear()
 
                 # Update state BEFORE updating UI to break potential cycles
                 self._last_known_rois = backend_rois
