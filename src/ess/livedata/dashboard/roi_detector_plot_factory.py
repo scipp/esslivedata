@@ -435,21 +435,35 @@ class ROIDetectorPlotFactory:
 
     def _generate_spectrum_keys(self, detector_key: ResultKey) -> list[ResultKey]:
         """
-        Generate spectrum keys for all ROI histogram outputs.
+        Generate spectrum keys for ROI histogram outputs matching detector type.
+
+        Generates only current or cumulative histogram keys based on the detector's
+        output_name. If detector shows 'current', generates roi_current_*. If
+        detector shows 'cumulative', generates roi_cumulative_*.
 
         Parameters
         ----------
         detector_key:
-            ResultKey identifying the detector output. Must have output_name set.
+            ResultKey identifying the detector output. Must have output_name set
+            to either 'current' or 'cumulative'.
 
         Returns
         -------
         :
-            List of ResultKeys for all ROI histogram outputs (current + cumulative).
+            List of ResultKeys for ROI histogram outputs matching detector type.
         """
+        # Determine which histogram type based on detector output_name
+        if detector_key.output_name == "current":
+            histogram_keys = self._roi_mapper.all_current_keys()
+        elif detector_key.output_name == "cumulative":
+            histogram_keys = self._roi_mapper.all_cumulative_keys()
+        else:
+            # Fallback for unexpected output_name - generate all keys
+            histogram_keys = self._roi_mapper.all_histogram_keys()
+
         return [
             detector_key.model_copy(update={"output_name": key})
-            for key in self._roi_mapper.all_histogram_keys()
+            for key in histogram_keys
         ]
 
     @staticmethod
