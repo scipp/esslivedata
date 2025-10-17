@@ -71,16 +71,6 @@ class ROIHistogram:
                 f"Only rectangle ROI is currently supported, got {roi_type}"
             )
 
-    def _add_weights(self, data: sc.DataArray) -> None:
-        """Add weights required for histogramming to binned data."""
-        constituents = data.bins.constituents
-        content = constituents['data']
-        content.coords['time_of_arrival'] = content.data
-        content.data = sc.ones(
-            dims=content.dims, shape=content.shape, dtype='float32', unit='counts'
-        )
-        data.data = sc.bins(**constituents, validate_indices=False)
-
     def add_data(self, data: sc.DataArray) -> None:
         """
         Add detector data for histogram accumulation.
@@ -91,9 +81,12 @@ class ROIHistogram:
             Detector event data (binned DataArray from GroupIntoPixels).
         """
         filtered, scale = self._roi_filter.apply(data)
-        self._add_weights(filtered)
-        filtered *= scale
-        chunk = filtered.hist(time_of_arrival=self._edges_ns, dim=filtered.dim)
+        filtered_with_weights = filtered.bins.assign_coords(
+            time_of_arrival=filtered.bins.data
+        ).bins.assign(sc.bins_like(filtered, scale))
+        chunk = filtered_with_weights.hist(
+            time_of_arrival=self._edges_ns, dim=filtered.dim
+        )
         self._chunks.append(chunk)
 
     def _empty_histogram(self) -> sc.DataArray:
