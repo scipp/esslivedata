@@ -16,6 +16,7 @@ from ess.livedata.dashboard.plot_params import (
 )
 from ess.livedata.dashboard.roi_detector_plot_factory import (
     ROIDetectorPlotFactory,
+    ROIPlotState,
     boxes_to_rois,
     rois_to_rectangles,
 )
@@ -755,3 +756,398 @@ def test_backend_update_from_another_view(
 
     # Verify backlog was cleared (synced with backend)
     assert len(plot_state._published_backlog) == 0
+
+
+def test_two_plots_remove_last_roi_syncs_correctly(
+    roi_plot_factory, data_service, detector_data, workflow_id, job_number
+):
+    """
+    Test that removing the last ROI on one plot correctly syncs to the other plot.
+
+    Reproduces bug where:
+    1. Draw 2 ROIs on plot A - they appear on plot B (works)
+    2. Remove 1 ROI on plot A - it's removed from plot B (works)
+    3. Remove last ROI on plot A - BUG: not removed from plot B
+    """
+    import logging
+
+    from ess.livedata.dashboard.roi_publisher import FakeROIPublisher
+
+    # Set up fake publisher shared by both plots
+    fake_publisher = FakeROIPublisher()
+
+    # Create two plot states for the same detector (like current and cumulative views)
+    detector_key_A = ResultKey(
+        workflow_id=workflow_id,
+        job_id=JobId(source_name='detector_data', job_number=job_number),
+        output_name='current',
+    )
+    detector_key_B = ResultKey(
+        workflow_id=workflow_id,
+        job_id=JobId(source_name='detector_data', job_number=job_number),
+        output_name='cumulative',
+    )
+
+    # Create Plot A
+    box_stream_A = hv.streams.BoxEdit()
+    boxes_pipe_A = hv.streams.Pipe(data=[])
+    default_colors = hv.Cycle.default_cycles["default_colors"]
+
+    plot_state_A = ROIPlotState(
+        result_key=detector_key_A,
+        box_stream=box_stream_A,
+        boxes_pipe=boxes_pipe_A,
+        x_unit='dimensionless',
+        y_unit='dimensionless',
+        roi_publisher=fake_publisher,
+        logger=logging.getLogger(__name__),
+        colors=default_colors[:10],
+    )
+
+    # Create Plot B
+    box_stream_B = hv.streams.BoxEdit()
+    boxes_pipe_B = hv.streams.Pipe(data=[])
+
+    plot_state_B = ROIPlotState(
+        result_key=detector_key_B,
+        box_stream=box_stream_B,
+        boxes_pipe=boxes_pipe_B,
+        x_unit='dimensionless',
+        y_unit='dimensionless',
+        roi_publisher=fake_publisher,
+        logger=logging.getLogger(__name__),
+        colors=default_colors[:10],
+    )
+
+    # Step 1: User draws 2 ROIs on Plot A
+    two_rois = {
+        0: RectangleROI(
+            x=Interval(min=1.0, max=3.0, unit='dimensionless'),
+            y=Interval(min=2.0, max=4.0, unit='dimensionless'),
+        ),
+        1: RectangleROI(
+            x=Interval(min=5.0, max=7.0, unit='dimensionless'),
+            y=Interval(min=6.0, max=8.0, unit='dimensionless'),
+        ),
+    }
+    plot_state_A.box_stream.event(
+        data={
+            'x0': [1.0, 5.0],
+            'y0': [2.0, 6.0],
+            'x1': [3.0, 7.0],
+            'y1': [4.0, 8.0],
+        }
+    )
+
+    # Verify Plot A has 2 ROIs
+    assert plot_state_A._last_known_rois == two_rois
+
+    # Simulate backend readback to Plot B
+    plot_state_B.on_backend_roi_update(two_rois)
+
+    # Verify Plot B received 2 ROIs
+    assert plot_state_B._last_known_rois == two_rois
+    assert len(plot_state_B.box_stream.data['x0']) == 2
+
+    # Step 2: User removes 1 ROI on Plot A (keep only ROI 0)
+    one_roi = {
+        0: RectangleROI(
+            x=Interval(min=1.0, max=3.0, unit='dimensionless'),
+            y=Interval(min=2.0, max=4.0, unit='dimensionless'),
+        ),
+    }
+    plot_state_A.box_stream.event(
+        data={
+            'x0': [1.0],
+            'y0': [2.0],
+            'x1': [3.0],
+            'y1': [4.0],
+        }
+    )
+
+    # Verify Plot A has 1 ROI
+    assert plot_state_A._last_known_rois == one_roi
+
+    # Simulate backend readback to Plot B
+    plot_state_B.on_backend_roi_update(one_roi)
+
+    # Verify Plot B updated to 1 ROI
+    assert plot_state_B._last_known_rois == one_roi
+    assert len(plot_state_B.box_stream.data['x0']) == 1
+
+    # Step 3: User removes last ROI on Plot A (BUG: should sync to Plot B)
+    no_rois = {}
+
+    # Test with empty dict (what BoxEdit might send)
+    plot_state_A.box_stream.event(data={})
+
+    # Verify Plot A has 0 ROIs
+    assert plot_state_A._last_known_rois == no_rois
+
+    # Simulate backend readback to Plot B
+    plot_state_B.on_backend_roi_update(no_rois)
+
+    # THIS IS WHERE THE BUG MIGHT BE: Plot B should update to 0 ROIs
+    assert (
+        plot_state_B._last_known_rois == no_rois
+    ), "Plot B should have 0 ROIs after Plot A removed last ROI"
+    assert (
+        len(plot_state_B.box_stream.data['x0']) == 0
+    ), "Plot B BoxEdit should have 0 boxes after Plot A removed last ROI"
+
+
+def test_two_plots_both_clear_rois_independently(
+    roi_plot_factory, data_service, detector_data, workflow_id, job_number
+):
+    """
+    Test scenario where both plots independently clear ROIs.
+
+    This tests an edge case where Plot B might have {} in its backlog:
+    1. Plot A draws 2 ROIs, syncs to Plot B
+    2. Plot B clears all ROIs (publishes {})
+    3. Backend syncs {} back to Plot A
+    4. Later, Plot A also clears all ROIs (publishes {})
+    5. Backend should sync {} to Plot B, but Plot B might have {} in backlog
+    """
+    import logging
+
+    from ess.livedata.dashboard.roi_publisher import FakeROIPublisher
+
+    # Set up fake publisher shared by both plots
+    fake_publisher = FakeROIPublisher()
+
+    # Create two plot states
+    detector_key_A = ResultKey(
+        workflow_id=workflow_id,
+        job_id=JobId(source_name='detector_data', job_number=job_number),
+        output_name='current',
+    )
+    detector_key_B = ResultKey(
+        workflow_id=workflow_id,
+        job_id=JobId(source_name='detector_data', job_number=job_number),
+        output_name='cumulative',
+    )
+
+    # Create Plot A
+    box_stream_A = hv.streams.BoxEdit()
+    boxes_pipe_A = hv.streams.Pipe(data=[])
+    default_colors = hv.Cycle.default_cycles["default_colors"]
+
+    plot_state_A = ROIPlotState(
+        result_key=detector_key_A,
+        box_stream=box_stream_A,
+        boxes_pipe=boxes_pipe_A,
+        x_unit='dimensionless',
+        y_unit='dimensionless',
+        roi_publisher=fake_publisher,
+        logger=logging.getLogger(__name__),
+        colors=default_colors[:10],
+    )
+
+    # Create Plot B
+    box_stream_B = hv.streams.BoxEdit()
+    boxes_pipe_B = hv.streams.Pipe(data=[])
+
+    plot_state_B = ROIPlotState(
+        result_key=detector_key_B,
+        box_stream=box_stream_B,
+        boxes_pipe=boxes_pipe_B,
+        x_unit='dimensionless',
+        y_unit='dimensionless',
+        roi_publisher=fake_publisher,
+        logger=logging.getLogger(__name__),
+        colors=default_colors[:10],
+    )
+
+    # Step 1: Plot A draws 2 ROIs
+    two_rois = {
+        0: RectangleROI(
+            x=Interval(min=1.0, max=3.0, unit='dimensionless'),
+            y=Interval(min=2.0, max=4.0, unit='dimensionless'),
+        ),
+        1: RectangleROI(
+            x=Interval(min=5.0, max=7.0, unit='dimensionless'),
+            y=Interval(min=6.0, max=8.0, unit='dimensionless'),
+        ),
+    }
+    plot_state_A.box_stream.event(
+        data={
+            'x0': [1.0, 5.0],
+            'y0': [2.0, 6.0],
+            'x1': [3.0, 7.0],
+            'y1': [4.0, 8.0],
+        }
+    )
+
+    # Backend syncs to Plot B
+    plot_state_B.on_backend_roi_update(two_rois)
+    assert plot_state_B._last_known_rois == two_rois
+
+    # Step 2: Plot B clears all ROIs (user interaction on Plot B)
+    plot_state_B.box_stream.event(data={})
+    assert plot_state_B._last_known_rois == {}
+
+    # Backend syncs {} back to Plot A
+    plot_state_A.on_backend_roi_update({})
+    assert plot_state_A._last_known_rois == {}
+
+    # Step 3: User re-draws ROIs on Plot A
+    one_roi = {
+        0: RectangleROI(
+            x=Interval(min=10.0, max=20.0, unit='dimensionless'),
+            y=Interval(min=15.0, max=25.0, unit='dimensionless'),
+        ),
+    }
+    plot_state_A.box_stream.event(
+        data={
+            'x0': [10.0],
+            'y0': [15.0],
+            'x1': [20.0],
+            'y1': [25.0],
+        }
+    )
+
+    # Backend syncs to Plot B
+    plot_state_B.on_backend_roi_update(one_roi)
+    assert plot_state_B._last_known_rois == one_roi
+
+    # Step 4: Plot A removes last ROI again
+    plot_state_A.box_stream.event(data={})
+    assert plot_state_A._last_known_rois == {}
+
+    # Backend should sync {} to Plot B
+    # THIS IS THE CRITICAL TEST: Plot B might have {} in its old backlog
+    plot_state_B.on_backend_roi_update({})
+
+    # Plot B should update to {}
+    assert (
+        plot_state_B._last_known_rois == {}
+    ), "Plot B should have 0 ROIs after Plot A removed last ROI (second time)"
+    assert (
+        len(plot_state_B.box_stream.data['x0']) == 0
+    ), "Plot B BoxEdit should have 0 boxes"
+
+
+def test_empty_roi_backlog_collision(
+    roi_plot_factory, data_service, detector_data, workflow_id, job_number
+):
+    """
+    Test the bug where Plot B has {} in backlog and ignores Plot A's {} update.
+
+    Critical scenario:
+    1. Plot B clears ROIs (publishes {}, backlog has {})
+    2. Plot A clears ROIs (publishes {})
+    3. Backend sends {} to Plot B
+    4. BUG: Plot B finds {} in its own backlog and ignores it!
+    """
+    import logging
+
+    from ess.livedata.dashboard.roi_publisher import FakeROIPublisher
+
+    # Set up fake publisher shared by both plots
+    fake_publisher = FakeROIPublisher()
+
+    # Create two plot states
+    detector_key_A = ResultKey(
+        workflow_id=workflow_id,
+        job_id=JobId(source_name='detector_data', job_number=job_number),
+        output_name='current',
+    )
+    detector_key_B = ResultKey(
+        workflow_id=workflow_id,
+        job_id=JobId(source_name='detector_data', job_number=job_number),
+        output_name='cumulative',
+    )
+
+    # Create Plot A
+    box_stream_A = hv.streams.BoxEdit()
+    boxes_pipe_A = hv.streams.Pipe(data=[])
+    default_colors = hv.Cycle.default_cycles["default_colors"]
+
+    plot_state_A = ROIPlotState(
+        result_key=detector_key_A,
+        box_stream=box_stream_A,
+        boxes_pipe=boxes_pipe_A,
+        x_unit='dimensionless',
+        y_unit='dimensionless',
+        roi_publisher=fake_publisher,
+        logger=logging.getLogger(__name__),
+        colors=default_colors[:10],
+    )
+
+    # Create Plot B
+    box_stream_B = hv.streams.BoxEdit()
+    boxes_pipe_B = hv.streams.Pipe(data=[])
+
+    plot_state_B = ROIPlotState(
+        result_key=detector_key_B,
+        box_stream=box_stream_B,
+        boxes_pipe=boxes_pipe_B,
+        x_unit='dimensionless',
+        y_unit='dimensionless',
+        roi_publisher=fake_publisher,
+        logger=logging.getLogger(__name__),
+        colors=default_colors[:10],
+    )
+
+    # Step 1: Plot A draws 2 ROIs
+    two_rois = {
+        0: RectangleROI(
+            x=Interval(min=1.0, max=3.0, unit='dimensionless'),
+            y=Interval(min=2.0, max=4.0, unit='dimensionless'),
+        ),
+        1: RectangleROI(
+            x=Interval(min=5.0, max=7.0, unit='dimensionless'),
+            y=Interval(min=6.0, max=8.0, unit='dimensionless'),
+        ),
+    }
+    plot_state_A.box_stream.event(
+        data={
+            'x0': [1.0, 5.0],
+            'y0': [2.0, 6.0],
+            'x1': [3.0, 7.0],
+            'y1': [4.0, 8.0],
+        }
+    )
+
+    # Backend syncs to Plot B
+    plot_state_B.on_backend_roi_update(two_rois)
+    assert plot_state_B._last_known_rois == two_rois
+
+    # Step 2: Plot B clears all ROIs (user deletes all ROIs on Plot B)
+    plot_state_B.box_stream.event(data={})
+    assert plot_state_B._last_known_rois == {}
+
+    # Backend sends Plot B's {} to Plot A
+    plot_state_A.on_backend_roi_update({})
+    assert plot_state_A._last_known_rois == {}
+
+    # Step 3: IMMEDIATELY after (before backlog timeout), Plot A also clears ROIs
+    # This simulates both users independently removing all ROIs within seconds
+    plot_state_A.box_stream.event(data={})
+    assert plot_state_A._last_known_rois == {}
+
+    # Draw 1 ROI on Plot B to simulate user interaction
+    plot_state_B.box_stream.event(
+        data={
+            'x0': [100.0],
+            'y0': [150.0],
+            'x1': [200.0],
+            'y1': [250.0],
+        }
+    )
+
+    # Step 4: Plot A clears again
+    plot_state_A.box_stream.event(data={})
+
+    # Backend sends {} from Plot A to Plot B
+    # Plot B should update even though it has {} in old backlog
+    plot_state_B.on_backend_roi_update({})
+
+    # Plot B should update to {} even though it previously had {} in backlog
+    assert plot_state_B._last_known_rois == {}, (
+        "Plot B should have 0 ROIs after Plot A cleared " "(even with {} in backlog)"
+    )
+    assert (
+        len(plot_state_B.box_stream.data['x0']) == 0
+    ), "Plot B BoxEdit should have 0 boxes"

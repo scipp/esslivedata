@@ -282,10 +282,15 @@ class ROIPlotState:
                 self.boxes_pipe.send(rectangles)
 
                 if self._roi_publisher:
-                    # Add to backlog before publishing to track this state
-                    self._published_backlog.append(
-                        (current_rois.copy(), time.monotonic())
-                    )
+                    # Add to backlog before publishing to track this state.
+                    # Special case: Don't add empty dict to backlog since {}
+                    # is not unique. Multiple plots can independently arrive at {},
+                    # so backlog filtering would incorrectly treat another plot's
+                    # {} as our own readback.
+                    if current_rois:  # Only add non-empty ROI dicts to backlog
+                        self._published_backlog.append(
+                            (current_rois.copy(), time.monotonic())
+                        )
 
                     self._roi_publisher.publish_rois(
                         self.result_key.job_id, current_rois
