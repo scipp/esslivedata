@@ -14,6 +14,7 @@ import holoviews as hv
 import scipp as sc
 
 from ess.livedata.config.models import ROI, Interval, RectangleROI
+from ess.livedata.config.roi_names import get_roi_mapper
 from ess.livedata.config.workflow_spec import ResultKey
 
 from .data_subscriber import (
@@ -217,6 +218,7 @@ class ROIPlotState:
         logger: logging.Logger,
         colors: list[str],
         initial_rois: dict[int, RectangleROI] | None = None,
+        roi_mapper=None,
     ) -> None:
         self.result_key = result_key
         self.box_stream = box_stream
@@ -226,6 +228,7 @@ class ROIPlotState:
         self._roi_publisher = roi_publisher
         self._logger = logger
         self._colors = colors
+        self._roi_mapper = roi_mapper or get_roi_mapper()
 
         # Single source of truth for current ROI state
         # Initialize from initial_rois to establish baseline
@@ -379,7 +382,7 @@ class ROIPlotState:
         :
             True if the ROI index is active, False otherwise.
         """
-        roi_index = ROIDetectorPlotFactory._parse_roi_index(key.output_name)
+        roi_index = self._roi_mapper.parse_roi_index(key.output_name)
         return roi_index is not None and roi_index in self._active_roi_indices
 
 
@@ -409,16 +412,16 @@ class ROIDetectorPlotFactory:
         self._stream_manager = stream_manager
         self._roi_publisher = roi_publisher
         self._logger = logger or logging.getLogger(__name__)
+        self._roi_mapper = get_roi_mapper()
 
-    @staticmethod
-    def _parse_roi_index(output_name: str | None) -> int | None:
+    def _parse_roi_index(self, output_name: str | None) -> int | None:
         """
         Extract ROI index from output name.
 
         Parameters
         ----------
         output_name:
-            Output name in format 'roi_{output_name}_{index}'.
+            Output name in format 'roi_current_{index}' or 'roi_cumulative_{index}'.
 
         Returns
         -------
@@ -428,38 +431,25 @@ class ROIDetectorPlotFactory:
         if output_name is None:
             return None
 
-        parts = output_name.rsplit("_", 1)
-        if len(parts) != 2:
-            return None
+        return self._roi_mapper.parse_roi_index(output_name)
 
-        try:
-            return int(parts[1])
-        except ValueError:
-            return None
-
-    @staticmethod
-    def _generate_spectrum_keys(
-        detector_key: ResultKey, max_roi_count: int
-    ) -> list[ResultKey]:
+    def _generate_spectrum_keys(self, detector_key: ResultKey) -> list[ResultKey]:
         """
-        Generate spectrum keys for ROI outputs.
+        Generate spectrum keys for all ROI histogram outputs.
 
         Parameters
         ----------
         detector_key:
             ResultKey identifying the detector output. Must have output_name set.
-        max_roi_count:
-            Maximum number of ROIs to subscribe to.
 
         Returns
         -------
         :
-            List of ResultKeys for ROI spectrum outputs.
+            List of ResultKeys for all ROI histogram outputs (current + cumulative).
         """
-        roi_base_name = f"roi_{detector_key.output_name}"
         return [
-            detector_key.model_copy(update={"output_name": f"{roi_base_name}_{idx}"})
-            for idx in range(max_roi_count)
+            detector_key.model_copy(update={"output_name": key})
+            for key in self._roi_mapper.all_histogram_keys()
         ]
 
     @staticmethod
@@ -654,13 +644,14 @@ class ROIDetectorPlotFactory:
             logger=self._logger,
             colors=colors_list,
             initial_rois=None,
+            roi_mapper=self._roi_mapper,
         )
 
         # Subscribe to ROI readback stream from backend for bidirectional sync.
         # This will automatically initialize the plot with existing ROI data if
         # available in DataService.
         roi_readback_key = detector_key.model_copy(
-            update={"output_name": "roi_rectangle"}
+            update={"output_name": self._roi_mapper.readback_keys[0]}
         )
         self._subscribe_to_roi_readback(roi_readback_key, plot_state)
 
@@ -673,7 +664,7 @@ class ROIDetectorPlotFactory:
             raise ValueError(
                 "detector_key.output_name must be set for ROI detector plots"
             )
-        spectrum_keys = self._generate_spectrum_keys(detector_key, max_roi_count)
+        spectrum_keys = self._generate_spectrum_keys(detector_key)
         roi_spectrum_dmap = self._create_roi_spectrum_plot(
             spectrum_keys, plot_state, params
         )

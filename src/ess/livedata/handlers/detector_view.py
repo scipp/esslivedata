@@ -19,6 +19,7 @@ from ess.reduce.live import raw
 
 from .. import parameter_models
 from ..config import models
+from ..config.roi_names import get_roi_mapper
 from .roi_histogram import ROIHistogram
 from .workflow_factory import Workflow
 
@@ -80,6 +81,7 @@ class DetectorView(Workflow):
         self._rois: dict[int, ROIHistogram] = {}
         self._toa_edges = params.toa_edges.get_edges()
         self._rois_updated = False  # Track ROI updates at workflow level
+        self._roi_mapper = get_roi_mapper()
 
     def apply_toa_range(self, data: sc.DataArray) -> sc.DataArray:
         if not self._use_toa_range:
@@ -139,8 +141,10 @@ class DetectorView(Workflow):
         for idx, roi_state in self._rois.items():
             roi_delta = roi_state.get_delta()
 
-            roi_result[f'roi_current_{idx}'] = roi_delta
-            roi_result[f'roi_cumulative_{idx}'] = roi_state.cumulative.copy()
+            roi_result[self._roi_mapper.current_key(idx)] = roi_delta
+            roi_result[self._roi_mapper.cumulative_key(idx)] = (
+                roi_state.cumulative.copy()
+            )
 
         # Publish all ROIs as single concatenated message for readback, but only if
         # the ROI collection was updated. This mirrors the frontend's publishing
@@ -150,8 +154,8 @@ class DetectorView(Workflow):
             roi_models = {idx: roi_state.model for idx, roi_state in self._rois.items()}
             # Convert to concatenated DataArray with roi_index coordinate
             concatenated_rois = models.ROI.to_concatenated_data_array(roi_models)
-            # Use singular 'rectangle' to match stream naming convention
-            roi_result['roi_rectangle'] = concatenated_rois
+            # Use readback key from mapper
+            roi_result[self._roi_mapper.readback_keys[0]] = concatenated_rois
 
             # Clear updated flag after publishing
             self._rois_updated = False

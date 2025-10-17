@@ -6,6 +6,13 @@ import enum
 
 import pydantic
 
+from ..config.roi_names import get_roi_mapper
+
+
+def _get_default_max_roi_count() -> int:
+    """Get the default maximum ROI count from the mapper configuration."""
+    return get_roi_mapper().total_rois
+
 
 class PlotScale(str, enum.Enum):
     """Enumeration of plot scales."""
@@ -148,7 +155,7 @@ class ROIOptions(pydantic.BaseModel):
     """Options for ROI detector plots."""
 
     max_roi_count: int = pydantic.Field(
-        default=3,
+        default_factory=lambda: _get_default_max_roi_count(),
         description="Maximum number of regions of interest (ROIs) that can be defined.",
         title="Max ROI Count",
         ge=1,
