@@ -165,40 +165,38 @@ class DetectorView(Workflow):
             roi_state.clear()
 
     def _update_rois(self, rois: dict[int, models.ROI]) -> None:
-        """Update ROI configuration from incoming ROI models."""
+        """
+        Update ROI configuration from incoming ROI models.
+
+        When any ROI changes (addition, deletion, or modification), all ROIs are
+        cleared and recreated. This ensures consistent accumulation periods across
+        all ROIs, which is critical since ROI spectra are overlaid on the same plot.
+        """
         # Check if the ROI set has changed
         current_indices = set(rois.keys())
         previous_indices = set(self._rois.keys())
 
         # Detect any change in the ROI collection (addition, deletion, or modification)
+        rois_changed = False
         if current_indices != previous_indices:
             # Indices changed (addition or deletion)
-            self._rois_updated = True
+            rois_changed = True
         else:
             # Check if any existing ROI model has changed
             for idx, roi_model in rois.items():
                 if idx in self._rois and self._rois[idx].model != roi_model:
-                    self._rois_updated = True
+                    rois_changed = True
                     break
 
-        # Remove deleted ROIs
-        for idx in previous_indices - current_indices:
-            del self._rois[idx]
-
-        # Create/recreate ROIs only if they don't exist or have changed
-        for idx, roi_model in rois.items():
-            if idx not in self._rois:
-                # New ROI - create it
+        if rois_changed:
+            self._rois_updated = True
+            # Clear all ROIs to ensure consistent accumulation periods
+            self._rois.clear()
+            # Recreate all ROIs from scratch
+            for idx, roi_model in rois.items():
                 self._rois[idx] = ROIHistogram(
                     toa_edges=self._toa_edges,
                     roi_filter=self._view.make_roi_filter(),
                     model=roi_model,
                 )
-            elif self._rois[idx].model != roi_model:
-                # ROI model changed - recreate and reset cumulative
-                self._rois[idx] = ROIHistogram(
-                    toa_edges=self._toa_edges,
-                    roi_filter=self._view.make_roi_filter(),
-                    model=roi_model,
-                )
-            # else: ROI unchanged, do nothing (preserves cumulative)
+        # else: No changes detected, preserve all existing ROI states

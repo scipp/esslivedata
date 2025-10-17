@@ -736,11 +736,11 @@ class TestDetectorViewEdgeCases:
         mock_rolling_view: RollingDetectorView,
         sample_detector_events: sc.DataArray,
     ) -> None:
-        """Test that ROI deletion triggers publication of updated ROI set.
+        """Test that ROI deletion triggers publication and clears all ROIs.
 
-        This tests the critical bug where deletion of an ROI should trigger
-        publication of the updated ROI set, even if the remaining ROIs haven't
-        changed. Without this, downstream consumers cannot detect deletions.
+        When any ROI is deleted, all ROIs are cleared to maintain consistent
+        accumulation periods. This is critical since ROI spectra are overlaid
+        on the same plot.
         """
         params = DetectorViewParams()
         view = DetectorView(params=params, detector_view=mock_rolling_view)
@@ -766,22 +766,19 @@ class TestDetectorViewEdgeCases:
         assert 0 in published_rois
         assert 1 in published_rois
 
-        # Process one more round without changes - should not publish
+        # Accumulate more data to build up cumulative
         view.accumulate({'detector': sample_detector_events})
         result_no_change = view.finalize()
-        assert (
-            'roi_rectangle' not in result_no_change
-        ), "Should not publish when ROIs haven't changed"
+        assert 'roi_rectangle' not in result_no_change
+        # ROI 0 should have accumulated events from both rounds
+        assert sc.sum(result_no_change['roi_cumulative_0']).value == 2 * 3  # 6 events
 
-        # Now delete ROI 1, keeping only ROI 0 (UNCHANGED)
-        # This is the critical test: roi0 itself hasn't changed, but the set has
+        # Now delete ROI 1, keeping only ROI 0
         view.accumulate({'roi': RectangleROI.to_concatenated_data_array({0: roi0})})
         view.accumulate({'detector': sample_detector_events})
         result2 = view.finalize()
 
-        # CRITICAL: ROI config should be published to signal deletion
-        # This currently FAILS because roi0 is "updated" via configure_from_roi_model
-        # even though it's identical, which masks the real issue
+        # ROI config should be published to signal deletion
         assert (
             'roi_rectangle' in result2
         ), "ROI deletion should trigger publication of updated ROI set"
@@ -791,18 +788,76 @@ class TestDetectorViewEdgeCases:
         assert 0 in published_rois
         assert 1 not in published_rois, "Deleted ROI should not be in published set"
 
+        # CRITICAL: ROI 0 should be cleared (reset to fresh accumulation)
+        # This ensures all visible ROIs have consistent accumulation periods
+        assert sc.sum(result2['roi_cumulative_0']).value == 3, (
+            "Deleting any ROI should clear all ROIs to maintain consistent "
+            "accumulation periods across overlaid spectra"
+        )
+
+    def test_roi_deletion_with_index_renumbering_clears_all(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+        standard_roi: RectangleROI,
+        corner_roi: RectangleROI,
+    ) -> None:
+        """Test that ROI deletion with renumbering clears all ROIs.
+
+        This tests the specific scenario: if you have ROI 0 and ROI 1, and delete
+        ROI 0 in the UI, the frontend renumbers ROI 1 -> ROI 0. The backend must
+        clear all ROIs to avoid misleading overlaid spectra with different
+        accumulation periods.
+        """
+        params = DetectorViewParams()
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # Create two ROIs with different geometries
+        # ROI 0: standard_roi (pixels 5, 6, 10) -> 3 events
+        # ROI 1: corner_roi (pixel 15) -> 1 event
+        view.accumulate(
+            {
+                'roi': RectangleROI.to_concatenated_data_array(
+                    {0: standard_roi, 1: corner_roi}
+                )
+            }
+        )
+
+        # Accumulate events twice to build up cumulative
+        view.accumulate({'detector': sample_detector_events})
+        view.finalize()
+        view.accumulate({'detector': sample_detector_events})
+        result = view.finalize()
+
+        # Verify both ROIs have accumulated
+        assert sc.sum(result['roi_cumulative_0']).value == 2 * 3  # 6 events
+        assert sc.sum(result['roi_cumulative_1']).value == 2 * 1  # 2 events
+
+        # Now simulate deleting ROI 0 in UI: ROI 1 gets renumbered to ROI 0
+        # From backend perspective: index 0 changes from standard_roi to corner_roi
+        view.accumulate(
+            {'roi': RectangleROI.to_concatenated_data_array({0: corner_roi})}
+        )
+        view.accumulate({'detector': sample_detector_events})
+        result2 = view.finalize()
+
+        # CRITICAL: The renumbered ROI should be cleared
+        # Even though it's the "same" ROI geometrically (corner_roi),
+        # it appeared at a different index, so we clear all ROIs
+        assert sc.sum(result2['roi_cumulative_0']).value == 1, (
+            "When ROI deletion causes index renumbering, all ROIs must be cleared "
+            "to maintain consistent accumulation periods on overlaid plots"
+        )
+
     def test_unchanged_roi_resend_unnecessarily_resets_cumulative(
         self,
         mock_rolling_view: RollingDetectorView,
         sample_detector_events: sc.DataArray,
     ) -> None:
-        """Test that resending identical ROI config unnecessarily resets cumulative.
+        """Test that resending identical ROI config preserves cumulative.
 
-        This demonstrates a bug in the current implementation: if the same ROI
-        configuration is sent again (even if unchanged), it calls
-        configure_from_roi_model which resets the cumulative histogram.
-        This is wasteful and incorrect - cumulative should only reset when
-        the ROI geometry actually changes.
+        When the exact same ROI configuration is sent again (same indices,
+        same geometries), cumulative should be preserved.
         """
         params = DetectorViewParams()
         view = DetectorView(params=params, detector_view=mock_rolling_view)
