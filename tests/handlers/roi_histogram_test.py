@@ -86,7 +86,6 @@ class TestROIHistogram:
         )
 
         assert roi_histogram.model == standard_roi
-        assert not roi_histogram.updated
         assert roi_histogram.cumulative is None
 
     def test_cumulative_accumulation_across_multiple_periods(
@@ -120,70 +119,6 @@ class TestROIHistogram:
 
         assert sc.sum(delta2).value == 3
         assert sc.sum(roi_histogram.cumulative).value == 7  # Accumulated!
-
-    def test_roi_reconfiguration_resets_cumulative(
-        self, detector_number: sc.Variable, detector_indices: sc.DataArray
-    ) -> None:
-        """Test that changing ROI configuration resets cumulative histogram."""
-        roi1 = make_rectangle_roi(
-            x_min=5.0, x_max=25.0, y_min=5.0, y_max=25.0, x_unit='mm', y_unit='mm'
-        )
-        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
-        roi_filter = ROIFilter(detector_indices)
-
-        roi_histogram = ROIHistogram(
-            toa_edges=toa_edges, roi_filter=roi_filter, model=roi1
-        )
-
-        # Accumulate some data
-        events = DetectorEvents(
-            pixel_id=[5, 6, 9, 10],
-            time_of_arrival=[100, 200, 300, 400],
-            unit='ns',
-        )
-        grouper = GroupIntoPixels(detector_number=detector_number)
-        grouper.add(0, events)
-        grouped = grouper.get()
-
-        roi_histogram.add_data(grouped)
-        roi_histogram.get_delta()
-        assert sc.sum(roi_histogram.cumulative).value == 4
-
-        # Change ROI configuration
-        roi2 = make_rectangle_roi(
-            x_min=10.0, x_max=20.0, y_min=10.0, y_max=20.0, x_unit='mm', y_unit='mm'
-        )
-        roi_histogram.configure_from_roi_model(roi2)
-
-        # Cumulative should reset
-        assert roi_histogram.updated
-        assert roi_histogram.cumulative is None
-
-    def test_updated_flag_lifecycle(self, detector_indices: sc.DataArray) -> None:
-        """Test that updated flag is set on config change and clearable."""
-        roi1 = make_rectangle_roi(
-            x_min=5.0, x_max=25.0, y_min=5.0, y_max=25.0, x_unit='mm', y_unit='mm'
-        )
-        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
-        roi_filter = ROIFilter(detector_indices)
-
-        roi_histogram = ROIHistogram(
-            toa_edges=toa_edges, roi_filter=roi_filter, model=roi1
-        )
-
-        assert not roi_histogram.updated
-
-        # Reconfigure should set updated flag
-        roi2 = make_rectangle_roi(
-            x_min=10.0, x_max=20.0, y_min=10.0, y_max=20.0, x_unit='mm', y_unit='mm'
-        )
-        roi_histogram.configure_from_roi_model(roi2)
-        assert roi_histogram.updated
-        assert roi_histogram.model == roi2
-
-        # Clear flag
-        roi_histogram.clear_updated_flag()
-        assert not roi_histogram.updated
 
     def test_clear_resets_all_state(
         self, detector_number: sc.Variable, detector_indices: sc.DataArray

@@ -79,6 +79,7 @@ class DetectorView(Workflow):
 
         self._rois: dict[int, ROIHistogram] = {}
         self._toa_edges = params.toa_edges.get_edges()
+        self._rois_updated = False  # Track ROI updates at workflow level
 
     def apply_toa_range(self, data: sc.DataArray) -> sc.DataArray:
         if not self._use_toa_range:
@@ -142,9 +143,9 @@ class DetectorView(Workflow):
             roi_result[f'roi_cumulative_{idx}'] = roi_state.cumulative.copy()
 
         # Publish all ROIs as single concatenated message for readback, but only if
-        # any ROI was updated. This mirrors the frontend's publishing behavior and
-        # enables proper deletion detection.
-        if any(roi_state.updated for roi_state in self._rois.values()):
+        # the ROI collection was updated. This mirrors the frontend's publishing
+        # behavior and enables proper deletion detection.
+        if self._rois_updated:
             # Extract ROI models from all active ROI states
             roi_models = {idx: roi_state.model for idx, roi_state in self._rois.items()}
             # Convert to concatenated DataArray with roi_index coordinate
@@ -152,9 +153,8 @@ class DetectorView(Workflow):
             # Use singular 'rectangle' to match stream naming convention
             roi_result['roi_rectangle'] = concatenated_rois
 
-            # Clear updated flags after publishing
-            for roi_state in self._rois.values():
-                roi_state.clear_updated_flag()
+            # Clear updated flag after publishing
+            self._rois_updated = False
 
         return {**view_result, **roi_result}
 
@@ -166,24 +166,39 @@ class DetectorView(Workflow):
 
     def _update_rois(self, rois: dict[int, models.ROI]) -> None:
         """Update ROI configuration from incoming ROI models."""
+        # Check if the ROI set has changed
         current_indices = set(rois.keys())
         previous_indices = set(self._rois.keys())
+
+        # Detect any change in the ROI collection (addition, deletion, or modification)
+        if current_indices != previous_indices:
+            # Indices changed (addition or deletion)
+            self._rois_updated = True
+        else:
+            # Check if any existing ROI model has changed
+            for idx, roi_model in rois.items():
+                if idx in self._rois and self._rois[idx].model != roi_model:
+                    self._rois_updated = True
+                    break
 
         # Remove deleted ROIs
         for idx in previous_indices - current_indices:
             del self._rois[idx]
 
-        # Add/update ROIs
+        # Create/recreate ROIs only if they don't exist or have changed
         for idx, roi_model in rois.items():
             if idx not in self._rois:
-                # Create new ROI histogram (this sets _updated = False initially)
+                # New ROI - create it
                 self._rois[idx] = ROIHistogram(
                     toa_edges=self._toa_edges,
                     roi_filter=self._view.make_roi_filter(),
                     model=roi_model,
                 )
-                # Mark as updated so it gets published on first finalize
-                self._rois[idx]._updated = True
-            else:
-                # Update existing ROI configuration (this sets _updated = True)
-                self._rois[idx].configure_from_roi_model(roi_model)
+            elif self._rois[idx].model != roi_model:
+                # ROI model changed - recreate and reset cumulative
+                self._rois[idx] = ROIHistogram(
+                    toa_edges=self._toa_edges,
+                    roi_filter=self._view.make_roi_filter(),
+                    model=roi_model,
+                )
+            # else: ROI unchanged, do nothing (preserves cumulative)

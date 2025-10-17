@@ -44,8 +44,7 @@ class ROIHistogram:
         self._edges_ns = toa_edges.to(unit='ns')
         self._model = model
         self._cumulative: sc.DataArray | None = None
-        self._updated = False
-        # Configure ROI filter from initial model without setting updated flag
+        # Configure ROI filter from model
         self._configure_filter(model)
 
     @property
@@ -57,11 +56,6 @@ class ROIHistogram:
     def cumulative(self) -> sc.DataArray | None:
         """Get the cumulative histogram, or None if not yet accumulated."""
         return self._cumulative
-
-    @property
-    def updated(self) -> bool:
-        """Check if ROI configuration was updated."""
-        return self._updated
 
     def _configure_filter(
         self, roi: models.RectangleROI | models.PolygonROI | models.EllipseROI
@@ -77,24 +71,8 @@ class ROIHistogram:
                 f"Only rectangle ROI is currently supported, got {roi_type}"
             )
 
-    def configure_from_roi_model(
-        self, roi: models.RectangleROI | models.PolygonROI | models.EllipseROI
-    ) -> None:
-        """
-        Update ROI filter configuration from an ROI model.
-
-        Parameters
-        ----------
-        roi:
-            An ROI model from config.models (RectangleROI, PolygonROI, or EllipseROI).
-        """
-        self._configure_filter(roi)
-        self._model = roi
-        self._updated = True
-        self._cumulative = None  # Reset cumulative on config change
-
     def _add_weights(self, data: sc.DataArray) -> None:
-        """Add weight coordinate to binned data."""
+        """Add weights required for histogramming to binned data."""
         constituents = data.bins.constituents
         content = constituents['data']
         content.coords['time_of_arrival'] = content.data
@@ -158,7 +136,3 @@ class ROIHistogram:
         """Clear both chunks and cumulative data, preserving configuration."""
         self._chunks.clear()
         self._cumulative = None
-
-    def clear_updated_flag(self) -> None:
-        """Clear the updated flag."""
-        self._updated = False

@@ -730,3 +730,112 @@ class TestDetectorViewEdgeCases:
         published_roi = published_rois[0]
         assert published_roi.x.min == 10.0
         assert published_roi.x.max == 20.0
+
+    def test_roi_deletion_is_published(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that ROI deletion triggers publication of updated ROI set.
+
+        This tests the critical bug where deletion of an ROI should trigger
+        publication of the updated ROI set, even if the remaining ROIs haven't
+        changed. Without this, downstream consumers cannot detect deletions.
+        """
+        params = DetectorViewParams()
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # Create two ROIs
+        roi0 = make_rectangle_roi(
+            x_min=5.0, x_max=25.0, y_min=5.0, y_max=25.0, x_unit='mm', y_unit='mm'
+        )
+        roi1 = make_rectangle_roi(
+            x_min=25.0, x_max=35.0, y_min=25.0, y_max=35.0, x_unit='mm', y_unit='mm'
+        )
+        view.accumulate(
+            {'roi': RectangleROI.to_concatenated_data_array({0: roi0, 1: roi1})}
+        )
+        view.accumulate({'detector': sample_detector_events})
+        result1 = view.finalize()
+
+        # Both ROIs should be published
+        assert 'roi_rectangle' in result1
+        from ess.livedata.config.models import ROI
+
+        published_rois = ROI.from_concatenated_data_array(result1['roi_rectangle'])
+        assert 0 in published_rois
+        assert 1 in published_rois
+
+        # Process one more round without changes - should not publish
+        view.accumulate({'detector': sample_detector_events})
+        result_no_change = view.finalize()
+        assert (
+            'roi_rectangle' not in result_no_change
+        ), "Should not publish when ROIs haven't changed"
+
+        # Now delete ROI 1, keeping only ROI 0 (UNCHANGED)
+        # This is the critical test: roi0 itself hasn't changed, but the set has
+        view.accumulate({'roi': RectangleROI.to_concatenated_data_array({0: roi0})})
+        view.accumulate({'detector': sample_detector_events})
+        result2 = view.finalize()
+
+        # CRITICAL: ROI config should be published to signal deletion
+        # This currently FAILS because roi0 is "updated" via configure_from_roi_model
+        # even though it's identical, which masks the real issue
+        assert (
+            'roi_rectangle' in result2
+        ), "ROI deletion should trigger publication of updated ROI set"
+
+        # Verify only ROI 0 is present
+        published_rois = ROI.from_concatenated_data_array(result2['roi_rectangle'])
+        assert 0 in published_rois
+        assert 1 not in published_rois, "Deleted ROI should not be in published set"
+
+    def test_unchanged_roi_resend_unnecessarily_resets_cumulative(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that resending identical ROI config unnecessarily resets cumulative.
+
+        This demonstrates a bug in the current implementation: if the same ROI
+        configuration is sent again (even if unchanged), it calls
+        configure_from_roi_model which resets the cumulative histogram.
+        This is wasteful and incorrect - cumulative should only reset when
+        the ROI geometry actually changes.
+        """
+        params = DetectorViewParams()
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # Create ROI
+        roi0 = make_rectangle_roi(
+            x_min=5.0, x_max=25.0, y_min=5.0, y_max=25.0, x_unit='mm', y_unit='mm'
+        )
+        view.accumulate({'roi': RectangleROI.to_concatenated_data_array({0: roi0})})
+
+        # Accumulate data twice to build up cumulative
+        view.accumulate({'detector': sample_detector_events})
+        view.finalize()
+        expected_events = 3  # pixels 5, 6, 10 in ROI
+
+        view.accumulate({'detector': sample_detector_events})
+        result2 = view.finalize()
+
+        # Cumulative should have doubled
+        assert sc.sum(result2['roi_cumulative_0']).value == 2 * expected_events
+
+        # Now resend the SAME ROI configuration (no actual change)
+        view.accumulate({'roi': RectangleROI.to_concatenated_data_array({0: roi0})})
+        view.accumulate({'detector': sample_detector_events})
+        result3 = view.finalize()
+
+        # BUG: Current implementation resets cumulative even though ROI didn't change!
+        # Cumulative is reset to just the new events instead of continuing to accumulate
+        cumulative_after_resend = sc.sum(result3['roi_cumulative_0']).value
+
+        # This assertion will FAIL with current implementation, exposing the bug
+        assert cumulative_after_resend == 3 * expected_events, (
+            f"Expected cumulative to continue accumulating (3 * {expected_events} = "
+            f"{3 * expected_events}), but got {cumulative_after_resend}. "
+            "Resending identical ROI config should not reset cumulative histogram!"
+        )
