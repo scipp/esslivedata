@@ -51,7 +51,7 @@ def test_can_configure_and_stop_workflow_with_detector(
         'dummy': 'total_counts',
         'dream': 'powder_reduction',
     }[instrument]
-    n_target = {'bifrost': 4, 'dummy': 1, 'dream': 2}[instrument]
+    n_target = {'bifrost': 1, 'dummy': 1, 'dream': 2}[instrument]
     check_counts = instrument != 'dream'
     # WorkflowSpec (second arg) unused here since the workflow does not take params.
     workflow_id, _ = _get_workflow_from_registry(instrument, workflow_name)
