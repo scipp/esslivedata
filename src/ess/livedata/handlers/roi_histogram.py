@@ -44,6 +44,7 @@ class ROIHistogram:
         self._edges_ns = toa_edges.to(unit='ns')
         self._model = model
         self._cumulative: sc.DataArray | None = None
+        self._dim = 'time_of_arrival'
         # Configure ROI filter from model
         self._configure_filter(model)
 
@@ -82,10 +83,10 @@ class ROIHistogram:
         """
         filtered, scale = self._roi_filter.apply(data)
         filtered_with_weights = filtered.bins.assign_coords(
-            time_of_arrival=filtered.bins.data
+            **{self._dim: filtered.bins.data}
         ).bins.assign(sc.bins_like(filtered, scale))
         chunk = filtered_with_weights.hist(
-            time_of_arrival=self._edges_ns, dim=filtered.dim
+            **{self._dim: self._edges_ns}, dim=filtered.dim
         )
         # Set unit to counts (histogram of weighted events represents counts)
         chunk.data.unit = 'counts'
@@ -95,11 +96,11 @@ class ROIHistogram:
         """Create an empty histogram with the configured edges."""
         return sc.DataArray(
             data=sc.zeros(
-                dims=['time_of_arrival'],
+                dims=[self._dim],
                 shape=[len(self._edges) - 1],
                 unit='counts',
             ),
-            coords={'time_of_arrival': self._edges},
+            coords={self._dim: self._edges},
         )
 
     def get_delta(self) -> sc.DataArray:
@@ -119,7 +120,7 @@ class ROIHistogram:
         else:
             delta = sc.reduce(self._chunks).sum()
             self._chunks.clear()
-            delta.coords['time_of_arrival'] = self._edges
+            delta.coords[self._dim] = self._edges
 
         if self._cumulative is None:
             self._cumulative = delta.copy()
