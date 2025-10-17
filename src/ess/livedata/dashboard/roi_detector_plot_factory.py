@@ -231,13 +231,13 @@ class ROIPlotState:
             initial_rois.copy() if initial_rois else {}
         )
 
-        # Initialize active indices before attaching watcher to prevent race condition
-        self._active_roi_indices: set[int] = (
-            set(initial_rois.keys()) if initial_rois else set()
-        )
-
         # Attach the callback to the stream AFTER initializing state
         self.box_stream.param.watch(self.on_box_change, "data")
+
+    @property
+    def _active_roi_indices(self) -> set[int]:
+        """Indices of currently active ROIs."""
+        return set(self._last_known_rois.keys())
 
     def on_box_change(self, event) -> None:
         """
@@ -257,17 +257,6 @@ class ROIPlotState:
 
         try:
             current_rois = boxes_to_rois(data, x_unit=self.x_unit, y_unit=self.y_unit)
-            current_indices = set(current_rois.keys())
-
-            # Update active ROI indices for filtering
-            if current_indices != self._active_roi_indices:
-                self._logger.debug(
-                    "Active ROI indices changing from %s to %s for job %s",
-                    self._active_roi_indices,
-                    current_indices,
-                    self.result_key.job_id,
-                )
-            self._active_roi_indices = current_indices
 
             # Only publish if ROIs changed from last known state
             # This prevents republishing when backend updates trigger UI changes
@@ -316,7 +305,6 @@ class ROIPlotState:
 
                 # Update state BEFORE updating UI to break potential cycles
                 self._last_known_rois = backend_rois
-                self._active_roi_indices = set(backend_rois.keys())
 
                 # Convert to BoxEdit format (dict with float arrays)
                 box_data = rois_to_box_data(backend_rois)
