@@ -153,7 +153,9 @@ class DetectorView(Workflow):
             # Extract ROI models from all active ROI states
             roi_models = {idx: roi_state.model for idx, roi_state in self._rois.items()}
             # Convert to concatenated DataArray with roi_index coordinate
-            concatenated_rois = models.ROI.to_concatenated_data_array(roi_models)
+            concatenated_rois = models.RectangleROI.to_concatenated_data_array(
+                roi_models
+            )
             # Use readback key from mapper
             roi_result[self._roi_mapper.readback_keys[0]] = concatenated_rois
 
