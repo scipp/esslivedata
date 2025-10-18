@@ -186,10 +186,9 @@ class ROIPlotState:
     - Backend updates trigger UI updates (via on_backend_roi_update)
     - Kafka is the single source of truth; backend state always wins
 
-    Cycle prevention is handled via state comparison in _last_known_rois:
-    - on_box_change only publishes if ROIs differ from _last_known_rois
-    - on_backend_roi_update sets _last_known_rois before updating UI
-    - This ensures UI updates don't trigger redundant republishes
+    Two visual layers are maintained:
+    - Request ROIs: Interactive dashed boxes showing user's pending changes
+    - Readback ROIs: Non-interactive solid boxes showing backend confirmed state
 
     Parameters
     ----------
@@ -197,8 +196,10 @@ class ROIPlotState:
         ResultKey identifying this detector plot.
     box_stream:
         HoloViews BoxEdit stream for this plot.
-    boxes_pipe:
-        HoloViews Pipe stream for programmatically updating ROI rectangles.
+    request_pipe:
+        HoloViews Pipe stream for programmatically updating request ROI rectangles.
+    readback_pipe:
+        HoloViews Pipe stream for programmatically updating readback ROI rectangles.
     x_unit:
         Unit for x coordinates.
     y_unit:
@@ -211,15 +212,15 @@ class ROIPlotState:
         List of colors to use for ROI rectangles, indexed by ROI number.
     initial_rois:
         Optional dictionary of initial ROI configurations. Used to establish
-        the baseline state for cycle prevention and to determine which ROI
-        indices are initially active.
+        the baseline state for both request and readback layers.
     """
 
     def __init__(
         self,
         result_key: ResultKey,
         box_stream: hv.streams.BoxEdit,
-        boxes_pipe: hv.streams.Pipe,
+        request_pipe: hv.streams.Pipe,
+        readback_pipe: hv.streams.Pipe,
         x_unit: str | None,
         y_unit: str | None,
         roi_publisher: ROIPublisher | None,
@@ -230,7 +231,8 @@ class ROIPlotState:
     ) -> None:
         self.result_key = result_key
         self.box_stream = box_stream
-        self.boxes_pipe = boxes_pipe
+        self.request_pipe = request_pipe
+        self.readback_pipe = readback_pipe
         self.x_unit = x_unit
         self.y_unit = y_unit
         self._roi_publisher = roi_publisher
@@ -238,9 +240,12 @@ class ROIPlotState:
         self._colors = colors
         self._roi_mapper = roi_mapper or get_roi_mapper()
 
-        # Single source of truth for current ROI state
-        # Initialize from initial_rois to establish baseline
-        self._last_known_rois: dict[int, RectangleROI] = (
+        # Separate state for request (user's pending changes) and readback
+        # (backend truth). Initialize both from initial_rois (they start in sync)
+        self._request_rois: dict[int, RectangleROI] = (
+            initial_rois.copy() if initial_rois else {}
+        )
+        self._readback_rois: dict[int, RectangleROI] = (
             initial_rois.copy() if initial_rois else {}
         )
 
@@ -249,15 +254,16 @@ class ROIPlotState:
 
     @property
     def _active_roi_indices(self) -> set[int]:
-        """Indices of currently active ROIs."""
-        return set(self._last_known_rois.keys())
+        """Indices of currently active ROIs based on readback (backend truth)."""
+        return set(self._readback_rois.keys())
 
     def on_box_change(self, event) -> None:
         """
         Handle BoxEdit data changes from UI.
 
-        Only publishes to backend if ROIs differ from the last known state,
-        preventing redundant publishes when backend updates trigger UI changes.
+        Updates request layer immediately (optimistic UI) and publishes to backend.
+        Only publishes if ROIs differ from current request state to prevent cycles
+        when backend updates trigger box_stream.event().
 
         Parameters
         ----------
@@ -271,25 +277,24 @@ class ROIPlotState:
         try:
             current_rois = boxes_to_rois(data, x_unit=self.x_unit, y_unit=self.y_unit)
 
-            # Only publish if ROIs changed from last known state
-            # This prevents republishing when backend updates trigger UI changes
-            if current_rois != self._last_known_rois:
-                self._last_known_rois = current_rois
+            # Only update and publish if ROIs changed from current request state
+            # This prevents republishing when backend updates trigger box_stream.event()
+            if current_rois == self._request_rois:
+                return
 
-                # Update pipe to assign colors to user-drawn rectangles
-                # This ensures newly drawn rectangles get colors immediately
-                rectangles = rois_to_rectangles(current_rois, colors=self._colors)
-                self.boxes_pipe.send(rectangles)
+            # Update request layer immediately (optimistic UI feedback)
+            self._request_rois = current_rois
+            request_rectangles = rois_to_rectangles(current_rois, colors=self._colors)
+            self.request_pipe.send(request_rectangles)
 
-                if self._roi_publisher:
-                    self._roi_publisher.publish_rois(
-                        self.result_key.job_id, current_rois
-                    )
-                    self._logger.info(
-                        "Published %d ROI(s) for job %s",
-                        len(current_rois),
-                        self.result_key.job_id,
-                    )
+            # Publish to backend
+            if self._roi_publisher:
+                self._roi_publisher.publish_rois(self.result_key.job_id, current_rois)
+                self._logger.info(
+                    "Published %d ROI(s) for job %s",
+                    len(current_rois),
+                    self.result_key.job_id,
+                )
 
         except Exception as e:
             self._logger.error("Failed to publish ROI update: %s", e)
@@ -299,13 +304,8 @@ class ROIPlotState:
         Handle ROI updates from the backend stream.
 
         The backend is the single source of truth for ROI state. This method
-        updates the UI to reflect backend state changes from other clients or
-        from the initial state. Updates are only applied if the backend state
-        differs from the current local state.
-
-        Cycle prevention: Updates _last_known_rois BEFORE triggering UI updates,
-        so the subsequent on_box_change callback sees matching state and skips
-        republishing.
+        updates the readback layer (solid lines) with the authoritative backend state,
+        and syncs the request layer (dashed lines) to match if needed.
 
         Parameters
         ----------
@@ -313,8 +313,12 @@ class ROIPlotState:
             Dictionary mapping ROI index to RectangleROI from backend.
         """
         try:
-            # Only update if state actually differs from what we know
-            if backend_rois == self._last_known_rois:
+            # Check if any state needs updating
+            readback_changed = backend_rois != self._readback_rois
+            request_needs_sync = backend_rois != self._request_rois
+
+            if not readback_changed and not request_needs_sync:
+                # Nothing to update
                 return
 
             self._logger.debug(
@@ -322,21 +326,30 @@ class ROIPlotState:
                 self.result_key.job_id,
             )
 
-            # Update state BEFORE updating UI to prevent cycles
-            # When box_stream.event() triggers on_box_change, it will see
-            # current_rois == self._last_known_rois and skip republishing
-            self._last_known_rois = backend_rois
+            # Update readback layer if changed (authoritative backend state)
+            if readback_changed:
+                self._readback_rois = backend_rois
+                readback_rectangles = rois_to_rectangles(
+                    backend_rois, colors=self._colors
+                )
+                self.readback_pipe.send(readback_rectangles)
 
-            # Convert to BoxEdit format (dict with float arrays)
-            box_data = rois_to_box_data(backend_rois)
+            # Sync request layer to match backend if needed
+            # This handles scenario 2: different view updates backend
+            if request_needs_sync:
+                self._request_rois = backend_rois
 
-            # Update Pipe to refresh visual representation (via DynamicMap)
-            rectangles = rois_to_rectangles(backend_rois, colors=self._colors)
-            self.boxes_pipe.send(rectangles)
+                # Convert to BoxEdit format (dict with float arrays)
+                box_data = rois_to_box_data(backend_rois)
 
-            # Update BoxEdit stream to enable drag operations
-            # This must be done AFTER pipe.send() to ensure BoxEdit has correct data
-            self.box_stream.event(data=box_data)
+                # Update request rectangles via pipe
+                request_rectangles = rois_to_rectangles(
+                    backend_rois, colors=self._colors
+                )
+                self.request_pipe.send(request_rectangles)
+
+                # Update BoxEdit stream to enable drag operations
+                self.box_stream.event(data=box_data)
 
             self._logger.info(
                 "UI updated with %d ROI(s) from backend for job %s",
@@ -596,23 +609,37 @@ class ROIDetectorPlotFactory:
         #   user interaction to work correctly. The key insight is to use the
         #   DynamicMap(Rectangles) as source for BoxEdit, not the Rectangles element.
 
-        # Create Pipe for programmatic updates to rectangles
-        boxes_pipe = hv.streams.Pipe(data=initial_rectangles)
+        # Create two separate layers:
+        # 1. Readback rectangles (solid, non-interactive) - backend truth
+        # 2. Request rectangles (dashed, interactive) - user's pending changes
 
-        # Create DynamicMap that wraps Rectangles
-        # This allows programmatic updates via boxes_pipe.send()
-        # Rectangles include color as a vdim to preserve per-rectangle colors
-        def make_boxes(data):
+        # Create Pipes for programmatic updates to both layers
+        readback_pipe = hv.streams.Pipe(data=initial_rectangles)
+        request_pipe = hv.streams.Pipe(data=initial_rectangles)
+
+        # Create DynamicMap for readback rectangles (solid lines)
+        # This shows the authoritative backend state
+        def make_readback_boxes(data):
             if not data:
                 data = []
             return hv.Rectangles(data, vdims=['color']).opts(color='color')
 
-        boxes_dmap = hv.DynamicMap(make_boxes, streams=[boxes_pipe])
+        readback_dmap = hv.DynamicMap(make_readback_boxes, streams=[readback_pipe])
 
-        # Create BoxEdit stream with DynamicMap as source
-        # This enables user interaction (drag, create, delete)
+        # Create DynamicMap for request rectangles (dashed lines)
+        # This allows programmatic updates via request_pipe.send()
+        # and serves as the source for BoxEdit interaction
+        def make_request_boxes(data):
+            if not data:
+                data = []
+            return hv.Rectangles(data, vdims=['color']).opts(color='color')
+
+        request_dmap = hv.DynamicMap(make_request_boxes, streams=[request_pipe])
+
+        # Create BoxEdit stream with request_dmap as source
+        # This enables user interaction (drag, create, delete) on the request layer
         box_stream = hv.streams.BoxEdit(
-            source=boxes_dmap,
+            source=request_dmap,
             num_objects=max_roi_count,
             styles={"fill_color": default_colors[:max_roi_count]},
             data=initial_box_data,
@@ -631,7 +658,8 @@ class ROIDetectorPlotFactory:
         plot_state = ROIPlotState(
             result_key=detector_key,
             box_stream=box_stream,
-            boxes_pipe=boxes_pipe,
+            request_pipe=request_pipe,
+            readback_pipe=readback_pipe,
             x_unit=x_unit,
             y_unit=y_unit,
             roi_publisher=self._roi_publisher,
@@ -649,9 +677,18 @@ class ROIDetectorPlotFactory:
         )
         self._subscribe_to_roi_readback(roi_readback_key, plot_state)
 
-        # Create the detector plot with interactive boxes overlay
-        interactive_boxes = boxes_dmap.opts(fill_alpha=0.3, line_width=2)
-        detector_with_boxes = detector_dmap * interactive_boxes
+        # Create the detector plot with two ROI layers:
+        # 1. Readback layer (solid lines) - backend confirmed state
+        # 2. Request layer (dashed lines) - user's interactive edits
+        # Both layers start overlapping; they diverge during user edits
+        readback_boxes = readback_dmap.opts(
+            fill_alpha=0.3, line_width=2, line_dash='solid'
+        )
+        request_boxes = request_dmap.opts(
+            fill_alpha=0.3, line_width=2, line_dash='dashed'
+        )
+        # Layer order: detector, then readback (solid), then request (dashed on top)
+        detector_with_boxes = detector_dmap * readback_boxes * request_boxes
 
         # Generate spectrum keys and create ROI spectrum plot
         if detector_key.output_name is None:

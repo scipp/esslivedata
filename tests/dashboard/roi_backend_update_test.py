@@ -91,10 +91,14 @@ def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
         '#bcbd22',
         '#17becf',
     ]
+    # boxes_pipe fixture is now used as readback_pipe for backward compatibility
+    # with tests that check pipe updates
+    request_pipe = hv.streams.Pipe(data=[])
     return ROIPlotState(
         result_key=result_key,
         box_stream=box_stream,
-        boxes_pipe=boxes_pipe,
+        request_pipe=request_pipe,
+        readback_pipe=boxes_pipe,  # reuse boxes_pipe fixture for readback
         x_unit='m',
         y_unit='m',
         roi_publisher=fake_publisher,

@@ -647,10 +647,10 @@ def test_stale_readback_filtering(
         }
     )
 
-    # Verify ROI B was published and state updated
+    # Verify ROI B was published and request state updated
     assert len(roi_plot_factory._roi_publisher.published_rois) == 1
     assert roi_plot_factory._roi_publisher.published_rois[0][1] == roi_b
-    assert plot_state._last_known_rois == roi_b
+    assert plot_state._request_rois == roi_b
 
     # Simulate user dragging to position C (rapid change)
     roi_c = {
@@ -668,20 +668,22 @@ def test_stale_readback_filtering(
         }
     )
 
-    # Verify state updated to ROI C
-    assert plot_state._last_known_rois == roi_c
+    # Verify request state updated to ROI C
+    assert plot_state._request_rois == roi_c
 
     # Backend updates with ROI B (backend is source of truth, may be behind)
     plot_state.on_backend_roi_update(roi_b)
 
-    # Backend state wins - UI now shows ROI B
-    assert plot_state._last_known_rois == roi_b
+    # Backend state wins - readback and request both show ROI B
+    assert plot_state._readback_rois == roi_b
+    assert plot_state._request_rois == roi_b
 
     # Backend catches up with ROI C
     plot_state.on_backend_roi_update(roi_c)
 
-    # Verify UI now shows ROI C
-    assert plot_state._last_known_rois == roi_c
+    # Verify readback and request both show ROI C
+    assert plot_state._readback_rois == roi_c
+    assert plot_state._request_rois == roi_c
 
 
 def test_backend_update_from_another_view(
@@ -726,8 +728,8 @@ def test_backend_update_from_another_view(
         }
     )
 
-    # Verify state is ROI B
-    assert plot_state._last_known_rois == roi_b
+    # Verify request state is ROI B
+    assert plot_state._request_rois == roi_b
 
     # Backend update from View 2 (different ROI position D)
     roi_d = {
@@ -739,7 +741,8 @@ def test_backend_update_from_another_view(
     plot_state.on_backend_roi_update(roi_d)
 
     # Verify View 1 UI updated to ROI D (backend is source of truth)
-    assert plot_state._last_known_rois == roi_d
+    assert plot_state._readback_rois == roi_d
+    assert plot_state._request_rois == roi_d
 
 
 def test_two_plots_remove_last_roi_syncs_correctly(
@@ -774,13 +777,15 @@ def test_two_plots_remove_last_roi_syncs_correctly(
 
     # Create Plot A
     box_stream_A = hv.streams.BoxEdit()
-    boxes_pipe_A = hv.streams.Pipe(data=[])
+    request_pipe_A = hv.streams.Pipe(data=[])
+    readback_pipe_A = hv.streams.Pipe(data=[])
     default_colors = hv.Cycle.default_cycles["default_colors"]
 
     plot_state_A = ROIPlotState(
         result_key=detector_key_A,
         box_stream=box_stream_A,
-        boxes_pipe=boxes_pipe_A,
+        request_pipe=request_pipe_A,
+        readback_pipe=readback_pipe_A,
         x_unit='dimensionless',
         y_unit='dimensionless',
         roi_publisher=fake_publisher,
@@ -790,12 +795,14 @@ def test_two_plots_remove_last_roi_syncs_correctly(
 
     # Create Plot B
     box_stream_B = hv.streams.BoxEdit()
-    boxes_pipe_B = hv.streams.Pipe(data=[])
+    request_pipe_B = hv.streams.Pipe(data=[])
+    readback_pipe_B = hv.streams.Pipe(data=[])
 
     plot_state_B = ROIPlotState(
         result_key=detector_key_B,
         box_stream=box_stream_B,
-        boxes_pipe=boxes_pipe_B,
+        request_pipe=request_pipe_B,
+        readback_pipe=readback_pipe_B,
         x_unit='dimensionless',
         y_unit='dimensionless',
         roi_publisher=fake_publisher,
@@ -823,14 +830,15 @@ def test_two_plots_remove_last_roi_syncs_correctly(
         }
     )
 
-    # Verify Plot A has 2 ROIs
-    assert plot_state_A._last_known_rois == two_rois
+    # Verify Plot A has 2 ROIs in request state
+    assert plot_state_A._request_rois == two_rois
 
     # Simulate backend readback to Plot B
     plot_state_B.on_backend_roi_update(two_rois)
 
-    # Verify Plot B received 2 ROIs
-    assert plot_state_B._last_known_rois == two_rois
+    # Verify Plot B received 2 ROIs in both readback and request states
+    assert plot_state_B._readback_rois == two_rois
+    assert plot_state_B._request_rois == two_rois
     assert len(plot_state_B.box_stream.data['x0']) == 2
 
     # Step 2: User removes 1 ROI on Plot A (keep only ROI 0)
@@ -849,14 +857,15 @@ def test_two_plots_remove_last_roi_syncs_correctly(
         }
     )
 
-    # Verify Plot A has 1 ROI
-    assert plot_state_A._last_known_rois == one_roi
+    # Verify Plot A has 1 ROI in request state
+    assert plot_state_A._request_rois == one_roi
 
     # Simulate backend readback to Plot B
     plot_state_B.on_backend_roi_update(one_roi)
 
-    # Verify Plot B updated to 1 ROI
-    assert plot_state_B._last_known_rois == one_roi
+    # Verify Plot B updated to 1 ROI in both states
+    assert plot_state_B._readback_rois == one_roi
+    assert plot_state_B._request_rois == one_roi
     assert len(plot_state_B.box_stream.data['x0']) == 1
 
     # Step 3: User removes last ROI on Plot A (BUG: should sync to Plot B)
@@ -865,16 +874,19 @@ def test_two_plots_remove_last_roi_syncs_correctly(
     # Test with empty dict (what BoxEdit might send)
     plot_state_A.box_stream.event(data={})
 
-    # Verify Plot A has 0 ROIs
-    assert plot_state_A._last_known_rois == no_rois
+    # Verify Plot A has 0 ROIs in request state
+    assert plot_state_A._request_rois == no_rois
 
     # Simulate backend readback to Plot B
     plot_state_B.on_backend_roi_update(no_rois)
 
     # THIS IS WHERE THE BUG MIGHT BE: Plot B should update to 0 ROIs
     assert (
-        plot_state_B._last_known_rois == no_rois
-    ), "Plot B should have 0 ROIs after Plot A removed last ROI"
+        plot_state_B._readback_rois == no_rois
+    ), "Plot B should have 0 ROIs in readback after Plot A removed last ROI"
+    assert (
+        plot_state_B._request_rois == no_rois
+    ), "Plot B should have 0 ROIs in request after Plot A removed last ROI"
     assert (
         len(plot_state_B.box_stream.data['x0']) == 0
     ), "Plot B BoxEdit should have 0 boxes after Plot A removed last ROI"
@@ -914,13 +926,15 @@ def test_two_plots_both_clear_rois_independently(
 
     # Create Plot A
     box_stream_A = hv.streams.BoxEdit()
-    boxes_pipe_A = hv.streams.Pipe(data=[])
+    request_pipe_A = hv.streams.Pipe(data=[])
+    readback_pipe_A = hv.streams.Pipe(data=[])
     default_colors = hv.Cycle.default_cycles["default_colors"]
 
     plot_state_A = ROIPlotState(
         result_key=detector_key_A,
         box_stream=box_stream_A,
-        boxes_pipe=boxes_pipe_A,
+        request_pipe=request_pipe_A,
+        readback_pipe=readback_pipe_A,
         x_unit='dimensionless',
         y_unit='dimensionless',
         roi_publisher=fake_publisher,
@@ -930,12 +944,14 @@ def test_two_plots_both_clear_rois_independently(
 
     # Create Plot B
     box_stream_B = hv.streams.BoxEdit()
-    boxes_pipe_B = hv.streams.Pipe(data=[])
+    request_pipe_B = hv.streams.Pipe(data=[])
+    readback_pipe_B = hv.streams.Pipe(data=[])
 
     plot_state_B = ROIPlotState(
         result_key=detector_key_B,
         box_stream=box_stream_B,
-        boxes_pipe=boxes_pipe_B,
+        request_pipe=request_pipe_B,
+        readback_pipe=readback_pipe_B,
         x_unit='dimensionless',
         y_unit='dimensionless',
         roi_publisher=fake_publisher,
@@ -965,15 +981,17 @@ def test_two_plots_both_clear_rois_independently(
 
     # Backend syncs to Plot B
     plot_state_B.on_backend_roi_update(two_rois)
-    assert plot_state_B._last_known_rois == two_rois
+    assert plot_state_B._readback_rois == two_rois
+    assert plot_state_B._request_rois == two_rois
 
     # Step 2: Plot B clears all ROIs (user interaction on Plot B)
     plot_state_B.box_stream.event(data={})
-    assert plot_state_B._last_known_rois == {}
+    assert plot_state_B._request_rois == {}
 
     # Backend syncs {} back to Plot A
     plot_state_A.on_backend_roi_update({})
-    assert plot_state_A._last_known_rois == {}
+    assert plot_state_A._readback_rois == {}
+    assert plot_state_A._request_rois == {}
 
     # Step 3: User re-draws ROIs on Plot A
     one_roi = {
@@ -993,20 +1011,26 @@ def test_two_plots_both_clear_rois_independently(
 
     # Backend syncs to Plot B
     plot_state_B.on_backend_roi_update(one_roi)
-    assert plot_state_B._last_known_rois == one_roi
+    assert plot_state_B._readback_rois == one_roi
+    assert plot_state_B._request_rois == one_roi
 
     # Step 4: Plot A removes last ROI again
     plot_state_A.box_stream.event(data={})
-    assert plot_state_A._last_known_rois == {}
+    assert plot_state_A._request_rois == {}
 
     # Backend should sync {} to Plot B
     # THIS IS THE CRITICAL TEST: Plot B might have {} in its old backlog
     plot_state_B.on_backend_roi_update({})
 
     # Plot B should update to {}
-    assert (
-        plot_state_B._last_known_rois == {}
-    ), "Plot B should have 0 ROIs after Plot A removed last ROI (second time)"
+    assert plot_state_B._readback_rois == {}, (
+        "Plot B should have 0 ROIs in readback after Plot A removed last ROI "
+        "(second time)"
+    )
+    assert plot_state_B._request_rois == {}, (
+        "Plot B should have 0 ROIs in request after Plot A removed last ROI "
+        "(second time)"
+    )
     assert (
         len(plot_state_B.box_stream.data['x0']) == 0
     ), "Plot B BoxEdit should have 0 boxes"
@@ -1045,13 +1069,15 @@ def test_empty_roi_backlog_collision(
 
     # Create Plot A
     box_stream_A = hv.streams.BoxEdit()
-    boxes_pipe_A = hv.streams.Pipe(data=[])
+    request_pipe_A = hv.streams.Pipe(data=[])
+    readback_pipe_A = hv.streams.Pipe(data=[])
     default_colors = hv.Cycle.default_cycles["default_colors"]
 
     plot_state_A = ROIPlotState(
         result_key=detector_key_A,
         box_stream=box_stream_A,
-        boxes_pipe=boxes_pipe_A,
+        request_pipe=request_pipe_A,
+        readback_pipe=readback_pipe_A,
         x_unit='dimensionless',
         y_unit='dimensionless',
         roi_publisher=fake_publisher,
@@ -1061,12 +1087,14 @@ def test_empty_roi_backlog_collision(
 
     # Create Plot B
     box_stream_B = hv.streams.BoxEdit()
-    boxes_pipe_B = hv.streams.Pipe(data=[])
+    request_pipe_B = hv.streams.Pipe(data=[])
+    readback_pipe_B = hv.streams.Pipe(data=[])
 
     plot_state_B = ROIPlotState(
         result_key=detector_key_B,
         box_stream=box_stream_B,
-        boxes_pipe=boxes_pipe_B,
+        request_pipe=request_pipe_B,
+        readback_pipe=readback_pipe_B,
         x_unit='dimensionless',
         y_unit='dimensionless',
         roi_publisher=fake_publisher,
@@ -1096,20 +1124,22 @@ def test_empty_roi_backlog_collision(
 
     # Backend syncs to Plot B
     plot_state_B.on_backend_roi_update(two_rois)
-    assert plot_state_B._last_known_rois == two_rois
+    assert plot_state_B._readback_rois == two_rois
+    assert plot_state_B._request_rois == two_rois
 
     # Step 2: Plot B clears all ROIs (user deletes all ROIs on Plot B)
     plot_state_B.box_stream.event(data={})
-    assert plot_state_B._last_known_rois == {}
+    assert plot_state_B._request_rois == {}
 
     # Backend sends Plot B's {} to Plot A
     plot_state_A.on_backend_roi_update({})
-    assert plot_state_A._last_known_rois == {}
+    assert plot_state_A._readback_rois == {}
+    assert plot_state_A._request_rois == {}
 
     # Step 3: IMMEDIATELY after (before backlog timeout), Plot A also clears ROIs
     # This simulates both users independently removing all ROIs within seconds
     plot_state_A.box_stream.event(data={})
-    assert plot_state_A._last_known_rois == {}
+    assert plot_state_A._request_rois == {}
 
     # Draw 1 ROI on Plot B to simulate user interaction
     plot_state_B.box_stream.event(
@@ -1123,14 +1153,20 @@ def test_empty_roi_backlog_collision(
 
     # Step 4: Plot A clears again
     plot_state_A.box_stream.event(data={})
+    assert plot_state_A._request_rois == {}
 
     # Backend sends {} from Plot A to Plot B
     # Plot B should update even though it has {} in old backlog
     plot_state_B.on_backend_roi_update({})
 
     # Plot B should update to {} even though it previously had {} in backlog
-    assert plot_state_B._last_known_rois == {}, (
-        "Plot B should have 0 ROIs after Plot A cleared " "(even with {} in backlog)"
+    assert plot_state_B._readback_rois == {}, (
+        "Plot B should have 0 ROIs in readback after Plot A cleared "
+        "(even with {} in backlog)"
+    )
+    assert plot_state_B._request_rois == {}, (
+        "Plot B should have 0 ROIs in request after Plot A cleared "
+        "(even with {} in backlog)"
     )
     assert (
         len(plot_state_B.box_stream.data['x0']) == 0
