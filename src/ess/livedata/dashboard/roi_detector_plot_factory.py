@@ -5,8 +5,6 @@
 from __future__ import annotations
 
 import logging
-import time
-from collections import deque
 from functools import partial
 from typing import Any
 
@@ -183,6 +181,16 @@ class ROIPlotState:
     Encapsulates state and callbacks for a single ROI detector plot,
     including active ROI tracking, publishing logic, and BoxEdit stream.
 
+    This class implements bidirectional synchronization with Kafka:
+    - User edits trigger publishes to backend (via on_box_change)
+    - Backend updates trigger UI updates (via on_backend_roi_update)
+    - Kafka is the single source of truth; backend state always wins
+
+    Cycle prevention is handled via state comparison in _last_known_rois:
+    - on_box_change only publishes if ROIs differ from _last_known_rois
+    - on_backend_roi_update sets _last_known_rois before updating UI
+    - This ensures UI updates don't trigger redundant republishes
+
     Parameters
     ----------
     result_key:
@@ -236,14 +244,6 @@ class ROIPlotState:
             initial_rois.copy() if initial_rois else {}
         )
 
-        # Track recently published ROI states to filter stale backend readbacks
-        # Stores (rois, timestamp) tuples for last 50 publishes
-        self._published_backlog: deque[tuple[dict[int, RectangleROI], float]] = deque(
-            maxlen=50
-        )
-        # Drop backlog entries older than this timeout
-        self._backlog_timeout: float = 5.0
-
         # Attach the callback to the stream AFTER initializing state
         self.box_stream.param.watch(self.on_box_change, "data")
 
@@ -282,16 +282,6 @@ class ROIPlotState:
                 self.boxes_pipe.send(rectangles)
 
                 if self._roi_publisher:
-                    # Add to backlog before publishing to track this state.
-                    # Special case: Don't add empty dict to backlog since {}
-                    # is not unique. Multiple plots can independently arrive at {},
-                    # so backlog filtering would incorrectly treat another plot's
-                    # {} as our own readback.
-                    if current_rois:  # Only add non-empty ROI dicts to backlog
-                        self._published_backlog.append(
-                            (current_rois.copy(), time.monotonic())
-                        )
-
                     self._roi_publisher.publish_rois(
                         self.result_key.job_id, current_rois
                     )
@@ -308,9 +298,14 @@ class ROIPlotState:
         """
         Handle ROI updates from the backend stream.
 
-        Filters out stale readbacks by checking against recently published states.
-        Only applies backend updates that represent new information (from other
-        views or initial state).
+        The backend is the single source of truth for ROI state. This method
+        updates the UI to reflect backend state changes from other clients or
+        from the initial state. Updates are only applied if the backend state
+        differs from the current local state.
+
+        Cycle prevention: Updates _last_known_rois BEFORE triggering UI updates,
+        so the subsequent on_box_change callback sees matching state and skips
+        republishing.
 
         Parameters
         ----------
@@ -318,58 +313,36 @@ class ROIPlotState:
             Dictionary mapping ROI index to RectangleROI from backend.
         """
         try:
-            now = time.monotonic()
+            # Only update if state actually differs from what we know
+            if backend_rois == self._last_known_rois:
+                return
 
-            # Clean old entries from backlog
-            while (
-                self._published_backlog
-                and now - self._published_backlog[0][1] > self._backlog_timeout
-            ):
-                self._published_backlog.popleft()
+            self._logger.debug(
+                "Applying backend ROI update for job %s",
+                self.result_key.job_id,
+            )
 
-            # Check if this readback matches something we recently published
-            for i, (published_rois, _timestamp) in enumerate(self._published_backlog):
-                if backend_rois == published_rois:
-                    # This is a readback of our own publish - ignore it
-                    # Remove this entry and all older ones from backlog
-                    for _ in range(i + 1):
-                        self._published_backlog.popleft()
-                    self._logger.debug(
-                        "Ignoring backend readback matching own publish for job %s",
-                        self.result_key.job_id,
-                    )
-                    return
+            # Update state BEFORE updating UI to prevent cycles
+            # When box_stream.event() triggers on_box_change, it will see
+            # current_rois == self._last_known_rois and skip republishing
+            self._last_known_rois = backend_rois
 
-            # Not in our backlog - must be from another view or initial state
-            # Apply it only if different from current state
-            if backend_rois != self._last_known_rois:
-                self._logger.debug(
-                    "Applying backend ROI update (not in backlog) for job %s",
-                    self.result_key.job_id,
-                )
+            # Convert to BoxEdit format (dict with float arrays)
+            box_data = rois_to_box_data(backend_rois)
 
-                # Clear backlog since we're syncing with backend state
-                self._published_backlog.clear()
+            # Update Pipe to refresh visual representation (via DynamicMap)
+            rectangles = rois_to_rectangles(backend_rois, colors=self._colors)
+            self.boxes_pipe.send(rectangles)
 
-                # Update state BEFORE updating UI to break potential cycles
-                self._last_known_rois = backend_rois
+            # Update BoxEdit stream to enable drag operations
+            # This must be done AFTER pipe.send() to ensure BoxEdit has correct data
+            self.box_stream.event(data=box_data)
 
-                # Convert to BoxEdit format (dict with float arrays)
-                box_data = rois_to_box_data(backend_rois)
-
-                # Update Pipe to refresh visual representation (via DynamicMap)
-                rectangles = rois_to_rectangles(backend_rois, colors=self._colors)
-                self.boxes_pipe.send(rectangles)
-
-                # Update BoxEdit stream to enable drag operations
-                # This must be done AFTER pipe.send() to ensure BoxEdit has correct data
-                self.box_stream.event(data=box_data)
-
-                self._logger.info(
-                    "UI updated with %d ROI(s) from backend for job %s",
-                    len(backend_rois),
-                    self.result_key.job_id,
-                )
+            self._logger.info(
+                "UI updated with %d ROI(s) from backend for job %s",
+                len(backend_rois),
+                self.result_key.job_id,
+            )
         except Exception as e:
             self._logger.error("Failed to update UI from backend ROI data: %s", e)
 

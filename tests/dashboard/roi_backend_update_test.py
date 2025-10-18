@@ -78,9 +78,19 @@ def fake_publisher():
 @pytest.fixture
 def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
     """Create a ROIPlotState for testing."""
-    import holoviews as hv
-
-    default_colors = hv.Cycle.default_cycles["default_colors"]
+    # Use a fixed set of colors for testing (independent of holoviews config)
+    test_colors = [
+        '#1f77b4',
+        '#ff7f0e',
+        '#2ca02c',
+        '#d62728',
+        '#9467bd',
+        '#8c564b',
+        '#e377c2',
+        '#7f7f7f',
+        '#bcbd22',
+        '#17becf',
+    ]
     return ROIPlotState(
         result_key=result_key,
         box_stream=box_stream,
@@ -89,7 +99,7 @@ def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
         y_unit='m',
         roi_publisher=fake_publisher,
         logger=logging.getLogger(__name__),
-        colors=default_colors[:10],
+        colors=test_colors,
     )
 
 

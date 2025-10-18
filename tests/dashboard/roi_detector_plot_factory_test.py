@@ -608,7 +608,7 @@ def test_custom_max_roi_count(roi_plot_factory, detector_data, workflow_id, job_
 def test_stale_readback_filtering(
     roi_plot_factory, detector_data, workflow_id, job_number
 ):
-    """Test that stale backend readbacks are filtered out using backlog tracking."""
+    """Test that backend is the source of truth for ROI state (state-based sync)."""
     from ess.livedata.dashboard.roi_publisher import FakeROIPublisher
 
     # Set up fake publisher
@@ -647,13 +647,10 @@ def test_stale_readback_filtering(
         }
     )
 
-    # Verify ROI B was published
+    # Verify ROI B was published and state updated
     assert len(roi_plot_factory._roi_publisher.published_rois) == 1
     assert roi_plot_factory._roi_publisher.published_rois[0][1] == roi_b
-
-    # Verify ROI B is in the backlog
-    assert len(plot_state._published_backlog) == 1
-    assert plot_state._published_backlog[0][0] == roi_b
+    assert plot_state._last_known_rois == roi_b
 
     # Simulate user dragging to position C (rapid change)
     roi_c = {
@@ -671,35 +668,26 @@ def test_stale_readback_filtering(
         }
     )
 
-    # Verify both ROI B and C are in backlog
-    assert len(plot_state._published_backlog) == 2
-    assert plot_state._published_backlog[0][0] == roi_b
-    assert plot_state._published_backlog[1][0] == roi_c
+    # Verify state updated to ROI C
+    assert plot_state._last_known_rois == roi_c
 
-    # Simulate stale backend readback with ROI B (backend is slow)
+    # Backend updates with ROI B (backend is source of truth, may be behind)
     plot_state.on_backend_roi_update(roi_b)
 
-    # Verify UI still shows ROI C (stale readback was ignored)
-    assert plot_state._last_known_rois == roi_c
+    # Backend state wins - UI now shows ROI B
+    assert plot_state._last_known_rois == roi_b
 
-    # Verify ROI B was removed from backlog (and older entries)
-    assert len(plot_state._published_backlog) == 1
-    assert plot_state._published_backlog[0][0] == roi_c
-
-    # Simulate backend catching up with ROI C
+    # Backend catches up with ROI C
     plot_state.on_backend_roi_update(roi_c)
 
-    # Verify UI still shows ROI C
+    # Verify UI now shows ROI C
     assert plot_state._last_known_rois == roi_c
-
-    # Verify backlog was cleared (readback matched our publish)
-    assert len(plot_state._published_backlog) == 0
 
 
 def test_backend_update_from_another_view(
     roi_plot_factory, detector_data, workflow_id, job_number
 ):
-    """Test that updates from another view are applied and clear the backlog."""
+    """Test that backend updates from other clients are applied correctly."""
     from ess.livedata.dashboard.roi_publisher import FakeROIPublisher
 
     # Set up fake publisher
@@ -738,11 +726,10 @@ def test_backend_update_from_another_view(
         }
     )
 
-    # Verify backlog has ROI B
-    assert len(plot_state._published_backlog) == 1
+    # Verify state is ROI B
     assert plot_state._last_known_rois == roi_b
 
-    # Simulate backend update from View 2 (different ROI position D)
+    # Backend update from View 2 (different ROI position D)
     roi_d = {
         0: RectangleROI(
             x=Interval(min=50, max=60, unit='dimensionless'),
@@ -751,11 +738,8 @@ def test_backend_update_from_another_view(
     }
     plot_state.on_backend_roi_update(roi_d)
 
-    # Verify View 1 UI updated to ROI D (not in backlog, so applied)
+    # Verify View 1 UI updated to ROI D (backend is source of truth)
     assert plot_state._last_known_rois == roi_d
-
-    # Verify backlog was cleared (synced with backend)
-    assert len(plot_state._published_backlog) == 0
 
 
 def test_two_plots_remove_last_roi_syncs_correctly(
