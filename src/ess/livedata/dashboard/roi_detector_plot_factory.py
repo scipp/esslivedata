@@ -622,7 +622,14 @@ class ROIDetectorPlotFactory:
         def make_readback_boxes(data):
             if not data:
                 data = []
-            return hv.Rectangles(data, vdims=['color']).opts(color='color')
+            return hv.Rectangles(data, vdims=['color']).opts(
+                color='color',
+                fill_alpha=0.3,
+                line_width=2,
+                line_dash='solid',
+                # Force canvas backend: WebGL doesn't support line_dash on Quad
+                backend_opts={'plot.output_backend': 'canvas'},
+            )
 
         readback_dmap = hv.DynamicMap(make_readback_boxes, streams=[readback_pipe])
 
@@ -632,7 +639,14 @@ class ROIDetectorPlotFactory:
         def make_request_boxes(data):
             if not data:
                 data = []
-            return hv.Rectangles(data, vdims=['color']).opts(color='color')
+            return hv.Rectangles(data, vdims=['color']).opts(
+                color='color',
+                fill_alpha=0.3,
+                line_width=2,
+                line_dash='dashed',
+                # Force canvas backend: WebGL doesn't support line_dash on Quad
+                backend_opts={'plot.output_backend': 'canvas'},
+            )
 
         request_dmap = hv.DynamicMap(make_request_boxes, streams=[request_pipe])
 
@@ -641,7 +655,10 @@ class ROIDetectorPlotFactory:
         box_stream = hv.streams.BoxEdit(
             source=request_dmap,
             num_objects=max_roi_count,
-            styles={"fill_color": default_colors[:max_roi_count]},
+            styles={
+                "fill_color": default_colors[:max_roi_count],
+                "fill_alpha": 0.3,
+            },
             data=initial_box_data,
         )
 
@@ -681,14 +698,8 @@ class ROIDetectorPlotFactory:
         # 1. Readback layer (solid lines) - backend confirmed state
         # 2. Request layer (dashed lines) - user's interactive edits
         # Both layers start overlapping; they diverge during user edits
-        readback_boxes = readback_dmap.opts(
-            fill_alpha=0.3, line_width=2, line_dash='solid'
-        )
-        request_boxes = request_dmap.opts(
-            fill_alpha=0.3, line_width=2, line_dash='dashed'
-        )
         # Layer order: detector, then readback (solid), then request (dashed on top)
-        detector_with_boxes = detector_dmap * readback_boxes * request_boxes
+        detector_with_boxes = detector_dmap * readback_dmap * request_dmap
 
         # Generate spectrum keys and create ROI spectrum plot
         if detector_key.output_name is None:
