@@ -21,6 +21,7 @@ def make_detector_service_builder(
         RoutingAdapterBuilder(stream_mapping=stream_mapping)
         .with_detector_route()
         .with_livedata_config_route()
+        .with_livedata_roi_route()
         .build()
     )
     _ = get_config(instrument)  # Load the module to register the instrument

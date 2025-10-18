@@ -23,6 +23,8 @@ from ess.livedata.config.workflow_spec import (
 from .config_service import ConfigService
 from .job_service import JobService
 from .plotting import PlotterSpec, plotter_registry
+from .roi_detector_plot_factory import ROIDetectorPlotFactory
+from .roi_publisher import ROIPublisher
 from .stream_manager import StreamManager
 
 K = TypeVar('K', bound=Hashable)
@@ -53,6 +55,8 @@ class PlottingController:
     cleanup_fraction:
         Fraction of configurations to remove when cleanup is triggered. The oldest
         configurations are removed first.
+    roi_publisher:
+        Publisher for ROI updates to Kafka. If None, ROI publishing is disabled.
     """
 
     _plotter_config_key = keys.PERSISTENT_PLOTTING_CONFIGS.create_key()
@@ -65,6 +69,7 @@ class PlottingController:
         logger: logging.Logger | None = None,
         max_persistent_configs: int = 100,
         cleanup_fraction: float = 0.2,
+        roi_publisher: ROIPublisher | None = None,
     ) -> None:
         self._job_service = job_service
         self._stream_manager = stream_manager
@@ -72,6 +77,9 @@ class PlottingController:
         self._logger = logger or logging.getLogger(__name__)
         self._max_persistent_configs = max_persistent_configs
         self._cleanup_fraction = cleanup_fraction
+        self._roi_detector_plot_factory = ROIDetectorPlotFactory(
+            stream_manager=stream_manager, roi_publisher=roi_publisher, logger=logger
+        )
 
     def get_available_plotters(
         self, job_number: JobNumber, output_name: str | None
@@ -280,7 +288,7 @@ class PlottingController:
         output_name: str | None,
         plot_name: str,
         params: pydantic.BaseModel,
-    ) -> hv.DynamicMap:
+    ) -> hv.DynamicMap | hv.Layout:
         """
         Create a plot from job data with the specified parameters.
 
@@ -306,6 +314,7 @@ class PlottingController:
             A HoloViews DynamicMap that updates with streaming data.
             For plotters with kdims (e.g., SlicerPlotter), the DynamicMap
             includes interactive dimensions that generate widgets when rendered.
+            For roi_detector, returns a Layout with separate DynamicMaps.
         """
         self._save_plotting_config(
             workflow_id=self._job_service.job_info[job_number],
@@ -320,6 +329,22 @@ class PlottingController:
             ): self._job_service.job_data[job_number][source_name][output_name]
             for source_name in source_names
         }
+
+        # Special case for roi_detector: call factory once per detector
+        if plot_name == 'roi_detector':
+            plot_components = [
+                self._roi_detector_plot_factory.create_roi_detector_plot_components(
+                    detector_key=key, detector_data=data, params=params
+                )
+                for key, data in items.items()
+            ]
+            # Each component returns (detector_with_boxes, roi_spectrum, plot_state)
+            # Flatten detector and spectrum plots into a layout with 2 columns
+            plots = []
+            for detector_with_boxes, roi_spectrum, _plot_state in plot_components:
+                plots.extend([detector_with_boxes, roi_spectrum])
+            return hv.Layout(plots).cols(2).opts(shared_axes=False)
+
         pipe = self._stream_manager.make_merging_stream(items)
         plotter = plotter_registry.create_plotter(plot_name, params=params)
 

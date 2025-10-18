@@ -10,6 +10,7 @@ from ess.livedata.handlers.accumulators import (
     CollectTOA,
     Cumulative,
     GroupIntoPixels,
+    LatestValue,
     LogData,
     MonitorEvents,
     NullAccumulator,
@@ -27,7 +28,7 @@ def test_LogData_from_f144() -> None:
     assert log_data.value == 42.0
 
 
-@pytest.mark.parametrize('accumulator_cls', [Cumulative, ToNXevent_data])
+@pytest.mark.parametrize('accumulator_cls', [Cumulative, LatestValue, ToNXevent_data])
 def test_accumulator_raises_if_get_before_add(
     accumulator_cls: type[Accumulator],
 ) -> None:
@@ -72,6 +73,82 @@ class TestNullAccumulator:
         accumulator = NullAccumulator()
         accumulator.clear()
         # Should not raise any exceptions
+
+
+class TestLatestValue:
+    def test_get_before_add_raises_error(self) -> None:
+        accumulator = LatestValue()
+        with pytest.raises(ValueError, match="No data has been added"):
+            accumulator.get()
+
+    def test_keeps_latest_value_only(self) -> None:
+        accumulator = LatestValue()
+        da1 = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0], unit='m'),
+            coords={'x': sc.array(dims=['x'], values=[0.0], unit='s')},
+        )
+        da2 = sc.DataArray(
+            sc.array(dims=['x'], values=[2.0], unit='m'),
+            coords={'x': sc.array(dims=['x'], values=[1.0], unit='s')},
+        )
+        da3 = sc.DataArray(
+            sc.array(dims=['y'], values=[3.0, 4.0], unit='m'),
+            coords={'y': sc.array(dims=['y'], values=[0.0, 1.0], unit='s')},
+        )
+
+        accumulator.add(0, da1)
+        result = accumulator.get()
+        assert sc.identical(result, da1)
+
+        # Add second value - should replace first
+        accumulator.add(1, da2)
+        result = accumulator.get()
+        assert sc.identical(result, da2)
+
+        # Add third value with different shape - should still replace
+        accumulator.add(2, da3)
+        result = accumulator.get()
+        assert sc.identical(result, da3)
+
+    def test_stores_copy_not_reference(self) -> None:
+        accumulator = LatestValue()
+        da = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0], unit='m'),
+            coords={'x': sc.array(dims=['x'], values=[0.0], unit='s')},
+        )
+
+        accumulator.add(0, da)
+        # Modify original
+        da.values[0] = 999.0
+
+        # Should not affect stored value
+        result = accumulator.get()
+        assert result.values[0] == 1.0
+
+    def test_clear(self) -> None:
+        accumulator = LatestValue()
+        da = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0], unit='m'),
+            coords={'x': sc.array(dims=['x'], values=[0.0], unit='s')},
+        )
+
+        accumulator.add(0, da)
+        accumulator.clear()
+
+        with pytest.raises(ValueError, match="No data has been added"):
+            accumulator.get()
+
+    def test_timestamp_parameter_is_ignored(self) -> None:
+        accumulator = LatestValue()
+        da = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0], unit='m'),
+            coords={'x': sc.array(dims=['x'], values=[0.0], unit='s')},
+        )
+
+        # Timestamp should not affect behavior
+        accumulator.add(12345, da)
+        result = accumulator.get()
+        assert sc.identical(result, da)
 
 
 class TestCumulative:

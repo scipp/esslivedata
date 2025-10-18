@@ -150,7 +150,10 @@ class Plotter(ABC):
                 plot_element = self.plot(da, data_key, **kwargs)
                 # Add label from data_key if the plot supports it
                 if hasattr(plot_element, 'relabel'):
-                    plot_element = plot_element.relabel(data_key.job_id.source_name)
+                    label = data_key.job_id.source_name
+                    if data_key.output_name is not None:
+                        label = f'{label}/{data_key.output_name}'
+                    plot_element = plot_element.relabel(label)
                 plots.append(plot_element)
         except Exception as e:
             plots = [
@@ -159,12 +162,19 @@ class Plotter(ABC):
                 )
             ]
 
+        if len(plots) == 0:
+            plots = [
+                hv.Text(0.5, 0.5, 'No data').opts(
+                    text_align='center', text_baseline='middle'
+                )
+            ]
+
         plots = [self._apply_generic_options(p) for p in plots]
 
-        if len(plots) == 1:
-            return plots[0]
         if self.layout_params.combine_mode == 'overlay':
             return hv.Overlay(plots)
+        if len(plots) == 1:
+            return plots[0]
         return hv.Layout(plots).cols(self.layout_params.layout_columns)
 
     def _apply_generic_options(self, plot_element: hv.Element) -> hv.Element:
