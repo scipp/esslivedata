@@ -20,16 +20,10 @@ from .data_subscriber import (
     FilteredMergingStreamAssembler,
     MergingStreamAssembler,
 )
-from .holoviews_webgl_patch import apply as apply_webgl_patch
 from .plot_params import LayoutParams, PlotParamsROIDetector
 from .plots import ImagePlotter, LinePlotter, PlotAspect, PlotAspectType
 from .roi_publisher import ROIPublisher
 from .stream_manager import StreamManager
-
-# Apply WebGL patch for Rectangles line_dash support
-# This converts HoloViews Rectangles to use Patches glyph instead of Quad,
-# enabling dashed lines to render correctly in WebGL mode.
-apply_webgl_patch()
 
 
 def boxes_to_rois(
@@ -633,6 +627,8 @@ class ROIDetectorPlotFactory:
                 fill_alpha=0.3,
                 line_width=2,
                 line_dash='solid',
+                # Force canvas backend: WebGL doesn't support line_dash on Quad
+                backend_opts={'plot.output_backend': 'canvas'},
             )
 
         readback_dmap = hv.DynamicMap(make_readback_boxes, streams=[readback_pipe])
@@ -648,6 +644,8 @@ class ROIDetectorPlotFactory:
                 fill_alpha=0.3,
                 line_width=2,
                 line_dash='dashed',
+                # Force canvas backend: WebGL doesn't support line_dash on Quad
+                backend_opts={'plot.output_backend': 'canvas'},
             )
 
         request_dmap = hv.DynamicMap(make_request_boxes, streams=[request_pipe])
