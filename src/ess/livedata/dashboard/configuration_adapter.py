@@ -95,7 +95,7 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         self,
         selected_sources: list[str],
         parameter_values: Model,
-    ) -> bool:
+    ) -> None:
         """
         Execute the start action with selected sources and parameters.
 
@@ -109,8 +109,9 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         parameter_values
             Parameter values as a validated Pydantic model instance
 
-        Returns
-        -------
-        bool
-            True if successful, False otherwise
+        Raises
+        ------
+        Exception
+            May raise exceptions if the action fails. Callers should handle exceptions
+            appropriately (e.g., log and display error messages to users).
         """

@@ -57,8 +57,8 @@ class FakeConfigurationAdapter(ConfigurationAdapter):
         selected_sources: list[str],
         parameter_values: object,
         aux_source_names=None,
-    ) -> bool:
-        return True
+    ) -> None:
+        pass
 
 
 class TestWorkflowParams:
