@@ -9,7 +9,7 @@ import holoviews as hv
 import param
 import pytest
 
-from ess.livedata.config.models import RectangleROI
+from ess.livedata.config.models import Interval, RectangleROI
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.dashboard.roi_detector_plot_factory import ROIPlotState
 from ess.livedata.dashboard.roi_publisher import FakeROIPublisher
@@ -63,7 +63,8 @@ def fake_publisher():
 @pytest.fixture
 def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
     """Create a ROIPlotState for testing."""
-    import holoviews as hv
+    # Initialize holoviews extension to populate default color cycles
+    hv.extension('bokeh')
 
     # Create ROI state stream for tracking active ROIs
     class ROIStateStream(hv.streams.Stream):
@@ -96,6 +97,8 @@ class TestROIPlotState:
         self, result_key, fake_publisher
     ):
         """Test that ROIPlotState attaches callback to box_stream on init."""
+        hv.extension('bokeh')
+
         readback_pipe = hv.streams.Pipe(data=[])
         request_pipe = hv.streams.Pipe(data=[])
         box_stream = hv.streams.BoxEdit()
@@ -248,14 +251,29 @@ class TestROIPlotState:
         _, rois_dict = fake_publisher.published_rois[1]
         assert len(rois_dict) == 0
 
-    def test_updates_active_roi_indices(self, roi_plot_state, box_stream):
-        """Test that active ROI indices are tracked correctly."""
-        # Initially no active ROIs
-        assert len(roi_plot_state._active_roi_indices) == 0
+    def test_is_roi_active(self, roi_plot_state, box_stream, result_key):
+        """Test is_roi_active method tracks backend ROI state correctly."""
+        # Initially no ROIs are active
+        roi_key_0 = result_key.model_copy(update={'output_name': 'roi_current_0'})
+        roi_key_1 = result_key.model_copy(update={'output_name': 'roi_current_1'})
+        assert roi_plot_state.is_roi_active(roi_key_0) is False
+        assert roi_plot_state.is_roi_active(roi_key_1) is False
 
-        # Add one ROI
+        # Add ROI at index 0 via user edit
         box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
-        assert roi_plot_state._active_roi_indices == {0}
+        # Simulate backend readback
+        roi_plot_state.on_backend_roi_update(
+            {
+                0: RectangleROI(
+                    x=Interval(min=1.0, max=5.0, unit='m'),
+                    y=Interval(min=2.0, max=6.0, unit='m'),
+                )
+            }
+        )
+
+        # ROI 0 should be active, ROI 1 should not
+        assert roi_plot_state.is_roi_active(roi_key_0) is True
+        assert roi_plot_state.is_roi_active(roi_key_1) is False
 
         # Add second ROI
         box_stream.event(
@@ -266,26 +284,32 @@ class TestROIPlotState:
                 'y1': [6.0, 25.0],
             }
         )
-        assert roi_plot_state._active_roi_indices == {0, 1}
+        roi_plot_state.on_backend_roi_update(
+            {
+                0: RectangleROI(
+                    x=Interval(min=1.0, max=5.0, unit='m'),
+                    y=Interval(min=2.0, max=6.0, unit='m'),
+                ),
+                1: RectangleROI(
+                    x=Interval(min=10.0, max=15.0, unit='m'),
+                    y=Interval(min=20.0, max=25.0, unit='m'),
+                ),
+            }
+        )
+
+        # Both ROIs should be active
+        assert roi_plot_state.is_roi_active(roi_key_0) is True
+        assert roi_plot_state.is_roi_active(roi_key_1) is True
 
         # Remove all ROIs
         box_stream.event(data={})
-        assert roi_plot_state._active_roi_indices == set()
+        roi_plot_state.on_backend_roi_update({})
 
-    def test_is_roi_active(self, roi_plot_state, box_stream, result_key):
-        """Test is_roi_active method."""
-        # Add ROI at index 0
-        box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
-
-        # Create key for ROI 0
-        roi_key_0 = result_key.model_copy(update={'output_name': 'roi_current_0'})
-        assert roi_plot_state.is_roi_active(roi_key_0) is True
-
-        # Create key for ROI 1 (not active)
-        roi_key_1 = result_key.model_copy(update={'output_name': 'roi_current_1'})
+        # No ROIs should be active
+        assert roi_plot_state.is_roi_active(roi_key_0) is False
         assert roi_plot_state.is_roi_active(roi_key_1) is False
 
-        # Non-ROI key
+        # Non-ROI key should never be considered active
         non_roi_key = result_key.model_copy(update={'output_name': 'current'})
         assert roi_plot_state.is_roi_active(non_roi_key) is False
 
@@ -300,7 +324,9 @@ class TestROIPlotState:
         assert len(fake_publisher.published_rois) == 1
 
     def test_no_publishing_when_publisher_is_none(self, result_key):
-        """Test that no publishing happens when publisher is None."""
+        """Test that ROI state works correctly when publisher is None."""
+        hv.extension('bokeh')
+
         readback_pipe = hv.streams.Pipe(data=[])
         request_pipe = hv.streams.Pipe(data=[])
         box_stream = hv.streams.BoxEdit()
@@ -327,14 +353,26 @@ class TestROIPlotState:
             colors=default_colors[:10],
         )
 
-        # Simulate box edit
+        # Simulate box edit - should not crash
         box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
 
-        # Active ROI indices should still be tracked
-        assert state._active_roi_indices == {0}
+        # Simulate backend readback - should not crash
+        state.on_backend_roi_update(
+            {
+                0: RectangleROI(
+                    x=Interval(min=1.0, max=5.0, unit='m'),
+                    y=Interval(min=2.0, max=6.0, unit='m'),
+                )
+            }
+        )
+
+        # Verify ROI is tracked via public API
+        roi_key = result_key.model_copy(update={'output_name': 'roi_current_0'})
+        assert state.is_roi_active(roi_key) is True
 
     def test_logs_error_on_publishing_failure(self, result_key, caplog):
         """Test that errors during publishing are logged."""
+        hv.extension('bokeh')
 
         class FailingPublisher:
             """Publisher that raises an error."""
