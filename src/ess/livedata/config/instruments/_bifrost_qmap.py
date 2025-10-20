@@ -4,6 +4,7 @@
 
 from enum import StrEnum
 from functools import cache
+from typing import Literal
 
 import pydantic
 import sciline
@@ -17,6 +18,7 @@ from ess.bifrost.data import (
 )
 from ess.bifrost.live import BifrostQCutWorkflow, CutAxis, CutAxis1, CutAxis2, CutData
 from ess.livedata.config import Instrument
+from ess.livedata.config.workflow_spec import AuxSourcesBase
 from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 from ess.livedata.parameter_models import EnergyEdges, QEdges
 from ess.reduce.nexus.types import Filename, NeXusData, SampleRun
@@ -166,6 +168,17 @@ class BifrostCustomElasticQMapParams(pydantic.BaseModel):
         return CutAxis.from_q_vector(output=name, vec=vec, bins=edges)
 
 
+class BifrostAuxSources(AuxSourcesBase):
+    """Auxiliary source names for Bifrost Q-map workflows."""
+
+    detector_rotation: Literal['detector_rotation'] = pydantic.Field(
+        default='detector_rotation', description='Detector bank rotation angle.'
+    )
+    sample_rotation: Literal['sample_rotation'] = pydantic.Field(
+        default='sample_rotation', description='Sample rotation angle.'
+    )
+
+
 def register_qmap_workflows(
     instrument: Instrument,
 ) -> None:
@@ -175,7 +188,7 @@ def register_qmap_workflows(
         title='Q map',
         description='Map of scattering intensity as function of Q and energy transfer.',
         source_names=['unified_detector'],
-        aux_source_names=['detector_rotation', 'sample_rotation'],
+        aux_sources=BifrostAuxSources,
     )
     def _qmap_workflow(params: BifrostQMapParams) -> StreamProcessorWorkflow:
         wf = _get_q_cut_workflow()
@@ -189,7 +202,7 @@ def register_qmap_workflows(
         title='Elastic Q map',
         description='Elastic Q map with predefined axes.',
         source_names=['unified_detector'],
-        aux_source_names=['detector_rotation', 'sample_rotation'],
+        aux_sources=BifrostAuxSources,
     )
     def _elastic_qmap_workflow(
         params: BifrostElasticQMapParams,
@@ -205,7 +218,7 @@ def register_qmap_workflows(
         title='Elastic Q map (custom)',
         description='Elastic Q map with custom axes.',
         source_names=['unified_detector'],
-        aux_source_names=['detector_rotation', 'sample_rotation'],
+        aux_sources=BifrostAuxSources,
     )
     def _custom_elastic_qmap_workflow(
         params: BifrostCustomElasticQMapParams,

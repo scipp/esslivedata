@@ -55,9 +55,7 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
     def description(self) -> str:
         return self._plot_spec.description
 
-    def model_class(
-        self, aux_source_names: dict[str, str]
-    ) -> type[pydantic.BaseModel] | None:
+    def model_class(self) -> type[pydantic.BaseModel] | None:
         return self._plot_spec.params
 
     @property
@@ -82,7 +80,11 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
             return self._persisted_config.config.params
         return {}
 
-    def start_action(self, selected_sources: list[str], parameter_values: Any) -> bool:
+    def start_action(
+        self,
+        selected_sources: list[str],
+        parameter_values: Any,
+    ) -> bool:
         try:
             plot = self._plotting_controller.create_plot(
                 job_number=self._job_number,

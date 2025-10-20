@@ -28,7 +28,7 @@ class FakeJobFactory(JobFactory):
             workflow_id=config.identifier,
             processor=processor,
             source_names=[job_id.source_name],
-            aux_source_names=["aux_source"],
+            aux_source_names=config.aux_source_names,
         )
 
         self.created_jobs.append((job_id, config))
@@ -1256,3 +1256,292 @@ class TestJobManager:
         # Compute results should not include this job
         results = manager.compute_results()
         assert len(results) == 0
+
+
+class TestJobFactoryRender:
+    """Tests for JobFactory calling render() on aux sources."""
+
+    def test_job_factory_calls_render_on_aux_sources(self) -> None:
+        """Test that JobFactory calls render() when creating a job."""
+        from typing import Literal
+
+        from ess.livedata.config.instrument import Instrument
+        from ess.livedata.config.workflow_spec import AuxSourcesBase
+
+        # Create a custom aux sources model with render spy
+        class TestAuxSources(AuxSourcesBase):
+            monitor: Literal['monitor1'] = 'monitor1'
+
+            def render(self, job_id: JobId) -> dict[str, str]:
+                # Append job_number to stream name
+                base = self.model_dump(mode='json')
+                return {
+                    field: f"{job_id.job_number}/{stream}"
+                    for field, stream in base.items()
+                }
+
+        # Setup instrument and workflow
+        instrument = Instrument(name='test')
+        instrument.active_namespace = 'data_reduction'
+
+        @instrument.register_workflow(
+            name='test_workflow',
+            version=1,
+            title='Test',
+            description='Test',
+            source_names=['detector1'],
+            aux_sources=TestAuxSources,
+        )
+        def test_workflow():
+            return FakeProcessor()
+
+        # Create JobFactory and job config
+        factory = JobFactory(instrument)
+        workflow_id = WorkflowId(
+            instrument='test',
+            namespace='data_reduction',
+            name='test_workflow',
+            version=1,
+        )
+        config = WorkflowConfig(
+            identifier=workflow_id,
+            aux_source_names={'monitor': 'monitor1'},
+        )
+        job_id = JobId(source_name='detector1', job_number='test-uuid-123')
+
+        # Create job
+        job = factory.create(job_id=job_id, config=config)
+
+        # Verify that render() was called and result was used
+        # The job should have the rendered aux source names
+        assert job.aux_source_names == ['test-uuid-123/monitor1']
+
+    def test_job_factory_default_render_preserves_names(self) -> None:
+        """Test JobFactory with default render() behavior."""
+        from typing import Literal
+
+        from ess.livedata.config.instrument import Instrument
+        from ess.livedata.config.workflow_spec import AuxSourcesBase
+
+        class DefaultAuxSources(AuxSourcesBase):
+            incident_monitor: Literal['monitor1'] = 'monitor1'
+            transmission_monitor: Literal['monitor2'] = 'monitor2'
+
+        # Setup
+        instrument = Instrument(name='test')
+        instrument.active_namespace = 'data_reduction'
+
+        @instrument.register_workflow(
+            name='default_workflow',
+            version=1,
+            title='Default',
+            description='Default',
+            source_names=['detector1'],
+            aux_sources=DefaultAuxSources,
+        )
+        def default_workflow():
+            return FakeProcessor()
+
+        factory = JobFactory(instrument)
+        spec = instrument.workflow_factory[
+            WorkflowId(
+                instrument='test',
+                namespace='data_reduction',
+                name='default_workflow',
+                version=1,
+            )
+        ]
+        config = WorkflowConfig(
+            identifier=spec.get_id(),
+            aux_source_names={
+                'incident_monitor': 'monitor1',
+                'transmission_monitor': 'monitor2',
+            },
+        )
+        job_id = JobId(source_name='detector1', job_number='uuid-456')
+
+        # Create job
+        job = factory.create(job_id=job_id, config=config)
+
+        # Default render should preserve the original names
+        assert set(job.aux_source_names) == {'monitor1', 'monitor2'}
+
+    def test_job_factory_with_no_aux_sources(self) -> None:
+        """Test JobFactory with workflow that has no aux sources."""
+        from ess.livedata.config.instrument import Instrument
+
+        instrument = Instrument(name='test')
+        instrument.active_namespace = 'data_reduction'
+
+        @instrument.register_workflow(
+            name='no_aux_workflow',
+            version=1,
+            title='No Aux',
+            description='No aux sources',
+            source_names=['detector1'],
+        )
+        def no_aux_workflow():
+            return FakeProcessor()
+
+        factory = JobFactory(instrument)
+        spec = instrument.workflow_factory[
+            WorkflowId(
+                instrument='test',
+                namespace='data_reduction',
+                name='no_aux_workflow',
+                version=1,
+            )
+        ]
+        config = WorkflowConfig(identifier=spec.get_id())
+        job_id = JobId(source_name='detector1', job_number='uuid-789')
+
+        # Should not raise, should create job with empty aux sources
+        job = factory.create(job_id=job_id, config=config)
+        assert job.aux_source_names == []
+
+    def test_job_factory_with_empty_aux_source_names(self) -> None:
+        """Test JobFactory when config has empty aux_source_names dict with defaults."""
+        from typing import Literal
+
+        from ess.livedata.config.instrument import Instrument
+        from ess.livedata.config.workflow_spec import AuxSourcesBase
+
+        class OptionalAuxSources(AuxSourcesBase):
+            monitor: Literal['monitor1'] = 'monitor1'
+
+        instrument = Instrument(name='test')
+        instrument.active_namespace = 'data_reduction'
+
+        @instrument.register_workflow(
+            name='optional_aux_workflow',
+            version=1,
+            title='Optional Aux',
+            description='Optional',
+            source_names=['detector1'],
+            aux_sources=OptionalAuxSources,
+        )
+        def optional_aux_workflow():
+            return FakeProcessor()
+
+        factory = JobFactory(instrument)
+        spec = instrument.workflow_factory[
+            WorkflowId(
+                instrument='test',
+                namespace='data_reduction',
+                name='optional_aux_workflow',
+                version=1,
+            )
+        ]
+        # Config with empty aux_source_names
+        config = WorkflowConfig(identifier=spec.get_id(), aux_source_names={})
+        job_id = JobId(source_name='detector1', job_number='uuid-abc')
+
+        job = factory.create(job_id=job_id, config=config)
+        # Empty dict triggers model defaults, so should use 'monitor1'
+        assert job.aux_source_names == ['monitor1']
+
+    def test_job_factory_render_uses_source_name(self) -> None:
+        """Test that render() can use source_name from JobId."""
+        from typing import Literal
+
+        from ess.livedata.config.instrument import Instrument
+        from ess.livedata.config.workflow_spec import AuxSourcesBase
+
+        class SourcePrefixedAuxSources(AuxSourcesBase):
+            roi: Literal['roi_rectangle'] = 'roi_rectangle'
+
+            def render(self, job_id: JobId) -> dict[str, str]:
+                base = self.model_dump(mode='json')
+                return {
+                    field: f"{job_id.source_name}/{stream}"
+                    for field, stream in base.items()
+                }
+
+        instrument = Instrument(name='test')
+        instrument.active_namespace = 'data_reduction'
+
+        @instrument.register_workflow(
+            name='source_prefix_workflow',
+            version=1,
+            title='Source Prefix',
+            description='Source prefix',
+            source_names=['detector1', 'detector2'],
+            aux_sources=SourcePrefixedAuxSources,
+        )
+        def source_prefix_workflow():
+            return FakeProcessor()
+
+        factory = JobFactory(instrument)
+        spec = instrument.workflow_factory[
+            WorkflowId(
+                instrument='test',
+                namespace='data_reduction',
+                name='source_prefix_workflow',
+                version=1,
+            )
+        ]
+
+        # Create jobs for different sources
+        config = WorkflowConfig(
+            identifier=spec.get_id(),
+            aux_source_names={'roi': 'roi_rectangle'},
+        )
+        job_id_1 = JobId(source_name='detector1', job_number='uuid-1')
+        job_id_2 = JobId(source_name='detector2', job_number='uuid-2')
+
+        job1 = factory.create(job_id=job_id_1, config=config)
+        job2 = factory.create(job_id=job_id_2, config=config)
+
+        # Each job should have source-specific stream name
+        assert job1.aux_source_names == ['detector1/roi_rectangle']
+        assert job2.aux_source_names == ['detector2/roi_rectangle']
+
+    def test_job_factory_render_with_empty_dict_uses_defaults(self) -> None:
+        """Test that empty aux_source_names dict triggers model defaults and render."""
+        from typing import Literal
+
+        from ess.livedata.config.instrument import Instrument
+        from ess.livedata.config.workflow_spec import AuxSourcesBase
+
+        class DefaultedAuxSources(AuxSourcesBase):
+            monitor: Literal['monitor1', 'monitor2'] = 'monitor1'  # Has default
+
+            def render(self, job_id: JobId) -> dict[str, str]:
+                base = self.model_dump(mode='json')
+                return {
+                    field: f"{job_id.source_name}/{stream}"
+                    for field, stream in base.items()
+                }
+
+        instrument = Instrument(name='test')
+        instrument.active_namespace = 'data_reduction'
+
+        @instrument.register_workflow(
+            name='defaulted_aux_workflow',
+            version=1,
+            title='Defaulted Aux',
+            description='Defaulted',
+            source_names=['detector1'],
+            aux_sources=DefaultedAuxSources,
+        )
+        def defaulted_aux_workflow():
+            return FakeProcessor()
+
+        factory = JobFactory(instrument)
+        spec = instrument.workflow_factory[
+            WorkflowId(
+                instrument='test',
+                namespace='data_reduction',
+                name='defaulted_aux_workflow',
+                version=1,
+            )
+        ]
+
+        # Config with empty aux_source_names should use model defaults
+        config = WorkflowConfig(identifier=spec.get_id(), aux_source_names={})
+        job_id = JobId(source_name='detector1', job_number='uuid-default')
+
+        job = factory.create(job_id=job_id, config=config)
+
+        # Should use default 'monitor1' and render it with source prefix
+        assert job.aux_source_names == ['detector1/monitor1']

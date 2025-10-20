@@ -48,6 +48,42 @@ class JobId:
     job_number: JobNumber
 
 
+class AuxSourcesBase(BaseModel):
+    """
+    Base class for auxiliary source models.
+
+    Auxiliary source models define the available auxiliary data streams that a workflow
+    can consume. Subclasses should define fields with Literal or Enum types to specify
+    the available stream choices.
+
+    The `render()` method can be overridden to transform field values into job-specific
+    or source-specific stream names for routing purposes.
+    """
+
+    def render(self, job_id: JobId) -> dict[str, str]:
+        """
+        Render auxiliary source stream names for a specific job.
+
+        The default implementation returns the model values unchanged, preserving
+        backward compatibility with existing workflows.
+
+        Parameters
+        ----------
+        job_id:
+            The job identifier, containing both source_name and job_number.
+            Subclasses can use this to create job-specific or source-specific
+            stream names (e.g., "{job_id.job_number}/roi_rectangle").
+
+        Returns
+        -------
+        :
+            Mapping from field names to stream names for routing. The keys are the
+            field names defined in the model, and the values are the stream names
+            that the job should subscribe to.
+        """
+        return self.model_dump(mode='json')
+
+
 class ResultKey(BaseModel, frozen=True):
     # If the job produced a DataGroup then it will be serialized as multiple da00
     # messages. Each message corresponds to a single DataArray value the DataGroup.
@@ -83,9 +119,14 @@ class WorkflowSpec(BaseModel):
         default_factory=list,
         description="List of detector/other streams the workflow can be applied to.",
     )
-    aux_source_names: list[str] = Field(
-        default_factory=list,
-        description="List of auxiliary data streams the workflow needs.",
+    aux_sources: type[BaseModel] | None = Field(
+        default=None,
+        description=(
+            "Pydantic model defining auxiliary data sources with their configuration. "
+            "Field names define the aux source identifiers, and field types (typically "
+            "Literal or Enum) define the available stream choices. Field metadata "
+            "(title, description) provides UI information."
+        ),
     )
     params: type[BaseModel] | None = Field(description="Model for workflow param.")
 
@@ -154,10 +195,56 @@ class WorkflowConfig(BaseModel):
     schedule: JobSchedule = Field(
         default_factory=JobSchedule, description="Schedule for the workflow."
     )
+    aux_source_names: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Selected auxiliary source names as a mapping from field name (as defined "
+            "in WorkflowSpec.aux_sources) to the selected stream name."
+        ),
+    )
     params: dict[str, Any] = Field(
         default_factory=dict,
         description="Parameters for the workflow, as JSON-serialized Pydantic model.",
     )
+
+    @classmethod
+    def from_params(
+        cls,
+        workflow_id: WorkflowId,
+        params: BaseModel | None = None,
+        aux_source_names: BaseModel | None = None,
+        job_number: JobNumber | None = None,
+    ) -> WorkflowConfig:
+        """
+        Create a WorkflowConfig from validated Pydantic models.
+
+        Parameters
+        ----------
+        workflow_id:
+            Identifier for the workflow
+        params:
+            Validated Pydantic model with workflow parameters, or None if no params
+        aux_source_names:
+            Validated Pydantic model with auxiliary source selections, or None if no
+            aux sources
+        job_number:
+            Optional job number (generated if not provided)
+
+        Returns
+        -------
+        :
+            WorkflowConfig instance ready to be sent to backend
+        """
+        return cls(
+            identifier=workflow_id,
+            job_number=job_number if job_number is not None else uuid.uuid4(),
+            aux_source_names=(
+                aux_source_names.model_dump(mode='json')
+                if aux_source_names is not None
+                else {}
+            ),
+            params=params.model_dump() if params is not None else {},
+        )
 
 
 class PersistentWorkflowConfig(BaseModel):

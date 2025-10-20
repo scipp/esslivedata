@@ -19,12 +19,15 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         self,
         spec: WorkflowSpec,
         persistent_config: PersistentWorkflowConfig | None,
-        start_callback: Callable[[list[str], pydantic.BaseModel], bool],
+        start_callback: Callable[
+            [list[str], pydantic.BaseModel, pydantic.BaseModel | None], bool
+        ],
     ) -> None:
         """Initialize adapter with workflow spec, config, and start callback."""
         self._spec = spec
         self._persistent_config = persistent_config
         self._start_callback = start_callback
+        self._cached_aux_sources: pydantic.BaseModel | None = None
 
     @property
     def title(self) -> str:
@@ -37,13 +40,18 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         return self._spec.description
 
     @property
-    def aux_source_names(self) -> dict[str, list[str]]:
-        """Get auxiliary source names with unique options."""
-        return {key: [key] for key in self._spec.aux_source_names}
+    def aux_sources(self) -> type[pydantic.BaseModel] | None:
+        """Get auxiliary sources Pydantic model."""
+        return self._spec.aux_sources
 
-    def model_class(
-        self, aux_source_names: dict[str, str]
-    ) -> type[pydantic.BaseModel] | None:
+    @property
+    def initial_aux_source_names(self) -> dict[str, str]:
+        """Get initial auxiliary source names from persistent config."""
+        if not self._persistent_config:
+            return {}
+        return self._persistent_config.config.aux_source_names
+
+    def model_class(self) -> type[pydantic.BaseModel] | None:
         """Get workflow parameters model class."""
         return self._spec.params
 
@@ -65,7 +73,11 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         return self._persistent_config.config.params
 
     def start_action(
-        self, selected_sources: list[str], parameter_values: pydantic.BaseModel
+        self,
+        selected_sources: list[str],
+        parameter_values: pydantic.BaseModel,
     ) -> bool:
         """Start the workflow with given sources and parameters."""
-        return self._start_callback(selected_sources, parameter_values)
+        return self._start_callback(
+            selected_sources, parameter_values, self._cached_aux_sources
+        )

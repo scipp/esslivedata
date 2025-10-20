@@ -10,13 +10,16 @@ ESSlivedata is a live data reduction visualization framework for the European Sp
 
 ### Environment Setup
 
-**IMPORTANT**: This project uses a Python 3.11 virtual environment located at `/workspace/venv`. The environment is managed automatically - you do not need to activate it manually.
+**IMPORTANT**: In the devcontainer, this project uses micromamba with Python 3.11 in the base environment. The environment is automatically activated - you do not need to activate it manually.
 
-For manual setup (if needed):
+For manual setup outside the devcontainer (if needed):
 
 ```sh
 # Create virtual environment with Python 3.11
 python3.11 -m venv venv
+
+# Activate the virtual environment
+source venv/bin/activate
 
 # Install all development dependencies
 pip install -r requirements/dev.txt
@@ -28,7 +31,7 @@ pip install -e .
 pre-commit install
 ```
 
-**Note**: All Python commands (`python`, `pytest`, `tox`, etc.) will automatically use the virtual environment. Pre-commit hooks will run automatically on `git commit` if properly installed.
+**Note**: In the devcontainer, all Python commands (`python`, `pytest`, `tox`, etc.) automatically use the micromamba base environment. Pre-commit hooks will run automatically on `git commit` if properly installed.
 
 ### Running Tests
 
@@ -63,11 +66,20 @@ ruff check .
 # Run ruff formatting
 ruff format .
 
+# Run pylint (not part of pre-commit or CI, but useful for code quality)
+python -m pylint src/ess/livedata
+# Disable all docstring warnings (shorter)
+python -m pylint --disable=C0114,C0115,C0116 src/ess/livedata
+# Run pylint on specific file
+python -m pylint src/ess/livedata/core/message.py
+
 # Type checking with mypy (minimize errors, but not strictly enforced)
 tox -e mypy
 ```
 
-**Note**: The project primarily relies on `ruff` for linting. `mypy` type checking is run but not strictly enforced - aim to minimize errors where practical.
+**Note**: The project primarily relies on `ruff` for linting.
+**Note**: `pylint` is not enforced in pre-commit hooks or CI, but is available in the devcontainer and can be helpful for identifying code quality issues. Current codebase scores ~8.85/10 with default configuration.
+**Note**:`mypy` type checking is neither run nor enforced in CI at this point - aim to minimize errors where practical.
 
 ### Documentation
 
@@ -217,10 +229,8 @@ See [docs/developer/design/dashboard-architecture.md](docs/developer/design/dash
 
 For in-depth understanding of ESSlivedata's architecture, see the following design documents:
 
-- **[Backend Service Architecture](docs/developer/design/backend-service-architecture.md)**: Service-Processor-Workflow pattern, job management, and service lifecycle
+- **[Backend Service Architecture](docs/developer/design/backend-service-architecture.md)**: Service-Processor-Workflow pattern, job management, and service lifecycle. Job lifecycle, scheduling, primary vs auxiliary data, and workflow protocol
 - **[Message Flow and Transformation](docs/developer/design/message-flow-and-transformation.md)**: End-to-end message journey, adapters, stream mapping, and batching strategies
-- **[Job-Based Processing](docs/developer/design/job-based-processing.md)**: Job lifecycle, scheduling, primary vs auxiliary data, and workflow protocol
-- **[Testing Guide](docs/developer/testing-guide.md)**: Unit testing with fakes, integration testing, and testing strategies
 - **[Dashboard Architecture](docs/developer/design/dashboard-architecture.md)**: MVC pattern, configuration management, and threading model
 
 ## Service Factory Pattern
@@ -254,7 +264,6 @@ All services use `OrchestratingProcessor` for job-based processing. See [src/ess
 - **All unit tests run without Kafka** - use fakes from `fakes.py` (e.g., `FakeMessageSource`, `FakeMessageSink`)
 - Test files follow pattern `*_test.py`
 - Tests use `pytest` with `--import-mode=importlib`
-- See [Testing Guide](docs/developer/testing-guide.md) for comprehensive testing strategies and examples
 
 ## Code Style Conventions
 
@@ -302,32 +311,14 @@ def simple_method(self) -> int:
 
 ### Adding Dashboard Widgets
 
-1. Create Pydantic model for backend validation
-2. Create Param model (subclass `ConfigBackedParam` for simple controls)
-3. Subscribe widget to `ConfigService`
-4. For complex workflows, use a centralized controller (e.g., `WorkflowController`)
+1. Workflow and plotter configuration uses widgets generated from Pydantic model for validation on the frontend and serialization for Kafka communication
 
 ### Message Processing
 
 - Messages have `timestamp`, `stream`, and `value` fields
 - `StreamId` identifies message type (kind + name)
-- Use `compact_messages()` to deduplicate by keeping latest per stream
 - Preprocessors accumulate messages via `add()`, return accumulated data via `get()`
 - Workflows receive accumulated data and execute scientific reduction logic
-
-### Background Processing
-
-- Use `BackgroundMessageSource` for Kafka consumers (non-blocking polls)
-- Use `BackgroundMessageBridge` in dashboards to prevent GUI blocking
-- Queue-based communication between threads
-
-## Key Environment Variables
-
-- `LIVEDATA_ENV`: Configuration environment (dev, staging, production)
-- `LIVEDATA_INSTRUMENT`: Instrument name (dummy, DREAM, Bifrost, LOKI, etc.)
-- `KAFKA_BOOTSTRAP_SERVERS`: Upstream Kafka broker (raw data)
-- `KAFKA2_BOOTSTRAP_SERVERS`: Downstream Kafka broker (processed data, defaults to Docker container)
-- `JUPYTER_PLATFORM_DIRS`: Set to 1 for tests
 
 ## Instrument Support
 
