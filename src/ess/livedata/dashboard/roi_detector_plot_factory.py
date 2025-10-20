@@ -618,10 +618,9 @@ class ROIDetectorPlotFactory:
         request_pipe = hv.streams.Pipe(data=initial_rectangles)
 
         # Create DynamicMap for readback rectangles (solid lines)
-        # This shows the authoritative backend state
-        def make_readback_boxes(data):
-            if not data:
-                data = []
+        # This shows the backend state (single source of truth) in sync with current
+        # spectrum data
+        def make_readback_boxes(data: list):
             return hv.Rectangles(data, vdims=['color']).opts(color='color')
 
         readback_dmap = hv.DynamicMap(make_readback_boxes, streams=[readback_pipe])
@@ -629,9 +628,7 @@ class ROIDetectorPlotFactory:
         # Create DynamicMap for request rectangles (dashed lines)
         # This allows programmatic updates via request_pipe.send()
         # and serves as the source for BoxEdit interaction
-        def make_request_boxes(data):
-            if not data:
-                data = []
+        def make_request_boxes(data: list):
             return hv.Rectangles(data, vdims=['color']).opts(color='color')
 
         request_dmap = hv.DynamicMap(make_request_boxes, streams=[request_pipe])
@@ -639,10 +636,7 @@ class ROIDetectorPlotFactory:
         # Create BoxEdit stream with request_dmap as source
         # This enables user interaction (drag, create, delete) on the request layer
         box_stream = hv.streams.BoxEdit(
-            source=request_dmap,
-            num_objects=max_roi_count,
-            styles={"fill_color": default_colors[:max_roi_count]},
-            data=initial_box_data,
+            source=request_dmap, num_objects=max_roi_count, data=initial_box_data
         )
 
         # Extract coordinate units
@@ -673,6 +667,7 @@ class ROIDetectorPlotFactory:
         # This will automatically initialize the plot with existing ROI data if
         # available in DataService.
         roi_readback_key = detector_key.model_copy(
+            # Index 0 is the "first" geometry readback key: The rectangle ROIs
             update={"output_name": self._roi_mapper.readback_keys[0]}
         )
         self._subscribe_to_roi_readback(roi_readback_key, plot_state)
@@ -680,12 +675,17 @@ class ROIDetectorPlotFactory:
         # Create the detector plot with two ROI layers:
         # 1. Readback layer (solid lines) - backend confirmed state
         # 2. Request layer (dashed lines) - user's interactive edits
-        # Both layers start overlapping; they diverge during user edits
+        # Both layers start overlapping; they diverge (briefly) during user edits
         readback_boxes = readback_dmap.opts(
             fill_alpha=0.3, line_width=2, line_dash='solid'
         )
         request_boxes = request_dmap.opts(
-            fill_alpha=0.3, line_width=2, line_dash='dashed'
+            fill_alpha=0.3,
+            line_width=2,
+            line_dash='dashed',
+            # There is a Bokeh(?) bug where line_dash='dashed' does not render with the
+            # WebGL backend, so we force canvas output here.
+            backend_opts={'plot.output_backend': 'canvas'},
         )
         # Layer order: detector, then readback (solid), then request (dashed on top)
         detector_with_boxes = detector_dmap * readback_boxes * request_boxes
