@@ -3,23 +3,22 @@
 import logging
 import time
 from dataclasses import replace
-from typing import Literal, NoReturn, TypeVar
+from typing import Literal, NoReturn
 
 import numpy as np
 import scipp as sc
 from streaming_data_types import eventdata_ev44
 
-from ess.livedata import Handler, Message, MessageSource, Service, StreamId, StreamKind
+from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
-from ess.livedata.core.handler import CommonHandlerFactory
-from ess.livedata.kafka.message_adapter import MessageAdapter
+from ess.livedata.core import IdentityProcessor
+from ess.livedata.kafka.message_adapter import AdaptingMessageSource, MessageAdapter
 from ess.livedata.kafka.sink import (
     KafkaSink,
     SerializationError,
     serialize_dataarray_to_da00,
 )
-from ess.livedata.service_factory import DataServiceBuilder
 
 
 class FakeMonitorSource(MessageSource[sc.Variable]):
@@ -96,15 +95,6 @@ class EventsToHistogramAdapter(
         )
 
 
-T = TypeVar('T')
-
-
-class IdentityHandler(Handler[T, T]):
-    def handle(self, messages: list[Message[T]]) -> list[Message[T]]:
-        # We know the message does not originate from Kafka, so we can keep the key
-        return messages
-
-
 def serialize_variable_to_monitor_ev44(msg: Message[sc.Variable]) -> bytes:
     if msg.value.unit != 'ns':
         raise SerializationError(f"Expected unit 'ns', got {msg.value.unit}")
@@ -138,18 +128,21 @@ def run_service(
             toa=sc.linspace('toa', 0, 71_000_000, num=1001, unit='ns')
         )
         serializer = serialize_dataarray_to_da00
-    builder = DataServiceBuilder(
-        instrument=instrument,
-        name=f'fake_{mode}_producer',
-        log_level=log_level,
-        adapter=adapter,
-        handler_factory=CommonHandlerFactory(handler_cls=IdentityHandler),
-    )
-    service = builder.from_source(
-        source=FakeMonitorSource(instrument=instrument, num_monitors=num_monitors),
+
+    source = FakeMonitorSource(instrument=instrument, num_monitors=num_monitors)
+    if adapter is not None:
+        source = AdaptingMessageSource(source=source, adapter=adapter)
+
+    processor = IdentityProcessor(
+        source=source,
         sink=KafkaSink(
             instrument=instrument, kafka_config=kafka_config, serializer=serializer
         ),
+    )
+    service = Service(
+        processor=processor,
+        name=f'{instrument}_fake_{mode}_producer',
+        log_level=log_level,
     )
     service.start()
 

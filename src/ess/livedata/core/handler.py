@@ -3,44 +3,45 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Generic, Protocol, TypeVar
 
 from ..config.instrument import Instrument
-from .message import Message, StreamId, Tin, Tout
+from .message import StreamId, Tin, Tout
+
+T = TypeVar('T')
+U = TypeVar('U')
+V = TypeVar('V')
 
 
-class Config(Protocol):
-    def get(self, key: str, default: Any | None = None) -> Any: ...
-
-
-class Handler(Generic[Tin, Tout]):
+class Accumulator(Protocol, Generic[T, U]):
     """
-    Base class for message handlers.
+    Protocol for an accumulator that accumulates data over time.
 
-    Handlers are used by :py:class:`StreamProcessor` to process messages. Since each
-    stream of messages will typically need multiple handlers (one per topic and message
-    source), handlers are typically created by a :py:class:`HandlerRegistry` and not
-    directly.
+    Accumulators are used as preprocessors in the message processing pipeline.
+    They accumulate data from multiple messages before passing it to workflows.
     """
 
-    def __init__(self, *, logger: logging.Logger | None = None, config: Config):
-        self._logger = logger or logging.getLogger(__name__)
-        self._config = config
+    def add(self, timestamp: int, data: T) -> None: ...
 
-    def handle(self, messages: list[Message[Tin]]) -> list[Message[Tout]]:
-        """Handle a list of messages. There is no 1:1 mapping to the output list."""
-        raise NotImplementedError
+    def get(self) -> U: ...
+
+    def clear(self) -> None: ...
 
 
-class HandlerFactory(Protocol, Generic[Tin, Tout]):
-    def make_handler(self, key: StreamId) -> Handler[Tin, Tout] | None:
-        pass
+class PreprocessorFactory(Protocol, Generic[Tin, Tout]):
+    """
+    Factory for creating preprocessors (accumulators) for message streams.
+
+    Preprocessors accumulate and transform messages before they are passed to workflows
+    for final processing.
+    """
 
     def make_preprocessor(self, key: StreamId) -> Accumulator | None:
+        """Create a preprocessor for the given stream, or None to skip."""
         return None
 
 
-class JobBasedHandlerFactoryBase(HandlerFactory[Tin, Tout]):
+class JobBasedPreprocessorFactoryBase(PreprocessorFactory[Tin, Tout]):
     """Factory base used by job-based backend services."""
 
     def __init__(
@@ -52,65 +53,3 @@ class JobBasedHandlerFactoryBase(HandlerFactory[Tin, Tout]):
     @property
     def instrument(self) -> Instrument:
         return self._instrument
-
-
-class CommonHandlerFactory(HandlerFactory[Tin, Tout]):
-    """
-    Factory for using (multiple instances of) a common handler class.
-    """
-
-    def __init__(
-        self,
-        *,
-        logger: logging.Logger | None = None,
-        handler_cls: type[Handler[Tin, Tout]],
-    ):
-        self._logger = logger or logging.getLogger(__name__)
-        self._handler_cls = handler_cls
-
-    def make_handler(self, key: StreamId) -> Handler[Tin, Tout]:
-        return self._handler_cls(logger=self._logger, config={})
-
-
-class HandlerRegistry(Generic[Tin, Tout]):
-    """
-    Registry for handlers.
-
-    Handlers are created on demand from a factory and cached based on the message key.
-    If the factory returns None for a key, messages with that key will be skipped.
-    """
-
-    def __init__(self, *, factory: HandlerFactory[Tin, Tout]):
-        self._factory = factory
-        self._handlers: dict[StreamId, Handler[Tin, Tout] | None] = {}
-
-    def __len__(self) -> int:
-        return sum(1 for handler in self._handlers.values() if handler is not None)
-
-    def register_handler(self, key: StreamId, handler: Handler[Tin, Tout]) -> None:
-        self._handlers[key] = handler
-
-    def get(self, key: StreamId) -> Handler[Tin, Tout] | None:
-        if key not in self._handlers:
-            self._handlers[key] = self._factory.make_handler(key)
-        return self._handlers[key]
-
-
-T = TypeVar('T')
-U = TypeVar('U')
-V = TypeVar('V')
-
-
-class Accumulator(Protocol, Generic[T, U]):
-    """
-    Protocol for an accumulator that accumulates data over time.
-
-    Accumulators are used by handlers such as :py:class:`PeriodicAccumulatingHandler` as
-    (1) preprocessors and (2) accumulators for the final data.
-    """
-
-    def add(self, timestamp: int, data: T) -> None: ...
-
-    def get(self) -> U: ...
-
-    def clear(self) -> None: ...

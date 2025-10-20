@@ -37,8 +37,7 @@ class FakeConfigurationAdapter(ConfigurationAdapter):
     def description(self) -> str:
         return self._spec.description
 
-    @property
-    def model_class(self) -> type[pydantic.BaseModel] | None:
+    def model_class(self, aux_source_names) -> type[pydantic.BaseModel] | None:
         return self._spec.params
 
     @property
@@ -54,7 +53,10 @@ class FakeConfigurationAdapter(ConfigurationAdapter):
         return {}
 
     def start_action(
-        self, selected_sources: list[str], parameter_values: object
+        self,
+        selected_sources: list[str],
+        parameter_values: object,
+        aux_source_names=None,
     ) -> bool:
         return True
 

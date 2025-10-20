@@ -7,7 +7,6 @@ Workflow controller implementation backed by a config service.
 from __future__ import annotations
 
 import logging
-import uuid
 from collections.abc import Callable, Mapping
 
 import pydantic
@@ -144,16 +143,18 @@ class WorkflowController:
         workflow_id: WorkflowId,
         source_names: list[str],
         config: pydantic.BaseModel,
+        aux_source_names: pydantic.BaseModel | None = None,
     ) -> bool:
         """Start a workflow with given configuration.
 
         Returns True if the workflow was started successfully, False otherwise.
         """
         self._logger.info(
-            'Starting workflow %s on sources %s with config %s',
+            'Starting workflow %s on sources %s with config %s and aux_sources %s',
             workflow_id,
             source_names,
             config,
+            aux_source_names,
         )
 
         spec = self.get_workflow_spec(workflow_id)
@@ -163,10 +164,14 @@ class WorkflowController:
             )
             return False
 
-        # We generate a new job number for the workflow. This will allow for associating
-        # multiple jobs with the same workflow run for different sources.
-        workflow_config = WorkflowConfig(
-            identifier=workflow_id, job_number=uuid.uuid4(), params=config.model_dump()
+        # Create a SINGLE workflow config which will be used for ALL source names (see
+        # loop below). WorkflowConfig.from_params generates a new job number which
+        # allows for associating multiple jobs with the same workflow run across the
+        # different sources.
+        workflow_config = WorkflowConfig.from_params(
+            workflow_id=workflow_id,
+            params=config,
+            aux_source_names=aux_source_names,
         )
 
         # Update the config for this workflow, used for restoring widget state
@@ -216,10 +221,14 @@ class WorkflowController:
         persistent_config = self.get_workflow_config(workflow_id)
 
         def start_callback(
-            selected_sources: list[str], parameter_values: pydantic.BaseModel
+            selected_sources: list[str],
+            parameter_values: pydantic.BaseModel,
+            aux_source_names: pydantic.BaseModel | None = None,
         ) -> bool:
             """Bound callback to start this specific workflow."""
-            return self.start_workflow(workflow_id, selected_sources, parameter_values)
+            return self.start_workflow(
+                workflow_id, selected_sources, parameter_values, aux_source_names
+            )
 
         return WorkflowConfigurationAdapter(spec, persistent_config, start_callback)
 
