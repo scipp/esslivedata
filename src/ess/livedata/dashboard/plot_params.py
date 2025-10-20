@@ -155,11 +155,11 @@ class ROIOptions(pydantic.BaseModel):
     """Options for ROI detector plots."""
 
     max_roi_count: int = pydantic.Field(
-        default_factory=lambda: _get_default_max_roi_count(),
+        default_factory=lambda: min(3, _get_default_max_roi_count()),
         description="Maximum number of regions of interest (ROIs) that can be defined.",
         title="Max ROI Count",
         ge=1,
-        le=10,
+        le=_get_default_max_roi_count(),
     )
 
 

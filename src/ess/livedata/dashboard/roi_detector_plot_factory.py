@@ -332,19 +332,17 @@ class ROIPlotState:
                 self.result_key.job_id,
             )
 
+            rectangles = rois_to_rectangles(backend_rois, colors=self._colors)
+
             # Update readback layer if changed (authoritative backend state)
             if readback_changed:
                 self._readback_rois = backend_rois
-                readback_rectangles = rois_to_rectangles(
-                    backend_rois, colors=self._colors
-                )
-                self.readback_pipe.send(readback_rectangles)
+                self.readback_pipe.send(rectangles)
 
                 # Trigger ROI state stream to update spectrum plot filtering
                 self.roi_state_stream.event(active_rois=self._active_roi_indices)
 
             # Sync request layer to match backend if needed
-            # This handles scenario 2: different view updates backend
             if request_needs_sync:
                 self._request_rois = backend_rois
 
@@ -352,10 +350,7 @@ class ROIPlotState:
                 box_data = rois_to_box_data(backend_rois)
 
                 # Update request rectangles via pipe
-                request_rectangles = rois_to_rectangles(
-                    backend_rois, colors=self._colors
-                )
-                self.request_pipe.send(request_rectangles)
+                self.request_pipe.send(rectangles)
 
                 # Update BoxEdit stream to enable drag operations
                 self.box_stream.event(data=box_data)
@@ -365,8 +360,8 @@ class ROIPlotState:
                 len(backend_rois),
                 self.result_key.job_id,
             )
-        except Exception as e:
-            self._logger.error("Failed to update UI from backend ROI data: %s", e)
+        except Exception:
+            self._logger.exception("Failed to update UI from backend ROI data")
 
     def is_roi_active(self, key: ResultKey) -> bool:
         """
