@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Any, Literal
+from urllib.parse import quote, unquote
 
 import scipp as sc
 from pydantic import BaseModel, Field
@@ -91,11 +92,15 @@ class ConfigKey(BaseModel, frozen=True):
         Returns
         -------
         :
-            String in the format source_name/service_name/key with '*' for None values
+            String in the format source_name/service_name/key with '*' for None values.
+            Components are URL-encoded to handle special characters like '/'.
         """
-        source = '*' if self.source_name is None else self.source_name
-        service = '*' if self.service_name is None else self.service_name
-        return f"{source}/{service}/{self.key}"
+        source = '*' if self.source_name is None else quote(self.source_name, safe='')
+        service = (
+            '*' if self.service_name is None else quote(self.service_name, safe='')
+        )
+        key_encoded = quote(self.key, safe='')
+        return f"{source}/{service}/{key_encoded}"
 
     @classmethod
     def from_string(cls, key_str: str) -> ConfigKey:
@@ -105,7 +110,8 @@ class ConfigKey(BaseModel, frozen=True):
         Parameters
         ----------
         key_str:
-            String in the format 'source_name/service_name/key'
+            String in the format 'source_name/service_name/key'.
+            Components should be URL-encoded to handle special characters.
 
         Returns
         -------
@@ -124,8 +130,8 @@ class ConfigKey(BaseModel, frozen=True):
                 f"got {key_str}"
             )
         source_name, service_name, key = parts
-        if source_name == '*':
-            source_name = None
-        if service_name == '*':
-            service_name = None
+        # Decode URL-encoded components
+        source_name = None if source_name == '*' else unquote(source_name)
+        service_name = None if service_name == '*' else unquote(service_name)
+        key = unquote(key)
         return cls(source_name=source_name, service_name=service_name, key=key)
