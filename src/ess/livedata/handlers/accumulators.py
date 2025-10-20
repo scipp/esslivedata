@@ -9,10 +9,7 @@ import numpy as np
 import scipp as sc
 from streaming_data_types import logdata_f144
 
-from ess.reduce.live.roi import ROIFilter
-
 from ..core.handler import Accumulator
-from ..parameter_models import RangeModel
 from .to_nxevent_data import DetectorEvents, MonitorEvents
 
 
@@ -43,6 +40,31 @@ class NullAccumulator(Accumulator[Any, None]):
 
     def clear(self) -> None:
         pass
+
+
+class LatestValue(Accumulator[sc.DataArray, sc.DataArray]):
+    """
+    Accumulator that keeps only the latest value.
+
+    Unlike Cumulative, this does not add values together - it simply replaces
+    the stored value with each new addition. Useful for configuration data like ROI
+    where only the current state matters.
+    """
+
+    def __init__(self):
+        self._latest: sc.DataArray | None = None
+
+    def add(self, timestamp: int, data: sc.DataArray) -> None:
+        _ = timestamp
+        self._latest = data.copy()
+
+    def get(self) -> sc.DataArray:
+        if self._latest is None:
+            raise ValueError("No data has been added")
+        return self._latest
+
+    def clear(self) -> None:
+        self._latest = None
 
 
 class _CumulativeAccumulationMixin:
@@ -135,63 +157,6 @@ class GroupIntoPixels(Accumulator[DetectorEvents, sc.DataArray]):
         )
         self._chunks.clear()
         return da.group(self._groups).fold(dim=self._dim, sizes=self._sizes)
-
-    def clear(self) -> None:
-        self._chunks.clear()
-
-
-class ROIBasedTOAHistogram(Accumulator[sc.DataArray, sc.DataArray]):
-    def __init__(
-        self,
-        *,
-        x_range: RangeModel,
-        y_range: RangeModel,
-        toa_edges: sc.Variable,
-        roi_filter: ROIFilter,
-    ):
-        self._roi_filter = roi_filter
-        self._chunks: list[sc.DataArray] = []
-        self._nbin = -1
-        self._edges = toa_edges
-        self._edges_ns = toa_edges.to(unit='ns')
-        self._configure_roi_filter(rx=x_range, ry=y_range)
-
-    def _configure_roi_filter(self, rx: RangeModel, ry: RangeModel) -> None:
-        # Access to protected variables should hopefully be avoided by changing the
-        # config values to send indices instead of percentages, once we have per-view
-        # configuration.
-        y, x = self._roi_filter._indices.dims
-        sizes = self._roi_filter._indices.sizes
-        # Convert fraction to indices
-        y_indices = (int(ry.start * (sizes[y] - 1)), int(ry.stop * (sizes[y] - 1)))
-        x_indices = (int(rx.start * (sizes[x] - 1)), int(rx.stop * (sizes[x] - 1)))
-        new_roi = {y: y_indices, x: x_indices}
-
-        self._roi_filter.set_roi_from_intervals(sc.DataGroup(new_roi))
-
-    def _add_weights(self, data: sc.DataArray) -> None:
-        constituents = data.bins.constituents
-        content = constituents['data']
-        content.coords['time_of_arrival'] = content.data
-        content.data = sc.ones(
-            dims=content.dims, shape=content.shape, dtype='float32', unit='counts'
-        )
-        data.data = sc.bins(**constituents, validate_indices=False)
-
-    def add(self, timestamp: int, data: sc.DataArray) -> None:
-        # Note that the preprocessor does *not* add weights of 1 (unlike NeXus loaders).
-        # Instead, the data column of the content corresponds to the time of arrival.
-        filtered, scale = self._roi_filter.apply(data)
-        self._add_weights(filtered)
-        filtered *= scale
-        chunk = filtered.hist(time_of_arrival=self._edges_ns, dim=filtered.dim)
-        self._chunks.append(chunk)
-
-    def get(self) -> sc.DataArray:
-        da = sc.reduce(self._chunks).sum()
-        self._chunks.clear()
-        da.coords['time_of_arrival'] = self._edges
-        return da
 
     def clear(self) -> None:
         self._chunks.clear()

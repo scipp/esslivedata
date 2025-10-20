@@ -10,7 +10,10 @@ import scipp as sc
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.dashboard.data_service import DataService
-from ess.livedata.dashboard.data_subscriber import Pipe, StreamAssembler
+from ess.livedata.dashboard.data_subscriber import (
+    Pipe,
+    StreamAssembler,
+)
 from ess.livedata.dashboard.stream_manager import StreamManager
 
 
@@ -403,3 +406,191 @@ class TestStreamManager:
         # Verify pipe3 (key a only)
         assert len(pipe3.send_calls) == 1
         assert pipe3.send_calls[0] == {key_a: data_a}
+
+
+class TestStreamManagerMakeMergingStreamFromKeys:
+    """Test cases for make_merging_stream_from_keys method."""
+
+    def test_make_merging_stream_from_keys_initializes_with_empty_dict(
+        self, data_service, fake_pipe_factory
+    ):
+        """Test that make_merging_stream_from_keys initializes pipe with empty dict."""
+        manager = StreamManager(
+            data_service=data_service, pipe_factory=fake_pipe_factory
+        )
+
+        key = ResultKey(
+            workflow_id=WorkflowId(
+                instrument="test", namespace="ns", name="wf", version=1
+            ),
+            job_id=JobId(source_name="source", job_number=uuid.uuid4()),
+        )
+        keys = [key]
+
+        pipe = manager.make_merging_stream_from_keys(keys)
+
+        # Should initialize with empty dict
+        assert isinstance(pipe, FakePipe)
+        assert pipe.data == {}
+        assert len(data_service._subscribers) == 1
+
+    def test_make_merging_stream_from_keys_receives_data_when_available(
+        self, data_service, fake_pipe_factory, sample_data
+    ):
+        """Test that pipe receives data when it becomes available."""
+        manager = StreamManager(
+            data_service=data_service, pipe_factory=fake_pipe_factory
+        )
+
+        key = ResultKey(
+            workflow_id=WorkflowId(
+                instrument="test", namespace="ns", name="wf", version=1
+            ),
+            job_id=JobId(source_name="source", job_number=uuid.uuid4()),
+        )
+        keys = [key]
+
+        # Create stream first (no data yet)
+        pipe = manager.make_merging_stream_from_keys(keys)
+
+        # Initially empty
+        assert pipe.data == {}
+
+        # Publish data later
+        data_service[key] = sample_data
+
+        # Should receive data
+        assert len(pipe.send_calls) == 1
+        assert pipe.send_calls[0] == {key: sample_data}
+
+    def test_make_merging_stream_from_keys_with_multiple_keys(
+        self, data_service, fake_pipe_factory, sample_data
+    ):
+        """Test subscribing to multiple keys that don't have data yet."""
+        manager = StreamManager(
+            data_service=data_service, pipe_factory=fake_pipe_factory
+        )
+
+        key1 = ResultKey(
+            workflow_id=WorkflowId(
+                instrument="test", namespace="ns", name="wf1", version=1
+            ),
+            job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
+        )
+        key2 = ResultKey(
+            workflow_id=WorkflowId(
+                instrument="test", namespace="ns", name="wf2", version=1
+            ),
+            job_id=JobId(source_name="source2", job_number=uuid.uuid4()),
+        )
+        keys = [key1, key2]
+
+        pipe = manager.make_merging_stream_from_keys(keys)
+
+        # Initially empty
+        assert pipe.data == {}
+
+        # Publish data for first key
+        data_service[key1] = sample_data
+
+        # Should receive partial data
+        assert len(pipe.send_calls) == 1
+        assert key1 in pipe.send_calls[0]
+        assert key2 not in pipe.send_calls[0]
+
+    def test_make_merging_stream_from_keys_uses_default_assembler(
+        self, data_service, fake_pipe_factory, sample_data
+    ):
+        """Test that default assembler is MergingStreamAssembler."""
+        manager = StreamManager(
+            data_service=data_service, pipe_factory=fake_pipe_factory
+        )
+
+        key = ResultKey(
+            workflow_id=WorkflowId(
+                instrument="test", namespace="ns", name="wf", version=1
+            ),
+            job_id=JobId(source_name="source", job_number=uuid.uuid4()),
+        )
+
+        pipe = manager.make_merging_stream_from_keys([key])
+
+        # Publish data
+        data_service[key] = sample_data
+
+        # Should receive data (verifies default assembler works)
+        assert len(pipe.send_calls) == 1
+        assert pipe.send_calls[0] == {key: sample_data}
+
+    def test_make_merging_stream_from_keys_with_empty_list(
+        self, data_service, fake_pipe_factory
+    ):
+        """Test with empty keys list."""
+        manager = StreamManager(
+            data_service=data_service, pipe_factory=fake_pipe_factory
+        )
+
+        pipe = manager.make_merging_stream_from_keys([])
+
+        # Should initialize with empty dict
+        assert pipe.data == {}
+
+        # Publish some unrelated data
+        key = ResultKey(
+            workflow_id=WorkflowId(
+                instrument="test", namespace="ns", name="wf", version=1
+            ),
+            job_id=JobId(source_name="source", job_number=uuid.uuid4()),
+        )
+        data_service[key] = sc.DataArray(data=sc.array(dims=[], values=[1]))
+
+        # Should not receive any data
+        assert len(pipe.send_calls) == 0
+
+    def test_make_merging_stream_from_keys_roi_spectrum_use_case(
+        self, data_service, fake_pipe_factory
+    ):
+        """Test ROI spectrum subscription (subscribe upfront, data comes later)."""
+        manager = StreamManager(
+            data_service=data_service, pipe_factory=fake_pipe_factory
+        )
+
+        job_id = JobId(source_name="detector", job_number=uuid.uuid4())
+        workflow_id = WorkflowId(
+            instrument="test", namespace="ns", name="detector_view", version=1
+        )
+
+        # Subscribe to roi_current_0, roi_current_1, roi_current_2 upfront
+        # (even though they don't exist yet)
+        keys = [
+            ResultKey(
+                workflow_id=workflow_id,
+                job_id=job_id,
+                output_name=f'roi_current_{i}',
+            )
+            for i in range(3)
+        ]
+
+        pipe = manager.make_merging_stream_from_keys(keys)
+
+        # Initially empty
+        assert pipe.data == {}
+
+        # User selects first ROI - only roi_current_0 gets published
+        data0 = sc.DataArray(data=sc.array(dims=['x'], values=[1, 2, 3]))
+        data_service[keys[0]] = data0
+
+        # Should receive just roi_current_0
+        assert len(pipe.send_calls) == 1
+        assert len(pipe.send_calls[0]) == 1
+        assert keys[0] in pipe.send_calls[0]
+
+        # User adds second ROI - roi_current_1 also gets published
+        data1 = sc.DataArray(data=sc.array(dims=['x'], values=[4, 5, 6]))
+        data_service[keys[1]] = data1
+
+        # Should receive both roi_current_0 and roi_current_1
+        assert len(pipe.send_calls) == 2
+        assert len(pipe.send_calls[1]) == 2
+        assert keys[0] in pipe.send_calls[1]
+        assert keys[1] in pipe.send_calls[1]

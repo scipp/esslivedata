@@ -365,3 +365,60 @@ class TestAuxSourcesBase:
             'incident_monitor': 'monitor1',
             'transmission_monitor': 'monitor2',
         }
+
+
+class TestJobId:
+    """Test cases for JobId."""
+
+    def test_str_format(self) -> None:
+        """Test that __str__ returns source_name/job_number format."""
+        import uuid
+
+        job_number = uuid.uuid4()
+        job_id = JobId(source_name='detector', job_number=job_number)
+
+        result = str(job_id)
+
+        assert result == f'detector/{job_number}'
+
+    def test_str_with_different_source_names(self) -> None:
+        """Test __str__ with various source_name values."""
+        import uuid
+
+        test_cases = ['detector', 'monitor', 'mantle', 'source_1']
+
+        for source_name in test_cases:
+            job_number = uuid.uuid4()
+            job_id = JobId(source_name=source_name, job_number=job_number)
+
+            result = str(job_id)
+
+            assert result == f'{source_name}/{job_number}'
+            assert '/' in result
+            assert result.startswith(source_name + '/')
+
+    def test_str_used_in_stream_names(self) -> None:
+        """Test that __str__ is suitable for use in stream names."""
+        import uuid
+
+        job_number = uuid.uuid4()
+        job_id = JobId(source_name='detector', job_number=job_number)
+
+        # Simulate stream name construction
+        stream_name = f'{job_id}/roi_rectangle'
+
+        expected = f'detector/{job_number}/roi_rectangle'
+        assert stream_name == expected
+
+    def test_str_ensures_uniqueness_across_detectors(self) -> None:
+        """Test that __str__ provides unique identifiers for different detectors."""
+        import uuid
+
+        job_number = uuid.uuid4()  # Same job number
+        job_id_1 = JobId(source_name='detector_1', job_number=job_number)
+        job_id_2 = JobId(source_name='detector_2', job_number=job_number)
+
+        # Should be different due to different source names
+        assert str(job_id_1) != str(job_id_2)
+        assert str(job_id_1) == f'detector_1/{job_number}'
+        assert str(job_id_2) == f'detector_2/{job_number}'

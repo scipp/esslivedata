@@ -565,3 +565,192 @@ class TestSlicerPlotter:
             data_dict['values'][0, 1:],  # Skip the NaN at [0, 0]
             expected_slice.values[0, 1:],
         )
+
+
+class TestPlotterLabelChanges:
+    """Test Plotter label changes with output_name."""
+
+    @pytest.fixture
+    def simple_data(self):
+        """Create simple 1D data for testing."""
+        return sc.DataArray(
+            data=sc.array(dims=['x'], values=[1, 2, 3]),
+            coords={'x': sc.array(dims=['x'], values=[10, 20, 30])},
+        )
+
+    @pytest.fixture
+    def data_key_with_output_name(self):
+        """Create a test ResultKey with output_name."""
+        workflow_id = WorkflowId(
+            instrument='test_instrument',
+            namespace='test_namespace',
+            name='test_workflow',
+            version=1,
+        )
+        job_id = JobId(source_name='detector', job_number=uuid.uuid4())
+        return ResultKey(
+            workflow_id=workflow_id, job_id=job_id, output_name='roi_current_0'
+        )
+
+    @pytest.fixture
+    def data_key_without_output_name(self):
+        """Create a test ResultKey without output_name."""
+        workflow_id = WorkflowId(
+            instrument='test_instrument',
+            namespace='test_namespace',
+            name='test_workflow',
+            version=1,
+        )
+        job_id = JobId(source_name='detector', job_number=uuid.uuid4())
+        return ResultKey(workflow_id=workflow_id, job_id=job_id, output_name=None)
+
+    def test_label_includes_output_name(self, simple_data, data_key_with_output_name):
+        """Test that plot label includes output_name when present."""
+        plotter = plots.LinePlotter.from_params(PlotParams2d())
+        data_dict = {data_key_with_output_name: simple_data}
+
+        result = plotter(data_dict)
+
+        # Result should have label that includes output_name
+        # Label format: "detector/roi_current_0"
+        assert hasattr(result, 'label')
+        assert 'detector' in result.label
+        assert 'roi_current_0' in result.label
+
+    def test_label_without_output_name(self, simple_data, data_key_without_output_name):
+        """Test that plot label uses only source_name when output_name is None."""
+        plotter = plots.LinePlotter.from_params(PlotParams2d())
+        data_dict = {data_key_without_output_name: simple_data}
+
+        result = plotter(data_dict)
+
+        # Result should have label with just source_name
+        assert hasattr(result, 'label')
+        assert 'detector' in result.label
+
+
+class TestPlotterOverlayMode:
+    """Test Plotter overlay mode changes."""
+
+    @pytest.fixture
+    def simple_data_1(self):
+        """Create simple 1D data for testing."""
+        return sc.DataArray(
+            data=sc.array(dims=['x'], values=[1, 2, 3]),
+            coords={'x': sc.array(dims=['x'], values=[10, 20, 30])},
+        )
+
+    @pytest.fixture
+    def simple_data_2(self):
+        """Create another simple 1D data for testing."""
+        return sc.DataArray(
+            data=sc.array(dims=['x'], values=[4, 5, 6]),
+            coords={'x': sc.array(dims=['x'], values=[10, 20, 30])},
+        )
+
+    @pytest.fixture
+    def data_key_1(self):
+        """Create first test ResultKey."""
+        workflow_id = WorkflowId(
+            instrument='test_instrument',
+            namespace='test_namespace',
+            name='test_workflow',
+            version=1,
+        )
+        job_id = JobId(source_name='detector', job_number=uuid.uuid4())
+        return ResultKey(
+            workflow_id=workflow_id, job_id=job_id, output_name='roi_current_0'
+        )
+
+    @pytest.fixture
+    def data_key_2(self):
+        """Create second test ResultKey."""
+        workflow_id = WorkflowId(
+            instrument='test_instrument',
+            namespace='test_namespace',
+            name='test_workflow',
+            version=1,
+        )
+        job_id = JobId(source_name='detector', job_number=uuid.uuid4())
+        return ResultKey(
+            workflow_id=workflow_id, job_id=job_id, output_name='roi_current_1'
+        )
+
+    def test_overlay_mode_with_single_item(self, simple_data_1, data_key_1):
+        """Test that overlay mode returns Overlay even with single item."""
+        from ess.livedata.dashboard.plot_params import LayoutParams
+
+        params = PlotParams2d(layout=LayoutParams(combine_mode='overlay'))
+        plotter = plots.LinePlotter.from_params(params)
+        data_dict = {data_key_1: simple_data_1}
+
+        result = plotter(data_dict)
+
+        # Should return Overlay, not raw Curve
+        assert isinstance(result, hv.Overlay)
+        # Should contain one element
+        assert len(result) == 1
+
+    def test_overlay_mode_with_multiple_items(
+        self, simple_data_1, simple_data_2, data_key_1, data_key_2
+    ):
+        """Test that overlay mode combines multiple plots into Overlay."""
+        from ess.livedata.dashboard.plot_params import LayoutParams
+
+        params = PlotParams2d(layout=LayoutParams(combine_mode='overlay'))
+        plotter = plots.LinePlotter.from_params(params)
+        data_dict = {data_key_1: simple_data_1, data_key_2: simple_data_2}
+
+        result = plotter(data_dict)
+
+        # Should return Overlay
+        assert isinstance(result, hv.Overlay)
+        # Should contain two elements
+        assert len(result) == 2
+
+    def test_non_overlay_mode_with_single_item_returns_raw_plot(
+        self, simple_data_1, data_key_1
+    ):
+        """Test that non-overlay mode returns raw plot for single item."""
+        from ess.livedata.dashboard.plot_params import LayoutParams
+
+        params = PlotParams2d(layout=LayoutParams(combine_mode='layout'))
+        plotter = plots.LinePlotter.from_params(params)
+        data_dict = {data_key_1: simple_data_1}
+
+        result = plotter(data_dict)
+
+        # Should return raw Curve, not Overlay
+        assert isinstance(result, hv.Curve)
+
+    def test_empty_data_returns_no_data_text(self):
+        """Test that empty data returns 'No data' text element in overlay mode."""
+        from ess.livedata.dashboard.plot_params import LayoutParams
+
+        params = PlotParams2d(layout=LayoutParams(combine_mode='overlay'))
+        plotter = plots.LinePlotter.from_params(params)
+        data_dict = {}
+
+        result = plotter(data_dict)
+
+        # With overlay mode and empty data, returns Overlay containing Text
+        assert isinstance(result, hv.Overlay)
+        assert len(result) == 1
+        # First element should be Text
+        text_element = next(iter(result))
+        assert isinstance(text_element, hv.Text)
+        assert 'No data' in str(text_element.data)
+
+    def test_empty_data_returns_no_data_text_layout_mode(self):
+        """Test that empty data returns 'No data' text element in layout mode."""
+        from ess.livedata.dashboard.plot_params import LayoutParams
+
+        params = PlotParams2d(layout=LayoutParams(combine_mode='layout'))
+        plotter = plots.LinePlotter.from_params(params)
+        data_dict = {}
+
+        result = plotter(data_dict)
+
+        # With layout mode and empty data, returns Text directly
+        assert isinstance(result, hv.Text)
+        assert 'No data' in str(result.data)

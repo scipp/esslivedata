@@ -125,4 +125,10 @@ class MergingStreamAssembler(StreamAssembler):
     """Assembler for merging data from multiple sources into a dict."""
 
     def assemble(self, data: dict[ResultKey, Any]) -> dict[ResultKey, Any]:
-        return {key: data[key] for key in self.keys if key in data}
+        # Sort keys to ensure deterministic ordering (important for color assignment)
+        # Sort by (workflow_id, job_id, output_name) for consistent ordering
+        sorted_keys = sorted(
+            (key for key in self.keys if key in data),
+            key=lambda k: (str(k.workflow_id), str(k.job_id), k.output_name or ''),
+        )
+        return {key: data[key] for key in sorted_keys}
