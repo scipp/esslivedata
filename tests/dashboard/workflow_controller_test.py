@@ -132,10 +132,9 @@ class TestWorkflowController:
         config = SomeWorkflowParams(threshold=150.0, mode="accurate")
 
         # Act
-        result = controller.start_workflow(workflow_id, source_names, config)
+        controller.start_workflow(workflow_id, source_names, config)
 
         # Assert
-        assert result is True
         sent_configs = service.get_sent_configs()
         assert len(sent_configs) == len(source_names)
 
@@ -159,10 +158,9 @@ class TestWorkflowController:
         config = SomeWorkflowParams(threshold=200.0, mode="fast")
 
         # Act
-        result = controller.start_workflow(workflow_id, source_names, config)
+        controller.start_workflow(workflow_id, source_names, config)
 
         # Assert
-        assert result is True
         persistent_configs = service.get_persistent_configs()
         assert workflow_id in persistent_configs.configs
 
@@ -191,10 +189,9 @@ class TestWorkflowController:
         captured_status.clear()  # Clear initial callback
 
         # Act
-        result = controller.start_workflow(workflow_id, source_names, config)
+        controller.start_workflow(workflow_id, source_names, config)
 
         # Assert
-        assert result is True
         for source_name in source_names:
             status = captured_status[source_name]
             assert status.source_name == source_name
@@ -212,10 +209,9 @@ class TestWorkflowController:
         config = SomeWorkflowParams()  # Use defaults
 
         # Act
-        result = controller.start_workflow(workflow_id, source_names, config)
+        controller.start_workflow(workflow_id, source_names, config)
 
         # Assert
-        assert result is True
         sent_configs = service.get_sent_configs()
         for _, workflow_config in sent_configs:
             assert workflow_config.identifier == workflow_id
@@ -241,10 +237,9 @@ class TestWorkflowController:
         captured_status.clear()  # Clear initial callback
 
         # Act
-        result = controller.start_workflow(workflow_id, single_source, config)
+        controller.start_workflow(workflow_id, single_source, config)
 
         # Assert
-        assert result is True
         sent_configs = service.get_sent_configs()
         assert len(sent_configs) == 1
         assert sent_configs[0][0] == "detector_1"
@@ -253,23 +248,20 @@ class TestWorkflowController:
         assert captured_status["detector_1"].status == WorkflowStatusType.STARTING
         assert captured_status["detector_1"].workflow_id == workflow_id
 
-    def test_start_workflow_returns_false_for_nonexistent_workflow(
+    def test_start_workflow_raises_for_nonexistent_workflow(
         self,
         workflow_controller: tuple[WorkflowController, FakeWorkflowConfigService],
         source_names: list[str],
     ):
-        """Test that start_workflow returns False for non-existent workflow."""
+        """Test that start_workflow raises ValueError for non-existent workflow."""
         controller, service = workflow_controller
         nonexistent_workflow_id = "nonexistent_workflow"
         config = SomeWorkflowParams(threshold=100.0)
 
-        # Act
-        result = controller.start_workflow(
-            nonexistent_workflow_id, source_names, config
-        )
+        # Act & Assert
+        with pytest.raises(ValueError, match="Workflow spec for .* not found"):
+            controller.start_workflow(nonexistent_workflow_id, source_names, config)
 
-        # Assert
-        assert result is False
         # Should not have sent any configs
         sent_configs = service.get_sent_configs()
         assert len(sent_configs) == 0
@@ -315,12 +307,10 @@ class TestWorkflowController:
         )
 
         # Start both workflows
-        result1 = controller.start_workflow(workflow_id_1, sources_1, config_1)
-        result2 = controller.start_workflow(workflow_id_2, sources_2, config_2)
+        controller.start_workflow(workflow_id_1, sources_1, config_1)
+        controller.start_workflow(workflow_id_2, sources_2, config_2)
 
         # Assert
-        assert result1 is True
-        assert result2 is True
         persistent_configs = service.get_persistent_configs()
         assert len(persistent_configs.configs) == 2
 
@@ -345,20 +335,14 @@ class TestWorkflowController:
         # Start workflow with initial config
         initial_config = SomeWorkflowParams(threshold=100.0, mode="fast")
         initial_sources = ["detector_1"]
-        result1 = controller.start_workflow(
-            workflow_id, initial_sources, initial_config
-        )
+        controller.start_workflow(workflow_id, initial_sources, initial_config)
 
         # Start same workflow with different config
         updated_config = SomeWorkflowParams(threshold=300.0, mode="accurate")
         updated_sources = ["detector_1", "detector_2"]
-        result2 = controller.start_workflow(
-            workflow_id, updated_sources, updated_config
-        )
+        controller.start_workflow(workflow_id, updated_sources, updated_config)
 
         # Assert
-        assert result1 is True
-        assert result2 is True
         persistent_configs = service.get_persistent_configs()
         assert len(persistent_configs.configs) == 1
 
@@ -632,10 +616,9 @@ class TestWorkflowController:
         config = SomeWorkflowParams(threshold=100.0)
 
         # Act
-        result = controller.start_workflow(workflow_id, [], config)
+        controller.start_workflow(workflow_id, [], config)
 
         # Assert
-        assert result is True
         sent_configs = service.get_sent_configs()
         assert len(sent_configs) == 0  # No configs sent to sources
 
