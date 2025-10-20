@@ -314,6 +314,7 @@ class SpectrumViewOutputs(WorkflowOutputsBase):
         description='Spectrum view showing time-of-flight vs. detector position.',
     )
 
+
 class DetectorRatemeterParams(pydantic.BaseModel):
     """Parameters for detector ratemeter workflow."""
 
