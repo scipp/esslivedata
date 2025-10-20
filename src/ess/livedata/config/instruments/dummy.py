@@ -6,6 +6,7 @@ Detector configuration for a dummy instrument used for development and testing.
 
 from typing import NewType
 
+import pydantic
 import sciline
 import scipp as sc
 
@@ -41,6 +42,18 @@ def _total_counts(events: Events) -> TotalCounts:
 
 _total_counts_workflow = sciline.Pipeline((_total_counts,))
 
+
+class TotalCountsOutputs(pydantic.BaseModel):
+    """Outputs for the total counts workflow."""
+
+    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
+
+    total_counts: sc.DataArray = pydantic.Field(
+        title='Total Counts',
+        description='Sum of all detector counts.',
+    )
+
+
 instrument = Instrument(
     name='dummy', f144_attribute_registry={'motion1': {'units': 'mm'}}
 )
@@ -69,13 +82,14 @@ _panel_0_view = DetectorLogicalView(instrument=instrument, config=_panel_0_confi
     title='Total counts',
     description='Dummy workflow that simply computes the total counts.',
     source_names=['panel_0'],
+    outputs=TotalCountsOutputs,
 )
 def _total_counts_processor() -> StreamProcessorWorkflow:
     """Dummy processor for development and testing."""
     return StreamProcessorWorkflow(
         base_workflow=_total_counts_workflow.copy(),
         dynamic_keys={'panel_0': Events},
-        target_keys=(TotalCounts,),
+        target_keys={'total_counts': TotalCounts},
         accumulators=(TotalCounts,),
     )
 

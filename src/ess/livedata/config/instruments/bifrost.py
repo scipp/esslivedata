@@ -214,6 +214,27 @@ class BifrostWorkflowParams(pydantic.BaseModel):
     )
 
 
+class SpectrumViewOutputs(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
+
+    spectrum_view: sc.DataArray = pydantic.Field(
+        title='Spectrum View',
+        description='Spectrum view showing time-of-flight vs. detector position.',
+    )
+    analyzer_counts: sc.DataArray = pydantic.Field(
+        title='Analyzer Counts',
+        description='Total counts per analyzer as a timeseries.',
+    )
+    bank_counts: sc.DataArray = pydantic.Field(
+        title='Bank Counts',
+        description='Total counts per bank (sector) as a timeseries.',
+    )
+    detector_counts: sc.DataArray = pydantic.Field(
+        title='Total Detector Counts',
+        description='Total counts across entire detector as a timeseries.',
+    )
+
+
 # Monitor names matching group names in Nexus files
 monitor_names = [
     '007_frame_0',
@@ -248,6 +269,7 @@ _logical_view = DetectorLogicalView(
     title='Spectrum view',
     description='Spectrum view with configurable time bins and pixels per tube.',
     source_names=_source_names,
+    outputs=SpectrumViewOutputs,
 )
 def _spectrum_view(params: BifrostWorkflowParams) -> StreamProcessorWorkflow:
     wf = _reduction_workflow.copy()
@@ -257,7 +279,12 @@ def _spectrum_view(params: BifrostWorkflowParams) -> StreamProcessorWorkflow:
     return StreamProcessorWorkflow(
         wf,
         dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
-        target_keys=(SpectrumView, AnalyzerCounts, BankCounts, DetectorCounts),
+        target_keys={
+            'spectrum_view': SpectrumView,
+            'analyzer_counts': AnalyzerCounts,
+            'bank_counts': BankCounts,
+            'detector_counts': DetectorCounts,
+        },
         accumulators={
             SpectrumView: EternalAccumulator,
             AnalyzerCounts: TimeseriesAccumulator,

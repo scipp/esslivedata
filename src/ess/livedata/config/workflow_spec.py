@@ -129,6 +129,57 @@ class WorkflowSpec(BaseModel):
         ),
     )
     params: type[BaseModel] | None = Field(description="Model for workflow param.")
+    outputs: type[BaseModel] | None = Field(
+        default=None,
+        description=(
+            "Pydantic model defining workflow outputs with their metadata. "
+            "Field names are simplified identifiers (e.g., 'i_of_d_two_theta') "
+            "that match keys returned by workflow.finalize(). Field types should "
+            "be scipp.DataArray or more specific types. Field metadata (title, "
+            "description) provides human-readable names and explanations for "
+            "the UI."
+        ),
+    )
+
+    @field_validator('outputs', mode='after')
+    @classmethod
+    def validate_unique_output_titles(
+        cls, outputs: type[BaseModel] | None
+    ) -> type[BaseModel] | None:
+        """Validate that output titles are unique within the workflow."""
+        if outputs is None:
+            return outputs
+
+        titles = []
+        for field_name, field_info in outputs.model_fields.items():
+            title = field_info.title
+            if title is None:
+                # If no title is specified, use the field name
+                title = field_name
+            titles.append((title, field_name))
+
+        # Check for duplicate titles
+        title_counts: dict[str, list[str]] = {}
+        for title, field_name in titles:
+            if title not in title_counts:
+                title_counts[title] = []
+            title_counts[title].append(field_name)
+
+        duplicates = {
+            title: fields for title, fields in title_counts.items() if len(fields) > 1
+        }
+
+        if duplicates:
+            dup_str = ", ".join(
+                f"'{title}' (fields: {', '.join(fields)})"
+                for title, fields in duplicates.items()
+            )
+            raise ValueError(
+                f"Output titles must be unique within a workflow. "
+                f"Duplicate titles found: {dup_str}"
+            )
+
+        return outputs
 
     def get_id(self) -> WorkflowId:
         """

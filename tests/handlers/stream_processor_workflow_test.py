@@ -139,13 +139,13 @@ class TestStreamProcessorWorkflow:
         # Expected: context (3) * static (2) = 6, streamed: 7, final: 7 + 6 = 13
         assert result == {'output': Output(13)}
 
-    def test_target_keys_as_tuple(self, base_workflow_with_context):
-        """Test initialization with target_keys as tuple instead of dict."""
+    def test_target_keys_with_simplified_names(self, base_workflow_with_context):
+        """Test initialization with simplified output names."""
         workflow = StreamProcessorWorkflow(
             base_workflow_with_context,
             dynamic_keys={'streamed': Streamed},
             context_keys={'context': Context},
-            target_keys=(Output,),
+            target_keys={'simplified_output': Output},
             accumulators=(ProcessedStreamed,),
         )
 
@@ -154,8 +154,8 @@ class TestStreamProcessorWorkflow:
 
         result = workflow.finalize()
         # Expected: context (4) * static (2) = 8, streamed: 5, final: 5 + 8 = 13
-        # When target_keys is tuple, string representation of key is used
-        assert result == {str(Output): Output(13)}
+        # Simplified name is used as key
+        assert result == {'simplified_output': Output(13)}
 
     def test_no_context_keys(self, base_workflow_no_context):
         """Test workflow without context keys."""

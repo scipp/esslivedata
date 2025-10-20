@@ -30,6 +30,17 @@ class MonitorTimeseriesParams(pydantic.BaseModel):
     )
 
 
+class MonitorTimeseriesOutputs(pydantic.BaseModel):
+    """Outputs for the monitor timeseries workflow."""
+
+    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
+
+    monitor_counts: sc.DataArray = pydantic.Field(
+        title="Monitor Counts",
+        description="Timeseries of monitor counts within the specified TOA range.",
+    )
+
+
 CustomMonitor = NewType('CustomMonitor', int)
 CurrentRun = NewType('CurrentRun', int)
 MonitorCountsInInterval = NewType('MonitorCountsInInterval', sc.DataArray)
@@ -115,6 +126,7 @@ def register_monitor_timeseries_workflows(
         description='Timeseries of counts in a monitor within a specified '
         'time-of-arrival range.',
         source_names=source_names,
+        outputs=MonitorTimeseriesOutputs,
     )
     def monitor_timeseries_workflow(
         source_name: str, params: MonitorTimeseriesParams
@@ -124,6 +136,6 @@ def register_monitor_timeseries_workflows(
         return StreamProcessorWorkflow(
             base_workflow=wf,
             dynamic_keys={source_name: NeXusData[CustomMonitor, CurrentRun]},
-            target_keys=(MonitorCountsInInterval,),
+            target_keys={'monitor_counts': MonitorCountsInInterval},
             accumulators={MonitorCountsInInterval: TimeseriesAccumulator},
         )

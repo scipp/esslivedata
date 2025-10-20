@@ -280,6 +280,45 @@ class PowderWorkflowParams(pydantic.BaseModel):
     )
 
 
+class PowderReductionOutputs(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
+
+    focussed_data_dspacing: sc.DataArray = pydantic.Field(
+        title='I(d)',
+        description='Focussed intensity as a function of d-spacing.',
+    )
+    focussed_data_dspacing_two_theta: sc.DataArray = pydantic.Field(
+        title='I(d, 2θ)',
+        description='Focussed intensity as a function of d-spacing and two-theta.',
+    )
+
+
+class PowderReductionWithVanadiumOutputs(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
+
+    focussed_data_dspacing: sc.DataArray = pydantic.Field(
+        title='I(d)',
+        description='Focussed intensity as a function of d-spacing.',
+    )
+    focussed_data_dspacing_two_theta: sc.DataArray = pydantic.Field(
+        title='I(d, 2θ)',
+        description='Focussed intensity as a function of d-spacing and two-theta.',
+    )
+    i_of_dspacing: sc.DataArray = pydantic.Field(
+        title='Normalized I(d)',
+        description=(
+            'Normalized intensity as a function of d-spacing ' '(vanadium-corrected).'
+        ),
+    )
+    i_of_dspacing_two_theta: sc.DataArray = pydantic.Field(
+        title='Normalized I(d, 2θ)',
+        description=(
+            'Normalized intensity as a function of d-spacing and two-theta '
+            '(vanadium-corrected).'
+        ),
+    )
+
+
 @instrument.register_workflow(
     name='powder_reduction',
     version=1,
@@ -287,6 +326,7 @@ class PowderWorkflowParams(pydantic.BaseModel):
     description='Powder reduction without vanadium normalization.',
     source_names=_source_names,
     aux_sources=DreamAuxSources,
+    outputs=PowderReductionOutputs,
 )
 def _powder_workflow(source_name: str, params: PowderWorkflowParams) -> Workflow:
     wf = _reduction_workflow.copy()
@@ -303,10 +343,12 @@ def _powder_workflow(source_name: str, params: PowderWorkflowParams) -> Workflow
             source_name: NeXusData[NXdetector, SampleRun],
             'cave_monitor': NeXusData[powder.types.CaveMonitor, SampleRun],
         },
-        target_keys=(
-            powder.types.FocussedDataDspacing[SampleRun],
-            powder.types.FocussedDataDspacingTwoTheta[SampleRun],
-        ),
+        target_keys={
+            'focussed_data_dspacing': powder.types.FocussedDataDspacing[SampleRun],
+            'focussed_data_dspacing_two_theta': (
+                powder.types.FocussedDataDspacingTwoTheta[SampleRun]
+            ),
+        },
         accumulators=(
             powder.types.ReducedCountsDspacing[SampleRun],
             powder.types.WavelengthMonitor[SampleRun, powder.types.CaveMonitor],
@@ -321,6 +363,7 @@ def _powder_workflow(source_name: str, params: PowderWorkflowParams) -> Workflow
     description='Powder reduction with vanadium normalization.',
     source_names=_source_names,
     aux_sources=DreamAuxSources,
+    outputs=PowderReductionWithVanadiumOutputs,
 )
 def _powder_workflow_with_vanadium(
     source_name: str, params: PowderWorkflowParams
@@ -340,12 +383,14 @@ def _powder_workflow_with_vanadium(
             source_name: NeXusData[NXdetector, SampleRun],
             'cave_monitor': NeXusData[powder.types.CaveMonitor, SampleRun],
         },
-        target_keys=(
-            powder.types.FocussedDataDspacing[SampleRun],
-            powder.types.FocussedDataDspacingTwoTheta[SampleRun],
-            powder.types.IofDspacing[SampleRun],
-            powder.types.IofDspacingTwoTheta[SampleRun],
-        ),
+        target_keys={
+            'focussed_data_dspacing': powder.types.FocussedDataDspacing[SampleRun],
+            'focussed_data_dspacing_two_theta': (
+                powder.types.FocussedDataDspacingTwoTheta[SampleRun]
+            ),
+            'i_of_dspacing': powder.types.IofDspacing[SampleRun],
+            'i_of_dspacing_two_theta': powder.types.IofDspacingTwoTheta[SampleRun],
+        },
         accumulators=(
             powder.types.ReducedCountsDspacing[SampleRun],
             powder.types.WavelengthMonitor[SampleRun, powder.types.CaveMonitor],
