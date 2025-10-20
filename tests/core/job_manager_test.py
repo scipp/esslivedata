@@ -19,6 +19,14 @@ class FakeJobFactory(JobFactory):
         self.created_jobs = []
         self.processors: dict[JobId, FakeProcessor] = {}
 
+    def get_workflow_spec(self, workflow_id):
+        """Return None for tests - no enrichment needed in test scenarios."""
+        return None
+
+    def enrich_result(self, result):
+        """Pass-through implementation for tests."""
+        return result
+
     def create(self, *, job_id: JobId, config: WorkflowConfig) -> Job:
         processor = FakeProcessor()
         self.processors[job_id] = processor

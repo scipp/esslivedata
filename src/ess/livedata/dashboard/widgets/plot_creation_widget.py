@@ -130,6 +130,7 @@ class PlotCreationWidget:
         self._workflow_controller = workflow_controller
         self._selected_job: JobNumber | None = None
         self._selected_output: str | None = None
+        self._selected_output_title: str | None = None
         self._plot_counter = 0  # Counter for unique plot tab names
 
         # Create UI components
@@ -330,16 +331,19 @@ class PlotCreationWidget:
         if len(selection) != 1:
             self._selected_job = None
             self._selected_output = None
+            self._selected_output_title = None
             self._update_dependent_widgets()
             return
 
-        # Get selected job number and output name from index
+        # Get selected job number, output name, and title from index
         selected_row = selection[0]
         job_number_str = self._job_output_table.value['job_number'].iloc[selected_row]
         output_name = self._job_output_table.value['output_name'].iloc[selected_row]
+        output_title = self._job_output_table.value['output_title'].iloc[selected_row]
 
         self._selected_job = JobNumber(job_number_str)
         self._selected_output = output_name if output_name else None
+        self._selected_output_title = output_title if output_title else None
 
         self._update_dependent_widgets()
 
@@ -425,12 +429,17 @@ class PlotCreationWidget:
         pane = pn.pane.HoloViews(plot, sizing_mode='stretch_width')
         plot_pane = pane.layout
 
-        # Generate tab name
+        # Generate tab name with output title
         self._plot_counter += 1
+        output_label = (
+            self._selected_output_title
+            if self._selected_output_title
+            else self._selected_output
+        )
         sources_str = "_".join(selected_sources[:2])  # Limit length
         if len(selected_sources) > 2:
             sources_str += f"_+{len(selected_sources) - 2}"
-        tab_name = f"Plot {self._plot_counter}: {sources_str}"
+        tab_name = f"Plot {self._plot_counter}: {output_label} - {sources_str}"
 
         # Add as new tab to the plot tabs container
         self._plot_tabs.append((tab_name, plot_pane))

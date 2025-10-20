@@ -9,10 +9,17 @@ from enum import Enum
 from typing import Any, ClassVar
 
 import pydantic
+import scipp as sc
 
 from ess.livedata.config.instrument import Instrument
+from ess.livedata.config.workflow_spec import (
+    JobId,
+    JobSchedule,
+    WorkflowConfig,
+    WorkflowId,
+    WorkflowSpec,
+)
 
-from ..config.workflow_spec import JobId, JobSchedule, WorkflowConfig, WorkflowId
 from .job import Job, JobData, JobReply, JobResult, JobState, JobStatus
 from .message import StreamId
 
@@ -66,6 +73,53 @@ class JobCommand(pydantic.BaseModel):
 class JobFactory:
     def __init__(self, instrument: Instrument) -> None:
         self._instrument = instrument
+
+    def get_workflow_spec(self, workflow_id: WorkflowId) -> WorkflowSpec | None:
+        """Get the workflow specification for a given workflow ID."""
+        return self._instrument.workflow_factory.get(workflow_id)
+
+    def enrich_result(self, result: JobResult) -> JobResult:
+        """
+        Enrich a job result by setting human-readable names on output DataArrays.
+
+        This method looks up the workflow specification and uses the output metadata
+        to set the `.name` attribute on DataArrays based on their title field.
+
+        Parameters
+        ----------
+        result:
+            The job result to enrich with human-readable names.
+
+        Returns
+        -------
+        :
+            The enriched job result (modified in-place, but also returned).
+        """
+        # Skip enrichment if result has an error or no data
+        if result.error_message is not None or result.data is None:
+            return result
+
+        # Get workflow spec to access output metadata
+        workflow_spec = self.get_workflow_spec(result.workflow_id)
+        if workflow_spec is None or workflow_spec.outputs is None:
+            return result
+
+        def set_name_from_metadata(value, output_name: str) -> None:
+            """Set human-readable name on a value based on output metadata."""
+            if hasattr(value, 'name'):
+                field_info = workflow_spec.outputs.model_fields.get(output_name)
+                if field_info is not None and field_info.title is not None:
+                    value.name = field_info.title
+
+        # If data is a DataGroup, enrich each DataArray
+        if isinstance(result.data, sc.DataGroup):
+            for output_name, value in result.data.items():
+                set_name_from_metadata(value, output_name)
+        # If data is a single DataArray and we have a single output
+        elif hasattr(result.data, 'name') and result.output_name is not None:
+            set_name_from_metadata(result.data, result.output_name)
+
+        return result
 
     def create(self, *, job_id: JobId, config: WorkflowConfig) -> Job:
         workflow_id = config.identifier
@@ -323,6 +377,8 @@ class JobManager:
             if job.job_id not in self._jobs_with_primary_data:
                 continue
             result = job.get()
+            # Enrich result with human-readable names from workflow spec
+            result = self._job_factory.enrich_result(result)
             results.append(result)
             # Track errors from job finalization, or clear them on success
             if result.error_message is not None:
