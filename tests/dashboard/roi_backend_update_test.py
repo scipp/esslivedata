@@ -12,6 +12,7 @@ import logging
 import uuid
 
 import holoviews as hv
+import param
 import pytest
 
 from ess.livedata.config.models import Interval, RectangleROI
@@ -94,11 +95,19 @@ def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
     # boxes_pipe fixture is now used as readback_pipe for backward compatibility
     # with tests that check pipe updates
     request_pipe = hv.streams.Pipe(data=[])
+
+    # Create ROI state stream for tracking active ROIs
+    class ROIStateStream(hv.streams.Stream):
+        active_rois = param.Parameter(default=set(), doc="Set of active ROI indices")
+
+    roi_state_stream = ROIStateStream()
+
     return ROIPlotState(
         result_key=result_key,
         box_stream=box_stream,
         request_pipe=request_pipe,
         readback_pipe=boxes_pipe,  # reuse boxes_pipe fixture for readback
+        roi_state_stream=roi_state_stream,
         x_unit='m',
         y_unit='m',
         roi_publisher=fake_publisher,

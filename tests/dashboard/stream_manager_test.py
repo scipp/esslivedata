@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from functools import partial
 from typing import Any
 
 import pytest
@@ -12,7 +11,6 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.data_subscriber import (
-    FilteredMergingStreamAssembler,
     Pipe,
     StreamAssembler,
 )
@@ -499,68 +497,6 @@ class TestStreamManagerMakeMergingStreamFromKeys:
         assert len(pipe.send_calls) == 1
         assert key1 in pipe.send_calls[0]
         assert key2 not in pipe.send_calls[0]
-
-    def test_make_merging_stream_from_keys_with_custom_assembler_factory(
-        self, data_service, fake_pipe_factory, sample_data
-    ):
-        """Test using a custom assembler factory."""
-        manager = StreamManager(
-            data_service=data_service, pipe_factory=fake_pipe_factory
-        )
-
-        job_id = JobId(source_name="detector", job_number=uuid.uuid4())
-        workflow_id = WorkflowId(
-            instrument="test", namespace="ns", name="wf", version=1
-        )
-
-        # Create keys with ROI indices
-        keys = [
-            ResultKey(
-                workflow_id=workflow_id, job_id=job_id, output_name='roi_current_0'
-            ),
-            ResultKey(
-                workflow_id=workflow_id, job_id=job_id, output_name='roi_current_1'
-            ),
-            ResultKey(
-                workflow_id=workflow_id, job_id=job_id, output_name='roi_current_2'
-            ),
-        ]
-
-        # Create filter that only includes indices 0 and 1
-        def filter_fn(key: ResultKey) -> bool:
-            if key.output_name is None:
-                return False
-            parts = key.output_name.rsplit('_', 1)
-            if len(parts) != 2:
-                return False
-            try:
-                idx = int(parts[1])
-                return idx in {0, 1}
-            except ValueError:
-                return False
-
-        # Use partial to bind filter_fn to FilteredMergingStreamAssembler
-        assembler_factory = partial(FilteredMergingStreamAssembler, filter_fn=filter_fn)
-
-        pipe = manager.make_merging_stream_from_keys(
-            keys, assembler_factory=assembler_factory
-        )
-
-        # Publish data for all keys
-        data1 = sc.DataArray(data=sc.array(dims=[], values=[1]))
-        data2 = sc.DataArray(data=sc.array(dims=[], values=[2]))
-        data3 = sc.DataArray(data=sc.array(dims=[], values=[3]))
-
-        data_service[keys[0]] = data1
-        data_service[keys[1]] = data2
-        data_service[keys[2]] = data3
-
-        # Only keys 0 and 1 should be in the result (2 is filtered out)
-        final_data = pipe.send_calls[-1]
-        assert len(final_data) == 2
-        assert keys[0] in final_data
-        assert keys[1] in final_data
-        assert keys[2] not in final_data
 
     def test_make_merging_stream_from_keys_uses_default_assembler(
         self, data_service, fake_pipe_factory, sample_data

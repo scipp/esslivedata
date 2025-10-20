@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Hashable
+from collections.abc import Hashable
 from typing import Any, Generic, Protocol, TypeVar
 
 from ess.livedata.config.workflow_spec import ResultKey
@@ -132,46 +132,3 @@ class MergingStreamAssembler(StreamAssembler):
             key=lambda k: (str(k.workflow_id), str(k.job_id), k.output_name or ''),
         )
         return {key: data[key] for key in sorted_keys}
-
-
-class FilteredMergingStreamAssembler(MergingStreamAssembler):
-    """
-    Assembler that filters data based on a predicate function before merging.
-
-    This assembler extends MergingStreamAssembler by applying a filter predicate
-    to determine which data items should be included in the assembled result.
-    Useful for scenarios where data keys are subscribed to eagerly (e.g., ROI indices
-    0-2), but only a subset should be displayed at any given time.
-    """
-
-    def __init__(self, keys: set[Key], filter_fn: Callable[[Key], bool]) -> None:
-        """
-        Initialize the filtered assembler.
-
-        Parameters
-        ----------
-        keys:
-            The set of data keys this assembler depends on.
-        filter_fn:
-            A callable that takes a key and returns True if the data should be included.
-        """
-        super().__init__(keys)
-        self._filter_fn = filter_fn
-
-    def assemble(self, data: dict[ResultKey, Any]) -> dict[ResultKey, Any]:
-        """
-        Assemble data after applying the filter predicate.
-
-        Parameters
-        ----------
-        data:
-            A dictionary containing data keyed by ResultKey.
-
-        Returns
-        -------
-        :
-            The filtered and assembled data dictionary.
-        """
-        # Filter data based on predicate before calling parent's assemble
-        filtered_data = {k: v for k, v in data.items() if self._filter_fn(k)}
-        return super().assemble(filtered_data)

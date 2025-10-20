@@ -5,10 +5,10 @@
 from __future__ import annotations
 
 import logging
-from functools import partial
 from typing import Any
 
 import holoviews as hv
+import param
 import scipp as sc
 
 from ess.livedata.config.models import ROI, Interval, RectangleROI
@@ -17,7 +17,6 @@ from ess.livedata.config.workflow_spec import ResultKey
 
 from .data_subscriber import (
     DataSubscriber,
-    FilteredMergingStreamAssembler,
     MergingStreamAssembler,
 )
 from .plot_params import LayoutParams, PlotParamsROIDetector
@@ -200,6 +199,8 @@ class ROIPlotState:
         HoloViews Pipe stream for programmatically updating request ROI rectangles.
     readback_pipe:
         HoloViews Pipe stream for programmatically updating readback ROI rectangles.
+    roi_state_stream:
+        HoloViews Stream for broadcasting active ROI indices to spectrum plot.
     x_unit:
         Unit for x coordinates.
     y_unit:
@@ -221,6 +222,7 @@ class ROIPlotState:
         box_stream: hv.streams.BoxEdit,
         request_pipe: hv.streams.Pipe,
         readback_pipe: hv.streams.Pipe,
+        roi_state_stream: hv.streams.Stream,
         x_unit: str | None,
         y_unit: str | None,
         roi_publisher: ROIPublisher | None,
@@ -233,6 +235,7 @@ class ROIPlotState:
         self.box_stream = box_stream
         self.request_pipe = request_pipe
         self.readback_pipe = readback_pipe
+        self.roi_state_stream = roi_state_stream
         self.x_unit = x_unit
         self.y_unit = y_unit
         self._roi_publisher = roi_publisher
@@ -251,6 +254,9 @@ class ROIPlotState:
 
         # Attach the callback to the stream AFTER initializing state
         self.box_stream.param.watch(self.on_box_change, "data")
+
+        # Initialize roi_state_stream with the current active ROI indices
+        self.roi_state_stream.event(active_rois=self._active_roi_indices)
 
     @property
     def _active_roi_indices(self) -> set[int]:
@@ -333,6 +339,9 @@ class ROIPlotState:
                     backend_rois, colors=self._colors
                 )
                 self.readback_pipe.send(readback_rectangles)
+
+                # Trigger ROI state stream to update spectrum plot filtering
+                self.roi_state_stream.event(active_rois=self._active_roi_indices)
 
             # Sync request layer to match backend if needed
             # This handles scenario 2: different view updates backend
@@ -644,16 +653,26 @@ class ROIDetectorPlotFactory:
         x_unit = self._extract_unit_for_dim(detector_data, x_dim)
         y_unit = self._extract_unit_for_dim(detector_data, y_dim)
 
+        # Create stream for broadcasting active ROI indices to spectrum plot
+        # Use a custom Stream class to avoid parameter name clash with spectrum_pipe
+        class ROIStateStream(hv.streams.Stream):
+            active_rois = param.Parameter(
+                default=set(), doc="Set of active ROI indices"
+            )
+
+        roi_state_stream = ROIStateStream()
+
         # Create plot state (which will attach the watcher to box_stream)
         # Note: plot_state is kept alive by references from the returned plot:
         # - box_stream holds a callback reference to plot_state.on_box_change
-        # - The spectrum assembler (created below) holds plot_state.is_roi_active
+        # - roi_state_stream (below) is referenced by the spectrum plot DynamicMap
         # - roi_readback_pipe (below) holds plot_state.on_backend_roi_update
         plot_state = ROIPlotState(
             result_key=detector_key,
             box_stream=box_stream,
             request_pipe=request_pipe,
             readback_pipe=readback_pipe,
+            roi_state_stream=roi_state_stream,
             x_unit=x_unit,
             y_unit=y_unit,
             roi_publisher=self._roi_publisher,
@@ -697,7 +716,7 @@ class ROIDetectorPlotFactory:
             )
         spectrum_keys = self._generate_spectrum_keys(detector_key)
         roi_spectrum_dmap = self._create_roi_spectrum_plot(
-            spectrum_keys, plot_state, params
+            spectrum_keys, roi_state_stream, params
         )
 
         return detector_with_boxes, roi_spectrum_dmap, plot_state
@@ -705,7 +724,7 @@ class ROIDetectorPlotFactory:
     def _create_roi_spectrum_plot(
         self,
         spectrum_keys: list[ResultKey],
-        plot_state: ROIPlotState,
+        roi_state_stream: hv.streams.Stream,
         params: PlotParamsROIDetector,
     ) -> hv.DynamicMap:
         """
@@ -715,8 +734,8 @@ class ROIDetectorPlotFactory:
         ----------
         spectrum_keys:
             List of ResultKeys for ROI spectrum outputs.
-        plot_state:
-            ROI plot state for filtering active ROIs.
+        roi_state_stream:
+            Stream carrying active ROI indices (set[int]) via 'active_rois' parameter.
         params:
             The plotter parameters (PlotParamsROIDetector).
 
@@ -727,14 +746,11 @@ class ROIDetectorPlotFactory:
         """
         overlay_layout = LayoutParams(combine_mode="overlay")
 
-        assembler_factory = partial(
-            FilteredMergingStreamAssembler, filter_fn=plot_state.is_roi_active
-        )
         # FIXME: Memory leak - subscribers registered via stream_manager are never
         # unregistered. When this plot is closed, the subscriber remains in
         # DataService._subscribers, preventing garbage collection of plot components.
         spectrum_pipe = self._stream_manager.make_merging_stream_from_keys(
-            spectrum_keys, assembler_factory=assembler_factory
+            spectrum_keys
         )
 
         spectrum_plotter = LinePlotter(
@@ -748,6 +764,20 @@ class ROIDetectorPlotFactory:
             scale_opts=params.plot_scale,
         )
 
+        # Create filtering wrapper that filters spectrum data based on active ROIs
+        def filtered_spectrum_plotter(
+            data: dict[ResultKey, sc.DataArray], active_rois: set[int]
+        ) -> hv.Overlay | hv.Layout | hv.Element:
+            """Filter spectrum data to only include active ROIs."""
+            filtered_data = {
+                key: value
+                for key, value in data.items()
+                if self._roi_mapper.parse_roi_index(key.output_name) in active_rois
+            }
+            return spectrum_plotter(filtered_data)
+
         return hv.DynamicMap(
-            spectrum_plotter, streams=[spectrum_pipe], cache_size=1
+            filtered_spectrum_plotter,
+            streams=[spectrum_pipe, roi_state_stream],
+            cache_size=1,
         ).opts(shared_axes=False)

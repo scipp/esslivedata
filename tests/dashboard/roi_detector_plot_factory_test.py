@@ -3,6 +3,7 @@
 import uuid
 
 import holoviews as hv
+import param
 import pytest
 import scipp as sc
 
@@ -781,11 +782,18 @@ def test_two_plots_remove_last_roi_syncs_correctly(
     readback_pipe_A = hv.streams.Pipe(data=[])
     default_colors = hv.Cycle.default_cycles["default_colors"]
 
+    # Create ROI state stream for Plot A
+    class ROIStateStreamA(hv.streams.Stream):
+        active_rois = param.Parameter(default=set(), doc="Set of active ROI indices")
+
+    roi_state_stream_A = ROIStateStreamA()
+
     plot_state_A = ROIPlotState(
         result_key=detector_key_A,
         box_stream=box_stream_A,
         request_pipe=request_pipe_A,
         readback_pipe=readback_pipe_A,
+        roi_state_stream=roi_state_stream_A,
         x_unit='dimensionless',
         y_unit='dimensionless',
         roi_publisher=fake_publisher,
@@ -798,11 +806,18 @@ def test_two_plots_remove_last_roi_syncs_correctly(
     request_pipe_B = hv.streams.Pipe(data=[])
     readback_pipe_B = hv.streams.Pipe(data=[])
 
+    # Create ROI state stream for Plot B
+    class ROIStateStreamB(hv.streams.Stream):
+        active_rois = param.Parameter(default=set(), doc="Set of active ROI indices")
+
+    roi_state_stream_B = ROIStateStreamB()
+
     plot_state_B = ROIPlotState(
         result_key=detector_key_B,
         box_stream=box_stream_B,
         request_pipe=request_pipe_B,
         readback_pipe=readback_pipe_B,
+        roi_state_stream=roi_state_stream_B,
         x_unit='dimensionless',
         y_unit='dimensionless',
         roi_publisher=fake_publisher,
@@ -930,11 +945,18 @@ def test_two_plots_both_clear_rois_independently(
     readback_pipe_A = hv.streams.Pipe(data=[])
     default_colors = hv.Cycle.default_cycles["default_colors"]
 
+    # Create ROI state stream for Plot A
+    class ROIStateStreamA(hv.streams.Stream):
+        active_rois = param.Parameter(default=set(), doc="Set of active ROI indices")
+
+    roi_state_stream_A = ROIStateStreamA()
+
     plot_state_A = ROIPlotState(
         result_key=detector_key_A,
         box_stream=box_stream_A,
         request_pipe=request_pipe_A,
         readback_pipe=readback_pipe_A,
+        roi_state_stream=roi_state_stream_A,
         x_unit='dimensionless',
         y_unit='dimensionless',
         roi_publisher=fake_publisher,
@@ -947,11 +969,18 @@ def test_two_plots_both_clear_rois_independently(
     request_pipe_B = hv.streams.Pipe(data=[])
     readback_pipe_B = hv.streams.Pipe(data=[])
 
+    # Create ROI state stream for Plot B
+    class ROIStateStreamB(hv.streams.Stream):
+        active_rois = param.Parameter(default=set(), doc="Set of active ROI indices")
+
+    roi_state_stream_B = ROIStateStreamB()
+
     plot_state_B = ROIPlotState(
         result_key=detector_key_B,
         box_stream=box_stream_B,
         request_pipe=request_pipe_B,
         readback_pipe=readback_pipe_B,
+        roi_state_stream=roi_state_stream_B,
         x_unit='dimensionless',
         y_unit='dimensionless',
         roi_publisher=fake_publisher,
@@ -1073,11 +1102,18 @@ def test_empty_roi_backlog_collision(
     readback_pipe_A = hv.streams.Pipe(data=[])
     default_colors = hv.Cycle.default_cycles["default_colors"]
 
+    # Create ROI state stream for Plot A
+    class ROIStateStreamA(hv.streams.Stream):
+        active_rois = param.Parameter(default=set(), doc="Set of active ROI indices")
+
+    roi_state_stream_A = ROIStateStreamA()
+
     plot_state_A = ROIPlotState(
         result_key=detector_key_A,
         box_stream=box_stream_A,
         request_pipe=request_pipe_A,
         readback_pipe=readback_pipe_A,
+        roi_state_stream=roi_state_stream_A,
         x_unit='dimensionless',
         y_unit='dimensionless',
         roi_publisher=fake_publisher,
@@ -1090,11 +1126,18 @@ def test_empty_roi_backlog_collision(
     request_pipe_B = hv.streams.Pipe(data=[])
     readback_pipe_B = hv.streams.Pipe(data=[])
 
+    # Create ROI state stream for Plot B
+    class ROIStateStreamB(hv.streams.Stream):
+        active_rois = param.Parameter(default=set(), doc="Set of active ROI indices")
+
+    roi_state_stream_B = ROIStateStreamB()
+
     plot_state_B = ROIPlotState(
         result_key=detector_key_B,
         box_stream=box_stream_B,
         request_pipe=request_pipe_B,
         readback_pipe=readback_pipe_B,
+        roi_state_stream=roi_state_stream_B,
         x_unit='dimensionless',
         y_unit='dimensionless',
         roi_publisher=fake_publisher,

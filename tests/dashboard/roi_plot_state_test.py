@@ -6,6 +6,7 @@ import logging
 import uuid
 
 import holoviews as hv
+import param
 import pytest
 
 from ess.livedata.config.models import RectangleROI
@@ -64,11 +65,22 @@ def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
     """Create a ROIPlotState for testing."""
     import holoviews as hv
 
+    # Create ROI state stream for tracking active ROIs
+    class ROIStateStream(hv.streams.Stream):
+        active_rois = param.Parameter(default=set(), doc="Set of active ROI indices")
+
+    roi_state_stream = ROIStateStream()
+
+    # boxes_pipe is now used as readback_pipe; create separate request_pipe
+    request_pipe = hv.streams.Pipe(data=[])
+
     default_colors = hv.Cycle.default_cycles["default_colors"]
     return ROIPlotState(
         result_key=result_key,
         box_stream=box_stream,
-        boxes_pipe=boxes_pipe,
+        request_pipe=request_pipe,
+        readback_pipe=boxes_pipe,
+        roi_state_stream=roi_state_stream,
         x_unit='m',
         y_unit='m',
         roi_publisher=fake_publisher,
@@ -84,13 +96,25 @@ class TestROIPlotState:
         self, result_key, fake_publisher
     ):
         """Test that ROIPlotState attaches callback to box_stream on init."""
-        boxes_pipe = hv.streams.Pipe(data=[])
+        readback_pipe = hv.streams.Pipe(data=[])
+        request_pipe = hv.streams.Pipe(data=[])
         box_stream = hv.streams.BoxEdit()
         default_colors = hv.Cycle.default_cycles["default_colors"]
+
+        # Create ROI state stream
+        class ROIStateStream(hv.streams.Stream):
+            active_rois = param.Parameter(
+                default=set(), doc="Set of active ROI indices"
+            )
+
+        roi_state_stream = ROIStateStream()
+
         ROIPlotState(
             result_key=result_key,
             box_stream=box_stream,
-            boxes_pipe=boxes_pipe,
+            request_pipe=request_pipe,
+            readback_pipe=readback_pipe,
+            roi_state_stream=roi_state_stream,
             x_unit='m',
             y_unit='m',
             roi_publisher=fake_publisher,
@@ -277,13 +301,25 @@ class TestROIPlotState:
 
     def test_no_publishing_when_publisher_is_none(self, result_key):
         """Test that no publishing happens when publisher is None."""
-        boxes_pipe = hv.streams.Pipe(data=[])
+        readback_pipe = hv.streams.Pipe(data=[])
+        request_pipe = hv.streams.Pipe(data=[])
         box_stream = hv.streams.BoxEdit()
         default_colors = hv.Cycle.default_cycles["default_colors"]
+
+        # Create ROI state stream
+        class ROIStateStream(hv.streams.Stream):
+            active_rois = param.Parameter(
+                default=set(), doc="Set of active ROI indices"
+            )
+
+        roi_state_stream = ROIStateStream()
+
         state = ROIPlotState(
             result_key=result_key,
             box_stream=box_stream,
-            boxes_pipe=boxes_pipe,
+            request_pipe=request_pipe,
+            readback_pipe=readback_pipe,
+            roi_state_stream=roi_state_stream,
             x_unit='m',
             y_unit='m',
             roi_publisher=None,  # No publisher
@@ -306,14 +342,26 @@ class TestROIPlotState:
             def publish_rois(self, job_id, rois):
                 raise RuntimeError("Test error")
 
-        boxes_pipe = hv.streams.Pipe(data=[])
+        readback_pipe = hv.streams.Pipe(data=[])
+        request_pipe = hv.streams.Pipe(data=[])
         box_stream = hv.streams.BoxEdit()
         failing_publisher = FailingPublisher()
         default_colors = hv.Cycle.default_cycles["default_colors"]
+
+        # Create ROI state stream
+        class ROIStateStream(hv.streams.Stream):
+            active_rois = param.Parameter(
+                default=set(), doc="Set of active ROI indices"
+            )
+
+        roi_state_stream = ROIStateStream()
+
         ROIPlotState(
             result_key=result_key,
             box_stream=box_stream,
-            boxes_pipe=boxes_pipe,
+            request_pipe=request_pipe,
+            readback_pipe=readback_pipe,
+            roi_state_stream=roi_state_stream,
             x_unit='m',
             y_unit='m',
             roi_publisher=failing_publisher,
