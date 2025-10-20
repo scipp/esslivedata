@@ -12,6 +12,7 @@ import scipp as sc
 
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument
+from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.handlers.accumulators import LogData
 from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 from ess.livedata.handlers.to_nxlog import ToNXlog
@@ -30,10 +31,8 @@ class MonitorTimeseriesParams(pydantic.BaseModel):
     )
 
 
-class MonitorTimeseriesOutputs(pydantic.BaseModel):
+class MonitorTimeseriesOutputs(WorkflowOutputsBase):
     """Outputs for the monitor timeseries workflow."""
-
-    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
 
     monitor_counts: sc.DataArray = pydantic.Field(
         title="Monitor Counts",

@@ -18,7 +18,7 @@ from ess.bifrost.data import (
 )
 from ess.bifrost.live import BifrostQCutWorkflow, CutAxis, CutAxis1, CutAxis2, CutData
 from ess.livedata.config import Instrument
-from ess.livedata.config.workflow_spec import AuxSourcesBase
+from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 from ess.livedata.parameter_models import EnergyEdges, QEdges
 from ess.reduce.nexus.types import Filename, NeXusData, SampleRun
@@ -179,10 +179,8 @@ class BifrostAuxSources(AuxSourcesBase):
     )
 
 
-class QMapOutputs(pydantic.BaseModel):
+class QMapOutputs(WorkflowOutputsBase):
     """Outputs for Bifrost Q-map workflows."""
-
-    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
 
     cut_data: sc.DataArray = pydantic.Field(
         title='Cut Data',

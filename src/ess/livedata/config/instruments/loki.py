@@ -13,7 +13,7 @@ from ess import loki
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.env import StreamingEnv
-from ess.livedata.config.workflow_spec import AuxSourcesBase
+from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_data_handler import (
     DetectorProjection,
     get_nexus_geometry_filename,
@@ -70,26 +70,18 @@ class LokiAuxSources(AuxSourcesBase):
     )
 
 
-class IofQOutputs(pydantic.BaseModel):
+class IofQOutputs(WorkflowOutputsBase):
     """Outputs for the basic I(Q) workflow."""
 
-    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
-
     i_of_q: sc.DataArray = pydantic.Field(
         title='I(Q)',
         description='Scattered intensity as a function of momentum transfer Q.',
     )
 
 
-class IofQWithTransmissionOutputs(pydantic.BaseModel):
+class IofQWithTransmissionOutputs(IofQOutputs):
     """Outputs for I(Q) workflow with transmission from current run."""
 
-    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
-
-    i_of_q: sc.DataArray = pydantic.Field(
-        title='I(Q)',
-        description='Scattered intensity as a function of momentum transfer Q.',
-    )
     transmission_fraction: sc.DataArray = pydantic.Field(
         title='Transmission Fraction',
         description='Sample transmission fraction calculated from current run.',

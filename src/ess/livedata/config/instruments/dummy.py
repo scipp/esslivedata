@@ -12,6 +12,7 @@ import scipp as sc
 
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.env import StreamingEnv
+from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.handlers.detector_data_handler import (
     DetectorLogicalView,
     LogicalViewConfig,
@@ -43,10 +44,8 @@ def _total_counts(events: Events) -> TotalCounts:
 _total_counts_workflow = sciline.Pipeline((_total_counts,))
 
 
-class TotalCountsOutputs(pydantic.BaseModel):
+class TotalCountsOutputs(WorkflowOutputsBase):
     """Outputs for the total counts workflow."""
-
-    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
 
     total_counts: sc.DataArray = pydantic.Field(
         title='Total Counts',

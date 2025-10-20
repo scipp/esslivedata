@@ -12,11 +12,21 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, TypeVar
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 T = TypeVar('T')
 
 JobNumber = uuid.UUID
+
+
+class WorkflowOutputsBase(BaseModel):
+    """Base class for all workflow output models.
+
+    Provides common configuration for output models, including support for
+    arbitrary types like scipp.DataArray.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class WorkflowId(BaseModel, frozen=True):

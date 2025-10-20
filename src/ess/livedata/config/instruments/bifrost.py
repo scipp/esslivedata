@@ -14,6 +14,7 @@ from scippnexus import NXdetector
 
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.env import StreamingEnv
+from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.config.workflows import (
     TimeseriesAccumulator,
     register_monitor_timeseries_workflows,
@@ -214,9 +215,7 @@ class BifrostWorkflowParams(pydantic.BaseModel):
     )
 
 
-class SpectrumViewOutputs(pydantic.BaseModel):
-    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
-
+class SpectrumViewOutputs(WorkflowOutputsBase):
     spectrum_view: sc.DataArray = pydantic.Field(
         title='Spectrum View',
         description='Spectrum view showing time-of-flight vs. detector position.',

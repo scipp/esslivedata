@@ -13,7 +13,7 @@ from ess.dream import DreamPowderWorkflow
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.env import StreamingEnv
-from ess.livedata.config.workflow_spec import AuxSourcesBase
+from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_data_handler import (
     DetectorLogicalView,
     DetectorProjection,
@@ -280,9 +280,7 @@ class PowderWorkflowParams(pydantic.BaseModel):
     )
 
 
-class PowderReductionOutputs(pydantic.BaseModel):
-    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
-
+class PowderReductionOutputs(WorkflowOutputsBase):
     focussed_data_dspacing: sc.DataArray = pydantic.Field(
         title='I(d)',
         description='Focussed intensity as a function of d-spacing.',
@@ -293,17 +291,7 @@ class PowderReductionOutputs(pydantic.BaseModel):
     )
 
 
-class PowderReductionWithVanadiumOutputs(pydantic.BaseModel):
-    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
-
-    focussed_data_dspacing: sc.DataArray = pydantic.Field(
-        title='I(d)',
-        description='Focussed intensity as a function of d-spacing.',
-    )
-    focussed_data_dspacing_two_theta: sc.DataArray = pydantic.Field(
-        title='I(d, 2θ)',
-        description='Focussed intensity as a function of d-spacing and two-theta.',
-    )
+class PowderReductionWithVanadiumOutputs(PowderReductionOutputs):
     i_of_dspacing: sc.DataArray = pydantic.Field(
         title='Normalized I(d)',
         description=(
