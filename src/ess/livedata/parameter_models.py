@@ -30,6 +30,14 @@ class RangeModel(BaseModel, ABC):
             raise ValueError('stop must be greater than start')
         return v
 
+    def get_start(self) -> sc.Variable:
+        """Get the start of the range as a scipp variable."""
+        return sc.scalar(self.start, unit=self.unit.value)
+
+    def get_stop(self) -> sc.Variable:
+        """Get the stop of the range as a scipp variable."""
+        return sc.scalar(self.stop, unit=self.unit.value)
+
 
 class Scale(StrEnum):
     """Allowed scales for data reduction."""
@@ -115,14 +123,6 @@ class WavelengthRange(RangeModel):
         default=WavelengthUnit.ANGSTROM, description="Unit of the wavelength range."
     )
 
-    def get_start(self) -> sc.Variable:
-        """Get the start of the range as a scipp variable."""
-        return sc.scalar(self.start, unit=self.unit.value)
-
-    def get_stop(self) -> sc.Variable:
-        """Get the stop of the range as a scipp variable."""
-        return sc.scalar(self.stop, unit=self.unit.value)
-
 
 class TOARange(RangeModel):
     """Time of arrival range filter settings."""
@@ -136,8 +136,8 @@ class TOARange(RangeModel):
     def range_ns(self) -> tuple[sc.Variable, sc.Variable]:
         """Time window range in nanoseconds as a scipp scalar."""
         return (
-            sc.scalar(self.start, unit=self.unit.value).to(unit='ns'),
-            sc.scalar(self.stop, unit=self.unit.value).to(unit='ns'),
+            self.get_start().to(unit='ns'),
+            self.get_stop().to(unit='ns'),
         )
 
 
