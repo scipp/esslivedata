@@ -13,21 +13,7 @@ The two-phase registration pattern has been successfully implemented with the fo
 
 ## Remaining Work
 
-### 1. Split Monitor and Timeseries Handlers (HIGH PRIORITY)
-
-**Problem**: `monitor_data_handler.py` and `timeseries_handler.py` currently pull in heavy dependencies through `accumulators.py`:
-- `monitor_data_handler` → `accumulators` → `ess.reduce.live.roi`
-- This prevents truly lightweight spec loading
-
-**Solution**:
-- Create `monitor_view_specs.py` with lightweight spec registration helpers
-- Refactor `monitor_data_handler.py` to separate spec registration from factory implementation
-- Create `timeseries_view_specs.py` for timeseries workflows
-- Update `accumulators.py` to split lightweight and heavy components
-
-**Impact**: This will enable full lightweight spec loading for all instruments, including dummy.
-
-### 2. Convert Remaining Instruments to Submodule Structure
+### 1. Convert Remaining Instruments to Submodule Structure
 
 Each instrument needs conversion following the dummy pattern.
 
@@ -89,7 +75,7 @@ The key improvement is that `stream_mapping` has been moved to a separate `strea
 - [ ] Split into `specs.py`, `streams.py`, and `factories.py`
 - [ ] Remove old `tbl.py`
 
-### 3. Update DetectorProjection to Use New Pattern
+### 2. Update DetectorProjection to Use New Pattern
 
 **Current**: `DetectorProjection.__init__()` auto-registers workflows (line 125 in old pattern)
 
@@ -121,7 +107,7 @@ projection.attach_to_handles(
 )
 ```
 
-### 4. Frontend Verification
+### 3. Frontend Verification
 
 Once monitor/timeseries handlers are split:
 
@@ -130,7 +116,7 @@ Once monitor/timeseries handlers are split:
 - [ ] Verify no `ess.reduce`, `ess.loki`, etc. imports in frontend
 - [ ] Add integration test for frontend spec loading
 
-### 5. Cleanup Old Pattern
+### 4. Cleanup Old Pattern
 
 After all instruments are converted:
 
@@ -140,7 +126,7 @@ After all instruments are converted:
 - [ ] Remove old instrument `.py` files
 - [ ] Remove support for old pattern from `get_stream_mapping`.
 
-### 6. Documentation Updates
+### 5. Documentation Updates
 
 - [ ] Update developer docs with two-phase registration pattern
 - [ ] Document migration guide for converting instruments
