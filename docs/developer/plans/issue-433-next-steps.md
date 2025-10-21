@@ -130,15 +130,7 @@ Once monitor/timeseries handlers are split:
 - [ ] Verify no `ess.reduce`, `ess.loki`, etc. imports in frontend
 - [ ] Add integration test for frontend spec loading
 
-### 5. Documentation Updates
-
-- [ ] Update developer docs with two-phase registration pattern
-- [ ] Document migration guide for converting instruments
-- [ ] Update architecture diagrams
-- [ ] Add examples of spec registration and factory attachment
-- [ ] Document the lightweight/heavy split pattern
-
-### 6. Cleanup Old Pattern
+### 5. Cleanup Old Pattern
 
 After all instruments are converted:
 
@@ -148,22 +140,13 @@ After all instruments are converted:
 - [ ] Remove old instrument `.py` files
 - [ ] Remove support for old pattern from `get_stream_mapping`.
 
-## Migration Priority
+### 6. Documentation Updates
 
-**Phase 1 (Critical for lightweight frontend)**:
-1. Split monitor/timeseries handlers
-2. Convert LOKI (most used instrument)
-3. Verify frontend works with specs-only loading
-
-**Phase 2 (Complete migration)**:
-4. Convert DREAM
-5. Convert BIFROST
-6. Convert ODIN, NMX, TBL
-
-**Phase 3 (Cleanup)**:
-7. Deprecate old patterns
-8. Documentation updates
-9. Remove backup files
+- [ ] Update developer docs with two-phase registration pattern
+- [ ] Document migration guide for converting instruments
+- [ ] Update architecture diagrams
+- [ ] Add examples of spec registration and factory attachment
+- [ ] Document the lightweight/heavy split pattern
 
 ## Testing Strategy
 

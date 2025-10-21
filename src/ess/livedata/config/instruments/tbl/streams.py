@@ -1,16 +1,18 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""
+TBL instrument stream mapping configuration.
+
+This module contains Kafka-related infrastructure configuration.
+Not needed by frontend - only used by backend services.
+"""
 
 import scipp as sc
 
-from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.env import StreamingEnv
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
-from ._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
-
-instrument = Instrument(name='tbl')
-instrument_registry.register(instrument)
+from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
 
 # Note: Panel size is fake and does not correspond to production setting
 detectors_config = {
