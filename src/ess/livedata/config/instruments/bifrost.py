@@ -368,7 +368,7 @@ def _spectrum_view(params: BifrostWorkflowParams) -> StreamProcessorWorkflow:
     return StreamProcessorWorkflow(
         wf,
         dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
-        target_keys={'spectrum_view'},
+        target_keys={'spectrum_view': SpectrumView},
         accumulators={SpectrumView: EternalAccumulator},
     )
 
@@ -388,7 +388,7 @@ def _detector_ratemeter_workflow(
     return StreamProcessorWorkflow(
         wf,
         dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
-        target_keys=(DetectorRegionCounts,),
+        target_keys={'detector_region_counts': DetectorRegionCounts},
         accumulators={DetectorRegionCounts: TimeseriesAccumulator},
     )
 
