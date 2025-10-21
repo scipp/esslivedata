@@ -4,6 +4,7 @@
 DREAM instrument spec registration.
 """
 
+from enum import StrEnum
 from typing import Literal
 
 import pydantic
@@ -93,19 +94,31 @@ mantle_wire_view_handle = instrument.register_spec(
 
 
 # Pydantic models for DREAM workflows
+class InstrumentConfigurationEnum(StrEnum):
+    """
+    Chopper configuration options for DREAM.
+
+    Mirrors ess.dream.InstrumentConfiguration enum for UI generation.
+    """
+
+    high_flux_BC215 = 'high_flux_BC215'
+    high_flux_BC240 = 'high_flux_BC240'
+    high_resolution = 'high_resolution'
+
+
 class InstrumentConfiguration(pydantic.BaseModel):
     """
     Instrument configuration for DREAM.
     """
 
-    value: str = pydantic.Field(
-        default='high_flux_BC240',
+    value: InstrumentConfigurationEnum = pydantic.Field(
+        default=InstrumentConfigurationEnum.high_flux_BC240,
         description='Chopper settings determining TOA to TOF conversion.',
     )
 
     @pydantic.model_validator(mode="after")
     def check_high_resolution_not_implemented(self):
-        if self.value == 'high_resolution':
+        if self.value == InstrumentConfigurationEnum.high_resolution:
             raise pydantic.ValidationError.from_exception_data(
                 "ValidationError",
                 [
