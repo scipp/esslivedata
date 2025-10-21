@@ -896,9 +896,8 @@ class TestTwoPhaseRegistration:
             version=1,
         )
 
-        decorator = factory.attach_factory(workflow_id)
         with pytest.raises(ValueError, match="not registered"):
-            decorator(lambda: make_dummy_workflow())
+            factory.attach_factory(workflow_id)
 
     def test_spec_params_immutable_after_registration(self):
         """Test that spec.params is not mutated after register_spec()."""
