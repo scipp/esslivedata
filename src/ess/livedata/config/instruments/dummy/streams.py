@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""
+Dummy instrument stream mapping configuration.
+
+This module contains Kafka-related infrastructure configuration.
+Not needed by frontend - only used by backend services.
+"""
+
+from ess.livedata.config.env import StreamingEnv
+from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
+
+from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
+
+detectors_config = {'fakes': {'panel_0': (1, 128**2)}}
+
+
+def _make_dummy_detectors() -> StreamLUT:
+    """Dummy detector mapping."""
+    return {InputStreamKey(topic='dummy_detector', source_name='panel_0'): 'panel_0'}
+
+
+stream_mapping = {
+    StreamingEnv.DEV: make_dev_stream_mapping(
+        'dummy', detector_names=list(detectors_config['fakes'])
+    ),
+    StreamingEnv.PROD: StreamMapping(
+        **make_common_stream_mapping_inputs(instrument='dummy'),
+        detectors=_make_dummy_detectors(),
+    ),
+}

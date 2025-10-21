@@ -9,6 +9,7 @@ The two-phase registration pattern has been successfully implemented with the fo
 3. ✅ Dummy instrument converted to submodule structure
 4. ✅ Backend services updated to explicitly import factories
 5. ✅ Comprehensive test coverage
+6. ✅ Stream mapping separated from specs (moved to `streams.py` module for cleaner separation of concerns)
 
 ## Remaining Work
 
@@ -28,7 +29,15 @@ The two-phase registration pattern has been successfully implemented with the fo
 
 ### 2. Convert Remaining Instruments to Submodule Structure
 
-Each instrument needs conversion following the dummy pattern:
+Each instrument needs conversion following the dummy pattern.
+
+**Dummy instrument structure** (reference implementation):
+- `__init__.py` - imports only specs module
+- `specs.py` - lightweight spec registration (no heavy imports, no stream_mapping)
+- `factories.py` - heavy factory implementations with ess.reduce imports
+- `streams.py` - stream mapping configuration (Kafka infrastructure, not needed by frontend)
+
+The key improvement is that `stream_mapping` has been moved to a separate `streams.py` module, keeping the `specs.py` module truly lightweight and frontend-friendly. The `get_stream_mapping()` function in `config/streams.py` automatically handles both the old pattern (single file with stream_mapping) and new pattern (separate streams.py submodule).
 
 #### LOKI
 - [ ] Create `instruments/loki/` submodule
@@ -38,6 +47,11 @@ Each instrument needs conversion following the dummy pattern:
   - `LokiAuxSources` model
   - Spec registrations using `register_detector_view_specs()`
   - Spec registrations for SANS workflows (return handles)
+  - NO stream_mapping (moved to streams.py)
+- [ ] Create `loki/streams.py` with:
+  - `stream_mapping` dictionary
+  - Detector configuration helpers
+  - Kafka-related infrastructure (not needed by frontend)
 - [ ] Create `loki/factories.py` with:
   - Heavy imports (`ess.loki.live`, `ess.reduce`)
   - Detector projection factory attachments
@@ -48,31 +62,31 @@ Each instrument needs conversion following the dummy pattern:
 
 #### DREAM
 - [ ] Create `instruments/dream/` submodule
-- [ ] Split into `specs.py` (lightweight) and `factories.py` (heavy)
+- [ ] Split into `specs.py` (lightweight), `streams.py` (Kafka config), and `factories.py` (heavy)
 - [ ] Handle DREAM-specific workflows and detector views
 - [ ] Remove old `dream.py`
 
 #### BIFROST
 - [ ] Create `instruments/bifrost/` submodule
-- [ ] Split into `specs.py` and `factories.py`
+- [ ] Split into `specs.py`, `streams.py`, and `factories.py`
 - [ ] Handle spectroscopy workflows
 - [ ] Remove old `bifrost.py`
 
 #### ODIN
 - [ ] Create `instruments/odin/` submodule
-- [ ] Split into `specs.py` and `factories.py`
+- [ ] Split into `specs.py`, `streams.py`, and `factories.py`
 - [ ] Handle imaging workflows
 - [ ] Remove old `odin.py`
 
 #### NMX
 - [ ] Create `instruments/nmx/` submodule
-- [ ] Split into `specs.py` and `factories.py`
+- [ ] Split into `specs.py`, `streams.py`, and `factories.py`
 - [ ] Handle crystallography workflows
 - [ ] Remove old `nmx.py`
 
 #### TBL (Test Beamline)
 - [ ] Create `instruments/tbl/` submodule
-- [ ] Split into `specs.py` and `factories.py`
+- [ ] Split into `specs.py`, `streams.py`, and `factories.py`
 - [ ] Remove old `tbl.py`
 
 ### 3. Update DetectorProjection to Use New Pattern
@@ -128,10 +142,11 @@ Once monitor/timeseries handlers are split:
 
 After all instruments are converted:
 
-- [ ] Deprecate `Instrument.register_workflow()` (one-phase pattern)
+- [ ] Remove `Instrument.register_workflow()`
 - [ ] Remove auto-registration from `DetectorProcessorFactory.__init__`
 - [ ] Update all docstrings to reference new pattern
-- [ ] Remove old instrument `.py` files (keep `.py.bak` for reference)
+- [ ] Remove old instrument `.py` files
+- [ ] Remove support for old pattern from `get_stream_mapping`.
 
 ## Migration Priority
 

@@ -26,9 +26,21 @@ from ess.livedata.dashboard.workflow_configuration_adapter import (
 
 def _collect_workflows():
     """Collect all workflows from all instruments for parameterization."""
+    import importlib
+
     workflows = []
     for instrument_name in available_instruments():
         _ = get_config(instrument_name)  # Load module to register instrument
+
+        # Load factories for instruments using new submodule structure
+        try:
+            importlib.import_module(
+                f'ess.livedata.config.instruments.{instrument_name}.factories'
+            )
+        except ModuleNotFoundError:
+            # Instrument may not have been converted to submodule structure yet
+            pass
+
         instrument = instrument_registry[instrument_name]
         workflows.extend(
             [

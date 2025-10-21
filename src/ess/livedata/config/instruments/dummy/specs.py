@@ -4,27 +4,18 @@
 Dummy instrument spec registration (lightweight).
 
 This module registers workflow specs WITHOUT heavy dependencies.
+Frontend loads this module to access workflow specs.
+Backend services must also import .streams for stream mapping configuration.
 """
 
 import pydantic
 import scipp as sc
 
 from ess.livedata.config import Instrument, instrument_registry
-from ess.livedata.config.env import StreamingEnv
 from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import DetectorViewParams
 from ess.livedata.handlers.monitor_data_handler import register_monitor_workflows
 from ess.livedata.handlers.timeseries_handler import register_timeseries_workflows
-from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
-
-from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
-
-detectors_config = {'fakes': {'panel_0': (1, 128**2)}}
-
-
-def _make_dummy_detectors() -> StreamLUT:
-    """Dummy detector mapping."""
-    return {InputStreamKey(topic='dummy_detector', source_name='panel_0'): 'panel_0'}
 
 
 class TotalCountsOutputs(WorkflowOutputsBase):
@@ -71,14 +62,3 @@ total_counts_handle = instrument.register_spec(
     outputs=TotalCountsOutputs,
     params=None,
 )
-
-# Stream mapping (lightweight, no heavy dependencies)
-stream_mapping = {
-    StreamingEnv.DEV: make_dev_stream_mapping(
-        'dummy', detector_names=list(detectors_config['fakes'])
-    ),
-    StreamingEnv.PROD: StreamMapping(
-        **make_common_stream_mapping_inputs(instrument='dummy'),
-        detectors=_make_dummy_detectors(),
-    ),
-}
