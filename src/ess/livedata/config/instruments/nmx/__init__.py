@@ -2,9 +2,6 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
 NMX instrument configuration.
-
-This module provides lightweight spec registration for frontend use.
-Backend services must explicitly import .factories to attach implementations.
 """
 
 from . import specs, streams

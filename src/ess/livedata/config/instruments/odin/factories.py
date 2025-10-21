@@ -1,10 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-ODIN instrument factory implementations (heavy).
-
-This module contains factory implementations with heavy dependencies.
-Only imported by backend services.
+ODIN instrument factory implementations.
 """
 
 import h5py
@@ -32,7 +29,7 @@ with h5py.File(instrument.nexus_file, 'r+') as f:
     det.attrs['axes'] = ['x_pixel_offset', 'y_pixel_offset']
     det.attrs['detector_number_indices'] = [0, 1]
 
-# Add detector (uses geometry file patched above)
+# Add detector
 instrument.add_detector('timepix3', detector_group_name='event_mode_detectors')
 
 # Create detector projection

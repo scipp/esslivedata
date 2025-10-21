@@ -1,10 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-NMX instrument factory implementations (heavy).
-
-This module contains factory implementations with heavy dependencies.
-Only imported by backend services.
+NMX instrument factory implementations.
 """
 
 import scipp as sc

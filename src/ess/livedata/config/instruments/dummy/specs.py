@@ -1,11 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-Dummy instrument spec registration (lightweight).
-
-This module registers workflow specs WITHOUT heavy dependencies.
-Frontend loads this module to access workflow specs.
-Backend services must also import .streams for stream mapping configuration.
+Dummy instrument spec registration.
 """
 
 import pydantic
@@ -34,7 +30,6 @@ instrument = Instrument(
     name='dummy', f144_attribute_registry={'motion1': {'units': 'mm'}}
 )
 
-# Register lightweight workflows (no heavy dependencies)
 monitor_workflow_handle = register_monitor_workflow_specs(
     instrument=instrument, source_names=['monitor1', 'monitor2']
 )
@@ -45,7 +40,7 @@ timeseries_workflow_handle = register_timeseries_workflow_specs(
 # Register instrument
 instrument_registry.register(instrument)
 
-# Register detector view spec (no factory yet)
+# Register detector view spec.
 # Note: We don't use register_detector_view_specs here because dummy uses
 # DetectorLogicalView which doesn't follow the projection pattern.
 panel_0_view_handle = instrument.register_spec(
@@ -55,7 +50,7 @@ panel_0_view_handle = instrument.register_spec(
     title='Panel 0',
     description='',
     source_names=['panel_0'],
-    params=DetectorViewParams,  # Uses standard detector view params
+    params=DetectorViewParams,
 )
 
 # Register total counts workflow spec

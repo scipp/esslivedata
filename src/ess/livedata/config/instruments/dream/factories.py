@@ -1,10 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-DREAM instrument factory implementations (heavy).
-
-This module contains factory implementations with heavy dependencies.
-Only imported by backend services.
+DREAM instrument factory implementations.
 """
 
 from typing import NewType
@@ -213,7 +210,7 @@ def _powder_workflow_factory(source_name: str, params: PowderWorkflowParams):
     """Factory for DREAM powder reduction workflow."""
     wf = _reduction_workflow.copy()
     wf[NeXusName[NXdetector]] = source_name
-    # Convert string to enum - this is where we handle the heavy dependency
+    # Convert string to enum
     wf[dream.InstrumentConfiguration] = getattr(
         dream.InstrumentConfiguration, params.instrument_configuration.value
     )
@@ -249,7 +246,7 @@ def _powder_workflow_with_vanadium_factory(
     wf = _reduction_workflow.copy()
     wf[NeXusName[NXdetector]] = source_name
     wf[Filename[VanadiumRun]] = '268227_00024779_Vana_inc_BC_offset_240_deg_wlgth.hdf'
-    # Convert string to enum - this is where we handle the heavy dependency
+    # Convert string to enum
     wf[dream.InstrumentConfiguration] = getattr(
         dream.InstrumentConfiguration, params.instrument_configuration.value
     )

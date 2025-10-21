@@ -1,11 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-Bifrost spectrometer spec registration (lightweight).
-
-This module registers workflow specs WITHOUT heavy dependencies.
-Frontend loads this module to access workflow specs.
-Backend services must also import .streams for stream mapping configuration.
+Bifrost spectrometer spec registration
 
 Bifrost has 5 arcs (fixed analyzers), each labeled by its energy transfer:
 2.7, 3.2, 3.8, 4.4, and 5.0 meV. Each arc consists of all pixels at a given
@@ -237,7 +233,6 @@ f144_attribute_registry = {
 # Create instrument
 instrument = Instrument(name='bifrost', f144_attribute_registry=f144_attribute_registry)
 
-# Register lightweight workflows (no heavy dependencies)
 monitor_workflow_handle = register_monitor_workflow_specs(
     instrument=instrument, source_names=monitor_names
 )
@@ -248,7 +243,7 @@ timeseries_workflow_handle = register_timeseries_workflow_specs(
 # Register instrument
 instrument_registry.register(instrument)
 
-# Register detector view spec (no factory yet)
+# Register detector view spec.
 unified_detector_view_handle = instrument.register_spec(
     namespace='detector_data',
     name='unified_detector_view',

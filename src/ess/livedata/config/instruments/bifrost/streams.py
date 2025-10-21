@@ -2,9 +2,6 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
 Bifrost spectrometer stream mapping configuration.
-
-This module contains Kafka-related infrastructure configuration.
-Not needed by frontend - only used by backend services.
 """
 
 from collections.abc import Generator

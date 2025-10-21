@@ -2,9 +2,6 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
 TBL instrument stream mapping configuration.
-
-This module contains Kafka-related infrastructure configuration.
-Not needed by frontend - only used by backend services.
 """
 
 import scipp as sc

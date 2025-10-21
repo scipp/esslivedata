@@ -1,11 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""
-Dummy instrument stream mapping configuration.
-
-This module contains Kafka-related infrastructure configuration.
-Not needed by frontend - only used by backend services.
-"""
+"""Dummy instrument stream mapping configuration."""
 
 from ess.livedata.config.env import StreamingEnv
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping

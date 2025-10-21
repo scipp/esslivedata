@@ -1,11 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-LOKI instrument spec registration (lightweight).
-
-This module registers workflow specs WITHOUT heavy dependencies.
-Frontend loads this module to access workflow specs.
-Backend services must also import .streams for stream mapping configuration.
+LOKI instrument spec registration.
 """
 
 from typing import Literal
@@ -93,7 +89,6 @@ detector_names = [f'loki_detector_{bank}' for bank in range(9)]
 # Create instrument
 instrument = Instrument(name='loki')
 
-# Register monitor workflows (lightweight)
 monitor_workflow_handle = register_monitor_workflow_specs(
     instrument=instrument, source_names=['monitor1', 'monitor2']
 )
@@ -101,7 +96,6 @@ monitor_workflow_handle = register_monitor_workflow_specs(
 # Register instrument
 instrument_registry.register(instrument)
 
-# Register detector view specs (lightweight, no factories yet)
 xy_projection_handles = register_detector_view_specs(
     instrument=instrument,
     projections=['xy_plane'],

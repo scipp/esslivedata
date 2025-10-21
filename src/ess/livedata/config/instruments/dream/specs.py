@@ -1,11 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-DREAM instrument spec registration (lightweight).
-
-This module registers workflow specs WITHOUT heavy dependencies.
-Frontend loads this module to access workflow specs.
-Backend services must also import .streams for stream mapping configuration.
+DREAM instrument spec registration.
 """
 
 from typing import Literal
@@ -100,9 +96,6 @@ mantle_wire_view_handle = instrument.register_spec(
 class InstrumentConfiguration(pydantic.BaseModel):
     """
     Instrument configuration for DREAM.
-
-    Note: We cannot import dream.InstrumentConfiguration here as it's a heavy
-    dependency. We use a string literal and validate in the factory.
     """
 
     value: str = pydantic.Field(

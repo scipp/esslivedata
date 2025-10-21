@@ -1,10 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-Dummy instrument factory implementations (heavy).
-
-This module contains factory implementations with heavy dependencies.
-Only imported by backend services.
+Dummy instrument factory implementations.
 """
 
 from typing import NewType
@@ -27,7 +24,7 @@ from . import specs
 # Get instrument from registry (already registered by specs.py)
 instrument = instrument_registry['dummy']
 
-# Add detector (uses explicit detector_number so no file needed)
+# Add detector with explicit detector_number
 instrument.add_detector(
     'panel_0',
     detector_number=sc.arange('yx', 1, 128**2 + 1, unit=None).fold(
@@ -35,7 +32,7 @@ instrument.add_detector(
     ),
 )
 
-# Create detector view (heavy: uses DetectorLogicalView)
+# Create detector view
 _panel_0_config = LogicalViewConfig(
     name='panel_0_xy',
     title='Panel 0',

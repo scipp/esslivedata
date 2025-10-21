@@ -1,10 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-Bifrost spectrometer factory implementations (heavy).
-
-This module contains factory implementations with heavy dependencies.
-Only imported by backend services.
+Bifrost spectrometer factory implementations.
 """
 
 from functools import cache
@@ -84,7 +81,7 @@ def _to_flat_detector_view(obj: sc.Variable | sc.DataArray) -> sc.DataArray:
     return da['channel/pixel', :-pad_pix]['arc/tube', :-pad_tube]
 
 
-# Create detector view (heavy: uses DetectorLogicalView)
+# Create detector view
 _unified_detector_view = LogicalViewConfig(
     name='unified_detector_view',
     title='Unified detector view',

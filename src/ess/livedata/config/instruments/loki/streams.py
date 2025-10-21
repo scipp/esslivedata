@@ -2,9 +2,6 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
 LOKI instrument stream mapping configuration.
-
-This module contains Kafka-related infrastructure configuration.
-Not needed by frontend - only used by backend services.
 """
 
 from ess.livedata.config.env import StreamingEnv

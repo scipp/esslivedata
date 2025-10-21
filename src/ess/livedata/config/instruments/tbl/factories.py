@@ -1,11 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-TBL instrument factory implementations (heavy).
-
-This module contains factory implementations with heavy dependencies.
-Only imported by backend services.
-Currently minimal as TBL has no workflows or detector views registered.
+TBL instrument factory implementations.
 """
 
 from ess.livedata.config import instrument_registry
