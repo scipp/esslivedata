@@ -6,8 +6,4 @@ LOKI instrument configuration.
 
 from . import specs, streams
 
-# Re-export stream configuration for backward compatibility
-detectors_config = streams.detectors_config
-stream_mapping = streams.stream_mapping
-
-__all__ = ['detectors_config', 'specs', 'stream_mapping', 'streams']
+__all__ = ['specs', 'streams']
