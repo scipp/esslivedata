@@ -2,12 +2,11 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Service that processes detector event data into 2-D data for plotting."""
 
-import importlib
 import logging
 from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
-from ess.livedata.config.instruments import get_config
+from ess.livedata.config.instruments import load_factories
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.handlers.detector_data_handler import DetectorHandlerFactory
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
@@ -24,19 +23,7 @@ def make_detector_service_builder(
         .with_livedata_config_route()
         .build()
     )
-    # Load specs (lightweight)
-    _ = get_config(instrument)
-
-    # Load factories (heavy) - backend services need both specs and factories
-    try:
-        importlib.import_module(
-            f'ess.livedata.config.instruments.{instrument}.factories'
-        )
-    except ModuleNotFoundError:
-        # Instrument may not have been converted to submodule structure yet
-        # or may not need separate factories (already loaded by get_config)
-        pass
-
+    load_factories(instrument)
     service_name = 'detector_data'
     preprocessor_factory = DetectorHandlerFactory(
         instrument=instrument_registry[instrument]

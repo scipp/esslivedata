@@ -2,12 +2,11 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Service that runs a data reduction workflow."""
 
-import importlib
 import logging
 from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
-from ess.livedata.config.instruments import get_config
+from ess.livedata.config.instruments import load_factories
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.handlers.data_reduction_handler import ReductionHandlerFactory
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
@@ -26,19 +25,7 @@ def make_reduction_service_builder(
         .with_livedata_config_route()
         .build()
     )
-    # Load specs (lightweight)
-    _ = get_config(instrument)
-
-    # Load factories (heavy) - backend services need both specs and factories
-    try:
-        importlib.import_module(
-            f'ess.livedata.config.instruments.{instrument}.factories'
-        )
-    except ModuleNotFoundError:
-        # Instrument may not have been converted to submodule structure yet
-        # or may not need separate factories (already loaded by get_config)
-        pass
-
+    load_factories(instrument)
     instrument_config = instrument_registry[instrument]
     service_name = 'data_reduction'
     preprocessor_factory = ReductionHandlerFactory(instrument=instrument_config)

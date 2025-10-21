@@ -4,7 +4,7 @@ import logging
 from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
-from ess.livedata.config.instruments import get_config
+from ess.livedata.config.instruments import load_factories
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.handlers import monitor_data_handler
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
@@ -21,7 +21,7 @@ def make_monitor_service_builder(
         .with_livedata_config_route()
         .build()
     )
-    _ = get_config(instrument)  # Load the module to register the instrument
+    load_factories(instrument)
     service_name = 'monitor_data'
     preprocessor_factory = monitor_data_handler.MonitorHandlerFactory(
         instrument=instrument_registry[instrument]
