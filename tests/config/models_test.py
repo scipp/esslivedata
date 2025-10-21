@@ -135,3 +135,86 @@ class TestConfigKey:
         assert parsed.source_name is None
         assert parsed.service_name is None
         assert parsed.key == original.key
+
+    def test_encoding_special_characters_in_source_name(self):
+        """Test that special characters in source_name are properly encoded."""
+        # JobId.str() produces "source_name/job_number" with a slash
+        key = models.ConfigKey(
+            source_name="mantle_detector/87529091-604f-402a-b983-7ef190661bf5",
+            service_name=None,
+            key="job_command",
+        )
+        string_repr = str(key)
+        # Should have exactly 3 parts when split by /
+        assert string_repr.count('/') == 2
+        # Should be able to parse it back
+        parsed = models.ConfigKey.from_string(string_repr)
+        assert (
+            parsed.source_name == "mantle_detector/87529091-604f-402a-b983-7ef190661bf5"
+        )
+        assert parsed.service_name is None
+        assert parsed.key == "job_command"
+
+    def test_encoding_special_characters_in_service_name(self):
+        """Test that special characters in service_name are properly encoded."""
+        key = models.ConfigKey(
+            source_name="source1",
+            service_name="service/with/slashes",
+            key="test_key",
+        )
+        string_repr = str(key)
+        # Should have exactly 3 parts when split by /
+        assert string_repr.count('/') == 2
+        parsed = models.ConfigKey.from_string(string_repr)
+        assert parsed.source_name == "source1"
+        assert parsed.service_name == "service/with/slashes"
+        assert parsed.key == "test_key"
+
+    def test_encoding_special_characters_in_key(self):
+        """Test that special characters in key are properly encoded."""
+        key = models.ConfigKey(
+            source_name="source1",
+            service_name="service1",
+            key="key/with/slashes",
+        )
+        string_repr = str(key)
+        # Should have exactly 3 parts when split by /
+        assert string_repr.count('/') == 2
+        parsed = models.ConfigKey.from_string(string_repr)
+        assert parsed.source_name == "source1"
+        assert parsed.service_name == "service1"
+        assert parsed.key == "key/with/slashes"
+
+    def test_encoding_url_special_characters(self):
+        """Test URL encoding of various special characters."""
+        # Test various URL special characters that should be encoded
+        key = models.ConfigKey(
+            source_name="source with spaces",
+            service_name="service?query=value",
+            key="key#fragment",
+        )
+        string_repr = str(key)
+        parsed = models.ConfigKey.from_string(string_repr)
+        assert parsed.source_name == "source with spaces"
+        assert parsed.service_name == "service?query=value"
+        assert parsed.key == "key#fragment"
+
+    def test_roundtrip_with_special_characters(self):
+        """Test complete roundtrip with all special characters."""
+        test_cases = [
+            ("source/name", "service/name", "key/name"),
+            ("a/b/c", "d/e/f", "g/h/i"),
+            ("source with spaces", "service?query", "key#frag"),
+            ("source%encoded", "service&param", "key=value"),
+        ]
+        for source, service, key_val in test_cases:
+            original = models.ConfigKey(
+                source_name=source, service_name=service, key=key_val
+            )
+            string_repr = str(original)
+            # Ensure exactly 3 parts
+            assert string_repr.count('/') == 2
+            parsed = models.ConfigKey.from_string(string_repr)
+            assert parsed.source_name == source
+            assert parsed.service_name == service
+            assert parsed.key == key_val

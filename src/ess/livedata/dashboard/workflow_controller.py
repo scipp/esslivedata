@@ -144,10 +144,13 @@ class WorkflowController:
         source_names: list[str],
         config: pydantic.BaseModel,
         aux_source_names: pydantic.BaseModel | None = None,
-    ) -> bool:
+    ) -> None:
         """Start a workflow with given configuration.
 
-        Returns True if the workflow was started successfully, False otherwise.
+        Raises
+        ------
+        ValueError
+            If the workflow spec is not found.
         """
         self._logger.info(
             'Starting workflow %s on sources %s with config %s and aux_sources %s',
@@ -159,10 +162,9 @@ class WorkflowController:
 
         spec = self.get_workflow_spec(workflow_id)
         if spec is None:
-            self._logger.error(
-                'Workflow spec for %s not found, cannot start workflow', workflow_id
-            )
-            return False
+            msg = f'Workflow spec for {workflow_id} not found'
+            self._logger.error('%s, cannot start workflow', msg)
+            raise ValueError(msg)
 
         # Create a SINGLE workflow config which will be used for ALL source names (see
         # loop below). WorkflowConfig.from_params generates a new job number which
@@ -197,8 +199,6 @@ class WorkflowController:
         for callback in self._workflow_status_callbacks:
             self._notify_workflow_status_update(callback)
 
-        return True
-
     def create_workflow_adapter(self, workflow_id: WorkflowId):
         """Create a workflow configuration adapter for the given workflow ID."""
 
@@ -224,9 +224,9 @@ class WorkflowController:
             selected_sources: list[str],
             parameter_values: pydantic.BaseModel,
             aux_source_names: pydantic.BaseModel | None = None,
-        ) -> bool:
+        ) -> None:
             """Bound callback to start this specific workflow."""
-            return self.start_workflow(
+            self.start_workflow(
                 workflow_id, selected_sources, parameter_values, aux_source_names
             )
 

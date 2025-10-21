@@ -85,19 +85,15 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         self,
         selected_sources: list[str],
         parameter_values: Any,
-    ) -> bool:
-        try:
-            plot = self._plotting_controller.create_plot(
-                job_number=self._job_number,
-                source_names=selected_sources,
-                output_name=self._output_name,
-                plot_name=self._plot_spec.name,
-                params=parameter_values,
-            )
-            self._success_callback(plot, selected_sources)
-            return True
-        except Exception:
-            return False
+    ) -> None:
+        plot = self._plotting_controller.create_plot(
+            job_number=self._job_number,
+            source_names=selected_sources,
+            output_name=self._output_name,
+            plot_name=self._plot_spec.name,
+            params=parameter_values,
+        )
+        self._success_callback(plot, selected_sources)
 
 
 class PlotCreationWidget:
