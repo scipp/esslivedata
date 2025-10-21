@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Service that runs a data reduction workflow."""
 
+import importlib
 import logging
 from typing import NoReturn
 
@@ -25,7 +26,19 @@ def make_reduction_service_builder(
         .with_livedata_config_route()
         .build()
     )
-    _ = get_config(instrument)  # Load the module to register the instrument
+    # Load specs (lightweight)
+    _ = get_config(instrument)
+
+    # Load factories (heavy) - backend services need both specs and factories
+    try:
+        importlib.import_module(
+            f'ess.livedata.config.instruments.{instrument}.factories'
+        )
+    except ModuleNotFoundError:
+        # Instrument may not have been converted to submodule structure yet
+        # or may not need separate factories (already loaded by get_config)
+        pass
+
     instrument_config = instrument_registry[instrument]
     service_name = 'data_reduction'
     preprocessor_factory = ReductionHandlerFactory(instrument=instrument_config)

@@ -10,7 +10,7 @@ from typing import Any
 import scipp as sc
 import scippnexus as snx
 
-from ess.livedata.handlers.workflow_factory import Workflow, WorkflowFactory
+from ess.livedata.handlers.workflow_factory import SpecHandle, Workflow, WorkflowFactory
 
 from .workflow_spec import WorkflowSpec
 
@@ -112,6 +112,66 @@ class Instrument:
 
     def get_detector_number(self, name: str) -> sc.Variable:
         return self._detector_numbers[name]
+
+    def register_spec(
+        self,
+        *,
+        namespace: str = 'data_reduction',
+        name: str,
+        version: int,
+        title: str,
+        description: str = '',
+        source_names: Sequence[str] | None = None,
+        params: type[Any] | None = None,
+        aux_sources: type[Any] | None = None,
+        outputs: type[Any] | None = None,
+    ) -> SpecHandle:
+        """
+        Register workflow spec, return handle for later factory attachment.
+
+        This is the first phase of two-phase registration. The spec is registered
+        with explicit parameters and a handle is returned that can be used later
+        to attach the factory implementation.
+
+        Parameters
+        ----------
+        namespace:
+            Namespace for the workflow (default: 'data_reduction').
+        name:
+            Name to register the workflow under.
+        version:
+            Version of the workflow.
+        title:
+            Title of the workflow for display in the UI.
+        description:
+            Optional description of the workflow.
+        source_names:
+            Optional list of source names that the workflow can handle.
+        params:
+            Optional Pydantic model class defining workflow parameters. Must be
+            explicit (not inferred from factory).
+        aux_sources:
+            Optional Pydantic model class defining auxiliary data sources.
+        outputs:
+            Optional Pydantic model class defining workflow outputs with metadata.
+
+        Returns
+        -------
+        Handle for attaching factory later.
+        """
+        spec = WorkflowSpec(
+            instrument=self.name,
+            namespace=namespace,
+            name=name,
+            version=version,
+            title=title,
+            description=description,
+            source_names=list(source_names or []),
+            params=params,
+            aux_sources=aux_sources,
+            outputs=outputs,
+        )
+        return self.workflow_factory.register_spec(spec)
 
     def register_workflow(
         self,

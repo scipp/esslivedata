@@ -1,5 +1,14 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""
+Detector data handler with heavy dependencies (ess.reduce.live.raw).
+
+This module contains factory implementations that require heavy imports.
+It should only be imported by backend services, not by frontend/specs modules.
+
+For lightweight spec registration, use detector_view_specs.py instead.
+"""
+
 from __future__ import annotations
 
 import pathlib
@@ -9,39 +18,23 @@ from collections.abc import Callable, Hashable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-import pydantic
 import scipp as sc
 
 from ess.reduce.live import raw
 
-from .. import parameter_models
 from ..config import models
 from ..config.instrument import Instrument
 from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import DetectorEvents, GroupIntoPixels, ROIBasedTOAHistogram
+from .detector_view_specs import DetectorViewParams, ROIHistogramParams, SpecHandle
 from .workflow_factory import Workflow
-
-
-class DetectorViewParams(pydantic.BaseModel):
-    pixel_weighting: models.PixelWeighting = pydantic.Field(
-        title="Pixel Weighting",
-        description="Whether to apply pixel weighting based on the number of pixels "
-        "contributing to each screen pixel.",
-        default=models.PixelWeighting(
-            enabled=False, method=models.WeightingMethod.PIXEL_NUMBER
-        ),
-    )
-    # TODO split out the enabled flag?
-    toa_range: parameter_models.TOARange = pydantic.Field(
-        title="Time of Arrival Range",
-        description="Time of arrival range for detector data.",
-        default=parameter_models.TOARange(),
-    )
 
 
 @dataclass(frozen=True, kw_only=True)
 class ViewConfig:
+    """Configuration for a detector view."""
+
     name: str
     title: str
     description: str
@@ -49,11 +42,17 @@ class ViewConfig:
 
 
 class DetectorProcessorFactory(ABC):
+    """
+    Base class for detector processor factories.
+
+    This class no longer auto-registers workflows in __init__.
+    Use attach_to_handles() to explicitly attach factories to handles.
+    """
+
     def __init__(self, *, instrument: Instrument, config: ViewConfig) -> None:
         self._instrument = instrument
         self._config = config
         self._window_length = 1
-        self._register_with_instrument(instrument)
 
     def make_view(self, source_name: str, params: DetectorViewParams) -> DetectorView:
         """Factory method that will be registered as a workflow creation function."""
@@ -67,23 +66,21 @@ class DetectorProcessorFactory(ABC):
             params=params, detector_view=self._make_rolling_view(source_name)
         )
 
-    def _register_with_instrument(self, instrument: Instrument) -> None:
-        instrument.register_workflow(
-            namespace='detector_data',
-            name=self._config.name,
-            version=1,
-            title=self._config.title,
-            description=self._config.description,
-            source_names=self._config.source_names,
-        )(self.make_view)
-        instrument.register_workflow(
-            namespace='detector_data',
-            name=f'{self._config.name}_roi',
-            version=1,
-            title=f'ROI Histogram: {self._config.title} ',
-            description=f'ROI Histogram for {self._config.description}',
-            source_names=self._config.source_names,
-        )(self.make_roi)
+    def attach_to_handles(
+        self, *, view_handle: SpecHandle, roi_handle: SpecHandle
+    ) -> None:
+        """
+        Attach factory methods to handles from spec registration.
+
+        Parameters
+        ----------
+        view_handle:
+            Handle for the view workflow spec.
+        roi_handle:
+            Handle for the ROI histogram workflow spec.
+        """
+        view_handle.attach_factory()(self.make_view)
+        roi_handle.attach_factory()(self.make_roi)
 
     @abstractmethod
     def _make_rolling_view(self, source_name: str) -> raw.RollingDetectorView:
@@ -156,40 +153,6 @@ class DetectorLogicalView(DetectorProcessorFactory):
             window=self._window_length,
             projection=self._config.transform,
         )
-
-
-class LimitedRange(parameter_models.RangeModel):
-    """Model for a limited range between 0 and 1."""
-
-    start: float = parameter_models.Field(
-        ge=0.0, le=1.0, default=0.0, description="Start of the range."
-    )
-    stop: float = parameter_models.Field(
-        ge=0.0, le=1.0, default=1.0, description="Stop of the range."
-    )
-
-
-class ROIHistogramParams(pydantic.BaseModel):
-    x_range: LimitedRange = pydantic.Field(
-        title="X Range",
-        description="X range of the ROI as a fraction of the viewport.",
-        default=LimitedRange(start=0.0, stop=1.0),
-    )
-    y_range: LimitedRange = pydantic.Field(
-        title="Y Range",
-        description="Y range of the ROI as a fraction of the viewport.",
-        default=LimitedRange(start=0.0, stop=1.0),
-    )
-    toa_edges: parameter_models.TOAEdges = pydantic.Field(
-        title="Time of Arrival Edges",
-        description="Time of arrival edges for histogramming.",
-        default=parameter_models.TOAEdges(
-            start=0.0,
-            stop=1000.0 / 14,
-            num_bins=100,
-            unit=parameter_models.TimeUnit.MS,
-        ),
-    )
 
 
 class ROIHistogram(Workflow):

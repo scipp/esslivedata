@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Service that processes detector event data into 2-D data for plotting."""
 
+import importlib
 import logging
 from typing import NoReturn
 
@@ -23,7 +24,19 @@ def make_detector_service_builder(
         .with_livedata_config_route()
         .build()
     )
-    _ = get_config(instrument)  # Load the module to register the instrument
+    # Load specs (lightweight)
+    _ = get_config(instrument)
+
+    # Load factories (heavy) - backend services need both specs and factories
+    try:
+        importlib.import_module(
+            f'ess.livedata.config.instruments.{instrument}.factories'
+        )
+    except ModuleNotFoundError:
+        # Instrument may not have been converted to submodule structure yet
+        # or may not need separate factories (already loaded by get_config)
+        pass
+
     service_name = 'detector_data'
     preprocessor_factory = DetectorHandlerFactory(
         instrument=instrument_registry[instrument]

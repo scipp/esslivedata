@@ -285,3 +285,116 @@ class TestInstrument:
 
         workflow_names = {spec.name for spec in specs.values()}
         assert workflow_names == {"workflow1", "workflow2"}
+
+
+class TestInstrumentRegisterSpec:
+    """Test the new register_spec() convenience method for two-phase registration."""
+
+    def test_register_spec_returns_handle(self):
+        """Test that register_spec() returns a SpecHandle."""
+        from ess.livedata.handlers.workflow_factory import SpecHandle
+
+        instrument = Instrument(name="test_instrument")
+
+        handle = instrument.register_spec(
+            name="test_workflow", version=1, title="Test Workflow"
+        )
+
+        assert isinstance(handle, SpecHandle)
+
+    def test_register_spec_with_all_params(self):
+        """Test register_spec() with all parameters."""
+        import pydantic
+
+        from ess.livedata.handlers.workflow_factory import SpecHandle
+
+        class MyParams(pydantic.BaseModel):
+            value: int
+
+        class MyAuxSources(pydantic.BaseModel):
+            monitor: str
+
+        class MyOutputs(pydantic.BaseModel):
+            result: int
+
+        instrument = Instrument(name="test_instrument")
+
+        handle = instrument.register_spec(
+            namespace="custom_namespace",
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            description="Test description",
+            source_names=["source1", "source2"],
+            params=MyParams,
+            aux_sources=MyAuxSources,
+            outputs=MyOutputs,
+        )
+
+        assert isinstance(handle, SpecHandle)
+
+        # Verify spec was registered
+        spec_id = handle.workflow_id
+        spec = instrument.workflow_factory[spec_id]
+        assert spec.instrument == "test_instrument"
+        assert spec.namespace == "custom_namespace"
+        assert spec.name == "test_workflow"
+        assert spec.version == 1
+        assert spec.title == "Test Workflow"
+        assert spec.description == "Test description"
+        assert spec.source_names == ["source1", "source2"]
+        assert spec.params is MyParams
+        assert spec.aux_sources is MyAuxSources
+        assert spec.outputs is MyOutputs
+
+    def test_register_spec_with_defaults(self):
+        """Test register_spec() with default values."""
+        instrument = Instrument(name="test_instrument")
+
+        handle = instrument.register_spec(
+            name="minimal_workflow", version=1, title="Minimal"
+        )
+
+        spec = instrument.workflow_factory[handle.workflow_id]
+        assert spec.namespace == "data_reduction"  # default
+        assert spec.description == ""  # default
+        assert spec.source_names == []  # default
+        assert spec.params is None  # default
+        assert spec.aux_sources is None  # default
+        assert spec.outputs is None  # default
+
+    def test_register_spec_then_attach_factory(self):
+        """Test two-phase registration via Instrument.register_spec()."""
+        import pydantic
+
+        class MyParams(pydantic.BaseModel):
+            value: int
+
+        instrument = Instrument(name="test_instrument")
+
+        handle = instrument.register_spec(
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            params=MyParams,
+        )
+
+        @handle.attach_factory()
+        def factory(*, params: MyParams) -> Workflow:
+            class MockProcessor(Workflow):
+                def __call__(self, *args, **kwargs):
+                    return {"value": params.value}
+
+            return MockProcessor()
+
+        # Verify factory was attached
+        from ess.livedata.config.workflow_spec import WorkflowConfig
+
+        config = WorkflowConfig(identifier=handle.workflow_id, params={"value": 42})
+        processor = instrument.workflow_factory.create(
+            source_name="any-source", config=config
+        )
+        # Verify processor has the Workflow protocol methods
+        assert hasattr(processor, 'accumulate')
+        assert hasattr(processor, 'finalize')
+        assert hasattr(processor, 'clear')
