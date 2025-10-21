@@ -140,20 +140,28 @@ class Instrument:
         name:
             Name to register the workflow under.
         version:
-            Version of the workflow.
+            Version of the workflow. This is used to differentiate between different
+            versions of the same workflow.
         title:
-            Title of the workflow for display in the UI.
+            Title of the workflow. This is used for display in the UI.
         description:
             Optional description of the workflow.
         source_names:
-            Optional list of source names that the workflow can handle.
+            Optional list of source names that the workflow can handle. This is used to
+            create a workflow specification.
         params:
             Optional Pydantic model class defining workflow parameters. Must be
             explicit (not inferred from factory).
         aux_sources:
-            Optional Pydantic model class defining auxiliary data sources.
+            Optional Pydantic model class defining auxiliary data sources. If provided,
+            this will be used for validation and UI generation. The auxiliary source
+            configuration is handled by the Job layer and is not passed to the workflow
+            factory function.
         outputs:
             Optional Pydantic model class defining workflow outputs with metadata.
+            Field names should be simplified identifiers (e.g., 'i_of_d_two_theta')
+            that match keys returned by workflow.finalize(). Field metadata (title,
+            description) provides human-readable information for the UI.
 
         Returns
         -------
