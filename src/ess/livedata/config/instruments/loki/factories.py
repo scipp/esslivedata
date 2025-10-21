@@ -35,13 +35,8 @@ from ess.sans.types import (
     Transmission,
 )
 
-from .specs import (
-    SansWorkflowParams,
-    i_of_q_handle,
-    i_of_q_with_params_handle,
-    monitor_workflow_handle,
-    xy_projection_handles,
-)
+from . import specs
+from .specs import SansWorkflowParams
 
 # Get instrument from registry (already registered by specs.py)
 instrument = instrument_registry['loki']
@@ -78,14 +73,14 @@ _xy_projection = DetectorProjection(
 
 
 # Attach detector view factory
-@xy_projection_handles['xy_plane']['view'].attach_factory()
+@specs.xy_projection_handles['xy_plane']['view'].attach_factory()
 def _xy_projection_view_factory(source_name: str, params: DetectorViewParams):
     """Factory for XY projection detector view."""
     return _xy_projection.make_view(source_name, params=params)
 
 
 # Attach ROI histogram factory
-@xy_projection_handles['xy_plane']['roi'].attach_factory()
+@specs.xy_projection_handles['xy_plane']['roi'].attach_factory()
 def _xy_projection_roi_factory(source_name: str, params: ROIHistogramParams):
     """Factory for XY projection ROI histogram."""
     return _xy_projection.make_roi(source_name, params=params)
@@ -116,7 +111,7 @@ _accumulators = (
 
 
 # Attach I(Q) workflow factory
-@i_of_q_handle.attach_factory()
+@specs.i_of_q_handle.attach_factory()
 def _i_of_q_factory(source_name: str) -> StreamProcessorWorkflow:
     """Factory for basic I(Q) workflow."""
     wf = _base_workflow.copy()
@@ -130,7 +125,7 @@ def _i_of_q_factory(source_name: str) -> StreamProcessorWorkflow:
 
 
 # Attach I(Q) with params workflow factory
-@i_of_q_with_params_handle.attach_factory()
+@specs.i_of_q_with_params_handle.attach_factory()
 def _i_of_q_with_params_factory(
     source_name: str, params: SansWorkflowParams
 ) -> StreamProcessorWorkflow:
@@ -159,4 +154,4 @@ def _i_of_q_with_params_factory(
 
 
 # Attach monitor workflow factory
-attach_monitor_workflow_factory(monitor_workflow_handle)
+attach_monitor_workflow_factory(specs.monitor_workflow_handle)

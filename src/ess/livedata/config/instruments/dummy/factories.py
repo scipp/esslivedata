@@ -22,12 +22,7 @@ from ess.livedata.handlers.monitor_data_handler import attach_monitor_workflow_f
 from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 from ess.livedata.handlers.timeseries_handler import attach_timeseries_workflow_factory
 
-from .specs import (
-    monitor_workflow_handle,
-    panel_0_view_handle,
-    timeseries_workflow_handle,
-    total_counts_handle,
-)
+from . import specs
 
 # Get instrument from registry (already registered by specs.py)
 instrument = instrument_registry['dummy']
@@ -50,7 +45,7 @@ _panel_0_config = LogicalViewConfig(
 _panel_0_view = DetectorLogicalView(instrument=instrument, config=_panel_0_config)
 
 
-@panel_0_view_handle.attach_factory()
+@specs.panel_0_view_handle.attach_factory()
 def _panel_0_view_factory(source_name: str, params: DetectorViewParams):
     """Factory for panel_0 detector view."""
     return _panel_0_view.make_view(source_name, params=params)
@@ -69,7 +64,7 @@ def _total_counts(events: Events) -> TotalCounts:
 _total_counts_workflow = sciline.Pipeline((_total_counts,))
 
 
-@total_counts_handle.attach_factory()
+@specs.total_counts_handle.attach_factory()
 def _total_counts_processor() -> StreamProcessorWorkflow:
     """Dummy processor for development and testing."""
     return StreamProcessorWorkflow(
@@ -81,5 +76,5 @@ def _total_counts_processor() -> StreamProcessorWorkflow:
 
 
 # Attach monitor and timeseries workflow factories
-attach_monitor_workflow_factory(monitor_workflow_handle)
-attach_timeseries_workflow_factory(timeseries_workflow_handle)
+attach_monitor_workflow_factory(specs.monitor_workflow_handle)
+attach_timeseries_workflow_factory(specs.timeseries_workflow_handle)

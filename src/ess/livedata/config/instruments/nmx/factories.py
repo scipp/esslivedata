@@ -17,7 +17,7 @@ from ess.livedata.handlers.detector_data_handler import (
 from ess.livedata.handlers.detector_view_specs import DetectorViewParams
 from ess.livedata.handlers.monitor_data_handler import attach_monitor_workflow_factory
 
-from .specs import monitor_workflow_handle, panel_xy_view_handle
+from . import specs
 
 # Get instrument from registry (already registered by specs.py)
 instrument = instrument_registry['nmx']
@@ -44,11 +44,11 @@ _nmx_panels_config = LogicalViewConfig(
 _nmx_panels_view = DetectorLogicalView(instrument=instrument, config=_nmx_panels_config)
 
 
-@panel_xy_view_handle.attach_factory()
+@specs.panel_xy_view_handle.attach_factory()
 def _panel_xy_view_factory(source_name: str, params: DetectorViewParams):
     """Factory for panel_xy detector view."""
     return _nmx_panels_view.make_view(source_name, params=params)
 
 
 # Attach monitor workflow factory
-attach_monitor_workflow_factory(monitor_workflow_handle)
+attach_monitor_workflow_factory(specs.monitor_workflow_handle)

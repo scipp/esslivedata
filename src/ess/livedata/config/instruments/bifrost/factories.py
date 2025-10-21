@@ -49,6 +49,7 @@ from ess.spectroscopy.types import (
     TimeOfFlightLookupTableFilename,
 )
 
+from . import specs
 from .specs import (
     ArcEnergy,
     BifrostCustomElasticQMapParams,
@@ -57,14 +58,6 @@ from .specs import (
     BifrostWorkflowParams,
     DetectorRatemeterParams,
     DetectorRatemeterRegionParams,
-    detector_ratemeter_handle,
-    elastic_qmap_custom_handle,
-    elastic_qmap_handle,
-    monitor_workflow_handle,
-    qmap_handle,
-    spectrum_view_handle,
-    timeseries_workflow_handle,
-    unified_detector_view_handle,
 )
 from .streams import detector_number
 
@@ -104,7 +97,7 @@ _logical_view = DetectorLogicalView(
 )
 
 
-@unified_detector_view_handle.attach_factory()
+@specs.unified_detector_view_handle.attach_factory()
 def _unified_detector_view_factory(source_name: str, params: DetectorViewParams):
     """Factory for unified detector view."""
     return _logical_view.make_view(source_name, params=params)
@@ -240,7 +233,7 @@ reduction_workflow.insert(_make_spectrum_view)
 reduction_workflow.insert(_detector_ratemeter)
 
 
-@spectrum_view_handle.attach_factory()
+@specs.spectrum_view_handle.attach_factory()
 def _spectrum_view_workflow(params: BifrostWorkflowParams) -> StreamProcessorWorkflow:
     wf = reduction_workflow.copy()
     view_params = params.spectrum_view
@@ -254,7 +247,7 @@ def _spectrum_view_workflow(params: BifrostWorkflowParams) -> StreamProcessorWor
     )
 
 
-@detector_ratemeter_handle.attach_factory()
+@specs.detector_ratemeter_handle.attach_factory()
 def _detector_ratemeter_workflow(
     params: DetectorRatemeterParams,
 ) -> StreamProcessorWorkflow:
@@ -306,7 +299,7 @@ def _make_cut_stream_processor(workflow: sciline.Pipeline) -> StreamProcessorWor
     )
 
 
-@qmap_handle.attach_factory()
+@specs.qmap_handle.attach_factory()
 def _qmap_workflow(params: BifrostQMapParams) -> StreamProcessorWorkflow:
     wf = _get_q_cut_workflow()
     q_bins = params.q_edges.get_edges()
@@ -328,7 +321,7 @@ def _qmap_workflow(params: BifrostQMapParams) -> StreamProcessorWorkflow:
     return _make_cut_stream_processor(wf)
 
 
-@elastic_qmap_handle.attach_factory()
+@specs.elastic_qmap_handle.attach_factory()
 def _elastic_qmap_workflow(
     params: BifrostElasticQMapParams,
 ) -> StreamProcessorWorkflow:
@@ -348,7 +341,7 @@ def _elastic_qmap_workflow(
     return _make_cut_stream_processor(wf)
 
 
-@elastic_qmap_custom_handle.attach_factory()
+@specs.elastic_qmap_custom_handle.attach_factory()
 def _custom_elastic_qmap_workflow(
     params: BifrostCustomElasticQMapParams,
 ) -> StreamProcessorWorkflow:
@@ -371,5 +364,5 @@ def _custom_elastic_qmap_workflow(
 
 
 # Attach monitor and timeseries workflow factories
-attach_monitor_workflow_factory(monitor_workflow_handle)
-attach_timeseries_workflow_factory(timeseries_workflow_handle)
+attach_monitor_workflow_factory(specs.monitor_workflow_handle)
+attach_timeseries_workflow_factory(specs.timeseries_workflow_handle)

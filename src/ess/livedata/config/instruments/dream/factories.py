@@ -35,18 +35,8 @@ from ess.reduce.nexus.types import (
     VanadiumRun,
 )
 
-from .specs import (
-    PowderWorkflowParams,
-    cylinder_roi_handle,
-    cylinder_view_handle,
-    mantle_front_layer_handle,
-    mantle_wire_view_handle,
-    monitor_workflow_handle,
-    powder_reduction_handle,
-    powder_reduction_with_vanadium_handle,
-    xy_roi_handle,
-    xy_view_handle,
-)
+from . import specs
+from .specs import PowderWorkflowParams
 
 # Get instrument from registry (already registered by specs.py)
 instrument = instrument_registry['dream']
@@ -81,10 +71,12 @@ _xy_projection = DetectorProjection(
 
 # Attach detector view factories using handles from specs
 _cylinder_projection.attach_to_handles(
-    view_handle=cylinder_view_handle, roi_handle=cylinder_roi_handle
+    view_handle=specs.cylinder_view_handle, roi_handle=specs.cylinder_roi_handle
 )
 
-_xy_projection.attach_to_handles(view_handle=xy_view_handle, roi_handle=xy_roi_handle)
+_xy_projection.attach_to_handles(
+    view_handle=specs.xy_view_handle, roi_handle=specs.xy_roi_handle
+)
 
 
 # Bank sizes for mantle detector logical views
@@ -147,13 +139,13 @@ _mantle_wire_view = DetectorLogicalView(
 
 # Attach logical view factories
 # Note: Logical views only have view handles, no ROI handles
-@mantle_front_layer_handle.attach_factory()
+@specs.mantle_front_layer_handle.attach_factory()
 def _mantle_front_layer_factory(source_name: str, params: DetectorViewParams):
     """Factory for mantle front layer logical view."""
     return _mantle_front_layer_view.make_view(source_name, params=params)
 
 
-@mantle_wire_view_handle.attach_factory()
+@specs.mantle_wire_view_handle.attach_factory()
 def _mantle_wire_view_factory(source_name: str, params: DetectorViewParams):
     """Factory for mantle wire view logical view."""
     return _mantle_wire_view.make_view(source_name, params=params)
@@ -216,7 +208,7 @@ _reduction_workflow[powder.types.KeepEvents[SampleRun]] = powder.types.KeepEvent
 _reduction_workflow[Filename[SampleRun]] = get_nexus_geometry_filename('dream-no-shape')
 
 
-@powder_reduction_handle.attach_factory()
+@specs.powder_reduction_handle.attach_factory()
 def _powder_workflow_factory(source_name: str, params: PowderWorkflowParams):
     """Factory for DREAM powder reduction workflow."""
     wf = _reduction_workflow.copy()
@@ -249,7 +241,7 @@ def _powder_workflow_factory(source_name: str, params: PowderWorkflowParams):
     )
 
 
-@powder_reduction_with_vanadium_handle.attach_factory()
+@specs.powder_reduction_with_vanadium_handle.attach_factory()
 def _powder_workflow_with_vanadium_factory(
     source_name: str, params: PowderWorkflowParams
 ):
@@ -288,4 +280,4 @@ def _powder_workflow_with_vanadium_factory(
 
 
 # Attach monitor workflow factory
-attach_monitor_workflow_factory(monitor_workflow_handle)
+attach_monitor_workflow_factory(specs.monitor_workflow_handle)
