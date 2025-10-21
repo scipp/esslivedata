@@ -5,28 +5,13 @@ from __future__ import annotations
 from collections.abc import Hashable
 
 import numpy as np
-import pydantic
 import scipp as sc
 
-from .. import parameter_models
-from ..config.instrument import Instrument
 from ..core.handler import JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import Accumulator, CollectTOA, Cumulative, MonitorEvents
-from .workflow_factory import Workflow
-
-
-class MonitorDataParams(pydantic.BaseModel):
-    toa_edges: parameter_models.TOAEdges = pydantic.Field(
-        title="Time of Arrival Edges",
-        description="Time of arrival edges for histogramming.",
-        default=parameter_models.TOAEdges(
-            start=0.0,
-            stop=1000.0 / 14,
-            num_bins=100,
-            unit=parameter_models.TimeUnit.MS,
-        ),
-    )
+from .monitor_workflow_specs import MonitorDataParams
+from .workflow_factory import SpecHandle, Workflow
 
 
 class MonitorStreamProcessor(Workflow):
@@ -85,18 +70,19 @@ def _monitor_data_workflow(params: MonitorDataParams) -> Workflow:
     return MonitorStreamProcessor(edges=params.toa_edges.get_edges())
 
 
-def register_monitor_workflows(instrument: Instrument, source_names: list[str]) -> None:
-    """Create an Instrument with workflows for beam monitor processing."""
-    register = instrument.register_workflow(
-        namespace='monitor_data',
-        name='monitor_histogram',
-        version=1,
-        title="Beam monitor data",
-        description="Histogrammed and time-integrated beam monitor data. The monitor "
-        "is histogrammed or rebinned into specified time-of-arrival (TOA) bins.",
-        source_names=source_names,
-    )
-    register(_monitor_data_workflow)
+def attach_monitor_workflow_factory(handle: SpecHandle) -> None:
+    """
+    Attach monitor workflow factory to the spec handle (heavy dependencies).
+
+    This is the second phase of two-phase registration. Call this from
+    instrument factories.py modules.
+
+    Parameters
+    ----------
+    handle
+        The spec handle returned by register_monitor_workflow_specs().
+    """
+    handle.attach_factory()(_monitor_data_workflow)
 
 
 class MonitorHandlerFactory(

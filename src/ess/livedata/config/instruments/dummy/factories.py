@@ -18,9 +18,16 @@ from ess.livedata.handlers.detector_data_handler import (
     LogicalViewConfig,
 )
 from ess.livedata.handlers.detector_view_specs import DetectorViewParams
+from ess.livedata.handlers.monitor_data_handler import attach_monitor_workflow_factory
 from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
+from ess.livedata.handlers.timeseries_handler import attach_timeseries_workflow_factory
 
-from .specs import panel_0_view_handle, total_counts_handle
+from .specs import (
+    monitor_workflow_handle,
+    panel_0_view_handle,
+    timeseries_workflow_handle,
+    total_counts_handle,
+)
 
 # Get instrument from registry (already registered by specs.py)
 instrument = instrument_registry['dummy']
@@ -71,3 +78,8 @@ def _total_counts_processor() -> StreamProcessorWorkflow:
         target_keys={'total_counts': TotalCounts},
         accumulators=(TotalCounts,),
     )
+
+
+# Attach monitor and timeseries workflow factories
+attach_monitor_workflow_factory(monitor_workflow_handle)
+attach_timeseries_workflow_factory(timeseries_workflow_handle)

@@ -13,8 +13,9 @@ from ess.livedata.handlers.monitor_data_handler import (
     MonitorDataParams,
     MonitorHandlerFactory,
     MonitorStreamProcessor,
-    register_monitor_workflows,
+    attach_monitor_workflow_factory,
 )
+from ess.livedata.handlers.monitor_workflow_specs import register_monitor_workflow_specs
 from ess.livedata.parameter_models import TimeUnit, TOAEdges
 
 
@@ -206,10 +207,11 @@ def test_instrument():
 
 
 def test_make_beam_monitor_instrument(test_instrument):
-    """Test register_monitor_workflows function."""
+    """Test register_monitor_workflow_specs function."""
     source_names = ["source1", "source2"]
 
-    register_monitor_workflows(test_instrument, source_names)
+    handle = register_monitor_workflow_specs(test_instrument, source_names)
+    attach_monitor_workflow_factory(handle)
 
     factory = test_instrument.workflow_factory
 
@@ -229,7 +231,8 @@ class TestMonitorHandlerFactory:
     @pytest.fixture
     def mock_instrument(self, test_instrument):
         """Create a mock instrument for testing."""
-        register_monitor_workflows(test_instrument, ["source1"])
+        handle = register_monitor_workflow_specs(test_instrument, ["source1"])
+        attach_monitor_workflow_factory(handle)
         return test_instrument
 
     @pytest.fixture

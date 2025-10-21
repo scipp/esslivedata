@@ -22,6 +22,7 @@ from ess.livedata.handlers.detector_view_specs import (
     DetectorViewParams,
     ROIHistogramParams,
 )
+from ess.livedata.handlers.monitor_data_handler import attach_monitor_workflow_factory
 from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 from ess.reduce.nexus.types import NeXusData, NeXusDetectorName, SampleRun
 from ess.sans import types as sans_types
@@ -38,6 +39,7 @@ from .specs import (
     SansWorkflowParams,
     i_of_q_handle,
     i_of_q_with_params_handle,
+    monitor_workflow_handle,
     xy_projection_handles,
 )
 
@@ -154,3 +156,7 @@ def _i_of_q_with_params_factory(
         target_keys=target_keys,
         accumulators=_accumulators,
     )
+
+
+# Attach monitor workflow factory
+attach_monitor_workflow_factory(monitor_workflow_handle)

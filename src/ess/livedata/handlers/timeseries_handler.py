@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Hashable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import scipp as sc
 
-from ..config.instrument import Instrument
 from ..core.handler import JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId
 from .accumulators import LogData
 from .to_nxlog import ToNXlog
-from .workflow_factory import Workflow
+from .workflow_factory import SpecHandle, Workflow
+
+if TYPE_CHECKING:
+    from ..config.instrument import Instrument
 
 
 class TimeseriesStreamProcessor(Workflow):
@@ -39,19 +41,19 @@ def _timeseries_workflow() -> Workflow:
     return TimeseriesStreamProcessor()
 
 
-def register_timeseries_workflows(
-    instrument: Instrument, source_names: list[str]
-) -> None:
-    """Create an Instrument with workflows for timeseries processing."""
-    register = instrument.register_workflow(
-        namespace='timeseries',
-        name='timeseries_data',
-        version=1,
-        title="Timeseries data",
-        description="Accumulated log data as timeseries.",
-        source_names=source_names,
-    )
-    register(_timeseries_workflow)
+def attach_timeseries_workflow_factory(handle: SpecHandle) -> None:
+    """
+    Attach timeseries workflow factory to the spec handle (heavy dependencies).
+
+    This is the second phase of two-phase registration. Call this from
+    instrument factories.py modules.
+
+    Parameters
+    ----------
+    handle
+        The spec handle returned by register_timeseries_workflow_specs().
+    """
+    handle.attach_factory()(_timeseries_workflow)
 
 
 class LogdataHandlerFactory(JobBasedPreprocessorFactoryBase[LogData, sc.DataArray]):

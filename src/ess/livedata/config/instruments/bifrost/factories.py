@@ -29,7 +29,9 @@ from ess.livedata.handlers.detector_data_handler import (
     get_nexus_geometry_filename,
 )
 from ess.livedata.handlers.detector_view_specs import DetectorViewParams
+from ess.livedata.handlers.monitor_data_handler import attach_monitor_workflow_factory
 from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
+from ess.livedata.handlers.timeseries_handler import attach_timeseries_workflow_factory
 from ess.reduce.nexus.types import (
     CalibratedBeamline,
     DetectorData,
@@ -58,8 +60,10 @@ from .specs import (
     detector_ratemeter_handle,
     elastic_qmap_custom_handle,
     elastic_qmap_handle,
+    monitor_workflow_handle,
     qmap_handle,
     spectrum_view_handle,
+    timeseries_workflow_handle,
     unified_detector_view_handle,
 )
 from .streams import detector_number
@@ -364,3 +368,8 @@ def _custom_elastic_qmap_workflow(
     wf[CutAxis1] = axis1
     wf[CutAxis2] = axis2
     return _make_cut_stream_processor(wf)
+
+
+# Attach monitor and timeseries workflow factories
+attach_monitor_workflow_factory(monitor_workflow_handle)
+attach_timeseries_workflow_factory(timeseries_workflow_handle)

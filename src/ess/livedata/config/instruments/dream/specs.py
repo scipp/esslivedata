@@ -20,13 +20,15 @@ from ess.livedata.handlers.detector_view_specs import (
     DetectorViewParams,
     register_detector_view_specs,
 )
-from ess.livedata.handlers.monitor_data_handler import register_monitor_workflows
+from ess.livedata.handlers.monitor_workflow_specs import register_monitor_workflow_specs
 
 # Create instrument
 instrument = Instrument(name='dream')
 
 # Register monitor workflows
-register_monitor_workflows(instrument=instrument, source_names=['monitor1', 'monitor2'])
+monitor_workflow_handle = register_monitor_workflow_specs(
+    instrument=instrument, source_names=['monitor1', 'monitor2']
+)
 
 # Register instrument
 instrument_registry.register(instrument)

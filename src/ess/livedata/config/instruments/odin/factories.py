@@ -12,6 +12,9 @@ import scipp as sc
 
 from ess.livedata.config import instrument_registry
 from ess.livedata.handlers.detector_data_handler import DetectorProjection
+from ess.livedata.handlers.monitor_data_handler import attach_monitor_workflow_factory
+
+from .specs import monitor_workflow_handle
 
 # Get instrument from registry (already registered by specs.py)
 instrument = instrument_registry['odin']
@@ -69,3 +72,6 @@ def _resize_image(da: sc.DataArray) -> sc.DataArray:
 # def _panel_0_view_factory(source_name: str, params: DetectorViewParams):
 #     """Factory for timepix3 detector view."""
 #     return _panel_0_view.make_view(source_name, params=params)
+
+# Attach monitor workflow factory
+attach_monitor_workflow_factory(monitor_workflow_handle)

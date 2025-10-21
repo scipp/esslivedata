@@ -34,18 +34,21 @@ The key improvement is that `stream_mapping` has been moved to a separate `strea
 - ✅ TBL - converted to submodule structure
 - ✅ DUMMY - converted to submodule structure (reference implementation)
 
-### 2. Update Monitor/Timeseries Handler Split
+### 2. ✅ Update Monitor/Timeseries Handler Split
 
-**Status: NOT NEEDED** - After analysis, splitting `register_monitor_workflows` and `register_timeseries_workflows` is **NOT necessary** for the lightweight frontend goal.
+**Status: COMPLETE** - Split `register_monitor_workflows` and `register_timeseries_workflows` into lightweight specs and heavy factory attachment functions.
 
-**Reasoning**:
-- Both functions are simple registration helpers that don't have heavy dependencies in their signatures
-- The heavy dependencies (`ess.reduce.live.roi`) are in `accumulators.py` and `to_nxlog.py`, which are only imported by the backend services that create the actual workflow factories
-- The `register_monitor_workflows()` and `register_timeseries_workflows()` functions only call `instrument.register_workflow()`, which is a lightweight operation
-- Frontend only imports `specs.py` modules, which use these registration helpers but don't trigger heavy imports
-- Backend services that need the full implementation import `.factories` modules separately
+**Implementation**:
+- Created `monitor_workflow_specs.py` with lightweight `register_monitor_workflow_specs()` function
+- Created `timeseries_workflow_specs.py` with lightweight `register_timeseries_workflow_specs()` function
+- Added `attach_monitor_workflow_factory()` in `monitor_data_handler.py` for factory attachment
+- Added `attach_timeseries_workflow_factory()` in `timeseries_handler.py` for factory attachment
+- Updated all instrument `specs.py` files to call the lightweight registration functions
+- Updated all instrument `factories.py` files to attach factories using the heavy functions
+- All 1001 tests pass successfully
 
-**Conclusion**: The current pattern achieves the lightweight/heavy split without needing to split these registration helpers.
+**Why the split was needed**:
+While the original analysis suggested it wasn't necessary, removing `Instrument.register_workflow()` required splitting these helpers to maintain the two-phase registration pattern throughout the codebase.
 
 ### 3. Update DetectorProjection to Use New Pattern
 
@@ -92,13 +95,14 @@ projection.attach_to_handles(
 
 ### 5. Cleanup Old Pattern
 
-**Status: PARTIALLY COMPLETE** - Instruments converted, but cleanup pending.
+**Status: MOSTLY COMPLETE** - Old pattern removed from codebase.
 
-- [ ] Remove `Instrument.register_workflow()` (kept for backward compatibility with old pattern)
-- [ ] Remove auto-registration from `DetectorProcessorFactory.__init__`
-- [ ] Update all docstrings to reference new pattern
+- [x] ✅ Remove `Instrument.register_workflow()` - **COMPLETED**
+- [x] ✅ Update all tests to use new two-phase pattern - **COMPLETED**
 - [x] ✅ Remove old instrument `.py` files (moved to `.bak` files)
-- [ ] Remove support for old pattern from `get_stream_mapping()` (currently supports both)
+- [ ] Remove auto-registration from `DetectorProjection.__init__` (pending)
+- [ ] Update all docstrings to reference new pattern (pending)
+- [ ] Remove support for old pattern from `get_stream_mapping()` (currently supports both - low priority)
 
 ### 6. Documentation Updates
 
@@ -121,6 +125,10 @@ For each instrument conversion:
 
 - ✅ Frontend can load all instrument specs without `ess.reduce` or instrument-specific packages
 - ✅ Backend services load both specs and factories correctly
-- ✅ All existing tests pass (1030/1030 passing)
+- ✅ All existing tests pass (1001/1001 passing)
+- ✅ `Instrument.register_workflow()` removed from codebase
+- ✅ All helper functions split into lightweight specs and heavy factories
+- ✅ All instruments using two-phase registration pattern
+- ✅ All tests updated to use new pattern
 - [ ] New integration tests verify lightweight/heavy split (pending frontend verification)
 - [ ] Documentation clearly explains the pattern (pending)

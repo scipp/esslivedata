@@ -14,8 +14,10 @@ import scipp as sc
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import DetectorViewParams
-from ess.livedata.handlers.monitor_data_handler import register_monitor_workflows
-from ess.livedata.handlers.timeseries_handler import register_timeseries_workflows
+from ess.livedata.handlers.monitor_workflow_specs import register_monitor_workflow_specs
+from ess.livedata.handlers.timeseries_workflow_specs import (
+    register_timeseries_workflow_specs,
+)
 
 
 class TotalCountsOutputs(WorkflowOutputsBase):
@@ -33,8 +35,12 @@ instrument = Instrument(
 )
 
 # Register lightweight workflows (no heavy dependencies)
-register_monitor_workflows(instrument=instrument, source_names=['monitor1', 'monitor2'])
-register_timeseries_workflows(instrument=instrument, source_names=['motion1'])
+monitor_workflow_handle = register_monitor_workflow_specs(
+    instrument=instrument, source_names=['monitor1', 'monitor2']
+)
+timeseries_workflow_handle = register_timeseries_workflow_specs(
+    instrument=instrument, source_names=['motion1']
+)
 
 # Register instrument
 instrument_registry.register(instrument)

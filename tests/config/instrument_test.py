@@ -141,21 +141,12 @@ class TestInstrument:
             instrument.get_detector_number("detector2"), detector2_number
         )
 
-    def test_register_workflow_decorator(self):
-        """Test workflow registration decorator functionality."""
+    def test_register_spec_and_attach_factory(self):
+        """Test two-phase spec registration and factory attachment."""
         instrument = Instrument(name="test_instrument")
 
-        # Create a simple factory function
-        def simple_processor_factory(source_name: str) -> Workflow:
-            # Return a mock processor for testing
-            class MockProcessor(Workflow):
-                def __call__(self, *args, **kwargs):
-                    return {"source": source_name}
-
-            return MockProcessor()
-
-        # Register the workflow
-        decorator = instrument.register_workflow(
+        # Phase 1: Register spec
+        handle = instrument.register_spec(
             namespace="test_namespace",
             name="test_workflow",
             version=1,
@@ -164,13 +155,7 @@ class TestInstrument:
             source_names=["source1", "source2"],
         )
 
-        # Apply decorator
-        registered_factory = decorator(simple_processor_factory)
-
-        # Verify the factory is returned unchanged
-        assert registered_factory is simple_processor_factory
-
-        # Verify it was registered in the processor factory
+        # Verify spec is registered
         specs = instrument.workflow_factory
         assert len(specs) == 1
         spec = next(iter(specs.values()))
@@ -183,23 +168,29 @@ class TestInstrument:
         assert spec.source_names == ["source1", "source2"]
         assert spec.aux_sources is None
 
-    def test_register_workflow_with_defaults(self):
-        """Test workflow registration with default values."""
-        instrument = Instrument(name="test_instrument")
-
-        def simple_factory() -> Workflow:
+        # Phase 2: Attach factory
+        def simple_processor_factory(source_name: str) -> Workflow:
+            # Return a mock processor for testing
             class MockProcessor(Workflow):
                 def __call__(self, *args, **kwargs):
-                    return {}
+                    return {"source": source_name}
 
             return MockProcessor()
 
-        decorator = instrument.register_workflow(
+        # Attach factory using decorator
+        decorator = handle.attach_factory()
+        registered_factory = decorator(simple_processor_factory)
+
+        # Verify the factory is returned unchanged
+        assert registered_factory is simple_processor_factory
+
+    def test_register_spec_with_defaults(self):
+        """Test spec registration with default values."""
+        instrument = Instrument(name="test_instrument")
+
+        instrument.register_spec(
             name="minimal_workflow", version=1, title="Minimal Workflow"
         )
-
-        registered_factory = decorator(simple_factory)
-        assert registered_factory is simple_factory
 
         specs = instrument.workflow_factory
         assert len(specs) == 1
@@ -209,7 +200,7 @@ class TestInstrument:
         assert spec.source_names == []  # default
         assert spec.aux_sources is None  # default
 
-    def test_register_workflow_with_aux_sources_explicit(self):
+    def test_register_spec_with_aux_sources_explicit(self):
         """Test that aux_sources can be set explicitly."""
         from typing import Literal
 
@@ -221,22 +212,12 @@ class TestInstrument:
             monitor1: Literal['monitor1'] = 'monitor1'
             aux_stream: Literal['aux_stream'] = 'aux_stream'
 
-        def simple_factory() -> Workflow:
-            class MockProcessor(Workflow):
-                def __call__(self, *args, **kwargs):
-                    return {}
-
-            return MockProcessor()
-
-        decorator = instrument.register_workflow(
+        instrument.register_spec(
             name="workflow_with_aux",
             version=1,
             title="Workflow with Aux Sources",
             aux_sources=AuxSourcesModel,
         )
-
-        registered_factory = decorator(simple_factory)
-        assert registered_factory is simple_factory
 
         specs = instrument.workflow_factory
         assert len(specs) == 1
@@ -254,31 +235,13 @@ class TestInstrument:
         assert model_instance.monitor1 == 'monitor1'
         assert model_instance.aux_stream == 'aux_stream'
 
-    def test_multiple_workflow_registrations(self):
-        """Test registering multiple workflows."""
+    def test_multiple_spec_registrations(self):
+        """Test registering multiple specs."""
         instrument = Instrument(name="test_instrument")
 
-        def factory1() -> Workflow:
-            class MockProcessor(Workflow):
-                def __call__(self, *args, **kwargs):
-                    return {"workflow": 1}
-
-            return MockProcessor()
-
-        def factory2() -> Workflow:
-            class MockProcessor(Workflow):
-                def __call__(self, *args, **kwargs):
-                    return {"workflow": 2}
-
-            return MockProcessor()
-
-        # Register two workflows
-        instrument.register_workflow(name="workflow1", version=1, title="Workflow 1")(
-            factory1
-        )
-        instrument.register_workflow(name="workflow2", version=1, title="Workflow 2")(
-            factory2
-        )
+        # Register two specs
+        instrument.register_spec(name="workflow1", version=1, title="Workflow 1")
+        instrument.register_spec(name="workflow2", version=1, title="Workflow 2")
 
         specs = instrument.workflow_factory
         assert len(specs) == 2

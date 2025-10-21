@@ -23,6 +23,7 @@ from ess.livedata.handlers.detector_data_handler import (
     get_nexus_geometry_filename,
 )
 from ess.livedata.handlers.detector_view_specs import DetectorViewParams
+from ess.livedata.handlers.monitor_data_handler import attach_monitor_workflow_factory
 from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 from ess.reduce.nexus.types import (
     DetectorData,
@@ -40,6 +41,7 @@ from .specs import (
     cylinder_view_handle,
     mantle_front_layer_handle,
     mantle_wire_view_handle,
+    monitor_workflow_handle,
     powder_reduction_handle,
     powder_reduction_with_vanadium_handle,
     xy_roi_handle,
@@ -283,3 +285,7 @@ def _powder_workflow_with_vanadium_factory(
             powder.types.WavelengthMonitor[SampleRun, powder.types.CaveMonitor],
         ),
     )
+
+
+# Attach monitor workflow factory
+attach_monitor_workflow_factory(monitor_workflow_handle)
