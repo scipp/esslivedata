@@ -40,6 +40,8 @@ def setup_factories(instrument: Instrument):
         Transmission,
     )
 
+    # Created once outside workflow wrappers since this configures some files from pooch
+    # where a checksum is needed, which takes significant time.
     _base_workflow = loki.live._configured_Larmor_AgBeh_workflow()
     _base_workflow[Filename[SampleRun]] = get_nexus_geometry_filename('loki')
 
@@ -123,6 +125,7 @@ def setup_factories(instrument: Instrument):
             }
             wf.insert(_transmission_from_current_run)
         else:
+            # Transmission fraction is static, do not display
             target_keys = {'i_of_q': IofQ[SampleRun]}
         return StreamProcessorWorkflow(
             wf,
