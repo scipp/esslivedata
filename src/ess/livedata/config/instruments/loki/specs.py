@@ -13,7 +13,6 @@ from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import register_detector_view_specs
-from ess.livedata.handlers.monitor_workflow_specs import register_monitor_workflow_specs
 
 
 class SansWorkflowOptions(pydantic.BaseModel):
@@ -87,10 +86,10 @@ class SansWorkflowParams(pydantic.BaseModel):
 detector_names = [f'loki_detector_{bank}' for bank in range(9)]
 
 # Create instrument
-instrument = Instrument(name='loki')
-
-monitor_workflow_handle = register_monitor_workflow_specs(
-    instrument=instrument, source_names=['monitor1', 'monitor2']
+instrument = Instrument(
+    name='loki',
+    detector_names=detector_names,
+    monitors=['monitor1', 'monitor2'],
 )
 
 # Register instrument

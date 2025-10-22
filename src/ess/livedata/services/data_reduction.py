@@ -6,7 +6,6 @@ import logging
 from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
-from ess.livedata.config.instruments import load_factories
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.handlers.data_reduction_handler import ReductionHandlerFactory
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
@@ -25,8 +24,8 @@ def make_reduction_service_builder(
         .with_livedata_config_route()
         .build()
     )
-    load_factories(instrument)
     instrument_config = instrument_registry[instrument]
+    instrument_config.load_factories()
     service_name = 'data_reduction'
     preprocessor_factory = ReductionHandlerFactory(instrument=instrument_config)
     return DataServiceBuilder(

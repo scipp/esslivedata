@@ -50,12 +50,34 @@ class Instrument:
     """
 
     name: str
+    detector_names: list[str] = field(default_factory=list)
+    monitors: list[str] = field(default_factory=list)
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
     f144_attribute_registry: dict[str, dict[str, Any]] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
     _nexus_file: str | None = None
     active_namespace: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
+    _monitor_workflow_handle: SpecHandle | None = field(default=None, init=False)
+    _timeseries_workflow_handle: SpecHandle | None = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        """Auto-register standard workflow specs based on instrument metadata."""
+        from ess.livedata.handlers.monitor_workflow_specs import (
+            register_monitor_workflow_specs,
+        )
+        from ess.livedata.handlers.timeseries_workflow_specs import (
+            register_timeseries_workflow_specs,
+        )
+
+        self._monitor_workflow_handle = register_monitor_workflow_specs(
+            instrument=self, source_names=self.monitors
+        )
+
+        timeseries_names = list(self.f144_attribute_registry.keys())
+        self._timeseries_workflow_handle = register_timeseries_workflow_specs(
+            instrument=self, source_names=timeseries_names
+        )
 
     @property
     def nexus_file(self) -> str:
@@ -72,11 +94,6 @@ class Instrument:
                 ) from e
         return self._nexus_file
 
-    @property
-    def detector_names(self) -> list[str]:
-        """Get the names of all detectors registered in this instrument."""
-        return list(self._detector_numbers.keys())
-
     def get_detector_group_name(self, name: str) -> str:
         """
         Get the group name for a detector, defaulting to the detector name.
@@ -86,19 +103,39 @@ class Instrument:
         """
         return self._detector_group_names.get(name, name)
 
-    def add_detector(
+    def configure_detector(
         self,
         name: str,
         detector_number: sc.Variable | None = None,
         *,
         detector_group_name: str | None = None,
     ) -> None:
+        """
+        Configure detector-specific metadata.
+
+        Parameters
+        ----------
+        name
+            Name of the detector (must be in self.detector_names).
+        detector_number
+            Optional explicit detector_number array (e.g., computed arrays for NMX).
+        detector_group_name
+            Optional detector group name for nexus file loading.
+        """
+        if name not in self.detector_names:
+            raise ValueError(
+                f"Detector {name} not in declared detector_names. "
+                f"Available detectors: {self.detector_names}"
+            )
         if detector_number is not None:
             self._detector_numbers[name] = detector_number
             return
         if detector_group_name is not None:
             group_name = f'{detector_group_name}/{name}'
             self._detector_group_names[name] = group_name
+
+    def _load_detector_from_nexus(self, name: str) -> None:
+        """Load detector_number from nexus file."""
         candidate = snx.load(
             self.nexus_file,
             root=f'entry/instrument/{self.get_detector_group_name(name)}/detector_number',
@@ -106,9 +143,33 @@ class Instrument:
         if not isinstance(candidate, sc.Variable):
             raise ValueError(
                 f"Detector {name} not found in {self.nexus_file}. "
-                "Please provide a detector_number explicitly."
+                "Please provide a detector_number explicitly via configure_detector()."
             )
         self._detector_numbers[name] = candidate
+
+    def add_detector(
+        self,
+        name: str,
+        detector_number: sc.Variable | None = None,
+        *,
+        detector_group_name: str | None = None,
+    ) -> None:
+        """
+        Deprecated alias for configure_detector.
+
+        This method is kept for backward compatibility with instruments that
+        haven't been updated yet. It adds the detector name to detector_names
+        if not already present.
+        """
+        if name not in self.detector_names:
+            self.detector_names.append(name)
+        if detector_number is not None:
+            self._detector_numbers[name] = detector_number
+            return
+        if detector_group_name is not None:
+            group_name = f'{detector_group_name}/{name}'
+            self._detector_group_names[name] = group_name
+        self._load_detector_from_nexus(name)
 
     def get_detector_number(self, name: str) -> sc.Variable:
         return self._detector_numbers[name]
@@ -180,6 +241,41 @@ class Instrument:
             outputs=outputs,
         )
         return self.workflow_factory.register_spec(spec)
+
+    def load_factories(self) -> None:
+        """
+        Load and initialize instrument-specific factories.
+
+        This method:
+        1. Imports the instrument package (lightweight - just specs)
+        2. Auto-attaches standard factories if specs were registered
+        3. Calls instrument-specific setup_factories(self)
+        4. Auto-loads detector_numbers from nexus for unconfigured detectors
+        """
+        import importlib
+
+        module = importlib.import_module(f'ess.livedata.config.instruments.{self.name}')
+
+        if self._monitor_workflow_handle is not None:
+            from ess.livedata.handlers.monitor_data_handler import (
+                attach_monitor_workflow_factory,
+            )
+
+            attach_monitor_workflow_factory(self._monitor_workflow_handle)
+
+        if self._timeseries_workflow_handle is not None:
+            from ess.livedata.handlers.timeseries_handler import (
+                attach_timeseries_workflow_factory,
+            )
+
+            attach_timeseries_workflow_factory(self._timeseries_workflow_handle)
+
+        if hasattr(module, 'setup_factories'):
+            module.setup_factories(self)
+
+        for name in self.detector_names:
+            if name not in self._detector_numbers:
+                self._load_detector_from_nexus(name)
 
 
 instrument_registry = InstrumentRegistry()

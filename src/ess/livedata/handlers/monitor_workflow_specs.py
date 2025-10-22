@@ -28,12 +28,15 @@ class MonitorDataParams(pydantic.BaseModel):
 
 def register_monitor_workflow_specs(
     instrument: Instrument, source_names: list[str]
-) -> SpecHandle:
+) -> SpecHandle | None:
     """
     Register monitor workflow specs (lightweight, no heavy dependencies).
 
     This is the first phase of two-phase registration. Call this from
     instrument specs.py modules.
+
+    If the workflow is already registered (e.g., auto-registered in
+    Instrument.__post_init__()), returns the existing handle.
 
     Parameters
     ----------
@@ -41,11 +44,26 @@ def register_monitor_workflow_specs(
         The instrument to register the workflow specs for.
     source_names
         List of monitor names (source names) for which to register the workflow.
+        If empty, returns None without registering.
 
     Returns
     -------
-    SpecHandle for later factory attachment.
+    SpecHandle for later factory attachment, or None if no monitors.
     """
+    if not source_names:
+        return None
+
+    from ..config.workflow_spec import WorkflowId
+
+    workflow_id = WorkflowId(
+        instrument=instrument.name,
+        namespace='monitor_data',
+        name='monitor_histogram',
+        version=1,
+    )
+    if workflow_id in instrument.workflow_factory._workflow_specs:
+        return SpecHandle(workflow_id=workflow_id, _factory=instrument.workflow_factory)
+
     return instrument.register_spec(
         namespace='monitor_data',
         name='monitor_histogram',

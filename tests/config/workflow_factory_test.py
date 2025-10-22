@@ -35,16 +35,23 @@ def _collect_workflow_factories():
     for instrument_name in available_instruments():
         _ = get_config(instrument_name)  # Load specs
 
-        # Load factories for instruments using new submodule structure
+        instrument = instrument_registry[instrument_name]
+
+        # Try old pattern first (factories.py with module-level code)
         try:
             importlib.import_module(
                 f'ess.livedata.config.instruments.{instrument_name}.factories'
             )
         except ModuleNotFoundError:
-            # Instrument may not have been converted to submodule structure yet
             pass
 
-        instrument = instrument_registry[instrument_name]
+        # Always call load_factories() - handles both old and new patterns
+        try:
+            instrument.load_factories()
+        except Exception:  # noqa: S110
+            # Instrument may not have setup_factories() or may fail to load
+            pass
+
         workflows.extend(
             [
                 pytest.param(instrument_name, workflow_id, id=str(workflow_id))
