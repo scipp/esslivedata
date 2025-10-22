@@ -4,6 +4,6 @@
 Bifrost spectrometer configuration.
 """
 
-from . import specs, streams
+from .factories import setup_factories
 
-__all__ = ['specs', 'streams']
+__all__ = ['setup_factories']

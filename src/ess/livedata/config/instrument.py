@@ -275,7 +275,11 @@ class Instrument:
 
         for name in self.detector_names:
             if name not in self._detector_numbers:
-                self._load_detector_from_nexus(name)
+                try:
+                    self._load_detector_from_nexus(name)
+                except ValueError:
+                    # Nexus file not available or detector not in file
+                    pass
 
 
 instrument_registry = InstrumentRegistry()

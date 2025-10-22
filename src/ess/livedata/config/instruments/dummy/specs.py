@@ -10,10 +10,6 @@ import scipp as sc
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import DetectorViewParams
-from ess.livedata.handlers.monitor_workflow_specs import register_monitor_workflow_specs
-from ess.livedata.handlers.timeseries_workflow_specs import (
-    register_timeseries_workflow_specs,
-)
 
 
 class TotalCountsOutputs(WorkflowOutputsBase):
@@ -25,16 +21,13 @@ class TotalCountsOutputs(WorkflowOutputsBase):
     )
 
 
-# Create instrument
-instrument = Instrument(
-    name='dummy', f144_attribute_registry={'motion1': {'units': 'mm'}}
-)
+detector_names = ['panel_0']
 
-monitor_workflow_handle = register_monitor_workflow_specs(
-    instrument=instrument, source_names=['monitor1', 'monitor2']
-)
-timeseries_workflow_handle = register_timeseries_workflow_specs(
-    instrument=instrument, source_names=['motion1']
+instrument = Instrument(
+    name='dummy',
+    detector_names=detector_names,
+    monitors=['monitor1', 'monitor2'],
+    f144_attribute_registry={'motion1': {'units': 'mm'}},
 )
 
 # Register instrument

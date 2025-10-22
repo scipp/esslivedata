@@ -5,16 +5,15 @@ ODIN instrument spec registration.
 """
 
 from ess.livedata.config import Instrument, instrument_registry
-from ess.livedata.handlers.monitor_workflow_specs import register_monitor_workflow_specs
 
-# Create instrument
-instrument = Instrument(name='odin')
+detector_names = ['timepix3']
 
-monitor_workflow_handle = register_monitor_workflow_specs(
-    instrument=instrument, source_names=['monitor1', 'monitor2']
+instrument = Instrument(
+    name='odin',
+    detector_names=detector_names,
+    monitors=['monitor1', 'monitor2'],
 )
 
-# Register instrument
 instrument_registry.register(instrument)
 
 # Detector view spec registration (currently disabled)

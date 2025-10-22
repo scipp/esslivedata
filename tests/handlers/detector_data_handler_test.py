@@ -16,7 +16,9 @@ from ess.livedata.handlers.detector_data_handler import (
 
 def get_instrument(instrument_name: str) -> Instrument:
     _ = get_config(instrument_name)  # Load the module to register the instrument
-    return instrument_registry[instrument_name]
+    instrument = instrument_registry[instrument_name]
+    instrument.load_factories()
+    return instrument
 
 
 @pytest.mark.parametrize('instrument', ['dream', 'loki'])

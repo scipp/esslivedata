@@ -16,6 +16,8 @@ def setup_factories(instrument):
     from ess import loki
     from ess.livedata.handlers.detector_data_handler import (
         DetectorProjection,
+        DetectorView,
+        ROIHistogram,
         get_nexus_geometry_filename,
     )
     from ess.livedata.handlers.detector_view_specs import (
@@ -58,11 +60,15 @@ def setup_factories(instrument):
     )
 
     @specs.xy_projection_handles['xy_plane']['view'].attach_factory()
-    def _xy_projection_view_factory(source_name: str, params: DetectorViewParams):
+    def _xy_projection_view_factory(
+        source_name: str, params: DetectorViewParams
+    ) -> DetectorView:
         return _xy_projection.make_view(source_name, params=params)
 
     @specs.xy_projection_handles['xy_plane']['roi'].attach_factory()
-    def _xy_projection_roi_factory(source_name: str, params: ROIHistogramParams):
+    def _xy_projection_roi_factory(
+        source_name: str, params: ROIHistogramParams
+    ) -> ROIHistogram:
         return _xy_projection.make_roi(source_name, params=params)
 
     def _transmission_from_current_run(

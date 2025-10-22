@@ -12,7 +12,7 @@ from ess.livedata.config.env import StreamingEnv
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
 from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
-from .specs import monitor_names
+from .specs import monitors
 
 
 def _bifrost_generator() -> Generator[tuple[str, tuple[int, int]]]:
@@ -65,11 +65,11 @@ stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
         'bifrost',
         detector_names=list(detectors_config['fakes']),
-        monitor_names=monitor_names,
+        monitor_names=monitors,
     ),
     StreamingEnv.PROD: StreamMapping(
         **make_common_stream_mapping_inputs(
-            instrument='bifrost', monitor_names=monitor_names
+            instrument='bifrost', monitor_names=monitors
         ),
         detectors=_make_bifrost_detectors(),
     ),

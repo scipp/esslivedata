@@ -4,9 +4,10 @@
 TBL instrument factory implementations.
 """
 
-from ess.livedata.config import instrument_registry
+from . import specs  # noqa: F401
 
-# Get instrument from registry (already registered by specs.py)
-instrument = instrument_registry['tbl']
 
-# Future workflow factories can be added here
+def setup_factories(instrument):
+    """Initialize TBL-specific factories and workflows."""
+    # Future workflow factories can be added here
+    pass

@@ -19,10 +19,6 @@ import scipp as sc
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import DetectorViewParams
-from ess.livedata.handlers.monitor_workflow_specs import register_monitor_workflow_specs
-from ess.livedata.handlers.timeseries_workflow_specs import (
-    register_timeseries_workflow_specs,
-)
 from ess.livedata.parameter_models import EnergyEdges, QEdges
 
 
@@ -213,8 +209,11 @@ class QMapOutputs(WorkflowOutputsBase):
     )
 
 
+# Detector names (unified detector for bifrost)
+detector_names = ['unified_detector']
+
 # Monitor names matching group names in Nexus files
-monitor_names = [
+monitors = [
     '007_frame_0',
     '090_frame_1',
     '097_frame_2',
@@ -231,13 +230,11 @@ f144_attribute_registry = {
 }
 
 # Create instrument
-instrument = Instrument(name='bifrost', f144_attribute_registry=f144_attribute_registry)
-
-monitor_workflow_handle = register_monitor_workflow_specs(
-    instrument=instrument, source_names=monitor_names
-)
-timeseries_workflow_handle = register_timeseries_workflow_specs(
-    instrument, source_names=list(f144_attribute_registry)
+instrument = Instrument(
+    name='bifrost',
+    detector_names=detector_names,
+    monitors=monitors,
+    f144_attribute_registry=f144_attribute_registry,
 )
 
 # Register instrument

@@ -17,26 +17,25 @@ from ess.livedata.handlers.detector_view_specs import (
     DetectorViewParams,
     register_detector_view_specs,
 )
-from ess.livedata.handlers.monitor_workflow_specs import register_monitor_workflow_specs
-
-# Create instrument
-instrument = Instrument(name='dream')
-
-# Register monitor workflows
-monitor_workflow_handle = register_monitor_workflow_specs(
-    instrument=instrument, source_names=['monitor1', 'monitor2']
-)
-
-# Register instrument
-instrument_registry.register(instrument)
 
 # Detector names for DREAM data reduction workflows
-_detector_names = [
+detector_names = [
     'mantle_detector',
     'endcap_backward_detector',
     'endcap_forward_detector',
     'high_resolution_detector',
+    'sans_detector',
 ]
+
+# Create instrument
+instrument = Instrument(
+    name='dream',
+    detector_names=detector_names,
+    monitors=['monitor1', 'monitor2'],
+)
+
+# Register instrument
+instrument_registry.register(instrument)
 
 # Detector names for XY projection (endcap and high-res detectors)
 _xy_projection_detectors = [
@@ -210,12 +209,20 @@ class PowderReductionWithVanadiumOutputs(PowderReductionOutputs):
 
 
 # Register powder reduction workflow specs
+# Use only the detectors that are used for powder reduction (not sans_detector)
+_powder_detector_names = [
+    'mantle_detector',
+    'endcap_backward_detector',
+    'endcap_forward_detector',
+    'high_resolution_detector',
+]
+
 powder_reduction_handle = instrument.register_spec(
     name='powder_reduction',
     version=1,
     title='Powder reduction',
     description='Powder reduction without vanadium normalization.',
-    source_names=_detector_names,
+    source_names=_powder_detector_names,
     aux_sources=DreamAuxSources,
     outputs=PowderReductionOutputs,
     params=PowderWorkflowParams,
@@ -226,7 +233,7 @@ powder_reduction_with_vanadium_handle = instrument.register_spec(
     version=1,
     title='Powder reduction (with vanadium)',
     description='Powder reduction with vanadium normalization.',
-    source_names=_detector_names,
+    source_names=_powder_detector_names,
     aux_sources=DreamAuxSources,
     outputs=PowderReductionWithVanadiumOutputs,
     params=PowderWorkflowParams,
