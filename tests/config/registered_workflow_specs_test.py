@@ -30,8 +30,8 @@ def _collect_workflow_specs():
     workflows = []
     for instrument_name in available_instruments():
         _ = get_config(instrument_name)  # Load specs only
-        # DO NOT import factories module - that's the point of this split
         instrument = instrument_registry[instrument_name]
+        # DO NOT call instrument.load_factories()
         workflows.extend(
             [
                 pytest.param(instrument_name, workflow_id, id=str(workflow_id))

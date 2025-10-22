@@ -29,29 +29,11 @@ def _collect_workflow_factories():
     This imports both spec modules and factory implementation modules,
     loading heavy dependencies like sciline, ess.reduce, etc.
     """
-    import importlib
-
     workflows = []
     for instrument_name in available_instruments():
-        _ = get_config(instrument_name)  # Load specs
-
+        _ = get_config(instrument_name)  # Register instrument
         instrument = instrument_registry[instrument_name]
-
-        # Try old pattern first (factories.py with module-level code)
-        try:
-            importlib.import_module(
-                f'ess.livedata.config.instruments.{instrument_name}.factories'
-            )
-        except ModuleNotFoundError:
-            pass
-
-        # Always call load_factories() - handles both old and new patterns
-        try:
-            instrument.load_factories()
-        except Exception:  # noqa: S110
-            # Instrument may not have setup_factories() or may fail to load
-            pass
-
+        instrument.load_factories()
         workflows.extend(
             [
                 pytest.param(instrument_name, workflow_id, id=str(workflow_id))
