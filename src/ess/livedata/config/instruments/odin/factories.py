@@ -48,7 +48,9 @@ def setup_factories(instrument: Instrument) -> None:
         # 2048*2048 is the actual panel size, and 1024*1024 in the test file,
         # but ess.livedata might not be able to keep up with that
         # so we resample to 128*128 ((1024/8) * (1024/8)) for now.
-        return resample(da, sizes={'x': 8, 'y': 8}, method='sum')
+        return resample(
+            da, sizes={'x_pixel_offset': 8, 'y_pixel_offset': 8}, method='sum'
+        )
 
     # Detector view configuration
     from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
