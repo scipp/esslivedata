@@ -4,6 +4,11 @@
 Bifrost spectrometer factory implementations.
 """
 
+from functools import cache
+from typing import NewType
+
+import scipp as sc
+
 from . import specs
 from .specs import (
     ArcEnergy,
@@ -19,12 +24,8 @@ from .specs import (
 def setup_factories(instrument):
     """Initialize BIFROST-specific factories and workflows."""
     # Lazy imports
-    from functools import cache
-    from typing import NewType
-
     import numpy as np
     import sciline
-    import scipp as sc
     import scippnexus as snx
     from scippnexus import NXdetector
 
@@ -105,51 +106,6 @@ def setup_factories(instrument):
         for arc in range(1, 6)
         for channel in range(1, 10)
     ]
-
-    def _transpose_with_coords(
-        data: sc.DataArray, dims: tuple[str, ...]
-    ) -> sc.DataArray:
-        """
-        Transpose data array and all its coordinates.
-
-        Unlike scipp.DataArray.transpose, this function also transposes all coordinates
-        that have more than one dimension. Each coordinate is transposed to match the
-        order of dimensions specified in `dims`, considering only the intersection of
-        the coordinate's dimensions with `dims`.
-
-        Parameters
-        ----------
-        data:
-            Data array to transpose.
-        dims:
-            Target dimension order.
-
-        Returns
-        -------
-        :
-            Transposed data array with transposed coordinates.
-        """
-        result = data.transpose(dims)
-        # Transpose all multi-dimensional coordinates
-        for name, coord in data.coords.items():
-            if coord.ndim > 1:
-                # Only transpose dimensions that exist in both the coord and target dims
-                coord_dims = coord.dims
-                ordered_dims = tuple(d for d in dims if d in coord_dims)
-                result.coords[name] = coord.transpose(ordered_dims)
-        return result
-
-    def _combine_banks(*bank: sc.DataArray) -> sc.DataArray:
-        combined = (
-            sc.concat(bank, dim='')
-            .fold('', sizes={'arc': 5, 'channel': 9})
-            .rename_dims(dim_0='tube', dim_1='pixel')
-        )
-        # Order with consecutive detector_number
-        return _transpose_with_coords(
-            combined, ('arc', 'tube', 'channel', 'pixel')
-        ).copy()
-
     SpectrumView = NewType('SpectrumView', sc.DataArray)
     SpectrumViewTimeBins = NewType('SpectrumViewTimeBins', int)
     SpectrumViewPixelsPerTube = NewType('SpectrumViewPixelsPerTube', int)
@@ -351,5 +307,51 @@ def setup_factories(instrument):
     return reduction_workflow, DetectorRegionCounts
 
 
-# Backward compatibility: Initialize module-level variables for tests
-reduction_workflow, DetectorRegionCounts = setup_factories(specs.instrument)
+def _transpose_with_coords(data: sc.DataArray, dims: tuple[str, ...]) -> sc.DataArray:
+    """
+    Transpose data array and all its coordinates.
+
+    Unlike scipp.DataArray.transpose, this function also transposes all coordinates
+    that have more than one dimension. Each coordinate is transposed to match the
+    order of dimensions specified in `dims`, considering only the intersection of
+    the coordinate's dimensions with `dims`.
+
+    Parameters
+    ----------
+    data:
+        Data array to transpose.
+    dims:
+        Target dimension order.
+
+    Returns
+    -------
+    :
+        Transposed data array with transposed coordinates.
+    """
+    result = data.transpose(dims)
+    # Transpose all multi-dimensional coordinates
+    for name, coord in data.coords.items():
+        if coord.ndim > 1:
+            # Only transpose dimensions that exist in both the coord and target dims
+            coord_dims = coord.dims
+            ordered_dims = tuple(d for d in dims if d in coord_dims)
+            result.coords[name] = coord.transpose(ordered_dims)
+    return result
+
+
+def _combine_banks(*bank: sc.DataArray) -> sc.DataArray:
+    """
+    Combine Bifrost banks into a single detector data array.
+
+    Each NXdetetor is a He3 tube triplet with shape=(3, 100). Detector numbers in
+    triplet are *not* consecutive:
+    - 1...900 with increasing angle (across all sectors)
+    - 901 is back to first sector and detector, second tube
+    """
+    combined = (
+        sc.concat(bank, dim='')
+        .fold('', sizes={'arc': 5, 'channel': 9})
+        .rename_dims(dim_0='tube', dim_1='pixel')
+    )
+    # Order with consecutive detector_number
+    return _transpose_with_coords(combined, ('arc', 'tube', 'channel', 'pixel')).copy()

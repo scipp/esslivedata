@@ -12,6 +12,7 @@ for full instrument details.
 """
 
 from enum import Enum
+from typing import Literal
 
 import pydantic
 import scipp as sc
@@ -192,10 +193,10 @@ class BifrostCustomElasticQMapParams(pydantic.BaseModel):
 class BifrostAuxSources(AuxSourcesBase):
     """Auxiliary source names for Bifrost Q-map workflows."""
 
-    detector_rotation: str = pydantic.Field(
+    detector_rotation: Literal['detector_rotation'] = pydantic.Field(
         default='detector_rotation', description='Detector bank rotation angle.'
     )
-    sample_rotation: str = pydantic.Field(
+    sample_rotation: Literal['sample_rotation'] = pydantic.Field(
         default='sample_rotation', description='Sample rotation angle.'
     )
 
