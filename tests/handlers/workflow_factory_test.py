@@ -101,7 +101,9 @@ class TestWorkflowFactory:
     def test_register_adds_workflow_spec(self, workflow_id, workflow_spec):
         factory = WorkflowFactory()
 
-        @factory.register(workflow_spec)
+        handle = factory.register_spec(workflow_spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -115,7 +117,9 @@ class TestWorkflowFactory:
     def test_register_with_source_names(self, workflow_id, workflow_spec_with_sources):
         factory = WorkflowFactory()
 
-        @factory.register(workflow_spec_with_sources)
+        handle = factory.register_spec(workflow_spec_with_sources)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -125,20 +129,24 @@ class TestWorkflowFactory:
     def test_register_duplicate_id_raises_error(self, workflow_id, workflow_spec):
         factory = WorkflowFactory()
 
-        @factory.register(workflow_spec)
+        handle = factory.register_spec(workflow_spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
         with pytest.raises(
             ValueError,
-            match=f"Workflow ID '{workflow_id}' is already registered.",
+            match="already registered",
         ):
-            factory.register(workflow_spec)(lambda: make_dummy_workflow())
+            factory.register_spec(workflow_spec)
 
     def test_create_returns_stream_processor(self, workflow_id, workflow_spec):
         factory = WorkflowFactory()
 
-        @factory.register(workflow_spec)
+        handle = factory.register_spec(workflow_spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -165,7 +173,9 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func(*, source_name):
             return make_dummy_workflow_with_source(source_name=source_name)
 
@@ -188,10 +198,12 @@ class TestWorkflowFactory:
             version=workflow_id.version,
             title="test-workflow",
             description="Test",
-            params=None,
+            params=MyParams,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func(*, params: MyParams):
             return make_dummy_workflow_with_params(params=params)
 
@@ -216,10 +228,12 @@ class TestWorkflowFactory:
             version=workflow_id.version,
             title="test-workflow",
             description="Test",
-            params=None,  # This will be auto-detected by the factory
+            params=MyParams,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func(*, params: MyParams):
             return make_dummy_workflow_with_params(params=params)
 
@@ -265,7 +279,9 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -307,11 +323,14 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec1)
+        handle1 = factory.register_spec(spec1)
+        handle2 = factory.register_spec(spec2)
+
+        @handle1.attach_factory()
         def factory_func1():
             return make_dummy_workflow()
 
-        @factory.register(spec2)
+        @handle2.attach_factory()
         def factory_func2():
             return make_dummy_workflow()
 
@@ -323,7 +342,9 @@ class TestWorkflowFactory:
     def test_mapping_interface(self, workflow_id, workflow_spec):
         factory = WorkflowFactory()
 
-        @factory.register(workflow_spec)
+        handle = factory.register_spec(workflow_spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -367,11 +388,14 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec1)
+        handle1 = factory.register_spec(spec1)
+        handle2 = factory.register_spec(spec2)
+
+        @handle1.attach_factory()
         def factory_func1():
             return make_dummy_workflow()
 
-        @factory.register(spec2)
+        @handle2.attach_factory()
         def factory_func2():
             return make_dummy_workflow()
 
@@ -408,7 +432,9 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -440,7 +466,9 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -494,11 +522,14 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec1)
+        handle1 = factory.register_spec(spec1)
+        handle2 = factory.register_spec(spec2)
+
+        @handle1.attach_factory()
         def factory_func1():
             return make_dummy_workflow()
 
-        @factory.register(spec2)
+        @handle2.attach_factory()
         def factory_func2():
             return make_dummy_workflow()
 
@@ -525,7 +556,9 @@ class TestWorkflowFactory:
             aux_sources=MyAuxSources,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow_with_aux_sources()
 
@@ -555,7 +588,9 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -582,7 +617,9 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -617,7 +654,9 @@ class TestWorkflowFactory:
             aux_sources=MyAuxSources,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow_with_aux_sources()
 
@@ -650,7 +689,9 @@ class TestWorkflowFactory:
             aux_sources=MyAuxSources,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow_with_aux_sources()
 

@@ -142,40 +142,6 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
 
         return decorator
 
-    def register(
-        self, spec: WorkflowSpec
-    ) -> Callable[[Callable[..., Workflow]], Callable[..., Workflow]]:
-        """
-        Decorator to register a factory function for creating workflow instances.
-
-        Parameters
-        ----------
-        spec:
-            Workflow specification that describes the workflow to register.
-
-        Returns
-        -------
-        Decorator function that registers the factory and returns it unchanged.
-        """
-        spec_id = spec.get_id()
-        if spec_id in self._factories:
-            raise ValueError(f"Workflow ID '{spec_id}' is already registered.")
-
-        def decorator(
-            factory: Callable[..., Workflow],
-        ) -> Callable[..., Workflow]:
-            # Try to get the type hint of the 'params' argument if it exists.
-            # Use get_type_hints to resolve forward references, in case we used
-            # `from __future__ import annotations`.
-            type_hints = typing.get_type_hints(factory, globalns=factory.__globals__)
-            if (params_type := type_hints.get('params', None)) is not None:
-                spec.params = params_type
-            self._factories[spec_id] = factory
-            self._workflow_specs[spec_id] = spec
-            return factory
-
-        return decorator
-
     def create(self, *, source_name: str, config: WorkflowConfig) -> Workflow:
         """
         Create a workflow instance using the registered factory.
