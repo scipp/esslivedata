@@ -24,7 +24,6 @@ def setup_factories(instrument):
         DetectorProjection,
         get_nexus_geometry_filename,
     )
-    from ess.livedata.handlers.detector_view_specs import DetectorViewParams
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
     from ess.reduce.nexus.types import (
         DetectorData,
@@ -107,15 +106,8 @@ def setup_factories(instrument):
 
     # Attach logical view factories
     # Note: Logical views only have view handles, no ROI handles
-    @specs.mantle_front_layer_handle.attach_factory()
-    def _mantle_front_layer_factory(source_name: str, params: DetectorViewParams):
-        """Factory for mantle front layer logical view."""
-        return _mantle_front_layer_view.make_view(source_name, params=params)
-
-    @specs.mantle_wire_view_handle.attach_factory()
-    def _mantle_wire_view_factory(source_name: str, params: DetectorViewParams):
-        """Factory for mantle wire view logical view."""
-        return _mantle_wire_view.make_view(source_name, params=params)
+    specs.mantle_front_layer_handle.attach_factory()(_mantle_front_layer_view.make_view)
+    specs.mantle_wire_view_handle.attach_factory()(_mantle_wire_view.make_view)
 
     # Powder reduction workflow setup
     # Normalization to monitors is partially broken due to some wavelength-range check

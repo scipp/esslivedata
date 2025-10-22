@@ -45,7 +45,6 @@ def setup_factories(instrument):
         DetectorLogicalView,
         get_nexus_geometry_filename,
     )
-    from ess.livedata.handlers.detector_view_specs import DetectorViewParams
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
     from ess.reduce.nexus.types import (
         CalibratedBeamline,
@@ -93,10 +92,7 @@ def setup_factories(instrument):
         instrument=instrument, transform=_to_flat_detector_view
     )
 
-    @specs.unified_detector_view_handle.attach_factory()
-    def _unified_detector_view_factory(source_name: str, params: DetectorViewParams):
-        """Factory for unified detector view."""
-        return _logical_view.make_view(source_name, params=params)
+    specs.unified_detector_view_handle.attach_factory()(_logical_view.make_view)
 
     # Would like to use a 2-D scipp.Variable, but GenericNeXusWorkflow does not accept
     # detector names as scalar variables.

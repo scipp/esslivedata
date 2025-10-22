@@ -15,7 +15,6 @@ def setup_factories(instrument):
     import scipp as sc
 
     from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
-    from ess.livedata.handlers.detector_view_specs import DetectorViewParams
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 
     # Configure detector with explicit detector_number
@@ -29,10 +28,7 @@ def setup_factories(instrument):
     # Create detector view
     _panel_0_view = DetectorLogicalView(instrument=instrument)
 
-    @specs.panel_0_view_handle.attach_factory()
-    def _panel_0_view_factory(source_name: str, params: DetectorViewParams):
-        """Factory for panel_0 detector view."""
-        return _panel_0_view.make_view(source_name, params=params)
+    specs.panel_0_view_handle.attach_factory()(_panel_0_view.make_view)
 
     # Total counts workflow
     Events = NewType('Events', sc.DataArray)

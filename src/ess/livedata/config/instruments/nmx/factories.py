@@ -15,7 +15,6 @@ def setup_factories(instrument: Instrument) -> None:
     import scipp as sc
 
     from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
-    from ess.livedata.handlers.detector_view_specs import DetectorViewParams
 
     # Configure detectors with computed arrays
     # TODO Unclear if this is transposed or not. Wait for updated files.
@@ -35,7 +34,4 @@ def setup_factories(instrument: Instrument) -> None:
     # Create detector view
     _nmx_panels_view = DetectorLogicalView(instrument=instrument)
 
-    @specs.panel_xy_view_handle.attach_factory()
-    def _panel_xy_view_factory(source_name: str, params: DetectorViewParams):
-        """Factory for panel_xy detector view."""
-        return _nmx_panels_view.make_view(source_name, params=params)
+    specs.panel_xy_view_handle.attach_factory()(_nmx_panels_view.make_view)

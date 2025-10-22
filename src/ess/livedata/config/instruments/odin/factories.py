@@ -50,11 +50,7 @@ def setup_factories(instrument):
 
     # Detector view configuration
     from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
-    from ess.livedata.handlers.detector_view_specs import DetectorViewParams
 
     _panel_0_view = DetectorLogicalView(instrument=instrument, transform=_resize_image)
 
-    @specs.panel_0_view_handle.attach_factory()
-    def _panel_0_view_factory(source_name: str, params: DetectorViewParams):
-        """Factory for timepix3 detector view."""
-        return _panel_0_view.make_view(source_name, params=params)
+    specs.panel_0_view_handle.attach_factory()(_panel_0_view.make_view)

@@ -18,13 +18,7 @@ def setup_factories(instrument: Instrument):
     from ess import loki
     from ess.livedata.handlers.detector_data_handler import (
         DetectorProjection,
-        DetectorView,
-        ROIHistogram,
         get_nexus_geometry_filename,
-    )
-    from ess.livedata.handlers.detector_view_specs import (
-        DetectorViewParams,
-        ROIHistogramParams,
     )
     from ess.livedata.handlers.stream_processor_workflow import (
         StreamProcessorWorkflow,
@@ -65,17 +59,8 @@ def setup_factories(instrument: Instrument):
         resolution_scale=12,
     )
 
-    @specs.xy_projection_handles['view'].attach_factory()
-    def _xy_projection_view_factory(
-        source_name: str, params: DetectorViewParams
-    ) -> DetectorView:
-        return _xy_projection.make_view(source_name, params=params)
-
-    @specs.xy_projection_handles['roi'].attach_factory()
-    def _xy_projection_roi_factory(
-        source_name: str, params: ROIHistogramParams
-    ) -> ROIHistogram:
-        return _xy_projection.make_roi(source_name, params=params)
+    specs.xy_projection_handles['view'].attach_factory()(_xy_projection.make_view)
+    specs.xy_projection_handles['roi'].attach_factory()(_xy_projection.make_roi)
 
     def _transmission_from_current_run(
         data: sans_types.CleanMonitor[SampleRun, sans_types.MonitorType],
