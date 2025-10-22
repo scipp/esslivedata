@@ -15,7 +15,6 @@ import pathlib
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable
-from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import scipp as sc
@@ -31,16 +30,6 @@ from .detector_view_specs import DetectorViewParams, ROIHistogramParams, SpecHan
 from .workflow_factory import Workflow
 
 
-@dataclass(frozen=True, kw_only=True)
-class ViewConfig:
-    """Configuration for a detector view."""
-
-    name: str
-    title: str
-    description: str
-    source_names: list[str] = field(default_factory=list)
-
-
 class DetectorProcessorFactory(ABC):
     """
     Base class for detector processor factories.
@@ -49,9 +38,8 @@ class DetectorProcessorFactory(ABC):
     Use attach_to_handles() to explicitly attach factories to handles.
     """
 
-    def __init__(self, *, instrument: Instrument, config: ViewConfig) -> None:
+    def __init__(self, *, instrument: Instrument) -> None:
         self._instrument = instrument
-        self._config = config
         self._window_length = 1
 
     def make_view(self, source_name: str, params: DetectorViewParams) -> DetectorView:
@@ -97,29 +85,11 @@ class DetectorProjection(DetectorProcessorFactory):
         resolution: dict[str, dict[str, int]],
         resolution_scale: float = 1,
     ) -> None:
+        super().__init__(instrument=instrument)
         self._projection = projection
         self._pixel_noise = pixel_noise
         self._resolution = resolution
         self._res_scale = resolution_scale
-        source_names = list(resolution.keys())
-        if projection == 'xy_plane':
-            config = ViewConfig(
-                name='detector_xy_projection',
-                title='Detector XY Projection',
-                description='Projection of a detector bank onto an XY-plane.',
-                source_names=source_names,
-            )
-        elif projection == 'cylinder_mantle_z':
-            config = ViewConfig(
-                name='detector_cylinder_mantle_z',
-                title='Detector Cylinder Mantle Z Projection',
-                description='Projection of a detector bank onto a cylinder mantle '
-                'along Z-axis.',
-                source_names=source_names,
-            )
-        else:
-            raise ValueError(f'Unsupported projection: {projection}')
-        super().__init__(instrument=instrument, config=config)
 
     def _get_resolution(self, source_name: str) -> dict[str, int]:
         aspect = self._resolution[source_name]
@@ -136,22 +106,28 @@ class DetectorProjection(DetectorProcessorFactory):
         )
 
 
-@dataclass(frozen=True, kw_only=True)
-class LogicalViewConfig(ViewConfig):
-    # If no projection defined, the shape of the detector_number is used.
-    transform: Callable[[sc.DataArray], sc.DataArray] | None = None
-
-
 class DetectorLogicalView(DetectorProcessorFactory):
-    def __init__(self, *, instrument: Instrument, config: LogicalViewConfig) -> None:
-        super().__init__(instrument=instrument, config=config)
-        self._config = config
+    """
+    Factory for logical detector views with optional transform.
+
+    Logical views use detector_number arrays directly, optionally applying a transform
+    function to reshape or filter the data.
+    """
+
+    def __init__(
+        self,
+        *,
+        instrument: Instrument,
+        transform: Callable[[sc.DataArray], sc.DataArray] | None = None,
+    ) -> None:
+        super().__init__(instrument=instrument)
+        self._transform = transform
 
     def _make_rolling_view(self, source_name: str) -> raw.RollingDetectorView:
         return raw.RollingDetectorView(
             detector_number=self._instrument.get_detector_number(source_name),
             window=self._window_length,
-            projection=self._config.transform,
+            projection=self._transform,
         )
 
 

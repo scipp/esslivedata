@@ -50,15 +50,8 @@ def setup_factories(instrument):
 
     # Detector view configuration (currently disabled)
     # WARNING: Disabled until fixed
-    # _panel_0_config = LogicalViewConfig(
-    #     name='odin_detector_xy',
-    #     title='Timepix3 XY Detector Counts',
-    #     description='2D view of the Timepix3 detector counts',
-    #     source_names=['timepix3'],
-    #     transform=_resize_image,
-    # )
     # _panel_0_view = DetectorLogicalView(
-    #     instrument=instrument, config=_panel_0_config
+    #     instrument=instrument, transform=_resize_image
     # )
     #
     # from .specs import panel_0_view_handle

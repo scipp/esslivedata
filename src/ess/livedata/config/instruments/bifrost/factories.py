@@ -42,7 +42,6 @@ def setup_factories(instrument):
     from ess.livedata.config.workflows import TimeseriesAccumulator
     from ess.livedata.handlers.detector_data_handler import (
         DetectorLogicalView,
-        LogicalViewConfig,
         get_nexus_geometry_filename,
     )
     from ess.livedata.handlers.detector_view_specs import DetectorViewParams
@@ -89,15 +88,8 @@ def setup_factories(instrument):
         return da['channel/pixel', :-pad_pix]['arc/tube', :-pad_tube]
 
     # Create detector view
-    _unified_detector_view = LogicalViewConfig(
-        name='unified_detector_view',
-        title='Unified detector view',
-        description='All banks merged into a single detector view.',
-        source_names=['unified_detector'],
-        transform=_to_flat_detector_view,
-    )
     _logical_view = DetectorLogicalView(
-        instrument=instrument, config=_unified_detector_view
+        instrument=instrument, transform=_to_flat_detector_view
     )
 
     @specs.unified_detector_view_handle.attach_factory()

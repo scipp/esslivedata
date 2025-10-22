@@ -14,10 +14,7 @@ def setup_factories(instrument):
     import sciline
     import scipp as sc
 
-    from ess.livedata.handlers.detector_data_handler import (
-        DetectorLogicalView,
-        LogicalViewConfig,
-    )
+    from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
     from ess.livedata.handlers.detector_view_specs import DetectorViewParams
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 
@@ -30,13 +27,7 @@ def setup_factories(instrument):
     )
 
     # Create detector view
-    _panel_0_config = LogicalViewConfig(
-        name='panel_0_xy',
-        title='Panel 0',
-        description='',
-        source_names=['panel_0'],
-    )
-    _panel_0_view = DetectorLogicalView(instrument=instrument, config=_panel_0_config)
+    _panel_0_view = DetectorLogicalView(instrument=instrument)
 
     @specs.panel_0_view_handle.attach_factory()
     def _panel_0_view_factory(source_name: str, params: DetectorViewParams):

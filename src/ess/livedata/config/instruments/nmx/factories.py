@@ -14,10 +14,7 @@ def setup_factories(instrument: Instrument) -> None:
     # Lazy imports
     import scipp as sc
 
-    from ess.livedata.handlers.detector_data_handler import (
-        DetectorLogicalView,
-        LogicalViewConfig,
-    )
+    from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
     from ess.livedata.handlers.detector_view_specs import DetectorViewParams
 
     # Configure detectors with computed arrays
@@ -35,16 +32,8 @@ def setup_factories(instrument: Instrument) -> None:
             ).fold(dim=dim, sizes=sizes),
         )
 
-    # Create detector view configuration
-    _nmx_panels_config = LogicalViewConfig(
-        name='panel_xy',
-        title='Detector counts',
-        description='Detector counts per pixel.',
-        source_names=instrument.detector_names,
-    )
-    _nmx_panels_view = DetectorLogicalView(
-        instrument=instrument, config=_nmx_panels_config
-    )
+    # Create detector view
+    _nmx_panels_view = DetectorLogicalView(instrument=instrument)
 
     @specs.panel_xy_view_handle.attach_factory()
     def _panel_xy_view_factory(source_name: str, params: DetectorViewParams):

@@ -22,7 +22,6 @@ def setup_factories(instrument):
     from ess.livedata.handlers.detector_data_handler import (
         DetectorLogicalView,
         DetectorProjection,
-        LogicalViewConfig,
         get_nexus_geometry_filename,
     )
     from ess.livedata.handlers.detector_view_specs import DetectorViewParams
@@ -97,28 +96,12 @@ def setup_factories(instrument):
         )
 
     # Create logical views for mantle detector
-    _mantle_front_layer_config = LogicalViewConfig(
-        name='mantle_front_layer',
-        title='Mantle front layer',
-        description='All voxels of the front layer of the mantle detector.',
-        source_names=['mantle_detector'],
-        transform=_get_mantle_front_layer,
-    )
-
     _mantle_front_layer_view = DetectorLogicalView(
-        instrument=instrument, config=_mantle_front_layer_config
-    )
-
-    _mantle_wire_view_config = LogicalViewConfig(
-        name='mantle_wire_view',
-        title='Mantle wire view',
-        description='Sum over strips to show counts per wire in the mantle detector.',
-        source_names=['mantle_detector'],
-        transform=_get_wire_view,
+        instrument=instrument, transform=_get_mantle_front_layer
     )
 
     _mantle_wire_view = DetectorLogicalView(
-        instrument=instrument, config=_mantle_wire_view_config
+        instrument=instrument, transform=_get_wire_view
     )
 
     # Attach logical view factories
