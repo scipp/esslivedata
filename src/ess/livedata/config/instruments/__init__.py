@@ -29,16 +29,4 @@ def get_config(instrument: str) -> ModuleType:
         raise ValueError(f'No config found for instrument {instrument}') from e
 
 
-def load_factories(instrument: str) -> None:
-    """Load workflow factories for the instrument.
-
-    Backend services need workflow factories in addition to specs.
-    The dashboard only needs specs for configuration.
-    """
-    try:
-        importlib.import_module(f'.{instrument}.factories', __package__)
-    except ModuleNotFoundError:
-        pass
-
-
-__all__ = ['available_instruments', 'get_config', 'load_factories']
+__all__ = ['available_instruments', 'get_config']
