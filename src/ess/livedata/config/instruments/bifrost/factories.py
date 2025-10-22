@@ -66,8 +66,8 @@ def setup_factories(instrument):
 
     from .streams import detector_number
 
-    # Add detector
-    instrument.add_detector('unified_detector', detector_number=detector_number)
+    # Configure detector
+    instrument.configure_detector('unified_detector', detector_number=detector_number)
 
     def _to_flat_detector_view(obj: sc.Variable | sc.DataArray) -> sc.DataArray:
         da = sc.DataArray(obj) if isinstance(obj, sc.Variable) else obj

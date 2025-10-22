@@ -147,30 +147,6 @@ class Instrument:
             )
         self._detector_numbers[name] = candidate
 
-    def add_detector(
-        self,
-        name: str,
-        detector_number: sc.Variable | None = None,
-        *,
-        detector_group_name: str | None = None,
-    ) -> None:
-        """
-        Deprecated alias for configure_detector.
-
-        This method is kept for backward compatibility with instruments that
-        haven't been updated yet. It adds the detector name to detector_names
-        if not already present.
-        """
-        if name not in self.detector_names:
-            self.detector_names.append(name)
-        if detector_number is not None:
-            self._detector_numbers[name] = detector_number
-            return
-        if detector_group_name is not None:
-            group_name = f'{detector_group_name}/{name}'
-            self._detector_group_names[name] = group_name
-        self._load_detector_from_nexus(name)
-
     def get_detector_number(self, name: str) -> sc.Variable:
         return self._detector_numbers[name]
 

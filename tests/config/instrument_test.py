@@ -90,24 +90,26 @@ class TestInstrument:
         assert instrument.f144_attribute_registry == f144_registry
         assert instrument.active_namespace == "custom_namespace"
 
-    def test_add_detector_with_explicit_number(self):
-        """Test adding detector with explicit detector number."""
-        instrument = Instrument(name="test_instrument")
+    def test_configure_detector_with_explicit_number(self):
+        """Test configuring detector with explicit detector number."""
+        instrument = Instrument(name="test_instrument", detector_names=["detector1"])
         detector_number = sc.array(dims=['detector'], values=[1, 2, 3])
 
-        instrument.add_detector("detector1", detector_number)
+        instrument.configure_detector("detector1", detector_number)
 
         assert "detector1" in instrument.detector_names
         assert sc.identical(
             instrument.get_detector_number("detector1"), detector_number
         )
 
-    def test_add_detector_without_number_fails_without_nexus(self):
-        """Test adding detector without number fails when no nexus file available."""
-        instrument = Instrument(name="nonexistent_instrument")
+    def test_configure_detector_fails_if_not_in_detector_names(self):
+        """Test that configure_detector fails if detector not in detector_names."""
+        instrument = Instrument(name="test_instrument")
 
-        with pytest.raises(ValueError, match="Nexus file not set or found"):
-            instrument.add_detector("detector1")
+        with pytest.raises(ValueError, match="not in declared detector_names"):
+            instrument.configure_detector(
+                "detector1", sc.array(dims=['detector'], values=[1, 2, 3])
+            )
 
     def test_get_detector_number_for_nonexistent_detector(self):
         """Test getting detector number for non-existent detector raises KeyError."""
@@ -116,20 +118,27 @@ class TestInstrument:
         with pytest.raises(KeyError):
             instrument.get_detector_number("nonexistent_detector")
 
-    def test_add_detector_with_detector_numbers_from_nexus_file(self):
-        instrument = Instrument(name="dream")
-        instrument.add_detector("mantle_detector")
+    def test_load_factories_loads_detector_numbers_from_nexus_file(self):
+        """Test that load_factories automatically loads detector_numbers from nexus."""
+        instrument = Instrument(name="dream", detector_names=["mantle_detector"])
+        # Before load_factories, detector_number is not available
+        with pytest.raises(KeyError):
+            instrument.get_detector_number("mantle_detector")
+        # load_factories should load it from nexus
+        instrument.load_factories()
         detector_number = instrument.get_detector_number("mantle_detector")
         assert isinstance(detector_number, sc.Variable)
 
     def test_multiple_detectors(self):
         """Test managing multiple detectors."""
-        instrument = Instrument(name="test_instrument")
+        instrument = Instrument(
+            name="test_instrument", detector_names=["detector1", "detector2"]
+        )
         detector1_number = sc.array(dims=['detector'], values=[1, 2])
         detector2_number = sc.array(dims=['detector'], values=[3, 4, 5])
 
-        instrument.add_detector("detector1", detector1_number)
-        instrument.add_detector("detector2", detector2_number)
+        instrument.configure_detector("detector1", detector1_number)
+        instrument.configure_detector("detector2", detector2_number)
 
         assert len(instrument.detector_names) == 2
         assert "detector1" in instrument.detector_names

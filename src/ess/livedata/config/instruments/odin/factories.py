@@ -28,8 +28,10 @@ def setup_factories(instrument):
         det.attrs['axes'] = ['x_pixel_offset', 'y_pixel_offset']
         det.attrs['detector_number_indices'] = [0, 1]
 
-    # Add detector with custom group name
-    instrument.add_detector('timepix3', detector_group_name='event_mode_detectors')
+    # Configure detector with custom group name
+    instrument.configure_detector(
+        'timepix3', detector_group_name='event_mode_detectors'
+    )
 
     # Create detector projection
     _xy_projection = DetectorProjection(

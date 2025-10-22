@@ -21,8 +21,8 @@ def setup_factories(instrument):
     from ess.livedata.handlers.detector_view_specs import DetectorViewParams
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 
-    # Add detector with explicit detector_number
-    instrument.add_detector(
+    # Configure detector with explicit detector_number
+    instrument.configure_detector(
         'panel_0',
         detector_number=sc.arange('yx', 1, 128**2 + 1, unit=None).fold(
             dim='yx', sizes={'y': -1, 'x': 128}
