@@ -49,10 +49,12 @@ def setup_factories(instrument: Instrument):
         pixel_noise='cylindrical',
         resolution={
             'loki_detector_0': {'y': 12, 'x': 12},
+            # First window frame
             'loki_detector_1': {'y': 3, 'x': 9},
             'loki_detector_2': {'y': 9, 'x': 3},
             'loki_detector_3': {'y': 3, 'x': 9},
             'loki_detector_4': {'y': 9, 'x': 3},
+            # Second window frame
             'loki_detector_5': {'y': 3, 'x': 9},
             'loki_detector_6': {'y': 9, 'x': 3},
             'loki_detector_7': {'y': 3, 'x': 9},
