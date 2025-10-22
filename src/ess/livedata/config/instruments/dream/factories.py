@@ -36,7 +36,8 @@ def setup_factories(instrument):
         VanadiumRun,
     )
 
-    # Create detector projections
+    # We use the arc length instead of phi as it makes it easier to get a correct
+    # aspect ratio for the plot if both axes have the same unit.
     _cylinder_projection = DetectorProjection(
         instrument=instrument,
         projection='cylinder_mantle_z',
@@ -44,7 +45,7 @@ def setup_factories(instrument):
         resolution={'mantle_detector': {'arc_length': 10, 'z': 40}},
         resolution_scale=8,
     )
-
+    # Order in 'resolution' matters so plots have X as horizontal axis and Y vertical.
     _xy_projection = DetectorProjection(
         instrument=instrument,
         projection='xy_plane',
@@ -117,6 +118,8 @@ def setup_factories(instrument):
         return _mantle_wire_view.make_view(source_name, params=params)
 
     # Powder reduction workflow setup
+    # Normalization to monitors is partially broken due to some wavelength-range check
+    # in essdiffraction that does not play with TOA-TOF conversion (I think).
     _reduction_workflow = DreamPowderWorkflow(
         run_norm=powder.RunNormalization.proton_charge
     )
