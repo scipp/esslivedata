@@ -4,18 +4,50 @@
 DREAM instrument factory implementations.
 """
 
+from typing import NewType
+
+import scipp as sc
+
 from ess.livedata.config import Instrument
 
 from . import specs
 from .specs import PowderWorkflowParams
 
+# Bank sizes for mantle detector logical views
+_bank_sizes = {
+    'mantle_detector': {
+        'wire': 32,
+        'module': 5,
+        'segment': 6,
+        'strip': 256,
+        'counter': 2,
+    },
+}
+
+
+def _get_mantle_front_layer(da: sc.DataArray) -> sc.DataArray:
+    """Transform function to extract mantle front layer."""
+    return (
+        da.fold(dim=da.dim, sizes=_bank_sizes['mantle_detector'])
+        .transpose(('wire', 'module', 'segment', 'counter', 'strip'))['wire', 0]
+        .flatten(('module', 'segment', 'counter'), to='mod/seg/cntr')
+    )
+
+
+def _get_wire_view(da: sc.DataArray) -> sc.DataArray:
+    """Transform function to extract wire view."""
+    return (
+        da.fold(dim=da.dim, sizes=_bank_sizes['mantle_detector'])
+        .sum('strip')
+        .flatten(('module', 'segment', 'counter'), to='mod/seg/cntr')
+        # Transpose so that wire is the "x" dimension for more natural plotting.
+        .transpose()
+    )
+
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize DREAM-specific factories and workflows."""
     # Lazy imports - all expensive imports go inside the function
-    from typing import NewType
-
-    import scipp as sc
     from scippnexus import NXdetector
 
     import ess.powder.types  # noqa: F401
@@ -67,35 +99,6 @@ def setup_factories(instrument: Instrument) -> None:
     _xy_projection.attach_to_handles(
         view_handle=specs.xy_view_handle, roi_handle=specs.xy_roi_handle
     )
-
-    # Bank sizes for mantle detector logical views
-    _bank_sizes = {
-        'mantle_detector': {
-            'wire': 32,
-            'module': 5,
-            'segment': 6,
-            'strip': 256,
-            'counter': 2,
-        },
-    }
-
-    def _get_mantle_front_layer(da: sc.DataArray) -> sc.DataArray:
-        """Transform function to extract mantle front layer."""
-        return (
-            da.fold(dim=da.dim, sizes=_bank_sizes['mantle_detector'])
-            .transpose(('wire', 'module', 'segment', 'counter', 'strip'))['wire', 0]
-            .flatten(('module', 'segment', 'counter'), to='mod/seg/cntr')
-        )
-
-    def _get_wire_view(da: sc.DataArray) -> sc.DataArray:
-        """Transform function to extract wire view."""
-        return (
-            da.fold(dim=da.dim, sizes=_bank_sizes['mantle_detector'])
-            .sum('strip')
-            .flatten(('module', 'segment', 'counter'), to='mod/seg/cntr')
-            # Transpose so that wire is the "x" dimension for more natural plotting.
-            .transpose()
-        )
 
     # Create logical views for mantle detector
     _mantle_front_layer_view = DetectorLogicalView(

@@ -4,17 +4,27 @@
 Dummy instrument factory implementations.
 """
 
+from typing import NewType
+
+import scipp as sc
+
 from ess.livedata.config import Instrument
 
 from . import specs
 
+# Total counts workflow types
+Events = NewType('Events', sc.DataArray)
+TotalCounts = NewType('TotalCounts', sc.DataArray)
+
+
+def _total_counts(events: Events) -> TotalCounts:
+    """Calculate total counts from events."""
+    return TotalCounts(events.to(dtype='int64').sum())
+
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize dummy-specific factories and workflows."""
-    from typing import NewType
-
     import sciline
-    import scipp as sc
 
     from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
@@ -33,13 +43,6 @@ def setup_factories(instrument: Instrument) -> None:
     specs.panel_0_view_handle.attach_factory()(_panel_0_view.make_view)
 
     # Total counts workflow
-    Events = NewType('Events', sc.DataArray)
-    TotalCounts = NewType('TotalCounts', sc.DataArray)
-
-    def _total_counts(events: Events) -> TotalCounts:
-        """Calculate total counts from events."""
-        return TotalCounts(events.to(dtype='int64').sum())
-
     _total_counts_workflow = sciline.Pipeline((_total_counts,))
 
     @specs.total_counts_handle.attach_factory()

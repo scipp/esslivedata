@@ -4,6 +4,8 @@
 NMX instrument factory implementations.
 """
 
+import scipp as sc
+
 from ess.livedata.config import Instrument
 
 from . import specs
@@ -12,8 +14,6 @@ from . import specs
 def setup_factories(instrument: Instrument) -> None:
     """Initialize NMX-specific factories and configure detectors."""
     # Lazy imports
-    import scipp as sc
-
     from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
 
     # Configure detectors with computed arrays

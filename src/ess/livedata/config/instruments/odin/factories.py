@@ -4,15 +4,28 @@
 ODIN instrument factory implementations.
 """
 
+import scipp as sc
+
 from ess.livedata.config import Instrument
 
 from . import specs
 
 
+def _resize_image(da: sc.DataArray) -> sc.DataArray:
+    """Downsample detector image to 512x512 for performance."""
+    # 2048*2048 is the actual panel size, and 1024*1024 in the test file,
+    # but ess.livedata might not be able to keep up with that so we downsample to
+    # 512x512
+    da = da.fold(dim='x_pixel_offset', sizes={'x_pixel_offset': 512, 'x_bin': -1})
+    da = da.sum('x_bin')
+    da = da.fold(dim='y_pixel_offset', sizes={'y_pixel_offset': 512, 'y_bin': -1})
+    da = da.sum('y_bin')
+    return da
+
+
 def setup_factories(instrument: Instrument) -> None:
     """Initialize ODIN-specific factories and workflows."""
     import h5py
-    import scipp as sc
 
     from ess.livedata.handlers.detector_data_handler import DetectorProjection
 
@@ -41,16 +54,6 @@ def setup_factories(instrument: Instrument) -> None:
         projection='xy_plane',
         resolution={'timepix3': {'y': 512, 'x': 512}},
     )
-
-    def _resize_image(da: sc.DataArray) -> sc.DataArray:
-        # 2048*2048 is the actual panel size, and 1024*1024 in the test file,
-        # but ess.livedata might not be able to keep up with that so we downsample to
-        # 512x512
-        da = da.fold(dim='x_pixel_offset', sizes={'x_pixel_offset': 512, 'x_bin': -1})
-        da = da.sum('x_bin')
-        da = da.fold(dim='y_pixel_offset', sizes={'y_pixel_offset': 512, 'y_bin': -1})
-        da = da.sum('y_bin')
-        return da
 
     # Detector view configuration
     from ess.livedata.handlers.detector_data_handler import DetectorLogicalView

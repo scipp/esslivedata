@@ -22,6 +22,13 @@ from .specs import (
     DetectorRatemeterRegionParams,
 )
 
+# Q-vector basis for Q-map calculations
+_Q_VECTORS = {
+    'Qx': sc.vector([1, 0, 0]),
+    'Qy': sc.vector([0, 1, 0]),
+    'Qz': sc.vector([0, 0, 1]),
+}
+
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize BIFROST-specific factories and workflows."""
@@ -130,12 +137,6 @@ def setup_factories(instrument: Instrument) -> None:
     def _get_q_cut_workflow() -> sciline.Pipeline:
         return _init_q_cut_workflow().copy()
 
-    q_vectors = {
-        'Qx': sc.vector([1, 0, 0]),
-        'Qy': sc.vector([0, 1, 0]),
-        'Qz': sc.vector([0, 0, 1]),
-    }
-
     def _make_cut_stream_processor(
         workflow: sciline.Pipeline,
     ) -> StreamProcessorWorkflow:
@@ -177,12 +178,12 @@ def setup_factories(instrument: Instrument) -> None:
     ) -> StreamProcessorWorkflow:
         wf = _get_q_cut_workflow()
         # Convert axis1 to CutAxis
-        vec1 = q_vectors[params.axis1.axis.value]
+        vec1 = _Q_VECTORS[params.axis1.axis.value]
         dim1 = params.axis1.axis.value
         edges1 = params.axis1.get_edges().rename(Q=dim1)
         axis1 = CutAxis.from_q_vector(output=dim1, vec=vec1, bins=edges1)
         # Convert axis2 to CutAxis
-        vec2 = q_vectors[params.axis2.axis.value]
+        vec2 = _Q_VECTORS[params.axis2.axis.value]
         dim2 = params.axis2.axis.value
         edges2 = params.axis2.get_edges().rename(Q=dim2)
         axis2 = CutAxis.from_q_vector(output=dim2, vec=vec2, bins=edges2)
