@@ -9,6 +9,8 @@ from typing import NewType
 
 import scipp as sc
 
+from ess.livedata.config import Instrument
+
 from . import specs
 from .specs import (
     ArcEnergy,
@@ -21,7 +23,7 @@ from .specs import (
 )
 
 
-def setup_factories(instrument):
+def setup_factories(instrument: Instrument):
     """Initialize BIFROST-specific factories and workflows."""
     # Lazy imports
     import numpy as np
@@ -299,8 +301,6 @@ def setup_factories(instrument):
         wf[CutAxis1] = axis1
         wf[CutAxis2] = axis2
         return _make_cut_stream_processor(wf)
-
-    return reduction_workflow, DetectorRegionCounts
 
 
 def _transpose_with_coords(data: sc.DataArray, dims: tuple[str, ...]) -> sc.DataArray:
