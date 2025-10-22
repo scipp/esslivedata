@@ -33,9 +33,6 @@ from .workflow_factory import Workflow
 class DetectorProcessorFactory(ABC):
     """
     Base class for detector processor factories.
-
-    This class no longer auto-registers workflows in __init__.
-    Use attach_to_handles() to explicitly attach factories to handles.
     """
 
     def __init__(self, *, instrument: Instrument) -> None:
