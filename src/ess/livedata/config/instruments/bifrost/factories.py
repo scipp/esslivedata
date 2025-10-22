@@ -5,7 +5,6 @@ Bifrost spectrometer factory implementations.
 """
 
 from functools import cache
-from typing import NewType
 
 import numpy as np
 import scipp as sc
@@ -43,21 +42,14 @@ def setup_factories(instrument: Instrument) -> None:
         CutData,
     )
     from ess.livedata.config.workflows import TimeseriesAccumulator
-    from ess.livedata.handlers.detector_data_handler import (
-        DetectorLogicalView,
-        get_nexus_geometry_filename,
-    )
+    from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
     from ess.reduce.nexus.types import (
-        CalibratedBeamline,
-        DetectorData,
         Filename,
         NeXusData,
-        NeXusName,
         SampleRun,
     )
     from ess.reduce.streaming import EternalAccumulator
-    from ess.spectroscopy.indirect.time_of_flight import TofWorkflow
     from ess.spectroscopy.types import (
         InstrumentAngle,
         PreopenNeXusFile,
@@ -77,86 +69,22 @@ def setup_factories(instrument: Instrument) -> None:
 
     specs.unified_detector_view_handle.attach_factory()(_logical_view.make_view)
 
-    # Would like to use a 2-D scipp.Variable, but GenericNeXusWorkflow does not accept
-    # detector names as scalar variables.
-    _detector_names = [
-        f'{123 + 4 * (arc - 1) + (5 * 4 + 1) * (channel - 1)}'
-        f'_channel_{channel}_{arc}_triplet'
-        for arc in range(1, 6)
-        for channel in range(1, 10)
-    ]
-    SpectrumView = NewType('SpectrumView', sc.DataArray)
-    SpectrumViewTimeBins = NewType('SpectrumViewTimeBins', int)
-    SpectrumViewPixelsPerTube = NewType('SpectrumViewPixelsPerTube', int)
+    # Create base reduction workflow
+    (
+        reduction_workflow,
+        DetectorRegionCounts,
+        detector_ratemeter,
+        SpectrumView,
+        SpectrumViewTimeBins,
+        SpectrumViewPixelsPerTube,
+        make_spectrum_view,
+    ) = _create_base_reduction_workflow()
 
-    def _make_spectrum_view(
-        data: DetectorData[SampleRun],
-        time_bins: SpectrumViewTimeBins,
-        pixels_per_tube: SpectrumViewPixelsPerTube,
-    ) -> SpectrumView:
-        edges = sc.linspace(
-            'event_time_offset', 0, 71_000_000, num=time_bins + 1, unit='ns'
-        )
-        # Combine, e.g., 10 pixels into 1, so we have tubes with 10 pixels each
-        # Preserve arc dimension to allow per-arc visualization
-        per_arc = 3 * 900
-        detector_number_step = 100 // pixels_per_tube
-        detector_number_offset = sc.arange(
-            'detector_number_offset', 0, per_arc, step=detector_number_step, unit=None
-        )
-        return SpectrumView(
-            data.fold('pixel', sizes={'pixel': pixels_per_tube, 'subpixel': -1})
-            .drop_coords(tuple(data.coords))
-            .bins.concat('subpixel')
-            .flatten(dims=('tube', 'channel', 'pixel'), to='detector_number_offset')
-            .hist(event_time_offset=edges)
-            .assign_coords(
-                event_time_offset=edges.to(unit='ms'),
-                detector_number_offset=detector_number_offset,
-            )
-        )
-
-    _arc_energy_to_index = {
-        ArcEnergy.ARC_2_7: 0,
-        ArcEnergy.ARC_3_2: 1,
-        ArcEnergy.ARC_3_8: 2,
-        ArcEnergy.ARC_4_4: 3,
-        ArcEnergy.ARC_5_0: 4,
-    }
-
-    DetectorRegionCounts = NewType('DetectorRegionCounts', sc.DataArray)
-
-    def _detector_ratemeter(
-        data: DetectorData[SampleRun], region: DetectorRatemeterRegionParams
-    ) -> DetectorRegionCounts:
-        """Calculate detector count rate for selected arc and pixel range."""
-        arc_idx = _arc_energy_to_index[region.arc]
-        # Select the arc
-        arc_data = data['arc', arc_idx]
-        # Flatten channel and pixel dimensions into 900 positions along the arc
-        flat = arc_data.flatten(dims=('channel', 'pixel'), to='position')
-        # Select pixel range
-        selected = flat['position', region.pixel_start : region.pixel_stop]
-        # Sum over all tubes, positions, and events
-        counts = selected.sum()
-        time = selected.bins.coords['event_time_zero'].min()
-        counts.coords['time'] = time
-        counts.variances = counts.values  # Poisson statistics
-        return DetectorRegionCounts(counts)
-
-    # Base reduction workflow
-    reduction_workflow = TofWorkflow(run_types=(SampleRun,), monitor_types=())
-    reduction_workflow[Filename[SampleRun]] = get_nexus_geometry_filename('bifrost')
-    reduction_workflow[CalibratedBeamline[SampleRun]] = (
-        reduction_workflow[CalibratedBeamline[SampleRun]]
-        .map({NeXusName[NXdetector]: _detector_names})
-        .reduce(func=_combine_banks)
-    )
-
+    # Configure workflow with default parameters
     reduction_workflow[SpectrumViewTimeBins] = 500
     reduction_workflow[SpectrumViewPixelsPerTube] = 10
-    reduction_workflow.insert(_make_spectrum_view)
-    reduction_workflow.insert(_detector_ratemeter)
+    reduction_workflow.insert(make_spectrum_view)
+    reduction_workflow.insert(detector_ratemeter)
 
     @specs.spectrum_view_handle.attach_factory()
     def _spectrum_view_workflow(
@@ -348,3 +276,124 @@ def _to_flat_detector_view(obj: sc.Variable | sc.DataArray) -> sc.DataArray:
     )
     # Remove last padding
     return da['channel/pixel', :-pad_pix]['arc/tube', :-pad_tube]
+
+
+def _create_base_reduction_workflow():
+    """
+    Create the base Bifrost reduction workflow with all helper types and functions.
+
+    This function is called by setup_factories to create the reduction workflow
+    used in production, and can also be called by tests to access the same workflow.
+
+    All imports are lazy to avoid requiring heavy dependencies when this module
+    is imported.
+
+    Returns
+    -------
+    reduction_workflow:
+        The base TofWorkflow configured with detector geometry.
+    DetectorRegionCounts:
+        NewType for detector region counts.
+    detector_ratemeter:
+        Function that computes detector region counts.
+    SpectrumView:
+        NewType for spectrum view data.
+    SpectrumViewTimeBins:
+        NewType for spectrum view time bins parameter.
+    SpectrumViewPixelsPerTube:
+        NewType for spectrum view pixels per tube parameter.
+    make_spectrum_view:
+        Function that creates spectrum view from detector data.
+    """
+    # Lazy imports
+    from typing import NewType
+
+    from scippnexus import NXdetector
+
+    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
+    from ess.reduce.nexus.types import (
+        CalibratedBeamline,
+        DetectorData,
+        Filename,
+        NeXusName,
+        SampleRun,
+    )
+    from ess.spectroscopy.indirect.time_of_flight import TofWorkflow
+
+    _detector_names = [
+        f'{123 + 4 * (arc - 1) + (5 * 4 + 1) * (channel - 1)}'
+        f'_channel_{channel}_{arc}_triplet'
+        for arc in range(1, 6)
+        for channel in range(1, 10)
+    ]
+
+    _arc_energy_to_index = {
+        ArcEnergy.ARC_2_7: 0,
+        ArcEnergy.ARC_3_2: 1,
+        ArcEnergy.ARC_3_8: 2,
+        ArcEnergy.ARC_4_4: 3,
+        ArcEnergy.ARC_5_0: 4,
+    }
+
+    DetectorRegionCounts = NewType('DetectorRegionCounts', sc.DataArray)
+
+    def _detector_ratemeter(
+        data: DetectorData[SampleRun], region: DetectorRatemeterRegionParams
+    ) -> DetectorRegionCounts:
+        """Calculate detector count rate for selected arc and pixel range."""
+        arc_idx = _arc_energy_to_index[region.arc]
+        arc_data = data['arc', arc_idx]
+        flat = arc_data.flatten(dims=('channel', 'pixel'), to='position')
+        selected = flat['position', region.pixel_start : region.pixel_stop]
+        counts = selected.sum()
+        time = selected.bins.coords['event_time_zero'].min()
+        counts.coords['time'] = time
+        counts.variances = counts.values
+        return DetectorRegionCounts(counts)
+
+    SpectrumView = NewType('SpectrumView', sc.DataArray)
+    SpectrumViewTimeBins = NewType('SpectrumViewTimeBins', int)
+    SpectrumViewPixelsPerTube = NewType('SpectrumViewPixelsPerTube', int)
+
+    def _make_spectrum_view(
+        data: DetectorData[SampleRun],
+        time_bins: SpectrumViewTimeBins,
+        pixels_per_tube: SpectrumViewPixelsPerTube,
+    ) -> SpectrumView:
+        edges = sc.linspace(
+            'event_time_offset', 0, 71_000_000, num=time_bins + 1, unit='ns'
+        )
+        per_arc = 3 * 900
+        detector_number_step = 100 // pixels_per_tube
+        detector_number_offset = sc.arange(
+            'detector_number_offset', 0, per_arc, step=detector_number_step, unit=None
+        )
+        return SpectrumView(
+            data.fold('pixel', sizes={'pixel': pixels_per_tube, 'subpixel': -1})
+            .drop_coords(tuple(data.coords))
+            .bins.concat('subpixel')
+            .flatten(dims=('tube', 'channel', 'pixel'), to='detector_number_offset')
+            .hist(event_time_offset=edges)
+            .assign_coords(
+                event_time_offset=edges.to(unit='ms'),
+                detector_number_offset=detector_number_offset,
+            )
+        )
+
+    reduction_workflow = TofWorkflow(run_types=(SampleRun,), monitor_types=())
+    reduction_workflow[Filename[SampleRun]] = get_nexus_geometry_filename('bifrost')
+    reduction_workflow[CalibratedBeamline[SampleRun]] = (
+        reduction_workflow[CalibratedBeamline[SampleRun]]
+        .map({NeXusName[NXdetector]: _detector_names})
+        .reduce(func=_combine_banks)
+    )
+
+    return (
+        reduction_workflow,
+        DetectorRegionCounts,
+        _detector_ratemeter,
+        SpectrumView,
+        SpectrumViewTimeBins,
+        SpectrumViewPixelsPerTube,
+        _make_spectrum_view,
+    )
