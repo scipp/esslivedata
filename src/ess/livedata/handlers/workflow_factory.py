@@ -122,6 +122,8 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
 
         def decorator(factory: Callable[..., Workflow]) -> Callable[..., Workflow]:
             # Validate params type hint matches spec
+            # Use get_type_hints to resolve forward references, in case we used
+            # `from __future__ import annotations`.
             type_hints = typing.get_type_hints(factory, globalns=factory.__globals__)
             inferred_params = type_hints.get('params', None)
 
