@@ -4,7 +4,7 @@
 ODIN instrument factory implementations.
 """
 
-from . import specs  # noqa: F401
+from . import specs
 
 
 def setup_factories(instrument):
@@ -48,16 +48,13 @@ def setup_factories(instrument):
         # so we resample to 128*128 ((1024/8) * (1024/8)) for now.
         return resample(da, sizes={'x': 8, 'y': 8}, method='sum')
 
-    # Detector view configuration (currently disabled)
-    # WARNING: Disabled until fixed
-    # _panel_0_view = DetectorLogicalView(
-    #     instrument=instrument, transform=_resize_image
-    # )
-    #
-    # from .specs import panel_0_view_handle
-    # from ess.livedata.handlers.detector_view_specs import DetectorViewParams
-    #
-    # @panel_0_view_handle.attach_factory()
-    # def _panel_0_view_factory(source_name: str, params: DetectorViewParams):
-    #     """Factory for timepix3 detector view."""
-    #     return _panel_0_view.make_view(source_name, params=params)
+    # Detector view configuration
+    from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
+    from ess.livedata.handlers.detector_view_specs import DetectorViewParams
+
+    _panel_0_view = DetectorLogicalView(instrument=instrument, transform=_resize_image)
+
+    @specs.panel_0_view_handle.attach_factory()
+    def _panel_0_view_factory(source_name: str, params: DetectorViewParams):
+        """Factory for timepix3 detector view."""
+        return _panel_0_view.make_view(source_name, params=params)
