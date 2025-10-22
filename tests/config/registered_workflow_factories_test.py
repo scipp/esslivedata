@@ -7,7 +7,7 @@ This test file validates workflow factories by loading factory implementations.
 These tests are slower than workflow_spec_test.py because they import heavy
 dependencies (sciline, ess.reduce, etc.).
 
-For fast spec-only tests, see workflow_spec_test.py.
+For fast spec-only tests, see registered_workflow_specs_test.py.
 """
 
 import uuid
