@@ -2,11 +2,13 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """LOKI instrument factory implementations."""
 
+from ess.livedata.config import Instrument
+
 from . import specs
 from .specs import SansWorkflowParams
 
 
-def setup_factories(instrument):
+def setup_factories(instrument: Instrument):
     """Initialize LOKI-specific factories and workflows."""
     import sciline
     import sciline.typing
