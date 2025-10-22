@@ -43,14 +43,14 @@ def setup_factories(instrument: Instrument) -> None:
     )
 
     def _resize_image(da: sc.DataArray) -> sc.DataArray:
-        from ess.imaging.tools import resample
-
         # 2048*2048 is the actual panel size, and 1024*1024 in the test file,
         # but ess.livedata might not be able to keep up with that
         # so we resample to 128*128 ((1024/8) * (1024/8)) for now.
-        return resample(
-            da, sizes={'x_pixel_offset': 8, 'y_pixel_offset': 8}, method='sum'
-        )
+        da = da.fold(dim='x_pixel_offset', sizes={'x_pixel_offset': -1, 'x_bin': 8})
+        da = da.sum('x_bin')
+        da = da.fold(dim='y_pixel_offset', sizes={'y_pixel_offset': -1, 'y_bin': 8})
+        da = da.sum('y_bin')
+        return da
 
     # Detector view configuration
     from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
