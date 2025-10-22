@@ -234,17 +234,21 @@ class Instrument:
 
         if self._monitor_workflow_handle is not None:
             from ess.livedata.handlers.monitor_data_handler import (
-                attach_monitor_workflow_factory,
+                MonitorStreamProcessor,
             )
 
-            attach_monitor_workflow_factory(self._monitor_workflow_handle)
+            self._monitor_workflow_handle.attach_factory()(
+                MonitorStreamProcessor.create_workflow
+            )
 
         if self._timeseries_workflow_handle is not None:
             from ess.livedata.handlers.timeseries_handler import (
-                attach_timeseries_workflow_factory,
+                TimeseriesStreamProcessor,
             )
 
-            attach_timeseries_workflow_factory(self._timeseries_workflow_handle)
+            self._timeseries_workflow_handle.attach_factory()(
+                TimeseriesStreamProcessor.create_workflow
+            )
 
         if hasattr(module, 'setup_factories'):
             module.setup_factories(self)

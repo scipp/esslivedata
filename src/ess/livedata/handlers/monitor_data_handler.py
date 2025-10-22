@@ -11,7 +11,7 @@ from ..core.handler import JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import Accumulator, CollectTOA, Cumulative, MonitorEvents
 from .monitor_workflow_specs import MonitorDataParams
-from .workflow_factory import SpecHandle, Workflow
+from .workflow_factory import Workflow
 
 
 class MonitorStreamProcessor(Workflow):
@@ -20,6 +20,11 @@ class MonitorStreamProcessor(Workflow):
         self._event_edges = edges.to(unit='ns').values
         self._cumulative: sc.DataArray | None = None
         self._current: sc.DataArray | None = None
+
+    @staticmethod
+    def create_workflow(params: MonitorDataParams) -> Workflow:
+        """Factory method for creating MonitorStreamProcessor from params."""
+        return MonitorStreamProcessor(edges=params.toa_edges.get_edges())
 
     def accumulate(self, data: dict[Hashable, sc.DataArray | np.ndarray]) -> None:
         if len(data) != 1:
@@ -64,25 +69,6 @@ class MonitorStreamProcessor(Workflow):
     def clear(self) -> None:
         self._cumulative = None
         self._current = None
-
-
-def _monitor_data_workflow(params: MonitorDataParams) -> Workflow:
-    return MonitorStreamProcessor(edges=params.toa_edges.get_edges())
-
-
-def attach_monitor_workflow_factory(handle: SpecHandle) -> None:
-    """
-    Attach monitor workflow factory to the spec handle (heavy dependencies).
-
-    This is the second phase of two-phase registration. Call this from
-    instrument factories.py modules.
-
-    Parameters
-    ----------
-    handle
-        The spec handle returned by register_monitor_workflow_specs().
-    """
-    handle.attach_factory()(_monitor_data_workflow)
 
 
 class MonitorHandlerFactory(
