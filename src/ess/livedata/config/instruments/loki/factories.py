@@ -63,13 +63,13 @@ def setup_factories(instrument: Instrument):
         resolution_scale=12,
     )
 
-    @specs.xy_projection_handles['xy_plane']['view'].attach_factory()
+    @specs.xy_projection_handles['view'].attach_factory()
     def _xy_projection_view_factory(
         source_name: str, params: DetectorViewParams
     ) -> DetectorView:
         return _xy_projection.make_view(source_name, params=params)
 
-    @specs.xy_projection_handles['xy_plane']['roi'].attach_factory()
+    @specs.xy_projection_handles['roi'].attach_factory()
     def _xy_projection_roi_factory(
         source_name: str, params: ROIHistogramParams
     ) -> ROIHistogram:

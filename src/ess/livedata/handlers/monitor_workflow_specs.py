@@ -32,8 +32,7 @@ def register_monitor_workflow_specs(
     """
     Register monitor workflow specs (lightweight, no heavy dependencies).
 
-    This is the first phase of two-phase registration. Call this from
-    instrument specs.py modules.
+    This is the first phase of two-phase registration.
 
     If the workflow is already registered (e.g., auto-registered in
     Instrument.__post_init__()), returns the existing handle.

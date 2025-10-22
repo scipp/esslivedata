@@ -19,16 +19,17 @@ class TestRegisterDetectorViewSpecs:
         source_names = ["detector1", "detector2"]
 
         handles = register_detector_view_specs(
-            instrument=instrument, projections=["xy_plane"], source_names=source_names
+            instrument=instrument, projection="xy_plane", source_names=source_names
         )
 
         assert isinstance(handles, dict)
-        assert "xy_plane" in handles
-        assert isinstance(handles["xy_plane"]["view"], SpecHandle)
-        assert isinstance(handles["xy_plane"]["roi"], SpecHandle)
+        assert "view" in handles
+        assert "roi" in handles
+        assert isinstance(handles["view"], SpecHandle)
+        assert isinstance(handles["roi"], SpecHandle)
 
-    def test_register_detector_view_specs_multiple_projections(self):
-        """Test registering multiple projections."""
+    def test_register_multiple_projections_via_separate_calls(self):
+        """Test registering multiple projections via separate calls."""
         from ess.livedata.handlers.detector_view_specs import (
             register_detector_view_specs,
         )
@@ -36,16 +37,25 @@ class TestRegisterDetectorViewSpecs:
         instrument = Instrument(name="test_instrument")
         source_names = ["detector1"]
 
-        handles = register_detector_view_specs(
+        xy_handles = register_detector_view_specs(
             instrument=instrument,
-            projections=["xy_plane", "cylinder_mantle_z"],
+            projection="xy_plane",
+            source_names=source_names,
+        )
+        cylinder_handles = register_detector_view_specs(
+            instrument=instrument,
+            projection="cylinder_mantle_z",
             source_names=source_names,
         )
 
-        assert "xy_plane" in handles
-        assert "cylinder_mantle_z" in handles
-        assert isinstance(handles["xy_plane"]["view"], SpecHandle)
-        assert isinstance(handles["cylinder_mantle_z"]["view"], SpecHandle)
+        assert isinstance(xy_handles["view"], SpecHandle)
+        assert isinstance(cylinder_handles["view"], SpecHandle)
+
+        # Verify both are registered in the factory
+        xy_id = xy_handles["view"].workflow_id
+        cylinder_id = cylinder_handles["view"].workflow_id
+        assert xy_id in instrument.workflow_factory
+        assert cylinder_id in instrument.workflow_factory
 
     def test_specs_registered_in_workflow_factory(self):
         """Test that specs are actually registered in the workflow factory."""
@@ -57,12 +67,12 @@ class TestRegisterDetectorViewSpecs:
         source_names = ["detector1"]
 
         handles = register_detector_view_specs(
-            instrument=instrument, projections=["xy_plane"], source_names=source_names
+            instrument=instrument, projection="xy_plane", source_names=source_names
         )
 
         # Verify specs are in the workflow factory
-        view_id = handles["xy_plane"]["view"].workflow_id
-        roi_id = handles["xy_plane"]["roi"].workflow_id
+        view_id = handles["view"].workflow_id
+        roi_id = handles["roi"].workflow_id
 
         assert view_id in instrument.workflow_factory
         assert roi_id in instrument.workflow_factory
@@ -89,11 +99,11 @@ class TestRegisterDetectorViewSpecs:
         source_names = ["detector1"]
 
         handles = register_detector_view_specs(
-            instrument=instrument, projections=["xy_plane"], source_names=source_names
+            instrument=instrument, projection="xy_plane", source_names=source_names
         )
 
-        view_id = handles["xy_plane"]["view"].workflow_id
-        roi_id = handles["xy_plane"]["roi"].workflow_id
+        view_id = handles["view"].workflow_id
+        roi_id = handles["roi"].workflow_id
 
         view_spec = instrument.workflow_factory[view_id]
         roi_spec = instrument.workflow_factory[roi_id]

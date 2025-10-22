@@ -97,7 +97,7 @@ instrument_registry.register(instrument)
 
 xy_projection_handles = register_detector_view_specs(
     instrument=instrument,
-    projections=['xy_plane'],
+    projection='xy_plane',
     source_names=detector_names,
 )
 

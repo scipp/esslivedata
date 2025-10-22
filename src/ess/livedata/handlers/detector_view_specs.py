@@ -80,11 +80,11 @@ class ROIHistogramParams(pydantic.BaseModel):
 def register_detector_view_specs(
     *,
     instrument: Instrument,
-    projections: list[Literal["xy_plane", "cylinder_mantle_z"]],
+    projection: Literal["xy_plane", "cylinder_mantle_z"],
     source_names: list[str],
-) -> dict[str, dict[str, SpecHandle]]:
+) -> dict[str, SpecHandle]:
     """
-    Register detector view specs for given projections.
+    Register detector view specs for a given projection.
 
     This is a lightweight helper that registers workflow specs without creating
     the actual detector view objects (which require heavy ess.reduce imports).
@@ -93,53 +93,49 @@ def register_detector_view_specs(
     ----------
     instrument:
         Instrument to register specs with.
-    projections:
-        List of projection types to register specs for.
+    projection:
+        Projection type to register specs for.
     source_names:
         List of detector source names.
 
     Returns
     -------
-    Dictionary mapping projection name to dict with 'view' and 'roi' handles.
+    :
+        Dictionary with 'view' and 'roi' SpecHandle entries.
     """
-    handles = {}
-
-    for projection in projections:
-        if projection == "xy_plane":
-            name = "detector_xy_projection"
-            title = "Detector XY Projection"
-            description = "Projection of a detector bank onto an XY-plane."
-        elif projection == "cylinder_mantle_z":
-            name = "detector_cylinder_mantle_z"
-            title = "Detector Cylinder Mantle Z Projection"
-            description = (
-                "Projection of a detector bank onto a cylinder mantle along Z-axis."
-            )
-        else:
-            raise ValueError(f"Unsupported projection: {projection}")
-
-        # Register view spec
-        view_handle = instrument.register_spec(
-            namespace="detector_data",
-            name=name,
-            version=1,
-            title=title,
-            description=description,
-            source_names=source_names,
-            params=DetectorViewParams,
+    if projection == "xy_plane":
+        name = "detector_xy_projection"
+        title = "Detector XY Projection"
+        description = "Projection of a detector bank onto an XY-plane."
+    elif projection == "cylinder_mantle_z":
+        name = "detector_cylinder_mantle_z"
+        title = "Detector Cylinder Mantle Z Projection"
+        description = (
+            "Projection of a detector bank onto a cylinder mantle along Z-axis."
         )
+    else:
+        raise ValueError(f"Unsupported projection: {projection}")
 
-        # Register ROI histogram spec
-        roi_handle = instrument.register_spec(
-            namespace="detector_data",
-            name=f"{name}_roi",
-            version=1,
-            title=f"ROI Histogram: {title}",
-            description=f"ROI Histogram for {description}",
-            source_names=source_names,
-            params=ROIHistogramParams,
-        )
+    # Register view spec
+    view_handle = instrument.register_spec(
+        namespace="detector_data",
+        name=name,
+        version=1,
+        title=title,
+        description=description,
+        source_names=source_names,
+        params=DetectorViewParams,
+    )
 
-        handles[projection] = {"view": view_handle, "roi": roi_handle}
+    # Register ROI histogram spec
+    roi_handle = instrument.register_spec(
+        namespace="detector_data",
+        name=f"{name}_roi",
+        version=1,
+        title=f"ROI Histogram: {title}",
+        description=f"ROI Histogram for {description}",
+        source_names=source_names,
+        params=ROIHistogramParams,
+    )
 
-    return handles
+    return {"view": view_handle, "roi": roi_handle}
