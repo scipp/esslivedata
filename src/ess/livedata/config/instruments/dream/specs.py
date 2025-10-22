@@ -196,7 +196,7 @@ class PowderReductionWithVanadiumOutputs(PowderReductionOutputs):
     i_of_dspacing: sc.DataArray = pydantic.Field(
         title='Normalized I(d)',
         description=(
-            'Normalized intensity as a function of d-spacing ' '(vanadium-corrected).'
+            'Normalized intensity as a function of d-spacing (vanadium-corrected).'
         ),
     )
     i_of_dspacing_two_theta: sc.DataArray = pydantic.Field(
@@ -209,12 +209,8 @@ class PowderReductionWithVanadiumOutputs(PowderReductionOutputs):
 
 
 # Register powder reduction workflow specs
-# Use only the detectors that are used for powder reduction (not sans_detector)
 _powder_detector_names = [
-    'mantle_detector',
-    'endcap_backward_detector',
-    'endcap_forward_detector',
-    'high_resolution_detector',
+    name for name in instrument.detector_names if 'sans' not in name
 ]
 
 powder_reduction_handle = instrument.register_spec(

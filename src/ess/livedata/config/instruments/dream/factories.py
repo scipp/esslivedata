@@ -118,13 +118,6 @@ def setup_factories(instrument: Instrument) -> None:
         run_norm=powder.RunNormalization.proton_charge
     )
 
-    _source_names = [
-        'mantle_detector',
-        'endcap_backward_detector',
-        'endcap_forward_detector',
-        'high_resolution_detector',
-    ]
-
     TotalCounts = NewType('TotalCounts', sc.DataArray)
 
     def _total_counts(data: DetectorData[SampleRun]) -> TotalCounts:

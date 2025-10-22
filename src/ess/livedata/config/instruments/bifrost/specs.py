@@ -108,7 +108,6 @@ class DetectorRatemeterParams(pydantic.BaseModel):
     )
 
 
-# Q-map parameters (from _bifrost_qmap.py)
 QMAX_DEFAULT = 3.0
 QBIN_DEFAULT = 100
 
@@ -210,9 +209,6 @@ class QMapOutputs(WorkflowOutputsBase):
     )
 
 
-# Detector names (unified detector for bifrost)
-detector_names = ['unified_detector']
-
 # Monitor names matching group names in Nexus files
 monitors = [
     '007_frame_0',
@@ -233,7 +229,7 @@ f144_attribute_registry = {
 # Create instrument
 instrument = Instrument(
     name='bifrost',
-    detector_names=detector_names,
+    detector_names=['unified_detector'],
     monitors=monitors,
     f144_attribute_registry=f144_attribute_registry,
 )
