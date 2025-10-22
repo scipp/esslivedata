@@ -23,7 +23,7 @@ from .specs import (
 )
 
 
-def setup_factories(instrument: Instrument):
+def setup_factories(instrument: Instrument) -> None:
     """Initialize BIFROST-specific factories and workflows."""
     # Lazy imports
     import numpy as np

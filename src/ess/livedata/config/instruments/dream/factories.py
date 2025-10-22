@@ -4,11 +4,13 @@
 DREAM instrument factory implementations.
 """
 
+from ess.livedata.config import Instrument
+
 from . import specs
 from .specs import PowderWorkflowParams
 
 
-def setup_factories(instrument):
+def setup_factories(instrument: Instrument) -> None:
     """Initialize DREAM-specific factories and workflows."""
     # Lazy imports - all expensive imports go inside the function
     from typing import NewType

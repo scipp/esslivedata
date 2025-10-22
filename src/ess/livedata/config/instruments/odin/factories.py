@@ -4,10 +4,12 @@
 ODIN instrument factory implementations.
 """
 
+from ess.livedata.config import Instrument
+
 from . import specs
 
 
-def setup_factories(instrument):
+def setup_factories(instrument: Instrument) -> None:
     """Initialize ODIN-specific factories and workflows."""
     import h5py
     import scipp as sc

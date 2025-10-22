@@ -8,7 +8,7 @@ from . import specs
 from .specs import SansWorkflowParams
 
 
-def setup_factories(instrument: Instrument):
+def setup_factories(instrument: Instrument) -> None:
     """Initialize LOKI-specific factories and workflows."""
     import sciline
     import sciline.typing

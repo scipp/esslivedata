@@ -4,10 +4,12 @@
 Dummy instrument factory implementations.
 """
 
+from ess.livedata.config import Instrument
+
 from . import specs
 
 
-def setup_factories(instrument):
+def setup_factories(instrument: Instrument) -> None:
     """Initialize dummy-specific factories and workflows."""
     from typing import NewType
 
