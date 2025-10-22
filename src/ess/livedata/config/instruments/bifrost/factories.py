@@ -7,6 +7,7 @@ Bifrost spectrometer factory implementations.
 from functools import cache
 from typing import NewType
 
+import numpy as np
 import scipp as sc
 
 from ess.livedata.config import Instrument
@@ -26,7 +27,6 @@ from .specs import (
 def setup_factories(instrument: Instrument) -> None:
     """Initialize BIFROST-specific factories and workflows."""
     # Lazy imports
-    import numpy as np
     import sciline
     import scippnexus as snx
     from scippnexus import NXdetector
@@ -69,25 +69,6 @@ def setup_factories(instrument: Instrument) -> None:
 
     # Configure detector
     instrument.configure_detector('unified_detector', detector_number=detector_number)
-
-    def _to_flat_detector_view(obj: sc.Variable | sc.DataArray) -> sc.DataArray:
-        da = sc.DataArray(obj) if isinstance(obj, sc.Variable) else obj
-        da = da.to(dtype='float32')
-        # Padding between channels to make gaps visible
-        pad_pix = 10
-        da = sc.concat(
-            [da, sc.full_like(da['pixel', :pad_pix], value=np.nan)], dim='pixel'
-        )
-        # Padding between arc to make gaps visible
-        pad_tube = 1
-        da = sc.concat(
-            [da, sc.full_like(da['tube', :pad_tube], value=np.nan)], dim='tube'
-        )
-        da = da.flatten(dims=('arc', 'tube'), to='arc/tube').flatten(
-            dims=('channel', 'pixel'), to='channel/pixel'
-        )
-        # Remove last padding
-        return da['channel/pixel', :-pad_pix]['arc/tube', :-pad_tube]
 
     # Create detector view
     _logical_view = DetectorLogicalView(
@@ -351,3 +332,19 @@ def _combine_banks(*bank: sc.DataArray) -> sc.DataArray:
     )
     # Order with consecutive detector_number
     return _transpose_with_coords(combined, ('arc', 'tube', 'channel', 'pixel')).copy()
+
+
+def _to_flat_detector_view(obj: sc.Variable | sc.DataArray) -> sc.DataArray:
+    da = sc.DataArray(obj) if isinstance(obj, sc.Variable) else obj
+    da = da.to(dtype='float32')
+    # Padding between channels to make gaps visible
+    pad_pix = 10
+    da = sc.concat([da, sc.full_like(da['pixel', :pad_pix], value=np.nan)], dim='pixel')
+    # Padding between arc to make gaps visible
+    pad_tube = 1
+    da = sc.concat([da, sc.full_like(da['tube', :pad_tube], value=np.nan)], dim='tube')
+    da = da.flatten(dims=('arc', 'tube'), to='arc/tube').flatten(
+        dims=('channel', 'pixel'), to='channel/pixel'
+    )
+    # Remove last padding
+    return da['channel/pixel', :-pad_pix]['arc/tube', :-pad_tube]
