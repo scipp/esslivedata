@@ -255,38 +255,41 @@ class PlotGrid:
         plot_pane_wrapper = pn.pane.HoloViews(plot, sizing_mode='stretch_both')
         plot_pane = plot_pane_wrapper.layout
 
-        # Create close button
+        # Create close button with stylesheets for proper styling override
         close_button = pn.widgets.Button(
-            name='\u00d7',  # multiplication sign
-            width=25,
-            height=25,
+            name='\u00d7',  # "X" multiplication sign
+            width=40,
+            height=40,
             button_type='light',
             sizing_mode='fixed',
             margin=(2, 2),
             styles={
-                'background-color': 'transparent',
-                'border': 'none',
-                'color': '#dc3545',
-                'font-weight': 'bold',
-                'padding': '0',
+                'position': 'absolute',
+                'top': '5px',
+                'right': '5px',
+                'z-index': '1000',
             },
+            stylesheets=[
+                """
+                button {
+                    background-color: transparent !important;
+                    border: none !important;
+                    color: #dc3545 !important;
+                    font-weight: bold !important;
+                    font-size: 20px !important;
+                    padding: 0 !important;
+                }
+                button:hover {
+                    background-color: rgba(220, 53, 69, 0.1) !important;
+                }
+                """
+            ],
         )
 
         def on_close(event: Any) -> None:
             self._remove_plot(row, col, row_span, col_span)
 
         close_button.on_click(on_close)
-
-        # Create container with close button positioned at top-right
-        # Use absolute positioning for the close button
-        close_button.styles.update(
-            {
-                'position': 'absolute',
-                'top': '5px',
-                'right': '5px',
-                'z-index': '1000',
-            }
-        )
 
         container = pn.Column(
             close_button,
