@@ -153,12 +153,6 @@ class PlotGridTab:
         if pn.state.notifications is not None:
             pn.state.notifications.error(message, duration=3000)
 
-    def refresh(self) -> None:
-        """Refresh the widget with current job data."""
-        # Refresh job plotter modal if it's open
-        if self._current_job_plotter_modal is not None:
-            self._current_job_plotter_modal.refresh()
-
     @property
     def widget(self) -> pn.Column:
         """Get the Panel widget."""

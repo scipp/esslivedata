@@ -89,7 +89,6 @@ class PlotCreationWidget:
         self._widget = self._main_tabs
 
         self._job_service.register_job_update_subscriber(self.refresh)
-        self._job_service.register_job_update_subscriber(self._plot_grid_tab.refresh)
 
     def _get_output_metadata(
         self, job_number: JobNumber, output_name: str
