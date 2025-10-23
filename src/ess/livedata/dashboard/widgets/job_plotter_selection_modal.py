@@ -11,14 +11,18 @@ from ess.livedata.config.workflow_spec import JobNumber
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.plotting_controller import PlottingController
 
+from .configuration_widget import ConfigurationPanel
+from .plot_configuration_adapter import PlotConfigurationAdapter
+
 
 class JobPlotterSelectionModal:
     """
-    Two-step wizard modal for selecting job/output and plotter type.
+    Three-step wizard modal for selecting job/output, plotter type, and configuration.
 
     The modal guides the user through:
     1. Job and output selection from available data
     2. Plotter type selection based on compatibility with selected job/output
+    3. Plotter configuration (source selection and parameters)
 
     Parameters
     ----------
@@ -27,7 +31,7 @@ class JobPlotterSelectionModal:
     plotting_controller:
         Controller for determining available plotters
     success_callback:
-        Called with (job_number, output_name, plot_name) when user completes selection
+        Called with (plot, selected_sources) when user completes configuration
     cancel_callback:
         Called when modal is closed or cancelled
     """
@@ -36,7 +40,7 @@ class JobPlotterSelectionModal:
         self,
         job_service: JobService,
         plotting_controller: PlottingController,
-        success_callback: Callable[[JobNumber, str | None, str], None],
+        success_callback: Callable,
         cancel_callback: Callable[[], None],
     ) -> None:
         self._job_service = job_service
@@ -49,11 +53,22 @@ class JobPlotterSelectionModal:
         self._selected_job: JobNumber | None = None
         self._selected_output: str | None = None
         self._selected_plot: str | None = None
+        self._config_panel: ConfigurationPanel | None = None
         self._success_callback_invoked = False
 
         # UI components
         self._job_output_table = self._create_job_output_table()
         self._plotter_buttons_container = pn.Column(sizing_mode='stretch_width')
+        self._config_panel_container = pn.Column(sizing_mode='stretch_width')
+
+        self._back_button = pn.widgets.Button(
+            name="Back",
+            button_type="light",
+            sizing_mode='fixed',
+            width=100,
+        )
+        self._back_button.on_click(self._on_back_clicked)
+
         self._next_button = pn.widgets.Button(
             name="Next",
             button_type="primary",
@@ -221,18 +236,17 @@ class JobPlotterSelectionModal:
         """
         if self._selected_job is not None:
             self._selected_plot = plot_name
-            self._success_callback_invoked = True
-            self._modal.open = False
-            self._success_callback(
-                self._selected_job, self._selected_output, self._selected_plot
-            )
+            self._current_step = 3
+            self._update_content()
 
     def _update_content(self) -> None:
         """Update modal content based on current step."""
         if self._current_step == 1:
             self._show_step_1()
-        else:
+        elif self._current_step == 2:
             self._show_step_2()
+        else:
+            self._show_step_3()
 
     def _show_step_1(self) -> None:
         """Show step 1: job and output selection."""
@@ -263,16 +277,75 @@ class JobPlotterSelectionModal:
             [
                 pn.pane.HTML(
                     "<h3>Step 2: Select Plotter Type</h3>"
-                    "<p>Click a plotter to configure it.</p>"
+                    "<p>Choose the type of plot you want to create.</p>"
                 ),
                 self._plotter_buttons_container,
                 pn.Row(
                     pn.Spacer(),
+                    self._back_button,
                     self._cancel_button,
                     margin=(10, 0),
                 ),
             ]
         )
+
+    def _show_step_3(self) -> None:
+        """Show step 3: plotter configuration."""
+        # Create configuration panel if needed
+        if self._config_panel is None and self._selected_job and self._selected_plot:
+            # Get available sources for selected job
+            job_data = self._job_service.job_data.get(self._selected_job, {})
+            available_sources = list(job_data.keys())
+
+            if not available_sources:
+                self._show_error('No sources available for selected job')
+                self._on_cancel_clicked(None)
+                return
+
+            # Get plot spec
+            try:
+                plot_spec = self._plotting_controller.get_spec(self._selected_plot)
+            except Exception as e:
+                self._show_error(f'Error getting plot spec: {e}')
+                self._on_cancel_clicked(None)
+                return
+
+            # Create PlotConfigurationAdapter
+            # The adapter's success_callback is called from start_action()
+            # with (plot, sources)
+            config_adapter = PlotConfigurationAdapter(
+                job_number=self._selected_job,
+                output_name=self._selected_output,
+                plot_spec=plot_spec,
+                available_sources=available_sources,
+                plotting_controller=self._plotting_controller,
+                success_callback=self._on_plot_config_complete,
+            )
+
+            # Create ConfigurationPanel without cancel button
+            # The panel's success_callback is called after execute_action()
+            # succeeds (no args)
+            self._config_panel = ConfigurationPanel(
+                config=config_adapter,
+                start_button_text="Create Plot",
+                show_cancel_button=False,
+                success_callback=self._on_panel_action_success,
+            )
+
+        self._content.clear()
+        if self._config_panel:
+            self._content.extend(
+                [
+                    pn.pane.HTML("<h3>Step 3: Configure Plot</h3>"),
+                    self._config_panel.panel,
+                    pn.Row(
+                        pn.Spacer(),
+                        self._back_button,
+                        self._cancel_button,
+                        margin=(10, 0),
+                    ),
+                ]
+            )
 
     def _update_plotter_buttons(self) -> None:
         """Update plotter buttons based on job and output selection."""
@@ -309,10 +382,43 @@ class JobPlotterSelectionModal:
         self._current_step = 2
         self._update_content()
 
+    def _on_back_clicked(self, event) -> None:
+        """Handle back button click."""
+        if self._current_step > 1:
+            self._current_step -= 1
+            # Clear config panel when going back from step 3
+            if self._current_step == 2:
+                self._config_panel = None
+            self._update_content()
+
     def _on_cancel_clicked(self, event) -> None:
         """Handle cancel button click."""
         self._modal.open = False
         self._cancel_callback()
+
+    def _on_plot_config_complete(self, plot, selected_sources: list[str]) -> None:
+        """
+        Handle plot creation completion from PlotConfigurationAdapter.
+
+        This is called by the adapter's start_action() with the created plot.
+        """
+        # Store for potential use, then trigger parent callback
+        self._success_callback(plot, selected_sources)
+
+    def _on_panel_action_success(self) -> None:
+        """
+        Handle successful action from ConfigurationPanel.
+
+        This is called after execute_action() completes successfully.
+        Closes the modal.
+        """
+        self._success_callback_invoked = True
+        self._modal.open = False
+
+    def _show_error(self, message: str) -> None:
+        """Display an error notification."""
+        if pn.state.notifications is not None:
+            pn.state.notifications.error(message, duration=3000)
 
     def _on_modal_closed(self, event) -> None:
         """Handle modal being closed via X button or ESC key."""
@@ -339,6 +445,7 @@ class JobPlotterSelectionModal:
         self._selected_job = None
         self._selected_output = None
         self._selected_plot = None
+        self._config_panel = None
         self._next_button.disabled = True
 
         # Refresh data and show
