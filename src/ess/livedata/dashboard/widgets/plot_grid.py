@@ -47,7 +47,9 @@ class PlotGrid:
         self._pending_selection: tuple[int, int, int, int] | None = None
 
         # Create the grid
-        self._grid = pn.GridSpec(sizing_mode='stretch_both', name='PlotGrid')
+        self._grid = pn.GridSpec(
+            sizing_mode='stretch_both', name='PlotGrid', min_height=600
+        )
 
         # Initialize empty cells
         self._initialize_empty_cells()
