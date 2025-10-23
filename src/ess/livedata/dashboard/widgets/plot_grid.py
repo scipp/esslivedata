@@ -54,9 +54,10 @@ class PlotGrid:
 
     def _initialize_empty_cells(self) -> None:
         """Populate the grid with empty clickable cells."""
-        for row in range(self._nrows):
-            for col in range(self._ncols):
-                self._grid[row, col] = self._create_empty_cell(row, col)
+        with pn.io.hold():
+            for row in range(self._nrows):
+                for col in range(self._ncols):
+                    self._grid[row, col] = self._create_empty_cell(row, col)
 
     def _create_empty_cell(
         self,
@@ -193,10 +194,11 @@ class PlotGrid:
 
     def _refresh_all_cells(self) -> None:
         """Refresh all empty cells based on current selection state."""
-        for row in range(self._nrows):
-            for col in range(self._ncols):
-                if not self._is_cell_occupied(row, col):
-                    self._grid[row, col] = self._get_cell_for_state(row, col)
+        with pn.io.hold():
+            for row in range(self._nrows):
+                for col in range(self._ncols):
+                    if not self._is_cell_occupied(row, col):
+                        self._grid[row, col] = self._get_cell_for_state(row, col)
 
     def _get_cell_for_state(self, row: int, col: int) -> pn.Column:
         """Get the appropriate cell widget based on current selection state."""
@@ -311,9 +313,10 @@ class PlotGrid:
             del self._occupied_cells[key]
 
         # Restore empty cells
-        for r in range(row, row + row_span):
-            for c in range(col, col + col_span):
-                self._grid[r, c] = self._create_empty_cell(r, c)
+        with pn.io.hold():
+            for r in range(row, row + row_span):
+                for c in range(col, col + col_span):
+                    self._grid[r, c] = self._create_empty_cell(r, c)
 
     def _show_error(self, message: str) -> None:
         """Display a temporary error notification."""
