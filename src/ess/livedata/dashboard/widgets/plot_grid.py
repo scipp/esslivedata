@@ -54,9 +54,6 @@ class PlotGrid:
         # Initialize empty cells
         self._initialize_empty_cells()
 
-        # Setup keyboard event handling for ESC key
-        self._setup_keyboard_handler()
-
     def _initialize_empty_cells(self) -> None:
         """Populate the grid with empty clickable cells."""
         with pn.io.hold():
@@ -352,14 +349,6 @@ class PlotGrid:
         """Display a temporary error notification."""
         if pn.state.notifications is not None:
             pn.state.notifications.error(message, duration=3000)
-
-    def _setup_keyboard_handler(self) -> None:
-        """Setup keyboard event handler for ESC key."""
-        # Panel doesn't have built-in ESC key handling for custom widgets
-        # This would require JavaScript integration which is complex
-        # For now, we'll document that clicking outside the grid cancels selection
-        # A future enhancement could add proper keyboard support
-        pass
 
     def insert_plot_deferred(self, plot: hv.DynamicMap) -> None:
         """
