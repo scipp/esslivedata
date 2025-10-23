@@ -24,15 +24,16 @@ class PlotGrid:
     ncols:
         Number of columns in the grid.
     plot_request_callback:
-        Callback invoked when a region is selected. Should return a
-        HoloViews DynamicMap to insert into the grid.
+        Callback invoked when a region is selected. This callback will be
+        called asynchronously and should not return a value. The plot should
+        be inserted later via `insert_plot_deferred()`.
     """
 
     def __init__(
         self,
         nrows: int,
         ncols: int,
-        plot_request_callback: Callable[[], hv.DynamicMap],
+        plot_request_callback: Callable[[], None],
     ) -> None:
         self._nrows = nrows
         self._ncols = ncols
@@ -42,6 +43,8 @@ class PlotGrid:
         self._occupied_cells: dict[tuple[int, int, int, int], pn.Column] = {}
         self._first_click: tuple[int, int] | None = None
         self._highlighted_cell: pn.pane.HTML | None = None
+        self._plot_creation_in_flight: bool = False
+        self._pending_selection: tuple[int, int, int, int] | None = None
 
         # Create the grid
         self._grid = pn.GridSpec(sizing_mode='stretch_both', name='PlotGrid')
@@ -129,6 +132,11 @@ class PlotGrid:
 
     def _on_cell_click(self, row: int, col: int) -> None:
         """Handle cell click for region selection."""
+        # Check if plot creation is already in progress
+        if self._plot_creation_in_flight:
+            self._show_error('Plot creation in progress')
+            return
+
         # Check if cell is occupied
         if self._is_cell_occupied(row, col):
             self._show_error('Cannot select a cell that already contains a plot')
@@ -167,13 +175,12 @@ class PlotGrid:
             # Clear selection highlight
             self._clear_selection()
 
-            # Request plot from callback
-            try:
-                plot = self._plot_request_callback()
-                self._insert_plot(plot)
-            except Exception as e:
-                self._show_error(f'Error creating plot: {e}')
-                self._pending_selection = None
+            # Set in-flight flag before calling callback
+            self._plot_creation_in_flight = True
+            self._refresh_all_cells()
+
+            # Request plot from callback (async, no return value)
+            self._plot_request_callback()
 
     def _is_cell_occupied(self, row: int, col: int) -> bool:
         """Check if a specific cell is occupied by a plot."""
@@ -202,6 +209,10 @@ class PlotGrid:
 
     def _get_cell_for_state(self, row: int, col: int) -> pn.Column:
         """Get the appropriate cell widget based on current selection state."""
+        # If plot creation is in flight, show all cells as disabled
+        if self._plot_creation_in_flight:
+            return self._create_empty_cell(row, col, disabled=True)
+
         if self._first_click is None:
             # No selection in progress
             return self._create_empty_cell(row, col)
@@ -333,6 +344,41 @@ class PlotGrid:
         # For now, we'll document that clicking outside the grid cancels selection
         # A future enhancement could add proper keyboard support
         pass
+
+    def insert_plot_deferred(self, plot: hv.DynamicMap) -> None:
+        """
+        Complete plot insertion after async workflow.
+
+        This method should be called after the plot request callback completes
+        successfully. It inserts the plot at the pending selection location
+        and clears the in-flight state.
+
+        Parameters
+        ----------
+        plot:
+            The HoloViews DynamicMap to insert into the grid.
+        """
+        if self._pending_selection is None:
+            self._show_error('No pending selection to insert plot into')
+            return
+
+        try:
+            self._insert_plot(plot)
+        finally:
+            # Clear in-flight state regardless of success/failure
+            self._plot_creation_in_flight = False
+            self._refresh_all_cells()
+
+    def cancel_pending_selection(self) -> None:
+        """
+        Abort the current plot creation workflow and reset state.
+
+        This method should be called when the plot request callback is cancelled
+        or fails. It clears the pending selection and in-flight state.
+        """
+        self._pending_selection = None
+        self._plot_creation_in_flight = False
+        self._refresh_all_cells()
 
     @property
     def panel(self) -> pn.viewable.Viewable:
