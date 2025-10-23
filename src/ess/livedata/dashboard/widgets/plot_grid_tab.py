@@ -44,15 +44,20 @@ class PlotGridTab:
             nrows=3, ncols=3, plot_request_callback=self._on_plot_requested
         )
 
-        # Modal container for lifecycle management
-        self._modal_container = pn.Column()
+        # Modal container for lifecycle management.
+        # Using pn.Row with height=0 ensures the modal is part of the component tree
+        # (required for rendering) but doesn't compete with the grid for vertical space.
+        # The modal itself renders as an overlay when opened.
+        self._modal_container = pn.Row(height=0, sizing_mode='stretch_width')
 
         # State for tracking current workflow
         self._current_modal: JobPlotterSelectionModal | None = None
 
-        # Create main widget
+        # Create main widget - grid with zero-height modal container
         self._widget = pn.Column(
-            self._plot_grid.panel, self._modal_container, sizing_mode='stretch_both'
+            self._plot_grid.panel,
+            self._modal_container,
+            sizing_mode='stretch_both',
         )
 
     def _on_plot_requested(self) -> None:
@@ -65,7 +70,7 @@ class PlotGridTab:
             cancel_callback=self._on_modal_cancelled,
         )
 
-        # Clear modal container and add new modal
+        # Add modal to zero-height container so it renders but doesn't affect layout
         self._modal_container.clear()
         self._modal_container.append(self._current_modal.modal)
         self._current_modal.show()
