@@ -3,10 +3,108 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import holoviews as hv
 import panel as pn
+
+
+@dataclass(frozen=True)
+class _CellStyles:
+    """Styling constants for PlotGrid cells."""
+
+    # Colors
+    PRIMARY_BLUE = '#007bff'
+    LIGHT_GRAY = '#dee2e6'
+    LIGHT_RED = '#ffe6e6'
+    LIGHT_BLUE = '#e7f3ff'
+    VERY_LIGHT_GRAY = '#f8f9fa'
+    MEDIUM_GRAY = '#6c757d'
+    MUTED_GRAY = '#adb5bd'
+    DANGER_RED = '#dc3545'
+
+    # Dimensions
+    CELL_MIN_HEIGHT_PX = 100
+    CELL_BORDER_WIDTH_NORMAL = 1
+    CELL_BORDER_WIDTH_HIGHLIGHTED = 3
+    CELL_MARGIN = 2
+    CLOSE_BUTTON_SIZE = 40
+    CLOSE_BUTTON_TOP_OFFSET = '5px'
+    CLOSE_BUTTON_RIGHT_OFFSET = '5px'
+    CLOSE_BUTTON_Z_INDEX = '1000'
+
+    # Typography
+    FONT_SIZE_LARGE = '24px'
+    FONT_SIZE_CLOSE_BUTTON = '20px'
+
+
+def _normalize_region(r1: int, c1: int, r2: int, c2: int) -> tuple[int, int, int, int]:
+    """
+    Normalize region coordinates to (row_start, col_start, row_end, col_end).
+
+    Parameters
+    ----------
+    r1:
+        First row coordinate.
+    c1:
+        First column coordinate.
+    r2:
+        Second row coordinate.
+    c2:
+        Second column coordinate.
+
+    Returns
+    -------
+    :
+        Tuple of (row_start, col_start, row_end, col_end) where
+        row_start <= row_end and col_start <= col_end.
+    """
+    return min(r1, r2), min(c1, c2), max(r1, r2), max(c1, c2)
+
+
+def _calculate_region_span(
+    row_start: int, row_end: int, col_start: int, col_end: int
+) -> tuple[int, int]:
+    """
+    Calculate the span dimensions of a region.
+
+    Parameters
+    ----------
+    row_start:
+        Starting row (inclusive).
+    row_end:
+        Ending row (inclusive).
+    col_start:
+        Starting column (inclusive).
+    col_end:
+        Ending column (inclusive).
+
+    Returns
+    -------
+    :
+        Tuple of (row_span, col_span).
+    """
+    return row_end - row_start + 1, col_end - col_start + 1
+
+
+def _format_region_label(row_span: int, col_span: int) -> str:
+    """
+    Format a label describing region dimensions.
+
+    Parameters
+    ----------
+    row_span:
+        Number of rows in the region.
+    col_span:
+        Number of columns in the region.
+
+    Returns
+    -------
+    :
+        Formatted label string like "Click for 2x3 plot".
+    """
+    return f'Click for {row_span}x{col_span} plot'
 
 
 class PlotGrid:
@@ -71,19 +169,25 @@ class PlotGrid:
         large_font: bool = False,
     ) -> pn.Column:
         """Create an empty cell with placeholder text and click handler."""
-        border_color = '#007bff' if highlighted else '#dee2e6'
-        border_width = 3 if highlighted else 1
+        border_color = (
+            _CellStyles.PRIMARY_BLUE if highlighted else _CellStyles.LIGHT_GRAY
+        )
+        border_width = (
+            _CellStyles.CELL_BORDER_WIDTH_HIGHLIGHTED
+            if highlighted
+            else _CellStyles.CELL_BORDER_WIDTH_NORMAL
+        )
         border_style = 'dashed' if highlighted else 'solid'
 
         if disabled:
-            background_color = '#ffe6e6'  # light red
-            text_color = '#adb5bd'
+            background_color = _CellStyles.LIGHT_RED
+            text_color = _CellStyles.MUTED_GRAY
         elif highlighted:
-            background_color = '#e7f3ff'
-            text_color = '#6c757d'
+            background_color = _CellStyles.LIGHT_BLUE
+            text_color = _CellStyles.MEDIUM_GRAY
         else:
-            background_color = '#f8f9fa'
-            text_color = '#6c757d'
+            background_color = _CellStyles.VERY_LIGHT_GRAY
+            text_color = _CellStyles.MEDIUM_GRAY
 
         # Determine button label
         if label is None:
@@ -93,11 +197,11 @@ class PlotGrid:
         # Use stylesheets to target the button element directly
         if large_font:
             stylesheets = [
-                """
-                button {
-                    font-size: 24px;
+                f"""
+                button {{
+                    font-size: {_CellStyles.FONT_SIZE_LARGE};
                     font-weight: bold;
-                }
+                }}
                 """
             ]
         else:
@@ -113,10 +217,10 @@ class PlotGrid:
                 'background-color': background_color,
                 'border': f'{border_width}px {border_style} {border_color}',
                 'color': text_color,
-                'min-height': '100px',
+                'min-height': f'{_CellStyles.CELL_MIN_HEIGHT_PX}px',
             },
             stylesheets=stylesheets,
-            margin=2,
+            margin=_CellStyles.CELL_MARGIN,
         )
 
         # Attach click handler (even if disabled, for consistency)
@@ -151,10 +255,7 @@ class PlotGrid:
             r2, c2 = row, col
 
             # Normalize to get top-left and bottom-right corners
-            row_start = min(r1, r2)
-            row_end = max(r1, r2)
-            col_start = min(c1, c2)
-            col_end = max(c1, c2)
+            row_start, col_start, row_end, col_end = _normalize_region(r1, c1, r2, c2)
 
             # Check if the entire region is available
             if not self._is_region_available(row_start, col_start, row_end, col_end):
@@ -165,8 +266,9 @@ class PlotGrid:
                 return
 
             # Calculate span
-            row_span = row_end - row_start + 1
-            col_span = col_end - col_start + 1
+            row_span, col_span = _calculate_region_span(
+                row_start, row_end, col_start, col_end
+            )
 
             # Store selection for plot insertion
             self._pending_selection = (row_start, col_start, row_span, col_span)
@@ -235,10 +337,7 @@ class PlotGrid:
             )
 
         # Check if this cell would create a valid region
-        row_start = min(r1, row)
-        row_end = max(r1, row)
-        col_start = min(c1, col)
-        col_end = max(c1, col)
+        row_start, col_start, row_end, col_end = _normalize_region(r1, c1, row, col)
 
         # Check if region is valid
         is_valid = self._is_region_available(row_start, col_start, row_end, col_end)
@@ -247,10 +346,11 @@ class PlotGrid:
             # Disable this cell
             return self._create_empty_cell(row, col, disabled=True, large_font=True)
 
-        # Calculate dimensions
-        row_span = row_end - row_start + 1
-        col_span = col_end - col_start + 1
-        label = f'Click for {row_span}x{col_span} plot'
+        # Calculate dimensions and format label
+        row_span, col_span = _calculate_region_span(
+            row_start, row_end, col_start, col_end
+        )
+        label = _format_region_label(row_span, col_span)
 
         return self._create_empty_cell(row, col, label=label, large_font=True)
 
@@ -274,30 +374,30 @@ class PlotGrid:
         # Create close button with stylesheets for proper styling override
         close_button = pn.widgets.Button(
             name='\u00d7',  # "X" multiplication sign
-            width=40,
-            height=40,
+            width=_CellStyles.CLOSE_BUTTON_SIZE,
+            height=_CellStyles.CLOSE_BUTTON_SIZE,
             button_type='light',
             sizing_mode='fixed',
-            margin=(2, 2),
+            margin=(_CellStyles.CELL_MARGIN, _CellStyles.CELL_MARGIN),
             styles={
                 'position': 'absolute',
-                'top': '5px',
-                'right': '5px',
-                'z-index': '1000',
+                'top': _CellStyles.CLOSE_BUTTON_TOP_OFFSET,
+                'right': _CellStyles.CLOSE_BUTTON_RIGHT_OFFSET,
+                'z-index': _CellStyles.CLOSE_BUTTON_Z_INDEX,
             },
             stylesheets=[
-                """
-                button {
+                f"""
+                button {{
                     background-color: transparent !important;
                     border: none !important;
-                    color: #dc3545 !important;
+                    color: {_CellStyles.DANGER_RED} !important;
                     font-weight: bold !important;
-                    font-size: 20px !important;
+                    font-size: {_CellStyles.FONT_SIZE_CLOSE_BUTTON} !important;
                     padding: 0 !important;
-                }
-                button:hover {
+                }}
+                button:hover {{
                     background-color: rgba(220, 53, 69, 0.1) !important;
-                }
+                }}
                 """
             ],
         )
