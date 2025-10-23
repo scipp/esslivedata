@@ -53,7 +53,7 @@ class JobPlotterSelectionModal:
 
         # UI components
         self._job_output_table = self._create_job_output_table()
-        self._plot_selector = self._create_plot_selector()
+        self._plotter_buttons_container = pn.Column(sizing_mode='stretch_width')
         self._next_button = pn.widgets.Button(
             name="Next",
             button_type="primary",
@@ -62,15 +62,6 @@ class JobPlotterSelectionModal:
             width=120,
         )
         self._next_button.on_click(self._on_next_clicked)
-
-        self._configure_button = pn.widgets.Button(
-            name="Configure Plot",
-            button_type="primary",
-            disabled=True,
-            sizing_mode='fixed',
-            width=150,
-        )
-        self._configure_button.on_click(self._on_configure_clicked)
 
         self._cancel_button = pn.widgets.Button(
             name="Cancel",
@@ -99,7 +90,6 @@ class JobPlotterSelectionModal:
         self._job_output_table.param.watch(
             self._on_job_output_selection_change, 'selection'
         )
-        self._plot_selector.param.watch(self._on_plot_selection_change, 'value')
 
         # Initialize with step 1
         self._update_content()
@@ -126,15 +116,33 @@ class JobPlotterSelectionModal:
             },
         )
 
-    def _create_plot_selector(self) -> pn.widgets.Select:
-        """Create plot type selection widget."""
-        return pn.widgets.Select(
-            name="Plot Type",
-            options=[],
-            value=None,
-            sizing_mode='stretch_width',
-            disabled=True,
-        )
+    def _create_plotter_buttons(
+        self, available_plots: dict[str, tuple[str, object]]
+    ) -> list[pn.widgets.Button]:
+        """Create buttons for each available plotter.
+
+        Parameters
+        ----------
+        available_plots:
+            Dictionary mapping plot names to (title, spec) tuples.
+
+        Returns
+        -------
+        :
+            List of buttons for selecting plotters.
+        """
+        buttons = []
+        for plot_name, (title, _spec) in available_plots.items():
+            button = pn.widgets.Button(
+                name=title,
+                button_type="primary",
+                sizing_mode='stretch_width',
+                min_width=200,
+            )
+            # Capture plot_name in closure
+            button.on_click(lambda event, pn=plot_name: self._on_plotter_selected(pn))
+            buttons.append(button)
+        return buttons
 
     def _update_job_output_table(self) -> None:
         """Update the job and output table with current job data."""
@@ -203,10 +211,21 @@ class JobPlotterSelectionModal:
         # Enable next button
         self._next_button.disabled = False
 
-    def _on_plot_selection_change(self, event) -> None:
-        """Handle plot selection change."""
-        self._selected_plot = event.new
-        self._configure_button.disabled = self._selected_plot is None
+    def _on_plotter_selected(self, plot_name: str) -> None:
+        """Handle plotter button click.
+
+        Parameters
+        ----------
+        plot_name:
+            Name of the selected plotter.
+        """
+        if self._selected_job is not None:
+            self._selected_plot = plot_name
+            self._success_callback_invoked = True
+            self._modal.open = False
+            self._success_callback(
+                self._selected_job, self._selected_output, self._selected_plot
+            )
 
     def _update_content(self) -> None:
         """Update modal content based on current step."""
@@ -236,33 +255,33 @@ class JobPlotterSelectionModal:
 
     def _show_step_2(self) -> None:
         """Show step 2: plotter selection."""
-        # Update plot selector with available plotters
-        self._update_plot_selector()
+        # Update plotter buttons with available plotters
+        self._update_plotter_buttons()
 
         self._content.clear()
         self._content.extend(
             [
                 pn.pane.HTML(
                     "<h3>Step 2: Select Plotter Type</h3>"
-                    "<p>Choose the type of plot to create.</p>"
+                    "<p>Click a plotter to configure it.</p>"
                 ),
-                self._plot_selector,
+                self._plotter_buttons_container,
                 pn.Row(
                     pn.Spacer(),
                     self._cancel_button,
-                    self._configure_button,
                     margin=(10, 0),
                 ),
             ]
         )
 
-    def _update_plot_selector(self) -> None:
-        """Update plot selector based on job and output selection."""
+    def _update_plotter_buttons(self) -> None:
+        """Update plotter buttons based on job and output selection."""
+        self._plotter_buttons_container.clear()
+
         if self._selected_job is None:
-            self._plot_selector.options = []
-            self._plot_selector.value = None
-            self._plot_selector.disabled = True
-            self._configure_button.disabled = True
+            self._plotter_buttons_container.append(
+                pn.pane.Markdown("*No job selected*")
+            )
             return
 
         try:
@@ -270,38 +289,25 @@ class JobPlotterSelectionModal:
                 self._selected_job, self._selected_output
             )
             if available_plots:
-                # Create options with plot class names
-                options = {spec.title: name for name, spec in available_plots.items()}
-                self._plot_selector.options = options
-                self._plot_selector.value = next(iter(options)) if options else None
-                self._plot_selector.disabled = False
-                self._configure_button.disabled = False
+                # Create dictionary mapping plot names to (title, spec) tuples
+                plot_data = {
+                    name: (spec.title, spec) for name, spec in available_plots.items()
+                }
+                buttons = self._create_plotter_buttons(plot_data)
+                self._plotter_buttons_container.extend(buttons)
             else:
-                self._plot_selector.options = []
-                self._plot_selector.value = None
-                self._plot_selector.disabled = True
-                self._configure_button.disabled = True
+                self._plotter_buttons_container.append(
+                    pn.pane.Markdown("*No plotters available for this selection*")
+                )
         except Exception:
-            self._plot_selector.options = []
-            self._plot_selector.value = None
-            self._plot_selector.disabled = True
-            self._configure_button.disabled = True
+            self._plotter_buttons_container.append(
+                pn.pane.Markdown("*Error loading plotters*")
+            )
 
     def _on_next_clicked(self, event) -> None:
         """Handle next button click."""
         self._current_step = 2
         self._update_content()
-
-    def _on_configure_clicked(self, event) -> None:
-        """Handle configure button click."""
-        if self._selected_job is not None and self._selected_plot is not None:
-            # Mark success callback as invoked BEFORE closing modal
-            # to prevent _on_modal_closed from calling cancel callback
-            self._success_callback_invoked = True
-            self._modal.open = False
-            self._success_callback(
-                self._selected_job, self._selected_output, self._selected_plot
-            )
 
     def _on_cancel_clicked(self, event) -> None:
         """Handle cancel button click."""
@@ -334,7 +340,6 @@ class JobPlotterSelectionModal:
         self._selected_output = None
         self._selected_plot = None
         self._next_button.disabled = True
-        self._configure_button.disabled = True
 
         # Refresh data and show
         self._update_job_output_table()
