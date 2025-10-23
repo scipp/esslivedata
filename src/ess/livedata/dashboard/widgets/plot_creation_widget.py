@@ -81,7 +81,6 @@ class PlotCreationWidget:
         self._widget = self._main_tabs
 
         self._job_service.register_job_update_subscriber(self.refresh)
-        self._job_service.register_job_update_subscriber(self._plot_grid_tab.refresh)
 
     def _create_job_output_table(self) -> pn.widgets.Tabulator:
         """Create job and output selection table with grouping."""
