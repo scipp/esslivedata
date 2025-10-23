@@ -59,32 +59,58 @@ class PlotGrid:
                 self._grid[row, col] = self._create_empty_cell(row, col)
 
     def _create_empty_cell(
-        self, row: int, col: int, highlighted: bool = False
+        self,
+        row: int,
+        col: int,
+        highlighted: bool = False,
+        disabled: bool = False,
+        label: str | None = None,
+        large_font: bool = False,
     ) -> pn.Column:
         """Create an empty cell with placeholder text and click handler."""
         border_color = '#007bff' if highlighted else '#dee2e6'
         border_width = 3 if highlighted else 1
         border_style = 'dashed' if highlighted else 'solid'
-        background_color = '#e7f3ff' if highlighted else '#f8f9fa'
+
+        if disabled:
+            background_color = '#ffe6e6'  # light red
+            text_color = '#adb5bd'
+        elif highlighted:
+            background_color = '#e7f3ff'
+            text_color = '#6c757d'
+        else:
+            background_color = '#f8f9fa'
+            text_color = '#6c757d'
+
+        # Determine button label
+        if label is None:
+            label = '' if disabled else 'Click to add plot'
+
+        # Font size - larger during selection process
+        font_size = '24px' if large_font else '14px'
+        font_weight = 'bold' if large_font else 'normal'
 
         # Create a button that fills the cell
         button = pn.widgets.Button(
-            name='Click to add plot',
+            name=label,
             sizing_mode='stretch_both',
             button_type='light',
+            disabled=disabled,
             styles={
                 'background-color': background_color,
                 'border': f'{border_width}px {border_style} {border_color}',
-                'color': '#6c757d',
-                'font-size': '14px',
+                'color': text_color,
+                'font-size': font_size,
+                'font-weight': font_weight,
                 'min-height': '100px',
             },
             margin=2,
         )
 
-        # Attach click handler
+        # Attach click handler (even if disabled, for consistency)
         def on_click(event: Any) -> None:
-            self._on_cell_click(row, col)
+            if not disabled:
+                self._on_cell_click(row, col)
 
         button.on_click(on_click)
 
@@ -101,7 +127,7 @@ class PlotGrid:
         if self._first_click is None:
             # First click - start selection
             self._first_click = (row, col)
-            self._highlight_cell(row, col)
+            self._refresh_all_cells()
         else:
             # Second click - complete selection
             r1, c1 = self._first_click
@@ -156,21 +182,56 @@ class PlotGrid:
                     return False
         return True
 
-    def _highlight_cell(self, row: int, col: int) -> None:
-        """Highlight a cell to indicate selection in progress."""
-        # Replace the cell with a highlighted version
-        self._highlighted_cell = (row, col)
-        self._grid[row, col] = self._create_empty_cell(row, col, highlighted=True)
+    def _refresh_all_cells(self) -> None:
+        """Refresh all empty cells based on current selection state."""
+        for row in range(self._nrows):
+            for col in range(self._ncols):
+                if not self._is_cell_occupied(row, col):
+                    self._grid[row, col] = self._get_cell_for_state(row, col)
+
+    def _get_cell_for_state(self, row: int, col: int) -> pn.Column:
+        """Get the appropriate cell widget based on current selection state."""
+        if self._first_click is None:
+            # No selection in progress
+            return self._create_empty_cell(row, col)
+
+        r1, c1 = self._first_click
+
+        if row == r1 and col == c1:
+            # This is the first clicked cell - highlight it
+            return self._create_empty_cell(
+                row,
+                col,
+                highlighted=True,
+                label='Click again for 1x1 plot',
+                large_font=True,
+            )
+
+        # Check if this cell would create a valid region
+        row_start = min(r1, row)
+        row_end = max(r1, row)
+        col_start = min(c1, col)
+        col_end = max(c1, col)
+
+        # Check if region is valid
+        is_valid = self._is_region_available(row_start, col_start, row_end, col_end)
+
+        if not is_valid:
+            # Disable this cell
+            return self._create_empty_cell(row, col, disabled=True, large_font=True)
+
+        # Calculate dimensions
+        row_span = row_end - row_start + 1
+        col_span = col_end - col_start + 1
+        label = f'Click for {row_span}x{col_span} plot'
+
+        return self._create_empty_cell(row, col, label=label, large_font=True)
 
     def _clear_selection(self) -> None:
         """Clear the current selection state."""
-        if self._first_click is not None and self._highlighted_cell is not None:
-            row, col = self._first_click
-            if not self._is_cell_occupied(row, col):
-                self._grid[row, col] = self._create_empty_cell(row, col)
-
         self._first_click = None
         self._highlighted_cell = None
+        self._refresh_all_cells()
 
     def _insert_plot(self, plot: hv.DynamicMap) -> None:
         """Insert a plot into the grid at the pending selection."""
@@ -186,11 +247,18 @@ class PlotGrid:
         # Create close button
         close_button = pn.widgets.Button(
             name='\u00d7',  # multiplication sign
-            width=30,
-            height=30,
-            button_type='danger',
+            width=25,
+            height=25,
+            button_type='light',
             sizing_mode='fixed',
-            margin=(5, 5),
+            margin=(2, 2),
+            styles={
+                'background-color': 'transparent',
+                'border': 'none',
+                'color': '#dc3545',
+                'font-weight': 'bold',
+                'padding': '0',
+            },
         )
 
         def on_close(event: Any) -> None:
