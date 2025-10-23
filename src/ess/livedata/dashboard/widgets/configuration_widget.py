@@ -113,11 +113,11 @@ class ConfigurationWidget:
                 break
 
         if widget_index is not None:
-            self._widget.objects = (
-                self._widget.objects[:widget_index]
-                + [self._model_widget.widget]
-                + self._widget.objects[widget_index + 1 :]
-            )
+            self._widget.objects = [
+                *self._widget.objects[:widget_index],
+                self._model_widget.widget,
+                *self._widget.objects[widget_index + 1 :],
+            ]
 
     def _create_widget(self) -> pn.Column:
         """Create the main configuration widget."""
@@ -198,18 +198,20 @@ class ConfigurationWidget:
         self._model_widget.clear_validation_errors()
 
 
-class ConfigurationModal:
-    """Generic modal dialog for configuration."""
+class ConfigurationPanel:
+    """Reusable configuration panel with validation and action execution."""
 
     def __init__(
         self,
         config: ConfigurationAdapter,
         start_button_text: str = "Start",
+        show_cancel_button: bool = True,
         success_callback: Callable[[], None] | None = None,
         error_callback: Callable[[str], None] | None = None,
+        cancel_callback: Callable[[], None] | None = None,
     ) -> None:
         """
-        Initialize generic configuration modal.
+        Initialize configuration panel.
 
         Parameters
         ----------
@@ -217,66 +219,65 @@ class ConfigurationModal:
             Configuration adapter providing data and callbacks
         start_button_text
             Text for the start button
+        show_cancel_button
+            Whether to show the cancel button
         success_callback
             Called when action completes successfully
         error_callback
             Called when an error occurs
+        cancel_callback
+            Called when cancel button is clicked
         """
         self._config = config
         self._config_widget = ConfigurationWidget(config)
         self._success_callback = success_callback
         self._error_callback = error_callback
+        self._cancel_callback = cancel_callback
         self._error_pane = pn.pane.HTML("", sizing_mode='stretch_width')
-        self._modal = self._create_modal(start_button_text)
         self._logger = logging.getLogger(__name__)
+        self._panel = self._create_panel(start_button_text, show_cancel_button)
 
-    def _create_modal(self, start_button_text: str) -> pn.Modal:
-        """Create the modal dialog."""
+    def _create_panel(
+        self, start_button_text: str, show_cancel_button: bool
+    ) -> pn.Column:
+        """Create the configuration panel."""
         start_button = pn.widgets.Button(name=start_button_text, button_type="primary")
         start_button.on_click(self._on_start_action)
 
-        cancel_button = pn.widgets.Button(name="Cancel", button_type="light")
-        cancel_button.on_click(self._on_cancel)
+        buttons = [pn.Spacer(), start_button]
+        if show_cancel_button:
+            cancel_button = pn.widgets.Button(name="Cancel", button_type="light")
+            cancel_button.on_click(self._on_cancel)
+            buttons.insert(1, cancel_button)
 
         content = pn.Column(
             self._config_widget.widget,
             self._error_pane,
-            pn.Row(pn.Spacer(), cancel_button, start_button, margin=(10, 0)),
+            pn.Row(*buttons, margin=(10, 0)),
         )
 
-        modal = pn.Modal(
-            content,
-            name=f"Configure {self._config.title}",
-            margin=20,
-            width=800,
-            height=800,
-        )
-
-        # Watch for modal close events to clean up
-        modal.param.watch(self._on_modal_closed, 'open')
-
-        return modal
+        return content
 
     def _on_cancel(self, event) -> None:
         """Handle cancel button click."""
-        self._modal.open = False
-
-    def _on_modal_closed(self, event) -> None:
-        """Handle modal being closed (cleanup)."""
-        if not event.new:  # Modal was closed
-            # Remove modal from its parent container after a short delay
-            # to allow the close animation to complete
-            def cleanup():
-                try:
-                    if hasattr(self._modal, '_parent') and self._modal._parent:
-                        self._modal._parent.remove(self._modal)
-                except Exception:  # noqa: S110
-                    pass  # Ignore cleanup errors
-
-            pn.state.add_periodic_callback(cleanup, period=100, count=1)
+        if self._cancel_callback:
+            self._cancel_callback()
 
     def _on_start_action(self, event) -> None:
         """Handle start action button click."""
+        if self.execute_action():
+            if self._success_callback:
+                self._success_callback()
+
+    def execute_action(self) -> bool:
+        """
+        Validate and execute the configuration action.
+
+        Returns
+        -------
+        :
+            True if action succeeded, False if validation failed or action raised error
+        """
         # Clear previous errors
         self._config_widget.clear_validation_errors()
         self._error_pane.object = ""
@@ -286,7 +287,7 @@ class ConfigurationModal:
 
         if not is_valid:
             self._show_validation_errors(errors)
-            return
+            return False
 
         # Execute the start action and handle any exceptions
         try:
@@ -306,13 +307,9 @@ class ConfigurationModal:
             if self._error_callback:
                 self._error_callback(error_message)
 
-            # Keep modal open so user can correct the issue or see the error
-            return
+            return False
 
-        # Success - close modal and notify success callback
-        self._modal.open = False
-        if self._success_callback:
-            self._success_callback()
+        return True
 
     def _show_validation_errors(self, errors: list[str]) -> None:
         """Show validation errors inline."""
@@ -338,6 +335,90 @@ class ConfigurationModal:
             "</div>"
         )
         self._error_pane.object = error_html
+
+    @property
+    def panel(self) -> pn.Column:
+        """Get the panel widget."""
+        return self._panel
+
+
+class ConfigurationModal:
+    """Modal wrapper around ConfigurationPanel."""
+
+    def __init__(
+        self,
+        config: ConfigurationAdapter,
+        start_button_text: str = "Start",
+        success_callback: Callable[[], None] | None = None,
+        error_callback: Callable[[str], None] | None = None,
+    ) -> None:
+        """
+        Initialize configuration modal.
+
+        Parameters
+        ----------
+        config
+            Configuration adapter providing data and callbacks
+        start_button_text
+            Text for the start button
+        success_callback
+            Called when action completes successfully
+        error_callback
+            Called when an error occurs
+        """
+        self._config = config
+
+        # Create panel with cancel button that closes modal
+        self._panel = ConfigurationPanel(
+            config=config,
+            start_button_text=start_button_text,
+            show_cancel_button=True,
+            success_callback=self._on_success,
+            error_callback=error_callback,
+            cancel_callback=self._on_cancel,
+        )
+
+        self._success_callback = success_callback
+        self._modal = self._create_modal()
+
+    def _create_modal(self) -> pn.Modal:
+        """Create the modal dialog."""
+        modal = pn.Modal(
+            self._panel.panel,
+            name=f"Configure {self._config.title}",
+            margin=20,
+            width=800,
+            height=800,
+        )
+
+        # Watch for modal close events to clean up
+        modal.param.watch(self._on_modal_closed, 'open')
+
+        return modal
+
+    def _on_cancel(self) -> None:
+        """Handle cancel button click."""
+        self._modal.open = False
+
+    def _on_success(self) -> None:
+        """Handle successful action completion."""
+        self._modal.open = False
+        if self._success_callback:
+            self._success_callback()
+
+    def _on_modal_closed(self, event) -> None:
+        """Handle modal being closed (cleanup)."""
+        if not event.new:  # Modal was closed
+            # Remove modal from its parent container after a short delay
+            # to allow the close animation to complete
+            def cleanup():
+                try:
+                    if hasattr(self._modal, '_parent') and self._modal._parent:
+                        self._modal._parent.remove(self._modal)
+                except Exception:  # noqa: S110
+                    pass  # Ignore cleanup errors
+
+            pn.state.add_periodic_callback(cleanup, period=100, count=1)
 
     def show(self) -> None:
         """Show the modal dialog."""
