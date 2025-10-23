@@ -205,6 +205,12 @@ class PlotGrid:
             for row in range(self._nrows):
                 for col in range(self._ncols):
                     if not self._is_cell_occupied(row, col):
+                        # Delete the old cell first to avoid overlap warnings
+                        try:
+                            del self._grid[row, col]
+                        except (KeyError, IndexError):
+                            # Cell might not exist yet (during initialization)
+                            pass
                         self._grid[row, col] = self._get_cell_for_state(row, col)
 
     def _get_cell_for_state(self, row: int, col: int) -> pn.Column:
@@ -309,6 +315,14 @@ class PlotGrid:
             margin=2,
             styles={'position': 'relative'},
         )
+
+        # Delete existing cells in the region to avoid overlap warnings
+        for r in range(row, row + row_span):
+            for c in range(col, col + col_span):
+                try:
+                    del self._grid[r, c]
+                except (KeyError, IndexError):
+                    pass
 
         # Insert into grid
         self._grid[row : row + row_span, col : col + col_span] = container
