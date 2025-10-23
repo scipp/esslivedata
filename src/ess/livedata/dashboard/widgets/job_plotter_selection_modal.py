@@ -447,6 +447,7 @@ class JobPlotterSelectionModal:
         self._selected_plot = None
         self._config_panel = None
         self._next_button.disabled = True
+        self._success_callback_invoked = False
 
         # Refresh data and show
         self._update_job_output_table()
