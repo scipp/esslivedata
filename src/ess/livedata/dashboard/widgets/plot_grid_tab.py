@@ -125,12 +125,12 @@ class PlotGridTab:
         self, plot: hv.DynamicMap, selected_sources: list[str]
     ) -> None:
         """Handle successful plot creation from configuration modal."""
-        # Insert plot into grid using deferred insertion
-        self._plot_grid.insert_plot_deferred(plot)
-
-        # Clear references
+        # Clear references BEFORE inserting plot to prevent cancellation on modal close
         self._current_job_plotter_modal = None
         self._current_config_modal = None
+
+        # Insert plot into grid using deferred insertion
+        self._plot_grid.insert_plot_deferred(plot)
 
     def _on_modal_cancelled(self) -> None:
         """Handle modal cancellation (from JobPlotterSelectionModal)."""
