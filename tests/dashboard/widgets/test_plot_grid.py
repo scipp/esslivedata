@@ -22,9 +22,9 @@ def mock_plot() -> hv.DynamicMap:
 
 
 @pytest.fixture
-def mock_callback(mock_plot: hv.DynamicMap) -> MagicMock:
-    """Create a mock callback that returns a plot."""
-    callback = MagicMock(return_value=mock_plot)
+def mock_callback() -> MagicMock:
+    """Create a mock callback for async plot requests."""
+    callback = MagicMock(return_value=None)
     return callback
 
 
@@ -56,12 +56,14 @@ class TestCellSelection:
         # Simulate clicking the same cell twice
         grid._on_cell_click(1, 1)
         assert grid._first_click == (1, 1)
-        assert grid._highlighted_cell == (1, 1)
 
         grid._on_cell_click(1, 1)
 
         # Callback should be invoked
         mock_callback.assert_called_once()
+
+        # Complete the deferred insertion
+        grid.insert_plot_deferred(mock_plot)
 
         # Plot should be inserted
         assert len(grid._occupied_cells) == 1
@@ -78,6 +80,9 @@ class TestCellSelection:
 
         mock_callback.assert_called_once()
 
+        # Complete the deferred insertion
+        grid.insert_plot_deferred(mock_plot)
+
         # Should create a 2x3 region starting at (0, 0)
         assert (0, 0, 2, 3) in grid._occupied_cells
 
@@ -90,6 +95,9 @@ class TestCellSelection:
         grid._on_cell_click(2, 2)
         grid._on_cell_click(1, 1)
 
+        # Complete the deferred insertion
+        grid.insert_plot_deferred(mock_plot)
+
         # Should still create region with top-left as starting point
         assert (1, 1, 2, 2) in grid._occupied_cells
 
@@ -99,7 +107,7 @@ class TestCellSelection:
         grid._on_cell_click(0, 0)
 
         assert grid._first_click == (0, 0)
-        assert grid._highlighted_cell == (0, 0)
+        # Highlighting is now managed by refreshing cells, not a separate attribute
 
     def test_selection_cleared_after_insertion(
         self, mock_callback: MagicMock, mock_plot: hv.DynamicMap
@@ -109,8 +117,10 @@ class TestCellSelection:
         grid._on_cell_click(0, 0)
         grid._on_cell_click(1, 1)
 
+        # Complete the deferred insertion
+        grid.insert_plot_deferred(mock_plot)
+
         assert grid._first_click is None
-        assert grid._highlighted_cell is None
 
 
 class TestOccupancyChecking:
@@ -122,6 +132,7 @@ class TestOccupancyChecking:
         # Insert a plot at (0, 0)
         grid._on_cell_click(0, 0)
         grid._on_cell_click(0, 0)
+        grid.insert_plot_deferred(mock_plot)
 
         mock_callback.reset_mock()
 
@@ -140,6 +151,7 @@ class TestOccupancyChecking:
         # Insert a 2x2 plot at (1, 1)
         grid._on_cell_click(1, 1)
         grid._on_cell_click(2, 2)
+        grid.insert_plot_deferred(mock_plot)
 
         mock_callback.reset_mock()
 
@@ -159,6 +171,7 @@ class TestOccupancyChecking:
         # Insert a 2x2 plot
         grid._on_cell_click(1, 1)
         grid._on_cell_click(2, 2)
+        grid.insert_plot_deferred(mock_plot)
 
         # All cells within the span should be occupied
         assert grid._is_cell_occupied(1, 1)
@@ -179,6 +192,7 @@ class TestPlotInsertion:
 
         grid._on_cell_click(1, 2)
         grid._on_cell_click(1, 2)
+        grid.insert_plot_deferred(mock_plot)
 
         # Check the plot is tracked
         assert (1, 2, 1, 1) in grid._occupied_cells
@@ -202,10 +216,12 @@ class TestPlotInsertion:
         # Insert first plot
         grid._on_cell_click(0, 0)
         grid._on_cell_click(0, 0)
+        grid.insert_plot_deferred(mock_plot)
 
         # Insert second plot
         grid._on_cell_click(2, 2)
         grid._on_cell_click(2, 2)
+        grid.insert_plot_deferred(mock_plot)
 
         assert len(grid._occupied_cells) == 2
         assert (0, 0, 1, 1) in grid._occupied_cells
@@ -221,6 +237,7 @@ class TestPlotRemoval:
         # Insert plot
         grid._on_cell_click(0, 0)
         grid._on_cell_click(1, 1)
+        grid.insert_plot_deferred(mock_plot)
 
         # Remove plot
         grid._remove_plot(0, 0, 2, 2)
@@ -237,6 +254,7 @@ class TestPlotRemoval:
         # Insert and remove plot
         grid._on_cell_click(1, 1)
         grid._on_cell_click(1, 1)
+        grid.insert_plot_deferred(mock_plot)
         grid._remove_plot(1, 1, 1, 1)
 
         mock_callback.reset_mock()
@@ -246,6 +264,7 @@ class TestPlotRemoval:
         grid._on_cell_click(1, 1)
 
         assert mock_callback.call_count == 1
+        grid.insert_plot_deferred(mock_plot)
         assert (1, 1, 1, 1) in grid._occupied_cells
 
 
@@ -264,6 +283,7 @@ class TestRegionAvailability:
         # Insert plot at (1, 1) to (2, 2)
         grid._on_cell_click(1, 1)
         grid._on_cell_click(2, 2)
+        grid.insert_plot_deferred(mock_plot)
 
         # Overlapping region should not be available
         assert not grid._is_region_available(0, 0, 2, 2)
@@ -282,19 +302,34 @@ class TestCallbackErrors:
         grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=error_callback)
 
         grid._on_cell_click(0, 0)
-        grid._on_cell_click(0, 0)
+        # Callback raises error on second click, but grid continues
+        # In the new async API, callback errors don't prevent state setup
+        try:
+            grid._on_cell_click(0, 0)
+        except ValueError:
+            pass
 
-        # No plot should be inserted
+        # Plot should not be inserted (because we never called insert_plot_deferred)
         assert len(grid._occupied_cells) == 0
 
-    def test_callback_error_clears_selection(self) -> None:
+    def test_callback_error_preserves_pending_selection(self) -> None:
         error_callback = MagicMock(side_effect=ValueError('Test error'))
         grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=error_callback)
 
         grid._on_cell_click(0, 0)
-        grid._on_cell_click(0, 0)
+        try:
+            grid._on_cell_click(0, 0)
+        except ValueError:
+            pass
 
-        # Selection should be cleared even on error
+        # Selection should be cleared before callback
         assert grid._first_click is None
-        has_pending = hasattr(grid, '_pending_selection')
-        assert not has_pending or grid._pending_selection is None
+        # But pending selection should exist until insert or cancel
+        assert grid._pending_selection == (0, 0, 1, 1)
+        # In-flight flag should be set
+        assert grid._plot_creation_in_flight is True
+
+        # Cancel should clear everything
+        grid.cancel_pending_selection()
+        assert grid._pending_selection is None
+        assert grid._plot_creation_in_flight is False

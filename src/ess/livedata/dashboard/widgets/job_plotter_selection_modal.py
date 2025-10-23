@@ -49,6 +49,7 @@ class JobPlotterSelectionModal:
         self._selected_job: JobNumber | None = None
         self._selected_output: str | None = None
         self._selected_plot: str | None = None
+        self._success_callback_invoked = False
 
         # UI components
         self._job_output_table = self._create_job_output_table()
@@ -294,6 +295,9 @@ class JobPlotterSelectionModal:
     def _on_configure_clicked(self, event) -> None:
         """Handle configure button click."""
         if self._selected_job is not None and self._selected_plot is not None:
+            # Mark success callback as invoked BEFORE closing modal
+            # to prevent _on_modal_closed from calling cancel callback
+            self._success_callback_invoked = True
             self._modal.open = False
             self._success_callback(
                 self._selected_job, self._selected_output, self._selected_plot
@@ -307,8 +311,9 @@ class JobPlotterSelectionModal:
     def _on_modal_closed(self, event) -> None:
         """Handle modal being closed via X button or ESC key."""
         if not event.new:  # Modal was closed
-            # Call cancel callback if modal was closed without completing workflow
-            self._cancel_callback()
+            # Only call cancel callback if success callback wasn't invoked
+            if not self._success_callback_invoked:
+                self._cancel_callback()
 
             # Remove modal from its parent container after a short delay
             # to allow the close animation to complete
