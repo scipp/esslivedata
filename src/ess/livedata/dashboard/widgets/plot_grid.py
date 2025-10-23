@@ -276,16 +276,22 @@ class PlotGrid:
         close_button.on_click(on_close)
 
         # Create container with close button positioned at top-right
+        # Use absolute positioning for the close button
+        close_button.styles.update(
+            {
+                'position': 'absolute',
+                'top': '5px',
+                'right': '5px',
+                'z-index': '1000',
+            }
+        )
+
         container = pn.Column(
-            pn.Row(
-                pn.Spacer(),
-                close_button,
-                sizing_mode='stretch_width',
-                margin=(0, 0, 0, 0),
-            ),
+            close_button,
             plot_pane,
             sizing_mode='stretch_both',
             margin=2,
+            styles={'position': 'relative'},
         )
 
         # Insert into grid
