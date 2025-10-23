@@ -87,8 +87,18 @@ class PlotGrid:
             label = '' if disabled else 'Click to add plot'
 
         # Font size - larger during selection process
-        font_size = '24px' if large_font else '14px'
-        font_weight = 'bold' if large_font else 'normal'
+        # Use stylesheets to target the button element directly
+        if large_font:
+            stylesheets = [
+                """
+                button {
+                    font-size: 24px;
+                    font-weight: bold;
+                }
+                """
+            ]
+        else:
+            stylesheets = []
 
         # Create a button that fills the cell
         button = pn.widgets.Button(
@@ -100,10 +110,9 @@ class PlotGrid:
                 'background-color': background_color,
                 'border': f'{border_width}px {border_style} {border_color}',
                 'color': text_color,
-                'font-size': font_size,
-                'font-weight': font_weight,
                 'min-height': '100px',
             },
+            stylesheets=stylesheets,
             margin=2,
         )
 
