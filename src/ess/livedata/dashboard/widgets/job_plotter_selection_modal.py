@@ -324,16 +324,15 @@ class ConfigurationStep(WizardStep):
         self._logger = logger
         self._config_panel: ConfigurationPanel | None = None
         self._panel_container = pn.Column(sizing_mode='stretch_width')
+        # Track last configuration to detect when panel needs recreation
+        self._last_job: JobNumber | None = None
+        self._last_output: str | None = None
+        self._last_plot_name: str | None = None
 
     @property
     def name(self) -> str:
         """Display name for this step."""
         return "Configure Plot"
-
-    def reset(self) -> None:
-        """Reset configuration panel (e.g., when going back)."""
-        self._config_panel = None
-        self._panel_container.clear()
 
     def is_valid(self) -> bool:
         """Step is valid when configuration is valid."""
@@ -353,9 +352,22 @@ class ConfigurationStep(WizardStep):
         return self._panel_container
 
     def on_enter(self) -> None:
-        """Create configuration panel when step becomes active."""
-        if self._config_panel is None and self._context.job and self._context.plot_name:
+        """Create or recreate configuration panel when selection changes."""
+        if not self._context.job or not self._context.plot_name:
+            return
+
+        # Check if the configuration has changed
+        if (
+            self._context.job != self._last_job
+            or self._context.output != self._last_output
+            or self._context.plot_name != self._last_plot_name
+        ):
+            # Recreate panel with new configuration
             self._create_config_panel()
+            # Track new values
+            self._last_job = self._context.job
+            self._last_output = self._context.output
+            self._last_plot_name = self._context.plot_name
 
     def _create_config_panel(self) -> None:
         """Create the configuration panel for the selected plotter."""
@@ -432,16 +444,14 @@ class JobPlotterSelectionModal:
         cancel_callback: Callable[[], None],
     ) -> None:
         self._success_callback = success_callback
+        self._cancel_callback = cancel_callback
         self._logger = logging.getLogger(__name__)
 
         # Create shared context
         self._context = PlotterSelectionContext()
 
         # Create steps
-        step1 = JobOutputSelectionStep(
-            context=self._context,
-            job_service=job_service,
-        )
+        step1 = JobOutputSelectionStep(context=self._context, job_service=job_service)
 
         step2 = PlotterSelectionStep(
             context=self._context,
@@ -464,10 +474,6 @@ class JobPlotterSelectionModal:
             on_cancel=self._on_wizard_cancel,
             action_button_label="Create Plot",
         )
-
-        # Store step3 reference for reset
-        self._step3 = step3
-        self._cancel_callback = cancel_callback
 
         # Create modal wrapping the wizard
         self._modal = pn.Modal(
@@ -507,7 +513,6 @@ class JobPlotterSelectionModal:
         self._context.plot_name = None
         self._context.created_plot = None
         self._context.selected_sources = None
-        self._step3.reset()
 
         # Reset wizard and show modal
         self._wizard.reset()
