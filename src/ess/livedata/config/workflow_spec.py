@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, TypeVar
@@ -160,19 +161,9 @@ class WorkflowSpec(BaseModel):
         if outputs is None:
             return outputs
 
-        titles = []
+        title_counts: dict[str, list[str]] = defaultdict(list)
         for field_name, field_info in outputs.model_fields.items():
-            title = field_info.title
-            if title is None:
-                # If no title is specified, use the field name
-                title = field_name
-            titles.append((title, field_name))
-
-        # Check for duplicate titles
-        title_counts: dict[str, list[str]] = {}
-        for title, field_name in titles:
-            if title not in title_counts:
-                title_counts[title] = []
+            title = field_info.title if field_info.title is not None else field_name
             title_counts[title].append(field_name)
 
         duplicates = {
