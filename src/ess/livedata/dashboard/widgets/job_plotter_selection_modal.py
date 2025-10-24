@@ -173,8 +173,8 @@ class JobOutputSelectionStep(WizardStep[None, JobOutputSelection]):
         """Whether a valid job/output selection has been made."""
         return self._selected_job is not None
 
-    def execute(self) -> JobOutputSelection | None:
-        """Return the selected job and output."""
+    def commit(self) -> JobOutputSelection | None:
+        """Commit the selected job and output."""
         if self._selected_job is None:
             return None
         return JobOutputSelection(job=self._selected_job, output=self._selected_output)
@@ -231,8 +231,8 @@ class PlotterSelectionStep(WizardStep[JobOutputSelection, PlotterSelection]):
         """Step is valid when a plotter has been selected."""
         return self._selected_plot_name is not None
 
-    def execute(self) -> PlotterSelection | None:
-        """Return the job, output, and selected plotter."""
+    def commit(self) -> PlotterSelection | None:
+        """Commit the job, output, and selected plotter."""
         if self._job_output is None or self._selected_plot_name is None:
             return None
         return PlotterSelection(
@@ -367,8 +367,8 @@ class ConfigurationStep(WizardStep[PlotterSelection, PlotResult]):
         is_valid, _ = self._config_panel.validate()
         return is_valid
 
-    def execute(self) -> PlotResult | None:
-        """Execute the plot creation action and return result."""
+    def commit(self) -> PlotResult | None:
+        """Commit the plot configuration and create the plot."""
         if self._config_panel is None or self._plotter_selection is None:
             return None
 
