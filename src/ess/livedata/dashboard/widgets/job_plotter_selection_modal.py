@@ -376,9 +376,6 @@ class ConfigurationStep(WizardStep):
 
         self._config_panel = ConfigurationPanel(
             config=config_adapter,
-            start_button_text="Create Plot",
-            show_cancel_button=False,
-            show_buttons=False,
         )
 
         self._panel_container.clear()
