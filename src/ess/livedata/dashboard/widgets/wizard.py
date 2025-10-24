@@ -97,14 +97,18 @@ class WizardStep(ABC, Generic[TInput, TOutput]):
         """Whether step data allows advancement."""
 
     @abstractmethod
-    def execute(self) -> TOutput | None:
+    def commit(self) -> TOutput | None:
         """
-        Execute step action and return result for next step.
+        Commit this step's data for the pipeline.
+
+        Called when the user advances from this step. This method should package
+        the step's current state into output data for the next step. For the final
+        step, this may also trigger side effects (e.g., creating a plot).
 
         Returns
         -------
         :
-            Output data to pass to next step, or None if execution failed
+            Output data to pass to next step, or None if commit failed
         """
 
     @abstractmethod
@@ -190,10 +194,10 @@ class Wizard:
         if not self._current_step.is_valid():
             return
 
-        # Execute current step and get result
-        result = self._current_step.execute()
+        # Commit current step and get result
+        result = self._current_step.commit()
         if result is None:
-            return  # Execution failed, don't advance
+            return  # Commit failed, don't advance
 
         # Store result for this step
         if self._current_step_index < len(self._step_results):

@@ -52,8 +52,8 @@ class FakeWizardStep(WizardStep[Any, Any]):
         self.enter_called = True
         self.received_input = input_data
 
-    def execute(self) -> Any:
-        """Execute step action and return result."""
+    def commit(self) -> Any:
+        """Commit step data and return result."""
         self.execute_called = True
         if not self._can_execute:
             return None
