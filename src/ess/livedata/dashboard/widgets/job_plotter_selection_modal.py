@@ -338,7 +338,7 @@ class ConfigurationStep(WizardStep):
         """Step is valid when configuration is valid."""
         if self._config_panel is None:
             return False
-        is_valid, _ = self._config_panel._config_widget.validate_configuration()
+        is_valid, _ = self._config_panel.validate()
         return is_valid
 
     def execute(self) -> bool:
