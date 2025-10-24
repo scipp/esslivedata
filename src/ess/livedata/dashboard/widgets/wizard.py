@@ -66,6 +66,9 @@ class Wizard:
         Called with context when wizard completes successfully
     on_cancel:
         Called when wizard is cancelled
+    action_button_label:
+        Optional label for the action button on the last step (e.g., "Create Plot").
+        If None, no action button is shown on the last step.
     """
 
     def __init__(
@@ -74,11 +77,13 @@ class Wizard:
         context: Any,
         on_complete: Callable[[Any], None],
         on_cancel: Callable[[], None],
+        action_button_label: str | None = None,
     ) -> None:
         self._steps = steps
         self._context = context
         self._on_complete = on_complete
         self._on_cancel = on_cancel
+        self._action_button_label = action_button_label
 
         # State tracking
         self._current_step_index = 0
@@ -190,31 +195,29 @@ class Wizard:
         # Add step content
         self._content.append(self._current_step.render())
 
+        # Add vertical spacer to push buttons to bottom
+        self._content.append(pn.layout.VSpacer())
+
         # Update next button state based on step validity
         self._next_button.disabled = not self._current_step.is_valid()
 
-        # Build navigation row with standard order: Cancel | Back | Spacer | Next
-        nav_buttons = [self._cancel_button]
+        # Build navigation row with standard order: Cancel | Spacer | Back | Next
+        nav_buttons = [self._cancel_button, pn.layout.HSpacer()]
 
         if not self._is_first_step:
             nav_buttons.append(self._back_button)
 
-        nav_buttons.append(pn.Spacer())
-
-        # Show Next/Action button based on step and custom label
-        if self._is_last_step:
-            # On last step, check if step provides custom action button label
-            if hasattr(self._current_step, 'action_button_label'):
-                label = self._current_step.action_button_label()
-                if label:
-                    self._next_button.name = label
-                    nav_buttons.append(self._next_button)
-        else:
-            # Reset to "Next" for non-last steps
+        # Show Next/Action button based on step
+        if self._is_last_step and self._action_button_label:
+            self._next_button.name = self._action_button_label
+            nav_buttons.append(self._next_button)
+        elif not self._is_last_step:
             self._next_button.name = "Next"
             nav_buttons.append(self._next_button)
 
-        self._content.append(pn.Row(*nav_buttons, margin=(10, 0)))
+        self._content.append(
+            pn.Row(*nav_buttons, sizing_mode='stretch_width', margin=(10, 0))
+        )
 
     def _on_next_clicked(self, event) -> None:
         """Handle next button click."""
