@@ -398,16 +398,17 @@ class PlotGrid:
             styles={'position': 'relative'},
         )
 
-        # Delete existing cells in the region to avoid overlap warnings
-        for r in range(row, row + row_span):
-            for c in range(col, col + col_span):
-                try:
-                    del self._grid[r, c]
-                except (KeyError, IndexError):
-                    pass
+        with pn.io.hold():
+            # Delete existing cells in the region to avoid overlap warnings
+            for r in range(row, row + row_span):
+                for c in range(col, col + col_span):
+                    try:
+                        del self._grid[r, c]
+                    except (KeyError, IndexError):
+                        pass
 
-        # Insert into grid
-        self._grid[row : row + row_span, col : col + col_span] = container
+            # Insert into grid
+            self._grid[row : row + row_span, col : col + col_span] = container
 
         # Track occupation
         self._occupied_cells[(row, col, row_span, col_span)] = container
