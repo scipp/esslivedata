@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Generic multi-step wizard component with modal UI."""
+"""Generic multi-step wizard component."""
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 from enum import Enum, auto
 from typing import Any, Protocol
@@ -38,11 +37,11 @@ class WizardStep(Protocol):
 
 class Wizard:
     """
-    Generic multi-step wizard with modal UI.
+    Generic multi-step wizard component.
 
-    The wizard manages navigation between steps, displays a modal dialog,
-    and handles completion/cancellation callbacks. Steps receive callbacks
-    to signal advancement and share data via a context object.
+    The wizard manages navigation between steps and handles completion/cancellation
+    callbacks. Steps receive callbacks to signal advancement and share data via a
+    context object.
 
     Parameters
     ----------
@@ -50,33 +49,23 @@ class Wizard:
         List of wizard steps to display in sequence
     context:
         Shared data object (typically a dataclass) that steps read/write
-    title:
-        Modal window title
     on_complete:
         Called with context when wizard completes successfully
     on_cancel:
         Called when wizard is cancelled
-    width:
-        Modal width in pixels
-    height:
-        Modal height in pixels
     """
 
     def __init__(
         self,
         steps: list[WizardStep],
         context: Any,
-        title: str,
         on_complete: Callable[[Any], None],
         on_cancel: Callable[[], None],
-        width: int = 900,
-        height: int = 700,
     ) -> None:
         self._steps = steps
         self._context = context
         self._on_complete = on_complete
         self._on_cancel = on_cancel
-        self._logger = logging.getLogger(__name__)
 
         # State tracking
         self._current_step_index = 0
@@ -110,18 +99,6 @@ class Wizard:
         # Content container
         self._content = pn.Column(sizing_mode='stretch_width')
 
-        # Create modal
-        self._modal = pn.Modal(
-            self._content,
-            name=title,
-            margin=20,
-            width=width,
-            height=height,
-        )
-
-        # Watch for modal close events (X button or ESC key)
-        self._modal.param.watch(self._on_modal_closed, 'open')
-
     def advance(self) -> None:
         """Move to next step if current step is valid."""
         if not self._current_step.is_valid():
@@ -143,26 +120,22 @@ class Wizard:
     def complete(self) -> None:
         """Complete wizard successfully."""
         self._state = WizardState.COMPLETED
-        self._modal.open = False
         self._on_complete(self._context)
 
     def cancel(self) -> None:
         """Cancel wizard."""
         self._state = WizardState.CANCELLED
-        self._modal.open = False
         self._on_cancel()
 
-    def show(self) -> None:
-        """Show the wizard modal and reset to first step."""
+    def reset(self) -> None:
+        """Reset wizard to first step."""
         self._current_step_index = 0
         self._state = WizardState.ACTIVE
         self._update_content()
-        self._modal.open = True
 
-    @property
-    def modal(self) -> pn.Modal:
-        """Get the modal widget for adding to containers."""
-        return self._modal
+    def render(self) -> pn.Column:
+        """Render the wizard content."""
+        return self._content
 
     @property
     def context(self) -> Any:
@@ -231,22 +204,3 @@ class Wizard:
     def _on_cancel_clicked(self, event) -> None:
         """Handle cancel button click."""
         self.cancel()
-
-    def _on_modal_closed(self, event) -> None:
-        """Handle modal being closed via X button or ESC key."""
-        if not event.new:  # Modal was closed
-            # Only call cancel callback if workflow wasn't completed
-            if self._state == WizardState.ACTIVE:
-                self._state = WizardState.CANCELLED
-                self._on_cancel()
-
-            # Remove modal from its parent container after a short delay
-            # to allow the close animation to complete.
-            def cleanup():
-                try:
-                    if hasattr(self._modal, '_parent') and self._modal._parent:
-                        self._modal._parent.remove(self._modal)
-                except Exception as e:
-                    self._logger.debug("Modal cleanup warning (expected): %s", e)
-
-            pn.state.add_periodic_callback(cleanup, period=100, count=1)
