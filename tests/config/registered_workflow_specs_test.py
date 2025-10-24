@@ -1,16 +1,14 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-Test workflow registration → configuration → instantiation roundtrip.
+Test all registered workflow specs.
 
-This test ensures that for each registered workflow:
-1. WorkflowSpec is properly created with params and aux_sources type hints
-2. Default values can be obtained from Pydantic models (via adapter)
-3. WorkflowConfig can be created from defaults (via from_params)
-4. Backend can instantiate the workflow from the config
+This test file validates workflow specs WITHOUT loading factory implementations.
+These tests run fast because they don't import heavy dependencies.
+
+For tests that require factory implementations, see
+registered_workflow_factories_test.py.
 """
-
-import uuid
 
 import pydantic
 import pytest
@@ -18,18 +16,22 @@ import pytest
 from ess.livedata.config.instrument import instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
 from ess.livedata.config.workflow_spec import WorkflowConfig, WorkflowId
-from ess.livedata.core.job_manager import JobFactory, JobId
 from ess.livedata.dashboard.workflow_configuration_adapter import (
     WorkflowConfigurationAdapter,
 )
 
 
-def _collect_workflows():
-    """Collect all workflows from all instruments for parameterization."""
+def _collect_workflow_specs():
+    """Collect workflow specs WITHOUT loading factories (fast).
+
+    This only imports instrument spec modules, not factory implementations,
+    allowing tests to run much faster.
+    """
     workflows = []
     for instrument_name in available_instruments():
-        _ = get_config(instrument_name)  # Load module to register instrument
+        _ = get_config(instrument_name)  # Load specs only
         instrument = instrument_registry[instrument_name]
+        # DO NOT call instrument.load_factories()
         workflows.extend(
             [
                 pytest.param(instrument_name, workflow_id, id=str(workflow_id))
@@ -39,98 +41,15 @@ def _collect_workflows():
     return workflows
 
 
-@pytest.mark.parametrize(("instrument_name", "workflow_id"), _collect_workflows())
-def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
-    """Test complete roundtrip for a registered workflow.
+@pytest.mark.parametrize(("instrument_name", "workflow_id"), _collect_workflow_specs())
+def test_workflow_spec_params_validation(instrument_name: str, workflow_id: WorkflowId):
+    """Test that spec.params is None or a valid Pydantic BaseModel class.
 
-    This test validates the chain:
-    1. Workflow registration creates proper WorkflowSpec with type hints
-    2. Default parameter values can be extracted via adapter
-    3. WorkflowConfig can be created using from_params helper
-    4. Backend can instantiate workflow from config (JobFactory)
-    """
-    # Skip known workflows that require data files not available in CI
-    if str(workflow_id) == "dream/data_reduction/powder_reduction_with_vanadium/1":
-        pytest.skip(
-            "Workflow requires vanadium data file "
-            "(268227_00024779_Vana_inc_BC_offset_240_deg_wlgth.hdf) "
-            "not available in test environment"
-        )
-
-    instrument = instrument_registry[instrument_name]
-    workflow_factory = instrument.workflow_factory
-
-    # Step 1: Verify WorkflowSpec was created with proper type hints
-    spec = workflow_factory[workflow_id]
-    assert spec is not None, f"WorkflowSpec not found for {workflow_id}"
-
-    # Step 2: Use WorkflowConfigurationAdapter to get model classes
-    # This simulates what the frontend (ConfigurationWidget) does
-    adapter = WorkflowConfigurationAdapter(
-        spec=spec,
-        persistent_config=None,  # No saved config, use defaults
-        start_callback=lambda *args, **kwargs: True,  # Dummy callback for testing
-    )
-
-    # Get aux sources model first (like ConfigurationWidget does)
-    aux_sources_model = None
-    if adapter.aux_sources is not None:
-        # Instantiate with defaults
-        aux_sources_model = adapter.aux_sources()
-
-    # Set aux sources and get parameter model class (like ConfigurationWidget does)
-    params_model = None
-    params_class = adapter.set_aux_sources(aux_sources_model)
-    if params_class is not None:
-        # Instantiate with defaults (ConfigurationWidget uses initial_parameter_values
-        # if available, otherwise creates with defaults)
-        params_model = params_class()
-
-    # Step 3: Create WorkflowConfig using the helper method
-    # This simulates what WorkflowController.start_workflow does
-    workflow_config = WorkflowConfig.from_params(
-        workflow_id=workflow_id,
-        params=params_model,
-        aux_source_names=aux_sources_model,
-    )
-
-    # Step 4: Instantiate workflow via backend path (JobFactory → WorkflowFactory)
-    # Pick the first available source, or use empty string if none specified
-    source_name = spec.source_names[0] if spec.source_names else "test_source"
-
-    # Set active namespace to match the workflow namespace
-    # (in production this is set when the service starts)
-    original_namespace = instrument.active_namespace
-    instrument.active_namespace = workflow_id.namespace
-    try:
-        job_factory = JobFactory(instrument)
-        job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
-
-        # This should not raise - it validates params and aux_sources internally
-        job = job_factory.create(job_id=job_id, config=workflow_config)
-    finally:
-        # Restore original namespace
-        instrument.active_namespace = original_namespace
-
-    # Verify job was created successfully
-    assert job is not None
-    assert job.job_id == job_id
-    assert job.workflow_id == workflow_id
-
-
-@pytest.mark.parametrize(("instrument_name", "workflow_id"), _collect_workflows())
-def test_workflow_spec_has_type_hints(instrument_name: str, workflow_id: WorkflowId):
-    """Test that WorkflowSpec has type hints extracted from factory function.
-
-    This verifies that the decorator in WorkflowFactory.register properly extracted
-    type hints and populated spec.params and spec.aux_sources.
+    Since params are now explicitly registered (not inferred from factory),
+    this validates they're properly set in the spec.
     """
     instrument = instrument_registry[instrument_name]
     spec = instrument.workflow_factory[workflow_id]
-
-    # Type hints should be extracted if factory has params/aux_sources arguments
-    # We can't easily check the factory signature here without accessing private state,
-    # but we can verify that if type hints exist, they're valid Pydantic models
 
     if spec.params is not None:
         assert issubclass(spec.params, pydantic.BaseModel), (
@@ -140,6 +59,19 @@ def test_workflow_spec_has_type_hints(instrument_name: str, workflow_id: Workflo
         # Verify we can instantiate with defaults
         instance = spec.params()
         assert isinstance(instance, pydantic.BaseModel)
+
+
+@pytest.mark.parametrize(("instrument_name", "workflow_id"), _collect_workflow_specs())
+def test_workflow_spec_aux_sources_validation(
+    instrument_name: str, workflow_id: WorkflowId
+):
+    """Test that spec.aux_sources is None or a valid Pydantic BaseModel class.
+
+    Since aux_sources are now explicitly registered (not inferred from factory),
+    this validates they're properly set in the spec.
+    """
+    instrument = instrument_registry[instrument_name]
+    spec = instrument.workflow_factory[workflow_id]
 
     if spec.aux_sources is not None:
         assert issubclass(spec.aux_sources, pydantic.BaseModel), (
@@ -151,7 +83,32 @@ def test_workflow_spec_has_type_hints(instrument_name: str, workflow_id: Workflo
         assert isinstance(instance, pydantic.BaseModel)
 
 
-@pytest.mark.parametrize(("instrument_name", "workflow_id"), _collect_workflows())
+@pytest.mark.parametrize(("instrument_name", "workflow_id"), _collect_workflow_specs())
+def test_workflow_spec_outputs_validation(
+    instrument_name: str, workflow_id: WorkflowId
+):
+    """Test that spec.outputs is None or a valid Pydantic BaseModel class.
+
+    The outputs field defines workflow outputs with metadata for UI display.
+    """
+    instrument = instrument_registry[instrument_name]
+    spec = instrument.workflow_factory[workflow_id]
+
+    if spec.outputs is not None:
+        assert issubclass(spec.outputs, pydantic.BaseModel), (
+            f"spec.outputs for {workflow_id} should be a "
+            f"Pydantic BaseModel subclass, got {spec.outputs}"
+        )
+        # Verify we can instantiate (outputs model typically has no defaults needed)
+        try:
+            instance = spec.outputs()
+            assert isinstance(instance, pydantic.BaseModel)
+        except pydantic.ValidationError:
+            # Outputs may require fields - that's OK, just check the class is valid
+            pass
+
+
+@pytest.mark.parametrize(("instrument_name", "workflow_id"), _collect_workflow_specs())
 def test_workflow_params_serialization_roundtrip(
     instrument_name: str, workflow_id: WorkflowId
 ):
@@ -186,7 +143,7 @@ def test_workflow_params_serialization_roundtrip(
     assert deserialized.model_dump() == original.model_dump()
 
 
-@pytest.mark.parametrize(("instrument_name", "workflow_id"), _collect_workflows())
+@pytest.mark.parametrize(("instrument_name", "workflow_id"), _collect_workflow_specs())
 def test_workflow_aux_sources_serialization_roundtrip(
     instrument_name: str, workflow_id: WorkflowId
 ):
@@ -220,7 +177,7 @@ def test_workflow_aux_sources_serialization_roundtrip(
     assert deserialized.model_dump() == original.model_dump()
 
 
-@pytest.mark.parametrize(("instrument_name", "workflow_id"), _collect_workflows())
+@pytest.mark.parametrize(("instrument_name", "workflow_id"), _collect_workflow_specs())
 def test_workflow_config_widget_adapter_compatibility(
     instrument_name: str, workflow_id: WorkflowId
 ):

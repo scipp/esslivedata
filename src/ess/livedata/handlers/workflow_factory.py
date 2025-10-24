@@ -3,6 +3,7 @@
 import inspect
 import typing
 from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from ess.livedata.config.workflow_spec import WorkflowConfig, WorkflowId, WorkflowSpec
@@ -19,6 +20,26 @@ class Workflow(Protocol):
     def accumulate(self, data: dict[str, Any]) -> None: ...
     def finalize(self) -> dict[str, Any]: ...
     def clear(self) -> None: ...
+
+
+@dataclass(frozen=True)
+class SpecHandle:
+    """
+    Handle for attaching factories to registered specs.
+
+    Returned by WorkflowFactory.register_spec(), this handle is used to attach
+    factory implementations to a previously registered spec via the attach_factory()
+    decorator.
+    """
+
+    workflow_id: WorkflowId
+    _factory: 'WorkflowFactory'
+
+    def attach_factory(
+        self,
+    ) -> Callable[[Callable[..., Workflow]], Callable[..., Workflow]]:
+        """Decorator to attach factory implementation to this spec."""
+        return self._factory.attach_factory(self.workflow_id)
 
 
 class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
@@ -50,36 +71,75 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             for source_name in spec.source_names
         }
 
-    def register(
-        self, spec: WorkflowSpec
-    ) -> Callable[[Callable[..., Workflow]], Callable[..., Workflow]]:
+    def register_spec(self, spec: WorkflowSpec) -> SpecHandle:
         """
-        Decorator to register a factory function for creating workflow instances.
+        Register workflow spec, return handle for later factory attachment.
+
+        This is the first phase of two-phase registration. The spec is stored
+        and a handle is returned that can be used later to attach the factory
+        implementation.
 
         Parameters
         ----------
         spec:
-            Workflow specification that describes the workflow to register.
+            Workflow specification to register.
 
         Returns
         -------
-        Decorator function that registers the factory and returns it unchanged.
+        Handle for attaching factory later.
         """
         spec_id = spec.get_id()
-        if spec_id in self._factories:
-            raise ValueError(f"Workflow ID '{spec_id}' is already registered.")
+        if spec_id in self._workflow_specs:
+            raise ValueError(f"Workflow spec '{spec_id}' already registered.")
+        self._workflow_specs[spec_id] = spec
+        return SpecHandle(workflow_id=spec_id, _factory=self)
 
-        def decorator(
-            factory: Callable[..., Workflow],
-        ) -> Callable[..., Workflow]:
-            # Try to get the type hint of the 'params' argument if it exists.
+    def attach_factory(
+        self, workflow_id: WorkflowId
+    ) -> Callable[[Callable[..., Workflow]], Callable[..., Workflow]]:
+        """
+        Decorator to attach factory to a previously registered spec.
+
+        This is the second phase of two-phase registration. The factory's
+        params type hint is validated against the spec.params using object
+        identity (is not).
+
+        Parameters
+        ----------
+        workflow_id:
+            ID of the previously registered spec.
+
+        Returns
+        -------
+        Decorator function that validates and attaches the factory.
+        """
+        if workflow_id not in self._workflow_specs:
+            raise ValueError(
+                f"Spec '{workflow_id}' not registered. Call register_spec() first."
+            )
+
+        spec = self._workflow_specs[workflow_id]
+
+        def decorator(factory: Callable[..., Workflow]) -> Callable[..., Workflow]:
+            # Validate params type hint matches spec
             # Use get_type_hints to resolve forward references, in case we used
             # `from __future__ import annotations`.
             type_hints = typing.get_type_hints(factory, globalns=factory.__globals__)
-            if (params_type := type_hints.get('params', None)) is not None:
-                spec.params = params_type
-            self._factories[spec_id] = factory
-            self._workflow_specs[spec_id] = spec
+            inferred_params = type_hints.get('params', None)
+
+            if spec.params is not None and inferred_params is not None:
+                if spec.params is not inferred_params:  # Use `is not`
+                    raise TypeError(f"Params type mismatch for {workflow_id}")
+            elif spec.params is None and inferred_params is not None:
+                raise TypeError(
+                    f"Factory has params but spec has none for {workflow_id}"
+                )
+            elif spec.params is not None and inferred_params is None:
+                raise TypeError(
+                    f"Spec has params but factory has none for {workflow_id}"
+                )
+
+            self._factories[workflow_id] = factory
             return factory
 
         return decorator

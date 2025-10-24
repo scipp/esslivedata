@@ -5,28 +5,13 @@ from __future__ import annotations
 from collections.abc import Hashable
 
 import numpy as np
-import pydantic
 import scipp as sc
 
-from .. import parameter_models
-from ..config.instrument import Instrument
 from ..core.handler import JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import Accumulator, CollectTOA, Cumulative, MonitorEvents
+from .monitor_workflow_specs import MonitorDataParams
 from .workflow_factory import Workflow
-
-
-class MonitorDataParams(pydantic.BaseModel):
-    toa_edges: parameter_models.TOAEdges = pydantic.Field(
-        title="Time of Arrival Edges",
-        description="Time of arrival edges for histogramming.",
-        default=parameter_models.TOAEdges(
-            start=0.0,
-            stop=1000.0 / 14,
-            num_bins=100,
-            unit=parameter_models.TimeUnit.MS,
-        ),
-    )
 
 
 class MonitorStreamProcessor(Workflow):
@@ -35,6 +20,11 @@ class MonitorStreamProcessor(Workflow):
         self._event_edges = edges.to(unit='ns').values
         self._cumulative: sc.DataArray | None = None
         self._current: sc.DataArray | None = None
+
+    @staticmethod
+    def create_workflow(params: MonitorDataParams) -> Workflow:
+        """Factory method for creating MonitorStreamProcessor from params."""
+        return MonitorStreamProcessor(edges=params.toa_edges.get_edges())
 
     def accumulate(self, data: dict[Hashable, sc.DataArray | np.ndarray]) -> None:
         if len(data) != 1:
@@ -79,24 +69,6 @@ class MonitorStreamProcessor(Workflow):
     def clear(self) -> None:
         self._cumulative = None
         self._current = None
-
-
-def _monitor_data_workflow(params: MonitorDataParams) -> Workflow:
-    return MonitorStreamProcessor(edges=params.toa_edges.get_edges())
-
-
-def register_monitor_workflows(instrument: Instrument, source_names: list[str]) -> None:
-    """Create an Instrument with workflows for beam monitor processing."""
-    register = instrument.register_workflow(
-        namespace='monitor_data',
-        name='monitor_histogram',
-        version=1,
-        title="Beam monitor data",
-        description="Histogrammed and time-integrated beam monitor data. The monitor "
-        "is histogrammed or rebinned into specified time-of-arrival (TOA) bins.",
-        source_names=source_names,
-    )
-    register(_monitor_data_workflow)
 
 
 class MonitorHandlerFactory(

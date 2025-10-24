@@ -15,7 +15,6 @@ from ess.livedata import StreamKind
 from ess.livedata.kafka import StreamMapping
 
 from .env import StreamingEnv
-from .instruments import get_config
 
 
 def stream_kind_to_topic(instrument: str, kind: StreamKind) -> str:
@@ -47,7 +46,14 @@ def stream_kind_to_topic(instrument: str, kind: StreamKind) -> str:
 def get_stream_mapping(*, instrument: str, dev: bool) -> StreamMapping:
     """
     Returns the stream mapping for the given instrument.
+
+    Loads the stream_mapping from the instrument's .streams submodule.
     """
-    config = get_config(instrument=instrument)
+    import importlib
+
     env = StreamingEnv.DEV if dev else StreamingEnv.PROD
-    return config.stream_mapping[env]
+
+    streams_module = importlib.import_module(
+        f'.instruments.{instrument}.streams', package='ess.livedata.config'
+    )
+    return streams_module.stream_mapping[env]
