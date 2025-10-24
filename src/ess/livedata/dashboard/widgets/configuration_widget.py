@@ -204,8 +204,6 @@ class ConfigurationPanel:
     def __init__(
         self,
         config: ConfigurationAdapter,
-        success_callback: Callable[[], None] | None = None,
-        error_callback: Callable[[str], None] | None = None,
     ) -> None:
         """
         Initialize configuration panel.
@@ -214,15 +212,9 @@ class ConfigurationPanel:
         ----------
         config
             Configuration adapter providing data and callbacks
-        success_callback
-            Called when action completes successfully
-        error_callback
-            Called when an error occurs
         """
         self._config = config
         self._config_widget = ConfigurationWidget(config)
-        self._success_callback = success_callback
-        self._error_callback = error_callback
         self._error_pane = pn.pane.HTML("", sizing_mode='stretch_width')
         self._logger = logging.getLogger(__name__)
         self._panel = self._create_panel()
@@ -234,51 +226,63 @@ class ConfigurationPanel:
             self._error_pane,
         )
 
-    def execute_action(self) -> bool:
+    def validate(self) -> tuple[bool, list[str]]:
         """
-        Validate and execute the configuration action.
+        Validate configuration and show errors inline.
 
         Returns
         -------
         :
-            True if action succeeded, False if validation failed or action raised error
+            Tuple of (is_valid, list_of_error_messages)
         """
-        # Clear previous errors
         self._config_widget.clear_validation_errors()
         self._error_pane.object = ""
 
-        # Validate configuration
         is_valid, errors = self._config_widget.validate_configuration()
 
         if not is_valid:
             self._show_validation_errors(errors)
-            return False
 
-        # Execute the start action and handle any exceptions
+        return is_valid, errors
+
+    def execute_action(self) -> bool:
+        """
+        Execute the configuration action.
+
+        Assumes validation has already passed. If validation is needed,
+        use validate() first or use validate_and_execute().
+
+        Returns
+        -------
+        :
+            True if action succeeded, False if action raised error
+        """
         try:
             self._config.start_action(
                 self._config_widget.selected_sources,
                 self._config_widget.parameter_values,
             )
         except Exception as e:
-            # Log the full exception with stack trace
             self._logger.exception("Error starting '%s'", self._config.title)
-
-            # Show user-friendly error message
             error_message = f"Error starting '{self._config.title}': {e!s}"
             self._show_action_error(error_message)
-
-            # Notify error callback if provided
-            if self._error_callback:
-                self._error_callback(error_message)
-
             return False
 
-        # Notify success callback
-        if self._success_callback:
-            self._success_callback()
-
         return True
+
+    def validate_and_execute(self) -> bool:
+        """
+        Convenience method: validate then execute if valid.
+
+        Returns
+        -------
+        :
+            True if both validation and execution succeeded, False otherwise
+        """
+        is_valid, _ = self.validate()
+        if not is_valid:
+            return False
+        return self.execute_action()
 
     def _show_validation_errors(self, errors: list[str]) -> None:
         """Show validation errors inline."""
@@ -319,7 +323,6 @@ class ConfigurationModal:
         config: ConfigurationAdapter,
         start_button_text: str = "Start",
         success_callback: Callable[[], None] | None = None,
-        error_callback: Callable[[str], None] | None = None,
     ) -> None:
         """
         Initialize configuration modal.
@@ -332,18 +335,12 @@ class ConfigurationModal:
             Text for the start button
         success_callback
             Called when action completes successfully
-        error_callback
-            Called when an error occurs
         """
         self._config = config
         self._success_callback = success_callback
 
-        # Create panel without buttons
-        self._panel = ConfigurationPanel(
-            config=config,
-            success_callback=self._on_success,
-            error_callback=error_callback,
-        )
+        # Create panel
+        self._panel = ConfigurationPanel(config=config)
 
         # Create action buttons
         self._start_button = pn.widgets.Button(
@@ -385,17 +382,14 @@ class ConfigurationModal:
 
     def _on_start_clicked(self, event) -> None:
         """Handle start button click."""
-        self._panel.execute_action()
+        if self._panel.validate_and_execute():
+            self._modal.open = False
+            if self._success_callback:
+                self._success_callback()
 
     def _on_cancel_clicked(self, event) -> None:
         """Handle cancel button click."""
         self._modal.open = False
-
-    def _on_success(self) -> None:
-        """Handle successful action completion."""
-        self._modal.open = False
-        if self._success_callback:
-            self._success_callback()
 
     def _on_modal_closed(self, event) -> None:
         """Handle modal being closed (cleanup)."""

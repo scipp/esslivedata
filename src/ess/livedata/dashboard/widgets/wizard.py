@@ -81,6 +81,21 @@ class WizardStep(ABC):
     def is_valid(self) -> bool:
         """Whether step data allows advancement."""
 
+    def execute(self) -> bool:
+        """
+        Execute step action (typically only final steps need this).
+
+        This method is called when advancing from the last step. Most steps
+        don't need to execute actions and can use the default implementation.
+
+        Returns
+        -------
+        :
+            True if execution succeeded or no action needed, False to prevent
+            advancement
+        """
+        return True
+
     @abstractmethod
     def on_enter(self) -> None:
         """Called when step becomes active."""
@@ -164,10 +179,9 @@ class Wizard:
             self._current_step_index += 1
             self._update_content()
         else:
-            # On last step, execute step action if available
-            if hasattr(self._current_step, 'execute'):
-                if not self._current_step.execute():
-                    return  # Execution failed, don't complete
+            # On last step, execute step action
+            if not self._current_step.execute():
+                return  # Execution failed, don't complete
             self.complete()
 
     def back(self) -> None:
