@@ -12,6 +12,7 @@ import scipp as sc
 
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument
+from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.handlers.accumulators import LogData
 from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 from ess.livedata.handlers.to_nxlog import ToNXlog
@@ -27,6 +28,15 @@ class MonitorTimeseriesParams(pydantic.BaseModel):
         title="Time of Arrival Range",
         description="Time of arrival range to include.",
         default=parameter_models.TOARange(),
+    )
+
+
+class MonitorTimeseriesOutputs(WorkflowOutputsBase):
+    """Outputs for the monitor timeseries workflow."""
+
+    monitor_counts: sc.DataArray = pydantic.Field(
+        title="Monitor Counts",
+        description="Timeseries of monitor counts within the specified TOA range.",
     )
 
 
@@ -115,6 +125,7 @@ def register_monitor_timeseries_workflows(
         description='Timeseries of counts in a monitor within a specified '
         'time-of-arrival range.',
         source_names=source_names,
+        outputs=MonitorTimeseriesOutputs,
     )
     def monitor_timeseries_workflow(
         source_name: str, params: MonitorTimeseriesParams
@@ -124,6 +135,6 @@ def register_monitor_timeseries_workflows(
         return StreamProcessorWorkflow(
             base_workflow=wf,
             dynamic_keys={source_name: NeXusData[CustomMonitor, CurrentRun]},
-            target_keys=(MonitorCountsInInterval,),
+            target_keys={'monitor_counts': MonitorCountsInInterval},
             accumulators={MonitorCountsInInterval: TimeseriesAccumulator},
         )

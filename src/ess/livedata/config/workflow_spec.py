@@ -8,15 +8,26 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, TypeVar
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 T = TypeVar('T')
 
 JobNumber = uuid.UUID
+
+
+class WorkflowOutputsBase(BaseModel):
+    """Base class for all workflow output models.
+
+    Provides common configuration for output models, including support for
+    arbitrary types like scipp.DataArray.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class WorkflowId(BaseModel, frozen=True):
@@ -129,6 +140,47 @@ class WorkflowSpec(BaseModel):
         ),
     )
     params: type[BaseModel] | None = Field(description="Model for workflow param.")
+    outputs: type[BaseModel] | None = Field(
+        default=None,
+        description=(
+            "Pydantic model defining workflow outputs with their metadata. "
+            "Field names are simplified identifiers (e.g., 'i_of_d_two_theta') "
+            "that match keys returned by workflow.finalize(). Field types should "
+            "be scipp.DataArray or more specific types. Field metadata (title, "
+            "description) provides human-readable names and explanations for "
+            "the UI."
+        ),
+    )
+
+    @field_validator('outputs', mode='after')
+    @classmethod
+    def validate_unique_output_titles(
+        cls, outputs: type[BaseModel] | None
+    ) -> type[BaseModel] | None:
+        """Validate that output titles are unique within the workflow."""
+        if outputs is None:
+            return outputs
+
+        title_counts: dict[str, list[str]] = defaultdict(list)
+        for field_name, field_info in outputs.model_fields.items():
+            title = field_info.title if field_info.title is not None else field_name
+            title_counts[title].append(field_name)
+
+        duplicates = {
+            title: fields for title, fields in title_counts.items() if len(fields) > 1
+        }
+
+        if duplicates:
+            dup_str = ", ".join(
+                f"'{title}' (fields: {', '.join(fields)})"
+                for title, fields in duplicates.items()
+            )
+            raise ValueError(
+                f"Output titles must be unique within a workflow. "
+                f"Duplicate titles found: {dup_str}"
+            )
+
+        return outputs
 
     def get_id(self) -> WorkflowId:
         """

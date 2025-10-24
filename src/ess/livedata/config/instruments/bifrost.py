@@ -22,6 +22,7 @@ from scippnexus import NXdetector
 
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.env import StreamingEnv
+from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.config.workflows import (
     TimeseriesAccumulator,
     register_monitor_timeseries_workflows,
@@ -307,6 +308,13 @@ class BifrostWorkflowParams(pydantic.BaseModel):
     )
 
 
+class SpectrumViewOutputs(WorkflowOutputsBase):
+    spectrum_view: sc.DataArray = pydantic.Field(
+        title='Spectrum View',
+        description='Spectrum view showing time-of-flight vs. detector position.',
+    )
+
+
 class DetectorRatemeterParams(pydantic.BaseModel):
     """Parameters for detector ratemeter workflow."""
 
@@ -350,6 +358,7 @@ _logical_view = DetectorLogicalView(
     title='Spectrum view',
     description='Spectrum view with configurable time bins and pixels per tube.',
     source_names=_source_names,
+    outputs=SpectrumViewOutputs,
 )
 def _spectrum_view(params: BifrostWorkflowParams) -> StreamProcessorWorkflow:
     wf = reduction_workflow.copy()
@@ -359,7 +368,7 @@ def _spectrum_view(params: BifrostWorkflowParams) -> StreamProcessorWorkflow:
     return StreamProcessorWorkflow(
         wf,
         dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
-        target_keys=(SpectrumView,),
+        target_keys={'spectrum_view': SpectrumView},
         accumulators={SpectrumView: EternalAccumulator},
     )
 
@@ -379,7 +388,7 @@ def _detector_ratemeter_workflow(
     return StreamProcessorWorkflow(
         wf,
         dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
-        target_keys=(DetectorRegionCounts,),
+        target_keys={'detector_region_counts': DetectorRegionCounts},
         accumulators={DetectorRegionCounts: TimeseriesAccumulator},
     )
 

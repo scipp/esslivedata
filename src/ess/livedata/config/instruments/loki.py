@@ -5,6 +5,7 @@ from typing import Literal
 import pydantic
 import sciline
 import sciline.typing
+import scipp as sc
 from scippnexus import NXdetector
 
 import ess.loki.live  # noqa: F401
@@ -12,7 +13,7 @@ from ess import loki
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.env import StreamingEnv
-from ess.livedata.config.workflow_spec import AuxSourcesBase
+from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_data_handler import (
     DetectorProjection,
     get_nexus_geometry_filename,
@@ -66,6 +67,24 @@ class LokiAuxSources(AuxSourcesBase):
     transmission_monitor: Literal['monitor2'] = pydantic.Field(
         default='monitor2',
         description='Transmission monitor for sample transmission calculation.',
+    )
+
+
+class IofQOutputs(WorkflowOutputsBase):
+    """Outputs for the basic I(Q) workflow."""
+
+    i_of_q: sc.DataArray = pydantic.Field(
+        title='I(Q)',
+        description='Scattered intensity as a function of momentum transfer Q.',
+    )
+
+
+class IofQWithTransmissionOutputs(IofQOutputs):
+    """Outputs for I(Q) workflow with transmission from current run."""
+
+    transmission_fraction: sc.DataArray = pydantic.Field(
+        title='Transmission Fraction',
+        description='Sample transmission fraction calculated from current run.',
     )
 
 
@@ -157,6 +176,7 @@ _accumulators = (
     title='I(Q)',
     source_names=instrument.detector_names,
     aux_sources=LokiAuxSources,
+    outputs=IofQOutputs,
 )
 def _i_of_q(source_name: str) -> StreamProcessorWorkflow:
     wf = _base_workflow.copy()
@@ -164,7 +184,7 @@ def _i_of_q(source_name: str) -> StreamProcessorWorkflow:
     return StreamProcessorWorkflow(
         wf,
         dynamic_keys=_dynamic_keys(source_name),
-        target_keys=(IofQ[SampleRun],),
+        target_keys={'i_of_q': IofQ[SampleRun]},
         accumulators=_accumulators,
     )
 
@@ -176,6 +196,7 @@ def _i_of_q(source_name: str) -> StreamProcessorWorkflow:
     description='I(Q) reduction with configurable parameters.',
     source_names=instrument.detector_names,
     aux_sources=LokiAuxSources,
+    outputs=IofQWithTransmissionOutputs,
 )
 def _i_of_q_with_params(
     source_name: str, params: SansWorkflowParams
@@ -187,11 +208,14 @@ def _i_of_q_with_params(
     wf[sans_types.WavelengthBins] = params.wavelength_edges.get_edges()
 
     if not params.options.use_transmission_run:
-        target_keys = (IofQ[SampleRun], sans_types.TransmissionFraction[SampleRun])
+        target_keys = {
+            'i_of_q': IofQ[SampleRun],
+            'transmission_fraction': sans_types.TransmissionFraction[SampleRun],
+        }
         wf.insert(_transmission_from_current_run)
     else:
         # Transmission fraction is static, do not display
-        target_keys = (IofQ[SampleRun],)
+        target_keys = {'i_of_q': IofQ[SampleRun]}
     return StreamProcessorWorkflow(
         wf,
         dynamic_keys=_dynamic_keys(source_name),

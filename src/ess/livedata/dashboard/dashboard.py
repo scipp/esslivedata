@@ -247,6 +247,7 @@ class DashboardBase(ServiceBase, ABC):
             job_service=self._job_service,
             job_controller=self._job_controller,
             plotting_controller=self._plotting_controller,
+            workflow_controller=self._workflow_controller,
         ).widget
 
         template = pn.template.MaterialTemplate(

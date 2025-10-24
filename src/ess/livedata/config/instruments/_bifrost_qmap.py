@@ -18,7 +18,7 @@ from ess.bifrost.data import (
 )
 from ess.bifrost.live import BifrostQCutWorkflow, CutAxis, CutAxis1, CutAxis2, CutData
 from ess.livedata.config import Instrument
-from ess.livedata.config.workflow_spec import AuxSourcesBase
+from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 from ess.livedata.parameter_models import EnergyEdges, QEdges
 from ess.reduce.nexus.types import Filename, NeXusData, SampleRun
@@ -179,6 +179,15 @@ class BifrostAuxSources(AuxSourcesBase):
     )
 
 
+class QMapOutputs(WorkflowOutputsBase):
+    """Outputs for Bifrost Q-map workflows."""
+
+    cut_data: sc.DataArray = pydantic.Field(
+        title='Cut Data',
+        description='2D cut of intensity in Q-space or Q-E space.',
+    )
+
+
 def register_qmap_workflows(
     instrument: Instrument,
 ) -> None:
@@ -189,6 +198,7 @@ def register_qmap_workflows(
         description='Map of scattering intensity as function of Q and energy transfer.',
         source_names=['unified_detector'],
         aux_sources=BifrostAuxSources,
+        outputs=QMapOutputs,
     )
     def _qmap_workflow(params: BifrostQMapParams) -> StreamProcessorWorkflow:
         wf = _get_q_cut_workflow()
@@ -203,6 +213,7 @@ def register_qmap_workflows(
         description='Elastic Q map with predefined axes.',
         source_names=['unified_detector'],
         aux_sources=BifrostAuxSources,
+        outputs=QMapOutputs,
     )
     def _elastic_qmap_workflow(
         params: BifrostElasticQMapParams,
@@ -219,6 +230,7 @@ def register_qmap_workflows(
         description='Elastic Q map with custom axes.',
         source_names=['unified_detector'],
         aux_sources=BifrostAuxSources,
+        outputs=QMapOutputs,
     )
     def _custom_elastic_qmap_workflow(
         params: BifrostCustomElasticQMapParams,
@@ -237,6 +249,6 @@ def _make_cut_stream_processor(workflow: sciline.Pipeline) -> StreamProcessorWor
             'detector_rotation': InstrumentAngle[SampleRun],
             'sample_rotation': SampleAngle[SampleRun],
         },
-        target_keys=(CutData[SampleRun],),
+        target_keys={'cut_data': CutData[SampleRun]},
         accumulators=(CutData[SampleRun],),
     )

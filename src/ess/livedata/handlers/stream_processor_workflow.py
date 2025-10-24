@@ -18,7 +18,9 @@ class StreamProcessorWorkflow(Workflow):
     """
     Wrapper around ess.reduce.streaming.StreamProcessor to match the Workflow protocol.
 
-    This maps from stream names to sciline Keys, and vice versa for targets.
+    This maps from stream names to sciline Keys for inputs, and from simplified
+    output names to sciline Keys for targets. The simplified output names (dict keys
+    in target_keys) are used as keys in the dictionary returned by finalize().
     """
 
     def __init__(
@@ -27,16 +29,12 @@ class StreamProcessorWorkflow(Workflow):
         *,
         dynamic_keys: dict[str, sciline.typing.Key],
         context_keys: dict[str, sciline.typing.Key] | None = None,
-        target_keys: dict[str, sciline.typing.Key] | tuple[sciline.typing.Key, ...],
+        target_keys: dict[str, sciline.typing.Key],
         **kwargs: Any,
     ) -> None:
         self._dynamic_keys = dynamic_keys
         self._context_keys = context_keys if context_keys else {}
-        self._target_keys = (
-            {str(k): k for k in target_keys}
-            if isinstance(target_keys, tuple)
-            else target_keys
-        )
+        self._target_keys = target_keys
         self._stream_processor = streaming.StreamProcessor(
             base_workflow,
             dynamic_keys=tuple(self._dynamic_keys.values()),
