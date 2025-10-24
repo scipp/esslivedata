@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from enum import Enum, auto
-from typing import Any, Protocol
+from typing import Any
 
 import panel as pn
 
@@ -19,20 +20,32 @@ class WizardState(Enum):
     CANCELLED = auto()
 
 
-class WizardStep(Protocol):
-    """Protocol for wizard step components."""
+class WizardStep(ABC):
+    """Base class for wizard step components."""
 
+    def __init__(self) -> None:
+        self._on_ready_changed: Callable[[bool], None] | None = None
+
+    def on_ready_changed(self, callback: Callable[[bool], None]) -> None:
+        """Register callback to be notified when ready state changes."""
+        self._on_ready_changed = callback
+
+    def _notify_ready_changed(self, is_ready: bool) -> None:
+        """Notify wizard of ready state change."""
+        if self._on_ready_changed:
+            self._on_ready_changed(is_ready)
+
+    @abstractmethod
     def render(self) -> pn.Column:
         """Render the step's UI content."""
-        ...
 
+    @abstractmethod
     def is_valid(self) -> bool:
         """Whether step data allows advancement."""
-        ...
 
+    @abstractmethod
     def on_enter(self) -> None:
         """Called when step becomes active."""
-        ...
 
 
 class Wizard:
@@ -157,16 +170,13 @@ class Wizard:
         """Check if on last step."""
         return self._current_step_index == len(self._steps) - 1
 
-    def refresh_ui(self) -> None:
-        """
-        Refresh the UI to reflect current state.
-
-        Call this when step validity changes (e.g., after user selection).
-        """
-        self._next_button.disabled = not self._current_step.is_valid()
+    def _on_step_ready_changed(self, is_ready: bool) -> None:
+        """Handle step ready state change."""
+        self._next_button.disabled = not is_ready
 
     def _update_content(self) -> None:
         """Update modal content for current step."""
+        self._current_step.on_ready_changed(self._on_step_ready_changed)
         self._current_step.on_enter()
         self._render_step()
 
@@ -177,7 +187,7 @@ class Wizard:
         # Add step content
         self._content.append(self._current_step.render())
 
-        # Update next button state
+        # Update next button state based on step validity
         self._next_button.disabled = not self._current_step.is_valid()
 
         # Build navigation row
