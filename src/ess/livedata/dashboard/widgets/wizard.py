@@ -25,6 +25,7 @@ class WizardStep(ABC):
 
     def __init__(self) -> None:
         self._on_ready_changed: Callable[[bool], None] | None = None
+        self._step_number: int | None = None
 
     def on_ready_changed(self, callback: Callable[[bool], None]) -> None:
         """Register callback to be notified when ready state changes."""
@@ -35,9 +36,46 @@ class WizardStep(ABC):
         if self._on_ready_changed:
             self._on_ready_changed(is_ready)
 
+    @property
     @abstractmethod
-    def render(self) -> pn.Column:
-        """Render the step's UI content."""
+    def name(self) -> str:
+        """Display name for this step (e.g., 'Select Job and Output')."""
+
+    @property
+    def description(self) -> str | None:
+        """Optional description text shown below the step header."""
+        return None
+
+    def render(self, step_number: int) -> pn.Column:
+        """
+        Render the step's UI with automatic header generation.
+
+        Parameters
+        ----------
+        step_number:
+            The 1-based step number to display in the header
+
+        Returns
+        -------
+        :
+            Column containing header and step content
+        """
+        self._step_number = step_number
+
+        # Build header
+        header_parts = [f"<h3>Step {step_number}: {self.name}</h3>"]
+        if self.description:
+            header_parts.append(f"<p>{self.description}</p>")
+
+        return pn.Column(
+            pn.pane.HTML("".join(header_parts)),
+            self.render_content(),
+            sizing_mode='stretch_width',
+        )
+
+    @abstractmethod
+    def render_content(self) -> pn.Column | pn.viewable.Viewable:
+        """Render the step's content (without header)."""
 
     @abstractmethod
     def is_valid(self) -> bool:
@@ -192,8 +230,8 @@ class Wizard:
         """Render current step with navigation buttons."""
         self._content.clear()
 
-        # Add step content
-        self._content.append(self._current_step.render())
+        # Add step content with 1-based step number
+        self._content.append(self._current_step.render(self._current_step_index + 1))
 
         # Add vertical spacer to push buttons to bottom
         self._content.append(pn.layout.VSpacer())
