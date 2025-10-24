@@ -16,7 +16,7 @@ from ess.livedata.dashboard.plotting_controller import PlottingController
 
 from .configuration_widget import ConfigurationPanel
 from .plot_configuration_adapter import PlotConfigurationAdapter
-from .wizard import Wizard
+from .wizard import Wizard, WizardState
 
 
 @dataclass
@@ -433,13 +433,12 @@ class JobPlotterSelectionModal:
             logger=self._logger,
         )
 
-        # Create wizard
+        # Create wizard (without modal)
         self._wizard = Wizard(
             steps=[step1, step2, step3],
             context=self._context,
-            title="Select Job and Plotter",
             on_complete=self._on_wizard_complete,
-            on_cancel=cancel_callback,
+            on_cancel=self._on_wizard_cancel,
         )
 
         # Now wire up the callbacks
@@ -449,11 +448,37 @@ class JobPlotterSelectionModal:
 
         # Store step3 reference for reset
         self._step3 = step3
+        self._cancel_callback = cancel_callback
+
+        # Create modal wrapping the wizard
+        self._modal = pn.Modal(
+            self._wizard.render(),
+            name="Select Job and Plotter",
+            margin=20,
+            width=900,
+            height=700,
+        )
+
+        # Watch for modal close events (X button or ESC key)
+        self._modal.param.watch(self._on_modal_closed, 'open')
 
     def _on_wizard_complete(self, context: PlotterSelectionContext) -> None:
-        """Handle wizard completion - call success callback with results."""
+        """Handle wizard completion - close modal and call success callback."""
+        self._modal.open = False
         if context.created_plot is not None and context.selected_sources is not None:
             self._success_callback(context.created_plot, context.selected_sources)
+
+    def _on_wizard_cancel(self) -> None:
+        """Handle wizard cancellation - close modal and call cancel callback."""
+        self._modal.open = False
+        self._cancel_callback()
+
+    def _on_modal_closed(self, event) -> None:
+        """Handle modal being closed via X button or ESC key."""
+        if not event.new:  # Modal was closed
+            # Only call cancel callback if wizard wasn't already completed/cancelled
+            if self._wizard._state == WizardState.ACTIVE:
+                self._cancel_callback()
 
     def show(self) -> None:
         """Show the modal dialog."""
@@ -465,10 +490,11 @@ class JobPlotterSelectionModal:
         self._context.selected_sources = None
         self._step3.reset()
 
-        # Show wizard
-        self._wizard.show()
+        # Reset wizard and show modal
+        self._wizard.reset()
+        self._modal.open = True
 
     @property
     def modal(self) -> pn.Modal:
         """Get the modal widget."""
-        return self._wizard.modal
+        return self._modal
