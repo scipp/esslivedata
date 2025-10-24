@@ -16,7 +16,7 @@ from ess.livedata.dashboard.plotting_controller import PlottingController
 
 from .configuration_widget import ConfigurationPanel
 from .plot_configuration_adapter import PlotConfigurationAdapter
-from .wizard import Wizard, WizardState
+from .wizard import Wizard, WizardState, WizardStep
 
 
 @dataclass
@@ -30,14 +30,13 @@ class PlotterSelectionContext:
     selected_sources: list[str] | None = None
 
 
-class JobOutputSelectionStep:
+class JobOutputSelectionStep(WizardStep):
     """Step 1: Job and output selection."""
 
     def __init__(
         self,
         context: PlotterSelectionContext,
         job_service: JobService,
-        on_selection_changed: Callable[[], None],
     ) -> None:
         """
         Initialize job/output selection step.
@@ -48,12 +47,10 @@ class JobOutputSelectionStep:
             Shared wizard context
         job_service:
             Service for accessing job data
-        on_selection_changed:
-            Called when selection changes to update UI
         """
+        super().__init__()
         self._context = context
         self._job_service = job_service
-        self._on_selection_changed = on_selection_changed
         self._table = self._create_job_output_table()
 
         # Set up selection watcher
@@ -133,7 +130,7 @@ class JobOutputSelectionStep:
         if len(selection) != 1:
             self._context.job = None
             self._context.output = None
-            self._on_selection_changed()
+            self._notify_ready_changed(False)
             return
 
         # Get selected job number and output name from index
@@ -143,7 +140,7 @@ class JobOutputSelectionStep:
 
         self._context.job = JobNumber(job_number_str)
         self._context.output = output_name if output_name else None
-        self._on_selection_changed()
+        self._notify_ready_changed(True)
 
     def is_valid(self) -> bool:
         """Whether a valid job/output selection has been made."""
@@ -165,14 +162,13 @@ class JobOutputSelectionStep:
         self._update_job_output_table()
 
 
-class PlotterSelectionStep:
+class PlotterSelectionStep(WizardStep):
     """Step 2: Plotter type selection."""
 
     def __init__(
         self,
         context: PlotterSelectionContext,
         plotting_controller: PlottingController,
-        advance: Callable[[], None],
         logger: logging.Logger,
     ) -> None:
         """
@@ -184,16 +180,19 @@ class PlotterSelectionStep:
             Shared wizard context
         plotting_controller:
             Controller for determining available plotters
-        advance:
-            Called to advance to next step when plotter is selected
         logger:
             Logger instance for error reporting
         """
+        super().__init__()
         self._context = context
         self._plotting_controller = plotting_controller
-        self._advance = advance
+        self._wizard: Wizard | None = None
         self._logger = logger
         self._buttons_container = pn.Column(sizing_mode='stretch_width')
+
+    def set_wizard(self, wizard: Wizard) -> None:
+        """Set wizard reference after construction."""
+        self._wizard = wizard
 
     def is_valid(self) -> bool:
         """Step 2 doesn't use Next button, so always return False."""
@@ -263,10 +262,11 @@ class PlotterSelectionStep:
     def _on_button_click(self, plot_name: str) -> None:
         """Handle plotter button click - update context and advance."""
         self._context.plot_name = plot_name
-        self._advance()
+        if self._wizard:
+            self._wizard.advance()
 
 
-class ConfigurationStep:
+class ConfigurationStep(WizardStep):
     """Step 3: Plot configuration."""
 
     def __init__(
@@ -274,7 +274,6 @@ class ConfigurationStep:
         context: PlotterSelectionContext,
         job_service: JobService,
         plotting_controller: PlottingController,
-        complete: Callable[[], None],
         logger: logging.Logger,
     ) -> None:
         """
@@ -288,18 +287,21 @@ class ConfigurationStep:
             Service for accessing job data
         plotting_controller:
             Controller for plot creation
-        complete:
-            Called when wizard should complete
         logger:
             Logger instance for error reporting
         """
+        super().__init__()
         self._context = context
         self._job_service = job_service
         self._plotting_controller = plotting_controller
-        self._complete = complete
+        self._wizard: Wizard | None = None
         self._logger = logger
         self._config_panel: ConfigurationPanel | None = None
         self._panel_container = pn.Column(sizing_mode='stretch_width')
+
+    def set_wizard(self, wizard: Wizard) -> None:
+        """Set wizard reference after construction."""
+        self._wizard = wizard
 
     def reset(self) -> None:
         """Reset configuration panel (e.g., when going back)."""
@@ -368,7 +370,8 @@ class ConfigurationStep:
 
     def _on_panel_success(self) -> None:
         """Handle successful panel action - complete wizard."""
-        self._complete()
+        if self._wizard:
+            self._wizard.complete()
 
     def _show_error(self, message: str) -> None:
         """Display an error notification."""
@@ -410,18 +413,15 @@ class JobPlotterSelectionModal:
         # Create shared context
         self._context = PlotterSelectionContext()
 
-        # Create wizard (steps need wizard callbacks, so we build in order)
-        # We'll pass partial callbacks that will be replaced with wizard methods
+        # Create steps without wizard reference
         step1 = JobOutputSelectionStep(
             context=self._context,
             job_service=job_service,
-            on_selection_changed=lambda: None,  # Placeholder
         )
 
         step2 = PlotterSelectionStep(
             context=self._context,
             plotting_controller=plotting_controller,
-            advance=lambda: None,  # Placeholder
             logger=self._logger,
         )
 
@@ -429,11 +429,10 @@ class JobPlotterSelectionModal:
             context=self._context,
             job_service=job_service,
             plotting_controller=plotting_controller,
-            complete=lambda: None,  # Placeholder
             logger=self._logger,
         )
 
-        # Create wizard (without modal)
+        # Create wizard
         self._wizard = Wizard(
             steps=[step1, step2, step3],
             context=self._context,
@@ -441,10 +440,9 @@ class JobPlotterSelectionModal:
             on_cancel=self._on_wizard_cancel,
         )
 
-        # Now wire up the callbacks
-        step1._on_selection_changed = self._wizard.refresh_ui
-        step2._advance = self._wizard.advance
-        step3._complete = self._wizard.complete
+        # Wire up wizard references for steps that need to call wizard methods
+        step2.set_wizard(self._wizard)
+        step3.set_wizard(self._wizard)
 
         # Store step3 reference for reset
         self._step3 = step3
