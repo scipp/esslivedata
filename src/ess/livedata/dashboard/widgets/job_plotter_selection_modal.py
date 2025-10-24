@@ -323,10 +323,6 @@ class ConfigurationStep(WizardStep):
         is_valid, _ = self._config_panel._config_widget.validate_configuration()
         return is_valid
 
-    def action_button_label(self) -> str:
-        """Label for the action button on this step."""
-        return "Create Plot"
-
     def execute(self) -> bool:
         """Execute the plot creation action."""
         if self._config_panel is None:
@@ -451,6 +447,7 @@ class JobPlotterSelectionModal:
             context=self._context,
             on_complete=self._on_wizard_complete,
             on_cancel=self._on_wizard_cancel,
+            action_button_label="Create Plot",
         )
 
         # Store step3 reference for reset
