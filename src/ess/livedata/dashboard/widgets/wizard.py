@@ -7,9 +7,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from enum import Enum, auto
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 import panel as pn
+
+TInput = TypeVar('TInput')
+TOutput = TypeVar('TOutput')
 
 
 class WizardState(Enum):
@@ -20,8 +23,20 @@ class WizardState(Enum):
     CANCELLED = auto()
 
 
-class WizardStep(ABC):
-    """Base class for wizard step components."""
+class WizardStep(ABC, Generic[TInput, TOutput]):
+    """
+    Base class for wizard step components.
+
+    Each step transforms input from the previous step into output for the next step.
+    The first step receives None as input.
+
+    Type Parameters
+    ----------------
+    TInput:
+        Type of input data from previous step (None for first step)
+    TOutput:
+        Type of output data to pass to next step
+    """
 
     def __init__(self) -> None:
         self._on_ready_changed: Callable[[bool], None] | None = None
@@ -81,42 +96,43 @@ class WizardStep(ABC):
     def is_valid(self) -> bool:
         """Whether step data allows advancement."""
 
-    def execute(self) -> bool:
+    @abstractmethod
+    def execute(self) -> TOutput | None:
         """
-        Execute step action (typically only final steps need this).
-
-        This method is called when advancing from the last step. Most steps
-        don't need to execute actions and can use the default implementation.
+        Execute step action and return result for next step.
 
         Returns
         -------
         :
-            True if execution succeeded or no action needed, False to prevent
-            advancement
+            Output data to pass to next step, or None if execution failed
         """
-        return True
 
     @abstractmethod
-    def on_enter(self) -> None:
-        """Called when step becomes active."""
+    def on_enter(self, input_data: TInput) -> None:
+        """
+        Called when step becomes active.
+
+        Parameters
+        ----------
+        input_data:
+            Output from the previous step (None for first step)
+        """
 
 
 class Wizard:
     """
     Generic multi-step wizard component.
 
-    The wizard manages navigation between steps and handles completion/cancellation
-    callbacks. Steps receive callbacks to signal advancement and share data via a
-    context object.
+    The wizard manages navigation between steps, threading data from each step's
+    execution to the next step's input. Each step transforms input data to output
+    data, creating a pipeline of transformations.
 
     Parameters
     ----------
     steps:
         List of wizard steps to display in sequence
-    context:
-        Shared data object (typically a dataclass) that steps read/write
     on_complete:
-        Called with context when wizard completes successfully
+        Called with final step's output when wizard completes successfully
     on_cancel:
         Called when wizard is cancelled
     action_button_label:
@@ -126,14 +142,12 @@ class Wizard:
 
     def __init__(
         self,
-        steps: list[WizardStep],
-        context: Any,
+        steps: list[WizardStep[Any, Any]],
         on_complete: Callable[[Any], None],
         on_cancel: Callable[[], None],
         action_button_label: str | None = None,
     ) -> None:
         self._steps = steps
-        self._context = context
         self._on_complete = on_complete
         self._on_cancel = on_cancel
         self._action_button_label = action_button_label
@@ -141,6 +155,7 @@ class Wizard:
         # State tracking
         self._current_step_index = 0
         self._state = WizardState.ACTIVE
+        self._step_results: list[Any] = []  # Results from executed steps
 
         # Navigation buttons
         self._back_button = pn.widgets.Button(
@@ -175,14 +190,24 @@ class Wizard:
         if not self._current_step.is_valid():
             return
 
+        # Execute current step and get result
+        result = self._current_step.execute()
+        if result is None:
+            return  # Execution failed, don't advance
+
+        # Store result for this step
+        if self._current_step_index < len(self._step_results):
+            self._step_results[self._current_step_index] = result
+        else:
+            self._step_results.append(result)
+
         if self._current_step_index < len(self._steps) - 1:
+            # Move to next step
             self._current_step_index += 1
             self._update_content()
         else:
-            # On last step, execute step action
-            if not self._current_step.execute():
-                return  # Execution failed, don't complete
-            self.complete()
+            # Last step completed - pass result to completion callback
+            self.complete(result)
 
     def back(self) -> None:
         """Go to previous step."""
@@ -190,10 +215,17 @@ class Wizard:
             self._current_step_index -= 1
             self._update_content()
 
-    def complete(self) -> None:
-        """Complete wizard successfully."""
+    def complete(self, result: Any) -> None:
+        """
+        Complete wizard successfully.
+
+        Parameters
+        ----------
+        result:
+            Output from the final step
+        """
         self._state = WizardState.COMPLETED
-        self._on_complete(self._context)
+        self._on_complete(result)
 
     def cancel(self) -> None:
         """Cancel wizard."""
@@ -204,6 +236,7 @@ class Wizard:
         """Reset wizard to first step."""
         self._current_step_index = 0
         self._state = WizardState.ACTIVE
+        self._step_results = []
         self._update_content()
 
     def render(self) -> pn.Column:
@@ -211,12 +244,7 @@ class Wizard:
         return self._content
 
     @property
-    def context(self) -> Any:
-        """Get the shared context object."""
-        return self._context
-
-    @property
-    def _current_step(self) -> WizardStep:
+    def _current_step(self) -> WizardStep[Any, Any]:
         """Get the current step."""
         return self._steps[self._current_step_index]
 
@@ -237,7 +265,14 @@ class Wizard:
     def _update_content(self) -> None:
         """Update modal content for current step."""
         self._current_step.on_ready_changed(self._on_step_ready_changed)
-        self._current_step.on_enter()
+
+        # Get input for this step: None for first step, otherwise previous step's result
+        if self._current_step_index == 0:
+            input_data = None
+        else:
+            input_data = self._step_results[self._current_step_index - 1]
+
+        self._current_step.on_enter(input_data)
         self._render_step()
 
     def _render_step(self) -> None:

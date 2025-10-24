@@ -95,7 +95,7 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         self,
         selected_sources: list[str],
         parameter_values: Model,
-    ) -> None:
+    ) -> Any:
         """
         Execute the start action with selected sources and parameters.
 
@@ -108,6 +108,11 @@ class ConfigurationAdapter(ABC, Generic[Model]):
             Selected source names
         parameter_values
             Parameter values as a validated Pydantic model instance
+
+        Returns
+        -------
+        :
+            Result of the action (implementation-specific), or None if no result
 
         Raises
         ------
