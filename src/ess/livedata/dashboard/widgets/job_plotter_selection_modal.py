@@ -2,7 +2,9 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
+from enum import Enum, auto
 
 import pandas as pd
 import panel as pn
@@ -13,6 +15,14 @@ from ess.livedata.dashboard.plotting_controller import PlottingController
 
 from .configuration_widget import ConfigurationPanel
 from .plot_configuration_adapter import PlotConfigurationAdapter
+
+
+class WizardState(Enum):
+    """State of the wizard workflow."""
+
+    ACTIVE = auto()
+    COMPLETED = auto()
+    CANCELLED = auto()
 
 
 class JobPlotterSelectionModal:
@@ -47,6 +57,7 @@ class JobPlotterSelectionModal:
         self._plotting_controller = plotting_controller
         self._success_callback = success_callback
         self._cancel_callback = cancel_callback
+        self._logger = logging.getLogger(__name__)
 
         # State tracking
         self._current_step = 1
@@ -54,7 +65,7 @@ class JobPlotterSelectionModal:
         self._selected_output: str | None = None
         self._selected_plot: str | None = None
         self._config_panel: ConfigurationPanel | None = None
-        self._success_callback_invoked = False
+        self._state = WizardState.ACTIVE
 
         # UI components
         self._job_output_table = self._create_job_output_table()
@@ -372,9 +383,12 @@ class JobPlotterSelectionModal:
                 self._plotter_buttons_container.append(
                     pn.pane.Markdown("*No plotters available for this selection*")
                 )
-        except Exception:
+        except Exception as e:
+            self._logger.exception(
+                "Error loading plotters for job %s", self._selected_job
+            )
             self._plotter_buttons_container.append(
-                pn.pane.Markdown("*Error loading plotters*")
+                pn.pane.Markdown(f"*Error loading plotters: {e}*")
             )
 
     def _on_next_clicked(self, event) -> None:
@@ -393,6 +407,7 @@ class JobPlotterSelectionModal:
 
     def _on_cancel_clicked(self, event) -> None:
         """Handle cancel button click."""
+        self._state = WizardState.CANCELLED
         self._modal.open = False
         self._cancel_callback()
 
@@ -410,9 +425,9 @@ class JobPlotterSelectionModal:
         Handle successful action from ConfigurationPanel.
 
         This is called after execute_action() completes successfully.
-        Closes the modal.
+        Closes the modal and marks workflow as completed.
         """
-        self._success_callback_invoked = True
+        self._state = WizardState.COMPLETED
         self._modal.open = False
 
     def _show_error(self, message: str) -> None:
@@ -423,18 +438,21 @@ class JobPlotterSelectionModal:
     def _on_modal_closed(self, event) -> None:
         """Handle modal being closed via X button or ESC key."""
         if not event.new:  # Modal was closed
-            # Only call cancel callback if success callback wasn't invoked
-            if not self._success_callback_invoked:
+            # Only call cancel callback if workflow wasn't completed
+            if self._state == WizardState.ACTIVE:
+                self._state = WizardState.CANCELLED
                 self._cancel_callback()
 
             # Remove modal from its parent container after a short delay
-            # to allow the close animation to complete
+            # to allow the close animation to complete.
+            # This uses Panel's private API as there's no public cleanup method.
             def cleanup():
                 try:
                     if hasattr(self._modal, '_parent') and self._modal._parent:
                         self._modal._parent.remove(self._modal)
-                except Exception:  # noqa: S110
-                    pass  # Ignore cleanup errors
+                except Exception as e:
+                    # This is expected to fail sometimes due to Panel's lifecycle
+                    self._logger.debug("Modal cleanup warning (expected): %s", e)
 
             pn.state.add_periodic_callback(cleanup, period=100, count=1)
 
@@ -447,7 +465,7 @@ class JobPlotterSelectionModal:
         self._selected_plot = None
         self._config_panel = None
         self._next_button.disabled = True
-        self._success_callback_invoked = False
+        self._state = WizardState.ACTIVE
 
         # Refresh data and show
         self._update_job_output_table()
