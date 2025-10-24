@@ -237,12 +237,8 @@ class PlotGrid:
         """Handle cell click for region selection."""
         # Check if plot creation is already in progress
         if self._plot_creation_in_flight:
+            # Probably not possible to get here since the modal for plot config blocks?
             self._show_error('Plot creation in progress')
-            return
-
-        # Check if cell is occupied
-        if self._is_cell_occupied(row, col):
-            self._show_error('Cannot select a cell that already contains a plot')
             return
 
         if self._first_click is None:
@@ -256,14 +252,6 @@ class PlotGrid:
 
             # Normalize to get top-left and bottom-right corners
             row_start, col_start, row_end, col_end = _normalize_region(r1, c1, r2, c2)
-
-            # Check if the entire region is available
-            if not self._is_region_available(row_start, col_start, row_end, col_end):
-                self._show_error(
-                    'Cannot select a region that overlaps with existing plots'
-                )
-                self._clear_selection()
-                return
 
             # Calculate span
             row_span, col_span = _calculate_region_span(

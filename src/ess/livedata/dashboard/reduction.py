@@ -10,7 +10,7 @@ from ess.livedata import Service
 from .dashboard import DashboardBase
 from .widgets.log_producer_widget import LogProducerWidget
 
-pn.extension('holoviews', 'modal', template='material')
+pn.extension('holoviews', 'modal', notifications=True, template='material')
 hv.extension('bokeh')
 
 
