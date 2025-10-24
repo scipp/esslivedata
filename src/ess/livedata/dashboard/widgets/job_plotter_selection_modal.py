@@ -38,6 +38,132 @@ class WizardStep(Protocol):
         ...
 
 
+class JobOutputSelectionStep:
+    """Step 1: Job and output selection."""
+
+    def __init__(
+        self,
+        job_service: JobService,
+        on_selection_changed: Callable[[JobNumber | None, str | None, bool], None],
+    ) -> None:
+        """
+        Initialize job/output selection step.
+
+        Parameters
+        ----------
+        job_service:
+            Service for accessing job data
+        on_selection_changed:
+            Called when selection changes with (job, output, is_valid)
+        """
+        self._job_service = job_service
+        self._on_selection_changed = on_selection_changed
+        self._table = self._create_job_output_table()
+
+        # Set up selection watcher
+        self._table.param.watch(self._on_table_selection_change, 'selection')
+
+    def _create_job_output_table(self) -> pn.widgets.Tabulator:
+        """Create job and output selection table with grouping."""
+        return pn.widgets.Tabulator(
+            name="Available Jobs and Outputs",
+            pagination='remote',
+            page_size=15,
+            sizing_mode='stretch_width',
+            selectable=1,
+            disabled=True,
+            height=400,
+            groupby=['workflow_name', 'job_number'],
+            configuration={
+                'columns': [
+                    {'title': 'Job Number', 'field': 'job_number', 'width': 100},
+                    {'title': 'Workflow', 'field': 'workflow_name', 'width': 100},
+                    {'title': 'Output Name', 'field': 'output_name', 'width': 200},
+                    {'title': 'Source Names', 'field': 'source_names', 'width': 500},
+                ],
+            },
+        )
+
+    def _update_job_output_table(self) -> None:
+        """Update the job and output table with current job data."""
+        job_output_data = []
+        for job_number, workflow_id in self._job_service.job_info.items():
+            job_data = self._job_service.job_data.get(job_number, {})
+            sources = list(job_data.keys())
+
+            # Get output names from any source (they all have the same outputs per
+            # backend guarantee)
+            output_names = set()
+            for source_data in job_data.values():
+                if isinstance(source_data, dict):
+                    output_names.update(source_data.keys())
+                    break  # Since all sources have same outputs, we only check one
+
+            # If no outputs found, create a row with empty output name
+            if not output_names:
+                job_output_data.append(
+                    {
+                        'output_name': '',
+                        'source_names': ', '.join(sources),
+                        'workflow_name': workflow_id.name,
+                        'job_number': job_number.hex,
+                    }
+                )
+            else:
+                # Create one row per output name
+                job_output_data.extend(
+                    [
+                        {
+                            'output_name': output_name,
+                            'source_names': ', '.join(sources),
+                            'workflow_name': workflow_id.name,
+                            'job_number': job_number.hex,
+                        }
+                        for output_name in sorted(output_names)
+                    ]
+                )
+
+        if job_output_data:
+            df = pd.DataFrame(job_output_data)
+        else:
+            df = pd.DataFrame(
+                columns=['job_number', 'workflow_name', 'output_name', 'source_names']
+            )
+        self._table.value = df
+
+    def _on_table_selection_change(self, event) -> None:
+        """Handle job and output selection change."""
+        selection = event.new
+        if len(selection) != 1:
+            self._on_selection_changed(None, None, False)
+            return
+
+        # Get selected job number and output name from index
+        selected_row = selection[0]
+        job_number_str = self._table.value['job_number'].iloc[selected_row]
+        output_name = self._table.value['output_name'].iloc[selected_row]
+
+        job = JobNumber(job_number_str)
+        output = output_name if output_name else None
+
+        self._on_selection_changed(job, output, True)
+
+    def render(self) -> pn.Column:
+        """Render job/output selection table."""
+        return pn.Column(
+            pn.pane.HTML(
+                "<h3>Step 1: Select Job and Output</h3>"
+                "<p>Choose the job and output you want to visualize.</p>"
+            ),
+            self._table,
+            sizing_mode='stretch_width',
+        )
+
+    def on_enter(self) -> None:
+        """Update table data when step becomes active."""
+        self._update_job_output_table()
+
+
 class PlotterSelectionStep:
     """Step 2: Plotter type selection."""
 
@@ -282,6 +408,10 @@ class JobPlotterSelectionModal:
         self._state = WizardState.ACTIVE
 
         # Step components
+        self._step1 = JobOutputSelectionStep(
+            job_service=job_service,
+            on_selection_changed=self._on_job_output_selection_changed,
+        )
         self._step2 = PlotterSelectionStep(
             plotting_controller=plotting_controller,
             on_plotter_selected=self._on_plotter_selected,
@@ -295,9 +425,6 @@ class JobPlotterSelectionModal:
             show_error=self._show_error,
             logger=self._logger,
         )
-
-        # Step 1 UI (legacy - will be replaced)
-        self._job_output_table = self._create_job_output_table()
 
         self._back_button = pn.widgets.Button(
             name="Back",
@@ -339,102 +466,27 @@ class JobPlotterSelectionModal:
         # Watch for modal close events (X button or ESC key)
         self._modal.param.watch(self._on_modal_closed, 'open')
 
-        # Set up watchers
-        self._job_output_table.param.watch(
-            self._on_job_output_selection_change, 'selection'
-        )
-
         # Initialize with step 1
         self._update_content()
-        self._update_job_output_table()
 
-    def _create_job_output_table(self) -> pn.widgets.Tabulator:
-        """Create job and output selection table with grouping."""
-        return pn.widgets.Tabulator(
-            name="Available Jobs and Outputs",
-            pagination='remote',
-            page_size=15,
-            sizing_mode='stretch_width',
-            selectable=1,
-            disabled=True,
-            height=400,
-            groupby=['workflow_name', 'job_number'],
-            configuration={
-                'columns': [
-                    {'title': 'Job Number', 'field': 'job_number', 'width': 100},
-                    {'title': 'Workflow', 'field': 'workflow_name', 'width': 100},
-                    {'title': 'Output Name', 'field': 'output_name', 'width': 200},
-                    {'title': 'Source Names', 'field': 'source_names', 'width': 500},
-                ],
-            },
-        )
+    def _on_job_output_selection_changed(
+        self, job: JobNumber | None, output: str | None, is_valid: bool
+    ) -> None:
+        """
+        Handle job and output selection change from step 1.
 
-    def _update_job_output_table(self) -> None:
-        """Update the job and output table with current job data."""
-        job_output_data = []
-        for job_number, workflow_id in self._job_service.job_info.items():
-            job_data = self._job_service.job_data.get(job_number, {})
-            sources = list(job_data.keys())
-
-            # Get output names from any source (they all have the same outputs per
-            # backend guarantee)
-            output_names = set()
-            for source_data in job_data.values():
-                if isinstance(source_data, dict):
-                    output_names.update(source_data.keys())
-                    break  # Since all sources have same outputs, we only check one
-
-            # If no outputs found, create a row with empty output name
-            if not output_names:
-                job_output_data.append(
-                    {
-                        'output_name': '',
-                        'source_names': ', '.join(sources),
-                        'workflow_name': workflow_id.name,
-                        'job_number': job_number.hex,
-                    }
-                )
-            else:
-                # Create one row per output name
-                job_output_data.extend(
-                    [
-                        {
-                            'output_name': output_name,
-                            'source_names': ', '.join(sources),
-                            'workflow_name': workflow_id.name,
-                            'job_number': job_number.hex,
-                        }
-                        for output_name in sorted(output_names)
-                    ]
-                )
-
-        if job_output_data:
-            df = pd.DataFrame(job_output_data)
-        else:
-            df = pd.DataFrame(
-                columns=['job_number', 'workflow_name', 'output_name', 'source_names']
-            )
-        self._job_output_table.value = df
-
-    def _on_job_output_selection_change(self, event) -> None:
-        """Handle job and output selection change."""
-        selection = event.new
-        if len(selection) != 1:
-            self._selected_job = None
-            self._selected_output = None
-            self._next_button.disabled = True
-            return
-
-        # Get selected job number and output name from index
-        selected_row = selection[0]
-        job_number_str = self._job_output_table.value['job_number'].iloc[selected_row]
-        output_name = self._job_output_table.value['output_name'].iloc[selected_row]
-
-        self._selected_job = JobNumber(job_number_str)
-        self._selected_output = output_name if output_name else None
-
-        # Enable next button
-        self._next_button.disabled = False
+        Parameters
+        ----------
+        job:
+            Selected job number (None if no selection)
+        output:
+            Selected output name (None if no selection or no output)
+        is_valid:
+            Whether the selection is valid (enables next button)
+        """
+        self._selected_job = job
+        self._selected_output = output
+        self._next_button.disabled = not is_valid
 
     def _on_plotter_selected(self, plot_name: str) -> None:
         """Handle plotter button click.
@@ -455,6 +507,7 @@ class JobPlotterSelectionModal:
     def _update_content(self) -> None:
         """Update modal content based on current step."""
         if self._current_step == 1:
+            self._step1.on_enter()
             self._show_step_1()
         elif self._current_step == 2:
             self._step2.on_enter()
@@ -468,11 +521,7 @@ class JobPlotterSelectionModal:
         self._content.clear()
         self._content.extend(
             [
-                pn.pane.HTML(
-                    "<h3>Step 1: Select Job and Output</h3>"
-                    "<p>Choose the job and output you want to visualize.</p>"
-                ),
-                self._job_output_table,
+                self._step1.render(),
                 pn.Row(
                     pn.Spacer(),
                     self._cancel_button,
@@ -589,8 +638,7 @@ class JobPlotterSelectionModal:
         self._next_button.disabled = True
         self._state = WizardState.ACTIVE
 
-        # Refresh data and show
-        self._update_job_output_table()
+        # Update content (on_enter() will refresh data)
         self._update_content()
         self._modal.open = True
 
