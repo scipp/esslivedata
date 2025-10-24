@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from typing import Any
 
 import panel as pn
 import pydantic
@@ -245,7 +246,7 @@ class ConfigurationPanel:
 
         return is_valid, errors
 
-    def execute_action(self) -> bool:
+    def execute_action(self) -> Any:
         """
         Execute the configuration action.
 
@@ -255,29 +256,33 @@ class ConfigurationPanel:
         Returns
         -------
         :
-            True if action succeeded, False if action raised error
+            Result from start_action (True if action succeeded with no result,
+            actual result value if returned, or False if action raised error)
         """
         try:
-            self._config.start_action(
+            result = self._config.start_action(
                 self._config_widget.selected_sources,
                 self._config_widget.parameter_values,
             )
+            # Return True if action succeeded but returned no result (None)
+            # Otherwise return the actual result
+            return True if result is None else result
         except Exception as e:
             self._logger.exception("Error starting '%s'", self._config.title)
             error_message = f"Error starting '{self._config.title}': {e!s}"
             self._show_action_error(error_message)
             return False
 
-        return True
-
-    def validate_and_execute(self) -> bool:
+    def validate_and_execute(self) -> Any:
         """
         Convenience method: validate then execute if valid.
 
         Returns
         -------
         :
-            True if both validation and execution succeeded, False otherwise
+            Result from start_action if validation and execution succeeded
+            (True if no result, actual value if returned), or False if
+            validation or execution failed
         """
         is_valid, _ = self.validate()
         if not is_valid:
@@ -382,7 +387,8 @@ class ConfigurationModal:
 
     def _on_start_clicked(self, event) -> None:
         """Handle start button click."""
-        if self._panel.validate_and_execute():
+        result = self._panel.validate_and_execute()
+        if result is not False:
             self._modal.open = False
             if self._success_callback:
                 self._success_callback()

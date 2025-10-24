@@ -8,7 +8,7 @@ import panel as pn
 from ess.livedata.dashboard.widgets.wizard import Wizard, WizardState, WizardStep
 
 
-class FakeWizardStep(WizardStep):
+class FakeWizardStep(WizardStep[Any, Any]):
     """Test implementation of WizardStep."""
 
     def __init__(
@@ -17,14 +17,17 @@ class FakeWizardStep(WizardStep):
         valid: bool = True,
         can_execute: bool = True,
         step_description: str | None = None,
+        return_value: Any = None,
     ) -> None:
         super().__init__()
         self._name = step_name
         self._description = step_description
         self._valid = valid
         self._can_execute = can_execute
+        self._return_value = return_value
         self.enter_called = False
         self.execute_called = False
+        self.received_input: Any = None
 
     @property
     def name(self) -> str:
@@ -44,14 +47,19 @@ class FakeWizardStep(WizardStep):
         """Whether step is valid."""
         return self._valid
 
-    def on_enter(self) -> None:
+    def on_enter(self, input_data: Any) -> None:
         """Called when step becomes active."""
         self.enter_called = True
+        self.received_input = input_data
 
-    def execute(self) -> bool:
-        """Execute step action (for last step)."""
+    def execute(self) -> Any:
+        """Execute step action and return result."""
         self.execute_called = True
-        return self._can_execute
+        if not self._can_execute:
+            return None
+        return (
+            self._return_value if self._return_value is not None else {"result": "ok"}
+        )
 
     def set_valid(self, valid: bool) -> None:
         """Change validity and notify wizard."""
@@ -125,17 +133,14 @@ class TestWizardInitialization:
 
     def test_creates_wizard_with_single_step(self):
         steps = [FakeWizardStep()]
-        context = SampleContext()
 
         wizard = Wizard(
             steps=steps,
-            context=context,
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
         assert wizard is not None
-        assert wizard.context is context
 
     def test_creates_wizard_with_multiple_steps(self):
         steps = [
@@ -143,12 +148,10 @@ class TestWizardInitialization:
             FakeWizardStep("step2"),
             FakeWizardStep("step3"),
         ]
-        context = SampleContext()
 
         wizard = Wizard(
             steps=steps,
-            context=context,
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -158,8 +161,7 @@ class TestWizardInitialization:
         steps = [FakeWizardStep()]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -169,8 +171,7 @@ class TestWizardInitialization:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -181,8 +182,7 @@ class TestWizardInitialization:
         steps = [FakeWizardStep()]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
             action_button_label="Create",
         )
@@ -193,8 +193,7 @@ class TestWizardInitialization:
         steps = [FakeWizardStep()]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -208,8 +207,7 @@ class TestWizardNavigation:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -222,8 +220,7 @@ class TestWizardNavigation:
         steps = [FakeWizardStep("step1", valid=False), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -241,7 +238,6 @@ class TestWizardNavigation:
 
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
             on_complete=on_complete,
             on_cancel=lambda: None,
         )
@@ -255,8 +251,7 @@ class TestWizardNavigation:
         step = FakeWizardStep("step1", can_execute=True)
         wizard = Wizard(
             steps=[step],
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -274,7 +269,6 @@ class TestWizardNavigation:
 
         wizard = Wizard(
             steps=[step],
-            context=SampleContext(),
             on_complete=on_complete,
             on_cancel=lambda: None,
         )
@@ -288,8 +282,7 @@ class TestWizardNavigation:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -302,8 +295,7 @@ class TestWizardNavigation:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -315,8 +307,7 @@ class TestWizardNavigation:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -329,8 +320,7 @@ class TestWizardNavigation:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -349,43 +339,37 @@ class TestWizardCompletion:
         steps = [FakeWizardStep()]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
-        wizard.complete()
+        wizard.complete(None)
 
         assert wizard._state == WizardState.COMPLETED
 
     def test_complete_calls_on_complete_callback(self):
-        steps = [FakeWizardStep()]
-        context = SampleContext(value=42, name="test")
-        received_context = None
+        steps = [FakeWizardStep(return_value={"foo": "bar"})]
+        received_result = None
 
-        def on_complete(ctx: Any) -> None:
-            nonlocal received_context
-            received_context = ctx
+        def on_complete(result: Any) -> None:
+            nonlocal received_result
+            received_result = result
 
         wizard = Wizard(
             steps=steps,
-            context=context,
             on_complete=on_complete,
             on_cancel=lambda: None,
         )
 
-        wizard.complete()
+        wizard.complete({"foo": "bar"})
 
-        assert received_context is context
-        assert received_context.value == 42
-        assert received_context.name == "test"
+        assert received_result == {"foo": "bar"}
 
     def test_cancel_sets_state_to_cancelled(self):
         steps = [FakeWizardStep()]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -403,8 +387,7 @@ class TestWizardCompletion:
 
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=on_cancel,
         )
 
@@ -420,8 +403,7 @@ class TestWizardReset:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -434,12 +416,11 @@ class TestWizardReset:
         steps = [FakeWizardStep()]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
-        wizard.complete()
+        wizard.complete(None)
         wizard.reset()
 
         assert wizard._state == WizardState.ACTIVE
@@ -452,8 +433,7 @@ class TestWizardRendering:
         steps = [FakeWizardStep()]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -465,8 +445,7 @@ class TestWizardRendering:
         steps = [FakeWizardStep()]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -479,8 +458,7 @@ class TestWizardRendering:
         step = FakeWizardStep("test_step")
         wizard = Wizard(
             steps=[step],
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -493,8 +471,7 @@ class TestWizardRendering:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -507,8 +484,7 @@ class TestWizardRendering:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -526,8 +502,7 @@ class TestWizardRendering:
         ]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -542,8 +517,7 @@ class TestWizardRendering:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -558,8 +532,7 @@ class TestWizardRendering:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
             action_button_label="Create Plot",
         )
@@ -576,8 +549,7 @@ class TestWizardRendering:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
             action_button_label=None,
         )
@@ -593,8 +565,7 @@ class TestWizardRendering:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -615,8 +586,7 @@ class TestWizardButtonState:
         steps = [FakeWizardStep("step1", valid=True)]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -628,8 +598,7 @@ class TestWizardButtonState:
         steps = [FakeWizardStep("step1", valid=False)]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -641,8 +610,7 @@ class TestWizardButtonState:
         step = FakeWizardStep("step1", valid=False)
         wizard = Wizard(
             steps=[step],
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -662,8 +630,7 @@ class TestWizardButtonCallbacks:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -675,8 +642,7 @@ class TestWizardButtonCallbacks:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -695,8 +661,7 @@ class TestWizardButtonCallbacks:
 
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=on_cancel,
         )
 
@@ -708,24 +673,11 @@ class TestWizardButtonCallbacks:
 class TestWizardProperties:
     """Tests for wizard properties."""
 
-    def test_context_property_returns_context(self):
-        context = SampleContext(value=42, name="test")
-        steps = [FakeWizardStep()]
-        wizard = Wizard(
-            steps=steps,
-            context=context,
-            on_complete=lambda ctx: None,
-            on_cancel=lambda: None,
-        )
-
-        assert wizard.context is context
-
     def test_is_first_step_true_on_first_step(self):
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -735,8 +687,7 @@ class TestWizardProperties:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -748,8 +699,7 @@ class TestWizardProperties:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -759,8 +709,7 @@ class TestWizardProperties:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -776,19 +725,17 @@ class TestWizardIntegration:
         """Test a complete wizard flow from start to finish."""
         step1 = FakeWizardStep("step1")
         step2 = FakeWizardStep("step2")
-        step3 = FakeWizardStep("step3")
-        context = SampleContext(value=0)
+        step3 = FakeWizardStep("step3", return_value={"final": "result"})
         completed = False
-        received_context = None
+        received_result = None
 
-        def on_complete(ctx: Any) -> None:
-            nonlocal completed, received_context
+        def on_complete(result: Any) -> None:
+            nonlocal completed, received_result
             completed = True
-            received_context = ctx
+            received_result = result
 
         wizard = Wizard(
             steps=[step1, step2, step3],
-            context=context,
             on_complete=on_complete,
             on_cancel=lambda: None,
         )
@@ -816,7 +763,7 @@ class TestWizardIntegration:
         # Complete wizard
         wizard.advance()
         assert completed
-        assert received_context is context
+        assert received_result == {"final": "result"}
         assert wizard._state == WizardState.COMPLETED
 
     def test_wizard_cancellation_flow(self):
@@ -830,8 +777,7 @@ class TestWizardIntegration:
 
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=on_cancel,
         )
 
@@ -850,8 +796,7 @@ class TestWizardIntegration:
 
         wizard = Wizard(
             steps=[step1, step2, step3],
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -873,8 +818,7 @@ class TestWizardIntegration:
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
         wizard = Wizard(
             steps=steps,
-            context=SampleContext(),
-            on_complete=lambda ctx: None,
+            on_complete=lambda result: None,
             on_cancel=lambda: None,
         )
 
@@ -900,7 +844,6 @@ class TestWizardIntegration:
 
         wizard = Wizard(
             steps=[step],
-            context=SampleContext(),
             on_complete=on_complete,
             on_cancel=lambda: None,
             action_button_label="Execute",

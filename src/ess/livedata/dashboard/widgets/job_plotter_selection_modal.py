@@ -20,17 +20,31 @@ from .wizard import Wizard, WizardState, WizardStep
 
 
 @dataclass
-class PlotterSelectionContext:
-    """Data accumulated through wizard steps."""
+class JobOutputSelection:
+    """Output from job/output selection step."""
 
-    job: JobNumber | None = None
-    output: str | None = None
-    plot_name: str | None = None
-    created_plot: Any | None = None
-    selected_sources: list[str] | None = None
+    job: JobNumber
+    output: str | None
 
 
-class JobOutputSelectionStep(WizardStep):
+@dataclass
+class PlotterSelection:
+    """Output from plotter selection step."""
+
+    job: JobNumber
+    output: str | None
+    plot_name: str
+
+
+@dataclass
+class PlotResult:
+    """Output from configuration step (final result)."""
+
+    plot: Any
+    selected_sources: list[str]
+
+
+class JobOutputSelectionStep(WizardStep[None, JobOutputSelection]):
     """
     Step 1: Job and output selection.
 
@@ -40,7 +54,6 @@ class JobOutputSelectionStep(WizardStep):
 
     def __init__(
         self,
-        context: PlotterSelectionContext,
         job_service: JobService,
     ) -> None:
         """
@@ -48,15 +61,14 @@ class JobOutputSelectionStep(WizardStep):
 
         Parameters
         ----------
-        context:
-            Shared wizard context
         job_service:
             Service for accessing job data
         """
         super().__init__()
-        self._context = context
         self._job_service = job_service
         self._table = self._create_job_output_table()
+        self._selected_job: JobNumber | None = None
+        self._selected_output: str | None = None
 
         # Set up selection watcher
         self._table.param.watch(self._on_table_selection_change, 'selection')
@@ -143,8 +155,8 @@ class JobOutputSelectionStep(WizardStep):
         """Handle job and output selection change."""
         selection = event.new
         if len(selection) != 1:
-            self._context.job = None
-            self._context.output = None
+            self._selected_job = None
+            self._selected_output = None
             self._notify_ready_changed(False)
             return
 
@@ -153,13 +165,19 @@ class JobOutputSelectionStep(WizardStep):
         job_number_str = self._table.value['job_number'].iloc[selected_row]
         output_name = self._table.value['output_name'].iloc[selected_row]
 
-        self._context.job = JobNumber(job_number_str)
-        self._context.output = output_name if output_name else None
+        self._selected_job = JobNumber(job_number_str)
+        self._selected_output = output_name if output_name else None
         self._notify_ready_changed(True)
 
     def is_valid(self) -> bool:
         """Whether a valid job/output selection has been made."""
-        return self._context.job is not None
+        return self._selected_job is not None
+
+    def execute(self) -> JobOutputSelection | None:
+        """Return the selected job and output."""
+        if self._selected_job is None:
+            return None
+        return JobOutputSelection(job=self._selected_job, output=self._selected_output)
 
     def render_content(self) -> pn.Column:
         """Render job/output selection table."""
@@ -168,17 +186,16 @@ class JobOutputSelectionStep(WizardStep):
             sizing_mode='stretch_width',
         )
 
-    def on_enter(self) -> None:
+    def on_enter(self, input_data: None) -> None:
         """Update table data when step becomes active."""
         self._update_job_output_table()
 
 
-class PlotterSelectionStep(WizardStep):
+class PlotterSelectionStep(WizardStep[JobOutputSelection, PlotterSelection]):
     """Step 2: Plotter type selection."""
 
     def __init__(
         self,
-        context: PlotterSelectionContext,
         plotting_controller: PlottingController,
         logger: logging.Logger,
     ) -> None:
@@ -187,19 +204,18 @@ class PlotterSelectionStep(WizardStep):
 
         Parameters
         ----------
-        context:
-            Shared wizard context
         plotting_controller:
             Controller for determining available plotters
         logger:
             Logger instance for error reporting
         """
         super().__init__()
-        self._context = context
         self._plotting_controller = plotting_controller
         self._logger = logger
         self._radio_group: pn.widgets.RadioButtonGroup | None = None
         self._content_container = pn.Column(sizing_mode='stretch_width')
+        self._job_output: JobOutputSelection | None = None
+        self._selected_plot_name: str | None = None
 
     @property
     def name(self) -> str:
@@ -213,21 +229,32 @@ class PlotterSelectionStep(WizardStep):
 
     def is_valid(self) -> bool:
         """Step is valid when a plotter has been selected."""
-        return self._context.plot_name is not None
+        return self._selected_plot_name is not None
+
+    def execute(self) -> PlotterSelection | None:
+        """Return the job, output, and selected plotter."""
+        if self._job_output is None or self._selected_plot_name is None:
+            return None
+        return PlotterSelection(
+            job=self._job_output.job,
+            output=self._job_output.output,
+            plot_name=self._selected_plot_name,
+        )
 
     def render_content(self) -> pn.Column:
         """Render plotter selection radio buttons."""
         return self._content_container
 
-    def on_enter(self) -> None:
+    def on_enter(self, input_data: JobOutputSelection) -> None:
         """Update available plotters when step becomes active."""
+        self._job_output = input_data
         self._update_plotter_selection()
 
     def _update_plotter_selection(self) -> None:
         """Update plotter selection based on job and output selection."""
         self._content_container.clear()
 
-        if self._context.job is None:
+        if self._job_output is None:
             self._content_container.append(pn.pane.Markdown("*No job selected*"))
             self._radio_group = None
             self._notify_ready_changed(False)
@@ -235,7 +262,7 @@ class PlotterSelectionStep(WizardStep):
 
         try:
             available_plots = self._plotting_controller.get_available_plotters(
-                self._context.job, self._context.output
+                self._job_output.job, self._job_output.output
             )
             if available_plots:
                 self._create_radio_buttons(available_plots)
@@ -247,7 +274,7 @@ class PlotterSelectionStep(WizardStep):
                 self._notify_ready_changed(False)
         except Exception as e:
             self._logger.exception(
-                "Error loading plotters for job %s", self._context.job
+                "Error loading plotters for job %s", self._job_output.job
             )
             self._content_container.append(
                 pn.pane.Markdown(f"*Error loading plotters: {e}*")
@@ -277,28 +304,27 @@ class PlotterSelectionStep(WizardStep):
         self._radio_group.param.watch(self._on_plotter_selection_change, 'value')
         self._content_container.append(self._radio_group)
 
-        # Initialize context with the selected value
+        # Initialize with the selected value
         if initial_value is not None:
-            self._context.plot_name = self._plot_name_map[initial_value]
+            self._selected_plot_name = self._plot_name_map[initial_value]
             self._notify_ready_changed(True)
 
     def _on_plotter_selection_change(self, event) -> None:
         """Handle plotter selection change."""
         if event.new is not None:
             # Map display name back to plot name
-            self._context.plot_name = self._plot_name_map[event.new]
+            self._selected_plot_name = self._plot_name_map[event.new]
             self._notify_ready_changed(True)
         else:
-            self._context.plot_name = None
+            self._selected_plot_name = None
             self._notify_ready_changed(False)
 
 
-class ConfigurationStep(WizardStep):
+class ConfigurationStep(WizardStep[PlotterSelection, PlotResult]):
     """Step 3: Plot configuration."""
 
     def __init__(
         self,
-        context: PlotterSelectionContext,
         job_service: JobService,
         plotting_controller: PlottingController,
         logger: logging.Logger,
@@ -308,8 +334,6 @@ class ConfigurationStep(WizardStep):
 
         Parameters
         ----------
-        context:
-            Shared wizard context
         job_service:
             Service for accessing job data
         plotting_controller:
@@ -318,12 +342,12 @@ class ConfigurationStep(WizardStep):
             Logger instance for error reporting
         """
         super().__init__()
-        self._context = context
         self._job_service = job_service
         self._plotting_controller = plotting_controller
         self._logger = logger
         self._config_panel: ConfigurationPanel | None = None
         self._panel_container = pn.Column(sizing_mode='stretch_width')
+        self._plotter_selection: PlotterSelection | None = None
         # Track last configuration to detect when panel needs recreation
         self._last_job: JobNumber | None = None
         self._last_output: str | None = None
@@ -341,40 +365,53 @@ class ConfigurationStep(WizardStep):
         is_valid, _ = self._config_panel.validate()
         return is_valid
 
-    def execute(self) -> bool:
-        """Execute the plot creation action."""
-        if self._config_panel is None:
-            return False
-        return self._config_panel.execute_action()
+    def execute(self) -> PlotResult | None:
+        """Execute the plot creation action and return result."""
+        if self._config_panel is None or self._plotter_selection is None:
+            return None
+
+        # Validate and execute
+        is_valid, _ = self._config_panel.validate()
+        if not is_valid:
+            return None
+
+        # Execute and get the result
+        result = self._config_panel.execute_action()
+        # False indicates error, True indicates success with no result
+        # (not applicable here as plot adapter returns tuple)
+        if result is False or not isinstance(result, tuple):
+            return None
+
+        plot, selected_sources = result
+        return PlotResult(plot=plot, selected_sources=selected_sources)
 
     def render_content(self) -> pn.Column:
         """Render configuration panel."""
         return self._panel_container
 
-    def on_enter(self) -> None:
+    def on_enter(self, input_data: PlotterSelection) -> None:
         """Create or recreate configuration panel when selection changes."""
-        if not self._context.job or not self._context.plot_name:
-            return
+        self._plotter_selection = input_data
 
         # Check if the configuration has changed
         if (
-            self._context.job != self._last_job
-            or self._context.output != self._last_output
-            or self._context.plot_name != self._last_plot_name
+            input_data.job != self._last_job
+            or input_data.output != self._last_output
+            or input_data.plot_name != self._last_plot_name
         ):
             # Recreate panel with new configuration
             self._create_config_panel()
             # Track new values
-            self._last_job = self._context.job
-            self._last_output = self._context.output
-            self._last_plot_name = self._context.plot_name
+            self._last_job = input_data.job
+            self._last_output = input_data.output
+            self._last_plot_name = input_data.plot_name
 
     def _create_config_panel(self) -> None:
         """Create the configuration panel for the selected plotter."""
-        if not self._context.job or not self._context.plot_name:
+        if self._plotter_selection is None:
             return
 
-        job_data = self._job_service.job_data.get(self._context.job, {})
+        job_data = self._job_service.job_data.get(self._plotter_selection.job, {})
         available_sources = list(job_data.keys())
 
         if not available_sources:
@@ -382,19 +419,20 @@ class ConfigurationStep(WizardStep):
             return
 
         try:
-            plot_spec = self._plotting_controller.get_spec(self._context.plot_name)
+            plot_spec = self._plotting_controller.get_spec(
+                self._plotter_selection.plot_name
+            )
         except Exception as e:
             self._logger.exception("Error getting plot spec")
             self._show_error(f'Error getting plot spec: {e}')
             return
 
         config_adapter = PlotConfigurationAdapter(
-            job_number=self._context.job,
-            output_name=self._context.output,
+            job_number=self._plotter_selection.job,
+            output_name=self._plotter_selection.output,
             plot_spec=plot_spec,
             available_sources=available_sources,
             plotting_controller=self._plotting_controller,
-            success_callback=self._on_config_complete,
         )
 
         self._config_panel = ConfigurationPanel(
@@ -403,11 +441,6 @@ class ConfigurationStep(WizardStep):
 
         self._panel_container.clear()
         self._panel_container.append(self._config_panel.panel)
-
-    def _on_config_complete(self, plot, selected_sources: list[str]) -> None:
-        """Handle plot creation - store in context."""
-        self._context.created_plot = plot
-        self._context.selected_sources = selected_sources
 
     def _show_error(self, message: str) -> None:
         """Display an error notification."""
@@ -447,20 +480,15 @@ class JobPlotterSelectionModal:
         self._cancel_callback = cancel_callback
         self._logger = logging.getLogger(__name__)
 
-        # Create shared context
-        self._context = PlotterSelectionContext()
-
         # Create steps
-        step1 = JobOutputSelectionStep(context=self._context, job_service=job_service)
+        step1 = JobOutputSelectionStep(job_service=job_service)
 
         step2 = PlotterSelectionStep(
-            context=self._context,
             plotting_controller=plotting_controller,
             logger=self._logger,
         )
 
         step3 = ConfigurationStep(
-            context=self._context,
             job_service=job_service,
             plotting_controller=plotting_controller,
             logger=self._logger,
@@ -469,7 +497,6 @@ class JobPlotterSelectionModal:
         # Create wizard
         self._wizard = Wizard(
             steps=[step1, step2, step3],
-            context=self._context,
             on_complete=self._on_wizard_complete,
             on_cancel=self._on_wizard_cancel,
             action_button_label="Create Plot",
@@ -487,11 +514,10 @@ class JobPlotterSelectionModal:
         # Watch for modal close events (X button or ESC key)
         self._modal.param.watch(self._on_modal_closed, 'open')
 
-    def _on_wizard_complete(self, context: PlotterSelectionContext) -> None:
+    def _on_wizard_complete(self, result: PlotResult) -> None:
         """Handle wizard completion - close modal and call success callback."""
         self._modal.open = False
-        if context.created_plot is not None and context.selected_sources is not None:
-            self._success_callback(context.created_plot, context.selected_sources)
+        self._success_callback(result.plot, result.selected_sources)
 
     def _on_wizard_cancel(self) -> None:
         """Handle wizard cancellation - close modal and call cancel callback."""
@@ -507,13 +533,6 @@ class JobPlotterSelectionModal:
 
     def show(self) -> None:
         """Show the modal dialog."""
-        # Reset context
-        self._context.job = None
-        self._context.output = None
-        self._context.plot_name = None
-        self._context.created_plot = None
-        self._context.selected_sources = None
-
         # Reset wizard and show modal
         self._wizard.reset()
         self._modal.open = True
