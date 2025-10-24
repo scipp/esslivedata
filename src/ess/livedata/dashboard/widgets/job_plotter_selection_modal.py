@@ -31,7 +31,12 @@ class PlotterSelectionContext:
 
 
 class JobOutputSelectionStep(WizardStep):
-    """Step 1: Job and output selection."""
+    """
+    Step 1: Job and output selection.
+
+    This is mostly copied from the legacy PlotCreationWidget but is considered legacy.
+    The contents of this widget will be fully replaced.
+    """
 
     def __init__(
         self,
@@ -55,6 +60,16 @@ class JobOutputSelectionStep(WizardStep):
 
         # Set up selection watcher
         self._table.param.watch(self._on_table_selection_change, 'selection')
+
+    @property
+    def name(self) -> str:
+        """Display name for this step."""
+        return "Select Job and Output"
+
+    @property
+    def description(self) -> str | None:
+        """Description text for this step."""
+        return "Choose the job and output you want to visualize."
 
     def _create_job_output_table(self) -> pn.widgets.Tabulator:
         """Create job and output selection table with grouping."""
@@ -146,13 +161,9 @@ class JobOutputSelectionStep(WizardStep):
         """Whether a valid job/output selection has been made."""
         return self._context.job is not None
 
-    def render(self) -> pn.Column:
+    def render_content(self) -> pn.Column:
         """Render job/output selection table."""
         return pn.Column(
-            pn.pane.HTML(
-                "<h3>Step 1: Select Job and Output</h3>"
-                "<p>Choose the job and output you want to visualize.</p>"
-            ),
             self._table,
             sizing_mode='stretch_width',
         )
@@ -190,20 +201,23 @@ class PlotterSelectionStep(WizardStep):
         self._radio_group: pn.widgets.RadioButtonGroup | None = None
         self._content_container = pn.Column(sizing_mode='stretch_width')
 
+    @property
+    def name(self) -> str:
+        """Display name for this step."""
+        return "Select Plotter Type"
+
+    @property
+    def description(self) -> str | None:
+        """Description text for this step."""
+        return "Choose the type of plot you want to create."
+
     def is_valid(self) -> bool:
         """Step is valid when a plotter has been selected."""
         return self._context.plot_name is not None
 
-    def render(self) -> pn.Column:
+    def render_content(self) -> pn.Column:
         """Render plotter selection radio buttons."""
-        return pn.Column(
-            pn.pane.HTML(
-                "<h3>Step 2: Select Plotter Type</h3>"
-                "<p>Choose the type of plot you want to create.</p>"
-            ),
-            self._content_container,
-            sizing_mode='stretch_width',
-        )
+        return self._content_container
 
     def on_enter(self) -> None:
         """Update available plotters when step becomes active."""
@@ -311,6 +325,11 @@ class ConfigurationStep(WizardStep):
         self._config_panel: ConfigurationPanel | None = None
         self._panel_container = pn.Column(sizing_mode='stretch_width')
 
+    @property
+    def name(self) -> str:
+        """Display name for this step."""
+        return "Configure Plot"
+
     def reset(self) -> None:
         """Reset configuration panel (e.g., when going back)."""
         self._config_panel = None
@@ -329,13 +348,9 @@ class ConfigurationStep(WizardStep):
             return False
         return self._config_panel.execute_action()
 
-    def render(self) -> pn.Column:
+    def render_content(self) -> pn.Column:
         """Render configuration panel."""
-        return pn.Column(
-            pn.pane.HTML("<h3>Step 3: Configure Plot</h3>"),
-            self._panel_container,
-            sizing_mode='stretch_width',
-        )
+        return self._panel_container
 
     def on_enter(self) -> None:
         """Create configuration panel when step becomes active."""

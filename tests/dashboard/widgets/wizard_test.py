@@ -12,18 +12,33 @@ class FakeWizardStep(WizardStep):
     """Test implementation of WizardStep."""
 
     def __init__(
-        self, name: str = "test_step", valid: bool = True, can_execute: bool = True
+        self,
+        step_name: str = "test_step",
+        valid: bool = True,
+        can_execute: bool = True,
+        step_description: str | None = None,
     ) -> None:
         super().__init__()
-        self.name = name
+        self._name = step_name
+        self._description = step_description
         self._valid = valid
         self._can_execute = can_execute
         self.enter_called = False
         self.execute_called = False
 
-    def render(self) -> pn.Column:
+    @property
+    def name(self) -> str:
+        """Display name for this step."""
+        return self._name
+
+    @property
+    def description(self) -> str | None:
+        """Optional description text."""
+        return self._description
+
+    def render_content(self) -> pn.Column:
         """Render step content."""
-        return pn.Column(pn.pane.Markdown(f"# {self.name}"))
+        return pn.Column(pn.pane.Markdown(f"Content for {self.name}"))
 
     def is_valid(self) -> bool:
         """Whether step is valid."""
