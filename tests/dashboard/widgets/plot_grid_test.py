@@ -1,13 +1,36 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-from unittest.mock import MagicMock
-
 import holoviews as hv
 import numpy as np
 import panel as pn
 import pytest
 
 from ess.livedata.dashboard.widgets.plot_grid import PlotGrid
+
+
+class FakeCallback:
+    """Fake callback for testing plot requests."""
+
+    def __init__(self, side_effect: Exception | None = None) -> None:
+        self.call_count = 0
+        self.calls: list = []
+        self._side_effect = side_effect
+
+    def __call__(self, *args, **kwargs) -> None:
+        self.call_count += 1
+        self.calls.append((args, kwargs))
+        if self._side_effect is not None:
+            raise self._side_effect
+
+    def reset(self) -> None:
+        self.call_count = 0
+        self.calls.clear()
+
+    def assert_called_once(self) -> None:
+        assert self.call_count == 1, f"Expected 1 call, got {self.call_count}"
+
+    def assert_not_called(self) -> None:
+        assert self.call_count == 0, f"Expected 0 calls, got {self.call_count}"
 
 
 @pytest.fixture
@@ -23,10 +46,9 @@ def mock_plot() -> hv.DynamicMap:
 
 
 @pytest.fixture
-def mock_callback() -> MagicMock:
-    """Create a mock callback for async plot requests."""
-    callback = MagicMock(return_value=None)
-    return callback
+def mock_callback() -> FakeCallback:
+    """Create a fake callback for plot requests."""
+    return FakeCallback()
 
 
 def get_cell_button(grid: PlotGrid, row: int, col: int) -> pn.widgets.Button | None:
@@ -102,13 +124,13 @@ def count_occupied_cells(grid: PlotGrid) -> int:
 
 
 class TestPlotGridInitialization:
-    def test_grid_has_panel_property(self, mock_callback: MagicMock) -> None:
+    def test_grid_has_panel_property(self, mock_callback: FakeCallback) -> None:
         grid = PlotGrid(nrows=2, ncols=2, plot_request_callback=mock_callback)
         assert grid.panel is not None
         assert isinstance(grid.panel, pn.GridSpec)
 
     def test_grid_starts_with_empty_clickable_cells(
-        self, mock_callback: MagicMock
+        self, mock_callback: FakeCallback
     ) -> None:
         grid = PlotGrid(nrows=2, ncols=2, plot_request_callback=mock_callback)
 
@@ -124,7 +146,7 @@ class TestPlotGridInitialization:
 
 class TestCellSelection:
     def test_single_cell_selection_triggers_callback(
-        self, mock_callback: MagicMock, mock_plot: hv.DynamicMap
+        self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
         grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
 
@@ -143,7 +165,7 @@ class TestCellSelection:
         assert is_cell_occupied(grid, 1, 1)
 
     def test_rectangular_region_selection(
-        self, mock_callback: MagicMock, mock_plot: hv.DynamicMap
+        self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
         grid = PlotGrid(nrows=4, ncols=4, plot_request_callback=mock_callback)
 
@@ -169,7 +191,7 @@ class TestCellSelection:
         assert not is_cell_occupied(grid, 0, 3)
 
     def test_selection_works_regardless_of_click_order(
-        self, mock_callback: MagicMock, mock_plot: hv.DynamicMap
+        self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
         grid = PlotGrid(nrows=4, ncols=4, plot_request_callback=mock_callback)
 
@@ -186,7 +208,7 @@ class TestCellSelection:
         assert is_cell_occupied(grid, 2, 2)
 
     def test_first_click_changes_cell_appearance(
-        self, mock_callback: MagicMock
+        self, mock_callback: FakeCallback
     ) -> None:
         grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
 
@@ -208,7 +230,7 @@ class TestCellSelection:
 
 class TestPlotInsertion:
     def test_plot_appears_in_grid_after_insertion(
-        self, mock_callback: MagicMock, mock_plot: hv.DynamicMap
+        self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
         grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
 
@@ -220,7 +242,7 @@ class TestPlotInsertion:
         assert is_cell_occupied(grid, 1, 2)
 
     def test_multiple_plots_can_be_inserted(
-        self, mock_callback: MagicMock, mock_plot: hv.DynamicMap
+        self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
         grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
 
@@ -239,7 +261,7 @@ class TestPlotInsertion:
         assert is_cell_occupied(grid, 2, 2)
 
     def test_inserted_plot_has_close_button(
-        self, mock_callback: MagicMock, mock_plot: hv.DynamicMap
+        self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
         grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
 
@@ -254,7 +276,7 @@ class TestPlotInsertion:
 
 class TestPlotRemoval:
     def test_clicking_close_button_removes_plot(
-        self, mock_callback: MagicMock, mock_plot: hv.DynamicMap
+        self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
         grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
 
@@ -278,7 +300,7 @@ class TestPlotRemoval:
         assert get_cell_button(grid, 1, 1) is not None
 
     def test_removed_cells_become_selectable_again(
-        self, mock_callback: MagicMock, mock_plot: hv.DynamicMap
+        self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
         grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
 
@@ -291,7 +313,7 @@ class TestPlotRemoval:
         assert close_button is not None
         close_button.param.trigger('clicks')
 
-        mock_callback.reset_mock()
+        mock_callback.reset()
 
         # Should be able to select the cell again
         simulate_click(grid, 1, 1)
@@ -305,7 +327,7 @@ class TestPlotRemoval:
 
 class TestOverlapPrevention:
     def test_cannot_select_overlapping_region(
-        self, mock_callback: MagicMock, mock_plot: hv.DynamicMap
+        self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
         grid = PlotGrid(nrows=4, ncols=4, plot_request_callback=mock_callback)
 
@@ -323,7 +345,7 @@ class TestOverlapPrevention:
         assert button is None
 
     def test_non_overlapping_regions_can_be_selected(
-        self, mock_callback: MagicMock, mock_plot: hv.DynamicMap
+        self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
         grid = PlotGrid(nrows=4, ncols=4, plot_request_callback=mock_callback)
 
@@ -332,7 +354,7 @@ class TestOverlapPrevention:
         simulate_click(grid, 2, 2)
         grid.insert_plot_deferred(mock_plot)
 
-        mock_callback.reset_mock()
+        mock_callback.reset()
 
         # Should be able to select non-overlapping regions
         simulate_click(grid, 0, 0)
@@ -345,7 +367,7 @@ class TestOverlapPrevention:
 
 class TestSelectionCancellation:
     def test_cancel_pending_selection_clears_state(
-        self, mock_callback: MagicMock
+        self, mock_callback: FakeCallback
     ) -> None:
         grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
 
@@ -357,7 +379,7 @@ class TestSelectionCancellation:
         grid.cancel_pending_selection()
 
         # Should be able to start a new selection
-        mock_callback.reset_mock()
+        mock_callback.reset()
         simulate_click(grid, 2, 2)
         simulate_click(grid, 2, 2)
         mock_callback.assert_called_once()
@@ -365,7 +387,7 @@ class TestSelectionCancellation:
 
 class TestErrorHandling:
     def test_insert_without_pending_selection_shows_error(
-        self, mock_callback: MagicMock, mock_plot: hv.DynamicMap
+        self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
         grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
 
@@ -378,7 +400,7 @@ class TestErrorHandling:
         assert not is_cell_occupied(grid, 1, 1)
 
     def test_callback_error_prevents_plot_insertion(self) -> None:
-        error_callback = MagicMock(side_effect=ValueError('Test error'))
+        error_callback = FakeCallback(side_effect=ValueError('Test error'))
         grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=error_callback)
 
         simulate_click(grid, 0, 0)
