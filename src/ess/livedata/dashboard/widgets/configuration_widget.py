@@ -204,12 +204,8 @@ class ConfigurationPanel:
     def __init__(
         self,
         config: ConfigurationAdapter,
-        start_button_text: str = "Start",
-        show_cancel_button: bool = True,
-        show_buttons: bool = True,
         success_callback: Callable[[], None] | None = None,
         error_callback: Callable[[str], None] | None = None,
-        cancel_callback: Callable[[], None] | None = None,
     ) -> None:
         """
         Initialize configuration panel.
@@ -218,65 +214,25 @@ class ConfigurationPanel:
         ----------
         config
             Configuration adapter providing data and callbacks
-        start_button_text
-            Text for the start button
-        show_cancel_button
-            Whether to show the cancel button
-        show_buttons
-            Whether to show any buttons (for embedding in other containers)
         success_callback
             Called when action completes successfully
         error_callback
             Called when an error occurs
-        cancel_callback
-            Called when cancel button is clicked
         """
         self._config = config
         self._config_widget = ConfigurationWidget(config)
         self._success_callback = success_callback
         self._error_callback = error_callback
-        self._cancel_callback = cancel_callback
         self._error_pane = pn.pane.HTML("", sizing_mode='stretch_width')
         self._logger = logging.getLogger(__name__)
-        self._panel = self._create_panel(
-            start_button_text, show_cancel_button, show_buttons
-        )
+        self._panel = self._create_panel()
 
-    def _create_panel(
-        self, start_button_text: str, show_cancel_button: bool, show_buttons: bool
-    ) -> pn.Column:
+    def _create_panel(self) -> pn.Column:
         """Create the configuration panel."""
-        components = [
+        return pn.Column(
             self._config_widget.widget,
             self._error_pane,
-        ]
-
-        if show_buttons:
-            start_button = pn.widgets.Button(
-                name=start_button_text, button_type="primary"
-            )
-            start_button.on_click(self._on_start_action)
-
-            buttons = [pn.Spacer(), start_button]
-            if show_cancel_button:
-                cancel_button = pn.widgets.Button(name="Cancel", button_type="light")
-                cancel_button.on_click(self._on_cancel)
-                buttons.insert(1, cancel_button)
-
-            components.append(pn.Row(*buttons, margin=(10, 0)))
-
-        return pn.Column(*components)
-
-    def _on_cancel(self, event) -> None:
-        """Handle cancel button click."""
-        if self._cancel_callback:
-            self._cancel_callback()
-
-    def _on_start_action(self, event) -> None:
-        """Handle start action button click."""
-        if self.execute_action():
-            if self._success_callback:
-                self._success_callback()
+        )
 
     def execute_action(self) -> bool:
         """
@@ -318,6 +274,10 @@ class ConfigurationPanel:
 
             return False
 
+        # Notify success callback
+        if self._success_callback:
+            self._success_callback()
+
         return True
 
     def _show_validation_errors(self, errors: list[str]) -> None:
@@ -352,7 +312,7 @@ class ConfigurationPanel:
 
 
 class ConfigurationModal:
-    """Modal wrapper around ConfigurationPanel."""
+    """Modal wrapper around ConfigurationPanel with action buttons."""
 
     def __init__(
         self,
@@ -376,24 +336,42 @@ class ConfigurationModal:
             Called when an error occurs
         """
         self._config = config
+        self._success_callback = success_callback
 
-        # Create panel with cancel button that closes modal
+        # Create panel without buttons
         self._panel = ConfigurationPanel(
             config=config,
-            start_button_text=start_button_text,
-            show_cancel_button=True,
             success_callback=self._on_success,
             error_callback=error_callback,
-            cancel_callback=self._on_cancel,
         )
 
-        self._success_callback = success_callback
+        # Create action buttons
+        self._start_button = pn.widgets.Button(
+            name=start_button_text, button_type="primary"
+        )
+        self._start_button.on_click(self._on_start_clicked)
+
+        self._cancel_button = pn.widgets.Button(name="Cancel", button_type="light")
+        self._cancel_button.on_click(self._on_cancel_clicked)
+
+        # Create modal with panel + buttons
         self._modal = self._create_modal()
 
     def _create_modal(self) -> pn.Modal:
         """Create the modal dialog."""
-        modal = pn.Modal(
+        # Combine panel with buttons
+        content = pn.Column(
             self._panel.panel,
+            pn.Row(
+                pn.Spacer(),
+                self._cancel_button,
+                self._start_button,
+                margin=(10, 0),
+            ),
+        )
+
+        modal = pn.Modal(
+            content,
             name=f"Configure {self._config.title}",
             margin=20,
             width=800,
@@ -405,7 +383,11 @@ class ConfigurationModal:
 
         return modal
 
-    def _on_cancel(self) -> None:
+    def _on_start_clicked(self, event) -> None:
+        """Handle start button click."""
+        self._panel.execute_action()
+
+    def _on_cancel_clicked(self, event) -> None:
         """Handle cancel button click."""
         self._modal.open = False
 
