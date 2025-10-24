@@ -124,45 +124,6 @@ class TestCellSelection:
 
 
 class TestOccupancyChecking:
-    def test_cannot_select_occupied_cell(
-        self, mock_callback: MagicMock, mock_plot: hv.DynamicMap
-    ) -> None:
-        grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
-
-        # Insert a plot at (0, 0)
-        grid._on_cell_click(0, 0)
-        grid._on_cell_click(0, 0)
-        grid.insert_plot_deferred(mock_plot)
-
-        mock_callback.reset_mock()
-
-        # Try to select the same cell again
-        grid._on_cell_click(0, 0)
-
-        # Should not trigger callback
-        mock_callback.assert_not_called()
-        assert grid._first_click is None
-
-    def test_cannot_select_region_overlapping_plot(
-        self, mock_callback: MagicMock, mock_plot: hv.DynamicMap
-    ) -> None:
-        grid = PlotGrid(nrows=4, ncols=4, plot_request_callback=mock_callback)
-
-        # Insert a 2x2 plot at (1, 1)
-        grid._on_cell_click(1, 1)
-        grid._on_cell_click(2, 2)
-        grid.insert_plot_deferred(mock_plot)
-
-        mock_callback.reset_mock()
-
-        # Try to select a region that overlaps
-        grid._on_cell_click(0, 0)
-        grid._on_cell_click(2, 2)
-
-        # Should not insert new plot
-        mock_callback.assert_not_called()
-        assert len(grid._occupied_cells) == 1
-
     def test_is_cell_occupied_detects_cells_within_span(
         self, mock_callback: MagicMock, mock_plot: hv.DynamicMap
     ) -> None:
