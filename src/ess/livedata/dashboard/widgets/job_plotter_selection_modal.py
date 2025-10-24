@@ -352,6 +352,8 @@ class ConfigurationStep(WizardStep[PlotterSelection, PlotResult]):
         self._last_job: JobNumber | None = None
         self._last_output: str | None = None
         self._last_plot_name: str | None = None
+        # Store result from callback
+        self._last_plot_result: PlotResult | None = None
 
     @property
     def name(self) -> str:
@@ -370,20 +372,16 @@ class ConfigurationStep(WizardStep[PlotterSelection, PlotResult]):
         if self._config_panel is None or self._plotter_selection is None:
             return None
 
-        # Validate and execute
-        is_valid, _ = self._config_panel.validate()
-        if not is_valid:
+        # Clear previous result
+        self._last_plot_result = None
+
+        # Execute action (which calls adapter, which calls our callback)
+        success = self._config_panel.execute_action()
+        if not success:
             return None
 
-        # Execute and get the result
-        result = self._config_panel.execute_action()
-        # False indicates error, True indicates success with no result
-        # (not applicable here as plot adapter returns tuple)
-        if result is False or not isinstance(result, tuple):
-            return None
-
-        plot, selected_sources = result
-        return PlotResult(plot=plot, selected_sources=selected_sources)
+        # Result was captured by callback
+        return self._last_plot_result
 
     def render_content(self) -> pn.Column:
         """Render configuration panel."""
@@ -433,6 +431,7 @@ class ConfigurationStep(WizardStep[PlotterSelection, PlotResult]):
             plot_spec=plot_spec,
             available_sources=available_sources,
             plotting_controller=self._plotting_controller,
+            success_callback=self._on_plot_created,
         )
 
         self._config_panel = ConfigurationPanel(
@@ -441,6 +440,12 @@ class ConfigurationStep(WizardStep[PlotterSelection, PlotResult]):
 
         self._panel_container.clear()
         self._panel_container.append(self._config_panel.panel)
+
+    def _on_plot_created(self, plot, selected_sources: list[str]) -> None:
+        """Callback from adapter - store result for execute() to return."""
+        self._last_plot_result = PlotResult(
+            plot=plot, selected_sources=selected_sources
+        )
 
     def _show_error(self, message: str) -> None:
         """Display an error notification."""

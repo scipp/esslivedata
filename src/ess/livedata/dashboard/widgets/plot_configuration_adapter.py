@@ -22,12 +22,14 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         plot_spec: PlotterSpec,
         available_sources: list[str],
         plotting_controller: PlottingController,
+        success_callback,
     ):
         self._job_number = job_number
         self._output_name = output_name
         self._plot_spec = plot_spec
         self._available_sources = available_sources
         self._plotting_controller = plotting_controller
+        self._success_callback = success_callback
 
         self._persisted_config = (
             self._plotting_controller.get_persistent_plotter_config(
@@ -74,15 +76,8 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         self,
         selected_sources: list[str],
         parameter_values: Any,
-    ) -> tuple[Any, list[str]]:
-        """
-        Create and return the plot.
-
-        Returns
-        -------
-        :
-            Tuple of (plot, selected_sources)
-        """
+    ) -> None:
+        """Create the plot and call the success callback with the result."""
         plot = self._plotting_controller.create_plot(
             job_number=self._job_number,
             source_names=selected_sources,
@@ -90,4 +85,4 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
             plot_name=self._plot_spec.name,
             params=parameter_values,
         )
-        return plot, selected_sources
+        self._success_callback(plot, selected_sources)
