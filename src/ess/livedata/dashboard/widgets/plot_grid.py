@@ -276,9 +276,8 @@ class PlotGrid:
             # Clear selection highlight
             self._clear_selection()
 
-            # Set in-flight flag before calling callback
+            # Set in-flight flag to prevent concurrent selections
             self._plot_creation_in_flight = True
-            self._refresh_all_cells()
 
             # Request plot from callback (async, no return value)
             self._plot_request_callback()
@@ -316,10 +315,6 @@ class PlotGrid:
 
     def _get_cell_for_state(self, row: int, col: int) -> pn.Column:
         """Get the appropriate cell widget based on current selection state."""
-        # If plot creation is in flight, show all cells as disabled
-        if self._plot_creation_in_flight:
-            return self._create_empty_cell(row, col, disabled=True)
-
         if self._first_click is None:
             # No selection in progress
             return self._create_empty_cell(row, col)
@@ -472,7 +467,6 @@ class PlotGrid:
         finally:
             # Clear in-flight state regardless of success/failure
             self._plot_creation_in_flight = False
-            self._refresh_all_cells()
 
     def cancel_pending_selection(self) -> None:
         """
@@ -483,7 +477,6 @@ class PlotGrid:
         """
         self._pending_selection = None
         self._plot_creation_in_flight = False
-        self._refresh_all_cells()
 
     @property
     def panel(self) -> pn.viewable.Viewable:
