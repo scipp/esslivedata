@@ -345,7 +345,7 @@ class PlotGrid:
 
     def _insert_plot(self, plot: hv.DynamicMap) -> None:
         """Insert a plot into the grid at the pending selection."""
-        if not hasattr(self, '_pending_selection') or self._pending_selection is None:
+        if self._pending_selection is None:
             return
 
         row, col, row_span, col_span = self._pending_selection
