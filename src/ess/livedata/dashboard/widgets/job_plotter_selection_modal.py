@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from enum import Enum, auto
+from typing import Protocol
 
 import pandas as pd
 import panel as pn
@@ -23,6 +24,220 @@ class WizardState(Enum):
     ACTIVE = auto()
     COMPLETED = auto()
     CANCELLED = auto()
+
+
+class WizardStep(Protocol):
+    """Protocol for wizard step components."""
+
+    def render(self) -> pn.Column:
+        """Render the step's UI content."""
+        ...
+
+    def on_enter(self) -> None:
+        """Called when step becomes active."""
+        ...
+
+
+class PlotterSelectionStep:
+    """Step 2: Plotter type selection."""
+
+    def __init__(
+        self,
+        plotting_controller: PlottingController,
+        on_plotter_selected: Callable[[str], None],
+        logger: logging.Logger,
+    ) -> None:
+        """
+        Initialize plotter selection step.
+
+        Parameters
+        ----------
+        plotting_controller:
+            Controller for determining available plotters
+        on_plotter_selected:
+            Called when user selects a plotter (with plot name)
+        logger:
+            Logger instance for error reporting
+        """
+        self._plotting_controller = plotting_controller
+        self._on_plotter_selected = on_plotter_selected
+        self._logger = logger
+        self._selected_job: JobNumber | None = None
+        self._selected_output: str | None = None
+        self._buttons_container = pn.Column(sizing_mode='stretch_width')
+
+    def set_selection(self, job: JobNumber | None, output: str | None) -> None:
+        """Set the job and output for plotter filtering."""
+        self._selected_job = job
+        self._selected_output = output
+
+    def render(self) -> pn.Column:
+        """Render plotter selection buttons."""
+        return pn.Column(
+            pn.pane.HTML(
+                "<h3>Step 2: Select Plotter Type</h3>"
+                "<p>Choose the type of plot you want to create.</p>"
+            ),
+            self._buttons_container,
+            sizing_mode='stretch_width',
+        )
+
+    def on_enter(self) -> None:
+        """Update available plotters when step becomes active."""
+        self._update_plotter_buttons()
+
+    def _update_plotter_buttons(self) -> None:
+        """Update plotter buttons based on job and output selection."""
+        self._buttons_container.clear()
+
+        if self._selected_job is None:
+            self._buttons_container.append(pn.pane.Markdown("*No job selected*"))
+            return
+
+        try:
+            available_plots = self._plotting_controller.get_available_plotters(
+                self._selected_job, self._selected_output
+            )
+            if available_plots:
+                plot_data = {
+                    name: (spec.title, spec) for name, spec in available_plots.items()
+                }
+                buttons = self._create_plotter_buttons(plot_data)
+                self._buttons_container.extend(buttons)
+            else:
+                self._buttons_container.append(
+                    pn.pane.Markdown("*No plotters available for this selection*")
+                )
+        except Exception as e:
+            self._logger.exception(
+                "Error loading plotters for job %s", self._selected_job
+            )
+            self._buttons_container.append(
+                pn.pane.Markdown(f"*Error loading plotters: {e}*")
+            )
+
+    def _create_plotter_buttons(
+        self, available_plots: dict[str, tuple[str, object]]
+    ) -> list[pn.widgets.Button]:
+        """Create buttons for each available plotter."""
+        buttons = []
+        for plot_name, (title, _spec) in available_plots.items():
+            button = pn.widgets.Button(
+                name=title,
+                button_type="primary",
+                sizing_mode='stretch_width',
+                min_width=200,
+            )
+            button.on_click(lambda event, pn=plot_name: self._on_plotter_selected(pn))
+            buttons.append(button)
+        return buttons
+
+
+class ConfigurationStep:
+    """Step 3: Plot configuration."""
+
+    def __init__(
+        self,
+        job_service: JobService,
+        plotting_controller: PlottingController,
+        on_config_complete: Callable,
+        on_panel_success: Callable[[], None],
+        show_error: Callable[[str], None],
+        logger: logging.Logger,
+    ) -> None:
+        """
+        Initialize configuration step.
+
+        Parameters
+        ----------
+        job_service:
+            Service for accessing job data
+        plotting_controller:
+            Controller for plot creation
+        on_config_complete:
+            Called when configuration completes with (plot, sources)
+        on_panel_success:
+            Called when panel action succeeds (no args)
+        show_error:
+            Function to show error notifications
+        logger:
+            Logger instance for error reporting
+        """
+        self._job_service = job_service
+        self._plotting_controller = plotting_controller
+        self._on_config_complete = on_config_complete
+        self._on_panel_success = on_panel_success
+        self._show_error = show_error
+        self._logger = logger
+        self._selected_job: JobNumber | None = None
+        self._selected_output: str | None = None
+        self._selected_plot: str | None = None
+        self._config_panel: ConfigurationPanel | None = None
+        self._panel_container = pn.Column(sizing_mode='stretch_width')
+
+    def set_selection(
+        self, job: JobNumber | None, output: str | None, plot: str | None
+    ) -> None:
+        """Set the job, output, and plot for configuration."""
+        self._selected_job = job
+        self._selected_output = output
+        self._selected_plot = plot
+
+    def reset(self) -> None:
+        """Reset configuration panel (e.g., when going back)."""
+        self._config_panel = None
+        self._panel_container.clear()
+
+    def render(self) -> pn.Column:
+        """Render configuration panel."""
+        return pn.Column(
+            pn.pane.HTML("<h3>Step 3: Configure Plot</h3>"),
+            self._panel_container,
+            sizing_mode='stretch_width',
+        )
+
+    def on_enter(self) -> None:
+        """Create configuration panel when step becomes active."""
+        if self._config_panel is None and self._selected_job and self._selected_plot:
+            self._create_config_panel()
+
+    def _create_config_panel(self) -> None:
+        """Create the configuration panel for the selected plotter."""
+        if not self._selected_job or not self._selected_plot:
+            return
+
+        job_data = self._job_service.job_data.get(self._selected_job, {})
+        available_sources = list(job_data.keys())
+
+        if not available_sources:
+            self._show_error('No sources available for selected job')
+            return
+
+        try:
+            plot_spec = self._plotting_controller.get_spec(self._selected_plot)
+        except Exception as e:
+            self._logger.exception("Error getting plot spec")
+            self._show_error(f'Error getting plot spec: {e}')
+            return
+
+        config_adapter = PlotConfigurationAdapter(
+            job_number=self._selected_job,
+            output_name=self._selected_output,
+            plot_spec=plot_spec,
+            available_sources=available_sources,
+            plotting_controller=self._plotting_controller,
+            success_callback=self._on_config_complete,
+        )
+
+        self._config_panel = ConfigurationPanel(
+            config=config_adapter,
+            start_button_text="Create Plot",
+            show_cancel_button=False,
+            success_callback=self._on_panel_success,
+        )
+
+        self._panel_container.clear()
+        self._panel_container.append(self._config_panel.panel)
 
 
 class JobPlotterSelectionModal:
@@ -64,13 +279,25 @@ class JobPlotterSelectionModal:
         self._selected_job: JobNumber | None = None
         self._selected_output: str | None = None
         self._selected_plot: str | None = None
-        self._config_panel: ConfigurationPanel | None = None
         self._state = WizardState.ACTIVE
 
-        # UI components
+        # Step components
+        self._step2 = PlotterSelectionStep(
+            plotting_controller=plotting_controller,
+            on_plotter_selected=self._on_plotter_selected,
+            logger=self._logger,
+        )
+        self._step3 = ConfigurationStep(
+            job_service=job_service,
+            plotting_controller=plotting_controller,
+            on_config_complete=self._on_plot_config_complete,
+            on_panel_success=self._on_panel_action_success,
+            show_error=self._show_error,
+            logger=self._logger,
+        )
+
+        # Step 1 UI (legacy - will be replaced)
         self._job_output_table = self._create_job_output_table()
-        self._plotter_buttons_container = pn.Column(sizing_mode='stretch_width')
-        self._config_panel_container = pn.Column(sizing_mode='stretch_width')
 
         self._back_button = pn.widgets.Button(
             name="Back",
@@ -141,34 +368,6 @@ class JobPlotterSelectionModal:
                 ],
             },
         )
-
-    def _create_plotter_buttons(
-        self, available_plots: dict[str, tuple[str, object]]
-    ) -> list[pn.widgets.Button]:
-        """Create buttons for each available plotter.
-
-        Parameters
-        ----------
-        available_plots:
-            Dictionary mapping plot names to (title, spec) tuples.
-
-        Returns
-        -------
-        :
-            List of buttons for selecting plotters.
-        """
-        buttons = []
-        for plot_name, (title, _spec) in available_plots.items():
-            button = pn.widgets.Button(
-                name=title,
-                button_type="primary",
-                sizing_mode='stretch_width',
-                min_width=200,
-            )
-            # Capture plot_name in closure
-            button.on_click(lambda event, pn=plot_name: self._on_plotter_selected(pn))
-            buttons.append(button)
-        return buttons
 
     def _update_job_output_table(self) -> None:
         """Update the job and output table with current job data."""
@@ -247,6 +446,9 @@ class JobPlotterSelectionModal:
         """
         if self._selected_job is not None:
             self._selected_plot = plot_name
+            self._step3.set_selection(
+                self._selected_job, self._selected_output, self._selected_plot
+            )
             self._current_step = 3
             self._update_content()
 
@@ -255,8 +457,10 @@ class JobPlotterSelectionModal:
         if self._current_step == 1:
             self._show_step_1()
         elif self._current_step == 2:
+            self._step2.on_enter()
             self._show_step_2()
         else:
+            self._step3.on_enter()
             self._show_step_3()
 
     def _show_step_1(self) -> None:
@@ -280,17 +484,10 @@ class JobPlotterSelectionModal:
 
     def _show_step_2(self) -> None:
         """Show step 2: plotter selection."""
-        # Update plotter buttons with available plotters
-        self._update_plotter_buttons()
-
         self._content.clear()
         self._content.extend(
             [
-                pn.pane.HTML(
-                    "<h3>Step 2: Select Plotter Type</h3>"
-                    "<p>Choose the type of plot you want to create.</p>"
-                ),
-                self._plotter_buttons_container,
+                self._step2.render(),
                 pn.Row(
                     pn.Spacer(),
                     self._back_button,
@@ -302,107 +499,32 @@ class JobPlotterSelectionModal:
 
     def _show_step_3(self) -> None:
         """Show step 3: plotter configuration."""
-        # Create configuration panel if needed
-        if self._config_panel is None and self._selected_job and self._selected_plot:
-            # Get available sources for selected job
-            job_data = self._job_service.job_data.get(self._selected_job, {})
-            available_sources = list(job_data.keys())
-
-            if not available_sources:
-                self._show_error('No sources available for selected job')
-                self._on_cancel_clicked(None)
-                return
-
-            # Get plot spec
-            try:
-                plot_spec = self._plotting_controller.get_spec(self._selected_plot)
-            except Exception as e:
-                self._show_error(f'Error getting plot spec: {e}')
-                self._on_cancel_clicked(None)
-                return
-
-            # Create PlotConfigurationAdapter
-            # The adapter's success_callback is called from start_action()
-            # with (plot, sources)
-            config_adapter = PlotConfigurationAdapter(
-                job_number=self._selected_job,
-                output_name=self._selected_output,
-                plot_spec=plot_spec,
-                available_sources=available_sources,
-                plotting_controller=self._plotting_controller,
-                success_callback=self._on_plot_config_complete,
-            )
-
-            # Create ConfigurationPanel without cancel button
-            # The panel's success_callback is called after execute_action()
-            # succeeds (no args)
-            self._config_panel = ConfigurationPanel(
-                config=config_adapter,
-                start_button_text="Create Plot",
-                show_cancel_button=False,
-                success_callback=self._on_panel_action_success,
-            )
-
         self._content.clear()
-        if self._config_panel:
-            self._content.extend(
-                [
-                    pn.pane.HTML("<h3>Step 3: Configure Plot</h3>"),
-                    self._config_panel.panel,
-                    pn.Row(
-                        pn.Spacer(),
-                        self._back_button,
-                        self._cancel_button,
-                        margin=(10, 0),
-                    ),
-                ]
-            )
-
-    def _update_plotter_buttons(self) -> None:
-        """Update plotter buttons based on job and output selection."""
-        self._plotter_buttons_container.clear()
-
-        if self._selected_job is None:
-            self._plotter_buttons_container.append(
-                pn.pane.Markdown("*No job selected*")
-            )
-            return
-
-        try:
-            available_plots = self._plotting_controller.get_available_plotters(
-                self._selected_job, self._selected_output
-            )
-            if available_plots:
-                # Create dictionary mapping plot names to (title, spec) tuples
-                plot_data = {
-                    name: (spec.title, spec) for name, spec in available_plots.items()
-                }
-                buttons = self._create_plotter_buttons(plot_data)
-                self._plotter_buttons_container.extend(buttons)
-            else:
-                self._plotter_buttons_container.append(
-                    pn.pane.Markdown("*No plotters available for this selection*")
-                )
-        except Exception as e:
-            self._logger.exception(
-                "Error loading plotters for job %s", self._selected_job
-            )
-            self._plotter_buttons_container.append(
-                pn.pane.Markdown(f"*Error loading plotters: {e}*")
-            )
+        self._content.extend(
+            [
+                self._step3.render(),
+                pn.Row(
+                    pn.Spacer(),
+                    self._back_button,
+                    self._cancel_button,
+                    margin=(10, 0),
+                ),
+            ]
+        )
 
     def _on_next_clicked(self, event) -> None:
         """Handle next button click."""
         self._current_step = 2
+        self._step2.set_selection(self._selected_job, self._selected_output)
         self._update_content()
 
     def _on_back_clicked(self, event) -> None:
         """Handle back button click."""
         if self._current_step > 1:
+            # Clear step 3 config panel when going back from step 3
+            if self._current_step == 3:
+                self._step3.reset()
             self._current_step -= 1
-            # Clear config panel when going back from step 3
-            if self._current_step == 2:
-                self._config_panel = None
             self._update_content()
 
     def _on_cancel_clicked(self, event) -> None:
@@ -463,7 +585,7 @@ class JobPlotterSelectionModal:
         self._selected_job = None
         self._selected_output = None
         self._selected_plot = None
-        self._config_panel = None
+        self._step3.reset()
         self._next_button.disabled = True
         self._state = WizardState.ACTIVE
 
