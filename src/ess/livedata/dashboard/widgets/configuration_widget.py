@@ -206,6 +206,7 @@ class ConfigurationPanel:
         config: ConfigurationAdapter,
         start_button_text: str = "Start",
         show_cancel_button: bool = True,
+        show_buttons: bool = True,
         success_callback: Callable[[], None] | None = None,
         error_callback: Callable[[str], None] | None = None,
         cancel_callback: Callable[[], None] | None = None,
@@ -221,6 +222,8 @@ class ConfigurationPanel:
             Text for the start button
         show_cancel_button
             Whether to show the cancel button
+        show_buttons
+            Whether to show any buttons (for embedding in other containers)
         success_callback
             Called when action completes successfully
         error_callback
@@ -235,28 +238,34 @@ class ConfigurationPanel:
         self._cancel_callback = cancel_callback
         self._error_pane = pn.pane.HTML("", sizing_mode='stretch_width')
         self._logger = logging.getLogger(__name__)
-        self._panel = self._create_panel(start_button_text, show_cancel_button)
-
-    def _create_panel(
-        self, start_button_text: str, show_cancel_button: bool
-    ) -> pn.Column:
-        """Create the configuration panel."""
-        start_button = pn.widgets.Button(name=start_button_text, button_type="primary")
-        start_button.on_click(self._on_start_action)
-
-        buttons = [pn.Spacer(), start_button]
-        if show_cancel_button:
-            cancel_button = pn.widgets.Button(name="Cancel", button_type="light")
-            cancel_button.on_click(self._on_cancel)
-            buttons.insert(1, cancel_button)
-
-        content = pn.Column(
-            self._config_widget.widget,
-            self._error_pane,
-            pn.Row(*buttons, margin=(10, 0)),
+        self._panel = self._create_panel(
+            start_button_text, show_cancel_button, show_buttons
         )
 
-        return content
+    def _create_panel(
+        self, start_button_text: str, show_cancel_button: bool, show_buttons: bool
+    ) -> pn.Column:
+        """Create the configuration panel."""
+        components = [
+            self._config_widget.widget,
+            self._error_pane,
+        ]
+
+        if show_buttons:
+            start_button = pn.widgets.Button(
+                name=start_button_text, button_type="primary"
+            )
+            start_button.on_click(self._on_start_action)
+
+            buttons = [pn.Spacer(), start_button]
+            if show_cancel_button:
+                cancel_button = pn.widgets.Button(name="Cancel", button_type="light")
+                cancel_button.on_click(self._on_cancel)
+                buttons.insert(1, cancel_button)
+
+            components.append(pn.Row(*buttons, margin=(10, 0)))
+
+        return pn.Column(*components)
 
     def _on_cancel(self, event) -> None:
         """Handle cancel button click."""

@@ -121,7 +121,10 @@ class Wizard:
             self._current_step_index += 1
             self._update_content()
         else:
-            # Already on last step, advancement means completion
+            # On last step, execute step action if available
+            if hasattr(self._current_step, 'execute'):
+                if not self._current_step.execute():
+                    return  # Execution failed, don't complete
             self.complete()
 
     def back(self) -> None:
@@ -190,15 +193,25 @@ class Wizard:
         # Update next button state based on step validity
         self._next_button.disabled = not self._current_step.is_valid()
 
-        # Build navigation row
-        nav_buttons = [pn.Spacer()]
+        # Build navigation row with standard order: Cancel | Back | Spacer | Next
+        nav_buttons = [self._cancel_button]
 
         if not self._is_first_step:
             nav_buttons.append(self._back_button)
 
-        nav_buttons.append(self._cancel_button)
+        nav_buttons.append(pn.Spacer())
 
-        if not self._is_last_step:
+        # Show Next/Action button based on step and custom label
+        if self._is_last_step:
+            # On last step, check if step provides custom action button label
+            if hasattr(self._current_step, 'action_button_label'):
+                label = self._current_step.action_button_label()
+                if label:
+                    self._next_button.name = label
+                    nav_buttons.append(self._next_button)
+        else:
+            # Reset to "Next" for non-last steps
+            self._next_button.name = "Next"
             nav_buttons.append(self._next_button)
 
         self._content.append(pn.Row(*nav_buttons, margin=(10, 0)))

@@ -186,39 +186,37 @@ class PlotterSelectionStep(WizardStep):
         super().__init__()
         self._context = context
         self._plotting_controller = plotting_controller
-        self._wizard: Wizard | None = None
         self._logger = logger
-        self._buttons_container = pn.Column(sizing_mode='stretch_width')
-
-    def set_wizard(self, wizard: Wizard) -> None:
-        """Set wizard reference after construction."""
-        self._wizard = wizard
+        self._radio_group: pn.widgets.RadioButtonGroup | None = None
+        self._content_container = pn.Column(sizing_mode='stretch_width')
 
     def is_valid(self) -> bool:
-        """Step 2 doesn't use Next button, so always return False."""
-        return False
+        """Step is valid when a plotter has been selected."""
+        return self._context.plot_name is not None
 
     def render(self) -> pn.Column:
-        """Render plotter selection buttons."""
+        """Render plotter selection radio buttons."""
         return pn.Column(
             pn.pane.HTML(
                 "<h3>Step 2: Select Plotter Type</h3>"
                 "<p>Choose the type of plot you want to create.</p>"
             ),
-            self._buttons_container,
+            self._content_container,
             sizing_mode='stretch_width',
         )
 
     def on_enter(self) -> None:
         """Update available plotters when step becomes active."""
-        self._update_plotter_buttons()
+        self._update_plotter_selection()
 
-    def _update_plotter_buttons(self) -> None:
-        """Update plotter buttons based on job and output selection."""
-        self._buttons_container.clear()
+    def _update_plotter_selection(self) -> None:
+        """Update plotter selection based on job and output selection."""
+        self._content_container.clear()
 
         if self._context.job is None:
-            self._buttons_container.append(pn.pane.Markdown("*No job selected*"))
+            self._content_container.append(pn.pane.Markdown("*No job selected*"))
+            self._radio_group = None
+            self._notify_ready_changed(False)
             return
 
         try:
@@ -226,44 +224,59 @@ class PlotterSelectionStep(WizardStep):
                 self._context.job, self._context.output
             )
             if available_plots:
-                plot_data = {
-                    name: (spec.title, spec) for name, spec in available_plots.items()
-                }
-                buttons = self._create_plotter_buttons(plot_data)
-                self._buttons_container.extend(buttons)
+                self._create_radio_buttons(available_plots)
             else:
-                self._buttons_container.append(
+                self._content_container.append(
                     pn.pane.Markdown("*No plotters available for this selection*")
                 )
+                self._radio_group = None
+                self._notify_ready_changed(False)
         except Exception as e:
             self._logger.exception(
                 "Error loading plotters for job %s", self._context.job
             )
-            self._buttons_container.append(
+            self._content_container.append(
                 pn.pane.Markdown(f"*Error loading plotters: {e}*")
             )
+            self._radio_group = None
+            self._notify_ready_changed(False)
 
-    def _create_plotter_buttons(
-        self, available_plots: dict[str, tuple[str, object]]
-    ) -> list[pn.widgets.Button]:
-        """Create buttons for each available plotter."""
-        buttons = []
-        for plot_name, (title, _spec) in available_plots.items():
-            button = pn.widgets.Button(
-                name=title,
-                button_type="primary",
-                sizing_mode='stretch_width',
-                min_width=200,
-            )
-            button.on_click(lambda event, pn=plot_name: self._on_button_click(pn))
-            buttons.append(button)
-        return buttons
+    def _create_radio_buttons(self, available_plots: dict[str, object]) -> None:
+        """Create radio button group for plotter selection."""
+        # Build mapping from display name to plot name
+        self._plot_name_map = {
+            spec.title: name for name, spec in available_plots.items()
+        }
+        options = list(self._plot_name_map.keys())
 
-    def _on_button_click(self, plot_name: str) -> None:
-        """Handle plotter button click - update context and advance."""
-        self._context.plot_name = plot_name
-        if self._wizard:
-            self._wizard.advance()
+        # Select first option by default
+        initial_value = options[0] if options else None
+
+        self._radio_group = pn.widgets.RadioButtonGroup(
+            name="Plotter Type",
+            options=options,
+            value=initial_value,
+            button_type="primary",
+            button_style="solid",
+            sizing_mode='stretch_width',
+        )
+        self._radio_group.param.watch(self._on_plotter_selection_change, 'value')
+        self._content_container.append(self._radio_group)
+
+        # Initialize context with the selected value
+        if initial_value is not None:
+            self._context.plot_name = self._plot_name_map[initial_value]
+            self._notify_ready_changed(True)
+
+    def _on_plotter_selection_change(self, event) -> None:
+        """Handle plotter selection change."""
+        if event.new is not None:
+            # Map display name back to plot name
+            self._context.plot_name = self._plot_name_map[event.new]
+            self._notify_ready_changed(True)
+        else:
+            self._context.plot_name = None
+            self._notify_ready_changed(False)
 
 
 class ConfigurationStep(WizardStep):
@@ -294,14 +307,9 @@ class ConfigurationStep(WizardStep):
         self._context = context
         self._job_service = job_service
         self._plotting_controller = plotting_controller
-        self._wizard: Wizard | None = None
         self._logger = logger
         self._config_panel: ConfigurationPanel | None = None
         self._panel_container = pn.Column(sizing_mode='stretch_width')
-
-    def set_wizard(self, wizard: Wizard) -> None:
-        """Set wizard reference after construction."""
-        self._wizard = wizard
 
     def reset(self) -> None:
         """Reset configuration panel (e.g., when going back)."""
@@ -309,8 +317,21 @@ class ConfigurationStep(WizardStep):
         self._panel_container.clear()
 
     def is_valid(self) -> bool:
-        """Step 3 doesn't use Next button, completion is via config panel."""
-        return False
+        """Step is valid when configuration is valid."""
+        if self._config_panel is None:
+            return False
+        is_valid, _ = self._config_panel._config_widget.validate_configuration()
+        return is_valid
+
+    def action_button_label(self) -> str:
+        """Label for the action button on this step."""
+        return "Create Plot"
+
+    def execute(self) -> bool:
+        """Execute the plot creation action."""
+        if self._config_panel is None:
+            return False
+        return self._config_panel.execute_action()
 
     def render(self) -> pn.Column:
         """Render configuration panel."""
@@ -357,7 +378,7 @@ class ConfigurationStep(WizardStep):
             config=config_adapter,
             start_button_text="Create Plot",
             show_cancel_button=False,
-            success_callback=self._on_panel_success,
+            show_buttons=False,
         )
 
         self._panel_container.clear()
@@ -367,11 +388,6 @@ class ConfigurationStep(WizardStep):
         """Handle plot creation - store in context."""
         self._context.created_plot = plot
         self._context.selected_sources = selected_sources
-
-    def _on_panel_success(self) -> None:
-        """Handle successful panel action - complete wizard."""
-        if self._wizard:
-            self._wizard.complete()
 
     def _show_error(self, message: str) -> None:
         """Display an error notification."""
@@ -413,7 +429,7 @@ class JobPlotterSelectionModal:
         # Create shared context
         self._context = PlotterSelectionContext()
 
-        # Create steps without wizard reference
+        # Create steps
         step1 = JobOutputSelectionStep(
             context=self._context,
             job_service=job_service,
@@ -439,10 +455,6 @@ class JobPlotterSelectionModal:
             on_complete=self._on_wizard_complete,
             on_cancel=self._on_wizard_cancel,
         )
-
-        # Wire up wizard references for steps that need to call wizard methods
-        step2.set_wizard(self._wizard)
-        step3.set_wizard(self._wizard)
 
         # Store step3 reference for reset
         self._step3 = step3
