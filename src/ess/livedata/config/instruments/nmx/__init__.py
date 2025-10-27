@@ -4,6 +4,7 @@
 NMX instrument configuration.
 """
 
+from . import streams
 from .factories import setup_factories
 
-__all__ = ['setup_factories']
+__all__ = ['setup_factories', 'streams']

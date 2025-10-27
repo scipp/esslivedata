@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """LOKI instrument configuration package."""
 
+from . import streams
 from .factories import setup_factories
 
-__all__ = ['setup_factories']
+__all__ = ['setup_factories', 'streams']

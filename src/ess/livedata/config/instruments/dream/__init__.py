@@ -4,6 +4,7 @@
 DREAM instrument configuration package.
 """
 
+from . import streams
 from .factories import setup_factories
 
-__all__ = ['setup_factories']
+__all__ = ['setup_factories', 'streams']
