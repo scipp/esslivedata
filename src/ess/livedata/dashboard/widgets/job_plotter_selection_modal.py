@@ -17,7 +17,7 @@ from ess.livedata.dashboard.plotting_controller import PlottingController
 
 from ..plot_configuration_adapter import PlotConfigurationAdapter
 from .configuration_widget import ConfigurationPanel
-from .wizard import Wizard, WizardState, WizardStep
+from .wizard import Wizard, WizardStep
 
 
 @dataclass
@@ -521,7 +521,7 @@ class JobPlotterSelectionModal:
         """Handle modal being closed via X button or ESC key."""
         if not event.new:  # Modal was closed
             # Only call cancel callback if wizard wasn't already completed/cancelled
-            if self._wizard._state == WizardState.ACTIVE:
+            if not self._wizard.is_finished():
                 self._cancel_callback()
 
     def show(self) -> None:

@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-from dataclasses import dataclass
 from typing import Any
 
 import panel as pn
 
-from ess.livedata.dashboard.widgets.wizard import Wizard, WizardState, WizardStep
+from ess.livedata.dashboard.widgets.wizard import Wizard, WizardStep
 
 
 class FakeWizardStep(WizardStep[Any, Any]):
@@ -67,32 +66,6 @@ class FakeWizardStep(WizardStep[Any, Any]):
         self._notify_ready_changed(valid)
 
 
-@dataclass
-class SampleContext:
-    """Sample context object for wizard."""
-
-    value: int = 0
-    name: str = ""
-
-
-class TestWizardState:
-    """Tests for WizardState enum."""
-
-    def test_has_active_state(self):
-        assert hasattr(WizardState, "ACTIVE")
-
-    def test_has_completed_state(self):
-        assert hasattr(WizardState, "COMPLETED")
-
-    def test_has_cancelled_state(self):
-        assert hasattr(WizardState, "CANCELLED")
-
-    def test_states_are_distinct(self):
-        assert WizardState.ACTIVE != WizardState.COMPLETED
-        assert WizardState.ACTIVE != WizardState.CANCELLED
-        assert WizardState.COMPLETED != WizardState.CANCELLED
-
-
 class TestWizardStep:
     """Tests for WizardStep base class."""
 
@@ -131,33 +104,7 @@ class TestWizardStep:
 class TestWizardInitialization:
     """Tests for Wizard initialization."""
 
-    def test_creates_wizard_with_single_step(self):
-        steps = [FakeWizardStep()]
-
-        wizard = Wizard(
-            steps=steps,
-            on_complete=lambda result: None,
-            on_cancel=lambda: None,
-        )
-
-        assert wizard is not None
-
-    def test_creates_wizard_with_multiple_steps(self):
-        steps = [
-            FakeWizardStep("step1"),
-            FakeWizardStep("step2"),
-            FakeWizardStep("step3"),
-        ]
-
-        wizard = Wizard(
-            steps=steps,
-            on_complete=lambda result: None,
-            on_cancel=lambda: None,
-        )
-
-        assert wizard is not None
-
-    def test_initial_state_is_active(self):
+    def test_initial_state_is_not_finished(self):
         steps = [FakeWizardStep()]
         wizard = Wizard(
             steps=steps,
@@ -165,7 +112,7 @@ class TestWizardInitialization:
             on_cancel=lambda: None,
         )
 
-        assert wizard._state == WizardState.ACTIVE
+        assert not wizard.is_finished()
 
     def test_starts_at_first_step(self):
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
@@ -245,7 +192,7 @@ class TestWizardNavigation:
         wizard.advance()
 
         assert completed
-        assert wizard._state == WizardState.COMPLETED
+        assert wizard.is_finished()
 
     def test_advance_on_last_step_calls_execute_if_present(self):
         step = FakeWizardStep("step1", can_execute=True)
@@ -276,7 +223,7 @@ class TestWizardNavigation:
         wizard.advance()
 
         assert not completed
-        assert wizard._state == WizardState.ACTIVE
+        assert not wizard.is_finished()
 
     def test_back_moves_to_previous_step(self):
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
@@ -335,7 +282,7 @@ class TestWizardNavigation:
 class TestWizardCompletion:
     """Tests for wizard completion and cancellation."""
 
-    def test_complete_sets_state_to_completed(self):
+    def test_complete_marks_wizard_as_finished(self):
         steps = [FakeWizardStep()]
         wizard = Wizard(
             steps=steps,
@@ -345,7 +292,7 @@ class TestWizardCompletion:
 
         wizard.complete(None)
 
-        assert wizard._state == WizardState.COMPLETED
+        assert wizard.is_finished()
 
     def test_complete_calls_on_complete_callback(self):
         steps = [FakeWizardStep(return_value={"foo": "bar"})]
@@ -365,7 +312,7 @@ class TestWizardCompletion:
 
         assert received_result == {"foo": "bar"}
 
-    def test_cancel_sets_state_to_cancelled(self):
+    def test_cancel_marks_wizard_as_finished(self):
         steps = [FakeWizardStep()]
         wizard = Wizard(
             steps=steps,
@@ -375,7 +322,7 @@ class TestWizardCompletion:
 
         wizard.cancel()
 
-        assert wizard._state == WizardState.CANCELLED
+        assert wizard.is_finished()
 
     def test_cancel_calls_on_cancel_callback(self):
         steps = [FakeWizardStep()]
@@ -412,7 +359,7 @@ class TestWizardReset:
 
         assert wizard._current_step_index == 0
 
-    def test_reset_sets_state_to_active(self):
+    def test_reset_clears_finished_flag(self):
         steps = [FakeWizardStep()]
         wizard = Wizard(
             steps=steps,
@@ -423,23 +370,11 @@ class TestWizardReset:
         wizard.complete(None)
         wizard.reset()
 
-        assert wizard._state == WizardState.ACTIVE
+        assert not wizard.is_finished()
 
 
 class TestWizardRendering:
     """Tests for wizard rendering."""
-
-    def test_render_returns_column(self):
-        steps = [FakeWizardStep()]
-        wizard = Wizard(
-            steps=steps,
-            on_complete=lambda result: None,
-            on_cancel=lambda: None,
-        )
-
-        content = wizard.render()
-
-        assert isinstance(content, pn.Column)
 
     def test_render_returns_same_content_container(self):
         steps = [FakeWizardStep()]
@@ -453,19 +388,6 @@ class TestWizardRendering:
         content2 = wizard.render()
 
         assert content1 is content2
-
-    def test_render_step_includes_step_content(self):
-        step = FakeWizardStep("test_step")
-        wizard = Wizard(
-            steps=[step],
-            on_complete=lambda result: None,
-            on_cancel=lambda: None,
-        )
-
-        wizard._render_step()
-
-        # Check that content is not empty
-        assert len(wizard._content) > 0
 
     def test_render_step_includes_navigation_buttons(self):
         steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
@@ -764,7 +686,7 @@ class TestWizardIntegration:
         wizard.advance()
         assert completed
         assert received_result == {"final": "result"}
-        assert wizard._state == WizardState.COMPLETED
+        assert wizard.is_finished()
 
     def test_wizard_cancellation_flow(self):
         """Test wizard cancellation at different steps."""
@@ -786,7 +708,7 @@ class TestWizardIntegration:
         wizard.cancel()
 
         assert cancelled
-        assert wizard._state == WizardState.CANCELLED
+        assert wizard.is_finished()
 
     def test_wizard_with_invalid_step(self):
         """Test that wizard cannot advance past invalid step."""
@@ -826,11 +748,11 @@ class TestWizardIntegration:
         wizard._update_content()
         wizard.advance()
         wizard.advance()
-        assert wizard._state == WizardState.COMPLETED
+        assert wizard.is_finished()
 
         # Reset wizard
         wizard.reset()
-        assert wizard._state == WizardState.ACTIVE
+        assert not wizard.is_finished()
         assert wizard._current_step_index == 0
 
     def test_wizard_with_action_button_execution(self):

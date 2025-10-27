@@ -6,21 +6,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from enum import Enum, auto
 from typing import Any, Generic, TypeVar
 
 import panel as pn
 
 TInput = TypeVar('TInput')
 TOutput = TypeVar('TOutput')
-
-
-class WizardState(Enum):
-    """State of the wizard workflow."""
-
-    ACTIVE = auto()
-    COMPLETED = auto()
-    CANCELLED = auto()
 
 
 class WizardStep(ABC, Generic[TInput, TOutput]):
@@ -158,7 +149,7 @@ class Wizard:
 
         # State tracking
         self._current_step_index = 0
-        self._state = WizardState.ACTIVE
+        self._finished = False
         self._step_results: list[Any] = []  # Results from executed steps
 
         # Navigation buttons
@@ -228,18 +219,22 @@ class Wizard:
         result:
             Output from the final step
         """
-        self._state = WizardState.COMPLETED
+        self._finished = True
         self._on_complete(result)
 
     def cancel(self) -> None:
         """Cancel wizard."""
-        self._state = WizardState.CANCELLED
+        self._finished = True
         self._on_cancel()
+
+    def is_finished(self) -> bool:
+        """Whether wizard has completed or been cancelled."""
+        return self._finished
 
     def reset(self) -> None:
         """Reset wizard to first step."""
         self._current_step_index = 0
-        self._state = WizardState.ACTIVE
+        self._finished = False
         self._step_results = []
         self._update_content()
 
