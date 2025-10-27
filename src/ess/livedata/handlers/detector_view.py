@@ -20,9 +20,9 @@ from ess.reduce.live import raw
 from .. import parameter_models
 from ..config import models
 from ..config.roi_names import get_roi_mapper
+from .detector_view_specs import DetectorViewParams
 from .roi_histogram import ROIHistogram
 from .workflow_factory import Workflow
-from .detector_view_specs import DetectorViewParams
 
 
 class DetectorView(Workflow):

@@ -20,8 +20,8 @@ import pydantic
 from .. import parameter_models
 from ..config import models
 from ..config.instrument import Instrument
-from ..handlers.workflow_factory import SpecHandle
 from ..config.workflow_spec import AuxSourcesBase, JobId
+from ..handlers.workflow_factory import SpecHandle
 
 
 class DetectorViewParams(pydantic.BaseModel):

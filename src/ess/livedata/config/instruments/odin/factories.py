@@ -28,8 +28,8 @@ def setup_factories(instrument: Instrument) -> None:
     import h5py
 
     from ess.livedata.handlers.detector_data_handler import (
-        DetectorProjection,
         DetectorLogicalView,
+        DetectorProjection,
     )
 
     # Patch the Odin geometry file with:
