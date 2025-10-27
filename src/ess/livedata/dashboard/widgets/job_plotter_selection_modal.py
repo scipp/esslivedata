@@ -12,6 +12,7 @@ import panel as pn
 
 from ess.livedata.config.workflow_spec import JobNumber
 from ess.livedata.dashboard.job_service import JobService
+from ess.livedata.dashboard.plotting import PlotterSpec
 from ess.livedata.dashboard.plotting_controller import PlottingController
 
 from .configuration_widget import ConfigurationPanel
@@ -260,29 +261,19 @@ class PlotterSelectionStep(WizardStep[JobOutputSelection, PlotterSelection]):
             self._notify_ready_changed(False)
             return
 
-        try:
-            available_plots = self._plotting_controller.get_available_plotters(
-                self._job_output.job, self._job_output.output
-            )
-            if available_plots:
-                self._create_radio_buttons(available_plots)
-            else:
-                self._content_container.append(
-                    pn.pane.Markdown("*No plotters available for this selection*")
-                )
-                self._radio_group = None
-                self._notify_ready_changed(False)
-        except Exception as e:
-            self._logger.exception(
-                "Error loading plotters for job %s", self._job_output.job
-            )
+        available_plots = self._plotting_controller.get_available_plotters(
+            self._job_output.job, self._job_output.output
+        )
+        if available_plots:
+            self._create_radio_buttons(available_plots)
+        else:
             self._content_container.append(
-                pn.pane.Markdown(f"*Error loading plotters: {e}*")
+                pn.pane.Markdown("*No plotters available for this selection*")
             )
             self._radio_group = None
             self._notify_ready_changed(False)
 
-    def _create_radio_buttons(self, available_plots: dict[str, object]) -> None:
+    def _create_radio_buttons(self, available_plots: dict[str, PlotterSpec]) -> None:
         """Create radio button group for plotter selection."""
         # Build mapping from display name to plot name
         self._plot_name_map = {
@@ -434,9 +425,7 @@ class ConfigurationStep(WizardStep[PlotterSelection, PlotResult]):
             success_callback=self._on_plot_created,
         )
 
-        self._config_panel = ConfigurationPanel(
-            config=config_adapter,
-        )
+        self._config_panel = ConfigurationPanel(config=config_adapter)
 
         self._panel_container.clear()
         self._panel_container.append(self._config_panel.panel)
@@ -489,8 +478,7 @@ class JobPlotterSelectionModal:
         step1 = JobOutputSelectionStep(job_service=job_service)
 
         step2 = PlotterSelectionStep(
-            plotting_controller=plotting_controller,
-            logger=self._logger,
+            plotting_controller=plotting_controller, logger=self._logger
         )
 
         step3 = ConfigurationStep(
