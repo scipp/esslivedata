@@ -408,10 +408,4 @@ def setup_factories(instrument: Instrument) -> None:
 
 ## Reference Implementations
 
-For more complex examples, see existing instrument configurations in `src/ess/livedata/config/instruments/`:
-
-- [dummy](../../src/ess/livedata/config/instruments/dummy/): Simple example with logical view
-- [dream](../../src/ess/livedata/config/instruments/dream/): Complex setup with multiple detector types including cylindrical projection
-- [loki](../../src/ess/livedata/config/instruments/loki/): Multiple detector panels with XY projections
-- [bifrost](../../src/ess/livedata/config/instruments/bifrost/): Spectroscopy example with custom workflows
-- [nmx](../../src/ess/livedata/config/instruments/nmx/): Crystallography with computed detector numbers
+For more complex examples, see existing instrument configurations in `src/ess/livedata/config/instruments/`.
