@@ -7,16 +7,18 @@ This guide explains how to add support for a new instrument in ESSlivedata.
 1. Create a new instrument package in `src/ess/livedata/config/instruments/<instrument>/`
    - The directory name will be used as the instrument identifier
 2. Create and register an `Instrument` instance (imported via the package)
-3. Provide a `streams` submodule with a `stream_mapping` dictionary
+3. Provide `stream_mapping` accessible from the package namespace
 4. Optionally provide a `setup_factories(instrument)` function to attach workflow factories
+5. Optionally provide `detector_fakes` configuration for development/testing
 
 ## Package Structure
 
 The minimal requirements are:
 - **Required**: A package with `__init__.py`
-- **Required**: A `streams` submodule (e.g., `streams.py`) with `stream_mapping` dict
+- **Required**: `stream_mapping` dict accessible from the package namespace
 - **Required**: An `Instrument` instance registered with `instrument_registry`
-- **Optional**: A `setup_factories(instrument)` function accessible from the package
+- **Optional**: `setup_factories(instrument)` function accessible from the package
+- **Optional**: `detector_fakes` dict accessible from the package (for fake data generation)
 
 The typical convention uses this structure (but you can organize differently):
 
@@ -24,14 +26,15 @@ The typical convention uses this structure (but you can organize differently):
 src/ess/livedata/config/instruments/<instrument>/
 ├── __init__.py          # Imports and re-exports for package namespace
 ├── specs.py             # Instrument instance and workflow spec registration
-├── streams.py           # Stream mappings (required: must have stream_mapping)
+├── streams.py           # Stream mappings (typically defines stream_mapping and detector_fakes)
 └── factories.py         # Factory implementations (setup_factories function)
 ```
 
-**Note**: The file organization (`specs.py`, `factories.py`) is a convention, not a requirement. Large instruments may split factories into multiple files, combine specs and factories, etc. The system only requires that:
+**Note**: The file organization (`specs.py`, `streams.py`, `factories.py`) is a convention, not a requirement. Large instruments may split factories into multiple files, combine specs and streams, etc. The system only requires that:
 - The package imports create an `Instrument` and register it
-- A `streams` submodule exists with `stream_mapping`
+- `stream_mapping` is accessible from the package namespace (e.g., imported in `__init__.py`)
 - If factories are needed, `setup_factories` is accessible from the package namespace
+- If using fake data generators, `detector_fakes` is accessible from the package namespace
 
 ## Creating the Instrument instance
 
@@ -117,7 +120,7 @@ The `setup_factories` function will be called automatically by `Instrument.load_
 
 ## Stream Configuration
 
-In `streams.py`, define stream mappings and fake detector configuration:
+In `streams.py`, define stream mappings and optionally fake detector configuration:
 
 ```python
 from ess.livedata.config.env import StreamingEnv
@@ -125,12 +128,10 @@ from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
 from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
 
-# Fake detector configuration for development
-detectors_config = {
-    'fakes': {
-        'panel_a': (1, 128**2),              # (first_id, last_id)
-        'panel_b': (128**2 + 1, 2 * 128**2),
-    }
+# Fake detector configuration for development (optional)
+detector_fakes = {
+    'panel_a': (1, 128**2),              # (first_id, last_id)
+    'panel_b': (128**2 + 1, 2 * 128**2),
 }
 
 def _make_instrument_detectors() -> StreamLUT:
@@ -144,7 +145,7 @@ def _make_instrument_detectors() -> StreamLUT:
 stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
         'instrument_name',
-        detector_names=list(detectors_config['fakes'])
+        detector_names=list(detector_fakes)
     ),
     StreamingEnv.PROD: StreamMapping(
         **make_common_stream_mapping_inputs(instrument='instrument_name'),
@@ -155,11 +156,12 @@ stream_mapping = {
 
 ### Fake Detectors
 
-To enable development without real detector data, define pixel ID ranges in the `'fakes'` dictionary:
+To enable development without real detector data, define pixel ID ranges in the `detector_fakes` dictionary:
 
 - The pixel IDs should match your detector configuration and must not overlap
 - The fake detector service will generate random events within these ID ranges
 - Use these when running services with the `--dev` flag
+- This configuration is optional and only needed if you plan to use fake data generators
 
 ## Detector Configuration in Factories
 
@@ -252,10 +254,10 @@ Here's the complete structure for the dummy instrument as a reference:
 ### `__init__.py`
 
 ```python
-from . import streams
 from .factories import setup_factories
+from .streams import detector_fakes, stream_mapping
 
-__all__ = ['setup_factories', 'streams']
+__all__ = ['detector_fakes', 'setup_factories', 'stream_mapping']
 ```
 
 ### `specs.py`
@@ -302,7 +304,7 @@ from ess.livedata.config.env import StreamingEnv
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
 
-detectors_config = {'fakes': {'panel_0': (1, 128**2)}}
+detector_fakes = {'panel_0': (1, 128**2)}
 
 def _make_dummy_detectors() -> StreamLUT:
     return {InputStreamKey(topic='dummy_detector', source_name='panel_0'): 'panel_0'}

@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """ODIN instrument configuration package."""
 
-from . import streams
 from .factories import setup_factories
+from .streams import detector_fakes, stream_mapping
 
-__all__ = ['setup_factories', 'streams']
+__all__ = ['detector_fakes', 'setup_factories', 'stream_mapping']

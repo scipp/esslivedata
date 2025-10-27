@@ -49,13 +49,13 @@ def get_stream_mapping(*, instrument: str, dev: bool) -> StreamMapping:
     """
     Returns the stream mapping for the given instrument.
 
-    Loads the stream_mapping from the instrument's .streams submodule.
+    Loads the stream_mapping from the instrument package.
     """
     import importlib
 
     env = StreamingEnv.DEV if dev else StreamingEnv.PROD
 
-    streams_module = importlib.import_module(
-        f'.instruments.{instrument}.streams', package='ess.livedata.config'
+    instrument_module = importlib.import_module(
+        f'.instruments.{instrument}', package='ess.livedata.config'
     )
-    return streams_module.stream_mapping[env]
+    return instrument_module.stream_mapping[env]

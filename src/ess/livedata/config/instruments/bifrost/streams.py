@@ -36,7 +36,7 @@ def _bifrost_generator() -> Generator[tuple[str, tuple[int, int]]]:
         start += 1
 
 
-detectors_config = {'fakes': dict(_bifrost_generator())}
+detector_fakes = dict(_bifrost_generator())
 
 # Detector number configuration
 detector_number = sc.arange('detector_number', 1, 5 * 3 * 9 * 100 + 1, unit=None).fold(
@@ -64,7 +64,7 @@ def _make_bifrost_detectors() -> StreamLUT:
 stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
         'bifrost',
-        detector_names=list(detectors_config['fakes']),
+        detector_names=list(detector_fakes),
         monitor_names=monitors,
     ),
     StreamingEnv.PROD: StreamMapping(

@@ -9,7 +9,7 @@ from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
 from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
 
-detectors_config = {'fakes': {'timepix3': (1, 4096**2)}}
+detector_fakes = {'timepix3': (1, 4096**2)}
 
 
 def _make_odin_detectors() -> StreamLUT:
@@ -27,7 +27,7 @@ def _make_odin_detectors() -> StreamLUT:
 
 stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
-        'odin', detector_names=list(detectors_config['fakes'])
+        'odin', detector_names=list(detector_fakes)
     ),
     StreamingEnv.PROD: StreamMapping(
         **make_common_stream_mapping_inputs(instrument='odin'),

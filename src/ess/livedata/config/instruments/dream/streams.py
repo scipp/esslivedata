@@ -9,14 +9,12 @@ from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
 from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
 
-detectors_config = {
-    'fakes': {
-        'mantle_detector': (229377, 720896),
-        'endcap_backward_detector': (71618, 229376),
-        'endcap_forward_detector': (1, 71680),
-        'high_resolution_detector': (1122337, 1523680),  # Note: Not consecutive!
-        'sans_detector': (0, 0),  # TODO
-    },
+detector_fakes = {
+    'mantle_detector': (229377, 720896),
+    'endcap_backward_detector': (71618, 229376),
+    'endcap_forward_detector': (1, 71680),
+    'high_resolution_detector': (1122337, 1523680),  # Note: Not consecutive!
+    'sans_detector': (0, 0),  # TODO
 }
 
 
@@ -44,7 +42,7 @@ def _make_dream_detectors() -> StreamLUT:
 
 stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
-        'dream', detector_names=list(detectors_config['fakes'])
+        'dream', detector_names=list(detector_fakes)
     ),
     StreamingEnv.PROD: StreamMapping(
         **make_common_stream_mapping_inputs(instrument='dream'),

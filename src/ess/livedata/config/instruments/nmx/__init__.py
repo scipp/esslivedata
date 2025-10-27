@@ -4,7 +4,7 @@
 NMX instrument configuration.
 """
 
-from . import streams
 from .factories import setup_factories
+from .streams import detector_fakes, stream_mapping
 
-__all__ = ['setup_factories', 'streams']
+__all__ = ['detector_fakes', 'setup_factories', 'stream_mapping']

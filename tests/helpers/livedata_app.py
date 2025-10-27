@@ -59,9 +59,7 @@ class LivedataApp:
         self.monitor_topic = stream_kind_to_topic(
             instrument=self.instrument, kind=StreamKind.MONITOR_EVENTS
         )
-        self._detector_config = get_config(self.instrument).streams.detectors_config[
-            'fakes'
-        ]
+        self._detector_config = get_config(self.instrument).detector_fakes
         self._rng = np.random.default_rng(seed=1234)  # Avoid test flakiness
         self._detector_events: bytes | None = None
         self._monitor_events: dict[str, bytes] = {}
