@@ -123,6 +123,7 @@ class Instrument:
         description: str = '',
         source_names: Sequence[str] | None = None,
         aux_sources: type[Any] | None = None,
+        outputs: type[Any] | None = None,
     ) -> Callable[[Callable[..., Workflow]], Callable[..., Workflow]]:
         """
         Decorator to register a factory function for creating StreamProcessors.
@@ -157,6 +158,11 @@ class Instrument:
             this will be used for validation and UI generation. The auxiliary source
             configuration is handled by the Job layer and is not passed to the workflow
             factory function.
+        outputs:
+            Optional Pydantic model class defining workflow outputs with metadata.
+            Field names should be simplified identifiers (e.g., 'i_of_d_two_theta')
+            that match keys returned by workflow.finalize(). Field metadata (title,
+            description) provides human-readable information for the UI.
 
         Returns
         -------
@@ -172,6 +178,7 @@ class Instrument:
             source_names=list(source_names or []),
             params=None,  # placeholder, filled in from type hint later
             aux_sources=aux_sources,
+            outputs=outputs,
         )
         return self.workflow_factory.register(spec)
 

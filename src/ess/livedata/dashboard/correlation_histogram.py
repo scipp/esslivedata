@@ -254,7 +254,7 @@ class CorrelationHistogramConfigurationAdapter(ConfigurationAdapter[Model], ABC)
         self,
         selected_sources: list[str],
         parameter_values: Model,
-    ) -> bool:
+    ) -> None:
         """
         Execute the correlation histogram workflow with the given parameters.
 
@@ -262,9 +262,14 @@ class CorrelationHistogramConfigurationAdapter(ConfigurationAdapter[Model], ABC)
         as a postprocessing step when new data arrives. There are considerations around
         moving this into a separate backend service, after the primary services, where
         the WorkflowSpec could be converted to WorkflowConfig for submission.
+
+        Raises
+        ------
+        ValueError
+            If auxiliary sources have not been selected.
         """
         if self._selected_aux_sources is None:
-            return False
+            raise ValueError('Auxiliary sources must be selected before starting')
 
         data_keys = [
             self._source_name_to_key[source_name] for source_name in selected_sources
@@ -289,7 +294,6 @@ class CorrelationHistogramConfigurationAdapter(ConfigurationAdapter[Model], ABC)
                 result_callback=self._create_result_callback(key, job_number),
             )
             self._controller.add_correlation_processor(processor, {key: value, **axes})
-        return True
 
     def _create_result_callback(
         self, data_key: ResultKey, job_number: JobNumber

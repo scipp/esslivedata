@@ -15,6 +15,7 @@ from ess.livedata.dashboard.job_controller import JobController
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.plotting import PlotterSpec
 from ess.livedata.dashboard.plotting_controller import PlottingController
+from ess.livedata.dashboard.workflow_controller import WorkflowController
 
 from .configuration_widget import ConfigurationModal
 from .job_status_widget import JobStatusListWidget
@@ -84,19 +85,15 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         self,
         selected_sources: list[str],
         parameter_values: Any,
-    ) -> bool:
-        try:
-            plot = self._plotting_controller.create_plot(
-                job_number=self._job_number,
-                source_names=selected_sources,
-                output_name=self._output_name,
-                plot_name=self._plot_spec.name,
-                params=parameter_values,
-            )
-            self._success_callback(plot, selected_sources)
-            return True
-        except Exception:
-            return False
+    ) -> None:
+        plot = self._plotting_controller.create_plot(
+            job_number=self._job_number,
+            source_names=selected_sources,
+            output_name=self._output_name,
+            plot_name=self._plot_spec.name,
+            params=parameter_values,
+        )
+        self._success_callback(plot, selected_sources)
 
 
 class PlotCreationWidget:
@@ -108,6 +105,7 @@ class PlotCreationWidget:
         job_service: JobService,
         job_controller: JobController,
         plotting_controller: PlottingController,
+        workflow_controller: WorkflowController,
     ) -> None:
         """
         Initialize plot creation widget.
@@ -116,13 +114,19 @@ class PlotCreationWidget:
         ----------
         job_service:
             Service for accessing job data
+        job_controller:
+            Controller for managing jobs
         plotting_controller:
             Controller for creating plotters
+        workflow_controller:
+            Controller for accessing workflow specifications
         """
         self._job_service = job_service
         self._plotting_controller = plotting_controller
+        self._workflow_controller = workflow_controller
         self._selected_job: JobNumber | None = None
         self._selected_output: str | None = None
+        self._selected_output_title: str | None = None
         self._plot_counter = 0  # Counter for unique plot tab names
 
         # Create UI components
@@ -158,6 +162,44 @@ class PlotCreationWidget:
 
         self._job_service.register_job_update_subscriber(self.refresh)
 
+    def _get_output_metadata(
+        self, job_number: JobNumber, output_name: str
+    ) -> tuple[str, str]:
+        """
+        Get human-readable title and description for an output.
+
+        Parameters
+        ----------
+        job_number:
+            The job number to get output metadata for
+        output_name:
+            The raw output name (field name in the outputs model)
+
+        Returns
+        -------
+        :
+            Tuple of (title, description). If metadata is not available,
+            returns the raw output_name as title and empty description.
+        """
+        workflow_id = self._job_service.job_info.get(job_number)
+        if workflow_id is None:
+            return output_name, ''
+
+        workflow_spec = self._workflow_controller.get_workflow_spec(workflow_id)
+        if workflow_spec is None or workflow_spec.outputs is None:
+            return output_name, ''
+
+        # Get field metadata from the outputs model
+        field_info = workflow_spec.outputs.model_fields.get(output_name)
+        if field_info is None:
+            return output_name, ''
+
+        # Extract title and description from field metadata
+        title = field_info.title if field_info.title else output_name
+        description = field_info.description if field_info.description else ''
+
+        return title, description
+
     def _create_job_output_table(self) -> pn.widgets.Tabulator:
         """Create job and output selection table with grouping."""
         return pn.widgets.Tabulator(
@@ -173,7 +215,12 @@ class PlotCreationWidget:
                 'columns': [
                     {'title': 'Job Number', 'field': 'job_number', 'width': 100},
                     {'title': 'Workflow', 'field': 'workflow_name', 'width': 100},
-                    {'title': 'Output Name', 'field': 'output_name', 'width': 200},
+                    {
+                        'title': 'Output',
+                        'field': 'output_title',
+                        'width': 200,
+                        'tooltip': 'output_description',
+                    },
                     {'title': 'Source Names', 'field': 'source_names', 'width': 600},
                 ],
             },
@@ -233,6 +280,8 @@ class PlotCreationWidget:
                 job_output_data.append(
                     {
                         'output_name': '',
+                        'output_title': '',
+                        'output_description': '',
                         'source_names': ', '.join(sources),
                         'workflow_name': workflow_id.name,
                         'job_number': job_number.hex,
@@ -240,17 +289,20 @@ class PlotCreationWidget:
                 )
             else:
                 # Create one row per output name
-                job_output_data.extend(
-                    [
+                for output_name in sorted(output_names):
+                    title, description = self._get_output_metadata(
+                        job_number, output_name
+                    )
+                    job_output_data.append(
                         {
                             'output_name': output_name,
+                            'output_title': title,
+                            'output_description': description,
                             'source_names': ', '.join(sources),
                             'workflow_name': workflow_id.name,
                             'job_number': job_number.hex,
                         }
-                        for output_name in sorted(output_names)
-                    ]
-                )
+                    )
 
         if job_output_data:
             # Convert to DataFrame for Tabulator widget
@@ -258,7 +310,14 @@ class PlotCreationWidget:
         else:
             # Empty DataFrame with correct columns
             df = pd.DataFrame(
-                columns=['job_number', 'workflow_name', 'output_name', 'source_names']
+                columns=[
+                    'job_number',
+                    'workflow_name',
+                    'output_name',
+                    'output_title',
+                    'output_description',
+                    'source_names',
+                ]
             )
         self._job_output_table.value = df
 
@@ -268,16 +327,19 @@ class PlotCreationWidget:
         if len(selection) != 1:
             self._selected_job = None
             self._selected_output = None
+            self._selected_output_title = None
             self._update_dependent_widgets()
             return
 
-        # Get selected job number and output name from index
+        # Get selected job number, output name, and title from index
         selected_row = selection[0]
         job_number_str = self._job_output_table.value['job_number'].iloc[selected_row]
         output_name = self._job_output_table.value['output_name'].iloc[selected_row]
+        output_title = self._job_output_table.value['output_title'].iloc[selected_row]
 
         self._selected_job = JobNumber(job_number_str)
         self._selected_output = output_name if output_name else None
+        self._selected_output_title = output_title if output_title else None
 
         self._update_dependent_widgets()
 
@@ -363,12 +425,17 @@ class PlotCreationWidget:
         pane = pn.pane.HoloViews(plot, sizing_mode='stretch_width')
         plot_pane = pane.layout
 
-        # Generate tab name
+        # Generate tab name with output title
         self._plot_counter += 1
+        output_label = (
+            self._selected_output_title
+            if self._selected_output_title
+            else self._selected_output
+        )
         sources_str = "_".join(selected_sources[:2])  # Limit length
         if len(selected_sources) > 2:
             sources_str += f"_+{len(selected_sources) - 2}"
-        tab_name = f"Plot {self._plot_counter}: {sources_str}"
+        tab_name = f"Plot {self._plot_counter}: {output_label} - {sources_str}"
 
         # Add as new tab to the plot tabs container
         self._plot_tabs.append((tab_name, plot_pane))

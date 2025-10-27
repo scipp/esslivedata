@@ -20,7 +20,7 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         spec: WorkflowSpec,
         persistent_config: PersistentWorkflowConfig | None,
         start_callback: Callable[
-            [list[str], pydantic.BaseModel, pydantic.BaseModel | None], bool
+            [list[str], pydantic.BaseModel, pydantic.BaseModel | None], None
         ],
     ) -> None:
         """Initialize adapter with workflow spec, config, and start callback."""
@@ -76,8 +76,8 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         self,
         selected_sources: list[str],
         parameter_values: pydantic.BaseModel,
-    ) -> bool:
+    ) -> None:
         """Start the workflow with given sources and parameters."""
-        return self._start_callback(
+        self._start_callback(
             selected_sources, parameter_values, self._cached_aux_sources
         )

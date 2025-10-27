@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 import panel as pn
@@ -227,6 +228,7 @@ class ConfigurationModal:
         self._error_callback = error_callback
         self._error_pane = pn.pane.HTML("", sizing_mode='stretch_width')
         self._modal = self._create_modal(start_button_text)
+        self._logger = logging.getLogger(__name__)
 
     def _create_modal(self, start_button_text: str) -> pn.Modal:
         """Create the modal dialog."""
@@ -286,18 +288,28 @@ class ConfigurationModal:
             self._show_validation_errors(errors)
             return
 
-        success = self._config.start_action(
-            self._config_widget.selected_sources,
-            self._config_widget.parameter_values,
-        )
+        # Execute the start action and handle any exceptions
+        try:
+            self._config.start_action(
+                self._config_widget.selected_sources,
+                self._config_widget.parameter_values,
+            )
+        except Exception as e:
+            # Log the full exception with stack trace
+            self._logger.exception("Error starting '%s'", self._config.title)
 
-        if not success:
-            error_message = f"Error: '{self._config.title}' is no longer available."
+            # Show user-friendly error message
+            error_message = f"Error starting '{self._config.title}': {e!s}"
             self._show_action_error(error_message)
+
+            # Notify error callback if provided
             if self._error_callback:
                 self._error_callback(error_message)
+
+            # Keep modal open so user can correct the issue or see the error
             return
 
+        # Success - close modal and notify success callback
         self._modal.open = False
         if self._success_callback:
             self._success_callback()
