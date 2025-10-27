@@ -58,7 +58,7 @@ The variable name `instrument` is conventional but not required.
 
 ## Two-Phase Registration Pattern
 
-ESSlivedata uses a **two-phase registration pattern** to separate lightweight specifications from heavy factory implementations:
+ESSlivedata uses a **two-phase registration pattern** to separate specifications with minimal dependencies from factory implementations:
 
 ### Phase 1: Register Specs (in `specs.py`)
 
@@ -96,7 +96,7 @@ Use the handle to attach the actual factory implementation. This must be done in
 ```python
 def setup_factories(instrument: Instrument) -> None:
     """Initialize instrument-specific factories and workflows."""
-    # Heavy imports go here (only loaded when needed)
+    # Lazy imports go here (only loaded when needed)
     from ess.reduce.nexus import load_detector
 
     # Import the handle from wherever specs were registered
@@ -114,9 +114,53 @@ The `setup_factories` function will be called automatically by `Instrument.load_
 
 ### Why Two Phases?
 
-- **Phase 1 (specs)**: Lightweight, always imported - provides metadata for UI generation
-- **Phase 2 (factories)**: Heavy, loaded on-demand - contains actual workflow logic and imports
-- This separation improves startup time and allows validation without loading all dependencies
+- **Phase 1 (specs)**: Always imported - provides metadata for UI generation and configuration discovery
+- **Phase 2 (factories)**: Loaded on-demand - contains actual workflow logic and implementation
+- This separation ensures the dashboard and other spec consumers don't depend on instrument-specific packages
+
+### Critical: Lazy Import Requirements
+
+**IMPORTANT**: The instrument package must be importable without importing other packages from the `ess` namespace (such as `ess.reduce`, `ess.dream`, `ess.powder`, `ess.sans`, `ess.loki`, etc.). All such imports must be done lazily inside the `setup_factories()` function.
+
+**Correct pattern** (instrument packages imported inside `setup_factories`):
+```python
+# factories.py
+def setup_factories(instrument: Instrument) -> None:
+    """Initialize instrument-specific factories and workflows."""
+    # Instrument package imports go here
+    from ess.dream import DreamPowderWorkflow
+    from ess.powder import types as powder_types
+    from ess.livedata.handlers.detector_data_handler import DetectorProjection
+    # ... rest of factory setup
+```
+
+**Incorrect pattern** (importing at module level):
+```python
+# factories.py - DON'T DO THIS!
+from ess.dream import DreamPowderWorkflow  # BAD: imported at module level
+from ess.powder import types as powder_types  # BAD: imported at module level
+
+def setup_factories(instrument: Instrument) -> None:
+    """Initialize instrument-specific factories and workflows."""
+    # ...
+```
+
+**Why this matters**:
+- The dashboard and other spec consumers need to import instrument packages to read metadata (workflow parameters, output types, etc.)
+- These consumers should not be forced to install or import instrument-specific packages like `essdiffraction`, `esssans`, etc.
+- Specs are imported during configuration discovery and registry initialization
+- Factory implementations are only loaded when actually running the workflows
+
+**Which imports are allowed at module level**:
+- Configuration and type definitions: `ess.livedata.config.*`, `ess.livedata.parameter_models.*`
+- Standard library and common dependencies: `scipp`, `pydantic`, `typing`
+- Imports from your own instrument package: `from . import specs`
+
+**Which imports must be lazy (inside `setup_factories`)**:
+- Any imports from other `ess.*` packages: `ess.dream`, `ess.powder`, `ess.sans`, `ess.loki`, etc.
+- Workflow implementation modules: `ess.livedata.handlers.*` (detector handlers, workflow factories, etc.) as those depend on `ess.reduce`.
+- Workflow framework: `sciline`
+- Geometry and data loading: `scippnexus`, etc.
 
 ## Stream Configuration
 
@@ -165,7 +209,8 @@ To enable development without real detector data, define pixel ID ranges in the 
 
 ## Detector Configuration in Factories
 
-In `factories.py`, configure detectors with `detector_number` arrays:
+In `factories.py`, configure detectors with `detector_number` arrays.
+This is optional, if `configure_detector` is not called the `detector_number` array will be loaded from the NeXus geometry file.
 
 ```python
 def setup_factories(instrument: Instrument) -> None:
@@ -321,12 +366,14 @@ stream_mapping = {
 ### `factories.py`
 
 ```python
+# Only config and common dependencies at module level
 import scipp as sc
 from ess.livedata.config import Instrument
 from . import specs
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize dummy-specific factories and workflows."""
+    # Instrument packages and implementation imports go here
     import sciline
     from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
