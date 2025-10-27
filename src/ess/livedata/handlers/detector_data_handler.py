@@ -1,43 +1,88 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""
-Detector data handler with heavy dependencies (ess.reduce.live.raw).
-
-This module contains factory implementations that require heavy imports.
-It should only be imported by backend services, not by frontend/specs modules.
-
-For lightweight spec registration, use detector_view_specs.py instead.
-"""
-
 from __future__ import annotations
 
 import pathlib
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Hashable
-from typing import Any, Literal
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Literal
 
+import pydantic
 import scipp as sc
+from pydantic import field_validator
 
 from ess.reduce.live import raw
 
-from ..config import models
 from ..config.instrument import Instrument
+from ..config.workflow_spec import AuxSourcesBase, JobId
 from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
-from .accumulators import DetectorEvents, GroupIntoPixels, ROIBasedTOAHistogram
-from .detector_view_specs import DetectorViewParams, ROIHistogramParams, SpecHandle
-from .workflow_factory import Workflow
+from .accumulators import DetectorEvents, GroupIntoPixels, LatestValue
+from .detector_view import DetectorView, DetectorViewParams
+
+
+class DetectorROIAuxSources(AuxSourcesBase):
+    """
+    Auxiliary source model for ROI configuration in detector workflows.
+
+    Allows users to select between different ROI shapes (rectangle, polygon, ellipse).
+    The render() method prefixes stream names with the job number to create job-specific
+    ROI configuration streams, since each job instance needs its own ROI.
+    """
+
+    roi: Literal['rectangle', 'polygon', 'ellipse'] = pydantic.Field(
+        default='rectangle',
+        description='Shape to use for the region of interest (ROI).',
+    )
+
+    @field_validator('roi')
+    @classmethod
+    def validate_roi_shape(cls, v: str) -> str:
+        """Validate that only rectangle is currently supported."""
+        if v != 'rectangle':
+            raise ValueError(
+                f"Currently only 'rectangle' ROI shape is supported, got '{v}'"
+            )
+        return v
+
+    def render(self, job_id: JobId) -> dict[str, str]:
+        """
+        Render ROI stream name with job-specific prefix.
+
+        Parameters
+        ----------
+        job_id:
+            Job identifier containing source_name and job_number.
+
+        Returns
+        -------
+        :
+            Mapping from field name 'roi' to job-specific stream name in the
+            format '{source_name}/{job_number}/roi_{shape}' (e.g.,
+            'mantle/abc-123/roi_rectangle'). The source_name ensures ROI
+            streams are unique per detector in multi-detector workflows where
+            the same job_number is shared across detectors.
+        """
+        base = self.model_dump(mode='json')
+        return {field: f"{job_id}/roi_{stream}" for field, stream in base.items()}
+
+
+@dataclass(frozen=True, kw_only=True)
+class ViewConfig:
+    name: str
+    title: str
+    description: str
+    source_names: list[str] = field(default_factory=list)
 
 
 class DetectorProcessorFactory(ABC):
-    """
-    Base class for detector processor factories.
-    """
-
-    def __init__(self, *, instrument: Instrument) -> None:
+    def __init__(self, *, instrument: Instrument, config: ViewConfig) -> None:
         self._instrument = instrument
+        self._config = config
         self._window_length = 1
+        self._register_with_instrument(instrument)
 
     def make_view(self, source_name: str, params: DetectorViewParams) -> DetectorView:
         """Factory method that will be registered as a workflow creation function."""
@@ -45,27 +90,16 @@ class DetectorProcessorFactory(ABC):
             params=params, detector_view=self._make_rolling_view(source_name)
         )
 
-    def make_roi(self, source_name: str, params: ROIHistogramParams) -> ROIHistogram:
-        """Factory method that will be registered as a workflow creation function."""
-        return ROIHistogram(
-            params=params, detector_view=self._make_rolling_view(source_name)
-        )
-
-    def attach_to_handles(
-        self, *, view_handle: SpecHandle, roi_handle: SpecHandle
-    ) -> None:
-        """
-        Attach factory methods to handles from spec registration.
-
-        Parameters
-        ----------
-        view_handle:
-            Handle for the view workflow spec.
-        roi_handle:
-            Handle for the ROI histogram workflow spec.
-        """
-        view_handle.attach_factory()(self.make_view)
-        roi_handle.attach_factory()(self.make_roi)
+    def _register_with_instrument(self, instrument: Instrument) -> None:
+        instrument.register_workflow(
+            namespace='detector_data',
+            name=self._config.name,
+            version=1,
+            title=self._config.title,
+            description=self._config.description,
+            source_names=self._config.source_names,
+            aux_sources=DetectorROIAuxSources,
+        )(self.make_view)
 
     @abstractmethod
     def _make_rolling_view(self, source_name: str) -> raw.RollingDetectorView:
@@ -82,11 +116,29 @@ class DetectorProjection(DetectorProcessorFactory):
         resolution: dict[str, dict[str, int]],
         resolution_scale: float = 1,
     ) -> None:
-        super().__init__(instrument=instrument)
         self._projection = projection
         self._pixel_noise = pixel_noise
         self._resolution = resolution
         self._res_scale = resolution_scale
+        source_names = list(resolution.keys())
+        if projection == 'xy_plane':
+            config = ViewConfig(
+                name='detector_xy_projection',
+                title='Detector XY Projection',
+                description='Projection of a detector bank onto an XY-plane.',
+                source_names=source_names,
+            )
+        elif projection == 'cylinder_mantle_z':
+            config = ViewConfig(
+                name='detector_cylinder_mantle_z',
+                title='Detector Cylinder Mantle Z Projection',
+                description='Projection of a detector bank onto a cylinder mantle '
+                'along Z-axis.',
+                source_names=source_names,
+            )
+        else:
+            raise ValueError(f'Unsupported projection: {projection}')
+        super().__init__(instrument=instrument, config=config)
 
     def _get_resolution(self, source_name: str) -> dict[str, int]:
         aspect = self._resolution[source_name]
@@ -103,61 +155,23 @@ class DetectorProjection(DetectorProcessorFactory):
         )
 
 
+@dataclass(frozen=True, kw_only=True)
+class LogicalViewConfig(ViewConfig):
+    # If no projection defined, the shape of the detector_number is used.
+    transform: Callable[[sc.DataArray], sc.DataArray] | None = None
+
+
 class DetectorLogicalView(DetectorProcessorFactory):
-    """
-    Factory for logical detector views with optional transform.
-
-    Logical views use detector_number arrays directly, optionally applying a transform
-    function to reshape or filter the data.
-    """
-
-    def __init__(
-        self,
-        *,
-        instrument: Instrument,
-        transform: Callable[[sc.DataArray], sc.DataArray] | None = None,
-    ) -> None:
-        super().__init__(instrument=instrument)
-        self._transform = transform
+    def __init__(self, *, instrument: Instrument, config: LogicalViewConfig) -> None:
+        super().__init__(instrument=instrument, config=config)
+        self._config = config
 
     def _make_rolling_view(self, source_name: str) -> raw.RollingDetectorView:
         return raw.RollingDetectorView(
             detector_number=self._instrument.get_detector_number(source_name),
             window=self._window_length,
-            projection=self._transform,
+            projection=self._config.transform,
         )
-
-
-class ROIHistogram(Workflow):
-    def __init__(
-        self, params: ROIHistogramParams, detector_view: raw.RollingDetectorView
-    ) -> None:
-        self._accumulator = ROIBasedTOAHistogram(
-            toa_edges=params.toa_edges.get_edges(),
-            x_range=params.x_range,
-            y_range=params.y_range,
-            roi_filter=detector_view.make_roi_filter(),
-        )
-        self._cumulative: sc.DataArray | None = None
-
-    def accumulate(self, data: dict[Hashable, Any]) -> None:
-        if len(data) != 1:
-            raise ValueError("ROIHistogram expects exactly one data item.")
-        raw = next(iter(data.values()))
-        self._accumulator.add(0, raw)  # Timestamp not used.
-
-    def finalize(self) -> dict[str, sc.DataArray]:
-        delta = self._accumulator.get()
-        if self._cumulative is None:
-            self._cumulative = delta.copy()
-        else:
-            self._cumulative += delta
-        return {'cumulative': self._cumulative, 'current': delta}
-
-    def clear(self) -> None:
-        if self._cumulative is not None:
-            self._cumulative = None
-        self._accumulator.clear()
 
 
 class DetectorHandlerFactory(
@@ -177,75 +191,10 @@ class DetectorHandlerFactory(
             case StreamKind.DETECTOR_EVENTS:
                 detector_number = self._instrument.get_detector_number(key.name)
                 return GroupIntoPixels(detector_number=detector_number)
+            case StreamKind.LIVEDATA_ROI:
+                return LatestValue()
             case _:
                 return None
-
-
-class DetectorView(Workflow):
-    """
-    Accumulator for detector counts, based on a rolling detector view.
-
-    Return both a current (since last update) and a cumulative view of the counts.
-    """
-
-    def __init__(
-        self,
-        params: DetectorViewParams,
-        detector_view: raw.RollingDetectorView,
-    ) -> None:
-        self._use_toa_range = params.toa_range.enabled
-        self._toa_range = params.toa_range.range_ns
-        self._use_weights = params.pixel_weighting.enabled
-        # Note: Currently we use default weighting based on the number of detector
-        # pixels contributing to each screen pixel. In the future more advanced options
-        # such as by the signal of a uniform scattered may need to be supported.
-        weighting = params.pixel_weighting
-        if weighting.method != models.WeightingMethod.PIXEL_NUMBER:
-            raise ValueError(f'Unsupported pixel weighting method: {weighting.method}')
-        self._use_weights = weighting.enabled
-        self._view = detector_view
-        self._inv_weights = sc.reciprocal(detector_view.transform_weights())
-        self._previous: sc.DataArray | None = None
-
-    def apply_toa_range(self, data: sc.DataArray) -> sc.DataArray:
-        if not self._use_toa_range:
-            return data
-        low, high = self._toa_range
-        # GroupIntoPixels stores time-of-arrival as the data variable of the bins to
-        # avoid allocating weights that are all ones. For filtering we need to turn this
-        # into a coordinate, since scipp does not support filtering on data variables.
-        return data.bins.assign_coords(toa=data.bins.data).bins['toa', low:high]
-
-    def accumulate(self, data: dict[Hashable, Any]) -> None:
-        """
-        Add data to the accumulator.
-
-        Parameters
-        ----------
-        data:
-            Data to be added. It is assumed that this is ev44 data that was passed
-            through :py:class:`GroupIntoPixels`.
-        """
-        if len(data) != 1:
-            raise ValueError("DetectorViewProcessor expects exactly one data item.")
-        raw = next(iter(data.values()))
-        filtered = self.apply_toa_range(raw)
-        self._view.add_events(filtered)
-
-    def finalize(self) -> dict[str, sc.DataArray]:
-        cumulative = self._view.cumulative.copy()
-        # This is a hack to get the current counts. Should be updated once
-        # ess.reduce.live.raw.RollingDetectorView has been modified to support this.
-        current = cumulative
-        if self._previous is not None:
-            current = current - self._previous
-        self._previous = cumulative
-        result = sc.DataGroup(cumulative=cumulative, current=current)
-        return dict(result * self._inv_weights if self._use_weights else result)
-
-    def clear(self) -> None:
-        self._view.clear_counts()
-        self._previous = None
 
 
 # Note: Currently no need for a geometry file for NMX since the view is purely logical.
