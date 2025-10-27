@@ -22,6 +22,7 @@ class StreamKind(str, Enum):
     LOG = "log"
     LIVEDATA_CONFIG = "livedata_config"
     LIVEDATA_DATA = "livedata_data"
+    LIVEDATA_ROI = "livedata_roi"
     LIVEDATA_STATUS = "livedata_status"
 
 

@@ -1,0 +1,208 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""
+DetectorView workflow and ROI-based histogram accumulation.
+
+This module provides the DetectorView workflow which combines detector counts
+visualization with ROI-based time-of-arrival histogram accumulation.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Hashable
+from typing import Any
+
+import pydantic
+import scipp as sc
+
+from ess.reduce.live import raw
+
+from .. import parameter_models
+from ..config import models
+from ..config.roi_names import get_roi_mapper
+from .roi_histogram import ROIHistogram
+from .workflow_factory import Workflow
+
+
+class DetectorViewParams(pydantic.BaseModel):
+    pixel_weighting: models.PixelWeighting = pydantic.Field(
+        title="Pixel Weighting",
+        description="Whether to apply pixel weighting based on the number of pixels "
+        "contributing to each screen pixel.",
+        default=models.PixelWeighting(
+            enabled=False, method=models.WeightingMethod.PIXEL_NUMBER
+        ),
+    )
+    # TODO split out the enabled flag?
+    toa_range: parameter_models.TOARange = pydantic.Field(
+        title="Time of Arrival Range",
+        description="Time of arrival range for detector data.",
+        default=parameter_models.TOARange(),
+    )
+    toa_edges: parameter_models.TOAEdges = pydantic.Field(
+        title="Time of Arrival Edges",
+        description="Time of arrival edges for histogramming.",
+        default=parameter_models.TOAEdges(
+            start=0.0,
+            stop=1000.0 / 14,
+            num_bins=100,
+            unit=parameter_models.TimeUnit.MS,
+        ),
+    )
+
+
+class DetectorView(Workflow):
+    """
+    Unified workflow for detector counts and ROI histogram.
+
+    Return both a current (since last update) and a cumulative view of the counts,
+    and optionally ROI histogram data.
+    """
+
+    def __init__(
+        self,
+        params: DetectorViewParams,
+        detector_view: raw.RollingDetectorView,
+    ) -> None:
+        self._use_toa_range = params.toa_range.enabled
+        self._toa_range = params.toa_range.range_ns
+        self._use_weights = params.pixel_weighting.enabled
+        # Note: Currently we use default weighting based on the number of detector
+        # pixels contributing to each screen pixel. In the future more advanced options
+        # such as by the signal of a uniform scattered may need to be supported.
+        weighting = params.pixel_weighting
+        if weighting.method != models.WeightingMethod.PIXEL_NUMBER:
+            raise ValueError(f'Unsupported pixel weighting method: {weighting.method}')
+        self._use_weights = weighting.enabled
+        self._view = detector_view
+        self._inv_weights = sc.reciprocal(detector_view.transform_weights())
+        self._previous: sc.DataArray | None = None
+
+        self._rois: dict[int, ROIHistogram] = {}
+        self._toa_edges = params.toa_edges.get_edges()
+        self._rois_updated = False  # Track ROI updates at workflow level
+        self._roi_mapper = get_roi_mapper()
+
+    def apply_toa_range(self, data: sc.DataArray) -> sc.DataArray:
+        if not self._use_toa_range:
+            return data
+        low, high = self._toa_range
+        # GroupIntoPixels stores time-of-arrival as the data variable of the bins to
+        # avoid allocating weights that are all ones. For filtering we need to turn this
+        # into a coordinate, since scipp does not support filtering on data variables.
+        return data.bins.assign_coords(toa=data.bins.data).bins['toa', low:high]
+
+    def accumulate(self, data: dict[Hashable, Any]) -> None:
+        """
+        Add data to the accumulator.
+
+        Parameters
+        ----------
+        data:
+            Data to be added. Expected to contain detector event data and optionally
+            ROI configuration. Detector data is assumed to be ev44 data that was
+            passed through :py:class:`GroupIntoPixels`.
+        """
+        # Check for ROI configuration update (auxiliary data)
+        # Stream name is 'roi' (from 'roi_rectangle' after job_id prefix stripped)
+        roi_key = 'roi'
+        if roi_key in data:
+            roi_data_array = data[roi_key]
+            rois = models.ROI.from_concatenated_data_array(roi_data_array)
+            self._update_rois(rois)
+
+        # Process detector event data
+        detector_data = {k: v for k, v in data.items() if k != roi_key}
+        if len(detector_data) == 0:
+            # No detector data to process (e.g., empty dict or only rois)
+            return
+        if len(detector_data) != 1:
+            raise ValueError(
+                "DetectorViewProcessor expects exactly one detector data item."
+            )
+        raw = next(iter(detector_data.values()))
+        filtered = self.apply_toa_range(raw)
+        self._view.add_events(filtered)
+        for roi_state in self._rois.values():
+            roi_state.add_data(raw)
+
+    def finalize(self) -> dict[str, sc.DataArray]:
+        cumulative = self._view.cumulative.copy()
+        # This is a hack to get the current counts. Should be updated once
+        # ess.reduce.live.raw.RollingDetectorView has been modified to support this.
+        current = cumulative
+        if self._previous is not None:
+            current = current - self._previous
+        self._previous = cumulative
+        result = sc.DataGroup(cumulative=cumulative, current=current)
+        view_result = dict(result * self._inv_weights if self._use_weights else result)
+
+        roi_result = {}
+        for idx, roi_state in self._rois.items():
+            roi_delta = roi_state.get_delta()
+
+            roi_result[self._roi_mapper.current_key(idx)] = roi_delta
+            roi_result[self._roi_mapper.cumulative_key(idx)] = (
+                roi_state.cumulative.copy()
+            )
+
+        # Publish all ROIs as single concatenated message for readback, but only if
+        # the ROI collection was updated. This mirrors the frontend's publishing
+        # behavior and enables proper deletion detection.
+        if self._rois_updated:
+            # Extract ROI models from all active ROI states
+            roi_models = {idx: roi_state.model for idx, roi_state in self._rois.items()}
+            # Convert to concatenated DataArray with roi_index coordinate
+            concatenated_rois = models.RectangleROI.to_concatenated_data_array(
+                roi_models
+            )
+            # Use readback key from mapper
+            roi_result[self._roi_mapper.readback_keys[0]] = concatenated_rois
+
+            # Clear updated flag after publishing
+            self._rois_updated = False
+
+        return {**view_result, **roi_result}
+
+    def clear(self) -> None:
+        self._view.clear_counts()
+        self._previous = None
+        for roi_state in self._rois.values():
+            roi_state.clear()
+
+    def _update_rois(self, rois: dict[int, models.ROI]) -> None:
+        """
+        Update ROI configuration from incoming ROI models.
+
+        When any ROI changes (addition, deletion, or modification), all ROIs are
+        cleared and recreated. This ensures consistent accumulation periods across
+        all ROIs, which is critical since ROI spectra are overlaid on the same plot.
+        """
+        # Check if the ROI set has changed
+        current_indices = set(rois.keys())
+        previous_indices = set(self._rois.keys())
+
+        # Detect any change in the ROI collection (addition, deletion, or modification)
+        rois_changed = False
+        if current_indices != previous_indices:
+            # Indices changed (addition or deletion)
+            rois_changed = True
+        else:
+            # Check if any existing ROI model has changed
+            for idx, roi_model in rois.items():
+                if idx in self._rois and self._rois[idx].model != roi_model:
+                    rois_changed = True
+                    break
+
+        if rois_changed:
+            self._rois_updated = True
+            # Clear all ROIs to ensure consistent accumulation periods
+            self._rois.clear()
+            # Recreate all ROIs from scratch
+            for idx, roi_model in rois.items():
+                self._rois[idx] = ROIHistogram(
+                    toa_edges=self._toa_edges,
+                    roi_filter=self._view.make_roi_filter(),
+                    model=roi_model,
+                )
+        # else: No changes detected, preserve all existing ROI states

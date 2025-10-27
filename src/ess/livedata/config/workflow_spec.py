@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, TypeVar
@@ -56,6 +57,15 @@ class WorkflowId(BaseModel, frozen=True):
 class JobId:
     source_name: str
     job_number: JobNumber
+
+    def __str__(self) -> str:
+        """
+        String representation for use in stream names and identifiers.
+
+        Returns '{source_name}/{job_number}' to ensure unique identification
+        across detectors in multi-detector workflows.
+        """
+        return f"{self.source_name}/{self.job_number}"
 
 
 class AuxSourcesBase(BaseModel):
@@ -160,19 +170,9 @@ class WorkflowSpec(BaseModel):
         if outputs is None:
             return outputs
 
-        titles = []
+        title_counts: dict[str, list[str]] = defaultdict(list)
         for field_name, field_info in outputs.model_fields.items():
-            title = field_info.title
-            if title is None:
-                # If no title is specified, use the field name
-                title = field_name
-            titles.append((title, field_name))
-
-        # Check for duplicate titles
-        title_counts: dict[str, list[str]] = {}
-        for title, field_name in titles:
-            if title not in title_counts:
-                title_counts[title] = []
+            title = field_info.title if field_info.title is not None else field_name
             title_counts[title].append(field_name)
 
         duplicates = {

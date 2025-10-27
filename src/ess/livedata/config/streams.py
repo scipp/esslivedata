@@ -35,6 +35,8 @@ def stream_kind_to_topic(instrument: str, kind: StreamKind) -> str:
             return f'{instrument}_motion'
         case StreamKind.LIVEDATA_DATA:
             return f'{instrument}_livedata_data'
+        case StreamKind.LIVEDATA_ROI:
+            return f'{instrument}_livedata_roi'
         case StreamKind.LIVEDATA_CONFIG:
             return f'{instrument}_livedata_commands'
         case StreamKind.LIVEDATA_STATUS:

@@ -22,6 +22,7 @@ from ess.livedata.core.message import StreamKind
 from ess.livedata.kafka import consumer as kafka_consumer
 from ess.livedata.kafka.message_adapter import AdaptingMessageSource
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
+from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_da00
 from ess.livedata.kafka.source import BackgroundMessageSource
 
 from .config_service import ConfigService
@@ -34,6 +35,7 @@ from .kafka_transport import KafkaTransport
 from .message_bridge import BackgroundMessageBridge
 from .orchestrator import Orchestrator
 from .plotting_controller import PlottingController
+from .roi_publisher import ROIPublisher
 from .schema_validator import PydanticSchemaValidator
 from .stream_manager import StreamManager
 from .widgets.plot_creation_widget import PlotCreationWidget
@@ -134,11 +136,23 @@ class DashboardBase(ServiceBase, ABC):
         self._job_controller = JobController(
             config_service=self._config_service, job_service=self._job_service
         )
+
+        # Create ROI publisher for publishing ROI updates to Kafka
+        kafka_upstream_config = load_config(namespace=config_names.kafka_upstream)
+        roi_sink = KafkaSink(
+            kafka_config=kafka_upstream_config,
+            instrument=instrument,
+            serializer=serialize_dataarray_to_da00,
+            logger=self._logger,
+        )
+        roi_publisher = ROIPublisher(sink=roi_sink, logger=self._logger)
+
         self._plotting_controller = PlottingController(
             job_service=self._job_service,
             config_service=self._config_service,
             stream_manager=self._stream_manager,
             logger=self._logger,
+            roi_publisher=roi_publisher,
         )
         self._orchestrator = Orchestrator(
             self._setup_kafka_consumer(instrument=instrument, dev=dev),
