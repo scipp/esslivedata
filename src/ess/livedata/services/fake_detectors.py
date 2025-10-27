@@ -51,7 +51,7 @@ class FakeDetectorSource(MessageSource[sc.Dataset]):
     ):
         self._logger = logger or logging.getLogger(__name__)
         self._instrument = instrument
-        self._config = get_config(instrument).detectors_config['fakes']
+        self._config = get_config(instrument).detector_fakes
         self._rng = np.random.default_rng()
         self._tof = sc.linspace('tof', 0, 71_000_000, num=50, unit='ns')
         self._interval_ns = interval_ns

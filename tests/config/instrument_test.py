@@ -90,24 +90,26 @@ class TestInstrument:
         assert instrument.f144_attribute_registry == f144_registry
         assert instrument.active_namespace == "custom_namespace"
 
-    def test_add_detector_with_explicit_number(self):
-        """Test adding detector with explicit detector number."""
-        instrument = Instrument(name="test_instrument")
+    def test_configure_detector_with_explicit_number(self):
+        """Test configuring detector with explicit detector number."""
+        instrument = Instrument(name="test_instrument", detector_names=["detector1"])
         detector_number = sc.array(dims=['detector'], values=[1, 2, 3])
 
-        instrument.add_detector("detector1", detector_number)
+        instrument.configure_detector("detector1", detector_number)
 
         assert "detector1" in instrument.detector_names
         assert sc.identical(
             instrument.get_detector_number("detector1"), detector_number
         )
 
-    def test_add_detector_without_number_fails_without_nexus(self):
-        """Test adding detector without number fails when no nexus file available."""
-        instrument = Instrument(name="nonexistent_instrument")
+    def test_configure_detector_fails_if_not_in_detector_names(self):
+        """Test that configure_detector fails if detector not in detector_names."""
+        instrument = Instrument(name="test_instrument")
 
-        with pytest.raises(ValueError, match="Nexus file not set or found"):
-            instrument.add_detector("detector1")
+        with pytest.raises(ValueError, match="not in declared detector_names"):
+            instrument.configure_detector(
+                "detector1", sc.array(dims=['detector'], values=[1, 2, 3])
+            )
 
     def test_get_detector_number_for_nonexistent_detector(self):
         """Test getting detector number for non-existent detector raises KeyError."""
@@ -116,20 +118,27 @@ class TestInstrument:
         with pytest.raises(KeyError):
             instrument.get_detector_number("nonexistent_detector")
 
-    def test_add_detector_with_detector_numbers_from_nexus_file(self):
-        instrument = Instrument(name="dream")
-        instrument.add_detector("mantle_detector")
+    def test_load_factories_loads_detector_numbers_from_nexus_file(self):
+        """Test that load_factories automatically loads detector_numbers from nexus."""
+        instrument = Instrument(name="dream", detector_names=["mantle_detector"])
+        # Before load_factories, detector_number is not available
+        with pytest.raises(KeyError):
+            instrument.get_detector_number("mantle_detector")
+        # load_factories should load it from nexus
+        instrument.load_factories()
         detector_number = instrument.get_detector_number("mantle_detector")
         assert isinstance(detector_number, sc.Variable)
 
     def test_multiple_detectors(self):
         """Test managing multiple detectors."""
-        instrument = Instrument(name="test_instrument")
+        instrument = Instrument(
+            name="test_instrument", detector_names=["detector1", "detector2"]
+        )
         detector1_number = sc.array(dims=['detector'], values=[1, 2])
         detector2_number = sc.array(dims=['detector'], values=[3, 4, 5])
 
-        instrument.add_detector("detector1", detector1_number)
-        instrument.add_detector("detector2", detector2_number)
+        instrument.configure_detector("detector1", detector1_number)
+        instrument.configure_detector("detector2", detector2_number)
 
         assert len(instrument.detector_names) == 2
         assert "detector1" in instrument.detector_names
@@ -141,21 +150,12 @@ class TestInstrument:
             instrument.get_detector_number("detector2"), detector2_number
         )
 
-    def test_register_workflow_decorator(self):
-        """Test workflow registration decorator functionality."""
+    def test_register_spec_and_attach_factory(self):
+        """Test two-phase spec registration and factory attachment."""
         instrument = Instrument(name="test_instrument")
 
-        # Create a simple factory function
-        def simple_processor_factory(source_name: str) -> Workflow:
-            # Return a mock processor for testing
-            class MockProcessor(Workflow):
-                def __call__(self, *args, **kwargs):
-                    return {"source": source_name}
-
-            return MockProcessor()
-
-        # Register the workflow
-        decorator = instrument.register_workflow(
+        # Phase 1: Register spec
+        handle = instrument.register_spec(
             namespace="test_namespace",
             name="test_workflow",
             version=1,
@@ -164,13 +164,7 @@ class TestInstrument:
             source_names=["source1", "source2"],
         )
 
-        # Apply decorator
-        registered_factory = decorator(simple_processor_factory)
-
-        # Verify the factory is returned unchanged
-        assert registered_factory is simple_processor_factory
-
-        # Verify it was registered in the processor factory
+        # Verify spec is registered
         specs = instrument.workflow_factory
         assert len(specs) == 1
         spec = next(iter(specs.values()))
@@ -183,23 +177,29 @@ class TestInstrument:
         assert spec.source_names == ["source1", "source2"]
         assert spec.aux_sources is None
 
-    def test_register_workflow_with_defaults(self):
-        """Test workflow registration with default values."""
-        instrument = Instrument(name="test_instrument")
-
-        def simple_factory() -> Workflow:
+        # Phase 2: Attach factory
+        def simple_processor_factory(source_name: str) -> Workflow:
+            # Return a mock processor for testing
             class MockProcessor(Workflow):
                 def __call__(self, *args, **kwargs):
-                    return {}
+                    return {"source": source_name}
 
             return MockProcessor()
 
-        decorator = instrument.register_workflow(
+        # Attach factory using decorator
+        decorator = handle.attach_factory()
+        registered_factory = decorator(simple_processor_factory)
+
+        # Verify the factory is returned unchanged
+        assert registered_factory is simple_processor_factory
+
+    def test_register_spec_with_defaults(self):
+        """Test spec registration with default values."""
+        instrument = Instrument(name="test_instrument")
+
+        instrument.register_spec(
             name="minimal_workflow", version=1, title="Minimal Workflow"
         )
-
-        registered_factory = decorator(simple_factory)
-        assert registered_factory is simple_factory
 
         specs = instrument.workflow_factory
         assert len(specs) == 1
@@ -209,7 +209,7 @@ class TestInstrument:
         assert spec.source_names == []  # default
         assert spec.aux_sources is None  # default
 
-    def test_register_workflow_with_aux_sources_explicit(self):
+    def test_register_spec_with_aux_sources_explicit(self):
         """Test that aux_sources can be set explicitly."""
         from typing import Literal
 
@@ -221,22 +221,12 @@ class TestInstrument:
             monitor1: Literal['monitor1'] = 'monitor1'
             aux_stream: Literal['aux_stream'] = 'aux_stream'
 
-        def simple_factory() -> Workflow:
-            class MockProcessor(Workflow):
-                def __call__(self, *args, **kwargs):
-                    return {}
-
-            return MockProcessor()
-
-        decorator = instrument.register_workflow(
+        instrument.register_spec(
             name="workflow_with_aux",
             version=1,
             title="Workflow with Aux Sources",
             aux_sources=AuxSourcesModel,
         )
-
-        registered_factory = decorator(simple_factory)
-        assert registered_factory is simple_factory
 
         specs = instrument.workflow_factory
         assert len(specs) == 1
@@ -254,34 +244,129 @@ class TestInstrument:
         assert model_instance.monitor1 == 'monitor1'
         assert model_instance.aux_stream == 'aux_stream'
 
-    def test_multiple_workflow_registrations(self):
-        """Test registering multiple workflows."""
+    def test_multiple_spec_registrations(self):
+        """Test registering multiple specs."""
         instrument = Instrument(name="test_instrument")
 
-        def factory1() -> Workflow:
-            class MockProcessor(Workflow):
-                def __call__(self, *args, **kwargs):
-                    return {"workflow": 1}
-
-            return MockProcessor()
-
-        def factory2() -> Workflow:
-            class MockProcessor(Workflow):
-                def __call__(self, *args, **kwargs):
-                    return {"workflow": 2}
-
-            return MockProcessor()
-
-        # Register two workflows
-        instrument.register_workflow(name="workflow1", version=1, title="Workflow 1")(
-            factory1
-        )
-        instrument.register_workflow(name="workflow2", version=1, title="Workflow 2")(
-            factory2
-        )
+        # Register two specs
+        instrument.register_spec(name="workflow1", version=1, title="Workflow 1")
+        instrument.register_spec(name="workflow2", version=1, title="Workflow 2")
 
         specs = instrument.workflow_factory
         assert len(specs) == 2
 
         workflow_names = {spec.name for spec in specs.values()}
         assert workflow_names == {"workflow1", "workflow2"}
+
+
+class TestInstrumentRegisterSpec:
+    """Test the new register_spec() convenience method for two-phase registration."""
+
+    def test_register_spec_returns_handle(self):
+        """Test that register_spec() returns a SpecHandle."""
+        from ess.livedata.handlers.workflow_factory import SpecHandle
+
+        instrument = Instrument(name="test_instrument")
+
+        handle = instrument.register_spec(
+            name="test_workflow", version=1, title="Test Workflow"
+        )
+
+        assert isinstance(handle, SpecHandle)
+
+    def test_register_spec_with_all_params(self):
+        """Test register_spec() with all parameters."""
+        import pydantic
+
+        from ess.livedata.handlers.workflow_factory import SpecHandle
+
+        class MyParams(pydantic.BaseModel):
+            value: int
+
+        class MyAuxSources(pydantic.BaseModel):
+            monitor: str
+
+        class MyOutputs(pydantic.BaseModel):
+            result: int
+
+        instrument = Instrument(name="test_instrument")
+
+        handle = instrument.register_spec(
+            namespace="custom_namespace",
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            description="Test description",
+            source_names=["source1", "source2"],
+            params=MyParams,
+            aux_sources=MyAuxSources,
+            outputs=MyOutputs,
+        )
+
+        assert isinstance(handle, SpecHandle)
+
+        # Verify spec was registered
+        spec_id = handle.workflow_id
+        spec = instrument.workflow_factory[spec_id]
+        assert spec.instrument == "test_instrument"
+        assert spec.namespace == "custom_namespace"
+        assert spec.name == "test_workflow"
+        assert spec.version == 1
+        assert spec.title == "Test Workflow"
+        assert spec.description == "Test description"
+        assert spec.source_names == ["source1", "source2"]
+        assert spec.params is MyParams
+        assert spec.aux_sources is MyAuxSources
+        assert spec.outputs is MyOutputs
+
+    def test_register_spec_with_defaults(self):
+        """Test register_spec() with default values."""
+        instrument = Instrument(name="test_instrument")
+
+        handle = instrument.register_spec(
+            name="minimal_workflow", version=1, title="Minimal"
+        )
+
+        spec = instrument.workflow_factory[handle.workflow_id]
+        assert spec.namespace == "data_reduction"  # default
+        assert spec.description == ""  # default
+        assert spec.source_names == []  # default
+        assert spec.params is None  # default
+        assert spec.aux_sources is None  # default
+        assert spec.outputs is None  # default
+
+    def test_register_spec_then_attach_factory(self):
+        """Test two-phase registration via Instrument.register_spec()."""
+        import pydantic
+
+        class MyParams(pydantic.BaseModel):
+            value: int
+
+        instrument = Instrument(name="test_instrument")
+
+        handle = instrument.register_spec(
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            params=MyParams,
+        )
+
+        @handle.attach_factory()
+        def factory(*, params: MyParams) -> Workflow:
+            class MockProcessor(Workflow):
+                def __call__(self, *args, **kwargs):
+                    return {"value": params.value}
+
+            return MockProcessor()
+
+        # Verify factory was attached
+        from ess.livedata.config.workflow_spec import WorkflowConfig
+
+        config = WorkflowConfig(identifier=handle.workflow_id, params={"value": 42})
+        processor = instrument.workflow_factory.create(
+            source_name="any-source", config=config
+        )
+        # Verify processor has the Workflow protocol methods
+        assert hasattr(processor, 'accumulate')
+        assert hasattr(processor, 'finalize')
+        assert hasattr(processor, 'clear')

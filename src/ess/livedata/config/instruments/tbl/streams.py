@@ -1,30 +1,17 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""
+TBL instrument stream mapping configuration.
+"""
 
-import scipp as sc
-
-from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.env import StreamingEnv
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
-from ._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
-
-instrument = Instrument(name='tbl')
-instrument_registry.register(instrument)
+from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
 
 # Note: Panel size is fake and does not correspond to production setting
-detectors_config = {
-    'detectors': {
-        'Detector': {
-            'detector_name': 'tbl_detector_tpx3',
-            'detector_number': sc.arange('yx', 0, 128**2, unit=None).fold(
-                dim='yx', sizes={'y': -1, 'x': 128}
-            ),
-        }
-    },
-    'fakes': {
-        'tbl_detector_tpx3': (1, 128**2),
-    },
+detector_fakes = {
+    'tbl_detector_tpx3': (1, 128**2),
 }
 
 
@@ -56,7 +43,7 @@ def _make_tbl_detectors() -> StreamLUT:
 
 stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
-        'tbl', detector_names=list(detectors_config['fakes'])
+        'tbl', detector_names=list(detector_fakes)
     ),
     StreamingEnv.PROD: StreamMapping(
         **make_common_stream_mapping_inputs(instrument='tbl'),

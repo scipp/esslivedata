@@ -12,43 +12,15 @@ from __future__ import annotations
 from collections.abc import Hashable
 from typing import Any
 
-import pydantic
 import scipp as sc
 
 from ess.reduce.live import raw
 
-from .. import parameter_models
 from ..config import models
 from ..config.roi_names import get_roi_mapper
+from .detector_view_specs import DetectorViewParams
 from .roi_histogram import ROIHistogram
 from .workflow_factory import Workflow
-
-
-class DetectorViewParams(pydantic.BaseModel):
-    pixel_weighting: models.PixelWeighting = pydantic.Field(
-        title="Pixel Weighting",
-        description="Whether to apply pixel weighting based on the number of pixels "
-        "contributing to each screen pixel.",
-        default=models.PixelWeighting(
-            enabled=False, method=models.WeightingMethod.PIXEL_NUMBER
-        ),
-    )
-    # TODO split out the enabled flag?
-    toa_range: parameter_models.TOARange = pydantic.Field(
-        title="Time of Arrival Range",
-        description="Time of arrival range for detector data.",
-        default=parameter_models.TOARange(),
-    )
-    toa_edges: parameter_models.TOAEdges = pydantic.Field(
-        title="Time of Arrival Edges",
-        description="Time of arrival edges for histogramming.",
-        default=parameter_models.TOAEdges(
-            start=0.0,
-            stop=1000.0 / 14,
-            num_bins=100,
-            unit=parameter_models.TimeUnit.MS,
-        ),
-    )
 
 
 class DetectorView(Workflow):

@@ -101,7 +101,9 @@ class TestWorkflowFactory:
     def test_register_adds_workflow_spec(self, workflow_id, workflow_spec):
         factory = WorkflowFactory()
 
-        @factory.register(workflow_spec)
+        handle = factory.register_spec(workflow_spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -115,7 +117,9 @@ class TestWorkflowFactory:
     def test_register_with_source_names(self, workflow_id, workflow_spec_with_sources):
         factory = WorkflowFactory()
 
-        @factory.register(workflow_spec_with_sources)
+        handle = factory.register_spec(workflow_spec_with_sources)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -125,20 +129,24 @@ class TestWorkflowFactory:
     def test_register_duplicate_id_raises_error(self, workflow_id, workflow_spec):
         factory = WorkflowFactory()
 
-        @factory.register(workflow_spec)
+        handle = factory.register_spec(workflow_spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
         with pytest.raises(
             ValueError,
-            match=f"Workflow ID '{workflow_id}' is already registered.",
+            match="already registered",
         ):
-            factory.register(workflow_spec)(lambda: make_dummy_workflow())
+            factory.register_spec(workflow_spec)
 
     def test_create_returns_stream_processor(self, workflow_id, workflow_spec):
         factory = WorkflowFactory()
 
-        @factory.register(workflow_spec)
+        handle = factory.register_spec(workflow_spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -165,7 +173,9 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func(*, source_name):
             return make_dummy_workflow_with_source(source_name=source_name)
 
@@ -188,10 +198,12 @@ class TestWorkflowFactory:
             version=workflow_id.version,
             title="test-workflow",
             description="Test",
-            params=None,
+            params=MyParams,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func(*, params: MyParams):
             return make_dummy_workflow_with_params(params=params)
 
@@ -216,10 +228,12 @@ class TestWorkflowFactory:
             version=workflow_id.version,
             title="test-workflow",
             description="Test",
-            params=None,  # This will be auto-detected by the factory
+            params=MyParams,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func(*, params: MyParams):
             return make_dummy_workflow_with_params(params=params)
 
@@ -265,7 +279,9 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -307,11 +323,14 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec1)
+        handle1 = factory.register_spec(spec1)
+        handle2 = factory.register_spec(spec2)
+
+        @handle1.attach_factory()
         def factory_func1():
             return make_dummy_workflow()
 
-        @factory.register(spec2)
+        @handle2.attach_factory()
         def factory_func2():
             return make_dummy_workflow()
 
@@ -323,7 +342,9 @@ class TestWorkflowFactory:
     def test_mapping_interface(self, workflow_id, workflow_spec):
         factory = WorkflowFactory()
 
-        @factory.register(workflow_spec)
+        handle = factory.register_spec(workflow_spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -367,11 +388,14 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec1)
+        handle1 = factory.register_spec(spec1)
+        handle2 = factory.register_spec(spec2)
+
+        @handle1.attach_factory()
         def factory_func1():
             return make_dummy_workflow()
 
-        @factory.register(spec2)
+        @handle2.attach_factory()
         def factory_func2():
             return make_dummy_workflow()
 
@@ -408,7 +432,9 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -440,7 +466,9 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -494,11 +522,14 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec1)
+        handle1 = factory.register_spec(spec1)
+        handle2 = factory.register_spec(spec2)
+
+        @handle1.attach_factory()
         def factory_func1():
             return make_dummy_workflow()
 
-        @factory.register(spec2)
+        @handle2.attach_factory()
         def factory_func2():
             return make_dummy_workflow()
 
@@ -525,7 +556,9 @@ class TestWorkflowFactory:
             aux_sources=MyAuxSources,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow_with_aux_sources()
 
@@ -555,7 +588,9 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -582,7 +617,9 @@ class TestWorkflowFactory:
             params=None,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow()
 
@@ -617,7 +654,9 @@ class TestWorkflowFactory:
             aux_sources=MyAuxSources,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow_with_aux_sources()
 
@@ -650,10 +689,284 @@ class TestWorkflowFactory:
             aux_sources=MyAuxSources,
         )
 
-        @factory.register(spec)
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
         def factory_func():
             return make_dummy_workflow_with_aux_sources()
 
         # Check that aux_sources type was set in spec
         stored_spec = factory[workflow_id]
         assert stored_spec.aux_sources is MyAuxSources
+
+
+class TestTwoPhaseRegistration:
+    """Test the new two-phase registration pattern with SpecHandle."""
+
+    def test_register_spec_returns_handle(self):
+        """Test that register_spec() returns a SpecHandle."""
+        from ess.livedata.handlers.workflow_factory import SpecHandle
+
+        factory = WorkflowFactory()
+        workflow_id = WorkflowId(
+            instrument="test-instrument",
+            namespace="test-namespace",
+            name="test-workflow",
+            version=1,
+        )
+        spec = WorkflowSpec(
+            instrument=workflow_id.instrument,
+            namespace=workflow_id.namespace,
+            name=workflow_id.name,
+            version=workflow_id.version,
+            title="test-workflow",
+            description="Test",
+            params=None,
+        )
+
+        handle = factory.register_spec(spec)
+
+        assert isinstance(handle, SpecHandle)
+        assert handle.workflow_id == workflow_id
+
+    def test_register_spec_stores_spec(self):
+        """Test that register_spec() stores the spec in the factory."""
+        factory = WorkflowFactory()
+        workflow_id = WorkflowId(
+            instrument="test-instrument",
+            namespace="test-namespace",
+            name="test-workflow",
+            version=1,
+        )
+        spec = WorkflowSpec(
+            instrument=workflow_id.instrument,
+            namespace=workflow_id.namespace,
+            name=workflow_id.name,
+            version=workflow_id.version,
+            title="test-workflow",
+            description="Test",
+            params=None,
+        )
+
+        factory.register_spec(spec)
+
+        assert workflow_id in factory
+        assert factory[workflow_id] is spec
+
+    def test_register_spec_duplicate_raises_error(self):
+        """Test that registering the same spec twice raises an error."""
+        factory = WorkflowFactory()
+        workflow_id = WorkflowId(
+            instrument="test-instrument",
+            namespace="test-namespace",
+            name="test-workflow",
+            version=1,
+        )
+        spec = WorkflowSpec(
+            instrument=workflow_id.instrument,
+            namespace=workflow_id.namespace,
+            name=workflow_id.name,
+            version=workflow_id.version,
+            title="test-workflow",
+            description="Test",
+            params=None,
+        )
+
+        factory.register_spec(spec)
+
+        with pytest.raises(ValueError, match="already registered"):
+            factory.register_spec(spec)
+
+    def test_attach_factory_via_handle(self):
+        """Test attaching factory via SpecHandle.attach_factory()."""
+        factory = WorkflowFactory()
+        workflow_id = WorkflowId(
+            instrument="test-instrument",
+            namespace="test-namespace",
+            name="test-workflow",
+            version=1,
+        )
+        spec = WorkflowSpec(
+            instrument=workflow_id.instrument,
+            namespace=workflow_id.namespace,
+            name=workflow_id.name,
+            version=workflow_id.version,
+            title="test-workflow",
+            description="Test",
+            params=None,
+        )
+
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
+        def factory_func():
+            return make_dummy_workflow()
+
+        # Spec should be accessible
+        assert workflow_id in factory
+
+        # Should be able to create workflow
+        config = WorkflowConfig(identifier=workflow_id)
+        processor = factory.create(source_name="any-source", config=config)
+        assert isinstance(processor, StreamProcessor)
+
+    def test_attach_factory_with_params(self):
+        """Test attaching factory with params type hint."""
+        factory = WorkflowFactory()
+        workflow_id = WorkflowId(
+            instrument="test-instrument",
+            namespace="test-namespace",
+            name="test-workflow",
+            version=1,
+        )
+        spec = WorkflowSpec(
+            instrument=workflow_id.instrument,
+            namespace=workflow_id.namespace,
+            name=workflow_id.name,
+            version=workflow_id.version,
+            title="test-workflow",
+            description="Test",
+            params=MyParams,  # Explicit params!
+        )
+
+        handle = factory.register_spec(spec)
+
+        @handle.attach_factory()
+        def factory_func(*, params: MyParams):
+            return make_dummy_workflow_with_params(params=params)
+
+        # Should be able to create workflow with params
+        config = WorkflowConfig(
+            identifier=workflow_id, params={"value": 100, "name": "custom"}
+        )
+        processor = factory.create(source_name="any-source", config=config)
+        assert isinstance(processor, StreamProcessor)
+
+    def test_attach_factory_params_type_mismatch_raises_error(self):
+        """Test that type mismatch between spec and factory params raises an error."""
+        factory = WorkflowFactory()
+        workflow_id = WorkflowId(
+            instrument="test-instrument",
+            namespace="test-namespace",
+            name="test-workflow",
+            version=1,
+        )
+
+        class OtherParams(BaseModel):
+            other: str
+
+        spec = WorkflowSpec(
+            instrument=workflow_id.instrument,
+            namespace=workflow_id.namespace,
+            name=workflow_id.name,
+            version=workflow_id.version,
+            title="test-workflow",
+            description="Test",
+            params=MyParams,  # Spec expects MyParams
+        )
+
+        handle = factory.register_spec(spec)
+
+        with pytest.raises(TypeError, match="Params type mismatch"):
+
+            @handle.attach_factory()
+            def factory_func(*, params: OtherParams):  # Factory has OtherParams
+                return make_dummy_workflow_with_params(params=params)
+
+    def test_attach_factory_spec_has_params_factory_has_none_raises_error(self):
+        """Test error when spec has params but factory doesn't."""
+        factory = WorkflowFactory()
+        workflow_id = WorkflowId(
+            instrument="test-instrument",
+            namespace="test-namespace",
+            name="test-workflow",
+            version=1,
+        )
+        spec = WorkflowSpec(
+            instrument=workflow_id.instrument,
+            namespace=workflow_id.namespace,
+            name=workflow_id.name,
+            version=workflow_id.version,
+            title="test-workflow",
+            description="Test",
+            params=MyParams,  # Spec has params
+        )
+
+        handle = factory.register_spec(spec)
+
+        with pytest.raises(TypeError, match="Spec has params but factory has none"):
+
+            @handle.attach_factory()
+            def factory_func():  # Factory has no params
+                return make_dummy_workflow()
+
+    def test_attach_factory_spec_has_none_factory_has_params_raises_error(self):
+        """Test error when spec has no params but factory does."""
+        factory = WorkflowFactory()
+        workflow_id = WorkflowId(
+            instrument="test-instrument",
+            namespace="test-namespace",
+            name="test-workflow",
+            version=1,
+        )
+        spec = WorkflowSpec(
+            instrument=workflow_id.instrument,
+            namespace=workflow_id.namespace,
+            name=workflow_id.name,
+            version=workflow_id.version,
+            title="test-workflow",
+            description="Test",
+            params=None,  # Spec has no params
+        )
+
+        handle = factory.register_spec(spec)
+
+        with pytest.raises(TypeError, match="Factory has params but spec has none"):
+
+            @handle.attach_factory()
+            def factory_func(*, params: MyParams):  # Factory has params
+                return make_dummy_workflow_with_params(params=params)
+
+    def test_attach_factory_without_registered_spec_raises_error(self):
+        """Test that attach_factory() raises error if spec not registered."""
+        factory = WorkflowFactory()
+        workflow_id = WorkflowId(
+            instrument="test-instrument",
+            namespace="test-namespace",
+            name="test-workflow",
+            version=1,
+        )
+
+        with pytest.raises(ValueError, match="not registered"):
+            factory.attach_factory(workflow_id)
+
+    def test_spec_params_immutable_after_registration(self):
+        """Test that spec.params is not mutated after register_spec()."""
+        factory = WorkflowFactory()
+        workflow_id = WorkflowId(
+            instrument="test-instrument",
+            namespace="test-namespace",
+            name="test-workflow",
+            version=1,
+        )
+        spec = WorkflowSpec(
+            instrument=workflow_id.instrument,
+            namespace=workflow_id.namespace,
+            name=workflow_id.name,
+            version=workflow_id.version,
+            title="test-workflow",
+            description="Test",
+            params=MyParams,  # Explicit params
+        )
+
+        handle = factory.register_spec(spec)
+
+        # Verify params is still MyParams
+        assert factory[workflow_id].params is MyParams
+
+        @handle.attach_factory()
+        def factory_func(*, params: MyParams):
+            return make_dummy_workflow_with_params(params=params)
+
+        # Verify params is still MyParams (not mutated)
+        assert factory[workflow_id].params is MyParams

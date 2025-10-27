@@ -8,7 +8,6 @@ from functools import partial
 from typing import Any, NoReturn
 
 from ess.livedata.config import instrument_registry
-from ess.livedata.config.instruments import get_config
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.core.message_batcher import NaiveMessageBatcher
 from ess.livedata.core.orchestrating_processor import OrchestratingProcessor
@@ -31,10 +30,11 @@ def make_timeseries_service_builder(
         .with_livedata_config_route()
         .build()
     )
-    _ = get_config(instrument)  # Load the module to register the instrument
+    instrument_obj = instrument_registry[instrument]
+    instrument_obj.load_factories()
     service_name = 'timeseries'
     preprocessor_factory = LogdataHandlerFactory(
-        instrument=instrument_registry[instrument],
+        instrument=instrument_obj,
         attribute_registry=attribute_registry,
     )
     # The SimpleMessageBatcher used by default by OrchestratingProcessor) processes

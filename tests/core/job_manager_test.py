@@ -1292,7 +1292,7 @@ class TestJobFactoryRender:
         instrument = Instrument(name='test')
         instrument.active_namespace = 'data_reduction'
 
-        @instrument.register_workflow(
+        handle = instrument.register_spec(
             name='test_workflow',
             version=1,
             title='Test',
@@ -1300,6 +1300,8 @@ class TestJobFactoryRender:
             source_names=['detector1'],
             aux_sources=TestAuxSources,
         )
+
+        @handle.attach_factory()
         def test_workflow():
             return FakeProcessor()
 
@@ -1339,7 +1341,7 @@ class TestJobFactoryRender:
         instrument = Instrument(name='test')
         instrument.active_namespace = 'data_reduction'
 
-        @instrument.register_workflow(
+        handle = instrument.register_spec(
             name='default_workflow',
             version=1,
             title='Default',
@@ -1347,6 +1349,8 @@ class TestJobFactoryRender:
             source_names=['detector1'],
             aux_sources=DefaultAuxSources,
         )
+
+        @handle.attach_factory()
         def default_workflow():
             return FakeProcessor()
 
@@ -1381,13 +1385,15 @@ class TestJobFactoryRender:
         instrument = Instrument(name='test')
         instrument.active_namespace = 'data_reduction'
 
-        @instrument.register_workflow(
+        handle = instrument.register_spec(
             name='no_aux_workflow',
             version=1,
             title='No Aux',
             description='No aux sources',
             source_names=['detector1'],
         )
+
+        @handle.attach_factory()
         def no_aux_workflow():
             return FakeProcessor()
 
@@ -1420,7 +1426,7 @@ class TestJobFactoryRender:
         instrument = Instrument(name='test')
         instrument.active_namespace = 'data_reduction'
 
-        @instrument.register_workflow(
+        handle = instrument.register_spec(
             name='optional_aux_workflow',
             version=1,
             title='Optional Aux',
@@ -1428,6 +1434,8 @@ class TestJobFactoryRender:
             source_names=['detector1'],
             aux_sources=OptionalAuxSources,
         )
+
+        @handle.attach_factory()
         def optional_aux_workflow():
             return FakeProcessor()
 
@@ -1468,7 +1476,7 @@ class TestJobFactoryRender:
         instrument = Instrument(name='test')
         instrument.active_namespace = 'data_reduction'
 
-        @instrument.register_workflow(
+        handle = instrument.register_spec(
             name='source_prefix_workflow',
             version=1,
             title='Source Prefix',
@@ -1476,6 +1484,8 @@ class TestJobFactoryRender:
             source_names=['detector1', 'detector2'],
             aux_sources=SourcePrefixedAuxSources,
         )
+
+        @handle.attach_factory()
         def source_prefix_workflow():
             return FakeProcessor()
 
@@ -1524,7 +1534,7 @@ class TestJobFactoryRender:
         instrument = Instrument(name='test')
         instrument.active_namespace = 'data_reduction'
 
-        @instrument.register_workflow(
+        handle = instrument.register_spec(
             name='defaulted_aux_workflow',
             version=1,
             title='Defaulted Aux',
@@ -1532,6 +1542,8 @@ class TestJobFactoryRender:
             source_names=['detector1'],
             aux_sources=DefaultedAuxSources,
         )
+
+        @handle.attach_factory()
         def defaulted_aux_workflow():
             return FakeProcessor()
 

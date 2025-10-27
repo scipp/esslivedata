@@ -2,16 +2,45 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
 import numpy as np
+import pytest
 import scipp as sc
 from scipp.testing import assert_identical
 from scippnexus import NXdetector
 
-from ess.livedata.config.instruments import bifrost
-from ess.reduce.nexus.types import CalibratedBeamline, NeXusData, SampleRun
+from ess.livedata.config.instruments.bifrost import specs
+from ess.livedata.config.instruments.bifrost.factories import (
+    _create_base_reduction_workflow,
+)
+from ess.reduce.nexus.types import (
+    CalibratedBeamline,
+    NeXusData,
+    SampleRun,
+)
 
 
-def test_workflow_produces_detector_with_consecutive_detector_number():
-    wf = bifrost.reduction_workflow
+@pytest.fixture
+def bifrost_workflow():
+    """
+    Create and configure the base reduction workflow for tests.
+
+    Returns a tuple of (workflow, DetectorRegionCounts) where the workflow
+    has the detector_ratemeter function already inserted.
+    """
+    (
+        workflow,
+        DetectorRegionCounts,
+        detector_ratemeter,
+        _SpectrumView,
+        _SpectrumViewTimeBins,
+        _SpectrumViewPixelsPerTube,
+        _make_spectrum_view,
+    ) = _create_base_reduction_workflow()
+    workflow.insert(detector_ratemeter)
+    return workflow, DetectorRegionCounts
+
+
+def test_workflow_produces_detector_with_consecutive_detector_number(bifrost_workflow):
+    wf, _DetectorRegionCounts = bifrost_workflow
     da = wf.compute(CalibratedBeamline[SampleRun])
     assert_identical(
         da.coords['detector_number'].transpose(da.dims),
@@ -112,80 +141,84 @@ def _make_test_event_data(
 class TestDetectorRatemeter:
     """Tests for the detector ratemeter workflow."""
 
-    def test_ratemeter_sums_events_in_selected_arc(self):
+    def test_ratemeter_sums_events_in_selected_arc(self, bifrost_workflow):
         """Test that ratemeter correctly sums events in the selected arc."""
+        reduction_workflow, DetectorRegionCounts = bifrost_workflow
         # Create test data with 100 events in arc 2
         nexus_data = _make_test_event_data(arc_events={2: 100})
 
         # Set up workflow with arc 2 selected
-        wf = bifrost.reduction_workflow.copy()
-        region_params = bifrost.DetectorRatemeterRegionParams(
-            arc=bifrost.ArcEnergy.ARC_3_8,  # Arc index 2
+        wf = reduction_workflow.copy()
+        region_params = specs.DetectorRatemeterRegionParams(
+            arc=specs.ArcEnergy.ARC_3_8,  # Arc index 2
             pixel_start=0,
             pixel_stop=900,
         )
         wf[NeXusData[NXdetector, SampleRun]] = nexus_data
-        wf[bifrost.DetectorRatemeterRegionParams] = region_params
+        wf[specs.DetectorRatemeterRegionParams] = region_params
 
         # Compute result
-        result = wf.compute(bifrost.DetectorRegionCounts)
+        result = wf.compute(DetectorRegionCounts)
 
         # Check that we get the expected count
         assert result.value == 100
         assert result.variance == 100  # Poisson statistics
 
-    def test_ratemeter_with_pixel_range_selection(self):
+    def test_ratemeter_with_pixel_range_selection(self, bifrost_workflow):
         """Test that pixel range selection works correctly."""
+        reduction_workflow, DetectorRegionCounts = bifrost_workflow
         # Create test data with events evenly distributed across arc 0
         nexus_data = _make_test_event_data(arc_events={0: 900})
 
         # Select first half of pixels (0-450)
-        wf = bifrost.reduction_workflow.copy()
-        region_params = bifrost.DetectorRatemeterRegionParams(
-            arc=bifrost.ArcEnergy.ARC_2_7,  # Arc index 0
+        wf = reduction_workflow.copy()
+        region_params = specs.DetectorRatemeterRegionParams(
+            arc=specs.ArcEnergy.ARC_2_7,  # Arc index 0
             pixel_start=0,
             pixel_stop=450,
         )
         wf[NeXusData[NXdetector, SampleRun]] = nexus_data
-        wf[bifrost.DetectorRatemeterRegionParams] = region_params
+        wf[specs.DetectorRatemeterRegionParams] = region_params
 
-        result = wf.compute(bifrost.DetectorRegionCounts)
+        result = wf.compute(DetectorRegionCounts)
 
         # Should get approximately half the events (allowing some tolerance)
         assert 400 <= result.value <= 500
 
-    def test_ratemeter_with_different_arcs(self):
+    def test_ratemeter_with_different_arcs(self, bifrost_workflow):
         """Test that arc selection correctly isolates events."""
+        reduction_workflow, DetectorRegionCounts = bifrost_workflow
         # Create test data with different event counts per arc
         nexus_data = _make_test_event_data(arc_events={0: 50, 2: 150, 4: 200})
 
         # Test arc 4 (5.0 meV)
-        wf = bifrost.reduction_workflow.copy()
-        region_params = bifrost.DetectorRatemeterRegionParams(
-            arc=bifrost.ArcEnergy.ARC_5_0,  # Arc index 4
+        wf = reduction_workflow.copy()
+        region_params = specs.DetectorRatemeterRegionParams(
+            arc=specs.ArcEnergy.ARC_5_0,  # Arc index 4
             pixel_start=0,
             pixel_stop=900,
         )
         wf[NeXusData[NXdetector, SampleRun]] = nexus_data
-        wf[bifrost.DetectorRatemeterRegionParams] = region_params
+        wf[specs.DetectorRatemeterRegionParams] = region_params
 
-        result = wf.compute(bifrost.DetectorRegionCounts)
+        result = wf.compute(DetectorRegionCounts)
         assert result.value == 200
 
-    def test_ratemeter_includes_time_coordinate(self):
+    def test_ratemeter_includes_time_coordinate(self, bifrost_workflow):
         """Test that the result includes a time coordinate."""
+        reduction_workflow, DetectorRegionCounts = bifrost_workflow
         nexus_data = _make_test_event_data(arc_events={1: 50})
 
-        wf = bifrost.reduction_workflow.copy()
-        region_params = bifrost.DetectorRatemeterRegionParams(
-            arc=bifrost.ArcEnergy.ARC_3_2,  # Arc index 1
+        wf = reduction_workflow.copy()
+        region_params = specs.DetectorRatemeterRegionParams(
+            arc=specs.ArcEnergy.ARC_3_2,  # Arc index 1
             pixel_start=0,
             pixel_stop=900,
         )
         wf[NeXusData[NXdetector, SampleRun]] = nexus_data
-        wf[bifrost.DetectorRatemeterRegionParams] = region_params
+        wf[specs.DetectorRatemeterRegionParams] = region_params
 
-        result = wf.compute(bifrost.DetectorRegionCounts)
+        result = wf.compute(DetectorRegionCounts)
 
         assert 'time' in result.coords
         assert result.coords['time'].unit == 'ns'

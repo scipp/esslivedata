@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-import uuid
-
 import pytest
 import scipp as sc
 
@@ -9,19 +7,19 @@ from ess.livedata import StreamKind
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.instrument import Instrument
 from ess.livedata.config.instruments import available_instruments, get_config
-from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.handler import StreamId
 from ess.livedata.handlers.accumulators import LatestValue
 from ess.livedata.handlers.detector_data_handler import (
     DetectorHandlerFactory,
-    DetectorROIAuxSources,
     get_nexus_geometry_filename,
 )
 
 
 def get_instrument(instrument_name: str) -> Instrument:
     _ = get_config(instrument_name)  # Load the module to register the instrument
-    return instrument_registry[instrument_name]
+    instrument = instrument_registry[instrument_name]
+    instrument.load_factories()
+    return instrument
 
 
 @pytest.mark.parametrize('instrument', ['dream', 'loki'])
@@ -88,100 +86,3 @@ def test_factory_returns_none_for_unknown_stream_kinds() -> None:
     config_stream_id = StreamId(kind=StreamKind.LIVEDATA_CONFIG, name='config')
     preprocessor = factory.make_preprocessor(config_stream_id)
     assert preprocessor is None
-
-
-class TestDetectorROIAuxSources:
-    """Tests for DetectorROIAuxSources auxiliary source model."""
-
-    def test_default_roi_shape_is_rectangle(self) -> None:
-        """Test that the default ROI shape is rectangle."""
-        aux_sources = DetectorROIAuxSources()
-        assert aux_sources.roi == 'rectangle'
-
-    def test_can_select_rectangle_roi(self) -> None:
-        """Test that rectangle ROI shape can be selected."""
-        aux_sources = DetectorROIAuxSources(roi='rectangle')
-        assert aux_sources.roi == 'rectangle'
-
-    def test_validator_rejects_polygon_roi(self) -> None:
-        """Test that polygon ROI shape is rejected by validator."""
-        with pytest.raises(ValueError, match="Currently only 'rectangle' ROI shape"):
-            DetectorROIAuxSources(roi='polygon')
-
-    def test_validator_rejects_ellipse_roi(self) -> None:
-        """Test that ellipse ROI shape is rejected by validator."""
-        with pytest.raises(ValueError, match="Currently only 'rectangle' ROI shape"):
-            DetectorROIAuxSources(roi='ellipse')
-
-    def test_render_prefixes_stream_name_with_job_id_and_roi(self) -> None:
-        """Test that render() prefixes stream name with full job_id and roi_ prefix."""
-        aux_sources = DetectorROIAuxSources(roi='rectangle')
-        job_id = JobId(source_name='detector1', job_number=uuid.UUID(int=123))
-
-        rendered = aux_sources.render(job_id)
-
-        # Should prefix with source_name/job_number and roi_ prefix
-        expected_stream = f"detector1/{job_id.job_number}/roi_rectangle"
-        assert rendered == {'roi': expected_stream}
-
-    def test_render_creates_unique_streams_for_different_jobs(self) -> None:
-        """Test that different jobs get unique ROI stream names."""
-        aux_sources = DetectorROIAuxSources(roi='rectangle')
-        job_id_1 = JobId(source_name='detector1', job_number=uuid.UUID(int=111))
-        job_id_2 = JobId(source_name='detector1', job_number=uuid.UUID(int=222))
-
-        rendered_1 = aux_sources.render(job_id_1)
-        rendered_2 = aux_sources.render(job_id_2)
-
-        # Each job should get its own unique stream name
-        assert rendered_1['roi'] != rendered_2['roi']
-        assert rendered_1['roi'] == f"detector1/{job_id_1.job_number}/roi_rectangle"
-        assert rendered_2['roi'] == f"detector1/{job_id_2.job_number}/roi_rectangle"
-
-    def test_render_field_name_is_roi(self) -> None:
-        """Test that the field name in rendered dict is 'roi'."""
-        aux_sources = DetectorROIAuxSources()
-        job_id = JobId(source_name='detector1', job_number=uuid.UUID(int=789))
-
-        rendered = aux_sources.render(job_id)
-
-        # Field name should be 'roi' (what the workflow expects)
-        assert 'roi' in rendered
-        assert len(rendered) == 1
-
-    def test_model_dump_returns_roi_shape(self) -> None:
-        """Test that model_dump returns the selected ROI shape."""
-        aux_sources = DetectorROIAuxSources(roi='rectangle')
-        dumped = aux_sources.model_dump(mode='json')
-        assert dumped == {'roi': 'rectangle'}
-
-    def test_render_isolates_roi_streams_per_detector_in_multi_detector_workflow(
-        self,
-    ) -> None:
-        """
-        Test that ROI streams are unique per detector in multi-detector workflows.
-
-        When the same workflow runs on multiple detectors (same job_number),
-        each detector must get its own unique ROI stream to prevent cross-talk.
-        This is critical because job_number is shared across all detectors in
-        the same workflow run.
-        """
-        aux_sources = DetectorROIAuxSources(roi='rectangle')
-        shared_job_number = uuid.uuid4()
-
-        # Same job_number, different source_names (real multi-detector scenario)
-        job_id_mantle = JobId(source_name='mantle', job_number=shared_job_number)
-        job_id_high_res = JobId(
-            source_name='high_resolution', job_number=shared_job_number
-        )
-
-        rendered_mantle = aux_sources.render(job_id_mantle)
-        rendered_high_res = aux_sources.render(job_id_high_res)
-
-        # Each detector should get its own unique stream
-        assert rendered_mantle['roi'] != rendered_high_res['roi']
-        assert rendered_mantle['roi'] == f"mantle/{shared_job_number}/roi_rectangle"
-        assert (
-            rendered_high_res['roi']
-            == f"high_resolution/{shared_job_number}/roi_rectangle"
-        )

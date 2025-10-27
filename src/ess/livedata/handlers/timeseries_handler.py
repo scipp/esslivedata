@@ -4,21 +4,28 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Hashable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import scipp as sc
 
-from ..config.instrument import Instrument
 from ..core.handler import JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId
 from .accumulators import LogData
 from .to_nxlog import ToNXlog
 from .workflow_factory import Workflow
 
+if TYPE_CHECKING:
+    from ..config.instrument import Instrument
+
 
 class TimeseriesStreamProcessor(Workflow):
     def __init__(self) -> None:
         self._data: sc.DataArray | None = None
+
+    @staticmethod
+    def create_workflow() -> Workflow:
+        """Factory method for creating TimeseriesStreamProcessor."""
+        return TimeseriesStreamProcessor()
 
     def accumulate(self, data: dict[Hashable, sc.DataArray]) -> None:
         if len(data) != 1:
@@ -33,25 +40,6 @@ class TimeseriesStreamProcessor(Workflow):
 
     def clear(self) -> None:
         self._data = None
-
-
-def _timeseries_workflow() -> Workflow:
-    return TimeseriesStreamProcessor()
-
-
-def register_timeseries_workflows(
-    instrument: Instrument, source_names: list[str]
-) -> None:
-    """Create an Instrument with workflows for timeseries processing."""
-    register = instrument.register_workflow(
-        namespace='timeseries',
-        name='timeseries_data',
-        version=1,
-        title="Timeseries data",
-        description="Accumulated log data as timeseries.",
-        source_names=source_names,
-    )
-    register(_timeseries_workflow)
 
 
 class LogdataHandlerFactory(JobBasedPreprocessorFactoryBase[LogData, sc.DataArray]):
