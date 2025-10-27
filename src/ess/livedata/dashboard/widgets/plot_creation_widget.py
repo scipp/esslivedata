@@ -12,9 +12,9 @@ from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.workflow_controller import WorkflowController
 
+from ..plot_configuration_adapter import PlotConfigurationAdapter
 from .configuration_widget import ConfigurationModal
 from .job_status_widget import JobStatusListWidget
-from .plot_configuration_adapter import PlotConfigurationAdapter
 from .plot_grid_tab import PlotGridTab
 
 

@@ -15,8 +15,8 @@ from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.plotting import PlotterSpec
 from ess.livedata.dashboard.plotting_controller import PlottingController
 
+from ..plot_configuration_adapter import PlotConfigurationAdapter
 from .configuration_widget import ConfigurationPanel
-from .plot_configuration_adapter import PlotConfigurationAdapter
 from .wizard import Wizard, WizardState, WizardStep
 
 
