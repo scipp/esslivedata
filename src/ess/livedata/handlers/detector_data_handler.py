@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pathlib
 import re
-from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Literal
 
@@ -19,27 +18,14 @@ from .accumulators import DetectorEvents, GroupIntoPixels, LatestValue
 from .detector_view import DetectorView, DetectorViewParams
 
 
-class DetectorProcessorFactory(ABC):
+class DetectorProjection:
     """
-    Base class for detector processor factories.
+    Factory for detector projection views.
+
+    Creates detector views by projecting detector pixels onto a 2D plane
+    (xy_plane or cylinder_mantle_z).
     """
 
-    def __init__(self, *, instrument: Instrument) -> None:
-        self._instrument = instrument
-        self._window_length = 1
-
-    def make_view(self, source_name: str, params: DetectorViewParams) -> DetectorView:
-        """Factory method that will be registered as a workflow creation function."""
-        return DetectorView(
-            params=params, detector_view=self._make_rolling_view(source_name)
-        )
-
-    @abstractmethod
-    def _make_rolling_view(self, source_name: str) -> raw.RollingDetectorView:
-        """Create a RollingDetectorView for the given source name."""
-
-
-class DetectorProjection(DetectorProcessorFactory):
     def __init__(
         self,
         *,
@@ -49,18 +35,20 @@ class DetectorProjection(DetectorProcessorFactory):
         resolution: dict[str, dict[str, int]],
         resolution_scale: float = 1,
     ) -> None:
-        super().__init__(instrument=instrument)
+        self._instrument = instrument
         self._projection = projection
         self._pixel_noise = pixel_noise
         self._resolution = resolution
         self._res_scale = resolution_scale
+        self._window_length = 1
 
     def _get_resolution(self, source_name: str) -> dict[str, int]:
         aspect = self._resolution[source_name]
         return {key: value * self._res_scale for key, value in aspect.items()}
 
-    def _make_rolling_view(self, source_name: str) -> raw.RollingDetectorView:
-        return raw.RollingDetectorView.from_nexus(
+    def make_view(self, source_name: str, params: DetectorViewParams) -> DetectorView:
+        """Factory method that creates a detector view for the given source."""
+        detector_view = raw.RollingDetectorView.from_nexus(
             self._instrument.nexus_file,
             detector_name=self._instrument.get_detector_group_name(source_name),
             window=self._window_length,
@@ -68,9 +56,10 @@ class DetectorProjection(DetectorProcessorFactory):
             resolution=self._get_resolution(source_name),
             pixel_noise=self._pixel_noise,
         )
+        return DetectorView(params=params, detector_view=detector_view)
 
 
-class DetectorLogicalView(DetectorProcessorFactory):
+class DetectorLogicalView:
     """
     Factory for logical detector views with optional transform.
 
@@ -84,15 +73,18 @@ class DetectorLogicalView(DetectorProcessorFactory):
         instrument: Instrument,
         transform: Callable[[sc.DataArray], sc.DataArray] | None = None,
     ) -> None:
-        super().__init__(instrument=instrument)
+        self._instrument = instrument
         self._transform = transform
+        self._window_length = 1
 
-    def _make_rolling_view(self, source_name: str) -> raw.RollingDetectorView:
-        return raw.RollingDetectorView(
+    def make_view(self, source_name: str, params: DetectorViewParams) -> DetectorView:
+        """Factory method that creates a detector view for the given source."""
+        detector_view = raw.RollingDetectorView(
             detector_number=self._instrument.get_detector_number(source_name),
             window=self._window_length,
             projection=self._transform,
         )
+        return DetectorView(params=params, detector_view=detector_view)
 
 
 class DetectorHandlerFactory(

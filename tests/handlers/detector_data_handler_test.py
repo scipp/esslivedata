@@ -14,9 +14,9 @@ from ess.livedata.core.handler import StreamId
 from ess.livedata.handlers.accumulators import LatestValue
 from ess.livedata.handlers.detector_data_handler import (
     DetectorHandlerFactory,
-    DetectorROIAuxSources,
     get_nexus_geometry_filename,
 )
+from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
 
 
 def get_instrument(instrument_name: str) -> Instrument:

@@ -50,24 +50,18 @@ _cylinder_projection_detectors = [
 ]
 
 # Register detector view specs for cylinder projection
-cylinder_handles = register_detector_view_spec(
+cylinder_handle = register_detector_view_spec(
     instrument=instrument,
     projection='cylinder_mantle_z',
     source_names=_cylinder_projection_detectors,
 )
 
 # Register detector view specs for XY projection
-xy_handles = register_detector_view_spec(
+xy_handle = register_detector_view_spec(
     instrument=instrument,
     projection='xy_plane',
     source_names=_xy_projection_detectors,
 )
-
-# Extract individual handles for use in factories.py
-cylinder_view_handle = cylinder_handles['view']
-cylinder_roi_handle = cylinder_handles['roi']
-xy_view_handle = xy_handles['view']
-xy_roi_handle = xy_handles['roi']
 
 # Register logical view specs (mantle front layer and wire view)
 # These don't use the standard projection pattern, so we register them directly

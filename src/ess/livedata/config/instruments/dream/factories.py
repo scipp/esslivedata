@@ -92,13 +92,8 @@ def setup_factories(instrument: Instrument) -> None:
     )
 
     # Attach detector view factories using handles from specs
-    _cylinder_projection.attach_to_handle(
-        view_handle=specs.cylinder_view_handle, roi_handle=specs.cylinder_roi_handle
-    )
-
-    _xy_projection.attach_to_handle(
-        view_handle=specs.xy_view_handle, roi_handle=specs.xy_roi_handle
-    )
+    specs.cylinder_handle.attach_factory()(_cylinder_projection.make_view)
+    specs.xy_handle.attach_factory()(_xy_projection.make_view)
 
     # Create logical views for mantle detector
     _mantle_front_layer_view = DetectorLogicalView(
