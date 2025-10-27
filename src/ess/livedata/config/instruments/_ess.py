@@ -44,6 +44,24 @@ def _make_dev_beam_monitors(
     }
 
 
+def _make_livedata_topics(instrument: str) -> dict[str, str]:
+    """Create common livedata topic configuration for an instrument."""
+    return {
+        'livedata_config_topic': stream_kind_to_topic(
+            instrument=instrument, kind=StreamKind.LIVEDATA_CONFIG
+        ),
+        'livedata_data_topic': stream_kind_to_topic(
+            instrument=instrument, kind=StreamKind.LIVEDATA_DATA
+        ),
+        'livedata_roi_topic': stream_kind_to_topic(
+            instrument=instrument, kind=StreamKind.LIVEDATA_ROI
+        ),
+        'livedata_status_topic': stream_kind_to_topic(
+            instrument=instrument, kind=StreamKind.LIVEDATA_STATUS
+        ),
+    }
+
+
 def make_dev_stream_mapping(
     instrument: str,
     *,
@@ -57,15 +75,7 @@ def make_dev_stream_mapping(
         detectors=_make_dev_detectors(instrument=instrument, detectors=detector_names),
         monitors=_make_dev_beam_monitors(instrument, monitor_names=monitor_names),
         log_topics=log_topics,
-        livedata_config_topic=stream_kind_to_topic(
-            instrument=instrument, kind=StreamKind.LIVEDATA_CONFIG
-        ),
-        livedata_data_topic=stream_kind_to_topic(
-            instrument=instrument, kind=StreamKind.LIVEDATA_DATA
-        ),
-        livedata_status_topic=stream_kind_to_topic(
-            instrument=instrument, kind=StreamKind.LIVEDATA_STATUS
-        ),
+        **_make_livedata_topics(instrument),
     )
 
 
@@ -76,13 +86,5 @@ def make_common_stream_mapping_inputs(
         'instrument': instrument,
         'monitors': _make_cbm_monitors(instrument, monitor_names=monitor_names),
         'log_topics': None,
-        'livedata_config_topic': stream_kind_to_topic(
-            instrument=instrument, kind=StreamKind.LIVEDATA_CONFIG
-        ),
-        'livedata_data_topic': stream_kind_to_topic(
-            instrument=instrument, kind=StreamKind.LIVEDATA_DATA
-        ),
-        'livedata_status_topic': stream_kind_to_topic(
-            instrument=instrument, kind=StreamKind.LIVEDATA_STATUS
-        ),
+        **_make_livedata_topics(instrument),
     }

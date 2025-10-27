@@ -90,6 +90,14 @@ class RoutingAdapterBuilder:
         )
         return self
 
+    def with_livedata_roi_route(self) -> Self:
+        """Adds the livedata ROI route."""
+        self._routes[self._stream_mapping.livedata_roi_topic] = ChainedAdapter(
+            first=KafkaToDa00Adapter(stream_kind=StreamKind.LIVEDATA_ROI),
+            second=Da00ToScippAdapter(),
+        )
+        return self
+
     def with_livedata_status_route(self) -> Self:
         """Adds the livedata status route."""
         self._routes[self._stream_mapping.livedata_status_topic] = (
