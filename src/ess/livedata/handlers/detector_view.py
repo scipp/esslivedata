@@ -12,12 +12,10 @@ from __future__ import annotations
 from collections.abc import Hashable
 from typing import Any
 
-import pydantic
 import scipp as sc
 
 from ess.reduce.live import raw
 
-from .. import parameter_models
 from ..config import models
 from ..config.roi_names import get_roi_mapper
 from .detector_view_specs import DetectorViewParams
