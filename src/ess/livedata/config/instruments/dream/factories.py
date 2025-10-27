@@ -92,11 +92,11 @@ def setup_factories(instrument: Instrument) -> None:
     )
 
     # Attach detector view factories using handles from specs
-    _cylinder_projection.attach_to_handles(
+    _cylinder_projection.attach_to_handle(
         view_handle=specs.cylinder_view_handle, roi_handle=specs.cylinder_roi_handle
     )
 
-    _xy_projection.attach_to_handles(
+    _xy_projection.attach_to_handle(
         view_handle=specs.xy_view_handle, roi_handle=specs.xy_roi_handle
     )
 

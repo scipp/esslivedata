@@ -27,7 +27,10 @@ def setup_factories(instrument: Instrument) -> None:
     """Initialize ODIN-specific factories and workflows."""
     import h5py
 
-    from ess.livedata.handlers.detector_data_handler import DetectorProjection
+    from ess.livedata.handlers.detector_data_handler import (
+        DetectorProjection,
+        DetectorLogicalView,
+    )
 
     # Patch the Odin geometry file with:
     # 1. Non-zero z (needed for detector xy projection)
@@ -56,8 +59,6 @@ def setup_factories(instrument: Instrument) -> None:
     )
 
     # Detector view configuration
-    from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
-
     _panel_0_view = DetectorLogicalView(instrument=instrument, transform=_resize_image)
 
     specs.panel_0_view_handle.attach_factory()(_panel_0_view.make_view)

@@ -20,8 +20,7 @@ instrument = Instrument(
 # Register instrument
 instrument_registry.register(instrument)
 
-# Register detector view spec for the panel_xy view (no factory yet)
-# Note: The factory will be attached in factories.py
+# Register detector view spec for the panel_xy view
 panel_xy_view_handle = instrument.register_spec(
     namespace='detector_data',
     name='panel_xy',

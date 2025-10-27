@@ -6,100 +6,33 @@ import pathlib
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from typing import Literal
 
-import pydantic
 import scipp as sc
-from pydantic import field_validator
 
 from ess.reduce.live import raw
 
 from ..config.instrument import Instrument
-from ..config.workflow_spec import AuxSourcesBase, JobId
 from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import DetectorEvents, GroupIntoPixels, LatestValue
 from .detector_view import DetectorView, DetectorViewParams
 
 
-class DetectorROIAuxSources(AuxSourcesBase):
-    """
-    Auxiliary source model for ROI configuration in detector workflows.
-
-    Allows users to select between different ROI shapes (rectangle, polygon, ellipse).
-    The render() method prefixes stream names with the job number to create job-specific
-    ROI configuration streams, since each job instance needs its own ROI.
-    """
-
-    roi: Literal['rectangle', 'polygon', 'ellipse'] = pydantic.Field(
-        default='rectangle',
-        description='Shape to use for the region of interest (ROI).',
-    )
-
-    @field_validator('roi')
-    @classmethod
-    def validate_roi_shape(cls, v: str) -> str:
-        """Validate that only rectangle is currently supported."""
-        if v != 'rectangle':
-            raise ValueError(
-                f"Currently only 'rectangle' ROI shape is supported, got '{v}'"
-            )
-        return v
-
-    def render(self, job_id: JobId) -> dict[str, str]:
-        """
-        Render ROI stream name with job-specific prefix.
-
-        Parameters
-        ----------
-        job_id:
-            Job identifier containing source_name and job_number.
-
-        Returns
-        -------
-        :
-            Mapping from field name 'roi' to job-specific stream name in the
-            format '{source_name}/{job_number}/roi_{shape}' (e.g.,
-            'mantle/abc-123/roi_rectangle'). The source_name ensures ROI
-            streams are unique per detector in multi-detector workflows where
-            the same job_number is shared across detectors.
-        """
-        base = self.model_dump(mode='json')
-        return {field: f"{job_id}/roi_{stream}" for field, stream in base.items()}
-
-
-@dataclass(frozen=True, kw_only=True)
-class ViewConfig:
-    name: str
-    title: str
-    description: str
-    source_names: list[str] = field(default_factory=list)
-
-
 class DetectorProcessorFactory(ABC):
-    def __init__(self, *, instrument: Instrument, config: ViewConfig) -> None:
+    """
+    Base class for detector processor factories.
+    """
+
+    def __init__(self, *, instrument: Instrument) -> None:
         self._instrument = instrument
-        self._config = config
         self._window_length = 1
-        self._register_with_instrument(instrument)
 
     def make_view(self, source_name: str, params: DetectorViewParams) -> DetectorView:
         """Factory method that will be registered as a workflow creation function."""
         return DetectorView(
             params=params, detector_view=self._make_rolling_view(source_name)
         )
-
-    def _register_with_instrument(self, instrument: Instrument) -> None:
-        instrument.register_workflow(
-            namespace='detector_data',
-            name=self._config.name,
-            version=1,
-            title=self._config.title,
-            description=self._config.description,
-            source_names=self._config.source_names,
-            aux_sources=DetectorROIAuxSources,
-        )(self.make_view)
 
     @abstractmethod
     def _make_rolling_view(self, source_name: str) -> raw.RollingDetectorView:
@@ -116,29 +49,11 @@ class DetectorProjection(DetectorProcessorFactory):
         resolution: dict[str, dict[str, int]],
         resolution_scale: float = 1,
     ) -> None:
+        super().__init__(instrument=instrument)
         self._projection = projection
         self._pixel_noise = pixel_noise
         self._resolution = resolution
         self._res_scale = resolution_scale
-        source_names = list(resolution.keys())
-        if projection == 'xy_plane':
-            config = ViewConfig(
-                name='detector_xy_projection',
-                title='Detector XY Projection',
-                description='Projection of a detector bank onto an XY-plane.',
-                source_names=source_names,
-            )
-        elif projection == 'cylinder_mantle_z':
-            config = ViewConfig(
-                name='detector_cylinder_mantle_z',
-                title='Detector Cylinder Mantle Z Projection',
-                description='Projection of a detector bank onto a cylinder mantle '
-                'along Z-axis.',
-                source_names=source_names,
-            )
-        else:
-            raise ValueError(f'Unsupported projection: {projection}')
-        super().__init__(instrument=instrument, config=config)
 
     def _get_resolution(self, source_name: str) -> dict[str, int]:
         aspect = self._resolution[source_name]
@@ -155,22 +70,28 @@ class DetectorProjection(DetectorProcessorFactory):
         )
 
 
-@dataclass(frozen=True, kw_only=True)
-class LogicalViewConfig(ViewConfig):
-    # If no projection defined, the shape of the detector_number is used.
-    transform: Callable[[sc.DataArray], sc.DataArray] | None = None
-
-
 class DetectorLogicalView(DetectorProcessorFactory):
-    def __init__(self, *, instrument: Instrument, config: LogicalViewConfig) -> None:
-        super().__init__(instrument=instrument, config=config)
-        self._config = config
+    """
+    Factory for logical detector views with optional transform.
+
+    Logical views use detector_number arrays directly, optionally applying a transform
+    function to reshape or filter the data.
+    """
+
+    def __init__(
+        self,
+        *,
+        instrument: Instrument,
+        transform: Callable[[sc.DataArray], sc.DataArray] | None = None,
+    ) -> None:
+        super().__init__(instrument=instrument)
+        self._transform = transform
 
     def _make_rolling_view(self, source_name: str) -> raw.RollingDetectorView:
         return raw.RollingDetectorView(
             detector_number=self._instrument.get_detector_number(source_name),
             window=self._window_length,
-            projection=self._config.transform,
+            projection=self._transform,
         )
 
 

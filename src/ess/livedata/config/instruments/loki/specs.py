@@ -12,7 +12,7 @@ import scipp as sc
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
-from ess.livedata.handlers.detector_view_specs import register_detector_view_specs
+from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
 
 
 class SansWorkflowOptions(pydantic.BaseModel):
@@ -95,7 +95,7 @@ instrument = Instrument(
 # Register instrument
 instrument_registry.register(instrument)
 
-xy_projection_handles = register_detector_view_specs(
+xy_projection_handle = register_detector_view_spec(
     instrument=instrument,
     projection='xy_plane',
     source_names=detector_names,

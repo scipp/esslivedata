@@ -12,13 +12,13 @@ class TestRegisterDetectorViewSpecs:
     def test_register_detector_view_specs_returns_handles(self):
         """Test that register_detector_view_specs() returns handles."""
         from ess.livedata.handlers.detector_view_specs import (
-            register_detector_view_specs,
+            register_detector_view_spec,
         )
 
         instrument = Instrument(name="test_instrument")
         source_names = ["detector1", "detector2"]
 
-        handles = register_detector_view_specs(
+        handles = register_detector_view_spec(
             instrument=instrument, projection="xy_plane", source_names=source_names
         )
 
@@ -31,18 +31,18 @@ class TestRegisterDetectorViewSpecs:
     def test_register_multiple_projections_via_separate_calls(self):
         """Test registering multiple projections via separate calls."""
         from ess.livedata.handlers.detector_view_specs import (
-            register_detector_view_specs,
+            register_detector_view_spec,
         )
 
         instrument = Instrument(name="test_instrument")
         source_names = ["detector1"]
 
-        xy_handles = register_detector_view_specs(
+        xy_handles = register_detector_view_spec(
             instrument=instrument,
             projection="xy_plane",
             source_names=source_names,
         )
-        cylinder_handles = register_detector_view_specs(
+        cylinder_handles = register_detector_view_spec(
             instrument=instrument,
             projection="cylinder_mantle_z",
             source_names=source_names,
@@ -60,13 +60,13 @@ class TestRegisterDetectorViewSpecs:
     def test_specs_registered_in_workflow_factory(self):
         """Test that specs are actually registered in the workflow factory."""
         from ess.livedata.handlers.detector_view_specs import (
-            register_detector_view_specs,
+            register_detector_view_spec,
         )
 
         instrument = Instrument(name="test_instrument")
         source_names = ["detector1"]
 
-        handles = register_detector_view_specs(
+        handles = register_detector_view_spec(
             instrument=instrument, projection="xy_plane", source_names=source_names
         )
 
@@ -92,13 +92,13 @@ class TestRegisterDetectorViewSpecs:
         from ess.livedata.handlers.detector_view_specs import (
             DetectorViewParams,
             ROIHistogramParams,
-            register_detector_view_specs,
+            register_detector_view_spec,
         )
 
         instrument = Instrument(name="test_instrument")
         source_names = ["detector1"]
 
-        handles = register_detector_view_specs(
+        handles = register_detector_view_spec(
             instrument=instrument, projection="xy_plane", source_names=source_names
         )
 

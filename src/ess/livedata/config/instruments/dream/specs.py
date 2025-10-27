@@ -15,7 +15,7 @@ from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import (
     DetectorViewParams,
-    register_detector_view_specs,
+    register_detector_view_spec,
 )
 
 # Detector names for DREAM data reduction workflows
@@ -50,14 +50,14 @@ _cylinder_projection_detectors = [
 ]
 
 # Register detector view specs for cylinder projection
-cylinder_handles = register_detector_view_specs(
+cylinder_handles = register_detector_view_spec(
     instrument=instrument,
     projection='cylinder_mantle_z',
     source_names=_cylinder_projection_detectors,
 )
 
 # Register detector view specs for XY projection
-xy_handles = register_detector_view_specs(
+xy_handles = register_detector_view_spec(
     instrument=instrument,
     projection='xy_plane',
     source_names=_xy_projection_detectors,

@@ -59,8 +59,7 @@ def setup_factories(instrument: Instrument) -> None:
         resolution_scale=12,
     )
 
-    specs.xy_projection_handles['view'].attach_factory()(_xy_projection.make_view)
-    specs.xy_projection_handles['roi'].attach_factory()(_xy_projection.make_roi)
+    specs.xy_projection_handle.attach_factory()(_xy_projection.make_view)
 
     def _transmission_from_current_run(
         data: sans_types.CleanMonitor[SampleRun, sans_types.MonitorType],

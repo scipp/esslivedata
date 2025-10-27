@@ -21,11 +21,10 @@ from .. import parameter_models
 from ..config import models
 from ..config.instrument import Instrument
 from ..handlers.workflow_factory import SpecHandle
+from ..config.workflow_spec import AuxSourcesBase, JobId
 
 
 class DetectorViewParams(pydantic.BaseModel):
-    """Parameters for detector view workflows."""
-
     pixel_weighting: models.PixelWeighting = pydantic.Field(
         title="Pixel Weighting",
         description="Whether to apply pixel weighting based on the number of pixels "
@@ -34,36 +33,11 @@ class DetectorViewParams(pydantic.BaseModel):
             enabled=False, method=models.WeightingMethod.PIXEL_NUMBER
         ),
     )
+    # TODO split out the enabled flag?
     toa_range: parameter_models.TOARange = pydantic.Field(
         title="Time of Arrival Range",
         description="Time of arrival range for detector data.",
         default=parameter_models.TOARange(),
-    )
-
-
-class LimitedRange(parameter_models.RangeModel):
-    """Model for a limited range between 0 and 1."""
-
-    start: float = parameter_models.Field(
-        ge=0.0, le=1.0, default=0.0, description="Start of the range."
-    )
-    stop: float = parameter_models.Field(
-        ge=0.0, le=1.0, default=1.0, description="Stop of the range."
-    )
-
-
-class ROIHistogramParams(pydantic.BaseModel):
-    """Parameters for ROI histogram workflows."""
-
-    x_range: LimitedRange = pydantic.Field(
-        title="X Range",
-        description="X range of the ROI as a fraction of the viewport.",
-        default=LimitedRange(start=0.0, stop=1.0),
-    )
-    y_range: LimitedRange = pydantic.Field(
-        title="Y Range",
-        description="Y range of the ROI as a fraction of the viewport.",
-        default=LimitedRange(start=0.0, stop=1.0),
     )
     toa_edges: parameter_models.TOAEdges = pydantic.Field(
         title="Time of Arrival Edges",
@@ -77,17 +51,63 @@ class ROIHistogramParams(pydantic.BaseModel):
     )
 
 
-def register_detector_view_specs(
+class DetectorROIAuxSources(AuxSourcesBase):
+    """
+    Auxiliary source model for ROI configuration in detector workflows.
+
+    Allows users to select between different ROI shapes (rectangle, polygon, ellipse).
+    The render() method prefixes stream names with the job number to create job-specific
+    ROI configuration streams, since each job instance needs its own ROI.
+    """
+
+    roi: Literal['rectangle', 'polygon', 'ellipse'] = pydantic.Field(
+        default='rectangle',
+        description='Shape to use for the region of interest (ROI).',
+    )
+
+    @pydantic.field_validator('roi')
+    @classmethod
+    def validate_roi_shape(cls, v: str) -> str:
+        """Validate that only rectangle is currently supported."""
+        if v != 'rectangle':
+            raise ValueError(
+                f"Currently only 'rectangle' ROI shape is supported, got '{v}'"
+            )
+        return v
+
+    def render(self, job_id: JobId) -> dict[str, str]:
+        """
+        Render ROI stream name with job-specific prefix.
+
+        Parameters
+        ----------
+        job_id:
+            Job identifier containing source_name and job_number.
+
+        Returns
+        -------
+        :
+            Mapping from field name 'roi' to job-specific stream name in the
+            format '{source_name}/{job_number}/roi_{shape}' (e.g.,
+            'mantle/abc-123/roi_rectangle'). The source_name ensures ROI
+            streams are unique per detector in multi-detector workflows where
+            the same job_number is shared across detectors.
+        """
+        base = self.model_dump(mode='json')
+        return {field: f"{job_id}/roi_{stream}" for field, stream in base.items()}
+
+
+def register_detector_view_spec(
     *,
     instrument: Instrument,
     projection: Literal["xy_plane", "cylinder_mantle_z"],
     source_names: list[str],
-) -> dict[str, SpecHandle]:
+) -> SpecHandle:
     """
     Register detector view specs for a given projection.
 
     This is a lightweight helper that registers workflow specs without creating
-    the actual detector view objects (which require heavy ess.reduce imports).
+    the actual detector view objects.
 
     Parameters
     ----------
@@ -101,7 +121,7 @@ def register_detector_view_specs(
     Returns
     -------
     :
-        Dictionary with 'view' and 'roi' SpecHandle entries.
+        A SpecHandle.
     """
     if projection == "xy_plane":
         name = "detector_xy_projection"
@@ -116,26 +136,13 @@ def register_detector_view_specs(
     else:
         raise ValueError(f"Unsupported projection: {projection}")
 
-    # Register view spec
-    view_handle = instrument.register_spec(
+    return instrument.register_spec(
         namespace="detector_data",
         name=name,
         version=1,
         title=title,
         description=description,
         source_names=source_names,
+        aux_sources=DetectorROIAuxSources,
         params=DetectorViewParams,
     )
-
-    # Register ROI histogram spec
-    roi_handle = instrument.register_spec(
-        namespace="detector_data",
-        name=f"{name}_roi",
-        version=1,
-        title=f"ROI Histogram: {title}",
-        description=f"ROI Histogram for {description}",
-        source_names=source_names,
-        params=ROIHistogramParams,
-    )
-
-    return {"view": view_handle, "roi": roi_handle}
