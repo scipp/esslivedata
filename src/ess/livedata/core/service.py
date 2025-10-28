@@ -50,9 +50,13 @@ class ServiceBase(ABC):
 
     def _setup_signal_handlers(self) -> None:
         """Setup handlers for graceful shutdown"""
-        signal.signal(signal.SIGTERM, self._handle_shutdown)
-        signal.signal(signal.SIGINT, self._handle_shutdown)
-        self._logger.info("Registered signal handlers")
+        # Signal handlers can only be registered in the main thread
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGTERM, self._handle_shutdown)
+            signal.signal(signal.SIGINT, self._handle_shutdown)
+            self._logger.info("Registered signal handlers")
+        else:
+            self._logger.debug("Skipping signal handler registration (not main thread)")
 
     def _handle_shutdown(self, signum: int, _: Any) -> None:
         """Handle shutdown signals"""
@@ -140,7 +144,12 @@ class Service(ServiceBase):
         """Block forever, waiting for signals"""
         while self.is_running:
             try:
-                signal.pause()
+                # signal.pause() only works in the main thread
+                if threading.current_thread() is threading.main_thread():
+                    signal.pause()
+                else:
+                    # In non-main threads, use sleep to avoid busy waiting
+                    time.sleep(1)
             except KeyboardInterrupt:
                 self.stop()
 
