@@ -269,10 +269,10 @@ class DataServiceRunner:
         """
         return self._parser
 
-    def run(
-        self,
-    ) -> NoReturn:
+    def build(self, **override_args: Any) -> Service:
+        """Build and return a service without starting it."""
         args = vars(self._parser.parse_args())
+        args.update(override_args)
 
         # Remove sink_type from args before passing to make_builder
         sink_type = args.pop('sink_type')
@@ -284,11 +284,10 @@ class DataServiceRunner:
             # In-memory transport mode
             source_topics = builder._get_topic_names_from_adapter()
             sink_topic = f"{builder.instrument}_output"
-            with builder.from_in_memory_broker(
+            return builder.from_in_memory_broker(
                 source_topics=source_topics,
                 sink_topic=sink_topic,
-            ) as service:
-                service.start()
+            )
         else:
             # Kafka transport mode
             consumer_config = load_config(
@@ -307,9 +306,14 @@ class DataServiceRunner:
                 sink = PlotToPngSink()
             sink = UnrollingSinkAdapter(sink)
 
-            with builder.from_consumer_config(
+            return builder.from_consumer_config(
                 kafka_config={**consumer_config, **kafka_upstream_config},
                 sink=sink,
                 use_background_source=True,
-            ) as service:
-                service.start()
+            )
+
+    def run(
+        self,
+    ) -> NoReturn:
+        with self.build() as service:
+            service.start()

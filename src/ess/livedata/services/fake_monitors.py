@@ -112,7 +112,7 @@ def run_service(
     mode: Literal['ev44', 'da00'],
     num_monitors: int = 2,
     log_level: int = logging.INFO,
-) -> NoReturn:
+) -> Service:
     from ess.livedata.transport_factory import create_message_sink
 
     if mode == 'ev44':
@@ -135,8 +135,9 @@ def run_service(
         processor=processor,
         name=f'{instrument}_fake_{mode}_producer',
         log_level=log_level,
+        register_signal_handlers=False,  # Launcher handles signals
     )
-    service.start()
+    return service
 
 
 def main() -> NoReturn:
@@ -157,7 +158,8 @@ def main() -> NoReturn:
         metavar='1-10',
         help='Number of monitors to simulate (1-10, default: 2)',
     )
-    run_service(**vars(parser.parse_args()))
+    service = run_service(**vars(parser.parse_args()))
+    service.start(blocking=True)
 
 
 if __name__ == "__main__":

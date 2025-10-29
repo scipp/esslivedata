@@ -112,7 +112,7 @@ class FakeLogdataSource(MessageSource[sc.DataArray]):
         )
 
 
-def run_service(*, instrument: str, log_level: int = logging.INFO) -> NoReturn:
+def run_service(*, instrument: str, log_level: int = logging.INFO) -> Service:
     kafka_config = load_config(namespace=config_names.kafka_upstream)
     serializer = serialize_dataarray_to_f144
 
@@ -126,15 +126,17 @@ def run_service(*, instrument: str, log_level: int = logging.INFO) -> NoReturn:
         processor=processor,
         name=f'{instrument}_fake_f144_producer',
         log_level=log_level,
+        register_signal_handlers=False,  # Launcher handles signals
     )
-    service.start()
+    return service
 
 
 def main() -> NoReturn:
     parser = Service.setup_arg_parser(
         'Fake that publishes f144 logdata', dev_flag=False
     )
-    run_service(**vars(parser.parse_args()))
+    service = run_service(**vars(parser.parse_args()))
+    service.start(blocking=True)
 
 
 if __name__ == "__main__":

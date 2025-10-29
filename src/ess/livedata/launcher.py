@@ -41,7 +41,8 @@ class ServiceThread:
         self.kwargs = kwargs
         self.thread: threading.Thread | None = None
         self.logger = logging.getLogger(f"launcher.{name}")
-        self._stop_event = threading.Event()
+        self._service: Any = None  # Will hold the Service object once created
+        self._service_ready = threading.Event()
 
     def start(self) -> None:
         """Start the service in a background thread."""
@@ -50,23 +51,31 @@ class ServiceThread:
             target=self._run_wrapper, name=f"service-{self.name}", daemon=False
         )
         self.thread.start()
+        # Wait for service object to be created (with short timeout)
+        self._service_ready.wait(timeout=2.0)
         self.logger.info("%s service started", self.name)
 
     def _run_wrapper(self) -> None:
         """Wrapper to handle service execution and errors."""
         try:
-            self.service_func(**self.kwargs)
+            # Service function returns the service object instead of blocking
+            self._service = self.service_func(**self.kwargs)
+            self._service_ready.set()
+            # Now block in the service's run loop
+            if self._service is not None:
+                self._service.start(blocking=True)
+            else:
+                self.logger.error("Service function returned None for %s", self.name)
         except KeyboardInterrupt:
             self.logger.info("%s service received shutdown signal", self.name)
         except Exception as e:
             self.logger.exception("%s service failed: %s", self.name, e)
-        finally:
-            self._stop_event.set()
 
     def stop(self) -> None:
         """Signal the service to stop."""
         self.logger.info("Stopping %s service...", self.name)
-        self._stop_event.set()
+        if self._service is not None:
+            self._service.stop()
 
     def join(self, timeout: float | None = None) -> None:
         """Wait for the service thread to finish."""
@@ -118,13 +127,13 @@ class Launcher:
             transport_context.set_broker(self._broker)
 
     def _wrap_service_func(
-        self, service_func: Callable[..., None]
-    ) -> Callable[..., None]:
+        self, service_func: Callable[..., Any]
+    ) -> Callable[..., Any]:
         """Wrap service function to inject broker context before execution."""
 
-        def wrapper(**kwargs: Any) -> None:
+        def wrapper(**kwargs: Any) -> Any:
             self._inject_broker_context()
-            service_func(**kwargs)
+            return service_func(**kwargs)
 
         return wrapper
 
@@ -134,7 +143,7 @@ class Launcher:
 
         kwargs = {
             'instrument': self.args.instrument,
-            'log_level': self.args.log_level,
+            'log_level': getattr(logging, self.args.log_level),
         }
         if self.args.nexus_file:
             kwargs['nexus_file'] = self.args.nexus_file
@@ -151,7 +160,7 @@ class Launcher:
 
         kwargs = {
             'instrument': self.args.instrument,
-            'log_level': self.args.log_level,
+            'log_level': getattr(logging, self.args.log_level),
             'mode': self.args.monitor_mode,
             'num_monitors': self.args.num_monitors,
         }
@@ -168,7 +177,7 @@ class Launcher:
 
         kwargs = {
             'instrument': self.args.instrument,
-            'log_level': self.args.log_level,
+            'log_level': getattr(logging, self.args.log_level),
         }
 
         return ServiceThread(
@@ -184,12 +193,12 @@ class Launcher:
         kwargs = {
             'instrument': self.args.instrument,
             'dev': self.args.dev,
-            'log_level': self.args.log_level,
+            'log_level': getattr(logging, self.args.log_level),
         }
 
         return ServiceThread(
             'monitor-data',
-            self._run_processing_service_wrapper(monitor_data.main),
+            self._wrap_service_func(monitor_data.build_service),
             kwargs,
         )
 
@@ -200,12 +209,12 @@ class Launcher:
         kwargs = {
             'instrument': self.args.instrument,
             'dev': self.args.dev,
-            'log_level': self.args.log_level,
+            'log_level': getattr(logging, self.args.log_level),
         }
 
         return ServiceThread(
             'detector-data',
-            self._run_processing_service_wrapper(detector_data.main),
+            self._wrap_service_func(detector_data.build_service),
             kwargs,
         )
 
@@ -216,12 +225,12 @@ class Launcher:
         kwargs = {
             'instrument': self.args.instrument,
             'dev': self.args.dev,
-            'log_level': self.args.log_level,
+            'log_level': getattr(logging, self.args.log_level),
         }
 
         return ServiceThread(
             'data-reduction',
-            self._run_processing_service_wrapper(data_reduction.main),
+            self._wrap_service_func(data_reduction.build_service),
             kwargs,
         )
 
@@ -232,30 +241,14 @@ class Launcher:
         kwargs = {
             'instrument': self.args.instrument,
             'dev': self.args.dev,
-            'log_level': self.args.log_level,
+            'log_level': getattr(logging, self.args.log_level),
         }
 
         return ServiceThread(
-            'timeseries', self._run_processing_service_wrapper(timeseries.main), kwargs
+            'timeseries',
+            self._wrap_service_func(timeseries.build_service),
+            kwargs,
         )
-
-    def _run_processing_service_wrapper(
-        self, main_func: Callable[[], None]
-    ) -> Callable[..., None]:
-        """Wrapper to adapt processing service main functions to accept kwargs."""
-
-        def wrapper(**kwargs: Any) -> None:
-            self._inject_broker_context()
-
-            # Set up sys.argv for the service's argument parser
-            sys.argv = ['launcher']
-            sys.argv.append(f'--instrument={kwargs["instrument"]}')
-            if kwargs.get('dev'):
-                sys.argv.append('--dev')
-            sys.argv.append(f'--log-level={kwargs["log_level"]}')
-            main_func()
-
-        return wrapper
 
     def _run_dashboard(self) -> None:
         """Run the dashboard in the main thread (Panel requirement)."""

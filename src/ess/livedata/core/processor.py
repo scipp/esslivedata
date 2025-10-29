@@ -39,3 +39,6 @@ class IdentityProcessor(Generic[Tin, Tout]):
         messages = self._source.get_messages()
         self._logger.debug('Processing %d messages', len(messages))
         self._sink.publish_messages(messages)
+        import time
+
+        time.sleep(1.0)

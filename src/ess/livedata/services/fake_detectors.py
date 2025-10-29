@@ -170,7 +170,7 @@ def serialize_detector_events_to_ev44(
 
 def run_service(
     *, instrument: str, nexus_file: str | None = None, log_level: int = logging.INFO
-) -> NoReturn:
+) -> Service:
     from ess.livedata.transport_factory import create_message_sink
 
     name = 'fake_producer'
@@ -193,8 +193,9 @@ def run_service(
         processor=processor,
         name=f'{instrument}_{name}',
         log_level=log_level,
+        register_signal_handlers=False,  # Launcher handles signals
     )
-    service.start()
+    return service
 
 
 def main() -> NoReturn:
@@ -209,7 +210,8 @@ def main() -> NoReturn:
             'The event data will be looped over indefinitely.'
         ),
     )
-    run_service(**vars(parser.parse_args()))
+    service = run_service(**vars(parser.parse_args()))
+    service.start(blocking=True)
 
 
 if __name__ == "__main__":
