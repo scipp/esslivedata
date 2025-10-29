@@ -100,7 +100,7 @@ def create_data_source(
     dev: bool,
     http_data_url: str | None = None,
     exit_stack: Any,  # ExitStack from contextlib
-) -> AdaptingMessageSource:
+):
     """
     Create a data message source based on the specified type.
 
@@ -122,15 +122,15 @@ def create_data_source(
     :
         Message source for data and status messages
     """
-    stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
-    adapter = (
-        RoutingAdapterBuilder(stream_mapping=stream_mapping)
-        .with_livedata_data_route()
-        .with_livedata_status_route()
-        .build()
-    )
-
     if transport_type == 'kafka':
+        stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
+        adapter = (
+            RoutingAdapterBuilder(stream_mapping=stream_mapping)
+            .with_livedata_data_route()
+            .with_livedata_status_route()
+            .build()
+        )
+
         consumer_config = load_config(
             namespace=config_names.reduced_data_consumer, env=''
         )
@@ -149,6 +149,7 @@ def create_data_source(
             )
         )
         source = exit_stack.enter_context(BackgroundMessageSource(consumer=consumer))
+        return AdaptingMessageSource(source=source, adapter=adapter)
 
     elif transport_type == 'http':
         if http_data_url is None:
@@ -156,17 +157,15 @@ def create_data_source(
 
         from ..http_transport import HTTPMessageSource, RoutingMessageSerializer
 
-        # Create HTTP source for data and status messages
+        # HTTP source already returns domain Message objects, no adapter needed
         http_source = HTTPMessageSource(
             base_url=http_data_url,
             serializer=RoutingMessageSerializer(),
         )
-        source = exit_stack.enter_context(http_source)
+        return exit_stack.enter_context(http_source)
 
     else:
         raise ValueError(f"Unknown transport type: {transport_type}")
-
-    return AdaptingMessageSource(source=source, adapter=adapter)
 
 
 def create_roi_sink(
