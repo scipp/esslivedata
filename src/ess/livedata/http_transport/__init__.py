@@ -4,7 +4,6 @@
 
 from .app import MessageAPIWrapper, create_message_api, create_multi_endpoint_api
 from .serialization import (
-    ConfigMessageSerializer,
     DA00MessageSerializer,
     GenericJSONMessageSerializer,
     MessageSerializer,
@@ -16,7 +15,6 @@ from .sink import QueueBasedMessageSink
 from .source import HTTPMessageSource, MultiHTTPSource
 
 __all__ = [
-    'ConfigMessageSerializer',
     'DA00MessageSerializer',
     'GenericJSONMessageSerializer',
     'HTTPMessageSource',
