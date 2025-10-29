@@ -53,7 +53,28 @@ class ReductionApp(DashboardBase):
 
 
 def get_arg_parser() -> argparse.ArgumentParser:
-    return Service.setup_arg_parser(description='ESSlivedata Dashboard')
+    parser = Service.setup_arg_parser(description='ESSlivedata Dashboard')
+    parser.add_argument(
+        '--transport',
+        choices=['kafka', 'http'],
+        default='kafka',
+        help='Transport type: kafka (default) or http',
+    )
+    parser.add_argument(
+        '--http-data-url',
+        help='HTTP URL for data source (e.g., http://localhost:8001)',
+    )
+    parser.add_argument(
+        '--http-config-url',
+        help='HTTP URL for config source (e.g., http://localhost:9000)',
+    )
+    parser.add_argument(
+        '--http-sink-port',
+        type=int,
+        default=5010,
+        help='Port for HTTP ROI sink (default: 5010)',
+    )
+    return parser
 
 
 def main() -> None:
