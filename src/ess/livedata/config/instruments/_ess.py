@@ -37,7 +37,7 @@ def _make_dev_beam_monitors(
     # Might also be MONITOR_COUNTS, but topic is supposedly the same.
     topic = stream_kind_to_topic(instrument=instrument, kind=StreamKind.MONITOR_EVENTS)
     if monitor_names is None:
-        monitor_names = [f'monitor{monitor}' for monitor in range(10)]
+        monitor_names = [f'monitor{monitor + 1}' for monitor in range(10)]
     return {
         InputStreamKey(topic=topic, source_name=f'monitor{monitor + 1}'): name
         for monitor, name in enumerate(monitor_names)
