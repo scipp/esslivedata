@@ -20,7 +20,7 @@ class LogProducerWidget:
         self._instrument = instrument
         self._logger = logger
 
-        self._sink = KafkaSink(
+        self._sink = KafkaSink.from_kafka_config(
             kafka_config=load_config(namespace=config_names.kafka_upstream),
             instrument=instrument,
             serializer=serialize_dataarray_to_f144,

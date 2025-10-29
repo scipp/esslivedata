@@ -13,6 +13,8 @@ from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
 def make_monitor_service_builder(
     *, instrument: str, dev: bool = True, log_level: int = logging.INFO
 ) -> DataServiceBuilder:
+    from ess.livedata import transport_context
+
     stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
     adapter = (
         RoutingAdapterBuilder(stream_mapping=stream_mapping)
@@ -26,12 +28,17 @@ def make_monitor_service_builder(
     preprocessor_factory = monitor_data_handler.MonitorHandlerFactory(
         instrument=instrument_obj
     )
+
+    # Check if in-memory broker is available in context
+    broker = transport_context.get_broker()
+
     return DataServiceBuilder(
         instrument=instrument,
         name=service_name,
         log_level=log_level,
         adapter=adapter,
         preprocessor_factory=preprocessor_factory,
+        broker=broker,  # Will be None for Kafka transport
     )
 
 

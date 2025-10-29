@@ -57,9 +57,14 @@ class DashboardBase(ServiceBase, ABC):
         log_level: int = logging.INFO,
         dashboard_name: str,
         port: int = 5007,
+        register_signal_handlers: bool = True,
     ):
         name = f'{instrument}_{dashboard_name}'
-        super().__init__(name=name, log_level=log_level)
+        super().__init__(
+            name=name,
+            log_level=log_level,
+            register_signal_handlers=register_signal_handlers,
+        )
         self._instrument = instrument
         self._port = port
         self._dev = dev
@@ -92,19 +97,42 @@ class DashboardBase(ServiceBase, ABC):
         # should be placed?
 
     def _setup_config_service(self) -> None:
-        """Set up configuration service with Kafka bridge."""
-        kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
-        _, consumer = self._exit_stack.enter_context(
-            kafka_consumer.make_control_consumer(
-                instrument=self._instrument,
-                extra_config={'auto.offset.reset': 'earliest'},
+        """Set up configuration service with appropriate transport."""
+        from ess.livedata import transport_context
+        from ess.livedata.core.message import StreamKind
+
+        broker = transport_context.get_broker()
+        if broker is not None:
+            # In-memory transport
+            from .in_memory_transport import InMemoryConfigTransport
+
+            topic = stream_kind_to_topic(
+                instrument=self._instrument, kind=StreamKind.LIVEDATA_CONFIG
             )
-        )
-        kafka_transport = KafkaTransport(
-            kafka_config=kafka_downstream_config, consumer=consumer, logger=self._logger
-        )
+            transport = InMemoryConfigTransport(
+                broker=broker, topic=topic, logger=self._logger
+            )
+            self._logger.info("Using in-memory transport for config service")
+        else:
+            # Kafka transport
+            kafka_downstream_config = load_config(
+                namespace=config_names.kafka_downstream
+            )
+            _, consumer = self._exit_stack.enter_context(
+                kafka_consumer.make_control_consumer(
+                    instrument=self._instrument,
+                    extra_config={'auto.offset.reset': 'earliest'},
+                )
+            )
+            transport = KafkaTransport(
+                kafka_config=kafka_downstream_config,
+                consumer=consumer,
+                logger=self._logger,
+            )
+            self._logger.info("Using Kafka transport for config service")
+
         self._kafka_bridge = BackgroundMessageBridge(
-            transport=kafka_transport, logger=self._logger
+            transport=transport, logger=self._logger
         )
         self._config_service = ConfigService(
             message_bridge=self._kafka_bridge,
@@ -137,14 +165,27 @@ class DashboardBase(ServiceBase, ABC):
             config_service=self._config_service, job_service=self._job_service
         )
 
-        # Create ROI publisher for publishing ROI updates to Kafka
-        kafka_upstream_config = load_config(namespace=config_names.kafka_upstream)
-        roi_sink = KafkaSink(
-            kafka_config=kafka_upstream_config,
-            instrument=instrument,
-            serializer=serialize_dataarray_to_da00,
-            logger=self._logger,
-        )
+        # Create ROI publisher for publishing ROI updates
+        from ess.livedata import transport_context
+
+        broker = transport_context.get_broker()
+        if broker is not None:
+            # In-memory transport
+            from ess.livedata.in_memory import InMemoryMessageSink
+
+            roi_sink = InMemoryMessageSink(broker, instrument)
+            self._logger.info("Using in-memory transport for ROI publisher")
+        else:
+            # Kafka transport
+            kafka_upstream_config = load_config(namespace=config_names.kafka_upstream)
+            roi_sink = KafkaSink.from_kafka_config(
+                kafka_config=kafka_upstream_config,
+                instrument=instrument,
+                serializer=serialize_dataarray_to_da00,
+                logger=self._logger,
+            )
+            self._logger.info("Using Kafka transport for ROI publisher")
+
         roi_publisher = ROIPublisher(sink=roi_sink, logger=self._logger)
 
         self._plotting_controller = PlottingController(
@@ -155,36 +196,57 @@ class DashboardBase(ServiceBase, ABC):
             roi_publisher=roi_publisher,
         )
         self._orchestrator = Orchestrator(
-            self._setup_kafka_consumer(instrument=instrument, dev=dev),
+            self._setup_data_consumer(instrument=instrument, dev=dev),
             data_service=self._data_service,
             job_service=self._job_service,
         )
         self._logger.info("Data infrastructure setup complete")
 
-    def _setup_kafka_consumer(
+    def _setup_data_consumer(
         self, instrument: str, dev: bool
     ) -> AdaptingMessageSource:
-        """Set up Kafka consumer for data streams."""
-        consumer_config = load_config(
-            namespace=config_names.reduced_data_consumer, env=''
-        )
-        kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
-        data_topic = stream_kind_to_topic(
-            instrument=self._instrument, kind=StreamKind.LIVEDATA_DATA
-        )
-        status_topic = stream_kind_to_topic(
-            instrument=self._instrument, kind=StreamKind.LIVEDATA_STATUS
-        )
-        consumer = self._exit_stack.enter_context(
-            kafka_consumer.make_consumer_from_config(
-                topics=[data_topic, status_topic],
-                config={**consumer_config, **kafka_downstream_config},
-                group='dashboard',
+        """Set up data consumer with appropriate transport."""
+        from ess.livedata import transport_context
+
+        broker = transport_context.get_broker()
+        if broker is not None:
+            # In-memory transport
+            from ess.livedata.in_memory import InMemoryMessageSource
+
+            data_topic = stream_kind_to_topic(
+                instrument=self._instrument, kind=StreamKind.LIVEDATA_DATA
             )
-        )
-        source = self._exit_stack.enter_context(
-            BackgroundMessageSource(consumer=consumer)
-        )
+            status_topic = stream_kind_to_topic(
+                instrument=self._instrument, kind=StreamKind.LIVEDATA_STATUS
+            )
+            source = InMemoryMessageSource(broker, [data_topic, status_topic])
+            self._logger.info("Using in-memory transport for data consumer")
+        else:
+            # Kafka transport
+            consumer_config = load_config(
+                namespace=config_names.reduced_data_consumer, env=''
+            )
+            kafka_downstream_config = load_config(
+                namespace=config_names.kafka_downstream
+            )
+            data_topic = stream_kind_to_topic(
+                instrument=self._instrument, kind=StreamKind.LIVEDATA_DATA
+            )
+            status_topic = stream_kind_to_topic(
+                instrument=self._instrument, kind=StreamKind.LIVEDATA_STATUS
+            )
+            consumer = self._exit_stack.enter_context(
+                kafka_consumer.make_consumer_from_config(
+                    topics=[data_topic, status_topic],
+                    config={**consumer_config, **kafka_downstream_config},
+                    group='dashboard',
+                )
+            )
+            source = self._exit_stack.enter_context(
+                BackgroundMessageSource(consumer=consumer)
+            )
+            self._logger.info("Using Kafka transport for data consumer")
+
         stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
         adapter = (
             RoutingAdapterBuilder(stream_mapping=stream_mapping)
@@ -307,6 +369,11 @@ class DashboardBase(ServiceBase, ABC):
 
     def _stop_impl(self) -> None:
         """Clean shutdown of all components."""
-        self._kafka_bridge.stop()
-        self._kafka_bridge_thread.join()
-        self._exit_stack.__exit__(None, None, None)
+        # Handle partial initialization - attributes may not exist if shutdown
+        # happens during initialization
+        if hasattr(self, '_kafka_bridge'):
+            self._kafka_bridge.stop()
+        if hasattr(self, '_kafka_bridge_thread'):
+            self._kafka_bridge_thread.join()
+        if hasattr(self, '_exit_stack'):
+            self._exit_stack.__exit__(None, None, None)

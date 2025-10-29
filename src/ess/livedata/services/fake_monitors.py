@@ -119,7 +119,9 @@ def run_service(
     num_monitors: int = 2,
     log_level: int = logging.INFO,
 ) -> NoReturn:
-    kafka_config = load_config(namespace=config_names.kafka_upstream)
+    from ess.livedata import transport_context
+    from ess.livedata.in_memory import InMemoryMessageSink
+
     if mode == 'ev44':
         adapter = None
         serializer = serialize_variable_to_monitor_ev44
@@ -133,12 +135,19 @@ def run_service(
     if adapter is not None:
         source = AdaptingMessageSource(source=source, adapter=adapter)
 
-    processor = IdentityProcessor(
-        source=source,
-        sink=KafkaSink(
+    # Check if using in-memory transport
+    broker = transport_context.get_broker()
+    if broker is not None:
+        # In-memory transport - use same serializer as Kafka
+        sink = InMemoryMessageSink(broker, instrument=instrument, serializer=serializer)
+    else:
+        # Kafka transport
+        kafka_config = load_config(namespace=config_names.kafka_upstream)
+        sink = KafkaSink.from_kafka_config(
             instrument=instrument, kafka_config=kafka_config, serializer=serializer
-        ),
-    )
+        )
+
+    processor = IdentityProcessor(source=source, sink=sink)
     service = Service(
         processor=processor,
         name=f'{instrument}_fake_{mode}_producer',

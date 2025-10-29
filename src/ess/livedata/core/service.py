@@ -18,11 +18,18 @@ from .processor import Processor
 
 
 class ServiceBase(ABC):
-    def __init__(self, *, name: str | None = None, log_level: int = logging.INFO):
+    def __init__(
+        self,
+        *,
+        name: str | None = None,
+        log_level: int = logging.INFO,
+        register_signal_handlers: bool = True,
+    ):
         self._logger = logging.getLogger(name or __name__)
         self._setup_logging(log_level)
         self._running = False
-        self._setup_signal_handlers()
+        if register_signal_handlers:
+            self._setup_signal_handlers()
 
     @staticmethod
     def configure_logging(log_level: int) -> None:
@@ -62,7 +69,9 @@ class ServiceBase(ABC):
         """Handle shutdown signals"""
         self._logger.info("Received signal %d, initiating shutdown...", signum)
         self.stop()
-        sys.exit(0)
+        # Raise KeyboardInterrupt to allow proper exception handling up the stack
+        # This ensures cleanup happens in context managers and try/except blocks
+        raise KeyboardInterrupt
 
     def start(self, blocking: bool = True) -> None:
         """Start the service and block until stopped"""
@@ -115,8 +124,13 @@ class Service(ServiceBase):
         log_level: int = logging.INFO,
         poll_interval: float = 0.01,
         resources: ExitStack | None = None,
+        register_signal_handlers: bool = True,
     ):
-        super().__init__(name=name, log_level=log_level)
+        super().__init__(
+            name=name,
+            log_level=log_level,
+            register_signal_handlers=register_signal_handlers,
+        )
         self._poll_interval = poll_interval
         self._processor = processor
         self._thread: threading.Thread | None = None

@@ -17,13 +17,21 @@ hv.extension('bokeh')
 class ReductionApp(DashboardBase):
     """Reduction dashboard application."""
 
-    def __init__(self, *, instrument: str = 'dummy', dev: bool = False, log_level: int):
+    def __init__(
+        self,
+        *,
+        instrument: str = 'dummy',
+        dev: bool = False,
+        log_level: int,
+        register_signal_handlers: bool = True,
+    ):
         super().__init__(
             instrument=instrument,
             dev=dev,
             log_level=log_level,
             dashboard_name='reduction_dashboard',
             port=5009,  # Default port for reduction dashboard
+            register_signal_handlers=register_signal_handlers,
         )
 
         # Create log producer widget only in dev mode

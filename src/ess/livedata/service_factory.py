@@ -15,6 +15,12 @@ from .core.handler import JobBasedPreprocessorFactoryBase, PreprocessorFactory
 from .core.message import Message, MessageSource
 from .core.orchestrating_processor import OrchestratingProcessor
 from .core.service import Service
+from .in_memory import (
+    InMemoryBroker,
+    InMemoryMessageSink,
+    InMemoryMessageSource,
+    NullMessageSink,
+)
 from .kafka import KafkaTopic
 from .kafka import consumer as kafka_consumer
 from .kafka.message_adapter import AdaptingMessageSource, MessageAdapter
@@ -43,6 +49,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         preprocessor_factory: PreprocessorFactory[Tin, Tout],
         startup_messages: list[Message[Tout]] | None = None,
         processor_cls: type[Processor] = OrchestratingProcessor,
+        broker: InMemoryBroker | None = None,
     ) -> None:
         """
         Parameters
@@ -62,8 +69,12 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         processor_cls:
             The processor class to use for processing messages. Defaults to
             `OrchestratingProcessor`.
+        broker:
+            Optional in-memory broker for testing/development. If provided,
+            in-memory transport will be used instead of Kafka.
         """
         self._name = f'{instrument}_{name}'
+        self._service_name = name
         self._log_level = log_level
         self._topics: list[KafkaTopic] | None = None
         self._instrument = instrument
@@ -71,6 +82,7 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         self._preprocessor_factory = preprocessor_factory
         self._startup_messages = startup_messages or []
         self._processor_cls = processor_cls
+        self._broker = broker
         if isinstance(preprocessor_factory, JobBasedPreprocessorFactoryBase):
             # Ensure only jobs from the active namespace can be created by JobFactory.
             preprocessor_factory.instrument.active_namespace = name
@@ -79,6 +91,25 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
     def instrument(self) -> str:
         """Returns the instrument name."""
         return self._instrument
+
+    @property
+    def using_in_memory_broker(self) -> bool:
+        """Returns True if configured to use in-memory broker."""
+        return self._broker is not None
+
+    def _get_topic_names_from_adapter(self) -> list[str]:
+        """Extract topic names from adapter (for in-memory broker)."""
+        if self._adapter is None:
+            return []
+        # Adapter has a 'topics' attribute that can contain KafkaTopic objects or strings
+        topics = []
+        for topic in self._adapter.topics:
+            if isinstance(topic, str):
+                topics.append(topic)
+            else:
+                # Assume it has a 'name' attribute (KafkaTopic)
+                topics.append(topic.name)
+        return topics
 
     def from_consumer_config(
         self,
@@ -143,6 +174,46 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
             raise_on_adapter_error=raise_on_adapter_error,
         )
 
+    def from_in_memory_broker(
+        self,
+        broker: InMemoryBroker,
+        source_topics: list[str],
+        sink_topic: str | None = None,
+    ) -> Service:
+        """
+        Build service with in-memory message transport.
+
+        This is for testing and development only. Use from_consumer_config()
+        for production deployments with Kafka.
+
+        Parameters
+        ----------
+        broker:
+            Shared broker instance
+        source_topics:
+            List of topics to consume from
+        sink_topic:
+            Topic to publish results to (None for no output)
+
+        Returns
+        -------
+        :
+            Configured service ready to start
+        """
+        # Create raw source - adapter wrapping happens in from_source()
+        source = InMemoryMessageSource(broker, source_topics)
+
+        # Create sink - uses dynamic topic determination like KafkaSink
+        sink = (
+            InMemoryMessageSink(broker, self._instrument)
+            if sink_topic
+            else NullMessageSink()
+        )
+        # Wrap with UnrollingSinkAdapter to handle DataGroup outputs
+        sink = UnrollingSinkAdapter(sink)
+
+        return self.from_source(source, sink)
+
     def from_source(
         self,
         source: MessageSource,
@@ -199,24 +270,44 @@ class DataServiceRunner:
         self,
     ) -> NoReturn:
         args = vars(self._parser.parse_args())
-        consumer_config = load_config(namespace=config_names.raw_data_consumer, env='')
-        kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
-        kafka_upstream_config = load_config(namespace=config_names.kafka_upstream)
 
+        # Remove sink_type from args before passing to make_builder
         sink_type = args.pop('sink_type')
+
         builder = self._make_builder(**args)
 
-        if sink_type == 'kafka':
-            sink = KafkaSink(
-                instrument=builder.instrument, kafka_config=kafka_downstream_config
-            )
+        # Check if using in-memory broker
+        if builder.using_in_memory_broker:
+            # In-memory transport mode
+            source_topics = builder._get_topic_names_from_adapter()
+            sink_topic = f"{builder.instrument}_output"
+            with builder.from_in_memory_broker(
+                broker=builder._broker,
+                source_topics=source_topics,
+                sink_topic=sink_topic,
+            ) as service:
+                service.start()
         else:
-            sink = PlotToPngSink()
-        sink = UnrollingSinkAdapter(sink)
+            # Kafka transport mode
+            consumer_config = load_config(
+                namespace=config_names.raw_data_consumer, env=''
+            )
+            kafka_downstream_config = load_config(
+                namespace=config_names.kafka_downstream
+            )
+            kafka_upstream_config = load_config(namespace=config_names.kafka_upstream)
 
-        with builder.from_consumer_config(
-            kafka_config={**consumer_config, **kafka_upstream_config},
-            sink=sink,
-            use_background_source=True,
-        ) as service:
-            service.start()
+            if sink_type == 'kafka':
+                sink = KafkaSink.from_kafka_config(
+                    instrument=builder.instrument, kafka_config=kafka_downstream_config
+                )
+            else:
+                sink = PlotToPngSink()
+            sink = UnrollingSinkAdapter(sink)
+
+            with builder.from_consumer_config(
+                kafka_config={**consumer_config, **kafka_upstream_config},
+                sink=sink,
+                use_background_source=True,
+            ) as service:
+                service.start()

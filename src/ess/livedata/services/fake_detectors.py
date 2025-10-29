@@ -173,19 +173,32 @@ def serialize_detector_events_to_ev44(
 def run_service(
     *, instrument: str, nexus_file: str | None = None, log_level: int = logging.INFO
 ) -> NoReturn:
-    kafka_config = load_config(namespace=config_names.kafka_upstream)
-    serializer = serialize_detector_events_to_ev44
+    from ess.livedata import transport_context
+    from ess.livedata.in_memory import InMemoryMessageSink
+
     name = 'fake_producer'
     Service.configure_logging(log_level)
     logger = logging.getLogger(f'{instrument}_{name}')
+
+    # Check if using in-memory transport
+    broker = transport_context.get_broker()
+    serializer = serialize_detector_events_to_ev44
+    if broker is not None:
+        # In-memory transport - use same serializer as Kafka
+        logger.info("Using in-memory transport")
+        sink = InMemoryMessageSink(broker, instrument=instrument, serializer=serializer)
+    else:
+        # Kafka transport
+        kafka_config = load_config(namespace=config_names.kafka_upstream)
+        sink = KafkaSink.from_kafka_config(
+            instrument=instrument, kafka_config=kafka_config, serializer=serializer
+        )
 
     processor = IdentityProcessor(
         source=FakeDetectorSource(
             instrument=instrument, nexus_file=nexus_file, logger=logger
         ),
-        sink=KafkaSink(
-            instrument=instrument, kafka_config=kafka_config, serializer=serializer
-        ),
+        sink=sink,
     )
     service = Service(
         processor=processor,

@@ -118,7 +118,7 @@ def run_service(*, instrument: str, log_level: int = logging.INFO) -> NoReturn:
 
     processor = IdentityProcessor(
         source=FakeLogdataSource(instrument=instrument),
-        sink=KafkaSink(
+        sink=KafkaSink.from_kafka_config(
             instrument=instrument, kafka_config=kafka_config, serializer=serializer
         ),
     )

@@ -5,9 +5,6 @@
 Single-process launcher for ESSlivedata services.
 
 This launcher runs all ESSlivedata services (fakes, processors, and dashboard)
-in a single process using threads. Services still communicate via Kafka.
-
-Phase 1 implementation: Thread-per-service with Kafka communication.
 """
 
 import argparse
@@ -20,6 +17,7 @@ from collections.abc import Callable
 from typing import Any, NoReturn
 
 from ess.livedata.config.instruments import available_instruments
+from ess.livedata.in_memory import InMemoryBroker
 
 
 def setup_logging(log_level: str) -> None:
@@ -88,6 +86,15 @@ class Launcher:
         self.logger = logging.getLogger("launcher")
         self.services: list[ServiceThread] = []
         self._shutdown_event = threading.Event()
+        self._broker: InMemoryBroker | None = None
+
+        # Create broker if using in-memory transport
+        if args.transport == 'in-memory':
+            self._broker = InMemoryBroker(max_queue_size=1000)
+            self.logger.info("Using in-memory transport (broker created)")
+        else:
+            self.logger.info("Using Kafka transport")
+
         self._setup_signal_handlers()
 
     def _setup_signal_handlers(self) -> None:
@@ -97,9 +104,24 @@ class Launcher:
             self.logger.info("Received signal %s, initiating shutdown...", signum)
             self._shutdown_event.set()
             self.stop()
+            # Raise KeyboardInterrupt to allow dashboard's pn.serve() to exit
+            raise KeyboardInterrupt
 
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
+
+    def _wrap_service_func(
+        self, service_func: Callable[..., None]
+    ) -> Callable[..., None]:
+        """Wrap service function to inject broker context if needed."""
+
+        def wrapper(**kwargs: Any) -> None:
+            if self._broker is not None:
+                from ess.livedata import transport_context
+                transport_context.set_broker(self._broker)
+            service_func(**kwargs)
+
+        return wrapper
 
     def _create_fake_detector_service(self) -> ServiceThread:
         """Create the fake detector data service."""
@@ -112,7 +134,11 @@ class Launcher:
         if self.args.nexus_file:
             kwargs['nexus_file'] = self.args.nexus_file
 
-        return ServiceThread('fake-detectors', fake_detectors.run_service, kwargs)
+        return ServiceThread(
+            'fake-detectors',
+            self._wrap_service_func(fake_detectors.run_service),
+            kwargs,
+        )
 
     def _create_fake_monitor_service(self) -> ServiceThread:
         """Create the fake monitor data service."""
@@ -125,7 +151,11 @@ class Launcher:
             'num_monitors': self.args.num_monitors,
         }
 
-        return ServiceThread('fake-monitors', fake_monitors.run_service, kwargs)
+        return ServiceThread(
+            'fake-monitors',
+            self._wrap_service_func(fake_monitors.run_service),
+            kwargs,
+        )
 
     def _create_fake_logdata_service(self) -> ServiceThread:
         """Create the fake log data service."""
@@ -136,7 +166,11 @@ class Launcher:
             'log_level': self.args.log_level,
         }
 
-        return ServiceThread('fake-logdata', fake_logdata.run_service, kwargs)
+        return ServiceThread(
+            'fake-logdata',
+            self._wrap_service_func(fake_logdata.run_service),
+            kwargs,
+        )
 
     def _create_monitor_data_service(self) -> ServiceThread:
         """Create the monitor data processing service."""
@@ -206,6 +240,11 @@ class Launcher:
         """Wrapper to adapt processing service main functions to accept kwargs."""
 
         def wrapper(**kwargs: Any) -> None:
+            # Inject broker into thread context if using in-memory transport
+            if self._broker is not None:
+                from ess.livedata import transport_context
+                transport_context.set_broker(self._broker)
+
             # Set up sys.argv for the service's argument parser
             sys.argv = ['launcher']
             sys.argv.append(f'--instrument={kwargs["instrument"]}')
@@ -218,19 +257,25 @@ class Launcher:
 
     def _run_dashboard(self) -> None:
         """Run the dashboard in the main thread (Panel requirement)."""
-        from ess.livedata.dashboard import reduction
+        from ess.livedata.dashboard.reduction import ReductionApp
 
         self.logger.info("Starting dashboard service...")
 
-        # Set up sys.argv for the dashboard's argument parser
-        sys.argv = ['launcher']
-        sys.argv.append(f'--instrument={self.args.instrument}')
-        if self.args.dev:
-            sys.argv.append('--dev')
-        sys.argv.append(f'--log-level={self.args.log_level}')
+        # Set broker context in main thread for in-memory transport
+        if self._broker is not None:
+            from ess.livedata import transport_context
+            transport_context.set_broker(self._broker)
 
+        # Create dashboard directly without registering its own signal handlers
+        # since the launcher handles signals
         try:
-            reduction.main()
+            app = ReductionApp(
+                instrument=self.args.instrument,
+                dev=self.args.dev,
+                log_level=getattr(logging, self.args.log_level),
+                register_signal_handlers=False,  # Launcher handles signals
+            )
+            app.start(blocking=True)
         except KeyboardInterrupt:
             self.logger.info("Dashboard received shutdown signal")
         except Exception as e:
@@ -331,6 +376,12 @@ def create_parser() -> argparse.ArgumentParser:
         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
         default='INFO',
         help='Set the logging level',
+    )
+    parser.add_argument(
+        '--transport',
+        choices=['kafka', 'in-memory'],
+        default='kafka',
+        help='Message transport: kafka (requires Docker) or in-memory (for testing)',
     )
 
     # Service selection flags

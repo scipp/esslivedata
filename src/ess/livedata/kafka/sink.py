@@ -5,7 +5,6 @@ import logging
 from dataclasses import replace
 from typing import Any, Generic, Protocol, TypeVar
 
-import confluent_kafka as kafka
 import scipp as sc
 from streaming_data_types import dataarray_da00, logdata_f144
 
@@ -13,6 +12,7 @@ from ..config.streams import stream_kind_to_topic
 from ..config.workflow_spec import ResultKey
 from ..core.message import CONFIG_STREAM_ID, STATUS_STREAM_ID, Message, MessageSink
 from .scipp_da00_compat import scipp_to_da00
+from .transport import KafkaTransport, MessageTransport
 from .x5f2_compat import job_status_to_x5f2
 
 T = TypeVar("T")
@@ -56,26 +56,84 @@ def serialize_dataarray_to_f144(msg: Message[sc.DataArray]) -> bytes:
 
 
 class KafkaSink(MessageSink[T]):
+    """
+    Message sink using a transport abstraction.
+
+    Handles message serialization and routing, delegating actual
+    transport to a MessageTransport implementation.
+
+    Parameters
+    ----------
+    transport:
+        Transport implementation for message delivery
+    instrument:
+        Instrument name for topic generation
+    serializer:
+        Serializer for data messages
+    logger:
+        Optional logger
+    """
+
     def __init__(
         self,
         *,
-        logger: logging.Logger | None = None,
+        transport: MessageTransport,
         instrument: str,
-        kafka_config: dict[str, Any],
         serializer: Serializer[T] = serialize_dataarray_to_da00,
+        logger: logging.Logger | None = None,
     ):
-        self._logger = logger or logging.getLogger(__name__)
-        self._producer = kafka.Producer(kafka_config)
-        self._serializer = serializer
+        self._transport = transport
         self._instrument = instrument
+        self._serializer = serializer
+        self._logger = logger or logging.getLogger(__name__)
+
+    @classmethod
+    def from_kafka_config(
+        cls,
+        *,
+        kafka_config: dict[str, Any],
+        instrument: str,
+        serializer: Serializer[T] = serialize_dataarray_to_da00,
+        logger: logging.Logger | None = None,
+    ) -> "KafkaSink[T]":
+        """
+        Create KafkaSink with Kafka transport from configuration.
+
+        Parameters
+        ----------
+        kafka_config:
+            Kafka producer configuration
+        instrument:
+            Instrument name
+        serializer:
+            Serializer for data messages
+        logger:
+            Optional logger
+
+        Returns
+        -------
+        :
+            KafkaSink instance with KafkaTransport
+        """
+        transport = KafkaTransport.from_config(kafka_config=kafka_config, logger=logger)
+        return cls(
+            transport=transport,
+            instrument=instrument,
+            serializer=serializer,
+            logger=logger,
+        )
 
     def publish_messages(self, messages: Message[T]) -> None:
-        def delivery_callback(err, msg):
-            if err is not None:
-                self._logger.error(
-                    "Failed to deliver message to %s: %s", msg.topic(), err
-                )
+        """
+        Publish messages using the transport.
 
+        Serializes messages based on stream type and sends via transport.
+
+        Parameters
+        ----------
+        messages:
+            List of messages to publish
+        """
         self._logger.debug("Publishing %d messages", len(messages))
         for msg in messages:
             try:
@@ -94,26 +152,11 @@ class KafkaSink(MessageSink[T]):
             except SerializationError as e:
                 self._logger.error("Failed to serialize message: %s", e)
             else:
-                try:
-                    if key_bytes is None:
-                        self._producer.produce(
-                            topic=topic, value=value, callback=delivery_callback
-                        )
-                    else:
-                        self._producer.produce(
-                            topic=topic,
-                            key=key_bytes,
-                            value=value,
-                            callback=delivery_callback,
-                        )
-                    self._producer.poll(0)
-                except kafka.KafkaException as e:
-                    self._logger.error("Failed to publish message to %s: %s", topic, e)
+                self._transport.send(
+                    topic=topic, value=value, key=key_bytes, timestamp=msg.timestamp
+                )
 
-        try:
-            self._producer.flush(timeout=3)
-        except kafka.KafkaException as e:
-            self._logger.error("Error flushing producer: %s", e)
+        self._transport.flush()
 
 
 class UnrollingSinkAdapter(MessageSink[T | sc.DataGroup[T]]):
