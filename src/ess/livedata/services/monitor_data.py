@@ -24,7 +24,7 @@ def make_monitor_service_builder(
     instrument_obj.load_factories()
     service_name = 'monitor_data'
     preprocessor_factory = monitor_data_handler.MonitorHandlerFactory(
-        instrument=instrument_obj
+        instrument=instrument_obj, namespace=service_name
     )
 
     return DataServiceBuilder(

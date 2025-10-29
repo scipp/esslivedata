@@ -95,8 +95,12 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._message_preprocessor = MessagePreprocessor(
             factory=preprocessor_factory, logger=self._logger
         )
+        # Get namespace from preprocessor factory if available
+        namespace = getattr(preprocessor_factory, 'namespace', None)
         self._job_manager = JobManager(
-            job_factory=JobFactory(instrument=preprocessor_factory.instrument)
+            job_factory=JobFactory(
+                instrument=preprocessor_factory.instrument, namespace=namespace
+            )
         )
         self._job_manager_adapter = JobManagerAdapter(
             job_manager=self._job_manager, logger=self._logger
@@ -110,7 +114,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
     def process(self) -> None:
         messages = self._source.get_messages()
-        time.sleep(1.0)
+        # time.sleep(1.0)
         self._logger.debug('Processing %d messages', len(messages))
         config_messages: list[Message[Tin]] = []
         data_messages: list[Message[Tin]] = []

@@ -71,8 +71,9 @@ class JobCommand(pydantic.BaseModel):
 
 
 class JobFactory:
-    def __init__(self, instrument: Instrument) -> None:
+    def __init__(self, instrument: Instrument, namespace: str | None = None) -> None:
         self._instrument = instrument
+        self._namespace = namespace
 
     def get_workflow_spec(self, workflow_id: WorkflowId) -> WorkflowSpec | None:
         """Get the workflow specification for a given workflow ID."""
@@ -126,7 +127,7 @@ class JobFactory:
         if workflow_id is None:
             raise ValueError("WorkflowConfig must have an identifier to create a Job")
         if (workflow_id.instrument != self._instrument.name) or (
-            workflow_id.namespace != self._instrument.active_namespace
+            workflow_id.namespace != self._namespace
         ):
             raise DifferentInstrument()
 

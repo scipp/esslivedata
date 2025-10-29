@@ -78,8 +78,9 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         self._startup_messages = startup_messages or []
         self._processor_cls = processor_cls
         if isinstance(preprocessor_factory, JobBasedPreprocessorFactoryBase):
-            # Ensure only jobs from the active namespace can be created by JobFactory.
-            preprocessor_factory.instrument.active_namespace = name
+            # Set namespace on factory if not already set
+            if preprocessor_factory.namespace is None:
+                preprocessor_factory._namespace = name
 
     @property
     def instrument(self) -> str:

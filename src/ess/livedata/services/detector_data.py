@@ -26,7 +26,9 @@ def make_detector_service_builder(
     instrument_obj = instrument_registry[instrument]
     instrument_obj.load_factories()
     service_name = 'detector_data'
-    preprocessor_factory = DetectorHandlerFactory(instrument=instrument_obj)
+    preprocessor_factory = DetectorHandlerFactory(
+        instrument=instrument_obj, namespace=service_name
+    )
 
     return DataServiceBuilder(
         instrument=instrument,

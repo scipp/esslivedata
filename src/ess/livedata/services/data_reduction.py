@@ -27,7 +27,9 @@ def make_reduction_service_builder(
     instrument_config = instrument_registry[instrument]
     instrument_config.load_factories()
     service_name = 'data_reduction'
-    preprocessor_factory = ReductionHandlerFactory(instrument=instrument_config)
+    preprocessor_factory = ReductionHandlerFactory(
+        instrument=instrument_config, namespace=service_name
+    )
     return DataServiceBuilder(
         instrument=instrument,
         name=service_name,

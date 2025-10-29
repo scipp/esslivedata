@@ -35,6 +35,7 @@ def make_timeseries_service_builder(
     service_name = 'timeseries'
     preprocessor_factory = LogdataHandlerFactory(
         instrument=instrument_obj,
+        namespace=service_name,
         attribute_registry=attribute_registry,
     )
     # The SimpleMessageBatcher used by default by OrchestratingProcessor) processes

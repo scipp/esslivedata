@@ -45,11 +45,20 @@ class JobBasedPreprocessorFactoryBase(PreprocessorFactory[Tin, Tout]):
     """Factory base used by job-based backend services."""
 
     def __init__(
-        self, *, instrument: Instrument, logger: logging.Logger | None = None
+        self,
+        *,
+        instrument: Instrument,
+        namespace: str | None = None,
+        logger: logging.Logger | None = None,
     ) -> None:
         self._logger = logger or logging.getLogger(__name__)
         self._instrument = instrument
+        self._namespace = namespace
 
     @property
     def instrument(self) -> Instrument:
         return self._instrument
+
+    @property
+    def namespace(self) -> str | None:
+        return self._namespace

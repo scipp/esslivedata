@@ -54,6 +54,7 @@ class LogdataHandlerFactory(JobBasedPreprocessorFactoryBase[LogData, sc.DataArra
         self,
         *,
         instrument: Instrument,
+        namespace: str | None = None,
         logger: logging.Logger | None = None,
         attribute_registry: dict[str, dict[str, Any]] | None = None,
     ) -> None:
@@ -64,6 +65,8 @@ class LogdataHandlerFactory(JobBasedPreprocessorFactoryBase[LogData, sc.DataArra
         ----------
         instrument:
             The name of the instrument.
+        namespace:
+            The namespace for this service (used to filter workflows).
         logger:
             The logger to use for logging messages.
         attribute_registry:
@@ -74,9 +77,7 @@ class LogdataHandlerFactory(JobBasedPreprocessorFactoryBase[LogData, sc.DataArra
             containing the attributes as they would be found in the fields of an NXlog
             class in a NeXus file.
         """
-
-        self._logger = logger or logging.getLogger(__name__)
-        self._instrument = instrument
+        super().__init__(instrument=instrument, namespace=namespace, logger=logger)
         if attribute_registry is None:
             self._attribute_registry = instrument.f144_attribute_registry
         else:

@@ -129,19 +129,13 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
     # Pick the first available source, or use empty string if none specified
     source_name = spec.source_names[0] if spec.source_names else "test_source"
 
-    # Set active namespace to match the workflow namespace
+    # Create JobFactory with the workflow's namespace
     # (in production this is set when the service starts)
-    original_namespace = instrument.active_namespace
-    instrument.active_namespace = workflow_id.namespace
-    try:
-        job_factory = JobFactory(instrument)
-        job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
+    job_factory = JobFactory(instrument, namespace=workflow_id.namespace)
+    job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
 
-        # This should not raise - it validates params and aux_sources internally
-        job = job_factory.create(job_id=job_id, config=workflow_config)
-    finally:
-        # Restore original namespace
-        instrument.active_namespace = original_namespace
+    # This should not raise - it validates params and aux_sources internally
+    job = job_factory.create(job_id=job_id, config=workflow_config)
 
     # Verify job was created successfully
     assert job is not None
