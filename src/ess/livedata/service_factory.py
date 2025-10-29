@@ -13,11 +13,10 @@ from .config import config_names
 from .config.config_loader import load_config
 from .core import MessageSink, Processor
 from .core.handler import JobBasedPreprocessorFactoryBase, PreprocessorFactory
-from .core.message import Message, MessageSource
+from .core.message import Message, MessageSource, StreamKind
 from .core.orchestrating_processor import OrchestratingProcessor
 from .core.service import Service
 from .http_transport.serialization import (
-    ConfigMessageSerializer,
     DA00MessageSerializer,
     StatusMessageSerializer,
 )
@@ -253,9 +252,11 @@ class DataServiceRunner:
         elif sink_type == 'http':
             # Use multi-endpoint sink for proper topic separation
             http_sink_instance = HTTPMultiEndpointSink(
-                data_serializer=DA00MessageSerializer(),
-                status_serializer=StatusMessageSerializer(),
-                config_serializer=ConfigMessageSerializer(),
+                instrument=builder.instrument,
+                stream_serializers={
+                    StreamKind.LIVEDATA_DATA: DA00MessageSerializer(),
+                    StreamKind.LIVEDATA_STATUS: StatusMessageSerializer(),
+                },
                 host=http_host,
                 port=http_port,
             )

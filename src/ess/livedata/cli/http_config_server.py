@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 from ..config.models import ConfigKey
-from ..core.message import CONFIG_STREAM_ID, Message
+from ..core.message import CONFIG_STREAM_ID, Message, StreamKind
 from ..http_transport.serialization import GenericJSONMessageSerializer
 from ..http_transport.service import HTTPMultiEndpointSink
 
@@ -107,14 +107,17 @@ def run_server(
         Optional config value dict (if not using file)
     """
     print(f"Starting HTTP config server on http://{host}:{port}")
-    print(f"Services can poll http://{host}:{port}/config for config updates\n")
+    print(
+        f"Services can poll http://{host}:{port}/livedata_commands for config updates\n"
+    )
 
-    # Create HTTP multi-endpoint sink
-    serializer = GenericJSONMessageSerializer()
+    # Create HTTP multi-endpoint sink (only /livedata_commands endpoint is used)
+    # Note: instrument name is 'dummy' as a placeholder - endpoint path is what matters
     sink = HTTPMultiEndpointSink(
-        data_serializer=serializer,
-        status_serializer=serializer,
-        config_serializer=serializer,
+        instrument='dummy',
+        stream_serializers={
+            StreamKind.LIVEDATA_CONFIG: GenericJSONMessageSerializer(),
+        },
         host=host,
         port=port,
         max_queue_size=100,
@@ -138,7 +141,9 @@ def run_server(
             print(f"✓ Published config: {config_key}\n")
 
         print("Server is running. Press Ctrl+C to stop.")
-        print("(Config messages are now available at the /config endpoint)\n")
+        print(
+            "(Config messages are now available at the /livedata_commands endpoint)\n"
+        )
 
         # Keep server running
         while True:

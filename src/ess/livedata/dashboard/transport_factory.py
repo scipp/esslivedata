@@ -76,12 +76,12 @@ def create_config_transport(
             HTTPMultiEndpointSink,
         )
 
-        # Create HTTP multi-endpoint sink for dashboard (only /config is used)
-        # Dashboard uses GenericJSONMessageSerializer for all endpoints for simplicity
+        # Create HTTP multi-endpoint sink for dashboard (only /config endpoint is used)
         config_sink = HTTPMultiEndpointSink(
-            data_serializer=GenericJSONMessageSerializer(),
-            status_serializer=GenericJSONMessageSerializer(),
-            config_serializer=GenericJSONMessageSerializer(),
+            instrument=instrument,
+            stream_serializers={
+                StreamKind.LIVEDATA_CONFIG: GenericJSONMessageSerializer(),
+            },
             host='0.0.0.0',  # noqa: S104
             port=http_config_sink_port,
         )
@@ -231,15 +231,15 @@ def create_roi_sink(
     elif transport_type == 'http':
         from ..http_transport import (
             DA00MessageSerializer,
-            GenericJSONMessageSerializer,
             HTTPMultiEndpointSink,
         )
 
-        # ROI sink exposes /data endpoint (ROI data), /status, and /config unused
+        # ROI sink exposes /livedata_roi endpoint for ROI data
         return HTTPMultiEndpointSink(
-            data_serializer=DA00MessageSerializer(),
-            status_serializer=GenericJSONMessageSerializer(),
-            config_serializer=GenericJSONMessageSerializer(),
+            instrument=instrument,
+            stream_serializers={
+                StreamKind.LIVEDATA_ROI: DA00MessageSerializer(),
+            },
             host=http_sink_host,
             port=http_sink_port,
         )

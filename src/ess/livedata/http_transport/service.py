@@ -14,6 +14,7 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI
 
+from ..config.streams import stream_kind_to_topic
 from ..core import MessageSink
 from ..core.message import Message, StreamKind
 from .app import create_multi_endpoint_api
@@ -62,19 +63,18 @@ class HTTPMultiEndpointSink(MessageSink[Any]):
     Message sink that exposes multiple HTTP endpoints for different message types.
 
     Routes messages to different queues based on StreamKind, mirroring Kafka's
-    topic separation. Each StreamKind gets its own endpoint and serializer:
-    - LIVEDATA_DATA → /data (DA00 format)
-    - LIVEDATA_STATUS → /status (X5F2 format)
-    - LIVEDATA_CONFIG → /config (JSON format)
+    topic separation. Each StreamKind is mapped to an endpoint derived from its
+    topic name (with instrument prefix removed).
+
+    Multiple StreamKinds can share the same endpoint if they map to the same
+    topic (e.g., MONITOR_COUNTS and MONITOR_EVENTS both → /beam_monitor).
 
     Parameters
     ----------
-    data_serializer:
-        Serializer for DATA messages.
-    status_serializer:
-        Serializer for STATUS messages.
-    config_serializer:
-        Serializer for CONFIG messages.
+    instrument:
+        Instrument name used to derive endpoint paths from StreamKinds.
+    stream_serializers:
+        Mapping from StreamKind to serializer for that stream type.
     host:
         The host to bind the HTTP server to.
     port:
@@ -89,9 +89,8 @@ class HTTPMultiEndpointSink(MessageSink[Any]):
 
     def __init__(
         self,
-        data_serializer: MessageSerializer[Any],
-        status_serializer: MessageSerializer[Any],
-        config_serializer: MessageSerializer[Any],
+        instrument: str,
+        stream_serializers: dict[StreamKind, MessageSerializer[Any]],
         host: str = "0.0.0.0",
         port: int = 8000,
         max_queue_size: int = 1000,
@@ -101,30 +100,51 @@ class HTTPMultiEndpointSink(MessageSink[Any]):
         self._logger = logger_ or logger
         self._host = host
         self._port = port
+        self._instrument = instrument
 
-        # Create separate sinks for each message type
-        self._data_sink: QueueBasedMessageSink[Any] = QueueBasedMessageSink(
-            max_size=max_queue_size,
-            max_age_seconds=max_age_seconds,
-            logger=self._logger,
-        )
-        self._status_sink: QueueBasedMessageSink[Any] = QueueBasedMessageSink(
-            max_size=max_queue_size,
-            max_age_seconds=max_age_seconds,
-            logger=self._logger,
-        )
-        self._config_sink: QueueBasedMessageSink[Any] = QueueBasedMessageSink(
-            max_size=max_queue_size,
-            max_age_seconds=max_age_seconds,
-            logger=self._logger,
-        )
+        # Build endpoint mappings from StreamKinds
+        # Multiple StreamKinds may map to the same endpoint
+        endpoint_to_kinds: dict[str, list[StreamKind]] = {}
+        endpoint_to_serializer: dict[str, MessageSerializer[Any]] = {}
 
-        # Create FastAPI app with multiple endpoints
+        for kind, serializer in stream_serializers.items():
+            topic = stream_kind_to_topic(instrument, kind)
+            endpoint = f"/{topic.removeprefix(f'{instrument}_')}"
+
+            if endpoint not in endpoint_to_kinds:
+                endpoint_to_kinds[endpoint] = []
+                endpoint_to_serializer[endpoint] = serializer
+            else:
+                # Verify all StreamKinds for same endpoint use same serializer
+                if endpoint_to_serializer[endpoint] != serializer:
+                    raise ValueError(
+                        f"StreamKinds mapping to endpoint {endpoint} must use "
+                        f"the same serializer"
+                    )
+            endpoint_to_kinds[endpoint].append(kind)
+
+        # Create one sink per unique endpoint
+        self._endpoint_to_sink: dict[str, QueueBasedMessageSink[Any]] = {
+            endpoint: QueueBasedMessageSink(
+                max_size=max_queue_size,
+                max_age_seconds=max_age_seconds,
+                logger=self._logger,
+            )
+            for endpoint in endpoint_to_kinds
+        }
+
+        # Build reverse lookup for fast routing: StreamKind → sink
+        self._kind_to_sink: dict[StreamKind, QueueBasedMessageSink[Any]] = {}
+        for endpoint, kinds in endpoint_to_kinds.items():
+            sink = self._endpoint_to_sink[endpoint]
+            for kind in kinds:
+                self._kind_to_sink[kind] = sink
+
+        # Create FastAPI app with all endpoints
         self._app: FastAPI = create_multi_endpoint_api(
             endpoints={
-                "/data": (self._data_sink, data_serializer),
-                "/status": (self._status_sink, status_serializer),
-                "/config": (self._config_sink, config_serializer),
+                endpoint: (sink, endpoint_to_serializer[endpoint])
+                for endpoint, sink in self._endpoint_to_sink.items()
             },
             logger=self._logger,
         )
@@ -148,27 +168,25 @@ class HTTPMultiEndpointSink(MessageSink[Any]):
         messages:
             List of messages to route to appropriate endpoints.
         """
-        data_messages = []
-        status_messages = []
-        config_messages = []
+        # Group messages by sink
+        sink_to_messages: dict[QueueBasedMessageSink[Any], list[Message[Any]]] = {}
 
         for msg in messages:
-            if msg.stream.kind == StreamKind.LIVEDATA_STATUS:
-                status_messages.append(msg)
-            elif msg.stream.kind == StreamKind.LIVEDATA_CONFIG:
-                config_messages.append(msg)
-            else:
-                # All other messages (DATA, MONITOR_COUNTS, DETECTOR_EVENTS, etc.)
-                # go to /data endpoint
-                data_messages.append(msg)
+            sink = self._kind_to_sink.get(msg.stream.kind)
+            if sink is None:
+                self._logger.warning(
+                    "No sink configured for StreamKind %s, dropping message",
+                    msg.stream.kind,
+                )
+                continue
 
-        # Publish to appropriate sinks
-        if data_messages:
-            self._data_sink.publish_messages(data_messages)
-        if status_messages:
-            self._status_sink.publish_messages(status_messages)
-        if config_messages:
-            self._config_sink.publish_messages(config_messages)
+            if sink not in sink_to_messages:
+                sink_to_messages[sink] = []
+            sink_to_messages[sink].append(msg)
+
+        # Publish to each sink
+        for sink, sink_messages in sink_to_messages.items():
+            sink.publish_messages(sink_messages)
 
     def start(self) -> None:
         """Start the HTTP server in a background thread."""
@@ -204,11 +222,12 @@ class HTTPMultiEndpointSink(MessageSink[Any]):
             )
 
         self._started = True
+        endpoints_str = ", ".join(sorted(self._endpoint_to_sink.keys()))
         self._logger.info(
-            "HTTP API server ready on http://%s:%d with endpoints: "
-            "/data, /status, /config",
+            "HTTP API server ready on http://%s:%d with endpoints: %s",
             self._host,
             self._port,
+            endpoints_str,
         )
 
     def stop(self) -> None:

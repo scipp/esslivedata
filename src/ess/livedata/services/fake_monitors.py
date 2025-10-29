@@ -14,11 +14,7 @@ from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.core import IdentityProcessor
-from ess.livedata.http_transport.serialization import (
-    ConfigMessageSerializer,
-    DA00MessageSerializer,
-    StatusMessageSerializer,
-)
+from ess.livedata.http_transport.serialization import DA00MessageSerializer
 from ess.livedata.http_transport.service import HTTPMultiEndpointSink
 from ess.livedata.kafka.message_adapter import AdaptingMessageSource, MessageAdapter
 from ess.livedata.kafka.sink import (
@@ -146,11 +142,12 @@ def run_service(
     if sink_type == 'http':
         if mode == 'ev44':
             raise ValueError("HTTP sink only supports da00 mode (not ev44)")
-        # Use multi-endpoint sink for consistency (fake_monitors only uses /data)
+        # Use multi-endpoint sink for monitor data (exposes /beam_monitor endpoint)
         sink = HTTPMultiEndpointSink(
-            data_serializer=DA00MessageSerializer(),
-            status_serializer=StatusMessageSerializer(),
-            config_serializer=ConfigMessageSerializer(),
+            instrument=instrument,
+            stream_serializers={
+                StreamKind.MONITOR_COUNTS: DA00MessageSerializer(),
+            },
             host=http_host,
             port=http_port,
         )
