@@ -1,6 +1,6 @@
 """Command-line tool to monitor HTTP message endpoints.
 
-This tool polls a message endpoint and displays received messages.
+This tool polls message endpoints and displays received messages.
 Useful for testing and debugging HTTP transport services.
 """
 # ruff: noqa: T201  # print is appropriate for CLI output
@@ -13,10 +13,21 @@ from typing import Any
 
 import scipp as sc
 
-from ..http_transport.serialization import RoutingMessageSerializer
-from ..http_transport.source import HTTPMessageSource
+from ..http_transport.serialization import (
+    DA00MessageSerializer,
+    GenericJSONMessageSerializer,
+    StatusMessageSerializer,
+)
+from ..http_transport.source import HTTPMessageSource, MultiHTTPSource
 
 logger = logging.getLogger(__name__)
+
+# Standard endpoints and their serializers
+ENDPOINT_SERIALIZERS = {
+    '/data': DA00MessageSerializer(),
+    '/status': StatusMessageSerializer(),
+    '/config': GenericJSONMessageSerializer(),
+}
 
 
 def format_message(msg: Any) -> str:
@@ -40,9 +51,7 @@ def format_message(msg: Any) -> str:
 
 def main() -> int:
     """Main entry point for the HTTP monitor tool."""
-    parser = argparse.ArgumentParser(
-        description="Monitor messages from an HTTP endpoint"
-    )
+    parser = argparse.ArgumentParser(description="Monitor messages from HTTP endpoints")
     parser.add_argument(
         "url",
         help="Base URL of the service to monitor (e.g., http://localhost:8000)",
@@ -54,9 +63,10 @@ def main() -> int:
         help="Polling interval in seconds (default: 1.0)",
     )
     parser.add_argument(
-        "--endpoint",
-        default="/messages",
-        help="Endpoint path (default: /messages)",
+        "--endpoints",
+        nargs='+',
+        default=None,
+        help="Endpoint paths to monitor (default: all standard endpoints)",
     )
     parser.add_argument(
         "--timeout",
@@ -80,17 +90,43 @@ def main() -> int:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    # Create HTTP source
-    serializer = RoutingMessageSerializer()
-    source = HTTPMessageSource(
-        base_url=args.url,
-        serializer=serializer,
-        endpoint=args.endpoint,
-        timeout=args.timeout,
-        logger=logger,
-    )
+    # Determine which endpoints to monitor
+    if args.endpoints:
+        endpoints = args.endpoints
+        # For custom endpoints, use generic JSON serializer
+        sources = [
+            HTTPMessageSource(
+                base_url=args.url,
+                serializer=GenericJSONMessageSerializer(),
+                endpoint=endpoint,
+                timeout=args.timeout,
+                logger=logger,
+            )
+            for endpoint in endpoints
+        ]
+    else:
+        # Monitor all standard endpoints
+        endpoints = list(ENDPOINT_SERIALIZERS.keys())
+        sources = [
+            HTTPMessageSource(
+                base_url=args.url,
+                serializer=ENDPOINT_SERIALIZERS[endpoint],
+                endpoint=endpoint,
+                timeout=args.timeout,
+                logger=logger,
+            )
+            for endpoint in endpoints
+        ]
 
-    print(f"Monitoring {args.url}{args.endpoint} (polling every {args.interval}s)")
+    # Combine multiple sources
+    if len(sources) == 1:
+        source = sources[0]
+    else:
+        source = MultiHTTPSource(sources)
+
+    endpoints_str = ', '.join(endpoints)
+    print(f"Monitoring {args.url} endpoints: {endpoints_str}")
+    print(f"Polling every {args.interval}s")
     print("Press Ctrl+C to stop\n")
 
     message_count = 0
@@ -108,9 +144,11 @@ def main() -> int:
 
     except KeyboardInterrupt:
         print(f"\nStopped. Total messages received: {message_count}")
+        source.close()
         return 0
     except Exception as e:
         logger.exception("Error: %s", e)
+        source.close()
         return 1
 
 

@@ -7,7 +7,6 @@ from .serialization import (
     DA00MessageSerializer,
     GenericJSONMessageSerializer,
     MessageSerializer,
-    RoutingMessageSerializer,
     StatusMessageSerializer,
 )
 from .service import HTTPMultiEndpointSink
@@ -23,7 +22,6 @@ __all__ = [
     'MessageSerializer',
     'MultiHTTPSource',
     'QueueBasedMessageSink',
-    'RoutingMessageSerializer',
     'StatusMessageSerializer',
     'create_message_api',
     'create_multi_endpoint_api',
