@@ -16,8 +16,12 @@ from .core.handler import JobBasedPreprocessorFactoryBase, PreprocessorFactory
 from .core.message import Message, MessageSource
 from .core.orchestrating_processor import OrchestratingProcessor
 from .core.service import Service
-from .http_transport.serialization import DA00MessageSerializer
-from .http_transport.service import HTTPServiceSink
+from .http_transport.serialization import (
+    ConfigMessageSerializer,
+    DA00MessageSerializer,
+    StatusMessageSerializer,
+)
+from .http_transport.service import HTTPMultiEndpointSink
 from .kafka import KafkaTopic
 from .kafka import consumer as kafka_consumer
 from .kafka.message_adapter import AdaptingMessageSource, MessageAdapter
@@ -247,10 +251,11 @@ class DataServiceRunner:
                 instrument=builder.instrument, kafka_config=kafka_downstream_config
             )
         elif sink_type == 'http':
-            from .http_transport import RoutingMessageSerializer
-
-            http_sink_instance = HTTPServiceSink(
-                serializer=RoutingMessageSerializer(),
+            # Use multi-endpoint sink for proper topic separation
+            http_sink_instance = HTTPMultiEndpointSink(
+                data_serializer=DA00MessageSerializer(),
+                status_serializer=StatusMessageSerializer(),
+                config_serializer=ConfigMessageSerializer(),
                 host=http_host,
                 port=http_port,
             )
@@ -335,6 +340,7 @@ class DataServiceRunner:
 
                 config_http_source = HTTPMessageSource(
                     base_url=http_config_source,
+                    endpoint='/config',
                     serializer=GenericJSONMessageSerializer(),
                 )
 

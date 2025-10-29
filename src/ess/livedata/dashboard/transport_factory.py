@@ -71,11 +71,17 @@ def create_config_transport(
         if http_config_url is None:
             raise ValueError("http_config_url is required for HTTP transport")
 
-        from ..http_transport import GenericJSONMessageSerializer, HTTPServiceSink
+        from ..http_transport import (
+            GenericJSONMessageSerializer,
+            HTTPMultiEndpointSink,
+        )
 
-        # Create HTTP sink for dashboard to publish config messages
-        config_sink = HTTPServiceSink(
-            serializer=GenericJSONMessageSerializer(),
+        # Create HTTP multi-endpoint sink for dashboard (only /config is used)
+        # Dashboard uses GenericJSONMessageSerializer for all endpoints for simplicity
+        config_sink = HTTPMultiEndpointSink(
+            data_serializer=GenericJSONMessageSerializer(),
+            status_serializer=GenericJSONMessageSerializer(),
+            config_serializer=GenericJSONMessageSerializer(),
             host='0.0.0.0',  # noqa: S104
             port=http_config_sink_port,
         )
@@ -155,14 +161,28 @@ def create_data_source(
         if http_data_url is None:
             raise ValueError("http_data_url is required for HTTP transport")
 
-        from ..http_transport import HTTPMessageSource, RoutingMessageSerializer
-
-        # HTTP source already returns domain Message objects, no adapter needed
-        http_source = HTTPMessageSource(
-            base_url=http_data_url,
-            serializer=RoutingMessageSerializer(),
+        from ..http_transport import (
+            DA00MessageSerializer,
+            HTTPMessageSource,
+            MultiHTTPSource,
+            StatusMessageSerializer,
         )
-        return exit_stack.enter_context(http_source)
+
+        # Poll separate endpoints for data and status (mirrors Kafka topics)
+        data_source = HTTPMessageSource(
+            base_url=http_data_url,
+            endpoint='/data',
+            serializer=DA00MessageSerializer(),
+        )
+        status_source = HTTPMessageSource(
+            base_url=http_data_url,
+            endpoint='/status',
+            serializer=StatusMessageSerializer(),
+        )
+
+        # Combine sources similar to Kafka's MultiConsumer
+        combined_source = MultiHTTPSource([data_source, status_source])
+        return exit_stack.enter_context(combined_source)
 
     else:
         raise ValueError(f"Unknown transport type: {transport_type}")
@@ -209,10 +229,17 @@ def create_roi_sink(
         )
 
     elif transport_type == 'http':
-        from ..http_transport import DA00MessageSerializer, HTTPServiceSink
+        from ..http_transport import (
+            DA00MessageSerializer,
+            GenericJSONMessageSerializer,
+            HTTPMultiEndpointSink,
+        )
 
-        return HTTPServiceSink(
-            serializer=DA00MessageSerializer(),
+        # ROI sink exposes /data endpoint (ROI data), /status, and /config unused
+        return HTTPMultiEndpointSink(
+            data_serializer=DA00MessageSerializer(),
+            status_serializer=GenericJSONMessageSerializer(),
+            config_serializer=GenericJSONMessageSerializer(),
             host=http_sink_host,
             port=http_sink_port,
         )

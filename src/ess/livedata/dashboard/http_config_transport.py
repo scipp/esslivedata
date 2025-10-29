@@ -42,7 +42,8 @@ class HTTPConfigTransport(MessageTransport[ConfigKey, dict[str, Any]]):
         timeout: float = 1.0,
     ):
         self._sink = sink
-        self._poll_url = f"{poll_url.rstrip('/')}/messages"
+        self._poll_url = poll_url
+        self._poll_endpoint = '/config'  # Poll backend's /config endpoint
         self._logger = logger or logging.getLogger(__name__)
         self._timeout = timeout
         self._session = requests.Session()
@@ -91,14 +92,20 @@ class HTTPConfigTransport(MessageTransport[ConfigKey, dict[str, Any]]):
         :
             List of (config_key, config_value) tuples received
         """
+        from urllib.parse import urljoin
+
         received = []
+        url = urljoin(self._poll_url, self._poll_endpoint)
 
         try:
             response = self._session.get(
-                self._poll_url,
+                url,
                 timeout=self._timeout,
             )
             response.raise_for_status()
+
+            if response.status_code == 204:  # No content
+                return []
 
             # Parse JSON response
             data = response.json()
@@ -119,16 +126,14 @@ class HTTPConfigTransport(MessageTransport[ConfigKey, dict[str, Any]]):
 
             if received:
                 self._logger.debug(
-                    "Received %d config messages from %s", len(received), self._poll_url
+                    "Received %d config messages from %s", len(received), url
                 )
 
         except requests.exceptions.Timeout:
             # Timeout is expected when polling, don't log as error
             pass
         except requests.exceptions.RequestException as e:
-            self._logger.error(
-                "Failed to receive messages from %s: %s", self._poll_url, e
-            )
+            self._logger.error("Failed to receive messages from %s: %s", url, e)
         except Exception as e:
             self._logger.error("Error receiving messages: %s", e)
 

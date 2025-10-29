@@ -179,6 +179,147 @@ class GenericJSONMessageSerializer(MessageSerializer[Any]):
         return messages
 
 
+class ConfigMessageSerializer(MessageSerializer[Any]):
+    """
+    JSON serializer specifically for CONFIG messages.
+
+    Serializes config messages with their ConfigKey and value in JSON format.
+    """
+
+    def serialize(self, messages: list[Message[Any]]) -> bytes:
+        """
+        Serialize config messages to JSON.
+
+        Parameters
+        ----------
+        messages:
+            List of config messages to serialize.
+
+        Returns
+        -------
+        :
+            JSON-encoded bytes.
+        """
+        serialized = []
+        for msg in messages:
+            # Config messages have ConfigUpdate as value
+            value_data = (
+                msg.value.value.model_dump()
+                if hasattr(msg.value.value, 'model_dump')
+                else msg.value.value
+            )
+            config_dict = {
+                'key': str(msg.value.config_key),
+                'value': value_data,
+            }
+            serialized.append(
+                {
+                    'timestamp': msg.timestamp,
+                    'stream': {'kind': msg.stream.kind.value, 'name': msg.stream.name},
+                    'value': config_dict,
+                }
+            )
+        return json.dumps(serialized).encode('utf-8')
+
+    def deserialize(self, data: bytes) -> list[Message[Any]]:
+        """
+        Deserialize JSON bytes to config messages.
+
+        Parameters
+        ----------
+        data:
+            JSON-encoded bytes.
+
+        Returns
+        -------
+        :
+            List of deserialized config messages.
+        """
+        decoded = json.loads(data.decode('utf-8'))
+        messages = []
+        for item in decoded:
+            stream = StreamId(
+                kind=StreamKind(item['stream']['kind']), name=item['stream']['name']
+            )
+            # Keep value as dict (will be converted to ConfigUpdate by consumer)
+            messages.append(
+                Message(timestamp=item['timestamp'], stream=stream, value=item['value'])
+            )
+        return messages
+
+
+class StatusMessageSerializer(MessageSerializer[Any]):
+    """
+    Binary serializer for STATUS messages using x5f2 format.
+
+    Uses the same x5f2 format as Kafka transport for compatibility.
+    """
+
+    def serialize(self, messages: list[Message[Any]]) -> bytes:
+        """
+        Serialize status messages using x5f2 format.
+
+        Parameters
+        ----------
+        messages:
+            List of status messages to serialize.
+
+        Returns
+        -------
+        :
+            Binary-encoded messages with length prefixes.
+        """
+        from ..kafka.x5f2_compat import job_status_to_x5f2
+
+        parts = [struct.pack('<I', len(messages))]
+
+        for msg in messages:
+            x5f2_data = job_status_to_x5f2(msg.value)
+            parts.append(struct.pack('<I', len(x5f2_data)))
+            parts.append(x5f2_data)
+
+        return b''.join(parts)
+
+    def deserialize(self, data: bytes) -> list[Message[Any]]:
+        """
+        Deserialize x5f2-encoded status messages.
+
+        Parameters
+        ----------
+        data:
+            Binary-encoded messages with length prefixes.
+
+        Returns
+        -------
+        :
+            List of deserialized status messages.
+        """
+        from ..kafka.x5f2_compat import x5f2_to_job_status
+
+        messages = []
+        offset = 0
+
+        msg_count = struct.unpack_from('<I', data, offset)[0]
+        offset += 4
+
+        for _ in range(msg_count):
+            data_len = struct.unpack_from('<I', data, offset)[0]
+            offset += 4
+
+            msg_data = data[offset : offset + data_len]
+            offset += data_len
+
+            job_status = x5f2_to_job_status(msg_data)
+            messages.append(
+                Message(
+                    stream=STATUS_STREAM_ID,
+                    value=job_status,
+                )
+            )
+
+        return messages
+
+
 class RoutingMessageSerializer(MessageSerializer[Any]):
     """
     Routes messages to appropriate serializers based on stream type.

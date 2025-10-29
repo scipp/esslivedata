@@ -20,7 +20,7 @@ from typing import Any, NoReturn
 from ..config.models import ConfigKey
 from ..core.message import CONFIG_STREAM_ID, Message
 from ..http_transport.serialization import GenericJSONMessageSerializer
-from ..http_transport.service import HTTPServiceSink
+from ..http_transport.service import HTTPMultiEndpointSink
 
 logger = logging.getLogger(__name__)
 
@@ -107,12 +107,14 @@ def run_server(
         Optional config value dict (if not using file)
     """
     print(f"Starting HTTP config server on http://{host}:{port}")
-    print(f"Services can poll http://{host}:{port}/messages for config updates\n")
+    print(f"Services can poll http://{host}:{port}/config for config updates\n")
 
-    # Create HTTP sink
+    # Create HTTP multi-endpoint sink
     serializer = GenericJSONMessageSerializer()
-    sink = HTTPServiceSink(
-        serializer=serializer,
+    sink = HTTPMultiEndpointSink(
+        data_serializer=serializer,
+        status_serializer=serializer,
+        config_serializer=serializer,
         host=host,
         port=port,
         max_queue_size=100,
@@ -136,7 +138,7 @@ def run_server(
             print(f"✓ Published config: {config_key}\n")
 
         print("Server is running. Press Ctrl+C to stop.")
-        print("(Config messages are now available at the /messages endpoint)\n")
+        print("(Config messages are now available at the /config endpoint)\n")
 
         # Keep server running
         while True:
