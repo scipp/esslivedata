@@ -23,15 +23,58 @@ from .message_transport import MessageTransport
 TransportType = Literal['kafka', 'http']
 
 
+def create_dashboard_sink(
+    *,
+    instrument: str,
+    port: int,
+    logger: logging.Logger,
+) -> Any:
+    """
+    Create HTTP multi-endpoint sink for dashboard.
+
+    Exposes both /config and /livedata_roi endpoints for backend services to poll.
+
+    Parameters
+    ----------
+    instrument:
+        Instrument name
+    port:
+        Port to expose HTTP endpoints on
+    logger:
+        Logger instance
+
+    Returns
+    -------
+    :
+        HTTPMultiEndpointSink exposing config and ROI endpoints
+    """
+    from ..http_transport import (
+        DA00MessageSerializer,
+        GenericJSONMessageSerializer,
+        HTTPMultiEndpointSink,
+    )
+
+    return HTTPMultiEndpointSink(
+        instrument=instrument,
+        stream_serializers={
+            StreamKind.LIVEDATA_CONFIG: GenericJSONMessageSerializer(),
+            StreamKind.LIVEDATA_ROI: DA00MessageSerializer(),
+        },
+        host='0.0.0.0',  # noqa: S104
+        port=port,
+        logger_=logger,
+    )
+
+
 def create_config_transport(
     *,
     transport_type: TransportType,
     instrument: str,
     logger: logging.Logger,
-    http_config_url: str | None = None,
-    http_config_sink_port: int = 5011,
+    http_backend_url: str | None = None,
+    http_sink: Any | None = None,
     consumer: Consumer | None = None,
-) -> tuple[MessageTransport[ConfigKey, dict[str, Any]], Any | None]:
+) -> MessageTransport[ConfigKey, dict[str, Any]]:
     """
     Create a config message transport based on the specified type.
 
@@ -43,57 +86,42 @@ def create_config_transport(
         Instrument name
     logger:
         Logger instance
-    http_config_url:
+    http_backend_url:
         Base URL to poll for config messages from backend (HTTP mode only)
-    http_config_sink_port:
-        Port for dashboard's config sink (HTTP mode only)
+    http_sink:
+        HTTP multi-endpoint sink for publishing config (HTTP mode only)
     consumer:
         Kafka consumer for config messages (required for Kafka mode)
 
     Returns
     -------
     :
-        Tuple of (transport, http_sink_or_none) - HTTP sink for lifecycle management
+        Transport for config messages
     """
     if transport_type == 'kafka':
         if consumer is None:
             raise ValueError("consumer is required for Kafka transport")
 
         kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
-        transport = KafkaTransport(
+        return KafkaTransport(
             kafka_config=kafka_downstream_config,
             consumer=consumer,
             logger=logger,
         )
-        return transport, None
 
     elif transport_type == 'http':
-        if http_config_url is None:
-            raise ValueError("http_config_url is required for HTTP transport")
-
-        from ..http_transport import (
-            GenericJSONMessageSerializer,
-            HTTPMultiEndpointSink,
-        )
-
-        # Create HTTP multi-endpoint sink for dashboard (only /config endpoint is used)
-        config_sink = HTTPMultiEndpointSink(
-            instrument=instrument,
-            stream_serializers={
-                StreamKind.LIVEDATA_CONFIG: GenericJSONMessageSerializer(),
-            },
-            host='0.0.0.0',  # noqa: S104
-            port=http_config_sink_port,
-        )
+        if http_backend_url is None:
+            raise ValueError("http_backend_url is required for HTTP transport")
+        if http_sink is None:
+            raise ValueError("http_sink is required for HTTP transport")
 
         from .http_config_transport import HTTPConfigTransport
 
-        transport = HTTPConfigTransport(
-            sink=config_sink,
-            poll_url=http_config_url,
+        return HTTPConfigTransport(
+            sink=http_sink,
+            poll_url=http_backend_url,
             logger=logger,
         )
-        return transport, config_sink
 
     else:
         raise ValueError(f"Unknown transport type: {transport_type}")
@@ -104,7 +132,7 @@ def create_data_source(
     transport_type: TransportType,
     instrument: str,
     dev: bool,
-    http_data_url: str | None = None,
+    http_backend_url: str | None = None,
     exit_stack: Any,  # ExitStack from contextlib
 ):
     """
@@ -118,8 +146,8 @@ def create_data_source(
         Instrument name
     dev:
         Development mode flag
-    http_data_url:
-        Base URL for HTTP data service (required for HTTP mode)
+    http_backend_url:
+        Base URL for HTTP backend service (required for HTTP mode)
     exit_stack:
         ExitStack for resource management
 
@@ -158,8 +186,8 @@ def create_data_source(
         return AdaptingMessageSource(source=source, adapter=adapter)
 
     elif transport_type == 'http':
-        if http_data_url is None:
-            raise ValueError("http_data_url is required for HTTP transport")
+        if http_backend_url is None:
+            raise ValueError("http_backend_url is required for HTTP transport")
 
         from ..http_transport import (
             DA00MessageSerializer,
@@ -169,14 +197,25 @@ def create_data_source(
         )
 
         # Poll separate endpoints for data and status (mirrors Kafka topics)
+        # Endpoint names are derived from topic names with instrument prefix removed
+        # e.g., dummy_livedata_data -> /livedata_data
+        data_topic = stream_kind_to_topic(
+            instrument=instrument, kind=StreamKind.LIVEDATA_DATA
+        )
+        status_topic = stream_kind_to_topic(
+            instrument=instrument, kind=StreamKind.LIVEDATA_STATUS
+        )
+        data_endpoint = f"/{data_topic.removeprefix(f'{instrument}_')}"
+        status_endpoint = f"/{status_topic.removeprefix(f'{instrument}_')}"
+
         data_source = HTTPMessageSource(
-            base_url=http_data_url,
-            endpoint='/data',
+            base_url=http_backend_url,
+            endpoint=data_endpoint,
             serializer=DA00MessageSerializer(),
         )
         status_source = HTTPMessageSource(
-            base_url=http_data_url,
-            endpoint='/status',
+            base_url=http_backend_url,
+            endpoint=status_endpoint,
             serializer=StatusMessageSerializer(),
         )
 
@@ -193,8 +232,7 @@ def create_roi_sink(
     transport_type: TransportType,
     instrument: str,
     logger: logging.Logger,
-    http_sink_host: str = '0.0.0.0',  # noqa: S104
-    http_sink_port: int = 5010,
+    http_sink: Any | None = None,
 ):
     """
     Create a sink for publishing ROI updates.
@@ -207,10 +245,8 @@ def create_roi_sink(
         Instrument name
     logger:
         Logger instance
-    http_sink_host:
-        Host for HTTP sink (HTTP mode only)
-    http_sink_port:
-        Port for HTTP sink (HTTP mode only)
+    http_sink:
+        HTTP multi-endpoint sink for publishing ROI (HTTP mode only)
 
     Returns
     -------
@@ -229,20 +265,10 @@ def create_roi_sink(
         )
 
     elif transport_type == 'http':
-        from ..http_transport import (
-            DA00MessageSerializer,
-            HTTPMultiEndpointSink,
-        )
-
-        # ROI sink exposes /livedata_roi endpoint for ROI data
-        return HTTPMultiEndpointSink(
-            instrument=instrument,
-            stream_serializers={
-                StreamKind.LIVEDATA_ROI: DA00MessageSerializer(),
-            },
-            host=http_sink_host,
-            port=http_sink_port,
-        )
+        if http_sink is None:
+            raise ValueError("http_sink is required for HTTP transport")
+        # Reuse the same multi-endpoint sink created for config
+        return http_sink
 
     else:
         raise ValueError(f"Unknown transport type: {transport_type}")

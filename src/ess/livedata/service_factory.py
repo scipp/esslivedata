@@ -300,19 +300,54 @@ class DataServiceRunner:
                     "--http-data-source is required when using --source-type http"
                 )
 
-            # Create HTTP sources
+            # Create HTTP sources based on adapter's topics
+            # The adapter knows which topics (and thus endpoints) we need
             sources = []
 
-            # Data source (DA00 format for monitor/detector data)
-            data_source = HTTPMessageSource(
-                base_url=http_data_source,
-                serializer=DA00MessageSerializer(),
-            )
-            sources.append(data_source)
+            if builder._adapter is None:
+                raise ValueError(
+                    "HTTP source mode requires an adapter to determine which "
+                    "endpoints to poll"
+                )
 
-            # Config source (JSON format for config messages)
+            # Get topics from adapter - these tell us which endpoints to poll
+            topics = builder._adapter.topics
+
+            # If http_config_source is specified, we'll handle config separately
+            # so skip config topics from the data source
+            if http_config_source:
+                topics = [t for t in topics if 'livedata_commands' not in t]
+
+            # Convert topics to endpoints and create sources
+            for topic in topics:
+                # Convert topic to endpoint by removing instrument prefix
+                # e.g., "dummy_beam_monitor" -> "/beam_monitor"
+                endpoint = f"/{topic.removeprefix(f'{builder.instrument}_')}"
+
+                # Determine serializer based on endpoint type
+                # Config endpoints use JSON, data endpoints use DA00
+                if 'livedata_commands' in endpoint:
+                    serializer = GenericJSONMessageSerializer()
+                else:
+                    serializer = DA00MessageSerializer()
+
+                # Create HTTP source for this endpoint
+                http_source = HTTPMessageSource(
+                    base_url=http_data_source,
+                    endpoint=endpoint,
+                    serializer=serializer,
+                )
+                sources.append(http_source)
+
+            # Handle separate config source if specified
             if http_config_source:
                 from .kafka.message_adapter import RawConfigItem
+
+                # Config comes from a different server
+                config_topic = f'{builder.instrument}_livedata_commands'
+                config_endpoint = (
+                    f"/{config_topic.removeprefix(f'{builder.instrument}_')}"
+                )
 
                 # Create adapter to convert JSON dict to RawConfigItem
                 class HTTPConfigAdapter:
@@ -341,7 +376,7 @@ class DataServiceRunner:
 
                 config_http_source = HTTPMessageSource(
                     base_url=http_config_source,
-                    endpoint='/config',
+                    endpoint=config_endpoint,
                     serializer=GenericJSONMessageSerializer(),
                 )
 

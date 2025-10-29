@@ -56,9 +56,8 @@ class DashboardBase(ServiceBase, ABC):
         dashboard_name: str,
         port: int = 5007,
         transport: TransportType = 'kafka',
-        http_data_url: str | None = None,
-        http_config_url: str | None = None,
-        http_sink_port: int = 5010,
+        http_backend_url: str | None = None,
+        http_port: int = 8300,
     ):
         name = f'{instrument}_{dashboard_name}'
         super().__init__(name=name, log_level=log_level)
@@ -66,16 +65,25 @@ class DashboardBase(ServiceBase, ABC):
         self._port = port
         self._dev = dev
         self._transport = transport
-        self._http_data_url = http_data_url
-        self._http_config_url = http_config_url
-        self._http_sink_port = http_sink_port
+        self._http_backend_url = http_backend_url
+        self._http_port = http_port
 
         self._exit_stack = ExitStack()
         self._exit_stack.__enter__()
 
         self._callback = None
-        self._http_roi_sink = None  # Track HTTP ROI sink for lifecycle management
-        self._http_config_sink = None  # Track HTTP config sink for lifecycle management
+        self._http_sink = (
+            None  # Track HTTP multi-endpoint sink for lifecycle management
+        )
+
+        # Create HTTP sink once if using HTTP transport
+        if self._transport == 'http':
+            from .transport_factory import create_dashboard_sink
+
+            self._http_sink = create_dashboard_sink(
+                instrument=instrument, port=http_port, logger=self._logger
+            )
+
         self._setup_config_service()
         self._setup_data_infrastructure(instrument=instrument, dev=dev)
         self._logger.info(
@@ -114,16 +122,14 @@ class DashboardBase(ServiceBase, ABC):
             )
 
         # Create transport using factory
-        transport, http_config_sink = create_config_transport(
+        transport = create_config_transport(
             transport_type=self._transport,
             instrument=self._instrument,
             logger=self._logger,
-            http_config_url=self._http_config_url,
+            http_backend_url=self._http_backend_url,
+            http_sink=self._http_sink,
             consumer=consumer,
         )
-
-        # Store HTTP config sink for lifecycle management
-        self._http_config_sink = http_config_sink
 
         self._message_bridge = BackgroundMessageBridge(
             transport=transport, logger=self._logger
@@ -166,12 +172,8 @@ class DashboardBase(ServiceBase, ABC):
             transport_type=self._transport,
             instrument=instrument,
             logger=self._logger,
-            http_sink_port=self._http_sink_port,
+            http_sink=self._http_sink,
         )
-
-        # Store HTTP sink for lifecycle management
-        if self._transport == 'http':
-            self._http_roi_sink = roi_sink
 
         roi_publisher = ROIPublisher(sink=roi_sink, logger=self._logger)
 
@@ -188,7 +190,7 @@ class DashboardBase(ServiceBase, ABC):
             transport_type=self._transport,
             instrument=instrument,
             dev=dev,
-            http_data_url=self._http_data_url,
+            http_backend_url=self._http_backend_url,
             exit_stack=self._exit_stack,
         )
 
@@ -293,17 +295,14 @@ class DashboardBase(ServiceBase, ABC):
 
     def _start_impl(self) -> None:
         """Start the dashboard service."""
-        # Start HTTP config sink if using HTTP transport
-        if self._http_config_sink is not None:
-            self._http_config_sink.start()
-            self._logger.info("HTTP config sink started")
+        # Start HTTP multi-endpoint sink if using HTTP transport
+        if self._http_sink is not None:
+            self._http_sink.start()
+            self._logger.info(
+                "HTTP multi-endpoint sink started on port %d", self._http_port
+            )
 
         self._message_bridge_thread.start()
-
-        # Start HTTP ROI sink if using HTTP transport
-        if self._http_roi_sink is not None:
-            self._http_roi_sink.start()
-            self._logger.info("HTTP ROI sink started on port %d", self._http_sink_port)
 
     def run_forever(self) -> None:
         """Run the dashboard server."""
@@ -324,14 +323,10 @@ class DashboardBase(ServiceBase, ABC):
 
     def _stop_impl(self) -> None:
         """Clean shutdown of all components."""
-        # Stop HTTP sinks if using HTTP transport
-        if self._http_config_sink is not None:
-            self._http_config_sink.stop()
-            self._logger.info("HTTP config sink stopped")
-
-        if self._http_roi_sink is not None:
-            self._http_roi_sink.stop()
-            self._logger.info("HTTP ROI sink stopped")
+        # Stop HTTP multi-endpoint sink if using HTTP transport
+        if self._http_sink is not None:
+            self._http_sink.stop()
+            self._logger.info("HTTP multi-endpoint sink stopped")
 
         self._message_bridge.stop()
         self._message_bridge_thread.join()

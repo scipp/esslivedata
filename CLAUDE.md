@@ -119,29 +119,21 @@ The template manages the project structure, configuration files, and development
 
 ### Running Services Locally
 
+**IMPORTANT: Use HTTP Mode for Development**
+
+Services and dashboards run using HTTP transport without needing Kafka or Docker:
+
 ```sh
-# Start Kafka using Docker
-docker-compose up kafka
+# Run dashboard in HTTP mode (exposes HTTP endpoints on port 5011)
+python -m ess.livedata.dashboard.reduction --instrument dummy --transport http
 
-# Run fake data producers for testing
-python -m ess.livedata.services.fake_monitors --mode ev44 --instrument dummy
-python -m ess.livedata.services.fake_detectors --instrument dummy
-python -m ess.livedata.services.fake_logdata --instrument dummy
-
-# Run main processing services (use --dev for local testing)
-python -m ess.livedata.services.monitor_data --instrument dummy --dev
-python -m ess.livedata.services.detector_data --instrument dummy --dev
-python -m ess.livedata.services.data_reduction --instrument dummy --dev
-python -m ess.livedata.services.timeseries --instrument dummy --dev
-
-# Run dashboard in development mode
-python -m ess.livedata.dashboard.reduction --instrument dummy
-
-# Run dashboard in production mode with gunicorn (port 5009)
-LIVEDATA_INSTRUMENT=dummy gunicorn ess.livedata.dashboard.reduction_wsgi:application
+# Run main processing services in HTTP mode (polls dashboard for config)
+python -m ess.livedata.services.data_reduction --instrument dummy --transport http --dashboard-url http://localhost:5011
 ```
 
-Note: Use `--sink png` argument with processing services to save outputs as PNG files instead of publishing to Kafka for testing.
+**Do NOT run services in Kafka mode** - this requires Docker containers and is only for production deployment.
+
+Note: Use `--sink png` argument with processing services to save outputs as PNG files for inspection.
 
 ## Architecture Overview
 
@@ -160,15 +152,15 @@ The codebase follows a **message-driven service architecture** with these key ab
 ### Message Flow
 
 ```
-Kafka Topics → MessageSource → Processor → Preprocessor → JobManager → Workflow → MessageSink → Kafka Topics
+HTTP/Kafka Source → MessageSource → Processor → Preprocessor → JobManager → Workflow → MessageSink → HTTP/Kafka Sink
 ```
 
-1. Messages arrive from Kafka via `MessageSource` (e.g., `BackgroundMessageSource` wrapping `KafkaConsumer`)
+1. Messages arrive via `MessageSource` (e.g., `HttpMessageSource` polling HTTP endpoints in dev, or `BackgroundMessageSource` wrapping `KafkaConsumer` in production)
 2. `OrchestratingProcessor` batches messages by time window
 3. Preprocessors (accumulators) transform and accumulate messages
 4. `JobManager` schedules workflow execution with accumulated data
 5. Workflows execute scientific reduction logic
-6. Results are published via `MessageSink` (e.g., `KafkaSink`)
+6. Results are published via `MessageSink` (e.g., `HttpMessageSink` or `KafkaSink`)
 
 ### Key Components
 
@@ -184,6 +176,12 @@ Kafka Topics → MessageSource → Processor → Preprocessor → JobManager →
 - `sink.py`: Kafka producers for publishing results
 - `message_adapter.py`: Adapts raw Kafka messages to domain types
 - `stream_mapping.py`: Maps Kafka topics to stream identifiers
+
+**HTTP Transport Layer** (`src/ess/livedata/http_transport/`):
+- `source.py`: HTTP polling clients for consuming messages from endpoints
+- `service.py`: FastAPI server for exposing message endpoints
+- `stream_mapping.py`: Maps HTTP endpoint paths to stream identifiers
+- Provides Kafka-free operation for development and testing
 
 **Configuration** (`src/ess/livedata/config/`):
 - `config_loader.py`: Loads YAML/Jinja2 configurations per instrument
@@ -211,7 +209,7 @@ The dashboard follows a **layered MVC architecture**:
 
 1. **Presentation Layer**: Panel widgets and Holoviews plots
 2. **Application Layer**: Controllers (`WorkflowController`), Services (`ConfigService`, `DataService`)
-3. **Infrastructure Layer**: Kafka integration (`KafkaTransport`, `BackgroundMessageBridge`)
+3. **Infrastructure Layer**: Message transport (`KafkaTransport`, `HttpTransport`, `BackgroundMessageBridge`)
 
 **Key Pattern**: Separation between:
 - **Pydantic models**: Backend validation, serialization, Kafka communication
@@ -336,10 +334,9 @@ Install optional dependencies: `pip install esslivedata[dream]`, `pip install es
 ## Common Gotchas
 
 - Always run `tox -e deps` after changing dependencies in `pyproject.toml`
-- Use `--dev` flag when testing services locally to use simplified topic structure
-- Services (not unit tests) require Kafka to be running; use `docker-compose up kafka` for local development
+- Always use `--transport http` when running services for testing - do NOT run Kafka/Docker
 - All unit tests run independently without Kafka
-- Dashboard runs on port 5009
+- Dashboard runs on port 5009 (Kafka mode) or port 5011 (HTTP mode)
 - Pre-commit hooks will auto-format code; if they make changes, commit will be rejected (re-stage and commit again)
 - When adding new message types, register them in `StreamKind` enum
 - Project skeleton is managed by Copier template - use `copier update` to sync with upstream template changes

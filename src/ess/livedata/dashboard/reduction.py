@@ -24,20 +24,18 @@ class ReductionApp(DashboardBase):
         dev: bool = False,
         log_level: int,
         transport: str = 'kafka',
-        http_data_url: str | None = None,
-        http_config_url: str | None = None,
-        http_sink_port: int = 5010,
+        http_backend_url: str | None = None,
+        http_port: int = 8300,
     ):
         super().__init__(
             instrument=instrument,
             dev=dev,
             log_level=log_level,
             dashboard_name='reduction_dashboard',
-            port=5009,  # Default port for reduction dashboard
+            port=5007,  # Default port for reduction dashboard
             transport=transport,
-            http_data_url=http_data_url,
-            http_config_url=http_config_url,
-            http_sink_port=http_sink_port,
+            http_backend_url=http_backend_url,
+            http_port=http_port,
         )
 
         # Create log producer widget only in dev mode
@@ -75,18 +73,14 @@ def get_arg_parser() -> argparse.ArgumentParser:
         help='Transport type: kafka (default) or http',
     )
     parser.add_argument(
-        '--http-data-url',
-        help='HTTP URL for data source (e.g., http://localhost:8001)',
+        '--http-backend-url',
+        help='HTTP URL for backend service (e.g., http://localhost:9100)',
     )
     parser.add_argument(
-        '--http-config-url',
-        help='HTTP URL for config source (e.g., http://localhost:9000)',
-    )
-    parser.add_argument(
-        '--http-sink-port',
+        '--http-port',
         type=int,
-        default=5010,
-        help='Port for HTTP ROI sink (default: 5010)',
+        default=8300,
+        help='Port for HTTP endpoints (config, ROI) (default: 8300)',
     )
     return parser
 

@@ -87,57 +87,18 @@ class HTTPConfigTransport(MessageTransport[ConfigKey, dict[str, Any]]):
         """
         Poll for config messages via HTTP GET.
 
+        In HTTP mode, config flow is unidirectional (dashboard → backend only).
+        Backend services do not publish config back to the dashboard, so this
+        method always returns an empty list.
+
         Returns
         -------
         :
-            List of (config_key, config_value) tuples received
+            Empty list (no config loopback in HTTP mode)
         """
-        from urllib.parse import urljoin
-
-        received = []
-        url = urljoin(self._poll_url, self._poll_endpoint)
-
-        try:
-            response = self._session.get(
-                url,
-                timeout=self._timeout,
-            )
-            response.raise_for_status()
-
-            if response.status_code == 204:  # No content
-                return []
-
-            # Parse JSON response
-            data = response.json()
-
-            if not data:
-                return []
-
-            # Convert JSON messages to ConfigUpdate format
-            for item in data:
-                try:
-                    decoded_update = self._decode_update(item)
-                    if decoded_update:
-                        received.append(
-                            (decoded_update.config_key, decoded_update.value)
-                        )
-                except Exception as e:
-                    self._logger.error("Failed to decode config message: %s", e)
-
-            if received:
-                self._logger.debug(
-                    "Received %d config messages from %s", len(received), url
-                )
-
-        except requests.exceptions.Timeout:
-            # Timeout is expected when polling, don't log as error
-            pass
-        except requests.exceptions.RequestException as e:
-            self._logger.error("Failed to receive messages from %s: %s", url, e)
-        except Exception as e:
-            self._logger.error("Error receiving messages: %s", e)
-
-        return received
+        # HTTP mode does not support config loopback from backend to dashboard
+        # Backend services poll the dashboard for config, but don't publish back
+        return []
 
     def _decode_update(self, item: dict[str, Any]) -> ConfigUpdate | None:
         """
