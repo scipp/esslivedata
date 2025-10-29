@@ -114,7 +114,6 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
     def process(self) -> None:
         messages = self._source.get_messages()
-        # time.sleep(1.0)
         self._logger.debug('Processing %d messages', len(messages))
         config_messages: list[Message[Tin]] = []
         data_messages: list[Message[Tin]] = []
