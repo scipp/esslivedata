@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
+# ruff: noqa: S104  # Binding to 0.0.0.0 is intentional for HTTP services
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import logging
 import time
@@ -13,6 +14,8 @@ from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.core import IdentityProcessor
+from ess.livedata.http_transport.serialization import DA00MessageSerializer
+from ess.livedata.http_transport.service import HTTPServiceSink
 from ess.livedata.kafka.message_adapter import AdaptingMessageSource, MessageAdapter
 from ess.livedata.kafka.sink import (
     KafkaSink,
@@ -118,8 +121,10 @@ def run_service(
     mode: Literal['ev44', 'da00'],
     num_monitors: int = 2,
     log_level: int = logging.INFO,
+    sink_type: str = 'kafka',
+    http_host: str = '0.0.0.0',
+    http_port: int = 8000,
 ) -> NoReturn:
-    kafka_config = load_config(namespace=config_names.kafka_upstream)
     if mode == 'ev44':
         adapter = None
         serializer = serialize_variable_to_monitor_ev44
@@ -133,18 +138,37 @@ def run_service(
     if adapter is not None:
         source = AdaptingMessageSource(source=source, adapter=adapter)
 
-    processor = IdentityProcessor(
-        source=source,
-        sink=KafkaSink(
+    # Create sink based on sink_type
+    if sink_type == 'http':
+        if mode == 'ev44':
+            raise ValueError("HTTP sink only supports da00 mode (not ev44)")
+        sink = HTTPServiceSink(
+            serializer=DA00MessageSerializer(),
+            host=http_host,
+            port=http_port,
+        )
+    else:
+        kafka_config = load_config(namespace=config_names.kafka_upstream)
+        sink = KafkaSink(
             instrument=instrument, kafka_config=kafka_config, serializer=serializer
-        ),
-    )
+        )
+
+    processor = IdentityProcessor(source=source, sink=sink)
+
+    # Start HTTP server if using HTTP sink
+    if sink_type == 'http':
+        sink.start()
+
     service = Service(
         processor=processor,
         name=f'{instrument}_fake_{mode}_producer',
         log_level=log_level,
     )
-    service.start()
+    try:
+        service.start()
+    finally:
+        if sink_type == 'http':
+            sink.stop()
 
 
 def main() -> NoReturn:
@@ -164,6 +188,23 @@ def main() -> NoReturn:
         choices=range(1, 11),
         metavar='1-10',
         help='Number of monitors to simulate (1-10, default: 2)',
+    )
+    parser.add_argument(
+        '--sink-type',
+        choices=['kafka', 'http'],
+        default='kafka',
+        help='Select sink type: kafka or http',
+    )
+    parser.add_argument(
+        '--http-host',
+        default='0.0.0.0',
+        help='HTTP server host (when using http sink)',
+    )
+    parser.add_argument(
+        '--http-port',
+        type=int,
+        default=8000,
+        help='HTTP server port (when using http sink)',
     )
     run_service(**vars(parser.parse_args()))
 

@@ -44,6 +44,11 @@ dependencies = [
 dynamic = ["version"]
 
 [project.optional-dependencies]
+http = [
+    "fastapi",
+    "requests",
+    "uvicorn",
+]
 test = [
     "essdiffraction>=25.08.0",
     "esssans",

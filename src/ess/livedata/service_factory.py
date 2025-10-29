@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
+# ruff: noqa: S104  # Binding to 0.0.0.0 is intentional for HTTP services
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
@@ -15,6 +16,8 @@ from .core.handler import JobBasedPreprocessorFactoryBase, PreprocessorFactory
 from .core.message import Message, MessageSource
 from .core.orchestrating_processor import OrchestratingProcessor
 from .core.service import Service
+from .http.serialization import DA00MessageSerializer
+from .http.service import HTTPServiceSink
 from .kafka import KafkaTopic
 from .kafka import consumer as kafka_consumer
 from .kafka.message_adapter import AdaptingMessageSource, MessageAdapter
@@ -181,9 +184,20 @@ class DataServiceRunner:
         self._parser = Service.setup_arg_parser(description=f'{pretty_name} Service')
         self._parser.add_argument(
             '--sink-type',
-            choices=['kafka', 'png'],
+            choices=['kafka', 'png', 'http'],
             default='kafka',
-            help='Select sink type: kafka or png',
+            help='Select sink type: kafka, png, or http',
+        )
+        self._parser.add_argument(
+            '--http-host',
+            default='0.0.0.0',
+            help='HTTP server host (when using http sink)',
+        )
+        self._parser.add_argument(
+            '--http-port',
+            type=int,
+            default=8000,
+            help='HTTP server port (when using http sink)',
         )
 
     @property
@@ -204,11 +218,19 @@ class DataServiceRunner:
         kafka_upstream_config = load_config(namespace=config_names.kafka_upstream)
 
         sink_type = args.pop('sink_type')
+        http_host = args.pop('http_host')
+        http_port = args.pop('http_port')
         builder = self._make_builder(**args)
 
         if sink_type == 'kafka':
             sink = KafkaSink(
                 instrument=builder.instrument, kafka_config=kafka_downstream_config
+            )
+        elif sink_type == 'http':
+            sink = HTTPServiceSink(
+                serializer=DA00MessageSerializer(),
+                host=http_host,
+                port=http_port,
             )
         else:
             sink = PlotToPngSink()
