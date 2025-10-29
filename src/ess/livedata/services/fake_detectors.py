@@ -12,11 +12,9 @@ import scippnexus as snx
 from streaming_data_types import eventdata_ev44
 
 from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
-from ess.livedata.config import config_names
-from ess.livedata.config.config_loader import load_config
 from ess.livedata.config.instruments import get_config
 from ess.livedata.core import IdentityProcessor
-from ess.livedata.kafka.sink import KafkaSink, SerializationError
+from ess.livedata.kafka.sink import SerializationError
 
 
 def events_from_nexus(file_path: str) -> dict[str, sc.DataGroup]:
@@ -173,26 +171,17 @@ def serialize_detector_events_to_ev44(
 def run_service(
     *, instrument: str, nexus_file: str | None = None, log_level: int = logging.INFO
 ) -> NoReturn:
-    from ess.livedata import transport_context
-    from ess.livedata.in_memory import InMemoryMessageSink
+    from ess.livedata.transport_factory import create_message_sink
 
     name = 'fake_producer'
     Service.configure_logging(log_level)
     logger = logging.getLogger(f'{instrument}_{name}')
 
-    # Check if using in-memory transport
-    broker = transport_context.get_broker()
-    serializer = serialize_detector_events_to_ev44
-    if broker is not None:
-        # In-memory transport - use same serializer as Kafka
-        logger.info("Using in-memory transport")
-        sink = InMemoryMessageSink(broker, instrument=instrument, serializer=serializer)
-    else:
-        # Kafka transport
-        kafka_config = load_config(namespace=config_names.kafka_upstream)
-        sink = KafkaSink.from_kafka_config(
-            instrument=instrument, kafka_config=kafka_config, serializer=serializer
-        )
+    sink = create_message_sink(
+        instrument=instrument,
+        serializer=serialize_detector_events_to_ev44,
+        logger=logger,
+    )
 
     processor = IdentityProcessor(
         source=FakeDetectorSource(

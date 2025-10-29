@@ -16,7 +16,6 @@ from .core.message import Message, MessageSource
 from .core.orchestrating_processor import OrchestratingProcessor
 from .core.service import Service
 from .in_memory import (
-    InMemoryBroker,
     InMemoryMessageSink,
     InMemoryMessageSource,
     NullMessageSink,
@@ -49,7 +48,6 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         preprocessor_factory: PreprocessorFactory[Tin, Tout],
         startup_messages: list[Message[Tout]] | None = None,
         processor_cls: type[Processor] = OrchestratingProcessor,
-        broker: InMemoryBroker | None = None,
     ) -> None:
         """
         Parameters
@@ -69,9 +67,6 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         processor_cls:
             The processor class to use for processing messages. Defaults to
             `OrchestratingProcessor`.
-        broker:
-            Optional in-memory broker for testing/development. If provided,
-            in-memory transport will be used instead of Kafka.
         """
         self._name = f'{instrument}_{name}'
         self._service_name = name
@@ -82,7 +77,6 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         self._preprocessor_factory = preprocessor_factory
         self._startup_messages = startup_messages or []
         self._processor_cls = processor_cls
-        self._broker = broker
         if isinstance(preprocessor_factory, JobBasedPreprocessorFactoryBase):
             # Ensure only jobs from the active namespace can be created by JobFactory.
             preprocessor_factory.instrument.active_namespace = name
@@ -92,16 +86,17 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         """Returns the instrument name."""
         return self._instrument
 
-    @property
-    def using_in_memory_broker(self) -> bool:
-        """Returns True if configured to use in-memory broker."""
-        return self._broker is not None
+    def _using_in_memory_broker(self) -> bool:
+        """Returns True if transport context has an in-memory broker."""
+        from . import transport_context
+
+        return transport_context.get_broker() is not None
 
     def _get_topic_names_from_adapter(self) -> list[str]:
         """Extract topic names from adapter (for in-memory broker)."""
         if self._adapter is None:
             return []
-        # Adapter has a 'topics' attribute that can contain KafkaTopic objects or strings
+        # Adapter has a 'topics' attribute with KafkaTopic objects or strings
         topics = []
         for topic in self._adapter.topics:
             if isinstance(topic, str):
@@ -176,7 +171,6 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
 
     def from_in_memory_broker(
         self,
-        broker: InMemoryBroker,
         source_topics: list[str],
         sink_topic: str | None = None,
     ) -> Service:
@@ -186,10 +180,10 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         This is for testing and development only. Use from_consumer_config()
         for production deployments with Kafka.
 
+        The broker is obtained from the transport context.
+
         Parameters
         ----------
-        broker:
-            Shared broker instance
         source_topics:
             List of topics to consume from
         sink_topic:
@@ -200,6 +194,15 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         :
             Configured service ready to start
         """
+        from . import transport_context
+
+        broker = transport_context.get_broker()
+        if broker is None:
+            raise ValueError(
+                "No in-memory broker in transport context. "
+                "Use transport_context.set_broker() before calling this method."
+            )
+
         # Create raw source - adapter wrapping happens in from_source()
         source = InMemoryMessageSource(broker, source_topics)
 
@@ -277,12 +280,11 @@ class DataServiceRunner:
         builder = self._make_builder(**args)
 
         # Check if using in-memory broker
-        if builder.using_in_memory_broker:
+        if builder._using_in_memory_broker():
             # In-memory transport mode
             source_topics = builder._get_topic_names_from_adapter()
             sink_topic = f"{builder.instrument}_output"
             with builder.from_in_memory_broker(
-                broker=builder._broker,
                 source_topics=source_topics,
                 sink_topic=sink_topic,
             ) as service:

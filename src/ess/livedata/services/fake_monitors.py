@@ -10,15 +10,9 @@ import scipp as sc
 from streaming_data_types import eventdata_ev44
 
 from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
-from ess.livedata.config import config_names
-from ess.livedata.config.config_loader import load_config
 from ess.livedata.core import IdentityProcessor
 from ess.livedata.kafka.message_adapter import AdaptingMessageSource, MessageAdapter
-from ess.livedata.kafka.sink import (
-    KafkaSink,
-    SerializationError,
-    serialize_dataarray_to_da00,
-)
+from ess.livedata.kafka.sink import SerializationError, serialize_dataarray_to_da00
 
 
 class FakeMonitorSource(MessageSource[sc.Variable]):
@@ -119,8 +113,7 @@ def run_service(
     num_monitors: int = 2,
     log_level: int = logging.INFO,
 ) -> NoReturn:
-    from ess.livedata import transport_context
-    from ess.livedata.in_memory import InMemoryMessageSink
+    from ess.livedata.transport_factory import create_message_sink
 
     if mode == 'ev44':
         adapter = None
@@ -135,17 +128,7 @@ def run_service(
     if adapter is not None:
         source = AdaptingMessageSource(source=source, adapter=adapter)
 
-    # Check if using in-memory transport
-    broker = transport_context.get_broker()
-    if broker is not None:
-        # In-memory transport - use same serializer as Kafka
-        sink = InMemoryMessageSink(broker, instrument=instrument, serializer=serializer)
-    else:
-        # Kafka transport
-        kafka_config = load_config(namespace=config_names.kafka_upstream)
-        sink = KafkaSink.from_kafka_config(
-            instrument=instrument, kafka_config=kafka_config, serializer=serializer
-        )
+    sink = create_message_sink(instrument=instrument, serializer=serializer)
 
     processor = IdentityProcessor(source=source, sink=sink)
     service = Service(

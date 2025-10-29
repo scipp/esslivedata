@@ -110,15 +110,20 @@ class Launcher:
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
 
+    def _inject_broker_context(self) -> None:
+        """Inject broker context into current thread if using in-memory transport."""
+        if self._broker is not None:
+            from ess.livedata import transport_context
+
+            transport_context.set_broker(self._broker)
+
     def _wrap_service_func(
         self, service_func: Callable[..., None]
     ) -> Callable[..., None]:
-        """Wrap service function to inject broker context if needed."""
+        """Wrap service function to inject broker context before execution."""
 
         def wrapper(**kwargs: Any) -> None:
-            if self._broker is not None:
-                from ess.livedata import transport_context
-                transport_context.set_broker(self._broker)
+            self._inject_broker_context()
             service_func(**kwargs)
 
         return wrapper
@@ -240,10 +245,7 @@ class Launcher:
         """Wrapper to adapt processing service main functions to accept kwargs."""
 
         def wrapper(**kwargs: Any) -> None:
-            # Inject broker into thread context if using in-memory transport
-            if self._broker is not None:
-                from ess.livedata import transport_context
-                transport_context.set_broker(self._broker)
+            self._inject_broker_context()
 
             # Set up sys.argv for the service's argument parser
             sys.argv = ['launcher']
@@ -261,10 +263,7 @@ class Launcher:
 
         self.logger.info("Starting dashboard service...")
 
-        # Set broker context in main thread for in-memory transport
-        if self._broker is not None:
-            from ess.livedata import transport_context
-            transport_context.set_broker(self._broker)
+        self._inject_broker_context()
 
         # Create dashboard directly without registering its own signal handlers
         # since the launcher handles signals
