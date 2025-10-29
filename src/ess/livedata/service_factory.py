@@ -16,8 +16,8 @@ from .core.handler import JobBasedPreprocessorFactoryBase, PreprocessorFactory
 from .core.message import Message, MessageSource
 from .core.orchestrating_processor import OrchestratingProcessor
 from .core.service import Service
-from .http.serialization import DA00MessageSerializer
-from .http.service import HTTPServiceSink
+from .http_transport.serialization import DA00MessageSerializer
+from .http_transport.service import HTTPServiceSink
 from .kafka import KafkaTopic
 from .kafka import consumer as kafka_consumer
 from .kafka.message_adapter import AdaptingMessageSource, MessageAdapter
@@ -183,6 +183,20 @@ class DataServiceRunner:
         self._make_builder = make_builder
         self._parser = Service.setup_arg_parser(description=f'{pretty_name} Service')
         self._parser.add_argument(
+            '--source-type',
+            choices=['kafka', 'http'],
+            default='kafka',
+            help='Select source type: kafka or http',
+        )
+        self._parser.add_argument(
+            '--http-data-source',
+            help='HTTP URL for data source (e.g., http://localhost:8000)',
+        )
+        self._parser.add_argument(
+            '--http-config-source',
+            help='HTTP URL for config source (e.g., http://localhost:9000)',
+        )
+        self._parser.add_argument(
             '--sink-type',
             choices=['kafka', 'png', 'http'],
             default='kafka',
@@ -213,32 +227,156 @@ class DataServiceRunner:
         self,
     ) -> NoReturn:
         args = vars(self._parser.parse_args())
-        consumer_config = load_config(namespace=config_names.raw_data_consumer, env='')
-        kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
-        kafka_upstream_config = load_config(namespace=config_names.kafka_upstream)
 
+        source_type = args.pop('source_type')
+        http_data_source = args.pop('http_data_source')
+        http_config_source = args.pop('http_config_source')
         sink_type = args.pop('sink_type')
         http_host = args.pop('http_host')
         http_port = args.pop('http_port')
+
         builder = self._make_builder(**args)
 
+        # Create sink
+        http_sink_instance = None  # Track HTTP sink for starting/stopping
         if sink_type == 'kafka':
+            kafka_downstream_config = load_config(
+                namespace=config_names.kafka_downstream
+            )
             sink = KafkaSink(
                 instrument=builder.instrument, kafka_config=kafka_downstream_config
             )
         elif sink_type == 'http':
-            sink = HTTPServiceSink(
-                serializer=DA00MessageSerializer(),
+            from .http_transport import RoutingMessageSerializer
+
+            http_sink_instance = HTTPServiceSink(
+                serializer=RoutingMessageSerializer(),
                 host=http_host,
                 port=http_port,
             )
+            sink = http_sink_instance
         else:
             sink = PlotToPngSink()
         sink = UnrollingSinkAdapter(sink)
 
-        with builder.from_consumer_config(
-            kafka_config={**consumer_config, **kafka_upstream_config},
-            sink=sink,
-            use_background_source=True,
-        ) as service:
-            service.start()
+        # Create source based on source type
+        if source_type == 'kafka':
+            consumer_config = load_config(
+                namespace=config_names.raw_data_consumer, env=''
+            )
+            kafka_upstream_config = load_config(namespace=config_names.kafka_upstream)
+
+            # Start HTTP sink if we have one
+            if http_sink_instance is not None:
+                http_sink_instance.start()
+
+            try:
+                with builder.from_consumer_config(
+                    kafka_config={**consumer_config, **kafka_upstream_config},
+                    sink=sink,
+                    use_background_source=True,
+                ) as service:
+                    service.start()
+            finally:
+                # Stop HTTP sink on exit
+                if http_sink_instance is not None:
+                    http_sink_instance.stop()
+        elif source_type == 'http':
+            # HTTP source mode
+            from .http_transport import (
+                GenericJSONMessageSerializer,
+                HTTPMessageSource,
+                MultiHTTPSource,
+            )
+
+            if not http_data_source:
+                raise ValueError(
+                    "--http-data-source is required when using --source-type http"
+                )
+
+            # Create HTTP sources
+            sources = []
+
+            # Data source (DA00 format for monitor/detector data)
+            data_source = HTTPMessageSource(
+                base_url=http_data_source,
+                serializer=DA00MessageSerializer(),
+            )
+            sources.append(data_source)
+
+            # Config source (JSON format for config messages)
+            if http_config_source:
+                from .kafka.message_adapter import RawConfigItem
+
+                # Create adapter to convert JSON dict to RawConfigItem
+                class HTTPConfigAdapter:
+                    """Adapts HTTP JSON config messages to RawConfigItem format."""
+
+                    def adapt(self, message: Message) -> Message:
+                        """Convert dict config to RawConfigItem."""
+                        if not isinstance(message.value, dict):
+                            return message
+                        if 'key' in message.value and 'value' in message.value:
+                            import json
+
+                            # Convert JSON dict format to RawConfigItem
+                            raw_item = RawConfigItem(
+                                key=message.value['key'].encode('utf-8'),
+                                value=json.dumps(message.value['value']).encode(
+                                    'utf-8'
+                                ),
+                            )
+                            return Message(
+                                timestamp=message.timestamp,
+                                stream=message.stream,
+                                value=raw_item,
+                            )
+                        return message
+
+                config_http_source = HTTPMessageSource(
+                    base_url=http_config_source,
+                    serializer=GenericJSONMessageSerializer(),
+                )
+
+                # Wrap with adapter to convert to RawConfigItem
+                config_source = AdaptingMessageSource(
+                    source=config_http_source,
+                    adapter=HTTPConfigAdapter(),
+                    raise_on_error=False,
+                )
+                sources.append(config_source)
+
+            # Combine sources
+            if len(sources) == 1:
+                source = sources[0]
+            else:
+                source = MultiHTTPSource(sources)
+
+            # HTTP sources return typed Messages, so we don't need the adapter
+            # Temporarily clear it for HTTP mode
+            original_adapter = builder._adapter
+            builder._adapter = None
+
+            # Build service with HTTP source
+            service = builder.from_source(
+                source=source,
+                sink=sink,
+                resources=None,
+                raise_on_adapter_error=False,
+            )
+
+            # Restore adapter (in case builder is reused, though unlikely)
+            builder._adapter = original_adapter
+
+            # Start HTTP sink if we have one
+            if http_sink_instance is not None:
+                http_sink_instance.start()
+
+            try:
+                service.start()
+            finally:
+                # Stop HTTP sink on exit
+                if http_sink_instance is not None:
+                    http_sink_instance.stop()
+        else:
+            raise ValueError(f"Unknown source type: {source_type}")

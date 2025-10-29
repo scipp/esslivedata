@@ -95,3 +95,47 @@ class HTTPMessageSource(MessageSource[Message[T]], Generic[T]):
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit context manager and close session."""
         self.close()
+
+
+class MultiHTTPSource(MessageSource[Message[T]], Generic[T]):
+    """
+    Message source that combines multiple HTTP sources.
+
+    Polls multiple HTTP endpoints and combines their messages. Useful for
+    consuming from multiple upstream services (e.g., raw data + config).
+
+    Parameters
+    ----------
+    sources:
+        List of HTTP message sources to poll
+    """
+
+    def __init__(self, sources: list[HTTPMessageSource[T]]):
+        self._sources = sources
+
+    def get_messages(self) -> list[Message[T]]:
+        """
+        Poll all HTTP sources and combine messages.
+
+        Returns
+        -------
+        :
+            Combined list of messages from all sources
+        """
+        messages = []
+        for source in self._sources:
+            messages.extend(source.get_messages())
+        return messages
+
+    def close(self) -> None:
+        """Close all HTTP sessions."""
+        for source in self._sources:
+            source.close()
+
+    def __enter__(self):
+        """Enter context manager."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit context manager and close all sessions."""
+        self.close()

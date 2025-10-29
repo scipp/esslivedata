@@ -13,7 +13,7 @@ from typing import Any
 
 import scipp as sc
 
-from ..http_transport.serialization import DA00MessageSerializer
+from ..http_transport.serialization import RoutingMessageSerializer
 from ..http_transport.source import HTTPMessageSource
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,8 @@ def format_message(msg: Any) -> str:
         else:
             value_str = f"shape={data.shape}, dims={data.dims}"
     else:
-        value_str = str(msg.value)
+        # Handle JobStatus and other types
+        value_str = str(msg.value)[:100]  # Truncate long values
 
     return f"[{timestamp}] {stream_info}: {value_str}"
 
@@ -80,7 +81,7 @@ def main() -> int:
     )
 
     # Create HTTP source
-    serializer = DA00MessageSerializer()
+    serializer = RoutingMessageSerializer()
     source = HTTPMessageSource(
         base_url=args.url,
         serializer=serializer,

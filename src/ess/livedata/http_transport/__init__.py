@@ -7,10 +7,11 @@ from .serialization import (
     DA00MessageSerializer,
     GenericJSONMessageSerializer,
     MessageSerializer,
+    RoutingMessageSerializer,
 )
 from .service import HTTPServiceSink, http_service_sink
 from .sink import QueueBasedMessageSink
-from .source import HTTPMessageSource
+from .source import HTTPMessageSource, MultiHTTPSource
 
 __all__ = [
     'DA00MessageSerializer',
@@ -19,7 +20,9 @@ __all__ = [
     'HTTPServiceSink',
     'MessageAPIWrapper',
     'MessageSerializer',
+    'MultiHTTPSource',
     'QueueBasedMessageSink',
+    'RoutingMessageSerializer',
     'create_message_api',
     'http_service_sink',
 ]
