@@ -7,10 +7,7 @@ import numpy as np
 import scipp as sc
 
 from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
-from ess.livedata.config import config_names
-from ess.livedata.config.config_loader import load_config
-from ess.livedata.core import IdentityProcessor
-from ess.livedata.http_transport.service import HTTPMultiEndpointSink
+from ess.livedata.services.fake_service_runner import run_fake_service
 
 
 def _make_ramp(size: int) -> sc.DataArray:
@@ -123,55 +120,15 @@ def run_service(*, instrument: str, log_level: int = logging.INFO) -> NoReturn:
     log_level:
         Logging level.
     """
-    from ..config.transport_config import load_transport_config
-    from ..transport.factory import create_sink_from_config
-
     source = FakeLogdataSource(instrument=instrument)
 
-    transport_config = load_transport_config(instrument)
-
-    output_stream_kind = StreamKind.LOG
-
-    configured_kinds = {s.kind for s in transport_config.streams}
-    if output_stream_kind not in configured_kinds:
-        raise ValueError(
-            f"Stream kind {output_stream_kind.value} not found in transport config. "
-            f"Available kinds: {[k.value for k in configured_kinds]}"
-        )
-
-    kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
-
-    sink = create_sink_from_config(
+    run_fake_service(
         instrument=instrument,
-        transport_config=transport_config,
-        output_stream_kinds=[output_stream_kind],
-        kafka_config=kafka_downstream_config,
-    )
-
-    http_sink_instance = None
-    if hasattr(sink, 'routes'):
-        for route_sink in sink.routes.values():
-            if isinstance(route_sink, HTTPMultiEndpointSink):
-                http_sink_instance = route_sink
-                break
-    elif isinstance(sink, HTTPMultiEndpointSink):
-        http_sink_instance = sink
-
-    processor = IdentityProcessor(source=source, sink=sink)
-
-    if http_sink_instance is not None:
-        http_sink_instance.start()
-
-    service = Service(
-        processor=processor,
-        name=f'{instrument}_fake_f144_producer',
+        source=source,
+        output_stream_kind=StreamKind.LOG,
+        service_name='fake_f144_producer',
         log_level=log_level,
     )
-    try:
-        service.start()
-    finally:
-        if http_sink_instance is not None:
-            http_sink_instance.stop()
 
 
 def main() -> NoReturn:
