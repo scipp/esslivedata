@@ -57,9 +57,12 @@ def make_timeseries_service_builder(
 
 
 def main() -> NoReturn:
+    from ess.livedata import StreamKind
+
     runner = DataServiceRunner(
         pretty_name='Logdata to Timeseries',
         make_builder=make_timeseries_service_builder,
+        output_stream_kinds=[StreamKind.LIVEDATA_DATA, StreamKind.LIVEDATA_STATUS],
     )
     runner.run()
 

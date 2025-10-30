@@ -9,14 +9,13 @@ from typing import NoReturn
 import numpy as np
 import scipp as sc
 import scippnexus as snx
-from streaming_data_types import eventdata_ev44
 
 from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.config.instruments import get_config
 from ess.livedata.core import IdentityProcessor
-from ess.livedata.kafka.sink import KafkaSink, SerializationError
+from ess.livedata.http_transport.service import HTTPMultiEndpointSink
 
 
 def events_from_nexus(file_path: str) -> dict[str, sc.DataGroup]:
@@ -151,48 +150,75 @@ class FakeDetectorSource(MessageSource[sc.Dataset]):
         )
 
 
-def serialize_detector_events_to_ev44(
-    msg: Message[tuple[sc.Variable, sc.Variable]],
-) -> bytes:
-    if msg.value['time_of_arrival'].unit != 'ns':
-        raise SerializationError(f"Expected unit 'ns', got {msg.value.unit}")
-    try:
-        ev44 = eventdata_ev44.serialise_ev44(
-            source_name=msg.stream.name,
-            message_id=0,
-            reference_time=msg.timestamp,
-            reference_time_index=0,
-            time_of_flight=msg.value['time_of_arrival'].values,
-            pixel_id=msg.value['pixel_id'].values,
-        )
-    except (ValueError, TypeError) as e:
-        raise SerializationError(f"Failed to serialize message: {e}") from None
-    return ev44
-
-
 def run_service(
     *, instrument: str, nexus_file: str | None = None, log_level: int = logging.INFO
 ) -> NoReturn:
-    kafka_config = load_config(namespace=config_names.kafka_upstream)
-    serializer = serialize_detector_events_to_ev44
-    name = 'fake_producer'
-    Service.configure_logging(log_level)
-    logger = logging.getLogger(f'{instrument}_{name}')
+    """
+    Run fake detector service using YAML-based transport configuration.
 
-    processor = IdentityProcessor(
-        source=FakeDetectorSource(
-            instrument=instrument, nexus_file=nexus_file, logger=logger
-        ),
-        sink=KafkaSink(
-            instrument=instrument, kafka_config=kafka_config, serializer=serializer
-        ),
+    Parameters
+    ----------
+    instrument:
+        Instrument name.
+    nexus_file:
+        Path to NeXus file containing event data to replay.
+    log_level:
+        Logging level.
+    """
+    from ..config.transport_config import load_transport_config
+    from ..transport.factory import create_sink_from_config
+
+    Service.configure_logging(log_level)
+    logger = logging.getLogger(f'{instrument}_fake_detector_producer')
+
+    source = FakeDetectorSource(
+        instrument=instrument, nexus_file=nexus_file, logger=logger
     )
+
+    transport_config = load_transport_config(instrument)
+
+    output_stream_kind = StreamKind.DETECTOR_EVENTS
+
+    configured_kinds = {s.kind for s in transport_config.streams}
+    if output_stream_kind not in configured_kinds:
+        raise ValueError(
+            f"Stream kind {output_stream_kind.value} not found in transport config. "
+            f"Available kinds: {[k.value for k in configured_kinds]}"
+        )
+
+    kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
+
+    sink = create_sink_from_config(
+        instrument=instrument,
+        transport_config=transport_config,
+        output_stream_kinds=[output_stream_kind],
+        kafka_config=kafka_downstream_config,
+    )
+
+    http_sink_instance = None
+    if hasattr(sink, 'routes'):
+        for route_sink in sink.routes.values():
+            if isinstance(route_sink, HTTPMultiEndpointSink):
+                http_sink_instance = route_sink
+                break
+    elif isinstance(sink, HTTPMultiEndpointSink):
+        http_sink_instance = sink
+
+    processor = IdentityProcessor(source=source, sink=sink)
+
+    if http_sink_instance is not None:
+        http_sink_instance.start()
+
     service = Service(
         processor=processor,
-        name=f'{instrument}_{name}',
+        name=f'{instrument}_fake_detector_producer',
         log_level=log_level,
     )
-    service.start()
+    try:
+        service.start()
+    finally:
+        if http_sink_instance is not None:
+            http_sink_instance.stop()
 
 
 def main() -> NoReturn:

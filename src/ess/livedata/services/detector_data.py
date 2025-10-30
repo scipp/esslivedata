@@ -37,8 +37,12 @@ def make_detector_service_builder(
 
 
 def main() -> NoReturn:
+    from ess.livedata import StreamKind
+
     runner = DataServiceRunner(
-        pretty_name='Detector Data', make_builder=make_detector_service_builder
+        pretty_name='Detector Data',
+        make_builder=make_detector_service_builder,
+        output_stream_kinds=[StreamKind.LIVEDATA_DATA, StreamKind.LIVEDATA_STATUS],
     )
     runner.run()
 

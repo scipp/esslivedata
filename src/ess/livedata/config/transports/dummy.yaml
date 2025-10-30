@@ -6,6 +6,14 @@ streams:
   - kind: monitor_counts
     transport: http
     url: http://localhost:8001
+  # Input streams for fake_detectors service
+  - kind: detector_events
+    transport: http
+    url: http://localhost:8003
+  # Input streams for fake_logdata service
+  - kind: log
+    transport: http
+    url: http://localhost:8004
   - kind: livedata_config
     transport: http
     url: http://localhost:9000
