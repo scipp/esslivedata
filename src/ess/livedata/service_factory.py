@@ -182,8 +182,20 @@ class DataServiceRunner:
         *,
         pretty_name: str,
         make_builder: Callable[..., DataServiceBuilder],
+        output_stream_kinds: list[StreamKind] | None = None,
     ) -> None:
+        """
+        Parameters
+        ----------
+        pretty_name:
+            Human-readable service name for help text.
+        make_builder:
+            Factory function that creates a DataServiceBuilder.
+        output_stream_kinds:
+            List of stream kinds this service produces. Required for config mode.
+        """
         self._make_builder = make_builder
+        self._output_stream_kinds = output_stream_kinds
         self._parser = Service.setup_arg_parser(description=f'{pretty_name} Service')
         self._parser.add_argument(
             '--transport',
@@ -250,7 +262,11 @@ class DataServiceRunner:
 
         # New config-based transport mode
         if transport_mode == 'config':
-            self._run_with_transport_config(builder)
+            if self._output_stream_kinds is None:
+                raise ValueError(
+                    "output_stream_kinds must be specified when using config mode"
+                )
+            self._run_with_transport_config(builder, self._output_stream_kinds)
             return
 
         # Legacy mode - keep existing behavior for backward compatibility
@@ -264,8 +280,19 @@ class DataServiceRunner:
             http_port=http_port,
         )
 
-    def _run_with_transport_config(self, builder: DataServiceBuilder) -> NoReturn:
-        """Run service using YAML-based transport configuration."""
+    def _run_with_transport_config(
+        self, builder: DataServiceBuilder, output_stream_kinds: list[StreamKind]
+    ) -> NoReturn:
+        """
+        Run service using YAML-based transport configuration.
+
+        Parameters
+        ----------
+        builder:
+            Service builder.
+        output_stream_kinds:
+            List of stream kinds this service will produce.
+        """
         from .config.transport_config import load_transport_config
         from .transport.factory import (
             create_sink_from_config,
@@ -292,6 +319,7 @@ class DataServiceRunner:
         sink = create_sink_from_config(
             instrument=builder.instrument,
             transport_config=transport_config,
+            output_stream_kinds=output_stream_kinds,
             kafka_config=kafka_downstream_config,
         )
         sink = UnrollingSinkAdapter(sink)

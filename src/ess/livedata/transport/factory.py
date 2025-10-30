@@ -84,12 +84,16 @@ def create_source_from_config(
     and creates sources for each group. If multiple sources are created, they are
     combined into a single source.
 
+    Only creates sources for stream kinds that the adapter needs to consume.
+    If adapter is None, creates sources for all configured streams.
+
     Parameters
     ----------
     instrument:
         Instrument name for topic/endpoint derivation.
     adapter:
-        Optional message adapter for transforming raw messages.
+        Optional message adapter for transforming raw messages. If provided,
+        only stream kinds corresponding to the adapter's topics will be used.
     transport_config:
         Transport configuration defining how each stream is transported.
     kafka_config:
@@ -103,13 +107,31 @@ def create_source_from_config(
         source (currently using MultiHTTPSource, which works for heterogeneous
         source types).
     """
+    from ..config.streams import stream_kind_to_topic
+
+    # Filter streams to only those the adapter needs (input streams)
+    if adapter is not None:
+        # Get topics the adapter needs
+        adapter_topics = set(adapter.topics)
+        # Filter to stream kinds that match adapter's topics
+        filtered_streams = [
+            s
+            for s in transport_config.streams
+            if stream_kind_to_topic(instrument, s.kind) in adapter_topics
+        ]
+    else:
+        filtered_streams = transport_config.streams
+
+    if not filtered_streams:
+        raise ValueError("No input streams found in transport config for this adapter")
+
     sources = []
 
     # Group streams by (transport, url)
     def group_key(stream_config: StreamTransportConfig) -> tuple[str, str | None]:
         return (stream_config.transport, stream_config.url)
 
-    sorted_streams = sorted(transport_config.streams, key=group_key)
+    sorted_streams = sorted(filtered_streams, key=group_key)
 
     for (transport_type, url), stream_group in groupby(sorted_streams, key=group_key):
         # Extract stream kinds from this group
@@ -148,6 +170,7 @@ def create_source_from_config(
 def create_sink_from_config(
     instrument: str,
     transport_config: TransportConfig,
+    output_stream_kinds: list[StreamKind],
     kafka_config: dict[str, Any] | None = None,
 ) -> MessageSink:
     """
@@ -157,12 +180,16 @@ def create_sink_from_config(
     and creates sinks for each group. Returns a RoutingSink that routes messages
     to the appropriate sink based on their stream kind.
 
+    Only creates sinks for the specified output stream kinds.
+
     Parameters
     ----------
     instrument:
         Instrument name for topic/endpoint derivation.
     transport_config:
         Transport configuration defining how each stream is transported.
+    output_stream_kinds:
+        List of stream kinds this service will output (produce messages to).
     kafka_config:
         Optional Kafka configuration to use for Kafka strategies.
         If not provided, uses empty dict (strategies load defaults).
@@ -172,13 +199,26 @@ def create_sink_from_config(
     :
         RoutingSink that routes messages to appropriate sinks based on stream kind.
     """
+    # Filter to only the output stream kinds this service produces
+    output_kinds_set = set(output_stream_kinds)
+    filtered_streams = [
+        s for s in transport_config.streams if s.kind in output_kinds_set
+    ]
+
+    if not filtered_streams:
+        raise ValueError(
+            f"No output streams found in transport config. "
+            f"Requested: {[k.value for k in output_stream_kinds]}, "
+            f"Available: {[s.kind.value for s in transport_config.streams]}"
+        )
+
     routing_map: dict[StreamKind, MessageSink] = {}
 
     # Group streams by (transport, url)
     def group_key(stream_config: StreamTransportConfig) -> tuple[str, str | None]:
         return (stream_config.transport, stream_config.url)
 
-    sorted_streams = sorted(transport_config.streams, key=group_key)
+    sorted_streams = sorted(filtered_streams, key=group_key)
 
     for (transport_type, url), stream_group in groupby(sorted_streams, key=group_key):
         # Extract stream kinds from this group

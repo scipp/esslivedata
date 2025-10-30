@@ -36,8 +36,12 @@ def make_monitor_service_builder(
 
 
 def main() -> NoReturn:
+    from ess.livedata import StreamKind
+
     runner = DataServiceRunner(
-        pretty_name='Monitor Data', make_builder=make_monitor_service_builder
+        pretty_name='Monitor Data',
+        make_builder=make_monitor_service_builder,
+        output_stream_kinds=[StreamKind.LIVEDATA_DATA, StreamKind.LIVEDATA_STATUS],
     )
     runner.run()
 

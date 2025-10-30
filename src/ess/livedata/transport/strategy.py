@@ -197,7 +197,12 @@ class HttpStrategy:
     """
 
     def __init__(self, base_url: str):
+        from urllib.parse import urlparse
+
         self._base_url = base_url
+        parsed = urlparse(base_url)
+        self._host = parsed.hostname or '0.0.0.0'  # noqa: S104
+        self._port = parsed.port or 8000
 
     def create_source(
         self,
@@ -275,19 +280,27 @@ class HttpStrategy:
         :
             HTTPMultiEndpointSink for publishing messages via HTTP.
         """
+        # Reuse serializer instances of the same type to avoid validation errors
+        # when multiple stream kinds map to the same endpoint
+        da00_serializer = DA00MessageSerializer()
+        status_serializer = StatusMessageSerializer()
+        json_serializer = GenericJSONMessageSerializer()
+
         # Build serializer mapping for stream kinds
         stream_serializers = {}
         for kind in stream_kinds:
             if kind == StreamKind.LIVEDATA_STATUS:
-                stream_serializers[kind] = StatusMessageSerializer()
+                stream_serializers[kind] = status_serializer
             elif kind == StreamKind.LIVEDATA_CONFIG:
-                stream_serializers[kind] = GenericJSONMessageSerializer()
+                stream_serializers[kind] = json_serializer
             else:
                 # Default to DA00 for data streams
-                stream_serializers[kind] = DA00MessageSerializer()
+                stream_serializers[kind] = da00_serializer
 
         # HTTPMultiEndpointSink derives endpoints from stream kinds internally
         return HTTPMultiEndpointSink(
             instrument=instrument,
             stream_serializers=stream_serializers,
+            host=self._host,
+            port=self._port,
         )

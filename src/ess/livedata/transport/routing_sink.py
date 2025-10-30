@@ -36,6 +36,11 @@ class RoutingSink(MessageSink[T]):
         self._routes = routes
         self._logger = logger or logging.getLogger(__name__)
 
+    @property
+    def routes(self) -> dict[StreamKind, MessageSink[T]]:
+        """Returns the routing map."""
+        return self._routes
+
     def publish_messages(self, messages: list[Message[T]]) -> None:
         """
         Group messages by stream kind and publish each group to its sink.
