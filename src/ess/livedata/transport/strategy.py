@@ -256,7 +256,7 @@ class HttpStrategy:
             # Select serializer based on stream kind
             if kind == StreamKind.LIVEDATA_STATUS:
                 serializer = StatusMessageSerializer()
-            elif kind == StreamKind.LIVEDATA_CONFIG:
+            elif kind in (StreamKind.LIVEDATA_COMMANDS, StreamKind.LIVEDATA_RESPONSES):
                 serializer = GenericJSONMessageSerializer()
             else:
                 # Default to DA00 for data streams
@@ -306,7 +306,7 @@ class HttpStrategy:
         for kind in stream_kinds:
             if kind == StreamKind.LIVEDATA_STATUS:
                 stream_serializers[kind] = status_serializer
-            elif kind == StreamKind.LIVEDATA_CONFIG:
+            elif kind in (StreamKind.LIVEDATA_COMMANDS, StreamKind.LIVEDATA_RESPONSES):
                 stream_serializers[kind] = json_serializer
             else:
                 # Default to DA00 for data streams

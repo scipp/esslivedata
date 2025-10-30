@@ -14,9 +14,13 @@ streams:
   - kind: log
     transport: http
     url: http://localhost:8004
-  - kind: livedata_config
+  # Config streams (dashboard <-> backend)
+  - kind: livedata_commands
     transport: http
-    url: http://localhost:9000
+    url: http://localhost:9000  # Dashboard publishes commands here
+  - kind: livedata_responses
+    transport: http
+    url: http://localhost:8002  # Backend publishes responses here
   # Output streams for monitor_data service
   - kind: livedata_data
     transport: http
