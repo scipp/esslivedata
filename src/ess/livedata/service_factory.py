@@ -186,35 +186,42 @@ class DataServiceRunner:
         self._make_builder = make_builder
         self._parser = Service.setup_arg_parser(description=f'{pretty_name} Service')
         self._parser.add_argument(
+            '--transport',
+            choices=['legacy', 'config'],
+            default='legacy',
+            help='Transport mode: legacy (old CLI args) or config (YAML-based)',
+        )
+        # Legacy arguments (deprecated, for backward compatibility)
+        self._parser.add_argument(
             '--source-type',
             choices=['kafka', 'http'],
             default='kafka',
-            help='Select source type: kafka or http',
+            help='[LEGACY] Select source type: kafka or http',
         )
         self._parser.add_argument(
             '--http-data-source',
-            help='HTTP URL for data source (e.g., http://localhost:8000)',
+            help='[LEGACY] HTTP URL for data source (e.g., http://localhost:8000)',
         )
         self._parser.add_argument(
             '--http-config-source',
-            help='HTTP URL for config source (e.g., http://localhost:9000)',
+            help='[LEGACY] HTTP URL for config source (e.g., http://localhost:9000)',
         )
         self._parser.add_argument(
             '--sink-type',
             choices=['kafka', 'png', 'http'],
             default='kafka',
-            help='Select sink type: kafka, png, or http',
+            help='[LEGACY] Select sink type: kafka, png, or http',
         )
         self._parser.add_argument(
             '--http-host',
             default='0.0.0.0',
-            help='HTTP server host (when using http sink)',
+            help='[LEGACY] HTTP server host (when using http sink)',
         )
         self._parser.add_argument(
             '--http-port',
             type=int,
             default=8000,
-            help='HTTP server port (when using http sink)',
+            help='[LEGACY] HTTP server port (when using http sink)',
         )
 
     @property
@@ -231,6 +238,7 @@ class DataServiceRunner:
     ) -> NoReturn:
         args = vars(self._parser.parse_args())
 
+        transport_mode = args.pop('transport')
         source_type = args.pop('source_type')
         http_data_source = args.pop('http_data_source')
         http_config_source = args.pop('http_config_source')
@@ -239,6 +247,75 @@ class DataServiceRunner:
         http_port = args.pop('http_port')
 
         builder = self._make_builder(**args)
+
+        # New config-based transport mode
+        if transport_mode == 'config':
+            self._run_with_transport_config(builder)
+            return
+
+        # Legacy mode - keep existing behavior for backward compatibility
+        self._run_legacy(
+            builder=builder,
+            source_type=source_type,
+            http_data_source=http_data_source,
+            http_config_source=http_config_source,
+            sink_type=sink_type,
+            http_host=http_host,
+            http_port=http_port,
+        )
+
+    def _run_with_transport_config(self, builder: DataServiceBuilder) -> NoReturn:
+        """Run service using YAML-based transport configuration."""
+        from .config.transport_config import load_transport_config
+        from .transport.factory import (
+            create_sink_from_config,
+            create_source_from_config,
+        )
+
+        # Load transport configuration
+        transport_config = load_transport_config(builder.instrument)
+
+        # Load Kafka configs (needed by strategies)
+        consumer_config = load_config(namespace=config_names.raw_data_consumer, env='')
+        kafka_upstream_config = load_config(namespace=config_names.kafka_upstream)
+        kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
+        kafka_config = {**consumer_config, **kafka_upstream_config}
+
+        # Create source and sink using factory
+        source = create_source_from_config(
+            instrument=builder.instrument,
+            adapter=builder._adapter,
+            transport_config=transport_config,
+            kafka_config=kafka_config,
+        )
+
+        sink = create_sink_from_config(
+            instrument=builder.instrument,
+            transport_config=transport_config,
+            kafka_config=kafka_downstream_config,
+        )
+        sink = UnrollingSinkAdapter(sink)
+
+        # Build and start service
+        service = builder.from_source(
+            source=source,
+            sink=sink,
+            resources=None,
+            raise_on_adapter_error=False,
+        )
+        service.start()
+
+    def _run_legacy(
+        self,
+        builder: DataServiceBuilder,
+        source_type: str,
+        http_data_source: str | None,
+        http_config_source: str | None,
+        sink_type: str,
+        http_host: str,
+        http_port: int,
+    ) -> NoReturn:
+        """Run service using legacy CLI arguments (deprecated)."""
 
         # Create sink
         http_sink_instance = None  # Track HTTP sink for starting/stopping

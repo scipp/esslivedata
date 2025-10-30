@@ -1,0 +1,13 @@
+streams:
+  # Input streams for monitor_data service
+  - kind: monitor_events
+    transport: kafka
+  - kind: monitor_counts
+    transport: kafka
+  - kind: livedata_config
+    transport: kafka
+  # Output streams for monitor_data service
+  - kind: livedata_data
+    transport: kafka
+  - kind: livedata_status
+    transport: kafka
