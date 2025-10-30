@@ -12,11 +12,18 @@ import scipp as sc
 from holoviews import Dimension, streams
 
 from ess.livedata import ServiceBase
-from ess.livedata.config import instrument_registry
+from ess.livedata.config import config_names, instrument_registry
+from ess.livedata.config.config_loader import load_config
 from ess.livedata.config.instruments import get_config
 from ess.livedata.config.schema_registry import get_schema_registry
+from ess.livedata.config.streams import get_stream_mapping, stream_kind_to_topic
 from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.core.message import StreamKind
 from ess.livedata.kafka import consumer as kafka_consumer
+from ess.livedata.kafka.message_adapter import AdaptingMessageSource
+from ess.livedata.kafka.routes import RoutingAdapterBuilder
+from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_da00
+from ess.livedata.kafka.source import BackgroundMessageSource
 
 from .config_service import ConfigService
 from .controller_factory import ControllerFactory
@@ -24,18 +31,13 @@ from .correlation_histogram import CorrelationHistogramController
 from .data_service import DataService
 from .job_controller import JobController
 from .job_service import JobService
+from .kafka_transport import KafkaTransport
 from .message_bridge import BackgroundMessageBridge
 from .orchestrator import Orchestrator
 from .plotting_controller import PlottingController
 from .roi_publisher import ROIPublisher
 from .schema_validator import PydanticSchemaValidator
 from .stream_manager import StreamManager
-from .transport_factory import (
-    TransportType,
-    create_config_transport,
-    create_data_source,
-    create_roi_sink,
-)
 from .widgets.plot_creation_widget import PlotCreationWidget
 from .widgets.reduction_widget import ReductionWidget
 from .workflow_controller import WorkflowController
@@ -55,40 +57,20 @@ class DashboardBase(ServiceBase, ABC):
         log_level: int = logging.INFO,
         dashboard_name: str,
         port: int = 5007,
-        transport: TransportType = 'kafka',
-        http_backend_url: str | None = None,
-        http_port: int = 8300,
     ):
         name = f'{instrument}_{dashboard_name}'
         super().__init__(name=name, log_level=log_level)
         self._instrument = instrument
         self._port = port
         self._dev = dev
-        self._transport = transport
-        self._http_backend_url = http_backend_url
-        self._http_port = http_port
 
         self._exit_stack = ExitStack()
         self._exit_stack.__enter__()
 
         self._callback = None
-        self._http_sink = (
-            None  # Track HTTP multi-endpoint sink for lifecycle management
-        )
-
-        # Create HTTP sink once if using HTTP transport
-        if self._transport == 'http':
-            from .transport_factory import create_dashboard_sink
-
-            self._http_sink = create_dashboard_sink(
-                instrument=instrument, port=http_port, logger=self._logger
-            )
-
         self._setup_config_service()
         self._setup_data_infrastructure(instrument=instrument, dev=dev)
-        self._logger.info(
-            "%s initialized with %s transport", self.__class__.__name__, transport
-        )
+        self._logger.info("%s initialized", self.__class__.__name__)
 
         # Global unit format.
         Dimension.unit_format = ' [{unit}]'
@@ -110,32 +92,22 @@ class DashboardBase(ServiceBase, ABC):
         # should be placed?
 
     def _setup_config_service(self) -> None:
-        """Set up configuration service with transport bridge."""
-        # Create consumer if using Kafka transport
-        consumer = None
-        if self._transport == 'kafka':
-            _, consumer = self._exit_stack.enter_context(
-                kafka_consumer.make_control_consumer(
-                    instrument=self._instrument,
-                    extra_config={'auto.offset.reset': 'earliest'},
-                )
+        """Set up configuration service with Kafka bridge."""
+        kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
+        _, consumer = self._exit_stack.enter_context(
+            kafka_consumer.make_control_consumer(
+                instrument=self._instrument,
+                extra_config={'auto.offset.reset': 'earliest'},
             )
-
-        # Create transport using factory
-        transport = create_config_transport(
-            transport_type=self._transport,
-            instrument=self._instrument,
-            logger=self._logger,
-            http_backend_url=self._http_backend_url,
-            http_sink=self._http_sink,
-            consumer=consumer,
         )
-
-        self._message_bridge = BackgroundMessageBridge(
-            transport=transport, logger=self._logger
+        kafka_transport = KafkaTransport(
+            kafka_config=kafka_downstream_config, consumer=consumer, logger=self._logger
+        )
+        self._kafka_bridge = BackgroundMessageBridge(
+            transport=kafka_transport, logger=self._logger
         )
         self._config_service = ConfigService(
-            message_bridge=self._message_bridge,
+            message_bridge=self._kafka_bridge,
             schema_validator=PydanticSchemaValidator(
                 schema_registry=get_schema_registry()
             ),
@@ -145,12 +117,10 @@ class DashboardBase(ServiceBase, ABC):
             schema_registry=get_schema_registry(),
         )
 
-        self._message_bridge_thread = threading.Thread(
-            target=self._message_bridge.start, daemon=True
+        self._kafka_bridge_thread = threading.Thread(
+            target=self._kafka_bridge.start, daemon=True
         )
-        self._logger.info(
-            "Config service setup complete with %s transport", self._transport
-        )
+        self._logger.info("Config service setup complete")
 
     def _setup_data_infrastructure(self, instrument: str, dev: bool) -> None:
         """Set up data services, forwarder, and orchestrator."""
@@ -167,14 +137,14 @@ class DashboardBase(ServiceBase, ABC):
             config_service=self._config_service, job_service=self._job_service
         )
 
-        # Create ROI publisher using transport factory
-        roi_sink = create_roi_sink(
-            transport_type=self._transport,
+        # Create ROI publisher for publishing ROI updates to Kafka
+        kafka_upstream_config = load_config(namespace=config_names.kafka_upstream)
+        roi_sink = KafkaSink(
+            kafka_config=kafka_upstream_config,
             instrument=instrument,
+            serializer=serialize_dataarray_to_da00,
             logger=self._logger,
-            http_sink=self._http_sink,
         )
-
         roi_publisher = ROIPublisher(sink=roi_sink, logger=self._logger)
 
         self._plotting_controller = PlottingController(
@@ -184,24 +154,45 @@ class DashboardBase(ServiceBase, ABC):
             logger=self._logger,
             roi_publisher=roi_publisher,
         )
-
-        # Create data source using transport factory
-        data_source = create_data_source(
-            transport_type=self._transport,
-            instrument=instrument,
-            dev=dev,
-            http_backend_url=self._http_backend_url,
-            exit_stack=self._exit_stack,
-        )
-
         self._orchestrator = Orchestrator(
-            data_source,
+            self._setup_kafka_consumer(instrument=instrument, dev=dev),
             data_service=self._data_service,
             job_service=self._job_service,
         )
-        self._logger.info(
-            "Data infrastructure setup complete with %s transport", self._transport
+        self._logger.info("Data infrastructure setup complete")
+
+    def _setup_kafka_consumer(
+        self, instrument: str, dev: bool
+    ) -> AdaptingMessageSource:
+        """Set up Kafka consumer for data streams."""
+        consumer_config = load_config(
+            namespace=config_names.reduced_data_consumer, env=''
         )
+        kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
+        data_topic = stream_kind_to_topic(
+            instrument=self._instrument, kind=StreamKind.LIVEDATA_DATA
+        )
+        status_topic = stream_kind_to_topic(
+            instrument=self._instrument, kind=StreamKind.LIVEDATA_STATUS
+        )
+        consumer = self._exit_stack.enter_context(
+            kafka_consumer.make_consumer_from_config(
+                topics=[data_topic, status_topic],
+                config={**consumer_config, **kafka_downstream_config},
+                group='dashboard',
+            )
+        )
+        source = self._exit_stack.enter_context(
+            BackgroundMessageSource(consumer=consumer)
+        )
+        stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
+        adapter = (
+            RoutingAdapterBuilder(stream_mapping=stream_mapping)
+            .with_livedata_data_route()
+            .with_livedata_status_route()
+            .build()
+        )
+        return AdaptingMessageSource(source=source, adapter=adapter)
 
     def _setup_workflow_management(self) -> None:
         """Initialize workflow controller and reduction widget."""
@@ -295,14 +286,7 @@ class DashboardBase(ServiceBase, ABC):
 
     def _start_impl(self) -> None:
         """Start the dashboard service."""
-        # Start HTTP multi-endpoint sink if using HTTP transport
-        if self._http_sink is not None:
-            self._http_sink.start()
-            self._logger.info(
-                "HTTP multi-endpoint sink started on port %d", self._http_port
-            )
-
-        self._message_bridge_thread.start()
+        self._kafka_bridge_thread.start()
 
     def run_forever(self) -> None:
         """Run the dashboard server."""
@@ -323,11 +307,6 @@ class DashboardBase(ServiceBase, ABC):
 
     def _stop_impl(self) -> None:
         """Clean shutdown of all components."""
-        # Stop HTTP multi-endpoint sink if using HTTP transport
-        if self._http_sink is not None:
-            self._http_sink.stop()
-            self._logger.info("HTTP multi-endpoint sink stopped")
-
-        self._message_bridge.stop()
-        self._message_bridge_thread.join()
+        self._kafka_bridge.stop()
+        self._kafka_bridge_thread.join()
         self._exit_stack.__exit__(None, None, None)
