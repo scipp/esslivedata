@@ -309,6 +309,8 @@ class DataServiceRunner:
         kafka_config = {**consumer_config, **kafka_upstream_config}
 
         # Create source and sink using factory
+        # Transport strategies handle adapter application internally, so sources
+        # already return typed Messages
         source = create_source_from_config(
             instrument=builder.instrument,
             adapter=builder._adapter,
@@ -324,6 +326,27 @@ class DataServiceRunner:
         )
         sink = UnrollingSinkAdapter(sink)
 
+        # Extract HTTP sinks that need to be started
+        http_sinks = []
+        from .transport.routing_sink import RoutingSink
+
+        if isinstance(sink._sink, RoutingSink):
+            # Check each route for HTTP sinks
+            http_sinks.extend(
+                route_sink
+                for route_sink in sink._sink.routes.values()
+                if isinstance(route_sink, HTTPMultiEndpointSink)
+            )
+
+        # Start HTTP sinks before service starts
+        for http_sink in http_sinks:
+            http_sink.start()
+
+        # Strategies handle adaptation internally, so clear adapter to prevent
+        # double-wrapping in from_source()
+        original_adapter = builder._adapter
+        builder._adapter = None
+
         # Build and start service
         service = builder.from_source(
             source=source,
@@ -331,7 +354,16 @@ class DataServiceRunner:
             resources=None,
             raise_on_adapter_error=False,
         )
-        service.start()
+
+        # Restore adapter (defensive, though builder is not reused)
+        builder._adapter = original_adapter
+
+        try:
+            service.start()
+        finally:
+            # Stop HTTP sinks on exit
+            for http_sink in http_sinks:
+                http_sink.stop()
 
     def _run_legacy(
         self,

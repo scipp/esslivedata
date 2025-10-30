@@ -103,7 +103,8 @@ class KafkaStrategy:
 
         Creates a BackgroundMessageSource wrapping a KafkaConsumer for the
         given stream kinds. Topics are derived from stream kinds using
-        stream_kind_to_topic().
+        stream_kind_to_topic(). If an adapter is provided, wraps the source
+        with AdaptingMessageSource to convert raw Kafka messages to typed Messages.
 
         Note: This implementation creates Kafka consumers without explicit cleanup
         handlers. For production use with proper resource management, consider using
@@ -116,14 +117,15 @@ class KafkaStrategy:
         instrument:
             Instrument name.
         adapter:
-            Message adapter (currently unused in this implementation).
+            Optional message adapter for transforming raw Kafka messages to typed
+            Messages. If not provided, returns raw Kafka messages.
 
         Returns
         -------
         :
-            BackgroundMessageSource for consuming Kafka messages. The returned source
-            is a context manager and should be used with `with` statement or an
-            ExitStack for proper cleanup.
+            Message source yielding typed Messages (if adapter provided) or raw
+            Kafka messages (if no adapter). The returned source is a context manager
+            and should be used with `with` statement or an ExitStack for proper cleanup.
         """
         # Convert stream kinds to topics
         topics = [
@@ -152,7 +154,17 @@ class KafkaStrategy:
         consumer = consumer_cm.__enter__()
 
         # Wrap in background source for async consumption
-        return BackgroundMessageSource(consumer=consumer)
+        source: MessageSource = BackgroundMessageSource(consumer=consumer)
+
+        # Apply adapter if provided to convert raw Kafka messages to typed Messages
+        if adapter is not None:
+            from ..kafka.message_adapter import AdaptingMessageSource
+
+            source = AdaptingMessageSource(
+                source=source, adapter=adapter, raise_on_error=False
+            )
+
+        return source
 
     def create_sink(
         self, stream_kinds: list[StreamKind], instrument: str
@@ -217,6 +229,9 @@ class HttpStrategy:
         serializers based on the stream type. Combines multiple sources using
         MultiHTTPSource.
 
+        HTTP sources directly deserialize to typed Messages, so the adapter parameter
+        is accepted for protocol compliance but is not used.
+
         Parameters
         ----------
         stream_kinds:
@@ -224,12 +239,12 @@ class HttpStrategy:
         instrument:
             Instrument name.
         adapter:
-            Message adapter (currently unused).
+            Message adapter (unused - HTTP sources already return typed Messages).
 
         Returns
         -------
         :
-            HTTPMessageSource or MultiHTTPSource for polling messages.
+            HTTPMessageSource or MultiHTTPSource yielding typed Messages.
         """
         sources = []
 
