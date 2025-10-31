@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
 
 import pydantic
 
@@ -44,13 +43,6 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         """Get auxiliary sources Pydantic model."""
         return self._spec.aux_sources
 
-    @property
-    def initial_aux_source_names(self) -> dict[str, str]:
-        """Get initial auxiliary source names from persistent config."""
-        if not self._persistent_config:
-            return {}
-        return self._persistent_config.aux_source_names
-
     def model_class(self) -> type[pydantic.BaseModel] | None:
         """Get workflow parameters model class."""
         return self._spec.params
@@ -59,18 +51,6 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
     def source_names(self) -> list[str]:
         """Get available source names."""
         return self._spec.source_names
-
-    @property
-    def initial_source_names(self) -> list[str]:
-        """Get initial source names."""
-        return self._persistent_config.source_names if self._persistent_config else []
-
-    @property
-    def initial_parameter_values(self) -> dict[str, Any]:
-        """Get initial parameter values."""
-        if not self._persistent_config:
-            return {}
-        return self._persistent_config.params
 
     def start_action(
         self,

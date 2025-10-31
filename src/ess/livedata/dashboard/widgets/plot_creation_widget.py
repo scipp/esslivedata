@@ -63,24 +63,6 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
     def source_names(self) -> list[str]:
         return self._available_sources
 
-    @property
-    def initial_source_names(self) -> list[str]:
-        if self._persisted_config is not None:
-            # Filter persisted source names to only include those still available
-            persisted_sources = [
-                name
-                for name in self._persisted_config.source_names
-                if name in self._available_sources
-            ]
-            return persisted_sources if persisted_sources else self._available_sources
-        return self._available_sources
-
-    @property
-    def initial_parameter_values(self) -> dict[str, Any]:
-        if self._persisted_config is not None:
-            return self._persisted_config.params
-        return {}
-
     def start_action(
         self,
         selected_sources: list[str],

@@ -36,7 +36,14 @@ class ConfigurationState(BaseModel):
 
 
 class ConfigurationAdapter(ABC, Generic[Model]):
-    """Abstract adapter for providing configuration data to generic widgets."""
+    """
+    Abstract adapter for providing configuration data to generic widgets.
+
+    Subclasses should store persistent configuration in the protected attribute
+    `_persistent_config: ConfigurationState | None` if they want to use the
+    default implementations of `initial_source_names`, `initial_aux_source_names`,
+    and `initial_parameter_values`.
+    """
 
     @property
     @abstractmethod
@@ -65,9 +72,20 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         Initially selected auxiliary source names.
 
         Returns a mapping from field name (as defined in aux_sources model) to
-        the selected stream name.
+        the selected stream name. Default implementation filters persisted aux
+        sources to only include valid field names from the current aux_sources model.
         """
-        return {}
+        if not hasattr(self, '_persistent_config') or not self._persistent_config:
+            return {}
+        if not self.aux_sources:
+            return {}
+        # Filter to only include valid field names
+        valid_fields = set(self.aux_sources.model_fields.keys())
+        return {
+            k: v
+            for k, v in self._persistent_config.aux_source_names.items()
+            if k in valid_fields
+        }
 
     def set_aux_sources(self, aux_source_names: BaseModel | None) -> type[Model] | None:
         """
@@ -106,14 +124,34 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         """Available source names."""
 
     @property
-    @abstractmethod
     def initial_source_names(self) -> list[str]:
-        """Initially selected source names."""
+        """
+        Initially selected source names.
+
+        Default implementation filters persisted source names to only include
+        currently available sources. If no valid persisted sources remain,
+        defaults to all available sources.
+        """
+        if not hasattr(self, '_persistent_config') or not self._persistent_config:
+            return self.source_names
+        filtered = [
+            name
+            for name in self._persistent_config.source_names
+            if name in self.source_names
+        ]
+        return filtered if filtered else self.source_names
 
     @property
-    @abstractmethod
     def initial_parameter_values(self) -> dict[str, Any]:
-        """Initial parameter values."""
+        """
+        Initial parameter values.
+
+        Default implementation returns persisted parameter values if available,
+        otherwise returns empty dict.
+        """
+        if not hasattr(self, '_persistent_config') or not self._persistent_config:
+            return {}
+        return self._persistent_config.params
 
     @abstractmethod
     def start_action(
