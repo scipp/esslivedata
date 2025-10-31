@@ -165,7 +165,7 @@ class TestWorkflowController:
         # Act
         controller.start_workflow(workflow_id, source_names, config)
 
-        # Assert - check ConfigStore instead of service
+        # Assert
         persistent_config_data = config_store.get(workflow_id)
         assert persistent_config_data is not None
         persistent_config = ConfigurationState.model_validate(persistent_config_data)
