@@ -8,14 +8,12 @@ from contextlib import ExitStack
 
 import panel as pn
 import scipp as sc
-from confluent_kafka import Producer
 from holoviews import Dimension, streams
 
 from ess.livedata import ServiceBase
 from ess.livedata.config import config_names, instrument_registry
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.config.instruments import get_config
-from ess.livedata.config.schema_registry import get_schema_registry
 from ess.livedata.config.streams import get_stream_mapping, stream_kind_to_topic
 from ess.livedata.config.workflow_spec import ResultKey
 from ess.livedata.core.message import StreamKind
@@ -25,18 +23,16 @@ from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_da00
 from ess.livedata.kafka.source import BackgroundMessageSource
 
-from .config_service import ConfigService
 from .config_store import InMemoryConfigStore
-from .controller_factory import ControllerFactory
 from .correlation_histogram import CorrelationHistogramController
 from .data_service import DataService
 from .job_controller import JobController
 from .job_service import JobService
+from .kafka_job_command_service import KafkaJobCommandService
+from .kafka_workflow_config_service import KafkaWorkflowConfigService
 from .orchestrator import Orchestrator
 from .plotting_controller import PlottingController
 from .roi_publisher import ROIPublisher
-from .schema_validator import PydanticSchemaValidator
-from .source_based_message_bridge import SourceBasedMessageBridge
 from .stream_manager import StreamManager
 from .widgets.plot_creation_widget import PlotCreationWidget
 from .widgets.reduction_widget import ReductionWidget
@@ -102,14 +98,11 @@ class DashboardBase(ServiceBase, ABC):
         # should be placed?
 
     def _setup_config_service(self) -> None:
-        """Set up configuration service with Kafka bridge."""
+        """Set up configuration services using backend MessageSource/MessageSink."""
         kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
 
         # Dashboard subscribes to RESPONSES to receive backend status updates.
         # Dashboard publishes to COMMANDS to send configuration to backend services.
-        commands_topic = stream_kind_to_topic(
-            instrument=self._instrument, kind=StreamKind.LIVEDATA_COMMANDS
-        )
         responses_topic = stream_kind_to_topic(
             instrument=self._instrument, kind=StreamKind.LIVEDATA_RESPONSES
         )
@@ -123,33 +116,38 @@ class DashboardBase(ServiceBase, ABC):
         )
 
         # Create BackgroundMessageSource for consuming responses
-        source = self._exit_stack.enter_context(
+        self._message_source = self._exit_stack.enter_context(
             BackgroundMessageSource(consumer=consumer)
         )
 
-        # Create producer for publishing commands
-        producer = Producer(kafka_downstream_config)
+        # Create KafkaSink for publishing commands (using backend abstraction)
+        # Note: serializer is not used for LIVEDATA_COMMANDS messages
+        from ess.livedata.core.message import Message
+        from ess.livedata.handlers.config_handler import ConfigUpdate
 
-        # Create message bridge using BackgroundMessageSource
-        self._kafka_bridge = SourceBasedMessageBridge(
-            source=source,
-            producer=producer,
-            publish_topic=commands_topic,
+        def _config_serializer(value: Message[ConfigUpdate]) -> bytes:
+            raise NotImplementedError("ConfigUpdate serialization handled by KafkaSink")
+
+        self._message_sink = KafkaSink[ConfigUpdate](
+            kafka_config=kafka_downstream_config,
+            instrument=self._instrument,
+            logger=self._logger,
+            serializer=_config_serializer,
+        )
+
+        # Create focused services using MessageSource/MessageSink
+        self._workflow_config_service = KafkaWorkflowConfigService(
+            source=self._message_source,
+            sink=self._message_sink,
             logger=self._logger,
         )
 
-        self._config_service = ConfigService(
-            message_bridge=self._kafka_bridge,
-            schema_validator=PydanticSchemaValidator(
-                schema_registry=get_schema_registry()
-            ),
-        )
-        self._controller_factory = ControllerFactory(
-            config_service=self._config_service,
-            schema_registry=get_schema_registry(),
+        self._job_command_service = KafkaJobCommandService(
+            sink=self._message_sink,
+            logger=self._logger,
         )
 
-        self._logger.info("Config service setup complete")
+        self._logger.info("Config services setup complete")
 
     def _setup_data_infrastructure(self, instrument: str, dev: bool) -> None:
         """Set up data services, forwarder, and orchestrator."""
@@ -163,7 +161,7 @@ class DashboardBase(ServiceBase, ABC):
             data_service=self._data_service, logger=self._logger
         )
         self._job_controller = JobController(
-            config_service=self._config_service, job_service=self._job_service
+            command_service=self._job_command_service, job_service=self._job_service
         )
 
         # Create ROI publisher for publishing ROI updates to Kafka
@@ -228,8 +226,8 @@ class DashboardBase(ServiceBase, ABC):
         self._correlation_controller = CorrelationHistogramController(
             self._data_service
         )
-        self._workflow_controller = WorkflowController.from_config_service(
-            config_service=self._config_service,
+        self._workflow_controller = WorkflowController(
+            service=self._workflow_config_service,
             source_names=sorted(self._processor_factory.source_names),
             workflow_registry=self._processor_factory,
             config_store=self._workflow_config_store,
@@ -278,7 +276,7 @@ class DashboardBase(ServiceBase, ABC):
         def _safe_step():
             try:
                 self._step()
-                self._config_service.process_incoming_messages()
+                self._workflow_config_service.process_incoming_messages()
             except Exception:
                 self._logger.exception("Error in periodic update step.")
 
@@ -317,7 +315,7 @@ class DashboardBase(ServiceBase, ABC):
 
     def _start_impl(self) -> None:
         """Start the dashboard service."""
-        self._kafka_bridge.start()
+        self._message_source.start()
 
     def run_forever(self) -> None:
         """Run the dashboard server."""
@@ -338,5 +336,5 @@ class DashboardBase(ServiceBase, ABC):
 
     def _stop_impl(self) -> None:
         """Clean shutdown of all components."""
-        self._kafka_bridge.stop()
+        self._message_source.stop()
         self._exit_stack.__exit__(None, None, None)
