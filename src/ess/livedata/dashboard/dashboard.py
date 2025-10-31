@@ -69,7 +69,9 @@ class DashboardBase(ServiceBase, ABC):
         self._exit_stack.__enter__()
 
         self._callback = None
-        self._config_store = InMemoryConfigStore()  # For persistent UI state
+        # Separate config stores for workflow and plotter persistent UI state
+        self._workflow_config_store = InMemoryConfigStore()
+        self._plotter_config_store = InMemoryConfigStore()
         self._setup_config_service()
         self._setup_data_infrastructure(instrument=instrument, dev=dev)
         self._logger.info("%s initialized", self.__class__.__name__)
@@ -172,7 +174,7 @@ class DashboardBase(ServiceBase, ABC):
 
         self._plotting_controller = PlottingController(
             job_service=self._job_service,
-            config_store=self._config_store,
+            config_store=self._plotter_config_store,
             stream_manager=self._stream_manager,
             logger=self._logger,
             roi_publisher=roi_publisher,
@@ -226,7 +228,7 @@ class DashboardBase(ServiceBase, ABC):
             config_service=self._config_service,
             source_names=sorted(self._processor_factory.source_names),
             workflow_registry=self._processor_factory,
-            config_store=self._config_store,
+            config_store=self._workflow_config_store,
             data_service=self._data_service,
             correlation_histogram_controller=self._correlation_controller,
         )

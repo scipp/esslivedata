@@ -186,13 +186,13 @@ class WorkflowController:
         # Persist config for this workflow to restore widget state across sessions
         if self._config_store is not None:
             # Clean up in case there are stale workflows that no longer exist
-            self._config_store.cleanup_missing_workflows(set(self._workflow_registry))
+            self._config_store.remove_not_in_set(set(self._workflow_registry))
             persistent_config = PersistedUIConfig(
                 source_names=source_names,
                 aux_source_names=workflow_config.aux_source_names,
                 params=workflow_config.params,
             )
-            self._config_store.save_workflow_config(workflow_id, persistent_config)
+            self._config_store.save_config(workflow_id, persistent_config)
 
         # Send workflow config to each source
         for source_name in source_names:
@@ -263,7 +263,7 @@ class WorkflowController:
         """Load saved workflow configuration."""
         if self._config_store is None:
             return None
-        return self._config_store.load_workflow_config(workflow_id)
+        return self._config_store.load_config(workflow_id)
 
     def subscribe_to_workflow_status_updates(
         self, callback: Callable[[dict[str, WorkflowStatus]], None]

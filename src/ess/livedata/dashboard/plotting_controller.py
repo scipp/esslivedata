@@ -166,7 +166,7 @@ class PlottingController:
 
         workflow_id = self._job_service.job_info[job_number]
         plotter_id = self._create_plotter_id(workflow_id, output_name, plot_name)
-        return self._config_store.load_plotter_config(plotter_id)
+        return self._config_store.load_config(plotter_id)
 
     def _create_plotter_id(
         self, workflow_id: WorkflowId, output_name: str | None, plot_name: str
@@ -212,7 +212,7 @@ class PlottingController:
         if self._config_store is None:
             return
 
-        self._config_store.cleanup_old_plotter_configs(
+        self._config_store.remove_oldest(
             max_configs=self._max_persistent_configs,
             cleanup_fraction=self._cleanup_fraction,
         )
@@ -251,7 +251,7 @@ class PlottingController:
             aux_source_names={},
             params=params.model_dump(),
         )
-        self._config_store.save_plotter_config(plotter_id, persistent_config)
+        self._config_store.save_config(plotter_id, persistent_config)
         self._cleanup_old_configs()
 
     def create_plot(

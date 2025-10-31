@@ -29,41 +29,28 @@ class FakeConfigStore(ConfigStore):
     """Fake config store for testing."""
 
     def __init__(self):
-        self._workflow_configs: dict[WorkflowId, PersistedUIConfig] = {}
-        self._plotter_configs: dict[WorkflowId, PersistedUIConfig] = {}
+        self._configs: dict[WorkflowId, PersistedUIConfig] = {}
 
-    def save_workflow_config(
-        self, workflow_id: WorkflowId, config: PersistedUIConfig
-    ) -> None:
-        self._workflow_configs[workflow_id] = config
+    def save_config(self, config_id: WorkflowId, config: PersistedUIConfig) -> None:
+        self._configs[config_id] = config
 
-    def load_workflow_config(self, workflow_id: WorkflowId) -> PersistedUIConfig | None:
-        return self._workflow_configs.get(workflow_id)
+    def load_config(self, config_id: WorkflowId) -> PersistedUIConfig | None:
+        return self._configs.get(config_id)
 
-    def save_plotter_config(
-        self, plotter_id: WorkflowId, config: PersistedUIConfig
-    ) -> None:
-        self._plotter_configs[plotter_id] = config
+    def remove_not_in_set(self, valid_ids: set[WorkflowId]) -> None:
+        missing_ids = set(self._configs.keys()) - valid_ids
+        for config_id in missing_ids:
+            del self._configs[config_id]
 
-    def load_plotter_config(self, plotter_id: WorkflowId) -> PersistedUIConfig | None:
-        return self._plotter_configs.get(plotter_id)
-
-    def cleanup_missing_workflows(self, current_workflow_ids: set[WorkflowId]) -> None:
-        missing_ids = set(self._workflow_configs.keys()) - current_workflow_ids
-        for workflow_id in missing_ids:
-            del self._workflow_configs[workflow_id]
-
-    def cleanup_old_plotter_configs(
-        self, max_configs: int, cleanup_fraction: float = 0.1
-    ) -> None:
-        if len(self._plotter_configs) <= max_configs:
+    def remove_oldest(self, max_configs: int, cleanup_fraction: float = 0.1) -> None:
+        if len(self._configs) <= max_configs:
             return
-        num_to_remove = int(len(self._plotter_configs) * cleanup_fraction)
+        num_to_remove = int(len(self._configs) * cleanup_fraction)
         if num_to_remove == 0:
             num_to_remove = 1
-        oldest_keys = list(self._plotter_configs.keys())[:num_to_remove]
+        oldest_keys = list(self._configs.keys())[:num_to_remove]
         for key in oldest_keys:
-            del self._plotter_configs[key]
+            del self._configs[key]
 
 
 class FakeWorkflowConfigService(WorkflowConfigService):
@@ -208,7 +195,7 @@ class TestWorkflowController:
         controller.start_workflow(workflow_id, source_names, config)
 
         # Assert - check ConfigStore instead of service
-        persistent_config = config_store.load_workflow_config(workflow_id)
+        persistent_config = config_store.load_config(workflow_id)
         assert persistent_config is not None
         assert persistent_config.source_names == source_names
         assert persistent_config.params == {"threshold": 200.0, "mode": "fast"}
@@ -368,12 +355,12 @@ class TestWorkflowController:
         controller.start_workflow(workflow_id_2, sources_2, config_2)
 
         # Assert - check ConfigStore instead of service
-        config_1_data = config_store.load_workflow_config(workflow_id_1)
+        config_1_data = config_store.load_config(workflow_id_1)
         assert config_1_data is not None
         assert config_1_data.source_names == sources_1
         assert config_1_data.params == {"threshold": 100.0, "mode": "fast"}
 
-        config_2_data = config_store.load_workflow_config(workflow_id_2)
+        config_2_data = config_store.load_config(workflow_id_2)
         assert config_2_data is not None
         assert config_2_data.source_names == sources_2
         assert config_2_data.params == {"threshold": 200.0, "mode": "accurate"}
@@ -399,7 +386,7 @@ class TestWorkflowController:
         controller.start_workflow(workflow_id, updated_sources, updated_config)
 
         # Assert - check ConfigStore instead of service
-        workflow_config = config_store.load_workflow_config(workflow_id)
+        workflow_config = config_store.load_config(workflow_id)
         assert workflow_config is not None
 
         # Should have the updated values
@@ -501,9 +488,12 @@ class TestWorkflowController:
     ):
         """Test that get_workflow_config returns None for non-existent workflow."""
         controller, service, _config_store = workflow_controller
+        nonexistent_id = WorkflowId(
+            instrument='test', namespace='test', name='nonexistent', version=1
+        )
 
         # Act
-        result = controller.get_workflow_config("nonexistent_workflow")
+        result = controller.get_workflow_config(nonexistent_id)
 
         # Assert
         assert result is None
@@ -697,7 +687,7 @@ class TestWorkflowController:
         assert len(sent_configs) == 0  # No configs sent to sources
 
         # Should still save persistent config
-        persistent_config = config_store.load_workflow_config(workflow_id)
+        persistent_config = config_store.load_config(workflow_id)
         assert persistent_config is not None
         assert persistent_config.source_names == []
 
