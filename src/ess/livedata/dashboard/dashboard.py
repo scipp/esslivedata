@@ -3,12 +3,12 @@
 """Common functionality for implementing dashboards."""
 
 import logging
-import threading
 from abc import ABC, abstractmethod
 from contextlib import ExitStack
 
 import panel as pn
 import scipp as sc
+from confluent_kafka import Producer
 from holoviews import Dimension, streams
 
 from ess.livedata import ServiceBase
@@ -32,12 +32,11 @@ from .correlation_histogram import CorrelationHistogramController
 from .data_service import DataService
 from .job_controller import JobController
 from .job_service import JobService
-from .kafka_transport import KafkaTransport
-from .message_bridge import BackgroundMessageBridge
 from .orchestrator import Orchestrator
 from .plotting_controller import PlottingController
 from .roi_publisher import ROIPublisher
 from .schema_validator import PydanticSchemaValidator
+from .source_based_message_bridge import SourceBasedMessageBridge
 from .stream_manager import StreamManager
 from .widgets.plot_creation_widget import PlotCreationWidget
 from .widgets.reduction_widget import ReductionWidget
@@ -123,15 +122,22 @@ class DashboardBase(ServiceBase, ABC):
             )
         )
 
-        kafka_transport = KafkaTransport(
-            kafka_config=kafka_downstream_config,
-            consumer=consumer,
+        # Create BackgroundMessageSource for consuming responses
+        source = self._exit_stack.enter_context(
+            BackgroundMessageSource(consumer=consumer)
+        )
+
+        # Create producer for publishing commands
+        producer = Producer(kafka_downstream_config)
+
+        # Create message bridge using BackgroundMessageSource
+        self._kafka_bridge = SourceBasedMessageBridge(
+            source=source,
+            producer=producer,
             publish_topic=commands_topic,
             logger=self._logger,
         )
-        self._kafka_bridge = BackgroundMessageBridge(
-            transport=kafka_transport, logger=self._logger
-        )
+
         self._config_service = ConfigService(
             message_bridge=self._kafka_bridge,
             schema_validator=PydanticSchemaValidator(
@@ -143,9 +149,6 @@ class DashboardBase(ServiceBase, ABC):
             schema_registry=get_schema_registry(),
         )
 
-        self._kafka_bridge_thread = threading.Thread(
-            target=self._kafka_bridge.start, daemon=True
-        )
         self._logger.info("Config service setup complete")
 
     def _setup_data_infrastructure(self, instrument: str, dev: bool) -> None:
@@ -314,7 +317,7 @@ class DashboardBase(ServiceBase, ABC):
 
     def _start_impl(self) -> None:
         """Start the dashboard service."""
-        self._kafka_bridge_thread.start()
+        self._kafka_bridge.start()
 
     def run_forever(self) -> None:
         """Run the dashboard server."""
@@ -336,5 +339,4 @@ class DashboardBase(ServiceBase, ABC):
     def _stop_impl(self) -> None:
         """Clean shutdown of all components."""
         self._kafka_bridge.stop()
-        self._kafka_bridge_thread.join()
         self._exit_stack.__exit__(None, None, None)
