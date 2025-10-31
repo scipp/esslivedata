@@ -117,7 +117,7 @@ class TestConfigProcessor:
             Message(
                 value=RawConfigItem(
                     key=b'source1/service1/job_command',
-                    value=json.dumps(job_command.model_dump()).encode('utf-8'),
+                    value=job_command.model_dump_json().encode('utf-8'),
                 ),
                 timestamp=123456789,
                 stream=COMMANDS_STREAM_ID,
@@ -176,7 +176,7 @@ class TestConfigProcessor:
             Message(
                 value=RawConfigItem(
                     key=b'source2/service1/job_command',
-                    value=json.dumps(job_command.model_dump()).encode('utf-8'),
+                    value=job_command.model_dump_json().encode('utf-8'),
                 ),
                 timestamp=123456790,
                 stream=COMMANDS_STREAM_ID,
