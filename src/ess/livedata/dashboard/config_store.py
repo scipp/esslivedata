@@ -13,14 +13,14 @@ ConfigService is for transient runtime coordination.
 
 from typing import Protocol
 
-from ess.livedata.config.workflow_spec import PersistentWorkflowConfig, WorkflowId
+from ess.livedata.config.workflow_spec import PersistedUIConfig, WorkflowId
 
 
 class ConfigStore(Protocol):
     """Protocol for persisting dashboard UI configuration state."""
 
     def save_workflow_config(
-        self, workflow_id: WorkflowId, config: PersistentWorkflowConfig
+        self, workflow_id: WorkflowId, config: PersistedUIConfig
     ) -> None:
         """
         Save workflow configuration for persistence across sessions.
@@ -34,9 +34,7 @@ class ConfigStore(Protocol):
         """
         ...
 
-    def load_workflow_config(
-        self, workflow_id: WorkflowId
-    ) -> PersistentWorkflowConfig | None:
+    def load_workflow_config(self, workflow_id: WorkflowId) -> PersistedUIConfig | None:
         """
         Load persisted workflow configuration.
 
@@ -53,7 +51,7 @@ class ConfigStore(Protocol):
         ...
 
     def save_plotter_config(
-        self, plotter_id: WorkflowId, config: PersistentWorkflowConfig
+        self, plotter_id: WorkflowId, config: PersistedUIConfig
     ) -> None:
         """
         Save plotter configuration for persistence across sessions.
@@ -67,9 +65,7 @@ class ConfigStore(Protocol):
         """
         ...
 
-    def load_plotter_config(
-        self, plotter_id: WorkflowId
-    ) -> PersistentWorkflowConfig | None:
+    def load_plotter_config(self, plotter_id: WorkflowId) -> PersistedUIConfig | None:
         """
         Load persisted plotter configuration.
 
@@ -116,30 +112,26 @@ class InMemoryConfigStore(ConfigStore):
     """Simple in-memory implementation of ConfigStore for testing and development."""
 
     def __init__(self):
-        self._workflow_configs: dict[WorkflowId, PersistentWorkflowConfig] = {}
-        self._plotter_configs: dict[WorkflowId, PersistentWorkflowConfig] = {}
+        self._workflow_configs: dict[WorkflowId, PersistedUIConfig] = {}
+        self._plotter_configs: dict[WorkflowId, PersistedUIConfig] = {}
 
     def save_workflow_config(
-        self, workflow_id: WorkflowId, config: PersistentWorkflowConfig
+        self, workflow_id: WorkflowId, config: PersistedUIConfig
     ) -> None:
         """Save workflow configuration in memory."""
         self._workflow_configs[workflow_id] = config
 
-    def load_workflow_config(
-        self, workflow_id: WorkflowId
-    ) -> PersistentWorkflowConfig | None:
+    def load_workflow_config(self, workflow_id: WorkflowId) -> PersistedUIConfig | None:
         """Load workflow configuration from memory."""
         return self._workflow_configs.get(workflow_id)
 
     def save_plotter_config(
-        self, plotter_id: WorkflowId, config: PersistentWorkflowConfig
+        self, plotter_id: WorkflowId, config: PersistedUIConfig
     ) -> None:
         """Save plotter configuration in memory."""
         self._plotter_configs[plotter_id] = config
 
-    def load_plotter_config(
-        self, plotter_id: WorkflowId
-    ) -> PersistentWorkflowConfig | None:
+    def load_plotter_config(self, plotter_id: WorkflowId) -> PersistedUIConfig | None:
         """Load plotter configuration from memory."""
         return self._plotter_configs.get(plotter_id)
 

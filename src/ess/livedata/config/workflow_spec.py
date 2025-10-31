@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 T = TypeVar('T')
 
@@ -308,68 +308,29 @@ class WorkflowConfig(BaseModel):
         )
 
 
-class PersistentWorkflowConfig(BaseModel):
+class PersistedUIConfig(BaseModel):
     """
-    Persistent storage for workflow configuration including source selection.
+    UI state to persist across sessions.
 
-    This model stores both the source names selection and the parameter values
-    for a workflow, allowing the UI to restore the last-used configuration.
+    This model stores only the user preferences that should be restored when
+    reopening the dashboard. Runtime-specific data (job numbers, schedules) are
+    excluded as they are meaningless across sessions.
     """
 
     source_names: list[str] = Field(
         default_factory=list,
-        description="Selected source names for this workflow",
+        description="Selected source names for this workflow or plotter",
     )
-    config: WorkflowConfig = Field(
-        description="Configuration for the workflow, including parameter values",
-    )
-
-
-class PersistentWorkflowConfigs(BaseModel):
-    """
-    Collection of all persistent workflow configurations.
-
-    This model stores persistent configurations for multiple workflows in a single
-    config item, making it easy to manage and clean up old configurations.
-    """
-
-    configs: dict[WorkflowId, PersistentWorkflowConfig] = Field(
+    aux_source_names: dict[str, str] = Field(
         default_factory=dict,
-        description="Persistent configurations indexed by workflow ID",
+        description=(
+            "Selected auxiliary source names as field name to stream name mapping"
+        ),
     )
-
-    @field_serializer('configs')
-    def serialize_configs(
-        self, configs: dict[WorkflowId, PersistentWorkflowConfig]
-    ) -> dict[str, Any]:
-        """Serialize configs by converting WorkflowId keys to strings."""
-        return {str(k): v.model_dump() for k, v in configs.items()}
-
-    @field_validator('configs', mode='before')
-    @classmethod
-    def validate_configs(cls, v: Any) -> dict[WorkflowId, PersistentWorkflowConfig]:
-        """Validate configs by converting string keys back to WorkflowId objects."""
-        if isinstance(v, dict) and v:
-            # Check if keys are strings (during deserialization)
-            first_key = next(iter(v.keys()))
-            if isinstance(first_key, str):
-                result = {}
-                for k, config_data in v.items():
-                    workflow_id = WorkflowId.from_string(k)
-                    # Reconstruct PersistentWorkflowConfig
-                    if isinstance(config_data, dict):
-                        config_data = PersistentWorkflowConfig.model_validate(
-                            config_data
-                        )
-                    result[workflow_id] = config_data
-                return result
-        return v
-
-    def cleanup_missing_workflows(self, current_workflow_ids: set[WorkflowId]) -> None:
-        """Remove configurations for workflows that no longer exist."""
-        missing_ids = set(self.configs.keys()) - current_workflow_ids
-        for workflow_id in missing_ids:
-            del self.configs[workflow_id]
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Parameters for the workflow, as JSON-serialized Pydantic model",
+    )
 
 
 class WorkflowStatusType(str, Enum):

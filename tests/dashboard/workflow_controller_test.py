@@ -6,7 +6,7 @@ import pydantic
 import pytest
 
 from ess.livedata.config.workflow_spec import (
-    PersistentWorkflowConfig,
+    PersistedUIConfig,
     WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
@@ -29,27 +29,23 @@ class FakeConfigStore(ConfigStore):
     """Fake config store for testing."""
 
     def __init__(self):
-        self._workflow_configs: dict[WorkflowId, PersistentWorkflowConfig] = {}
-        self._plotter_configs: dict[WorkflowId, PersistentWorkflowConfig] = {}
+        self._workflow_configs: dict[WorkflowId, PersistedUIConfig] = {}
+        self._plotter_configs: dict[WorkflowId, PersistedUIConfig] = {}
 
     def save_workflow_config(
-        self, workflow_id: WorkflowId, config: PersistentWorkflowConfig
+        self, workflow_id: WorkflowId, config: PersistedUIConfig
     ) -> None:
         self._workflow_configs[workflow_id] = config
 
-    def load_workflow_config(
-        self, workflow_id: WorkflowId
-    ) -> PersistentWorkflowConfig | None:
+    def load_workflow_config(self, workflow_id: WorkflowId) -> PersistedUIConfig | None:
         return self._workflow_configs.get(workflow_id)
 
     def save_plotter_config(
-        self, plotter_id: WorkflowId, config: PersistentWorkflowConfig
+        self, plotter_id: WorkflowId, config: PersistedUIConfig
     ) -> None:
         self._plotter_configs[plotter_id] = config
 
-    def load_plotter_config(
-        self, plotter_id: WorkflowId
-    ) -> PersistentWorkflowConfig | None:
+    def load_plotter_config(self, plotter_id: WorkflowId) -> PersistedUIConfig | None:
         return self._plotter_configs.get(plotter_id)
 
     def cleanup_missing_workflows(self, current_workflow_ids: set[WorkflowId]) -> None:
@@ -215,8 +211,7 @@ class TestWorkflowController:
         persistent_config = config_store.load_workflow_config(workflow_id)
         assert persistent_config is not None
         assert persistent_config.source_names == source_names
-        assert persistent_config.config.identifier == workflow_id
-        assert persistent_config.config.params == {"threshold": 200.0, "mode": "fast"}
+        assert persistent_config.params == {"threshold": 200.0, "mode": "fast"}
 
     def test_start_workflow_updates_status_to_starting(
         self,
@@ -376,12 +371,12 @@ class TestWorkflowController:
         config_1_data = config_store.load_workflow_config(workflow_id_1)
         assert config_1_data is not None
         assert config_1_data.source_names == sources_1
-        assert config_1_data.config.params == {"threshold": 100.0, "mode": "fast"}
+        assert config_1_data.params == {"threshold": 100.0, "mode": "fast"}
 
         config_2_data = config_store.load_workflow_config(workflow_id_2)
         assert config_2_data is not None
         assert config_2_data.source_names == sources_2
-        assert config_2_data.config.params == {"threshold": 200.0, "mode": "accurate"}
+        assert config_2_data.params == {"threshold": 200.0, "mode": "accurate"}
 
     def test_persistent_config_replaces_existing_workflow(
         self,
@@ -409,7 +404,7 @@ class TestWorkflowController:
 
         # Should have the updated values
         assert workflow_config.source_names == updated_sources
-        assert workflow_config.config.params == {"threshold": 300.0, "mode": "accurate"}
+        assert workflow_config.params == {"threshold": 300.0, "mode": "accurate"}
 
     def test_status_updates_from_service(
         self,
@@ -496,8 +491,7 @@ class TestWorkflowController:
         # Assert
         assert result is not None
         assert result.source_names == source_names
-        assert result.config.identifier == workflow_id
-        assert result.config.params == {"threshold": 150.0, "mode": "accurate"}
+        assert result.params == {"threshold": 150.0, "mode": "accurate"}
 
     def test_get_workflow_config_returns_none_for_nonexistent(
         self,

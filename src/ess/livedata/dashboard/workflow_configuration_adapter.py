@@ -7,7 +7,7 @@ from typing import Any
 
 import pydantic
 
-from ess.livedata.config.workflow_spec import PersistentWorkflowConfig, WorkflowSpec
+from ess.livedata.config.workflow_spec import PersistedUIConfig, WorkflowSpec
 
 from .configuration_adapter import ConfigurationAdapter
 
@@ -18,7 +18,7 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
     def __init__(
         self,
         spec: WorkflowSpec,
-        persistent_config: PersistentWorkflowConfig | None,
+        persistent_config: PersistedUIConfig | None,
         start_callback: Callable[
             [list[str], pydantic.BaseModel, pydantic.BaseModel | None], None
         ],
@@ -49,7 +49,7 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         """Get initial auxiliary source names from persistent config."""
         if not self._persistent_config:
             return {}
-        return self._persistent_config.config.aux_source_names
+        return self._persistent_config.aux_source_names
 
     def model_class(self) -> type[pydantic.BaseModel] | None:
         """Get workflow parameters model class."""
@@ -70,7 +70,7 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         """Get initial parameter values."""
         if not self._persistent_config:
             return {}
-        return self._persistent_config.config.params
+        return self._persistent_config.params
 
     def start_action(
         self,

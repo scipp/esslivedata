@@ -12,9 +12,8 @@ import pydantic
 from ess.livedata.config.workflow_spec import (
     JobId,
     JobNumber,
-    PersistentWorkflowConfig,
+    PersistedUIConfig,
     ResultKey,
-    WorkflowConfig,
     WorkflowId,
 )
 
@@ -144,7 +143,7 @@ class PlottingController:
 
     def get_persistent_plotter_config(
         self, job_number: JobNumber, output_name: str | None, plot_name: str
-    ) -> PersistentWorkflowConfig | None:
+    ) -> PersistedUIConfig | None:
         """
         Get persistent plotter configuration for a given job, output, and plot.
 
@@ -246,10 +245,11 @@ class PlottingController:
             return
 
         plotter_id = self._create_plotter_id(workflow_id, output_name, plot_name)
-        plot_config = WorkflowConfig(identifier=plotter_id, params=params.model_dump())
 
-        persistent_config = PersistentWorkflowConfig(
-            source_names=source_names, config=plot_config
+        persistent_config = PersistedUIConfig(
+            source_names=source_names,
+            aux_source_names={},
+            params=params.model_dump(),
         )
         self._config_store.save_plotter_config(plotter_id, persistent_config)
         self._cleanup_old_configs()

@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping
 import pydantic
 
 from ess.livedata.config.workflow_spec import (
-    PersistentWorkflowConfig,
+    PersistedUIConfig,
     ResultKey,
     WorkflowConfig,
     WorkflowId,
@@ -187,8 +187,10 @@ class WorkflowController:
         if self._config_store is not None:
             # Clean up in case there are stale workflows that no longer exist
             self._config_store.cleanup_missing_workflows(set(self._workflow_registry))
-            persistent_config = PersistentWorkflowConfig(
-                source_names=source_names, config=workflow_config
+            persistent_config = PersistedUIConfig(
+                source_names=source_names,
+                aux_source_names=workflow_config.aux_source_names,
+                params=workflow_config.params,
             )
             self._config_store.save_workflow_config(workflow_id, persistent_config)
 
@@ -257,9 +259,7 @@ class WorkflowController:
         """Get the current workflow specification for the given Id."""
         return self._workflow_registry.get(workflow_id)
 
-    def get_workflow_config(
-        self, workflow_id: WorkflowId
-    ) -> PersistentWorkflowConfig | None:
+    def get_workflow_config(self, workflow_id: WorkflowId) -> PersistedUIConfig | None:
         """Load saved workflow configuration."""
         if self._config_store is None:
             return None
