@@ -69,11 +69,15 @@ class DashboardBase(ServiceBase, ABC):
         self._exit_stack.__enter__()
 
         self._callback = None
-        # Separate config stores for workflow and plotter persistent UI state
-        self._workflow_config_store = InMemoryConfigStore()  # No LRU limit
+        # Separate config stores for workflow and plotter persistent UI state.
+        # Note that the cleanup approach was carried over from when this was persisted
+        # in Kafka. With a short-lived in-memory store this is not so important, but we
+        # may move to a file-based approach (or back to Kafka) in the future.
+        self._workflow_config_store = InMemoryConfigStore(
+            max_configs=100, cleanup_fraction=0.2
+        )
         self._plotter_config_store = InMemoryConfigStore(
-            max_configs=100,
-            cleanup_fraction=0.2,  # Auto-evict when limit exceeded
+            max_configs=100, cleanup_fraction=0.2
         )
         self._setup_config_service()
         self._setup_data_infrastructure(instrument=instrument, dev=dev)
