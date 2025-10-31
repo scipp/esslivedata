@@ -14,7 +14,7 @@ from streaming_data_types.fbschemas.eventdata_ev44 import Event44Message
 from ess.livedata.core.job import JobStatus
 
 from ..core.message import (
-    CONFIG_STREAM_ID,
+    COMMANDS_STREAM_ID,
     STATUS_STREAM_ID,
     Message,
     MessageSource,
@@ -262,7 +262,7 @@ class LivedataConfigMessageAdapter(
         # Livedata configuration uses a compacted Kafka topic. The Kafka message key
         # is the encoded string representation of a :py:class:`ConfigKey` object.
         item = RawConfigItem(key=message.key(), value=message.value())
-        return Message(stream=CONFIG_STREAM_ID, timestamp=timestamp, value=item)
+        return Message(stream=COMMANDS_STREAM_ID, timestamp=timestamp, value=item)
 
 
 class ChainedAdapter(MessageAdapter[T, V]):

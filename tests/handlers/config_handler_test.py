@@ -156,12 +156,8 @@ class TestConfigProcessor:
         # Should not call job manager for unknown keys
         assert len(mock_job_manager.workflow_calls) == 0
         assert len(mock_job_manager.job_command_calls) == 0
-        # But should echo back the unknown config for dashboard persistence
-        assert len(result_messages) == 1
-        assert result_messages[0].stream == RESPONSES_STREAM_ID
-        assert isinstance(result_messages[0].value, ConfigUpdate)
-        assert result_messages[0].value.config_key.key == 'unknown_key'
-        assert result_messages[0].value.value == 'some_value'
+        # Should not produce any response messages for unknown keys
+        assert len(result_messages) == 0
 
     def test_process_multiple_messages_same_batch(self):
         mock_job_manager = MockJobManagerAdapter()
