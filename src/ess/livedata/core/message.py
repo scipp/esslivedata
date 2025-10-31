@@ -37,9 +37,6 @@ COMMANDS_STREAM_ID = StreamId(kind=StreamKind.LIVEDATA_COMMANDS, name='')
 RESPONSES_STREAM_ID = StreamId(kind=StreamKind.LIVEDATA_RESPONSES, name='')
 STATUS_STREAM_ID = StreamId(kind=StreamKind.LIVEDATA_STATUS, name='')
 
-# Deprecated aliases for backward compatibility
-CONFIG_STREAM_ID = COMMANDS_STREAM_ID
-
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Message(Generic[T]):
