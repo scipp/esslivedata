@@ -118,10 +118,7 @@ class DashboardBase(ServiceBase, ABC):
         consumer = self._exit_stack.enter_context(
             kafka_consumer.make_consumer_from_config(
                 topics=[responses_topic],
-                config={
-                    **kafka_downstream_config,
-                    'auto.offset.reset': 'latest',
-                },
+                config={**kafka_downstream_config, 'auto.offset.reset': 'latest'},
                 group='dashboard',
             )
         )

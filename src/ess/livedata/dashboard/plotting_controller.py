@@ -224,9 +224,7 @@ class PlottingController:
         plotter_id = self._create_plotter_id(workflow_id, output_name, plot_name)
 
         config_state = ConfigurationState(
-            source_names=source_names,
-            aux_source_names={},
-            params=params.model_dump(),
+            source_names=source_names, aux_source_names={}, params=params.model_dump()
         )
         self._config_store.save_config(plotter_id, config_state.model_dump())
 
