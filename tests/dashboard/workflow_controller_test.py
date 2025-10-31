@@ -6,7 +6,6 @@ import pydantic
 import pytest
 
 from ess.livedata.config.workflow_spec import (
-    PersistedUIConfig,
     WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
@@ -14,6 +13,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowStatusType,
 )
 from ess.livedata.dashboard.config_store import ConfigStore
+from ess.livedata.dashboard.configuration_adapter import ConfigurationState
 from ess.livedata.dashboard.workflow_config_service import WorkflowConfigService
 from ess.livedata.dashboard.workflow_controller import WorkflowController
 
@@ -29,12 +29,12 @@ class FakeConfigStore(ConfigStore):
     """Fake config store for testing."""
 
     def __init__(self):
-        self._configs: dict[WorkflowId, PersistedUIConfig] = {}
+        self._configs: dict[WorkflowId, dict] = {}
 
-    def save_config(self, config_id: WorkflowId, config: PersistedUIConfig) -> None:
+    def save_config(self, config_id: WorkflowId, config: dict) -> None:
         self._configs[config_id] = config
 
-    def load_config(self, config_id: WorkflowId) -> PersistedUIConfig | None:
+    def load_config(self, config_id: WorkflowId) -> dict | None:
         return self._configs.get(config_id)
 
     def remove_not_in_set(self, valid_ids: set[WorkflowId]) -> None:
@@ -195,8 +195,9 @@ class TestWorkflowController:
         controller.start_workflow(workflow_id, source_names, config)
 
         # Assert - check ConfigStore instead of service
-        persistent_config = config_store.load_config(workflow_id)
-        assert persistent_config is not None
+        persistent_config_data = config_store.load_config(workflow_id)
+        assert persistent_config_data is not None
+        persistent_config = ConfigurationState.model_validate(persistent_config_data)
         assert persistent_config.source_names == source_names
         assert persistent_config.params == {"threshold": 200.0, "mode": "fast"}
 
@@ -357,13 +358,15 @@ class TestWorkflowController:
         # Assert - check ConfigStore instead of service
         config_1_data = config_store.load_config(workflow_id_1)
         assert config_1_data is not None
-        assert config_1_data.source_names == sources_1
-        assert config_1_data.params == {"threshold": 100.0, "mode": "fast"}
+        config_1 = ConfigurationState.model_validate(config_1_data)
+        assert config_1.source_names == sources_1
+        assert config_1.params == {"threshold": 100.0, "mode": "fast"}
 
         config_2_data = config_store.load_config(workflow_id_2)
         assert config_2_data is not None
-        assert config_2_data.source_names == sources_2
-        assert config_2_data.params == {"threshold": 200.0, "mode": "accurate"}
+        config_2 = ConfigurationState.model_validate(config_2_data)
+        assert config_2.source_names == sources_2
+        assert config_2.params == {"threshold": 200.0, "mode": "accurate"}
 
     def test_persistent_config_replaces_existing_workflow(
         self,
@@ -386,8 +389,9 @@ class TestWorkflowController:
         controller.start_workflow(workflow_id, updated_sources, updated_config)
 
         # Assert - check ConfigStore instead of service
-        workflow_config = config_store.load_config(workflow_id)
-        assert workflow_config is not None
+        workflow_config_data = config_store.load_config(workflow_id)
+        assert workflow_config_data is not None
+        workflow_config = ConfigurationState.model_validate(workflow_config_data)
 
         # Should have the updated values
         assert workflow_config.source_names == updated_sources
@@ -687,8 +691,9 @@ class TestWorkflowController:
         assert len(sent_configs) == 0  # No configs sent to sources
 
         # Should still save persistent config
-        persistent_config = config_store.load_config(workflow_id)
-        assert persistent_config is not None
+        persistent_config_data = config_store.load_config(workflow_id)
+        assert persistent_config_data is not None
+        persistent_config = ConfigurationState.model_validate(persistent_config_data)
         assert persistent_config.source_names == []
 
     def test_callback_receives_complete_workflow_status_dict(

@@ -5,9 +5,34 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 Model = TypeVar('Model')
+
+
+class ConfigurationState(BaseModel):
+    """
+    Persisted state for ConfigurationAdapter implementations.
+
+    This model captures the user's configuration choices (sources, params,
+    aux sources) that should be restored when reopening the dashboard.
+    Used by both workflow and plotter configurations.
+    """
+
+    source_names: list[str] = Field(
+        default_factory=list,
+        description="Selected source names for this workflow or plotter",
+    )
+    aux_source_names: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Selected auxiliary source names as field name to stream name mapping"
+        ),
+    )
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Parameters for the workflow, as JSON-serialized Pydantic model",
+    )
 
 
 class ConfigurationAdapter(ABC, Generic[Model]):

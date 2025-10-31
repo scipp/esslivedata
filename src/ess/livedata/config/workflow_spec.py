@@ -308,31 +308,6 @@ class WorkflowConfig(BaseModel):
         )
 
 
-class PersistedUIConfig(BaseModel):
-    """
-    UI state to persist across sessions.
-
-    This model stores only the user preferences that should be restored when
-    reopening the dashboard. Runtime-specific data (job numbers, schedules) are
-    excluded as they are meaningless across sessions.
-    """
-
-    source_names: list[str] = Field(
-        default_factory=list,
-        description="Selected source names for this workflow or plotter",
-    )
-    aux_source_names: dict[str, str] = Field(
-        default_factory=dict,
-        description=(
-            "Selected auxiliary source names as field name to stream name mapping"
-        ),
-    )
-    params: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Parameters for the workflow, as JSON-serialized Pydantic model",
-    )
-
-
 class WorkflowStatusType(str, Enum):
     """
     Status of a workflow execution.

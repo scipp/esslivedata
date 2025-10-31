@@ -7,9 +7,9 @@ from typing import Any
 
 import pydantic
 
-from ess.livedata.config.workflow_spec import PersistedUIConfig, WorkflowSpec
+from ess.livedata.config.workflow_spec import WorkflowSpec
 
-from .configuration_adapter import ConfigurationAdapter
+from .configuration_adapter import ConfigurationAdapter, ConfigurationState
 
 
 class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
@@ -18,7 +18,7 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
     def __init__(
         self,
         spec: WorkflowSpec,
-        persistent_config: PersistedUIConfig | None,
+        persistent_config: ConfigurationState | None,
         start_callback: Callable[
             [list[str], pydantic.BaseModel, pydantic.BaseModel | None], None
         ],

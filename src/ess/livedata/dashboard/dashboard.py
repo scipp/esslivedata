@@ -70,8 +70,11 @@ class DashboardBase(ServiceBase, ABC):
 
         self._callback = None
         # Separate config stores for workflow and plotter persistent UI state
-        self._workflow_config_store = InMemoryConfigStore()
-        self._plotter_config_store = InMemoryConfigStore()
+        self._workflow_config_store = InMemoryConfigStore()  # No LRU limit
+        self._plotter_config_store = InMemoryConfigStore(
+            max_configs=100,
+            cleanup_fraction=0.2,  # Auto-evict when limit exceeded
+        )
         self._setup_config_service()
         self._setup_data_infrastructure(instrument=instrument, dev=dev)
         self._logger.info("%s initialized", self.__class__.__name__)
@@ -232,6 +235,12 @@ class DashboardBase(ServiceBase, ABC):
             data_service=self._data_service,
             correlation_histogram_controller=self._correlation_controller,
         )
+
+        # One-time cleanup: remove configs for workflows that no longer exist
+        if self._workflow_config_store is not None:
+            valid_workflow_ids = set(self._workflow_controller.get_workflow_registry())
+            self._workflow_config_store.remove_not_in_set(valid_workflow_ids)
+
         self._reduction_widget = ReductionWidget(controller=self._workflow_controller)
 
     def _step(self):

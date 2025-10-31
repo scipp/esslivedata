@@ -12,7 +12,6 @@ from collections.abc import Callable, Mapping
 import pydantic
 
 from ess.livedata.config.workflow_spec import (
-    PersistedUIConfig,
     ResultKey,
     WorkflowConfig,
     WorkflowId,
@@ -22,6 +21,7 @@ from ess.livedata.config.workflow_spec import (
 )
 
 from .config_store import ConfigStore
+from .configuration_adapter import ConfigurationState
 from .correlation_histogram import CorrelationHistogramController, make_workflow_spec
 from .data_service import DataService
 from .workflow_config_service import ConfigServiceAdapter, WorkflowConfigService
@@ -185,14 +185,12 @@ class WorkflowController:
 
         # Persist config for this workflow to restore widget state across sessions
         if self._config_store is not None:
-            # Clean up in case there are stale workflows that no longer exist
-            self._config_store.remove_not_in_set(set(self._workflow_registry))
-            persistent_config = PersistedUIConfig(
+            config_state = ConfigurationState(
                 source_names=source_names,
                 aux_source_names=workflow_config.aux_source_names,
                 params=workflow_config.params,
             )
-            self._config_store.save_config(workflow_id, persistent_config)
+            self._config_store.save_config(workflow_id, config_state.model_dump())
 
         # Send workflow config to each source
         for source_name in source_names:
@@ -259,11 +257,13 @@ class WorkflowController:
         """Get the current workflow specification for the given Id."""
         return self._workflow_registry.get(workflow_id)
 
-    def get_workflow_config(self, workflow_id: WorkflowId) -> PersistedUIConfig | None:
+    def get_workflow_config(self, workflow_id: WorkflowId) -> ConfigurationState | None:
         """Load saved workflow configuration."""
         if self._config_store is None:
             return None
-        return self._config_store.load_config(workflow_id)
+        if data := self._config_store.load_config(workflow_id):
+            return ConfigurationState.model_validate(data)
+        return None
 
     def subscribe_to_workflow_status_updates(
         self, callback: Callable[[dict[str, WorkflowStatus]], None]

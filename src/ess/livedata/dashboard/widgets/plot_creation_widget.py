@@ -78,7 +78,7 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
     @property
     def initial_parameter_values(self) -> dict[str, Any]:
         if self._persisted_config is not None:
-            return self._persisted_config.config.params
+            return self._persisted_config.params
         return {}
 
     def start_action(
