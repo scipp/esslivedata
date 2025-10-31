@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
 
 import pydantic
 
-from ess.livedata.config.workflow_spec import PersistentWorkflowConfig, WorkflowSpec
+from ess.livedata.config.workflow_spec import WorkflowSpec
 
-from .configuration_adapter import ConfigurationAdapter
+from .configuration_adapter import ConfigurationAdapter, ConfigurationState
 
 
 class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
@@ -18,14 +17,14 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
     def __init__(
         self,
         spec: WorkflowSpec,
-        persistent_config: PersistentWorkflowConfig | None,
+        config_state: ConfigurationState | None,
         start_callback: Callable[
             [list[str], pydantic.BaseModel, pydantic.BaseModel | None], None
         ],
     ) -> None:
         """Initialize adapter with workflow spec, config, and start callback."""
+        super().__init__(config_state=config_state)
         self._spec = spec
-        self._persistent_config = persistent_config
         self._start_callback = start_callback
         self._cached_aux_sources: pydantic.BaseModel | None = None
 
@@ -44,13 +43,6 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         """Get auxiliary sources Pydantic model."""
         return self._spec.aux_sources
 
-    @property
-    def initial_aux_source_names(self) -> dict[str, str]:
-        """Get initial auxiliary source names from persistent config."""
-        if not self._persistent_config:
-            return {}
-        return self._persistent_config.config.aux_source_names
-
     def model_class(self) -> type[pydantic.BaseModel] | None:
         """Get workflow parameters model class."""
         return self._spec.params
@@ -59,18 +51,6 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
     def source_names(self) -> list[str]:
         """Get available source names."""
         return self._spec.source_names
-
-    @property
-    def initial_source_names(self) -> list[str]:
-        """Get initial source names."""
-        return self._persistent_config.source_names if self._persistent_config else []
-
-    @property
-    def initial_parameter_values(self) -> dict[str, Any]:
-        """Get initial parameter values."""
-        if not self._persistent_config:
-            return {}
-        return self._persistent_config.config.params
 
     def start_action(
         self,

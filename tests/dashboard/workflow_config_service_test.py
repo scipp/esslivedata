@@ -6,8 +6,6 @@ from ess.livedata.config.keys import WORKFLOW_CONFIG, WORKFLOW_STATUS
 from ess.livedata.config.models import ConfigKey
 from ess.livedata.config.schema_registry import get_schema_registry
 from ess.livedata.config.workflow_spec import (
-    PersistentWorkflowConfig,
-    PersistentWorkflowConfigs,
     WorkflowConfig,
     WorkflowId,
     WorkflowStatus,
@@ -67,43 +65,6 @@ def sample_workflow_status(sample_workflow_id):
         status=WorkflowStatusType.RUNNING,
         message="Running successfully",
     )
-
-
-@pytest.fixture
-def sample_persistent_configs():
-    """Create sample persistent configs for testing."""
-    identifier = WorkflowId(
-        instrument="INSTR", namespace="data_reduction", name="saved_workflow", version=1
-    )
-    persistent_config = PersistentWorkflowConfig(
-        source_names=["source1"],
-        config=WorkflowConfig(identifier=identifier, params={"param": "value"}),
-    )
-    return PersistentWorkflowConfigs(configs={identifier: persistent_config})
-
-
-def test_get_persistent_configs_default(workflow_config_service):
-    """Test getting persistent configs returns default when none exist."""
-    configs = workflow_config_service.get_persistent_configs()
-
-    assert isinstance(configs, PersistentWorkflowConfigs)
-    assert configs.configs == {}
-
-
-def test_save_and_get_persistent_configs(
-    workflow_config_service, sample_persistent_configs, fake_message_bridge
-):
-    """Test saving and retrieving persistent configs."""
-    workflow_config_service.save_persistent_configs(sample_persistent_configs)
-
-    # Process the message to simulate round-trip through message bridge
-    fake_message_bridge.add_incoming_message(
-        fake_message_bridge.get_published_messages()[0]
-    )
-    workflow_config_service._config_service.process_incoming_messages()
-
-    retrieved_configs = workflow_config_service.get_persistent_configs()
-    assert retrieved_configs.configs == sample_persistent_configs.configs
 
 
 def test_send_workflow_config(

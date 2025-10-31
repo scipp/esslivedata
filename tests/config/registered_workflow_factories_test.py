@@ -99,7 +99,7 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
     # This simulates what the frontend (ConfigurationWidget) does
     adapter = WorkflowConfigurationAdapter(
         spec=spec,
-        persistent_config=None,  # No saved config, use defaults
+        config_state=None,  # No saved config, use defaults
         start_callback=lambda *args, **kwargs: True,  # Dummy callback for testing
     )
 

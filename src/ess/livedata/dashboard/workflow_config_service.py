@@ -13,7 +13,6 @@ from typing import Protocol
 
 import ess.livedata.config.keys as keys
 from ess.livedata.config.workflow_spec import (
-    PersistentWorkflowConfigs,
     WorkflowConfig,
     WorkflowStatus,
 )
@@ -22,15 +21,12 @@ from .config_service import ConfigService
 
 
 class WorkflowConfigService(Protocol):
-    """Protocol for workflow controller dependencies."""
+    """
+    Protocol for workflow controller runtime communication dependencies.
 
-    def get_persistent_configs(self) -> PersistentWorkflowConfigs:
-        """Get persistent workflow configurations."""
-        ...
-
-    def save_persistent_configs(self, configs: PersistentWorkflowConfigs) -> None:
-        """Save persistent workflow configurations."""
-        ...
+    This protocol handles runtime coordination with backend services via Kafka.
+    For persistent UI state storage, see ConfigStore protocol instead.
+    """
 
     def send_workflow_config(self, source_name: str, config: WorkflowConfig) -> None:
         """Send workflow configuration to a source."""
@@ -50,18 +46,6 @@ class ConfigServiceAdapter(WorkflowConfigService):
 
     def __init__(self, config_service: ConfigService):
         self._config_service = config_service
-
-    def get_persistent_configs(self) -> PersistentWorkflowConfigs:
-        """Get persistent workflow configurations."""
-        return self._config_service.get_config(
-            keys.PERSISTENT_WORKFLOW_CONFIGS.create_key(), PersistentWorkflowConfigs()
-        )
-
-    def save_persistent_configs(self, configs: PersistentWorkflowConfigs) -> None:
-        """Save persistent workflow configurations."""
-        self._config_service.update_config(
-            keys.PERSISTENT_WORKFLOW_CONFIGS.create_key(), configs
-        )
 
     def send_workflow_config(self, source_name: str, config: WorkflowConfig) -> None:
         """Send workflow configuration to a source."""

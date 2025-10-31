@@ -13,7 +13,7 @@ from .job import JobResult, JobStatus
 from .job_manager import JobFactory, JobManager, WorkflowData
 from .job_manager_adapter import JobManagerAdapter
 from .message import (
-    CONFIG_STREAM_ID,
+    COMMANDS_STREAM_ID,
     STATUS_STREAM_ID,
     Message,
     MessageSink,
@@ -115,7 +115,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         data_messages: list[Message[Tin]] = []
 
         for msg in messages:
-            if msg.stream == CONFIG_STREAM_ID:
+            if msg.stream == COMMANDS_STREAM_ID:
                 config_messages.append(msg)
             else:
                 data_messages.append(msg)

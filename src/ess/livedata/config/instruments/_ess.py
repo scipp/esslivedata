@@ -47,8 +47,8 @@ def _make_dev_beam_monitors(
 def _make_livedata_topics(instrument: str) -> dict[str, str]:
     """Create common livedata topic configuration for an instrument."""
     return {
-        'livedata_config_topic': stream_kind_to_topic(
-            instrument=instrument, kind=StreamKind.LIVEDATA_CONFIG
+        'livedata_commands_topic': stream_kind_to_topic(
+            instrument=instrument, kind=StreamKind.LIVEDATA_COMMANDS
         ),
         'livedata_data_topic': stream_kind_to_topic(
             instrument=instrument, kind=StreamKind.LIVEDATA_DATA

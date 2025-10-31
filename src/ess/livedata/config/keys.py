@@ -10,7 +10,6 @@ Usage patterns:
 """
 
 from ess.livedata.config.workflow_spec import (
-    PersistentWorkflowConfigs,
     WorkflowConfig,
     WorkflowStatus,
 )
@@ -49,23 +48,4 @@ WORKFLOW_CONFIG = _registry.create(
     description="Configuration for a workflow",
     produced_by={"dashboard"},
     consumed_by={"data_reduction"},
-)
-
-# Dashboard service keys
-PERSISTENT_WORKFLOW_CONFIGS = _registry.create(
-    key="persistent_workflow_configs",
-    service_name="dashboard",
-    model=PersistentWorkflowConfigs,
-    description="Saved workflow configurations",
-    produced_by={"dashboard"},
-    consumed_by={"dashboard"},
-)
-
-PERSISTENT_PLOTTING_CONFIGS = _registry.create(
-    key="persistent_plotting_configs",
-    service_name="dashboard",
-    model=PersistentWorkflowConfigs,
-    description="Saved plotting configurations",
-    produced_by={"dashboard"},
-    consumed_by={"dashboard"},
 )

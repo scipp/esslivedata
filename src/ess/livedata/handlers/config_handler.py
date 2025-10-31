@@ -11,7 +11,7 @@ from typing import Any
 from ..config.models import ConfigKey
 from ..core.job_manager import JobCommand
 from ..core.job_manager_adapter import JobManagerAdapter
-from ..core.message import CONFIG_STREAM_ID, Message
+from ..core.message import RESPONSES_STREAM_ID, Message
 from ..kafka.message_adapter import RawConfigItem
 
 
@@ -118,7 +118,7 @@ class ConfigProcessor:
                     # Convert results to messages
                     updates = [ConfigUpdate(*result) for result in results or []]
                     response_messages.extend(
-                        Message(stream=CONFIG_STREAM_ID, value=up) for up in updates
+                        Message(stream=RESPONSES_STREAM_ID, value=up) for up in updates
                     )
 
                 except Exception:

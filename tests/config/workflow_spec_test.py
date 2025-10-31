@@ -8,8 +8,6 @@ from pydantic import BaseModel, Field
 from ess.livedata.config.workflow_spec import (
     AuxSourcesBase,
     JobId,
-    PersistentWorkflowConfig,
-    PersistentWorkflowConfigs,
     WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
@@ -32,50 +30,6 @@ def sample_workflow_config(sample_workflow_id: WorkflowId) -> WorkflowConfig:
         identifier=sample_workflow_id,
         params={"param1": 10, "param2": "value"},
     )
-
-
-class TestPersistentWorkflowConfig:
-    def test_ser_deser_empty(self) -> None:
-        configs = PersistentWorkflowConfigs()
-        dumped = configs.model_dump()
-        loaded = PersistentWorkflowConfigs.model_validate(dumped)
-        assert configs == loaded
-
-    def test_ser_deser_single(
-        self, sample_workflow_id: WorkflowId, sample_workflow_config: WorkflowConfig
-    ) -> None:
-        pwc = PersistentWorkflowConfig(
-            source_names=["source1"], config=sample_workflow_config
-        )
-        configs = PersistentWorkflowConfigs(configs={sample_workflow_id: pwc})
-        dumped = configs.model_dump()
-        loaded = PersistentWorkflowConfigs.model_validate(dumped)
-        assert configs == loaded
-
-    def test_ser_deser_multiple(
-        self, sample_workflow_id: WorkflowId, sample_workflow_config: WorkflowConfig
-    ) -> None:
-        pwc1 = PersistentWorkflowConfig(
-            source_names=["source1"], config=sample_workflow_config
-        )
-        pwc2 = PersistentWorkflowConfig(
-            source_names=["source2", "source3"],
-            config=WorkflowConfig(
-                identifier=WorkflowId(
-                    instrument="INSTRUMENT2",
-                    namespace="NAMESPACE2",
-                    name="NAME2",
-                    version=2,
-                ),
-                params={"paramA": 5.0},
-            ),
-        )
-        configs = PersistentWorkflowConfigs(
-            configs={sample_workflow_id: pwc1, pwc2.config.identifier: pwc2}
-        )
-        dumped = configs.model_dump()
-        loaded = PersistentWorkflowConfigs.model_validate(dumped)
-        assert configs == loaded
 
 
 class TestWorkflowSpecAuxSources:
@@ -260,31 +214,6 @@ class TestWorkflowConfigFromParams:
         # Should be serialized to dict
         assert isinstance(config.params, dict)
         assert config.params == {"nested_value": 10, "string_list": ["x", "y", "z"]}
-
-
-class TestPersistentWorkflowConfigWithAuxSources:
-    """Tests for PersistentWorkflowConfig with aux_source_names."""
-
-    def test_persistent_config_serialization_with_aux_sources(
-        self, sample_workflow_id: WorkflowId
-    ) -> None:
-        """Test that PersistentWorkflowConfig correctly serializes aux_source_names."""
-        config = WorkflowConfig(
-            identifier=sample_workflow_id,
-            aux_source_names={"monitor": "monitor1"},
-            params={"param1": 5},
-        )
-        pwc = PersistentWorkflowConfig(source_names=["source1"], config=config)
-
-        # Test serialization through PersistentWorkflowConfigs
-        configs = PersistentWorkflowConfigs(configs={sample_workflow_id: pwc})
-        dumped = configs.model_dump()
-        loaded = PersistentWorkflowConfigs.model_validate(dumped)
-
-        assert loaded.configs[sample_workflow_id].config.aux_source_names == {
-            "monitor": "monitor1"
-        }
-        assert loaded.configs[sample_workflow_id].config.params == {"param1": 5}
 
 
 class TestAuxSourcesBase:

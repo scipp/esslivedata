@@ -21,7 +21,7 @@ def make_reduction_service_builder(
         .with_beam_monitor_route()
         .with_detector_route()
         .with_logdata_route()
-        .with_livedata_config_route()
+        .with_livedata_commands_route()
         .build()
     )
     instrument_config = instrument_registry[instrument]

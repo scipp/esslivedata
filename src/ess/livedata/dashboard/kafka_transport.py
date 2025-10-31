@@ -19,6 +19,7 @@ class KafkaTransport(MessageTransport[ConfigKey, dict[str, Any]]):
         self,
         kafka_config: dict[str, Any],
         consumer: Consumer,
+        publish_topic: str,
         logger: logging.Logger | None = None,
         max_batch_size: int = 100,
     ):
@@ -26,7 +27,7 @@ class KafkaTransport(MessageTransport[ConfigKey, dict[str, Any]]):
             raise ValueError(
                 "KafkaTransport requires a single topic assignment for the consumer"
             )
-        self._topic = next(iter(consumer.assignment())).topic
+        self._publish_topic = publish_topic
         self._logger = logger or logging.getLogger(__name__)
         self._producer = Producer(kafka_config)
         self._consumer = consumer
@@ -37,7 +38,7 @@ class KafkaTransport(MessageTransport[ConfigKey, dict[str, Any]]):
         try:
             for key, value in messages:
                 self._producer.produce(
-                    self._topic,
+                    self._publish_topic,
                     key=str(key).encode("utf-8"),
                     value=json.dumps(value).encode("utf-8"),
                     callback=self._delivery_callback,

@@ -19,7 +19,7 @@ from ess.livedata.core.message import StreamKind
         (StreamKind.LOG, 'motion'),
         (StreamKind.LIVEDATA_DATA, 'livedata_data'),
         (StreamKind.LIVEDATA_ROI, 'livedata_roi'),
-        (StreamKind.LIVEDATA_CONFIG, 'livedata_commands'),
+        (StreamKind.LIVEDATA_COMMANDS, 'livedata_commands'),
         (StreamKind.LIVEDATA_STATUS, 'livedata_heartbeat'),
     ],
 )
@@ -44,19 +44,19 @@ def test_stream_mapping_has_all_livedata_topics(instrument: str) -> None:
     mapping = streams.get_stream_mapping(instrument=instrument, dev=True)
 
     # Check all livedata topic properties exist
-    assert hasattr(mapping, 'livedata_config_topic')
+    assert hasattr(mapping, 'livedata_commands_topic')
     assert hasattr(mapping, 'livedata_data_topic')
     assert hasattr(mapping, 'livedata_roi_topic')
     assert hasattr(mapping, 'livedata_status_topic')
 
     # Check they return valid topic strings
-    assert mapping.livedata_config_topic
+    assert mapping.livedata_commands_topic
     assert mapping.livedata_data_topic
     assert mapping.livedata_roi_topic
     assert mapping.livedata_status_topic
 
     # Check instrument name is in the topics
-    assert instrument in mapping.livedata_config_topic
+    assert instrument in mapping.livedata_commands_topic
     assert instrument in mapping.livedata_data_topic
     assert instrument in mapping.livedata_roi_topic
     assert instrument in mapping.livedata_status_topic

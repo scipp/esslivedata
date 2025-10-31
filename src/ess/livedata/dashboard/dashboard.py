@@ -26,6 +26,7 @@ from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_da00
 from ess.livedata.kafka.source import BackgroundMessageSource
 
 from .config_service import ConfigService
+from .config_store import InMemoryConfigStore
 from .controller_factory import ControllerFactory
 from .correlation_histogram import CorrelationHistogramController
 from .data_service import DataService
@@ -68,6 +69,16 @@ class DashboardBase(ServiceBase, ABC):
         self._exit_stack.__enter__()
 
         self._callback = None
+        # Separate config stores for workflow and plotter persistent UI state.
+        # Note that the cleanup approach was carried over from when this was persisted
+        # in Kafka. With a short-lived in-memory store this is not so important, but we
+        # may move to a file-based approach (or back to Kafka) in the future.
+        self._workflow_config_store = InMemoryConfigStore(
+            max_configs=100, cleanup_fraction=0.2
+        )
+        self._plotter_config_store = InMemoryConfigStore(
+            max_configs=100, cleanup_fraction=0.2
+        )
         self._setup_config_service()
         self._setup_data_infrastructure(instrument=instrument, dev=dev)
         self._logger.info("%s initialized", self.__class__.__name__)
@@ -94,14 +105,29 @@ class DashboardBase(ServiceBase, ABC):
     def _setup_config_service(self) -> None:
         """Set up configuration service with Kafka bridge."""
         kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
-        _, consumer = self._exit_stack.enter_context(
-            kafka_consumer.make_control_consumer(
-                instrument=self._instrument,
-                extra_config={'auto.offset.reset': 'earliest'},
+
+        # Dashboard subscribes to RESPONSES to receive backend status updates.
+        # Dashboard publishes to COMMANDS to send configuration to backend services.
+        commands_topic = stream_kind_to_topic(
+            instrument=self._instrument, kind=StreamKind.LIVEDATA_COMMANDS
+        )
+        responses_topic = stream_kind_to_topic(
+            instrument=self._instrument, kind=StreamKind.LIVEDATA_RESPONSES
+        )
+
+        consumer = self._exit_stack.enter_context(
+            kafka_consumer.make_consumer_from_config(
+                topics=[responses_topic],
+                config={**kafka_downstream_config, 'auto.offset.reset': 'latest'},
+                group='dashboard',
             )
         )
+
         kafka_transport = KafkaTransport(
-            kafka_config=kafka_downstream_config, consumer=consumer, logger=self._logger
+            kafka_config=kafka_downstream_config,
+            consumer=consumer,
+            publish_topic=commands_topic,
+            logger=self._logger,
         )
         self._kafka_bridge = BackgroundMessageBridge(
             transport=kafka_transport, logger=self._logger
@@ -149,7 +175,7 @@ class DashboardBase(ServiceBase, ABC):
 
         self._plotting_controller = PlottingController(
             job_service=self._job_service,
-            config_service=self._config_service,
+            config_store=self._plotter_config_store,
             stream_manager=self._stream_manager,
             logger=self._logger,
             roi_publisher=roi_publisher,
@@ -203,9 +229,11 @@ class DashboardBase(ServiceBase, ABC):
             config_service=self._config_service,
             source_names=sorted(self._processor_factory.source_names),
             workflow_registry=self._processor_factory,
+            config_store=self._workflow_config_store,
             data_service=self._data_service,
             correlation_histogram_controller=self._correlation_controller,
         )
+
         self._reduction_widget = ReductionWidget(controller=self._workflow_controller)
 
     def _step(self):

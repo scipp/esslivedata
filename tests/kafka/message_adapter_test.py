@@ -9,7 +9,7 @@ from streaming_data_types import dataarray_da00, eventdata_ev44, logdata_f144
 from streaming_data_types.exceptions import WrongSchemaException
 
 from ess.livedata.core.message import (
-    CONFIG_STREAM_ID,
+    COMMANDS_STREAM_ID,
     Message,
     MessageSource,
     StreamId,
@@ -491,7 +491,7 @@ class TestLivedataConfigMessageAdapter:
         adapter = LivedataConfigMessageAdapter()
         adapted_message = adapter.adapt(message)
         # So it gets routed to config handler
-        assert adapted_message.stream == CONFIG_STREAM_ID
+        assert adapted_message.stream == COMMANDS_STREAM_ID
         assert adapted_message.value == RawConfigItem(key=key, value=encoded)
 
 

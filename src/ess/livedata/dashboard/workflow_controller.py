@@ -12,7 +12,6 @@ from collections.abc import Callable, Mapping
 import pydantic
 
 from ess.livedata.config.workflow_spec import (
-    PersistentWorkflowConfig,
     ResultKey,
     WorkflowConfig,
     WorkflowId,
@@ -21,6 +20,8 @@ from ess.livedata.config.workflow_spec import (
     WorkflowStatusType,
 )
 
+from .config_store import ConfigStore
+from .configuration_adapter import ConfigurationState
 from .correlation_histogram import CorrelationHistogramController, make_workflow_spec
 from .data_service import DataService
 from .workflow_config_service import ConfigServiceAdapter, WorkflowConfigService
@@ -52,6 +53,7 @@ class WorkflowController:
         service: WorkflowConfigService,
         source_names: list[str],
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+        config_store: ConfigStore | None = None,
         data_service: DataService[ResultKey, object] | None = None,
         correlation_histogram_controller: CorrelationHistogramController | None = None,
     ) -> None:
@@ -61,17 +63,20 @@ class WorkflowController:
         Parameters
         ----------
         service
-            Service for managing workflow configurations
+            Service for runtime workflow communication with backend services.
         source_names
             List of source names to monitor for workflow status updates.
         workflow_registry
             Registry of available workflows and their specifications.
+        config_store
+            Optional store for persisting UI configuration state across sessions.
         data_service
             Optional data service for cleaning up workflow data keys.
         correlation_histogram_controller
             Optional controller for correlation histogram workflows.
         """
         self._service = service
+        self._config_store = config_store
         self._logger = logging.getLogger(__name__)
 
         self._source_names = source_names
@@ -111,14 +116,16 @@ class WorkflowController:
         config_service,
         source_names: list[str],
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+        config_store: ConfigStore | None = None,
         data_service: DataService[ResultKey, object] | None = None,
         correlation_histogram_controller: CorrelationHistogramController | None = None,
     ) -> WorkflowController:
-        """Create WorkflowController from ConfigService."""
+        """Create WorkflowController from ConfigService and ConfigStore."""
         return cls(
             service=ConfigServiceAdapter(config_service),
             source_names=source_names,
             workflow_registry=workflow_registry,
+            config_store=config_store,
             data_service=data_service,
             correlation_histogram_controller=correlation_histogram_controller,
         )
@@ -176,14 +183,14 @@ class WorkflowController:
             aux_source_names=aux_source_names,
         )
 
-        # Update the config for this workflow, used for restoring widget state
-        current_configs = self._service.get_persistent_configs()
-        # Clean up in case there are stale workflows that no longer exist
-        current_configs.cleanup_missing_workflows(set(self._workflow_registry))
-        current_configs.configs[workflow_id] = PersistentWorkflowConfig(
-            source_names=source_names, config=workflow_config
-        )
-        self._service.save_persistent_configs(current_configs)
+        # Persist config for this workflow to restore widget state across sessions
+        if self._config_store is not None:
+            config_state = ConfigurationState(
+                source_names=source_names,
+                aux_source_names=workflow_config.aux_source_names,
+                params=workflow_config.params,
+            )
+            self._config_store[workflow_id] = config_state.model_dump()
 
         # Send workflow config to each source
         for source_name in source_names:
@@ -250,12 +257,13 @@ class WorkflowController:
         """Get the current workflow specification for the given Id."""
         return self._workflow_registry.get(workflow_id)
 
-    def get_workflow_config(
-        self, workflow_id: WorkflowId
-    ) -> PersistentWorkflowConfig | None:
+    def get_workflow_config(self, workflow_id: WorkflowId) -> ConfigurationState | None:
         """Load saved workflow configuration."""
-        all_configs = self._service.get_persistent_configs()
-        return all_configs.configs.get(workflow_id)
+        if self._config_store is None:
+            return None
+        if data := self._config_store.get(workflow_id):
+            return ConfigurationState.model_validate(data)
+        return None
 
     def subscribe_to_workflow_status_updates(
         self, callback: Callable[[dict[str, WorkflowStatus]], None]
