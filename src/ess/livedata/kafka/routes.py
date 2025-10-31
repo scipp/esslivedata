@@ -83,9 +83,9 @@ class RoutingAdapterBuilder:
         )
         return self
 
-    def with_livedata_config_route(self) -> Self:
-        """Adds the livedata config route."""
-        self._routes[self._stream_mapping.livedata_config_topic] = (
+    def with_livedata_commands_route(self) -> Self:
+        """Adds the livedata commands route."""
+        self._routes[self._stream_mapping.livedata_commands_topic] = (
             LivedataConfigMessageAdapter()
         )
         return self
