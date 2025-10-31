@@ -7,13 +7,13 @@ from collections.abc import Callable
 from ess.livedata.config.models import ConfigKey
 from ess.livedata.config.workflow_spec import JobId, JobNumber, WorkflowId
 from ess.livedata.core.job_manager import JobAction, JobCommand
+from ess.livedata.dashboard.job_command_service import JobCommandService
 from ess.livedata.dashboard.job_service import JobService
-from ess.livedata.dashboard.kafka_job_command_service import KafkaJobCommandService
 
 
 class JobController:
     def __init__(
-        self, command_service: KafkaJobCommandService, job_service: JobService
+        self, command_service: JobCommandService, job_service: JobService
     ) -> None:
         self._command_service = command_service
         self._job_service = job_service

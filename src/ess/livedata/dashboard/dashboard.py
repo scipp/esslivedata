@@ -26,9 +26,9 @@ from ess.livedata.kafka.source import BackgroundMessageSource
 from .config_store import InMemoryConfigStore
 from .correlation_histogram import CorrelationHistogramController
 from .data_service import DataService
+from .job_command_service import JobCommandService
 from .job_controller import JobController
 from .job_service import JobService
-from .kafka_job_command_service import KafkaJobCommandService
 from .kafka_workflow_config_service import KafkaWorkflowConfigService
 from .orchestrator import Orchestrator
 from .plotting_controller import PlottingController
@@ -142,7 +142,7 @@ class DashboardBase(ServiceBase, ABC):
             logger=self._logger,
         )
 
-        self._job_command_service = KafkaJobCommandService(
+        self._job_command_service = JobCommandService(
             sink=self._message_sink,
             logger=self._logger,
         )

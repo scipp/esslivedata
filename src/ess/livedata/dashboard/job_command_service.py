@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-Kafka-based service for sending job commands.
+Service for sending job commands.
 
-Uses backend MessageSink abstraction directly for job command publishing.
+Uses backend MessageSink abstraction for job command publishing.
 """
 
 import logging
@@ -15,9 +15,9 @@ from ess.livedata.core.message import COMMANDS_STREAM_ID, Message, MessageSink
 from ess.livedata.handlers.config_handler import ConfigUpdate
 
 
-class KafkaJobCommandService:
+class JobCommandService:
     """
-    Kafka-based service for publishing job commands.
+    Service for publishing job commands.
 
     Provides a focused interface for JobController to send commands without
     depending on the full ConfigService.
