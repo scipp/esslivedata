@@ -55,6 +55,18 @@ class InMemoryConfigStore(ConfigStore):
     """
     In-memory implementation of ConfigStore with optional LRU eviction.
 
+    This store uses LRU (Least Recently Used) eviction because it needs to handle
+    configurations for multiple use cases with different cleanup strategies:
+
+    - Workflow configs: Could theoretically be cleaned up by removing non-existent
+      workflows, but this requires tracking workflow registry state.
+    - Plotter configs: More complex - for each workflow there can be multiple outputs,
+      and for each output multiple applicable plotters, each needing its own config.
+      Tracking existence is impractical.
+
+    LRU eviction provides a simple, uniform policy that works for both cases and can
+    be configured per store instance based on expected usage patterns.
+
     Parameters
     ----------
     max_configs:
