@@ -15,6 +15,7 @@ from ess.livedata.core.job import JobStatus
 
 from ..core.message import (
     COMMANDS_STREAM_ID,
+    RESPONSES_STREAM_ID,
     STATUS_STREAM_ID,
     Message,
     MessageSource,
@@ -252,10 +253,8 @@ class RawConfigItem:
     value: bytes
 
 
-class LivedataConfigMessageAdapter(
-    MessageAdapter[KafkaMessage, Message[RawConfigItem]]
-):
-    """Adapts a Kafka message to a Livedata config message."""
+class CommandsAdapter(MessageAdapter[KafkaMessage, Message[RawConfigItem]]):
+    """Adapts Kafka messages from the livedata commands topic."""
 
     def adapt(self, message: KafkaMessage) -> Message[RawConfigItem]:
         timestamp = message.timestamp()[1]
@@ -263,6 +262,17 @@ class LivedataConfigMessageAdapter(
         # is the encoded string representation of a :py:class:`ConfigKey` object.
         item = RawConfigItem(key=message.key(), value=message.value())
         return Message(stream=COMMANDS_STREAM_ID, timestamp=timestamp, value=item)
+
+
+class ResponsesAdapter(MessageAdapter[KafkaMessage, Message[RawConfigItem]]):
+    """Adapts Kafka messages from the livedata responses topic."""
+
+    def adapt(self, message: KafkaMessage) -> Message[RawConfigItem]:
+        timestamp = message.timestamp()[1]
+        # Livedata configuration uses a compacted Kafka topic. The Kafka message key
+        # is the encoded string representation of a :py:class:`ConfigKey` object.
+        item = RawConfigItem(key=message.key(), value=message.value())
+        return Message(stream=RESPONSES_STREAM_ID, timestamp=timestamp, value=item)
 
 
 class ChainedAdapter(MessageAdapter[T, V]):
