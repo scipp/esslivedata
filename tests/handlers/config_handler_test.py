@@ -6,7 +6,7 @@ import pytest
 
 from ess.livedata.config.models import ConfigKey
 from ess.livedata.core.job_manager import JobAction, JobCommand
-from ess.livedata.core.message import CONFIG_STREAM_ID, Message
+from ess.livedata.core.message import COMMANDS_STREAM_ID, RESPONSES_STREAM_ID, Message
 from ess.livedata.handlers.config_handler import ConfigProcessor, ConfigUpdate
 from ess.livedata.kafka.message_adapter import RawConfigItem
 
@@ -86,7 +86,7 @@ class TestConfigProcessor:
                     value=json.dumps({"workflow": "test_workflow"}).encode('utf-8'),
                 ),
                 timestamp=123456789,
-                stream=CONFIG_STREAM_ID,
+                stream=COMMANDS_STREAM_ID,
             )
         ]
 
@@ -99,11 +99,11 @@ class TestConfigProcessor:
             {"workflow": "test_workflow"},
         )
 
-        # Verify response messages
+        # Verify response messages go to RESPONSES stream
         assert len(result_messages) == len(mock_job_manager.workflow_results)
         for i, message in enumerate(result_messages):
             expected_key, expected_value = mock_job_manager.workflow_results[i]
-            assert message.stream == CONFIG_STREAM_ID
+            assert message.stream == RESPONSES_STREAM_ID
             assert isinstance(message.value, ConfigUpdate)
             assert message.value.config_key == expected_key
             assert message.value.value == expected_value
@@ -120,7 +120,7 @@ class TestConfigProcessor:
                     value=json.dumps(job_command.model_dump()).encode('utf-8'),
                 ),
                 timestamp=123456789,
-                stream=CONFIG_STREAM_ID,
+                stream=COMMANDS_STREAM_ID,
             )
         ]
 
@@ -147,7 +147,7 @@ class TestConfigProcessor:
                     value=json.dumps("some_value").encode('utf-8'),
                 ),
                 timestamp=123456789,
-                stream=CONFIG_STREAM_ID,
+                stream=COMMANDS_STREAM_ID,
             )
         ]
 
@@ -156,7 +156,12 @@ class TestConfigProcessor:
         # Should not call job manager for unknown keys
         assert len(mock_job_manager.workflow_calls) == 0
         assert len(mock_job_manager.job_command_calls) == 0
-        assert len(result_messages) == 0
+        # But should echo back the unknown config for dashboard persistence
+        assert len(result_messages) == 1
+        assert result_messages[0].stream == RESPONSES_STREAM_ID
+        assert isinstance(result_messages[0].value, ConfigUpdate)
+        assert result_messages[0].value.config_key.key == 'unknown_key'
+        assert result_messages[0].value.value == 'some_value'
 
     def test_process_multiple_messages_same_batch(self):
         mock_job_manager = MockJobManagerAdapter()
@@ -170,7 +175,7 @@ class TestConfigProcessor:
                     value=json.dumps({"workflow": "test1"}).encode('utf-8'),
                 ),
                 timestamp=123456789,
-                stream=CONFIG_STREAM_ID,
+                stream=COMMANDS_STREAM_ID,
             ),
             Message(
                 value=RawConfigItem(
@@ -178,7 +183,7 @@ class TestConfigProcessor:
                     value=json.dumps(job_command.model_dump()).encode('utf-8'),
                 ),
                 timestamp=123456790,
-                stream=CONFIG_STREAM_ID,
+                stream=COMMANDS_STREAM_ID,
             ),
         ]
 
@@ -204,7 +209,7 @@ class TestConfigProcessor:
                     value=json.dumps({"workflow": "first"}).encode('utf-8'),
                 ),
                 timestamp=123456789,
-                stream=CONFIG_STREAM_ID,
+                stream=COMMANDS_STREAM_ID,
             ),
             Message(
                 value=RawConfigItem(
@@ -212,7 +217,7 @@ class TestConfigProcessor:
                     value=json.dumps({"workflow": "latest"}).encode('utf-8'),
                 ),
                 timestamp=123456790,
-                stream=CONFIG_STREAM_ID,
+                stream=COMMANDS_STREAM_ID,
             ),
         ]
 
@@ -233,7 +238,7 @@ class TestConfigProcessor:
                     value=json.dumps({"workflow": "global"}).encode('utf-8'),
                 ),
                 timestamp=123456789,
-                stream=CONFIG_STREAM_ID,
+                stream=COMMANDS_STREAM_ID,
             )
         ]
 
@@ -254,7 +259,7 @@ class TestConfigProcessor:
                     value=json.dumps({"workflow": "source1"}).encode('utf-8'),
                 ),
                 timestamp=123456789,
-                stream=CONFIG_STREAM_ID,
+                stream=COMMANDS_STREAM_ID,
             ),
             Message(
                 value=RawConfigItem(
@@ -262,7 +267,7 @@ class TestConfigProcessor:
                     value=json.dumps({"workflow": "global"}).encode('utf-8'),
                 ),
                 timestamp=123456790,
-                stream=CONFIG_STREAM_ID,
+                stream=COMMANDS_STREAM_ID,
             ),
         ]
 
@@ -284,7 +289,7 @@ class TestConfigProcessor:
                     value=b'not valid json',
                 ),
                 timestamp=123456789,
-                stream=CONFIG_STREAM_ID,
+                stream=COMMANDS_STREAM_ID,
             )
         ]
 
@@ -307,7 +312,7 @@ class TestConfigProcessor:
                     value=json.dumps({"workflow": "test"}).encode('utf-8'),
                 ),
                 timestamp=123456789,
-                stream=CONFIG_STREAM_ID,
+                stream=COMMANDS_STREAM_ID,
             )
         ]
 
