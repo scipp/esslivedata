@@ -112,13 +112,7 @@ class ConfigProcessor:
                 )
                 try:
                     if (action := self._actions.get(config_key)) is None:
-                        # Echo back unrecognized config keys for dashboard persistence
-                        self._logger.debug(
-                            'Unknown config key: %s - echoing back', config_key
-                        )
-                        response_messages.append(
-                            Message(stream=RESPONSES_STREAM_ID, value=update)
-                        )
+                        self._logger.debug('Unknown config key: %s', config_key)
                         continue
                     results = action(source_name, update.value)
                     # Convert results to messages
