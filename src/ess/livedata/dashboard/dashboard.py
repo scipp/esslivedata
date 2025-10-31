@@ -29,13 +29,13 @@ from .data_service import DataService
 from .job_command_service import JobCommandService
 from .job_controller import JobController
 from .job_service import JobService
-from .kafka_workflow_config_service import KafkaWorkflowConfigService
 from .orchestrator import Orchestrator
 from .plotting_controller import PlottingController
 from .roi_publisher import ROIPublisher
 from .stream_manager import StreamManager
 from .widgets.plot_creation_widget import PlotCreationWidget
 from .widgets.reduction_widget import ReductionWidget
+from .workflow_config_service_impl import WorkflowConfigServiceImpl
 from .workflow_controller import WorkflowController
 
 # Global throttling for sliders, etc.
@@ -98,27 +98,8 @@ class DashboardBase(ServiceBase, ABC):
         # should be placed?
 
     def _setup_config_service(self) -> None:
-        """Set up configuration services using backend MessageSource/MessageSink."""
+        """Set up configuration services using backend MessageSink abstraction."""
         kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
-
-        # Dashboard subscribes to RESPONSES to receive backend status updates.
-        # Dashboard publishes to COMMANDS to send configuration to backend services.
-        responses_topic = stream_kind_to_topic(
-            instrument=self._instrument, kind=StreamKind.LIVEDATA_RESPONSES
-        )
-
-        consumer = self._exit_stack.enter_context(
-            kafka_consumer.make_consumer_from_config(
-                topics=[responses_topic],
-                config={**kafka_downstream_config, 'auto.offset.reset': 'latest'},
-                group='dashboard',
-            )
-        )
-
-        # Create BackgroundMessageSource for consuming responses
-        self._message_source = self._exit_stack.enter_context(
-            BackgroundMessageSource(consumer=consumer)
-        )
 
         # Create KafkaSink for publishing commands (using backend abstraction)
         # Note: serializer is not used for LIVEDATA_COMMANDS messages
@@ -135,9 +116,8 @@ class DashboardBase(ServiceBase, ABC):
             serializer=_config_serializer,
         )
 
-        # Create focused services using MessageSource/MessageSink
-        self._workflow_config_service = KafkaWorkflowConfigService(
-            source=self._message_source,
+        # Create config service (responses are routed via unified Orchestrator)
+        self._workflow_config_service = WorkflowConfigServiceImpl(
             sink=self._message_sink,
             logger=self._logger,
         )
@@ -181,17 +161,22 @@ class DashboardBase(ServiceBase, ABC):
             logger=self._logger,
             roi_publisher=roi_publisher,
         )
+        # Setup unified message source for all dashboard streams
+        self._message_source = self._setup_kafka_consumer(
+            instrument=instrument, dev=dev
+        )
         self._orchestrator = Orchestrator(
-            self._setup_kafka_consumer(instrument=instrument, dev=dev),
+            self._message_source,
             data_service=self._data_service,
             job_service=self._job_service,
+            config_processor=self._workflow_config_service,
         )
         self._logger.info("Data infrastructure setup complete")
 
     def _setup_kafka_consumer(
         self, instrument: str, dev: bool
     ) -> AdaptingMessageSource:
-        """Set up Kafka consumer for data streams."""
+        """Set up unified Kafka consumer for all dashboard message streams."""
         consumer_config = load_config(
             namespace=config_names.reduced_data_consumer, env=''
         )
@@ -202,14 +187,22 @@ class DashboardBase(ServiceBase, ABC):
         status_topic = stream_kind_to_topic(
             instrument=self._instrument, kind=StreamKind.LIVEDATA_STATUS
         )
+        responses_topic = stream_kind_to_topic(
+            instrument=self._instrument, kind=StreamKind.LIVEDATA_RESPONSES
+        )
         consumer = self._exit_stack.enter_context(
             kafka_consumer.make_consumer_from_config(
-                topics=[data_topic, status_topic],
-                config={**consumer_config, **kafka_downstream_config},
+                topics=[data_topic, status_topic, responses_topic],
+                config={
+                    **consumer_config,
+                    **kafka_downstream_config,
+                    'auto.offset.reset': 'latest',
+                },
                 group='dashboard',
             )
         )
-        source = self._exit_stack.enter_context(
+        # Store BackgroundMessageSource for lifecycle management (start/stop)
+        self._background_source = self._exit_stack.enter_context(
             BackgroundMessageSource(consumer=consumer)
         )
         stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
@@ -217,9 +210,10 @@ class DashboardBase(ServiceBase, ABC):
             RoutingAdapterBuilder(stream_mapping=stream_mapping)
             .with_livedata_data_route()
             .with_livedata_status_route()
+            .with_livedata_responses_route()
             .build()
         )
-        return AdaptingMessageSource(source=source, adapter=adapter)
+        return AdaptingMessageSource(source=self._background_source, adapter=adapter)
 
     def _setup_workflow_management(self) -> None:
         """Initialize workflow controller and reduction widget."""
@@ -276,7 +270,6 @@ class DashboardBase(ServiceBase, ABC):
         def _safe_step():
             try:
                 self._step()
-                self._workflow_config_service.process_incoming_messages()
             except Exception:
                 self._logger.exception("Error in periodic update step.")
 
@@ -315,7 +308,7 @@ class DashboardBase(ServiceBase, ABC):
 
     def _start_impl(self) -> None:
         """Start the dashboard service."""
-        self._message_source.start()
+        self._background_source.start()
 
     def run_forever(self) -> None:
         """Run the dashboard server."""
@@ -336,5 +329,6 @@ class DashboardBase(ServiceBase, ABC):
 
     def _stop_impl(self) -> None:
         """Clean shutdown of all components."""
-        self._message_source.stop()
+        if hasattr(self, '_background_source'):
+            self._background_source.stop()
         self._exit_stack.__exit__(None, None, None)

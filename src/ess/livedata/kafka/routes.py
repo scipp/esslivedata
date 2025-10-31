@@ -90,6 +90,13 @@ class RoutingAdapterBuilder:
         )
         return self
 
+    def with_livedata_responses_route(self) -> Self:
+        """Adds the livedata responses route."""
+        self._routes[self._stream_mapping.livedata_responses_topic] = (
+            LivedataConfigMessageAdapter()
+        )
+        return self
+
     def with_livedata_roi_route(self) -> Self:
         """Adds the livedata ROI route."""
         self._routes[self._stream_mapping.livedata_roi_topic] = ChainedAdapter(
