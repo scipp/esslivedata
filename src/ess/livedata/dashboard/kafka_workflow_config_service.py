@@ -18,12 +18,17 @@ from confluent_kafka import KafkaError
 
 import ess.livedata.config.keys as keys
 from ess.livedata.config.workflow_spec import WorkflowConfig, WorkflowStatus
-from ess.livedata.core.message import COMMANDS_STREAM_ID, Message, MessageSink
+from ess.livedata.core.message import (
+    COMMANDS_STREAM_ID,
+    Message,
+    MessageSink,
+    MessageSource,
+)
+from ess.livedata.dashboard.workflow_config_service import WorkflowConfigService
 from ess.livedata.handlers.config_handler import ConfigUpdate
-from ess.livedata.kafka.source import BackgroundMessageSource
 
 
-class KafkaWorkflowConfigService:
+class KafkaWorkflowConfigService(WorkflowConfigService):
     """
     Kafka-based implementation of WorkflowConfigService.
 
@@ -33,7 +38,7 @@ class KafkaWorkflowConfigService:
 
     def __init__(
         self,
-        source: BackgroundMessageSource,
+        source: MessageSource,
         sink: MessageSink[ConfigUpdate],
         logger: logging.Logger | None = None,
     ):
