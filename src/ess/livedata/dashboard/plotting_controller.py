@@ -158,7 +158,7 @@ class PlottingController:
 
         workflow_id = self._job_service.job_info[job_number]
         plotter_id = self._create_plotter_id(workflow_id, output_name, plot_name)
-        if data := self._config_store.load_config(plotter_id):
+        if data := self._config_store.get(plotter_id):
             return ConfigurationState.model_validate(data)
         return None
 
@@ -226,7 +226,7 @@ class PlottingController:
         config_state = ConfigurationState(
             source_names=source_names, aux_source_names={}, params=params.model_dump()
         )
-        self._config_store.save_config(plotter_id, config_state.model_dump())
+        self._config_store[plotter_id] = config_state.model_dump()
 
     def create_plot(
         self,

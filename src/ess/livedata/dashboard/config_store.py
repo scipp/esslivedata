@@ -3,7 +3,7 @@
 """
 Abstraction for persisting dashboard UI state.
 
-This module provides the ConfigStore protocol for storing dashboard preferences
+This module provides the ConfigStore type alias for storing dashboard preferences
 and UI state across sessions. This is separate from ConfigService, which handles
 runtime communication with backend services via Kafka.
 
@@ -11,47 +11,16 @@ ConfigStore is for persistent storage (e.g., files, local storage) while
 ConfigService is for transient runtime coordination.
 """
 
-from typing import Any, Protocol
+from collections.abc import MutableMapping
+from typing import Any
 
 from ess.livedata.config.workflow_spec import WorkflowId
 
-
-class ConfigStore(Protocol):
-    """Protocol for persisting dashboard UI configuration state."""
-
-    def save_config(self, config_id: WorkflowId, config: dict[str, Any]) -> None:
-        """
-        Save configuration for persistence across sessions.
-
-        Parameters
-        ----------
-        config_id:
-            Unique identifier (WorkflowId for workflows, or synthetic WorkflowId
-            for plotters).
-        config:
-            Configuration to persist as a JSON-serializable dict.
-        """
-        ...
-
-    def load_config(self, config_id: WorkflowId) -> dict[str, Any] | None:
-        """
-        Load persisted configuration.
-
-        Parameters
-        ----------
-        config_id:
-            Unique identifier (WorkflowId for workflows, or synthetic WorkflowId
-            for plotters).
-
-        Returns
-        -------
-        :
-            The persisted configuration dict, or None if not found.
-        """
-        ...
+# Type alias for config stores - any mutable mapping from WorkflowId to config dict
+ConfigStore = MutableMapping[WorkflowId, dict[str, Any]]
 
 
-class InMemoryConfigStore(ConfigStore):
+class InMemoryConfigStore(MutableMapping[WorkflowId, dict[str, Any]]):
     """
     In-memory implementation of ConfigStore with optional LRU eviction.
 
@@ -83,13 +52,29 @@ class InMemoryConfigStore(ConfigStore):
         self._max_configs = max_configs
         self._cleanup_fraction = cleanup_fraction
 
-    def save_config(self, config_id: WorkflowId, config: dict[str, Any]) -> None:
-        """Save configuration in memory with automatic LRU eviction."""
-        self._configs[config_id] = config
+    def __getitem__(self, key: WorkflowId) -> dict[str, Any]:
+        """Get configuration by key."""
+        return self._configs[key]
+
+    def __setitem__(self, key: WorkflowId, value: dict[str, Any]) -> None:
+        """Save configuration with automatic LRU eviction."""
+        self._configs[key] = value
 
         # Automatic LRU eviction if limit exceeded
         if self._max_configs and len(self._configs) > self._max_configs:
             self._evict_oldest()
+
+    def __delitem__(self, key: WorkflowId) -> None:
+        """Delete configuration by key."""
+        del self._configs[key]
+
+    def __iter__(self):
+        """Iterate over configuration keys."""
+        return iter(self._configs)
+
+    def __len__(self) -> int:
+        """Return number of stored configurations."""
+        return len(self._configs)
 
     def _evict_oldest(self) -> None:
         """Remove oldest configs based on cleanup fraction."""
@@ -98,7 +83,3 @@ class InMemoryConfigStore(ConfigStore):
         oldest_keys = list(self._configs.keys())[:num_to_remove]
         for key in oldest_keys:
             del self._configs[key]
-
-    def load_config(self, config_id: WorkflowId) -> dict[str, Any] | None:
-        """Load configuration from memory."""
-        return self._configs.get(config_id)

@@ -190,7 +190,7 @@ class WorkflowController:
                 aux_source_names=workflow_config.aux_source_names,
                 params=workflow_config.params,
             )
-            self._config_store.save_config(workflow_id, config_state.model_dump())
+            self._config_store[workflow_id] = config_state.model_dump()
 
         # Send workflow config to each source
         for source_name in source_names:
@@ -261,7 +261,7 @@ class WorkflowController:
         """Load saved workflow configuration."""
         if self._config_store is None:
             return None
-        if data := self._config_store.load_config(workflow_id):
+        if data := self._config_store.get(workflow_id):
             return ConfigurationState.model_validate(data)
         return None
 

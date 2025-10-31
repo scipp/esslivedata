@@ -12,7 +12,6 @@ from ess.livedata.config.workflow_spec import (
     WorkflowStatus,
     WorkflowStatusType,
 )
-from ess.livedata.dashboard.config_store import ConfigStore
 from ess.livedata.dashboard.configuration_adapter import ConfigurationState
 from ess.livedata.dashboard.workflow_config_service import WorkflowConfigService
 from ess.livedata.dashboard.workflow_controller import WorkflowController
@@ -23,19 +22,6 @@ class SomeWorkflowParams(pydantic.BaseModel):
 
     threshold: float = 100.0
     mode: str = "fast"
-
-
-class FakeConfigStore(ConfigStore):
-    """Fake config store for testing."""
-
-    def __init__(self):
-        self._configs: dict[WorkflowId, dict] = {}
-
-    def save_config(self, config_id: WorkflowId, config: dict) -> None:
-        self._configs[config_id] = config
-
-    def load_config(self, config_id: WorkflowId) -> dict | None:
-        return self._configs.get(config_id)
 
 
 class FakeWorkflowConfigService(WorkflowConfigService):
@@ -113,18 +99,18 @@ def fake_service() -> FakeWorkflowConfigService:
 
 
 @pytest.fixture
-def fake_config_store() -> FakeConfigStore:
-    """Fake config store for testing."""
-    return FakeConfigStore()
+def fake_config_store() -> dict[WorkflowId, dict]:
+    """Plain dict for config store testing."""
+    return {}
 
 
 @pytest.fixture
 def workflow_controller(
     fake_service: FakeWorkflowConfigService,
-    fake_config_store: FakeConfigStore,
+    fake_config_store: dict[WorkflowId, dict],
     source_names: list[str],
     workflow_registry: dict[WorkflowId, WorkflowSpec],
-) -> tuple[WorkflowController, FakeWorkflowConfigService, FakeConfigStore]:
+) -> tuple[WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]]:
     """Workflow controller instance for testing."""
     controller = WorkflowController(
         service=fake_service,
@@ -139,7 +125,7 @@ class TestWorkflowController:
     def test_start_workflow_sends_config_to_sources(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
         workflow_id: WorkflowId,
         source_names: list[str],
@@ -167,7 +153,7 @@ class TestWorkflowController:
     def test_start_workflow_saves_persistent_config(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
         workflow_id: WorkflowId,
         source_names: list[str],
@@ -180,7 +166,7 @@ class TestWorkflowController:
         controller.start_workflow(workflow_id, source_names, config)
 
         # Assert - check ConfigStore instead of service
-        persistent_config_data = config_store.load_config(workflow_id)
+        persistent_config_data = config_store.get(workflow_id)
         assert persistent_config_data is not None
         persistent_config = ConfigurationState.model_validate(persistent_config_data)
         assert persistent_config.source_names == source_names
@@ -189,7 +175,7 @@ class TestWorkflowController:
     def test_start_workflow_updates_status_to_starting(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
         workflow_id: WorkflowId,
         source_names: list[str],
@@ -220,7 +206,7 @@ class TestWorkflowController:
     def test_start_workflow_with_empty_config(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
         workflow_id: WorkflowId,
         source_names: list[str],
@@ -241,7 +227,7 @@ class TestWorkflowController:
     def test_start_workflow_with_single_source(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
         workflow_id: WorkflowId,
     ):
@@ -274,7 +260,7 @@ class TestWorkflowController:
     def test_start_workflow_raises_for_nonexistent_workflow(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
         source_names: list[str],
     ):
@@ -294,7 +280,7 @@ class TestWorkflowController:
     def test_persistent_config_stores_multiple_workflows(
         self,
         fake_service: FakeWorkflowConfigService,
-        fake_config_store: FakeConfigStore,
+        fake_config_store: dict[WorkflowId, dict],
         source_names: list[str],
     ):
         """Test that multiple workflow configurations can be stored persistently."""
@@ -341,13 +327,13 @@ class TestWorkflowController:
         controller.start_workflow(workflow_id_2, sources_2, config_2)
 
         # Assert - check ConfigStore instead of service
-        config_1_data = config_store.load_config(workflow_id_1)
+        config_1_data = config_store.get(workflow_id_1)
         assert config_1_data is not None
         config_1 = ConfigurationState.model_validate(config_1_data)
         assert config_1.source_names == sources_1
         assert config_1.params == {"threshold": 100.0, "mode": "fast"}
 
-        config_2_data = config_store.load_config(workflow_id_2)
+        config_2_data = config_store.get(workflow_id_2)
         assert config_2_data is not None
         config_2 = ConfigurationState.model_validate(config_2_data)
         assert config_2.source_names == sources_2
@@ -356,7 +342,7 @@ class TestWorkflowController:
     def test_persistent_config_replaces_existing_workflow(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
         workflow_id: WorkflowId,
     ):
@@ -374,7 +360,7 @@ class TestWorkflowController:
         controller.start_workflow(workflow_id, updated_sources, updated_config)
 
         # Assert - check ConfigStore instead of service
-        workflow_config_data = config_store.load_config(workflow_id)
+        workflow_config_data = config_store.get(workflow_id)
         assert workflow_config_data is not None
         workflow_config = ConfigurationState.model_validate(workflow_config_data)
 
@@ -385,7 +371,7 @@ class TestWorkflowController:
     def test_status_updates_from_service(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
         workflow_id: WorkflowId,
     ):
@@ -415,7 +401,7 @@ class TestWorkflowController:
     def test_get_workflow_spec_returns_correct_spec(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
         workflow_id: WorkflowId,
         workflow_spec: WorkflowSpec,
@@ -434,7 +420,7 @@ class TestWorkflowController:
     def test_get_workflow_spec_returns_none_for_nonexistent(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
     ):
         """Test that get_workflow_spec returns None for non-existent workflow."""
@@ -449,7 +435,7 @@ class TestWorkflowController:
     def test_get_workflow_config_returns_persistent_config(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
         workflow_id: WorkflowId,
         source_names: list[str],
@@ -472,7 +458,7 @@ class TestWorkflowController:
     def test_get_workflow_config_returns_none_for_nonexistent(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
     ):
         """Test that get_workflow_config returns None for non-existent workflow."""
@@ -490,7 +476,7 @@ class TestWorkflowController:
     def test_subscribe_to_workflow_status_updates_calls_callback_immediately(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
     ):
         """Test that status updates subscription calls callback immediately."""
@@ -511,7 +497,7 @@ class TestWorkflowController:
     def test_subscribe_to_workflow_status_updates_calls_callback_on_status_change(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
         workflow_id: WorkflowId,
     ):
@@ -572,7 +558,7 @@ class TestWorkflowController:
     def test_workflow_status_callback_exception_handling(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
         workflow_id: WorkflowId,
     ):
@@ -615,7 +601,7 @@ class TestWorkflowController:
     def test_multiple_status_subscriptions_work_correctly(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
         workflow_id: WorkflowId,
     ):
@@ -660,7 +646,7 @@ class TestWorkflowController:
     def test_start_workflow_with_empty_source_names_list(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
         workflow_id: WorkflowId,
     ):
@@ -676,7 +662,7 @@ class TestWorkflowController:
         assert len(sent_configs) == 0  # No configs sent to sources
 
         # Should still save persistent config
-        persistent_config_data = config_store.load_config(workflow_id)
+        persistent_config_data = config_store.get(workflow_id)
         assert persistent_config_data is not None
         persistent_config = ConfigurationState.model_validate(persistent_config_data)
         assert persistent_config.source_names == []
@@ -684,7 +670,7 @@ class TestWorkflowController:
     def test_callback_receives_complete_workflow_status_dict(
         self,
         workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, FakeConfigStore
+            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
         ],
         workflow_id: WorkflowId,
         source_names: list[str],
