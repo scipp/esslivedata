@@ -24,7 +24,7 @@ from .config_store import ConfigStore
 from .configuration_adapter import ConfigurationState
 from .correlation_histogram import CorrelationHistogramController, make_workflow_spec
 from .data_service import DataService
-from .workflow_config_service import ConfigServiceAdapter, WorkflowConfigService
+from .workflow_config_service import WorkflowConfigService
 from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
 
@@ -108,27 +108,6 @@ class WorkflowController:
 
         # Subscribe to updates
         self._setup_subscriptions()
-
-    @classmethod
-    def from_config_service(
-        cls,
-        *,
-        config_service,
-        source_names: list[str],
-        workflow_registry: Mapping[WorkflowId, WorkflowSpec],
-        config_store: ConfigStore | None = None,
-        data_service: DataService[ResultKey, object] | None = None,
-        correlation_histogram_controller: CorrelationHistogramController | None = None,
-    ) -> WorkflowController:
-        """Create WorkflowController from ConfigService and ConfigStore."""
-        return cls(
-            service=ConfigServiceAdapter(config_service),
-            source_names=source_names,
-            workflow_registry=workflow_registry,
-            config_store=config_store,
-            data_service=data_service,
-            correlation_histogram_controller=correlation_histogram_controller,
-        )
 
     def _setup_subscriptions(self) -> None:
         """Setup subscriptions to service updates."""

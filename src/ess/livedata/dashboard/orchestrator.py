@@ -3,12 +3,31 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Protocol
 
 from ..config.workflow_spec import ResultKey
-from ..core.message import STATUS_STREAM_ID, MessageSource, StreamId
+from ..core.message import (
+    RESPONSES_STREAM_ID,
+    STATUS_STREAM_ID,
+    MessageSource,
+    StreamId,
+)
 from .data_service import DataService
 from .job_service import JobService
+
+
+class ConfigMessageProcessor(Protocol):
+    """Protocol for services that process config response messages."""
+
+    def process_config_item(self, raw_item: Any) -> None:
+        """Process a single config message item.
+
+        Parameters
+        ----------
+        raw_item:
+            The raw config item value from the message.
+        """
+        ...
 
 
 class Orchestrator:
@@ -26,10 +45,12 @@ class Orchestrator:
         message_source: MessageSource,
         data_service: DataService,
         job_service: JobService,
+        config_processor: ConfigMessageProcessor | None = None,
     ) -> None:
         self._message_source = message_source
         self._data_service = data_service
         self._job_service = job_service
+        self._config_processor = config_processor
         self._logger = logging.getLogger(__name__)
 
     def update(self) -> None:
@@ -37,18 +58,35 @@ class Orchestrator:
         Call this periodically to consume data and feed it into the dashboard.
         """
         messages = self._message_source.get_messages()
-        self._logger.debug("Consumed %d data messages", len(messages))
+        self._logger.debug("Consumed %d messages", len(messages))
 
         if not messages:
             return
 
-        # Batch all updates in a transaction to avoid repeated UI updates. Reason:
+        # Separate config messages from data/status messages
+        config_messages = []
+        data_messages = []
+        for message in messages:
+            if message.stream == RESPONSES_STREAM_ID:
+                config_messages.append(message)
+            else:
+                data_messages.append(message)
+
+        # Process config messages immediately (outside transaction)
+        if config_messages and self._config_processor is not None:
+            self._logger.debug("Processing %d config messages", len(config_messages))
+            for message in config_messages:
+                self._config_processor.process_config_item(message.value)
+
+        # Batch data/status updates in a transaction to avoid repeated UI updates.
+        # Reason:
         # - Some listeners depend on multiple streams.
         # - There may be multiple messages for the same stream, only the last one
         #   should trigger an update.
-        with self._data_service.transaction():
-            for message in messages:
-                self.forward(stream_id=message.stream, value=message.value)
+        if data_messages:
+            with self._data_service.transaction():
+                for message in data_messages:
+                    self.forward(stream_id=message.stream, value=message.value)
 
     def forward(self, stream_id: StreamId, value: Any) -> None:
         """
