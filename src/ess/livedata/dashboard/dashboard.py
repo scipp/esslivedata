@@ -236,11 +236,6 @@ class DashboardBase(ServiceBase, ABC):
             correlation_histogram_controller=self._correlation_controller,
         )
 
-        # One-time cleanup: remove configs for workflows that no longer exist
-        if self._workflow_config_store is not None:
-            valid_workflow_ids = set(self._workflow_controller.get_workflow_registry())
-            self._workflow_config_store.remove_not_in_set(valid_workflow_ids)
-
         self._reduction_widget = ReductionWidget(controller=self._workflow_controller)
 
     def _step(self):

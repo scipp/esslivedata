@@ -26,7 +26,8 @@ class ConfigStore(Protocol):
         Parameters
         ----------
         config_id:
-            Unique identifier (workflow ID or plotter ID).
+            Unique identifier (WorkflowId for workflows, or synthetic WorkflowId
+            for plotters).
         config:
             Configuration to persist as a JSON-serializable dict.
         """
@@ -39,36 +40,13 @@ class ConfigStore(Protocol):
         Parameters
         ----------
         config_id:
-            Unique identifier (workflow ID or plotter ID).
+            Unique identifier (WorkflowId for workflows, or synthetic WorkflowId
+            for plotters).
 
         Returns
         -------
         :
             The persisted configuration dict, or None if not found.
-        """
-        ...
-
-    def remove_not_in_set(self, valid_ids: set[WorkflowId]) -> None:
-        """
-        Remove configurations whose IDs are not in the valid set.
-
-        Parameters
-        ----------
-        valid_ids:
-            Set of IDs to keep. All other configs will be removed.
-        """
-        ...
-
-    def remove_oldest(self, max_configs: int, cleanup_fraction: float = 0.1) -> None:
-        """
-        Remove oldest configurations when limit is exceeded.
-
-        Parameters
-        ----------
-        max_configs:
-            Maximum number of configs to keep.
-        cleanup_fraction:
-            Fraction of configs to remove when limit exceeded (default 0.1 = 10%).
         """
         ...
 
@@ -112,27 +90,3 @@ class InMemoryConfigStore(ConfigStore):
     def load_config(self, config_id: WorkflowId) -> dict[str, Any] | None:
         """Load configuration from memory."""
         return self._configs.get(config_id)
-
-    def remove_not_in_set(self, valid_ids: set[WorkflowId]) -> None:
-        """Remove configurations whose IDs are not in the valid set."""
-        missing_ids = set(self._configs.keys()) - valid_ids
-        for config_id in missing_ids:
-            del self._configs[config_id]
-
-    def remove_oldest(self, max_configs: int, cleanup_fraction: float = 0.1) -> None:
-        """
-        Remove oldest configurations when limit exceeded.
-
-        This method is kept for backward compatibility but is no longer needed
-        when using automatic LRU eviction via max_configs constructor parameter.
-        """
-        if len(self._configs) <= max_configs:
-            return
-
-        num_to_remove = int(len(self._configs) * cleanup_fraction)
-        if num_to_remove == 0:
-            num_to_remove = 1
-
-        oldest_keys = list(self._configs.keys())[:num_to_remove]
-        for key in oldest_keys:
-            del self._configs[key]

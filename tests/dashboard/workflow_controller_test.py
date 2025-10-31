@@ -37,21 +37,6 @@ class FakeConfigStore(ConfigStore):
     def load_config(self, config_id: WorkflowId) -> dict | None:
         return self._configs.get(config_id)
 
-    def remove_not_in_set(self, valid_ids: set[WorkflowId]) -> None:
-        missing_ids = set(self._configs.keys()) - valid_ids
-        for config_id in missing_ids:
-            del self._configs[config_id]
-
-    def remove_oldest(self, max_configs: int, cleanup_fraction: float = 0.1) -> None:
-        if len(self._configs) <= max_configs:
-            return
-        num_to_remove = int(len(self._configs) * cleanup_fraction)
-        if num_to_remove == 0:
-            num_to_remove = 1
-        oldest_keys = list(self._configs.keys())[:num_to_remove]
-        for key in oldest_keys:
-            del self._configs[key]
-
 
 class FakeWorkflowConfigService(WorkflowConfigService):
     """Fake service for testing WorkflowController."""
