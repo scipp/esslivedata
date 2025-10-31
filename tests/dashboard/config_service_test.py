@@ -505,11 +505,46 @@ class TestConfigService:
 
         service.process_incoming_messages()
 
+        # Callback should NOT be called since value hasn't changed
+        assert callback.called is False
+
+        # But config should still be stored
+        stored_config = service.get_config(complex_key)
+        assert stored_config.items == ["item1", "item2", "item3"]
+        assert stored_config.metadata == {"count": 10, "priority": 5}
+        assert stored_config.threshold == 0.75
+
+    def test_process_incoming_messages_only_notifies_on_value_change(
+        self,
+        service_with_bridge: tuple[ConfigService, FakeMessageBridge],
+        simple_key: str,
+    ) -> None:
+        """Test that subscribers are only notified when values actually change."""
+        service, bridge = service_with_bridge
+        callback = FakeCallback()
+        service.subscribe(simple_key, callback)
+
+        # Send initial message
+        bridge.add_incoming_message((simple_key, {"value": 100}))
+        service.process_incoming_messages()
+
         assert callback.called is True
-        received_config = callback.data
-        assert received_config.items == ["item1", "item2", "item3"]
-        assert received_config.metadata == {"count": 10, "priority": 5}
-        assert received_config.threshold == 0.75
+        assert callback.data.value == 100
+
+        # Send same message again - should NOT trigger callback
+        callback.reset()
+        bridge.add_incoming_message((simple_key, {"value": 100}))
+        service.process_incoming_messages()
+
+        assert callback.called is False
+
+        # Send different message - SHOULD trigger callback
+        callback.reset()
+        bridge.add_incoming_message((simple_key, {"value": 200}))
+        service.process_incoming_messages()
+
+        assert callback.called is True
+        assert callback.data.value == 200
 
     def test_logging_configuration(
         self,

@@ -128,8 +128,13 @@ class ConfigService(Generic[K, Serialized, V]):
             self._logger.debug('Validated config for key %s: %s', key, validated)
             if validated is None:
                 return
-            self._config[key] = validated
-            self._notify_subscribers(key, validated)
+            # Only notify subscribers if value actually changed
+            old_value = self._config.get(key)
+            if old_value != validated:
+                self._config[key] = validated
+                self._notify_subscribers(key, validated)
+            else:
+                self._config[key] = validated  # Still update to maintain consistency
         except pydantic.ValidationError as e:
             self._logger.error('Invalid config data received for key %s: %s', key, e)
 
