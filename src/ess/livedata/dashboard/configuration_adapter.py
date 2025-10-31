@@ -39,11 +39,22 @@ class ConfigurationAdapter(ABC, Generic[Model]):
     """
     Abstract adapter for providing configuration data to generic widgets.
 
-    Subclasses should store persistent configuration in the protected attribute
-    `_persistent_config: ConfigurationState | None` if they want to use the
-    default implementations of `initial_source_names`, `initial_aux_source_names`,
-    and `initial_parameter_values`.
+    Subclasses should call `super().__init__(config_state=...)` to provide
+    persistent configuration that will be used by the default implementations
+    of `initial_source_names`, `initial_aux_source_names`, and
+    `initial_parameter_values`.
     """
+
+    def __init__(self, config_state: ConfigurationState | None = None) -> None:
+        """
+        Initialize the configuration adapter.
+
+        Parameters
+        ----------
+        config_state
+            Persistent configuration state to restore, or None for default values.
+        """
+        self._config_state = config_state
 
     @property
     @abstractmethod
@@ -75,7 +86,7 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         the selected stream name. Default implementation filters persisted aux
         sources to only include valid field names from the current aux_sources model.
         """
-        if not hasattr(self, '_persistent_config') or not self._persistent_config:
+        if not self._config_state:
             return {}
         if not self.aux_sources:
             return {}
@@ -83,7 +94,7 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         valid_fields = set(self.aux_sources.model_fields.keys())
         return {
             k: v
-            for k, v in self._persistent_config.aux_source_names.items()
+            for k, v in self._config_state.aux_source_names.items()
             if k in valid_fields
         }
 
@@ -132,11 +143,11 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         currently available sources. If no valid persisted sources remain,
         defaults to all available sources.
         """
-        if not hasattr(self, '_persistent_config') or not self._persistent_config:
+        if not self._config_state:
             return self.source_names
         filtered = [
             name
-            for name in self._persistent_config.source_names
+            for name in self._config_state.source_names
             if name in self.source_names
         ]
         return filtered if filtered else self.source_names
@@ -149,9 +160,9 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         Default implementation returns persisted parameter values if available,
         otherwise returns empty dict.
         """
-        if not hasattr(self, '_persistent_config') or not self._persistent_config:
+        if not self._config_state:
             return {}
-        return self._persistent_config.params
+        return self._config_state.params
 
     @abstractmethod
     def start_action(

@@ -33,20 +33,18 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         plotting_controller: PlottingController,
         success_callback,
     ):
+        config_state = plotting_controller.get_persistent_plotter_config(
+            job_number=job_number,
+            output_name=output_name,
+            plot_name=plot_spec.name,
+        )
+        super().__init__(config_state=config_state)
         self._job_number = job_number
         self._output_name = output_name
         self._plot_spec = plot_spec
         self._available_sources = available_sources
         self._plotting_controller = plotting_controller
         self._success_callback = success_callback
-
-        self._persisted_config = (
-            self._plotting_controller.get_persistent_plotter_config(
-                job_number=self._job_number,
-                output_name=self._output_name,
-                plot_name=self._plot_spec.name,
-            )
-        )
 
     @property
     def title(self) -> str:

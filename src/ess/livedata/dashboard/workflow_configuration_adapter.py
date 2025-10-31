@@ -17,14 +17,14 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
     def __init__(
         self,
         spec: WorkflowSpec,
-        persistent_config: ConfigurationState | None,
+        config_state: ConfigurationState | None,
         start_callback: Callable[
             [list[str], pydantic.BaseModel, pydantic.BaseModel | None], None
         ],
     ) -> None:
         """Initialize adapter with workflow spec, config, and start callback."""
+        super().__init__(config_state=config_state)
         self._spec = spec
-        self._persistent_config = persistent_config
         self._start_callback = start_callback
         self._cached_aux_sources: pydantic.BaseModel | None = None
 

@@ -143,6 +143,7 @@ class CorrelationHistogramConfigurationAdapter(ConfigurationAdapter[Model], ABC)
     """
 
     def __init__(self, controller: CorrelationHistogramController) -> None:
+        super().__init__(config_state=None)
         self._controller = controller
         self._selected_aux_sources: dict[str, str] | None = None
         self._cached_aux_sources: pydantic.BaseModel | None = None
