@@ -23,6 +23,10 @@ class KafkaTransport(MessageTransport[ConfigKey, dict[str, Any]]):
         logger: logging.Logger | None = None,
         max_batch_size: int = 100,
     ):
+        if len(consumer.assignment()) != 1:
+            raise ValueError(
+                "KafkaTransport requires a single topic assignment for the consumer"
+            )
         self._publish_topic = publish_topic
         self._logger = logger or logging.getLogger(__name__)
         self._producer = Producer(kafka_config)

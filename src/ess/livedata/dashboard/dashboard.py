@@ -105,11 +105,9 @@ class DashboardBase(ServiceBase, ABC):
     def _setup_config_service(self) -> None:
         """Set up configuration service with Kafka bridge."""
         kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
-        control_config = load_config(namespace='control_consumer', env='')
 
-        # Dashboard subscribes to BOTH commands and responses topics:
-        # - COMMANDS: to receive its own published config (loopback for consistency)
-        # - RESPONSES: to receive backend echoes and workflow status updates
+        # Dashboard subscribes to RESPONSES to receive backend status updates.
+        # Dashboard publishes to COMMANDS to send configuration to backend services.
         commands_topic = stream_kind_to_topic(
             instrument=self._instrument, kind=StreamKind.LIVEDATA_COMMANDS
         )
@@ -119,11 +117,10 @@ class DashboardBase(ServiceBase, ABC):
 
         consumer = self._exit_stack.enter_context(
             kafka_consumer.make_consumer_from_config(
-                topics=[commands_topic, responses_topic],
+                topics=[responses_topic],
                 config={
-                    **control_config,
                     **kafka_downstream_config,
-                    'auto.offset.reset': 'earliest',
+                    'auto.offset.reset': 'latest',
                 },
                 group='dashboard',
             )
@@ -132,7 +129,7 @@ class DashboardBase(ServiceBase, ABC):
         kafka_transport = KafkaTransport(
             kafka_config=kafka_downstream_config,
             consumer=consumer,
-            publish_topic=commands_topic,  # Dashboard publishes to COMMANDS
+            publish_topic=commands_topic,
             logger=self._logger,
         )
         self._kafka_bridge = BackgroundMessageBridge(
