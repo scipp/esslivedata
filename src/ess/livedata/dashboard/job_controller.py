@@ -102,12 +102,3 @@ class JobController:
         if action == JobAction.remove:
             for job_id in job_ids:
                 self._job_service.remove_job(job_id)
-
-    def send_workflow_action(self, workflow_id: WorkflowId, action: JobAction) -> None:
-        """Send action for a specific workflow ID."""
-        # Using full WorkflowId as source_name to work around current limitation of
-        # compacted Kafka topic. ConfigKey needs to be overhauled.
-        command = JobCommand(workflow_id=workflow_id, action=action)
-        self._command_service.send(
-            self._config_key(JobCommand.key, source_name=str(workflow_id)), command
-        )
