@@ -74,17 +74,7 @@ class JobController:
 
     def send_job_action(self, job_id: JobId, action: JobAction) -> None:
         """Send action for a specific job ID."""
-        # Using full JobId as source_name to work around current limitation of compacted
-        # Kafka topic. ConfigKey needs to be overhauled.
-        command = JobCommand(job_id=job_id, action=action)
-        self._command_service.send(
-            self._config_key(JobCommand.key, source_name=str(job_id)), command
-        )
-
-        # If this is a remove action, immediately remove from job service for UI
-        # responsiveness
-        if action == JobAction.remove:
-            self._job_service.remove_job(job_id)
+        self.send_job_actions_batch([job_id], action)
 
     def send_job_actions_batch(self, job_ids: list[JobId], action: JobAction) -> None:
         """Send the same action for multiple job IDs in a batch."""
