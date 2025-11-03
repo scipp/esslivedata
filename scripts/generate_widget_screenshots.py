@@ -53,8 +53,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Global variable to hold current widget for server
+# Timing constants for server startup and rendering
+SERVER_STARTUP_WAIT_SECONDS = 3
+PANEL_RENDER_WAIT_MS = 2000
+
+# Global variable to hold current widget for server, protected by lock
 current_widget = None
+widget_lock = threading.Lock()
 
 
 def create_widget_app(
@@ -126,8 +131,11 @@ def update_widget(
         Updated Panel widget
     """
     global current_widget
-    current_widget = create_widget_app(instrument_name, workflow_id, select_all_sources)
-    return current_widget
+    with widget_lock:
+        current_widget = create_widget_app(
+            instrument_name, workflow_id, select_all_sources
+        )
+        return current_widget
 
 
 def get_current_widget() -> pn.Column:
@@ -139,7 +147,8 @@ def get_current_widget() -> pn.Column:
     :
         Current Panel widget
     """
-    return current_widget
+    with widget_lock:
+        return current_widget
 
 
 def generate_screenshots_for_instrument(
@@ -208,7 +217,7 @@ def generate_screenshots_for_instrument(
     server_thread.start()
 
     # Give server time to start
-    time.sleep(3)
+    time.sleep(SERVER_STARTUP_WAIT_SECONDS)
 
     try:
         with sync_playwright() as p:
@@ -234,7 +243,7 @@ def generate_screenshots_for_instrument(
                 try:
                     page.goto(f'http://localhost:{port}', wait_until='networkidle')
                     # Give extra time for Panel to render
-                    page.wait_for_timeout(2000)
+                    page.wait_for_timeout(PANEL_RENDER_WAIT_MS)
                 except Exception as e:
                     logger.error("    Failed to load page: %s", e)
                     continue
