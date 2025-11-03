@@ -7,13 +7,13 @@ from collections.abc import Callable
 from ess.livedata.config.models import ConfigKey
 from ess.livedata.config.workflow_spec import JobId, JobNumber, WorkflowId
 from ess.livedata.core.job_manager import JobAction, JobCommand
-from ess.livedata.dashboard.job_command_service import JobCommandService
+from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.job_service import JobService
 
 
 class JobController:
     def __init__(
-        self, command_service: JobCommandService, job_service: JobService
+        self, command_service: CommandService, job_service: JobService
     ) -> None:
         self._command_service = command_service
         self._job_service = job_service
@@ -37,7 +37,7 @@ class JobController:
 
     def send_global_action(self, action: JobAction) -> None:
         command = JobCommand(action=action)
-        self._command_service.send_command(self._config_key(JobCommand.key), command)
+        self._command_service.send(self._config_key(JobCommand.key), command)
 
     def get_workflow_ids(self) -> list[WorkflowId]:
         """Get list of all workflow IDs from active jobs."""
@@ -77,7 +77,7 @@ class JobController:
         # Using full JobId as source_name to work around current limitation of compacted
         # Kafka topic. ConfigKey needs to be overhauled.
         command = JobCommand(job_id=job_id, action=action)
-        self._command_service.send_command(
+        self._command_service.send(
             self._config_key(JobCommand.key, source_name=str(job_id)), command
         )
 
@@ -91,6 +91,6 @@ class JobController:
         # Using full WorkflowId as source_name to work around current limitation of
         # compacted Kafka topic. ConfigKey needs to be overhauled.
         command = JobCommand(workflow_id=workflow_id, action=action)
-        self._command_service.send_command(
+        self._command_service.send(
             self._config_key(JobCommand.key, source_name=str(workflow_id)), command
         )

@@ -24,10 +24,10 @@ from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_da00
 from ess.livedata.kafka.source import BackgroundMessageSource
 
+from .command_service import CommandService
 from .config_store import InMemoryConfigStore
 from .correlation_histogram import CorrelationHistogramController
 from .data_service import DataService
-from .job_command_service import JobCommandService
 from .job_controller import JobController
 from .job_service import JobService
 from .orchestrator import Orchestrator
@@ -36,7 +36,7 @@ from .roi_publisher import ROIPublisher
 from .stream_manager import StreamManager
 from .widgets.plot_creation_widget import PlotCreationWidget
 from .widgets.reduction_widget import ReductionWidget
-from .workflow_config_service_impl import WorkflowConfigServiceImpl
+from .workflow_config_service import WorkflowConfigService
 from .workflow_controller import WorkflowController
 
 # Global throttling for sliders, etc.
@@ -106,12 +106,8 @@ class DashboardBase(ServiceBase, ABC):
             instrument=self._instrument,
             logger=self._logger,
         )
-        self._workflow_config_service = WorkflowConfigServiceImpl(
-            sink=command_sink, logger=self._logger
-        )
-        self._job_command_service = JobCommandService(
-            sink=command_sink, logger=self._logger
-        )
+        self._command_service = CommandService(sink=command_sink, logger=self._logger)
+        self._workflow_config_service = WorkflowConfigService(logger=self._logger)
 
         # da00 of backend services converted to scipp.DataArray
         ScippDataService = DataService[ResultKey, sc.DataArray]
@@ -123,7 +119,7 @@ class DashboardBase(ServiceBase, ABC):
             data_service=self._data_service, logger=self._logger
         )
         self._job_controller = JobController(
-            command_service=self._job_command_service, job_service=self._job_service
+            command_service=self._command_service, job_service=self._job_service
         )
 
         # Create ROI publisher for publishing ROI updates to Kafka
@@ -147,7 +143,7 @@ class DashboardBase(ServiceBase, ABC):
             self._setup_kafka_consumer(instrument=instrument, dev=dev),
             data_service=self._data_service,
             job_service=self._job_service,
-            config_processor=self._workflow_config_service,
+            workflow_config_service=self._workflow_config_service,
         )
         self._logger.info("Data infrastructure setup complete")
 
@@ -194,7 +190,8 @@ class DashboardBase(ServiceBase, ABC):
             self._data_service
         )
         self._workflow_controller = WorkflowController(
-            service=self._workflow_config_service,
+            command_service=self._command_service,
+            workflow_config_service=self._workflow_config_service,
             source_names=sorted(self._processor_factory.source_names),
             workflow_registry=self._processor_factory,
             config_store=self._workflow_config_store,
