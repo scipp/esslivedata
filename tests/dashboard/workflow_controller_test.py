@@ -14,17 +14,30 @@ from ess.livedata.config.workflow_spec import (
     WorkflowStatus,
     WorkflowStatusType,
 )
+from ess.livedata.core.message import COMMANDS_STREAM_ID, Message
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.configuration_adapter import ConfigurationState
 from ess.livedata.dashboard.workflow_config_service import WorkflowConfigService
 from ess.livedata.dashboard.workflow_controller import WorkflowController
+from ess.livedata.handlers.config_handler import ConfigUpdate
+
+
+class FakeMessageSink:
+    """Fake message sink for testing."""
+
+    def __init__(self):
+        self.published_messages = []
+
+    def publish_messages(self, messages: list[Message]) -> None:
+        """Record published messages."""
+        self.published_messages.append(messages)
 
 
 class WorkflowControllerFixture(NamedTuple):
     """Container for workflow controller fixture components."""
 
     controller: WorkflowController
-    command_service: "FakeCommandService"
+    fake_message_sink: FakeMessageSink
     workflow_config_service: "FakeWorkflowConfigService"
     config_store: dict[WorkflowId, dict]
 
@@ -36,43 +49,37 @@ class SomeWorkflowParams(pydantic.BaseModel):
     mode: str = "fast"
 
 
-class FakeCommandService(CommandService):
-    """Fake command service for testing."""
+def get_sent_commands(sink: FakeMessageSink) -> list[tuple[ConfigKey, Any]]:
+    """Extract all sent commands from the sink."""
+    result = []
+    for messages in sink.published_messages:
+        result.extend(
+            (msg.value.config_key, msg.value.value)
+            for msg in messages
+            if msg.stream == COMMANDS_STREAM_ID and isinstance(msg.value, ConfigUpdate)
+        )
+    return result
 
-    def __init__(self):
-        self._sent_commands: list[tuple[ConfigKey, Any]] = []
-        self._batch_calls: list[int] = []  # Track number of commands in each batch call
 
-    def send(self, key: ConfigKey, value: Any) -> None:
-        """Record sent commands."""
-        self._sent_commands.append((key, value))
-        self._batch_calls.append(1)  # Single command = batch of 1
+def get_sent_workflow_configs(
+    sink: FakeMessageSink,
+) -> list[tuple[str, WorkflowConfig]]:
+    """Extract workflow configs with source names from the sink."""
+    result = []
+    for messages in sink.published_messages:
+        result.extend(
+            (msg.value.config_key.source_name, msg.value.value)
+            for msg in messages
+            if msg.stream == COMMANDS_STREAM_ID
+            and isinstance(msg.value, ConfigUpdate)
+            and isinstance(msg.value.value, WorkflowConfig)
+        )
+    return result
 
-    def send_batch(self, commands: list[tuple[ConfigKey, Any]]) -> None:
-        """Record batch of commands."""
-        self._sent_commands.extend(commands)
-        self._batch_calls.append(len(commands))
 
-    def get_sent_commands(self) -> list[tuple[ConfigKey, Any]]:
-        """Test helper to get sent commands."""
-        return self._sent_commands.copy()
-
-    def get_sent_workflow_configs(self) -> list[tuple[str, WorkflowConfig]]:
-        """Test helper to extract workflow configs with source names."""
-        result = []
-        for key, value in self._sent_commands:
-            if isinstance(value, WorkflowConfig):
-                result.append((key.source_name, value))
-        return result
-
-    def get_batch_calls(self) -> list[int]:
-        """Test helper to get batch call sizes."""
-        return self._batch_calls.copy()
-
-    def clear_sent_commands(self) -> None:
-        """Test helper to clear sent commands."""
-        self._sent_commands.clear()
-        self._batch_calls.clear()
+def get_batch_calls(sink: FakeMessageSink) -> list[int]:
+    """Extract batch call sizes from the sink."""
+    return [len(messages) for messages in sink.published_messages]
 
 
 class FakeWorkflowConfigService(WorkflowConfigService):
@@ -133,9 +140,15 @@ def workflow_registry(
 
 
 @pytest.fixture
-def fake_command_service() -> FakeCommandService:
-    """Fake command service for testing."""
-    return FakeCommandService()
+def fake_message_sink() -> FakeMessageSink:
+    """Fake message sink for testing."""
+    return FakeMessageSink()
+
+
+@pytest.fixture
+def command_service(fake_message_sink: FakeMessageSink) -> CommandService:
+    """Create a command service with fake sink."""
+    return CommandService(sink=fake_message_sink)
 
 
 @pytest.fixture
@@ -152,7 +165,8 @@ def fake_config_store() -> dict[WorkflowId, dict]:
 
 @pytest.fixture
 def workflow_controller(
-    fake_command_service: FakeCommandService,
+    command_service: CommandService,
+    fake_message_sink: FakeMessageSink,
     fake_workflow_config_service: FakeWorkflowConfigService,
     fake_config_store: dict[WorkflowId, dict],
     source_names: list[str],
@@ -160,7 +174,7 @@ def workflow_controller(
 ) -> WorkflowControllerFixture:
     """Workflow controller instance for testing."""
     controller = WorkflowController(
-        command_service=fake_command_service,
+        command_service=command_service,
         workflow_config_service=fake_workflow_config_service,
         source_names=source_names,
         workflow_registry=workflow_registry,
@@ -168,7 +182,7 @@ def workflow_controller(
     )
     return WorkflowControllerFixture(
         controller=controller,
-        command_service=fake_command_service,
+        fake_message_sink=fake_message_sink,
         workflow_config_service=fake_workflow_config_service,
         config_store=fake_config_store,
     )
@@ -188,7 +202,7 @@ class TestWorkflowController:
         workflow_controller.controller.start_workflow(workflow_id, source_names, config)
 
         # Assert
-        sent_configs = workflow_controller.command_service.get_sent_workflow_configs()
+        sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
         assert len(sent_configs) == len(source_names)
 
         for source_name in source_names:
@@ -262,7 +276,7 @@ class TestWorkflowController:
         workflow_controller.controller.start_workflow(workflow_id, source_names, config)
 
         # Assert
-        sent_configs = workflow_controller.command_service.get_sent_workflow_configs()
+        sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
         for _, workflow_config in sent_configs:
             assert workflow_config.identifier == workflow_id
             assert workflow_config.params == {"threshold": 100.0, "mode": "fast"}
@@ -293,7 +307,7 @@ class TestWorkflowController:
         )
 
         # Assert
-        sent_configs = workflow_controller.command_service.get_sent_workflow_configs()
+        sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
         assert len(sent_configs) == 1
         assert sent_configs[0][0] == "detector_1"
 
@@ -317,18 +331,18 @@ class TestWorkflowController:
             )
 
         # Should not have sent any configs
-        sent_configs = workflow_controller.command_service.get_sent_workflow_configs()
+        sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
         assert len(sent_configs) == 0
 
     def test_persistent_config_stores_multiple_workflows(
         self,
-        fake_command_service: FakeCommandService,
+        command_service: CommandService,
+        fake_message_sink: FakeMessageSink,
         fake_workflow_config_service: FakeWorkflowConfigService,
         fake_config_store: dict[WorkflowId, dict],
         source_names: list[str],
     ):
         """Test that multiple workflow configurations can be stored persistently."""
-        command_service = fake_command_service
         workflow_config_service = fake_workflow_config_service
         config_store = fake_config_store
 
@@ -558,14 +572,14 @@ class TestWorkflowController:
 
     def test_controller_initializes_all_sources_with_unknown_status(
         self,
-        fake_command_service: FakeCommandService,
+        command_service: CommandService,
         fake_workflow_config_service: FakeWorkflowConfigService,
         workflow_registry: dict[WorkflowId, WorkflowSpec],
     ):
         """Test that controller initializes all sources with UNKNOWN status."""
         source_names = ["detector_1", "detector_2", "detector_3"]
         controller = WorkflowController(
-            command_service=fake_command_service,
+            command_service=command_service,
             workflow_config_service=fake_workflow_config_service,
             source_names=source_names,
             workflow_registry=workflow_registry,
@@ -685,7 +699,7 @@ class TestWorkflowController:
         workflow_controller.controller.start_workflow(workflow_id, [], config)
 
         # Assert
-        sent_configs = workflow_controller.command_service.get_sent_workflow_configs()
+        sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
         assert len(sent_configs) == 0  # No configs sent to sources
 
         # Should still save persistent config
@@ -743,10 +757,10 @@ class TestWorkflowController:
         workflow_controller.controller.start_workflow(workflow_id, source_names, config)
 
         # Assert - should have made exactly one batch call with all sources
-        batch_calls = workflow_controller.command_service.get_batch_calls()
+        batch_calls = get_batch_calls(workflow_controller.fake_message_sink)
         assert len(batch_calls) == 1
         assert batch_calls[0] == len(source_names)
 
         # Verify all commands were sent
-        sent_configs = workflow_controller.command_service.get_sent_workflow_configs()
+        sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
         assert len(sent_configs) == len(source_names)
