@@ -99,21 +99,16 @@ class DashboardBase(ServiceBase, ABC):
 
     def _setup_config_service(self) -> None:
         """Set up configuration services using backend MessageSink abstraction."""
+        from ess.livedata.handlers.config_handler import ConfigUpdate
+
         kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
 
         # Create KafkaSink for publishing commands (using backend abstraction)
-        # Note: serializer is not used for LIVEDATA_COMMANDS messages
-        from ess.livedata.core.message import Message
-        from ess.livedata.handlers.config_handler import ConfigUpdate
-
-        def _config_serializer(value: Message[ConfigUpdate]) -> bytes:
-            raise NotImplementedError("ConfigUpdate serialization handled by KafkaSink")
-
+        # Note: KafkaSink handles serialization of ConfigUpdate messages internally
         self._message_sink = KafkaSink[ConfigUpdate](
             kafka_config=kafka_downstream_config,
             instrument=self._instrument,
             logger=self._logger,
-            serializer=_config_serializer,
         )
 
         # Create config service (responses are routed via unified Orchestrator)
