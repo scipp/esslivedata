@@ -85,15 +85,11 @@ class TestCommandService:
     def test_send_empty_batch(
         self, command_service: CommandService, fake_sink: FakeMessageSink
     ):
-        """Test sending an empty batch."""
+        """Test sending an empty batch doesn't publish."""
         command_service.send_batch([])
 
-        # Should have published exactly one batch
-        assert len(fake_sink.published_messages) == 1
-
-        # Batch should be empty
-        messages = fake_sink.published_messages[0]
-        assert len(messages) == 0
+        # Should not have published anything
+        assert len(fake_sink.published_messages) == 0
 
     def test_multiple_sends_create_multiple_batches(
         self, command_service: CommandService, fake_sink: FakeMessageSink

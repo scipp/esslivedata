@@ -57,6 +57,8 @@ class CommandService:
             the command/config type and target, and value is the command or
             configuration value to send.
         """
+        if not commands:
+            return
         messages = [
             Message(
                 stream=COMMANDS_STREAM_ID,
