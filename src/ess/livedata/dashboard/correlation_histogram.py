@@ -376,8 +376,6 @@ class CorrelationHistogram2dConfigurationAdapter(
 class CorrelationHistogramController:
     def __init__(self, data_service: DataService[ResultKey, sc.DataArray]) -> None:
         self._data_service = data_service
-        self._update_subscribers: list[Callable[[], None]] = []
-        self._data_service.subscribe_to_changed_keys(self._on_data_keys_updated)
         self._processors: list[CorrelationHistogramProcessor] = []
 
     def get_data(self, key: ResultKey) -> sc.DataArray:
@@ -400,19 +398,6 @@ class CorrelationHistogramController:
         assembler = MergingStreamAssembler(set(items))
         subscriber = DataSubscriber(assembler, processor)
         self._data_service.register_subscriber(subscriber)
-
-    def register_update_subscriber(self, callback: Callable[[], None]) -> None:
-        """Register a callback to be called when job data is updated."""
-        self._update_subscribers.append(callback)
-
-    def _on_data_keys_updated(
-        self, added: set[ResultKey], removed: set[ResultKey]
-    ) -> None:
-        """Handle job updates from the job service."""
-        _ = added
-        _ = removed
-        for callback in self._update_subscribers:
-            callback()
 
     def get_timeseries(self) -> list[ResultKey]:
         return [key for key, da in self._data_service.items() if _is_timeseries(da)]
