@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
-import json
 import logging
 from dataclasses import replace
 from typing import Any, Generic, Protocol, TypeVar
@@ -87,7 +86,7 @@ class KafkaSink(MessageSink[T]):
                     StreamKind.LIVEDATA_RESPONSES,
                 ):
                     key_bytes = str(msg.value.config_key).encode('utf-8')
-                    value = json.dumps(msg.value.value.model_dump()).encode('utf-8')
+                    value = msg.value.value.model_dump_json().encode('utf-8')
                 elif msg.stream == STATUS_STREAM_ID:
                     key_bytes = None
                     value = job_status_to_x5f2(msg.value)

@@ -192,7 +192,7 @@ def test_workflow_config_widget_adapter_compatibility(
     # Create adapter (this is what WorkflowController.create_workflow_adapter does)
     adapter = WorkflowConfigurationAdapter(
         spec=spec,
-        persistent_config=None,
+        config_state=None,
         start_callback=lambda *args, **kwargs: True,
     )
 

@@ -5,6 +5,7 @@ from typing import Self
 from ..core.message import StreamKind
 from .message_adapter import (
     ChainedAdapter,
+    CommandsAdapter,
     Da00ToScippAdapter,
     Ev44ToDetectorEventsAdapter,
     F144ToLogDataAdapter,
@@ -12,8 +13,8 @@ from .message_adapter import (
     KafkaToEv44Adapter,
     KafkaToF144Adapter,
     KafkaToMonitorEventsAdapter,
-    LivedataConfigMessageAdapter,
     MessageAdapter,
+    ResponsesAdapter,
     RouteBySchemaAdapter,
     RouteByTopicAdapter,
     X5f2ToJobStatusAdapter,
@@ -83,11 +84,14 @@ class RoutingAdapterBuilder:
         )
         return self
 
-    def with_livedata_config_route(self) -> Self:
-        """Adds the livedata config route."""
-        self._routes[self._stream_mapping.livedata_config_topic] = (
-            LivedataConfigMessageAdapter()
-        )
+    def with_livedata_commands_route(self) -> Self:
+        """Adds the livedata commands route."""
+        self._routes[self._stream_mapping.livedata_commands_topic] = CommandsAdapter()
+        return self
+
+    def with_livedata_responses_route(self) -> Self:
+        """Adds the livedata responses route."""
+        self._routes[self._stream_mapping.livedata_responses_topic] = ResponsesAdapter()
         return self
 
     def with_livedata_roi_route(self) -> Self:

@@ -83,6 +83,6 @@ def test_factory_returns_none_for_unknown_stream_kinds() -> None:
     preprocessor = factory.make_preprocessor(unknown_stream_id)
     assert preprocessor is None
 
-    config_stream_id = StreamId(kind=StreamKind.LIVEDATA_CONFIG, name='config')
+    config_stream_id = StreamId(kind=StreamKind.LIVEDATA_COMMANDS, name='config')
     preprocessor = factory.make_preprocessor(config_stream_id)
     assert preprocessor is None
