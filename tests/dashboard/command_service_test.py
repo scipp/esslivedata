@@ -3,26 +3,10 @@
 import pytest
 
 from ess.livedata.config.models import ConfigKey
-from ess.livedata.core.message import COMMANDS_STREAM_ID, Message
+from ess.livedata.core.message import COMMANDS_STREAM_ID
 from ess.livedata.dashboard.command_service import CommandService
+from ess.livedata.fakes import FakeMessageSink
 from ess.livedata.handlers.config_handler import ConfigUpdate
-
-
-class FakeMessageSink:
-    """Fake message sink that preserves batch boundaries for testing.
-
-    Unlike the generic FakeMessageSink in fakes.py, this implementation stores
-    each publish_messages() call as a separate batch. This is necessary to verify
-    batching behavior in CommandService (e.g., that send() creates one batch,
-    send_batch() creates one batch, and empty batches don't publish).
-    """
-
-    def __init__(self):
-        self.published_messages = []
-
-    def publish_messages(self, messages: list[Message]) -> None:
-        """Record published messages as a batch."""
-        self.published_messages.append(messages)
 
 
 @pytest.fixture

@@ -14,23 +14,13 @@ from ess.livedata.config.workflow_spec import (
     WorkflowStatus,
     WorkflowStatusType,
 )
-from ess.livedata.core.message import COMMANDS_STREAM_ID, Message
+from ess.livedata.core.message import COMMANDS_STREAM_ID
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.configuration_adapter import ConfigurationState
 from ess.livedata.dashboard.workflow_config_service import WorkflowConfigService
 from ess.livedata.dashboard.workflow_controller import WorkflowController
+from ess.livedata.fakes import FakeMessageSink
 from ess.livedata.handlers.config_handler import ConfigUpdate
-
-
-class FakeMessageSink:
-    """Fake message sink for testing."""
-
-    def __init__(self):
-        self.published_messages = []
-
-    def publish_messages(self, messages: list[Message]) -> None:
-        """Record published messages."""
-        self.published_messages.append(messages)
 
 
 class WorkflowControllerFixture(NamedTuple):
