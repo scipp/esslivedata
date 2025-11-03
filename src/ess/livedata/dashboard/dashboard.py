@@ -102,27 +102,15 @@ class DashboardBase(ServiceBase, ABC):
         from ess.livedata.handlers.config_handler import ConfigUpdate
 
         kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
-
-        # Create KafkaSink for publishing commands (using backend abstraction)
-        # Note: KafkaSink handles serialization of ConfigUpdate messages internally
-        self._message_sink = KafkaSink[ConfigUpdate](
+        sink = KafkaSink[ConfigUpdate](
             kafka_config=kafka_downstream_config,
             instrument=self._instrument,
             logger=self._logger,
         )
-
-        # Create config service (responses are routed via unified Orchestrator)
         self._workflow_config_service = WorkflowConfigServiceImpl(
-            sink=self._message_sink,
-            logger=self._logger,
+            sink=sink, logger=self._logger
         )
-
-        self._job_command_service = JobCommandService(
-            sink=self._message_sink,
-            logger=self._logger,
-        )
-
-        self._logger.info("Config services setup complete")
+        self._job_command_service = JobCommandService(sink=sink, logger=self._logger)
 
     def _setup_data_infrastructure(self, instrument: str, dev: bool) -> None:
         """Set up data services, forwarder, and orchestrator."""
