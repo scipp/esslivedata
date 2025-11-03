@@ -177,12 +177,15 @@ class WorkflowController:
             )
             self._config_store[workflow_id] = config_state.model_dump()
 
-        # Send workflow config to each source
-        for source_name in source_names:
-            config_key = keys.WORKFLOW_CONFIG.create_key(source_name=source_name)
-            self._command_service.send(config_key, workflow_config)
+        # Send workflow config to all sources in a batch
+        commands = [
+            (keys.WORKFLOW_CONFIG.create_key(source_name=source_name), workflow_config)
+            for source_name in source_names
+        ]
+        self._command_service.send_batch(commands)
 
-            # Set status to STARTING for immediate UI feedback
+        # Set status to STARTING for immediate UI feedback
+        for source_name in source_names:
             self._workflow_status[source_name] = WorkflowStatus(
                 source_name=source_name,
                 workflow_id=workflow_id,

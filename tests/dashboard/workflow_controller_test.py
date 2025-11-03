@@ -41,10 +41,17 @@ class FakeCommandService(CommandService):
 
     def __init__(self):
         self._sent_commands: list[tuple[ConfigKey, Any]] = []
+        self._batch_calls: list[int] = []  # Track number of commands in each batch call
 
     def send(self, key: ConfigKey, value: Any) -> None:
         """Record sent commands."""
         self._sent_commands.append((key, value))
+        self._batch_calls.append(1)  # Single command = batch of 1
+
+    def send_batch(self, commands: list[tuple[ConfigKey, Any]]) -> None:
+        """Record batch of commands."""
+        self._sent_commands.extend(commands)
+        self._batch_calls.append(len(commands))
 
     def get_sent_commands(self) -> list[tuple[ConfigKey, Any]]:
         """Test helper to get sent commands."""
@@ -58,9 +65,14 @@ class FakeCommandService(CommandService):
                 result.append((key.source_name, value))
         return result
 
+    def get_batch_calls(self) -> list[int]:
+        """Test helper to get batch call sizes."""
+        return self._batch_calls.copy()
+
     def clear_sent_commands(self) -> None:
         """Test helper to clear sent commands."""
         self._sent_commands.clear()
+        self._batch_calls.clear()
 
 
 class FakeWorkflowConfigService(WorkflowConfigService):
@@ -717,3 +729,24 @@ class TestWorkflowController:
         assert len(received_status) == len(source_names)
         assert received_status["detector_1"].status == WorkflowStatusType.RUNNING
         assert received_status["detector_2"].status == WorkflowStatusType.UNKNOWN
+
+    def test_start_workflow_sends_commands_in_batch(
+        self,
+        workflow_controller: WorkflowControllerFixture,
+        workflow_id: WorkflowId,
+        source_names: list[str],
+    ):
+        """Test that start_workflow sends commands in a single batch."""
+        config = SomeWorkflowParams(threshold=150.0, mode="accurate")
+
+        # Act
+        workflow_controller.controller.start_workflow(workflow_id, source_names, config)
+
+        # Assert - should have made exactly one batch call with all sources
+        batch_calls = workflow_controller.command_service.get_batch_calls()
+        assert len(batch_calls) == 1
+        assert batch_calls[0] == len(source_names)
+
+        # Verify all commands were sent
+        sent_configs = workflow_controller.command_service.get_sent_workflow_configs()
+        assert len(sent_configs) == len(source_names)

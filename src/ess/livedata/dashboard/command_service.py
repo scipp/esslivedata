@@ -41,7 +41,29 @@ class CommandService:
         value:
             The command or configuration value to send.
         """
-        update = ConfigUpdate(config_key=key, value=value)
-        msg = Message(stream=COMMANDS_STREAM_ID, timestamp=time.time_ns(), value=update)
-        self._sink.publish_messages([msg])
-        self._logger.debug("Sent command for key %s", key)
+        self.send_batch([(key, value)])
+
+    def send_batch(self, commands: list[tuple[ConfigKey, Any]]) -> None:
+        """
+        Send multiple commands or configuration updates in a single batch.
+
+        Batching multiple commands into a single call is more efficient than
+        sending them individually, as it requires only one Kafka flush operation.
+
+        Parameters
+        ----------
+        commands:
+            List of (key, value) tuples where each key is a ConfigKey identifying
+            the command/config type and target, and value is the command or
+            configuration value to send.
+        """
+        messages = [
+            Message(
+                stream=COMMANDS_STREAM_ID,
+                timestamp=time.time_ns(),
+                value=ConfigUpdate(config_key=key, value=val),
+            )
+            for key, val in commands
+        ]
+        self._sink.publish_messages(messages)
+        self._logger.debug("Sent %d command(s)", len(commands))
