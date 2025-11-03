@@ -63,30 +63,14 @@ class Orchestrator:
         if not messages:
             return
 
-        # Separate config messages from data/status messages
-        config_messages = []
-        data_messages = []
-        for message in messages:
-            if message.stream == RESPONSES_STREAM_ID:
-                config_messages.append(message)
-            else:
-                data_messages.append(message)
-
-        # Process config messages immediately (outside transaction)
-        if config_messages and self._config_processor is not None:
-            self._logger.debug("Processing %d config messages", len(config_messages))
-            for message in config_messages:
-                self._config_processor.process_config_item(message.value)
-
-        # Batch data/status updates in a transaction to avoid repeated UI updates.
+        # Batch updates in a transaction to avoid repeated UI updates.
         # Reason:
         # - Some listeners depend on multiple streams.
         # - There may be multiple messages for the same stream, only the last one
         #   should trigger an update.
-        if data_messages:
-            with self._data_service.transaction():
-                for message in data_messages:
-                    self.forward(stream_id=message.stream, value=message.value)
+        with self._data_service.transaction():
+            for message in messages:
+                self.forward(stream_id=message.stream, value=message.value)
 
     def forward(self, stream_id: StreamId, value: Any) -> None:
         """
@@ -102,6 +86,9 @@ class Orchestrator:
         """
         if stream_id == STATUS_STREAM_ID:
             self._job_service.status_updated(value)
+        elif stream_id == RESPONSES_STREAM_ID:
+            if self._config_processor is not None:
+                self._config_processor.process_config_item(value)
         else:
             result_key = ResultKey.model_validate_json(stream_id.name)
             self._data_service[result_key] = value
