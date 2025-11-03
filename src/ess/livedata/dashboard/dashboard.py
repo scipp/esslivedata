@@ -143,12 +143,8 @@ class DashboardBase(ServiceBase, ABC):
             logger=self._logger,
             roi_publisher=roi_publisher,
         )
-        # Setup unified message source for all dashboard streams
-        self._message_source = self._setup_kafka_consumer(
-            instrument=instrument, dev=dev
-        )
         self._orchestrator = Orchestrator(
-            self._message_source,
+            self._setup_kafka_consumer(instrument=instrument, dev=dev),
             data_service=self._data_service,
             job_service=self._job_service,
             config_processor=self._workflow_config_service,
@@ -174,11 +170,7 @@ class DashboardBase(ServiceBase, ABC):
         consumer = self._exit_stack.enter_context(
             kafka_consumer.make_consumer_from_config(
                 topics=topics,
-                config={
-                    **consumer_config,
-                    **kafka_downstream_config,
-                    'auto.offset.reset': 'latest',
-                },
+                config={**consumer_config, **kafka_downstream_config},
                 group='dashboard',
             )
         )
