@@ -17,6 +17,7 @@ from ess.livedata.config.instruments import get_config
 from ess.livedata.config.streams import get_stream_mapping, stream_kind_to_topic
 from ess.livedata.config.workflow_spec import ResultKey
 from ess.livedata.core.message import StreamKind
+from ess.livedata.handlers.config_handler import ConfigUpdate
 from ess.livedata.kafka import consumer as kafka_consumer
 from ess.livedata.kafka.message_adapter import AdaptingMessageSource
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
@@ -74,7 +75,6 @@ class DashboardBase(ServiceBase, ABC):
         self._plotter_config_store = InMemoryConfigStore(
             max_configs=100, cleanup_fraction=0.2
         )
-        self._setup_config_service()
         self._setup_data_infrastructure(instrument=instrument, dev=dev)
         self._logger.info("%s initialized", self.__class__.__name__)
 
@@ -97,23 +97,22 @@ class DashboardBase(ServiceBase, ABC):
         # Currently unused, should this allow for defining a custom layout where plots
         # should be placed?
 
-    def _setup_config_service(self) -> None:
-        """Set up configuration services using backend MessageSink abstraction."""
-        from ess.livedata.handlers.config_handler import ConfigUpdate
-
+    def _setup_data_infrastructure(self, instrument: str, dev: bool) -> None:
+        """Set up data services, forwarder, and orchestrator."""
+        # Sink for commands
         kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
-        sink = KafkaSink[ConfigUpdate](
+        command_sink = KafkaSink[ConfigUpdate](
             kafka_config=kafka_downstream_config,
             instrument=self._instrument,
             logger=self._logger,
         )
         self._workflow_config_service = WorkflowConfigServiceImpl(
-            sink=sink, logger=self._logger
+            sink=command_sink, logger=self._logger
         )
-        self._job_command_service = JobCommandService(sink=sink, logger=self._logger)
+        self._job_command_service = JobCommandService(
+            sink=command_sink, logger=self._logger
+        )
 
-    def _setup_data_infrastructure(self, instrument: str, dev: bool) -> None:
-        """Set up data services, forwarder, and orchestrator."""
         # da00 of backend services converted to scipp.DataArray
         ScippDataService = DataService[ResultKey, sc.DataArray]
         self._data_service = ScippDataService()
@@ -164,18 +163,17 @@ class DashboardBase(ServiceBase, ABC):
             namespace=config_names.reduced_data_consumer, env=''
         )
         kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
-        data_topic = stream_kind_to_topic(
-            instrument=self._instrument, kind=StreamKind.LIVEDATA_DATA
-        )
-        status_topic = stream_kind_to_topic(
-            instrument=self._instrument, kind=StreamKind.LIVEDATA_STATUS
-        )
-        responses_topic = stream_kind_to_topic(
-            instrument=self._instrument, kind=StreamKind.LIVEDATA_RESPONSES
-        )
+        topics = [
+            stream_kind_to_topic(instrument=self._instrument, kind=kind)
+            for kind in [
+                StreamKind.LIVEDATA_DATA,
+                StreamKind.LIVEDATA_STATUS,
+                StreamKind.LIVEDATA_RESPONSES,
+            ]
+        ]
         consumer = self._exit_stack.enter_context(
             kafka_consumer.make_consumer_from_config(
-                topics=[data_topic, status_topic, responses_topic],
+                topics=topics,
                 config={
                     **consumer_config,
                     **kafka_downstream_config,
