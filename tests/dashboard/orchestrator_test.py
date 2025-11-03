@@ -317,48 +317,48 @@ class TestOrchestrator:
         assert result_key in data_service
 
 
-class FakeConfigProcessor:
-    """Fake config processor that records processed items."""
+class FakeWorkflowConfigService:
+    """Fake workflow config service that records processed responses."""
 
     def __init__(self):
-        self.processed_items = []
+        self.processed_responses = []
 
-    def process_config_item(self, raw_item) -> None:
-        """Record the processed config item."""
-        self.processed_items.append(raw_item)
+    def process_response(self, response) -> None:
+        """Record the processed response."""
+        self.processed_responses.append(response)
 
 
 class TestOrchestratorConfigProcessing:
     def test_forward_with_config_message(self) -> None:
-        """Test that config messages are forwarded to config processor."""
+        """Test that config messages are forwarded to workflow config service."""
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService(data_service=data_service)
-        config_processor = FakeConfigProcessor()
+        workflow_config_service = FakeWorkflowConfigService()
         orchestrator = Orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            config_processor=config_processor,
+            workflow_config_service=workflow_config_service,
         )
 
         config_data = {"key": "value"}
         orchestrator.forward(RESPONSES_STREAM_ID, config_data)
 
-        assert len(config_processor.processed_items) == 1
-        assert config_processor.processed_items[0] == config_data
+        assert len(workflow_config_service.processed_responses) == 1
+        assert workflow_config_service.processed_responses[0] == config_data
 
     def test_update_with_config_message(self) -> None:
         """Test that config messages are processed in update."""
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService(data_service=data_service)
-        config_processor = FakeConfigProcessor()
+        workflow_config_service = FakeWorkflowConfigService()
         orchestrator = Orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            config_processor=config_processor,
+            workflow_config_service=workflow_config_service,
         )
 
         config_data = {"instrument": "test"}
@@ -366,11 +366,11 @@ class TestOrchestratorConfigProcessing:
 
         orchestrator.update()
 
-        assert len(config_processor.processed_items) == 1
-        assert config_processor.processed_items[0] == config_data
+        assert len(workflow_config_service.processed_responses) == 1
+        assert workflow_config_service.processed_responses[0] == config_data
 
     def test_forward_with_config_message_no_processor(self) -> None:
-        """Test that config messages are handled gracefully without processor."""
+        """Test that config messages are handled gracefully without service."""
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService(data_service=data_service)
@@ -378,7 +378,7 @@ class TestOrchestratorConfigProcessing:
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            config_processor=None,
+            workflow_config_service=None,
         )
 
         config_data = {"key": "value"}
@@ -390,12 +390,12 @@ class TestOrchestratorConfigProcessing:
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService(data_service=data_service)
-        config_processor = FakeConfigProcessor()
+        workflow_config_service = FakeWorkflowConfigService()
         orchestrator = Orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            config_processor=config_processor,
+            workflow_config_service=workflow_config_service,
         )
 
         workflow_id = WorkflowId(
@@ -427,8 +427,8 @@ class TestOrchestratorConfigProcessing:
         orchestrator.update()
 
         # Both messages should be processed
-        assert len(config_processor.processed_items) == 1
-        assert config_processor.processed_items[0] == config_data
+        assert len(workflow_config_service.processed_responses) == 1
+        assert workflow_config_service.processed_responses[0] == config_data
         assert result_key in data_service
         # Should use only one transaction for batching
         assert transaction_count == 1
