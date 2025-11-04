@@ -17,8 +17,11 @@ from ..core.message import (
     COMMANDS_STREAM_ID,
     RESPONSES_STREAM_ID,
     STATUS_STREAM_ID,
+    DomainConverter,
     Message,
+    MessageSink,
     MessageSource,
+    SchemaMessageSink,
     StreamId,
     StreamKind,
 )
@@ -30,6 +33,7 @@ from .x5f2_compat import x5f2_to_job_status
 T = TypeVar('T')
 U = TypeVar('U')
 V = TypeVar('V')
+S = TypeVar('S')
 
 
 class KafkaMessage(Protocol):
@@ -366,3 +370,27 @@ class AdaptingMessageSource(MessageSource[U]):
                 if self._raise_on_error:
                     raise
         return adapted
+
+
+class ConvertingMessageSink(MessageSink[T]):
+    """
+    Wraps a schema-level sink with domain conversion.
+
+    This adapter sits between domain layer (workflows, handlers) and
+    transport layer (Kafka, files, etc.). It converts domain messages
+    to schema format before publishing.
+    """
+
+    def __init__(
+        self,
+        *,
+        schema_sink: SchemaMessageSink[S],
+        converter: DomainConverter[S, T],
+    ):
+        self._schema_sink = schema_sink
+        self._converter = converter
+
+    def publish_messages(self, messages: list[Message[T]]) -> None:
+        """Convert domain messages to schema format and publish."""
+        schema_messages = [self._converter.to_schema(msg) for msg in messages]
+        self._schema_sink.publish_messages(schema_messages)

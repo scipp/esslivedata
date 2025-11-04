@@ -67,6 +67,125 @@ class Message(Generic[T]):
         return self.timestamp < other.timestamp
 
 
+S = TypeVar('S')
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SchemaMessage(Generic[S]):
+    """
+    Message with schema-specific data format.
+
+    This sits at the boundary between transport layer (Kafka) and domain layer.
+    The schema format S comes from streaming_data_types library (EventData,
+    da00 Variables, etc.).
+
+    Parameters
+    ----------
+    stream:
+        The stream identifier for this message.
+    data:
+        Schema-specific data format from streaming_data_types.
+    timestamp:
+        The timestamp in nanoseconds since the epoch in UTC.
+    key:
+        Optional message key for Kafka partitioning/compaction.
+    """
+
+    stream: StreamId
+    data: S
+    timestamp: int
+    key: bytes | None = None
+
+
+class SchemaSerializer(Protocol[S]):
+    """Serializes schema-specific format to bytes for wire transmission."""
+
+    def serialize(self, msg: SchemaMessage[S]) -> bytes:
+        """
+        Serialize schema message to wire format.
+
+        Parameters
+        ----------
+        msg:
+            The schema message to serialize.
+
+        Returns
+        -------
+        :
+            Serialized bytes ready for transport.
+        """
+        ...
+
+
+class SchemaDeserializer(Protocol[S]):
+    """Deserializes bytes to schema-specific format with metadata extraction."""
+
+    def deserialize(
+        self,
+        data: bytes,
+        *,
+        topic: str,
+        timestamp: int,
+        key: bytes | None,
+    ) -> SchemaMessage[S]:
+        """
+        Deserialize bytes to schema message.
+
+        Parameters
+        ----------
+        data:
+            Raw bytes from transport layer.
+        topic:
+            Source topic (used for stream resolution).
+        timestamp:
+            Message timestamp from transport layer.
+        key:
+            Optional message key from transport layer.
+
+        Returns
+        -------
+        :
+            Schema message with extracted metadata.
+        """
+        ...
+
+
+class DomainConverter(Protocol[S, T]):
+    """Converts between schema format and domain model."""
+
+    def to_domain(self, schema_msg: SchemaMessage[S]) -> Message[T]:
+        """
+        Convert schema message to domain message.
+
+        Parameters
+        ----------
+        schema_msg:
+            Schema message to convert.
+
+        Returns
+        -------
+        :
+            Domain message.
+        """
+        ...
+
+    def to_schema(self, msg: Message[T]) -> SchemaMessage[S]:
+        """
+        Convert domain message to schema message.
+
+        Parameters
+        ----------
+        msg:
+            Domain message to convert.
+
+        Returns
+        -------
+        :
+            Schema message.
+        """
+        ...
+
+
 class MessageSource(Protocol, Generic[Tin]):
     # Note that Tin is often (but not always) Message[T]
     def get_messages(self) -> Sequence[Tin]: ...
@@ -80,6 +199,21 @@ class MessageSink(Protocol, Generic[Tout]):
         Args:
             messages: A list of messages to publish.
         """
+
+
+class SchemaMessageSink(Protocol, Generic[S]):
+    """Sink for schema-level messages."""
+
+    def publish_messages(self, messages: list[SchemaMessage[S]]) -> None:
+        """
+        Publish schema messages.
+
+        Parameters
+        ----------
+        messages:
+            A list of schema messages to publish.
+        """
+        ...
 
 
 def compact_messages(messages: list[Message[T]]) -> list[Message[T]]:

@@ -10,22 +10,41 @@ from streaming_data_types import dataarray_da00, logdata_f144
 
 from ..config.streams import stream_kind_to_topic
 from ..config.workflow_spec import ResultKey
-from ..core.message import STATUS_STREAM_ID, Message, MessageSink, StreamKind
+from ..core.message import (
+    Message,
+    MessageSink,
+    SchemaMessage,
+    SchemaMessageSink,
+    SchemaSerializer,
+)
 from .scipp_da00_compat import scipp_to_da00
-from .x5f2_compat import job_status_to_x5f2
 
 T = TypeVar("T")
+S = TypeVar("S")
 
 
 class SerializationError(Exception):
     """Raised when serialization of a message fails."""
 
 
+# ====== DEPRECATED: Use schema_codecs.py instead ======
+# The following are legacy serializers kept for backward compatibility.
+# New code should use the schema codec classes in kafka/schema_codecs.py.
+
+
 class Serializer(Protocol, Generic[T]):
+    """Deprecated: Use SchemaSerializer from schema_codecs.py instead."""
+
     def __call__(self, value: Message[T]) -> bytes: ...
 
 
 def serialize_dataarray_to_da00(msg: Message[sc.DataArray]) -> bytes:
+    """
+    Deprecated: Use Da00Serializer and ScippDa00Converter from schema_codecs.py.
+
+    This function combines domain conversion (scipp -> da00) with serialization
+    (da00 -> bytes). The new architecture separates these concerns.
+    """
     try:
         # We use the payload timestamp, which in turn was set from the result's
         # `start_time`. Depending on whether the result is a cumulative result or a
@@ -42,6 +61,12 @@ def serialize_dataarray_to_da00(msg: Message[sc.DataArray]) -> bytes:
 
 
 def serialize_dataarray_to_f144(msg: Message[sc.DataArray]) -> bytes:
+    """
+    Deprecated: Use F144Serializer from schema_codecs.py.
+
+    This function combines domain conversion with serialization.
+    The new architecture separates these concerns.
+    """
     try:
         da = msg.value
         f144 = logdata_f144.serialise_f144(
@@ -54,21 +79,30 @@ def serialize_dataarray_to_f144(msg: Message[sc.DataArray]) -> bytes:
     return f144
 
 
-class KafkaSink(MessageSink[T]):
+class KafkaSink(SchemaMessageSink[S]):
+    """
+    Pure Kafka transport layer for schema messages.
+
+    Only knows about SchemaMessage and bytes. No domain knowledge.
+    Can be reused with any schema format.
+    """
+
     def __init__(
         self,
         *,
         logger: logging.Logger | None = None,
         instrument: str,
         kafka_config: dict[str, Any],
-        serializer: Serializer[T] = serialize_dataarray_to_da00,
+        schema_serializer: SchemaSerializer[S],
     ):
         self._logger = logger or logging.getLogger(__name__)
         self._producer = kafka.Producer(kafka_config)
-        self._serializer = serializer
+        self._serializer = schema_serializer
         self._instrument = instrument
 
-    def publish_messages(self, messages: Message[T]) -> None:
+    def publish_messages(self, messages: list[SchemaMessage[S]]) -> None:
+        """Publish schema messages to Kafka."""
+
         def delivery_callback(err, msg):
             if err is not None:
                 self._logger.error(
@@ -76,41 +110,27 @@ class KafkaSink(MessageSink[T]):
                 )
 
         self._logger.debug("Publishing %d messages", len(messages))
+
         for msg in messages:
+            topic = stream_kind_to_topic(
+                instrument=self._instrument, kind=msg.stream.kind
+            )
             try:
-                topic = stream_kind_to_topic(
-                    instrument=self._instrument, kind=msg.stream.kind
+                # Schema serializer handles SchemaMessage -> bytes
+                value_bytes = self._serializer.serialize(msg)
+
+                self._producer.produce(
+                    topic=topic,
+                    key=msg.key,  # Key already on SchemaMessage
+                    value=value_bytes,
+                    callback=delivery_callback,
                 )
-                if msg.stream.kind in (
-                    StreamKind.LIVEDATA_COMMANDS,
-                    StreamKind.LIVEDATA_RESPONSES,
-                ):
-                    key_bytes = str(msg.value.config_key).encode('utf-8')
-                    value = msg.value.value.model_dump_json().encode('utf-8')
-                elif msg.stream == STATUS_STREAM_ID:
-                    key_bytes = None
-                    value = job_status_to_x5f2(msg.value)
-                else:
-                    key_bytes = None
-                    value = self._serializer(msg)
+                self._producer.poll(0)
+
             except SerializationError as e:
                 self._logger.error("Failed to serialize message: %s", e)
-            else:
-                try:
-                    if key_bytes is None:
-                        self._producer.produce(
-                            topic=topic, value=value, callback=delivery_callback
-                        )
-                    else:
-                        self._producer.produce(
-                            topic=topic,
-                            key=key_bytes,
-                            value=value,
-                            callback=delivery_callback,
-                        )
-                    self._producer.poll(0)
-                except kafka.KafkaException as e:
-                    self._logger.error("Failed to publish message to %s: %s", topic, e)
+            except kafka.KafkaException as e:
+                self._logger.error("Failed to publish message to %s: %s", topic, e)
 
         try:
             self._producer.flush(timeout=3)
