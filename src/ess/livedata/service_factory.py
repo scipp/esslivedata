@@ -11,6 +11,7 @@ from typing import Any, Generic, NoReturn, TypeVar
 from .config import config_names
 from .config.config_loader import load_config
 from .core import MessageSink, Processor
+from .core.converters import CompoundDomainConverter, CompoundSchemaSerializer
 from .core.handler import JobBasedPreprocessorFactoryBase, PreprocessorFactory
 from .core.message import Message, MessageSource
 from .core.orchestrating_processor import OrchestratingProcessor
@@ -22,7 +23,6 @@ from .kafka.message_adapter import (
     ConvertingMessageSink,
     MessageAdapter,
 )
-from .kafka.schema_codecs import make_standard_converter, make_standard_serializer
 from .kafka.sink import KafkaSink, UnrollingSinkAdapter
 from .kafka.source import (
     BackgroundMessageSource,
@@ -215,10 +215,11 @@ class DataServiceRunner:
             schema_sink = KafkaSink(
                 instrument=builder.instrument,
                 kafka_config=kafka_downstream_config,
-                schema_serializer=make_standard_serializer(),
+                schema_serializer=CompoundSchemaSerializer.make_standard(),
             )
             sink = ConvertingMessageSink(
-                schema_sink=schema_sink, converter=make_standard_converter()
+                schema_sink=schema_sink,
+                converter=CompoundDomainConverter.make_standard(),
             )
         else:
             sink = PlotToPngSink()

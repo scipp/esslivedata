@@ -16,6 +16,10 @@ from ess.livedata.config.config_loader import load_config
 from ess.livedata.config.instruments import get_config
 from ess.livedata.config.streams import get_stream_mapping, stream_kind_to_topic
 from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.core.converters import (
+    CompoundDomainConverter,
+    CompoundSchemaSerializer,
+)
 from ess.livedata.core.message import StreamKind
 from ess.livedata.handlers.config_handler import ConfigUpdate
 from ess.livedata.kafka import consumer as kafka_consumer
@@ -24,10 +28,6 @@ from ess.livedata.kafka.message_adapter import (
     ConvertingMessageSink,
 )
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
-from ess.livedata.kafka.schema_codecs import (
-    make_standard_converter,
-    make_standard_serializer,
-)
 from ess.livedata.kafka.sink import KafkaSink
 from ess.livedata.kafka.source import BackgroundMessageSource
 
@@ -134,11 +134,12 @@ class DashboardBase(ServiceBase, ABC):
         roi_schema_sink = KafkaSink(
             kafka_config=kafka_upstream_config,
             instrument=instrument,
-            schema_serializer=make_standard_serializer(),
+            schema_serializer=CompoundSchemaSerializer.make_standard(),
             logger=self._logger,
         )
         roi_sink = ConvertingMessageSink(
-            schema_sink=roi_schema_sink, converter=make_standard_converter()
+            schema_sink=roi_schema_sink,
+            converter=CompoundDomainConverter.make_standard(),
         )
         roi_publisher = ROIPublisher(sink=roi_sink, logger=self._logger)
 

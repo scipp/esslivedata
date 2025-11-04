@@ -5,15 +5,15 @@
 import scipp as sc
 from streaming_data_types import dataarray_da00
 
-from ess.livedata.core.message import Message, SchemaMessage, StreamId, StreamKind
-from ess.livedata.kafka.schema_codecs import (
+from ess.livedata.core.converters import (
     CompoundDomainConverter,
     CompoundSchemaSerializer,
+    ScippDa00Converter,
+)
+from ess.livedata.core.message import Message, SchemaMessage, StreamId, StreamKind
+from ess.livedata.kafka.schema_codecs import (
     Da00Deserializer,
     Da00Serializer,
-    ScippDa00Converter,
-    make_standard_converter,
-    make_standard_serializer,
 )
 
 
@@ -162,7 +162,7 @@ def test_compound_domain_converter():
 
 def test_make_standard_serializer():
     """Test make_standard_serializer creates serializer for common stream kinds."""
-    compound = make_standard_serializer()
+    compound = CompoundSchemaSerializer.make_standard()
 
     # Test da00 stream kinds
     da = sc.DataArray(sc.array(dims=['x'], values=[1.0], unit='m'))
@@ -183,7 +183,7 @@ def test_make_standard_serializer():
 
 def test_make_standard_converter():
     """Test make_standard_converter creates converter for common stream kinds."""
-    compound = make_standard_converter()
+    compound = CompoundDomainConverter.make_standard()
 
     # Verify common stream kinds are registered
     da = sc.DataArray(sc.array(dims=['x'], values=[1.0], unit='m'))
