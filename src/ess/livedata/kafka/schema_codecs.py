@@ -405,3 +405,204 @@ class ConfigUpdateConverter(DomainConverter[RawConfigItem, ConfigUpdate]):
             timestamp=msg.timestamp,
             key=key_bytes,  # Key for Kafka compaction
         )
+
+
+class CompoundDomainConverter:
+    """
+    Domain converter that dispatches to registered converters by StreamKind.
+
+    This allows converting multiple domain types to their corresponding schema formats.
+    """
+
+    def __init__(self):
+        self._converters: dict[StreamKind, DomainConverter] = {}
+
+    def register(
+        self, stream_kind: StreamKind, converter: DomainConverter
+    ) -> 'CompoundDomainConverter':
+        """
+        Register a converter for a specific StreamKind.
+
+        Parameters
+        ----------
+        stream_kind:
+            The stream kind to register the converter for.
+        converter:
+            The domain converter to use for this stream kind.
+
+        Returns
+        -------
+        :
+            Self, for method chaining.
+        """
+        self._converters[stream_kind] = converter
+        return self
+
+    def to_schema(self, msg: Message) -> SchemaMessage:
+        """
+        Convert domain message to schema message.
+
+        Parameters
+        ----------
+        msg:
+            Domain message to convert.
+
+        Returns
+        -------
+        :
+            Schema message.
+        """
+        if msg.stream.kind not in self._converters:
+            raise ValueError(
+                f"No converter registered for StreamKind {msg.stream.kind}. "
+                f"Registered kinds: {set(self._converters.keys())}"
+            )
+        converter = self._converters[msg.stream.kind]
+        return converter.to_schema(msg)
+
+    def to_domain(self, schema_msg: SchemaMessage) -> Message:
+        """
+        Convert schema message to domain message.
+
+        Parameters
+        ----------
+        schema_msg:
+            Schema message to convert.
+
+        Returns
+        -------
+        :
+            Domain message.
+        """
+        if schema_msg.stream.kind not in self._converters:
+            raise ValueError(
+                f"No converter registered for StreamKind {schema_msg.stream.kind}. "
+                f"Registered kinds: {set(self._converters.keys())}"
+            )
+        converter = self._converters[schema_msg.stream.kind]
+        return converter.to_domain(schema_msg)
+
+
+class CompoundSchemaSerializer:
+    """
+    Schema serializer that dispatches to registered serializers by StreamKind.
+
+    This allows a single sink to handle messages with different schema formats.
+    Multiple StreamKinds can share the same serializer instance.
+    """
+
+    def __init__(self):
+        self._serializers: dict[StreamKind, SchemaSerializer] = {}
+
+    def register(
+        self, stream_kind: StreamKind, serializer: SchemaSerializer
+    ) -> 'CompoundSchemaSerializer':
+        """
+        Register a serializer for a specific StreamKind.
+
+        Parameters
+        ----------
+        stream_kind:
+            The stream kind to register the serializer for.
+        serializer:
+            The schema serializer to use for this stream kind.
+
+        Returns
+        -------
+        :
+            Self, for method chaining.
+        """
+        self._serializers[stream_kind] = serializer
+        return self
+
+    def serialize(self, msg: SchemaMessage) -> bytes:
+        """
+        Serialize schema message by dispatching to the registered serializer.
+
+        Parameters
+        ----------
+        msg:
+            Schema message to serialize.
+
+        Returns
+        -------
+        :
+            Serialized bytes.
+        """
+        if msg.stream.kind not in self._serializers:
+            raise ValueError(
+                f"No serializer registered for StreamKind {msg.stream.kind}. "
+                f"Registered kinds: {set(self._serializers.keys())}"
+            )
+        serializer = self._serializers[msg.stream.kind]
+        return serializer.serialize(msg)
+
+
+def make_standard_converter() -> CompoundDomainConverter:
+    """
+    Create a CompoundDomainConverter with all standard domain converters.
+
+    This registers converters for common StreamKinds to their schema formats.
+
+    Returns
+    -------
+    :
+        Configured compound converter.
+    """
+    # Create converter instances (can be shared where domain types are the same)
+    monitor_events_converter = MonitorEventsEv44Converter()
+    detector_events_converter = DetectorEventsEv44Converter()
+    scipp_da00_converter = ScippDa00Converter()
+    log_data_converter = LogDataF144Converter()
+    status_converter = StatusX5f2ToJobStatusConverter()
+    config_converter = ConfigUpdateConverter()
+
+    compound = CompoundDomainConverter()
+    compound.register(StreamKind.MONITOR_EVENTS, monitor_events_converter)
+    compound.register(StreamKind.MONITOR_COUNTS, monitor_events_converter)
+    compound.register(StreamKind.DETECTOR_EVENTS, detector_events_converter)
+    compound.register(StreamKind.LIVEDATA_DATA, scipp_da00_converter)
+    compound.register(StreamKind.LIVEDATA_ROI, scipp_da00_converter)
+    compound.register(StreamKind.LOG, log_data_converter)
+    compound.register(StreamKind.LIVEDATA_STATUS, status_converter)
+    compound.register(StreamKind.LIVEDATA_COMMANDS, config_converter)
+    compound.register(StreamKind.LIVEDATA_RESPONSES, config_converter)
+
+    return compound
+
+
+def make_standard_serializer() -> CompoundSchemaSerializer:
+    """
+    Create a CompoundSchemaSerializer with all standard schema serializers.
+
+    This registers serializers for common StreamKinds:
+    - MONITOR_EVENTS, DETECTOR_EVENTS, MONITOR_COUNTS: ev44
+    - LIVEDATA_DATA, LIVEDATA_ROI: da00
+    - LOG: f144
+    - LIVEDATA_STATUS: x5f2
+    - LIVEDATA_COMMANDS, LIVEDATA_RESPONSES: config
+
+    Returns
+    -------
+    :
+        Configured compound serializer.
+    """
+    # Create serializer instances (can be shared where formats are the same)
+    ev44_serializer = Ev44Serializer()
+    da00_serializer = Da00Serializer()
+    f144_serializer = F144Serializer()
+    x5f2_serializer = X5f2Serializer()
+    config_serializer = ConfigSerializer()
+
+    compound = CompoundSchemaSerializer()
+    compound.register(StreamKind.MONITOR_EVENTS, ev44_serializer)
+    compound.register(StreamKind.MONITOR_COUNTS, ev44_serializer)
+    compound.register(StreamKind.DETECTOR_EVENTS, ev44_serializer)
+    compound.register(StreamKind.LIVEDATA_DATA, da00_serializer)
+    compound.register(StreamKind.LIVEDATA_ROI, da00_serializer)
+    compound.register(StreamKind.LOG, f144_serializer)
+    compound.register(StreamKind.LIVEDATA_STATUS, x5f2_serializer)
+    compound.register(StreamKind.LIVEDATA_COMMANDS, config_serializer)
+    compound.register(StreamKind.LIVEDATA_RESPONSES, config_serializer)
+
+    return compound

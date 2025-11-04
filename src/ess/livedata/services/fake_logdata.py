@@ -10,7 +10,12 @@ from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.core import IdentityProcessor
-from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_f144
+from ess.livedata.kafka.message_adapter import ConvertingMessageSink
+from ess.livedata.kafka.schema_codecs import (
+    make_standard_converter,
+    make_standard_serializer,
+)
+from ess.livedata.kafka.sink import KafkaSink
 
 
 def _make_ramp(size: int) -> sc.DataArray:
@@ -114,13 +119,19 @@ class FakeLogdataSource(MessageSource[sc.DataArray]):
 
 def run_service(*, instrument: str, log_level: int = logging.INFO) -> NoReturn:
     kafka_config = load_config(namespace=config_names.kafka_upstream)
-    serializer = serialize_dataarray_to_f144
+
+    schema_sink = KafkaSink(
+        instrument=instrument,
+        kafka_config=kafka_config,
+        schema_serializer=make_standard_serializer(),
+    )
+    sink = ConvertingMessageSink(
+        schema_sink=schema_sink, converter=make_standard_converter()
+    )
 
     processor = IdentityProcessor(
         source=FakeLogdataSource(instrument=instrument),
-        sink=KafkaSink(
-            instrument=instrument, kafka_config=kafka_config, serializer=serializer
-        ),
+        sink=sink,
     )
     service = Service(
         processor=processor,

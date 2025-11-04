@@ -14,7 +14,6 @@ from ..core.message import (
     Message,
     MessageSink,
     SchemaMessage,
-    SchemaMessageSink,
     SchemaSerializer,
 )
 from .scipp_da00_compat import scipp_to_da00
@@ -79,12 +78,12 @@ def serialize_dataarray_to_f144(msg: Message[sc.DataArray]) -> bytes:
     return f144
 
 
-class KafkaSink(SchemaMessageSink[S]):
+class KafkaSink:
     """
     Pure Kafka transport layer for schema messages.
 
     Only knows about SchemaMessage and bytes. No domain knowledge.
-    Can be reused with any schema format.
+    Can be reused with any schema format via CompoundSchemaSerializer.
     """
 
     def __init__(
@@ -93,14 +92,14 @@ class KafkaSink(SchemaMessageSink[S]):
         logger: logging.Logger | None = None,
         instrument: str,
         kafka_config: dict[str, Any],
-        schema_serializer: SchemaSerializer[S],
+        schema_serializer: SchemaSerializer,
     ):
         self._logger = logger or logging.getLogger(__name__)
         self._producer = kafka.Producer(kafka_config)
         self._serializer = schema_serializer
         self._instrument = instrument
 
-    def publish_messages(self, messages: list[SchemaMessage[S]]) -> None:
+    def publish_messages(self, messages: list[SchemaMessage]) -> None:
         """Publish schema messages to Kafka."""
 
         def delivery_callback(err, msg):

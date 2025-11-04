@@ -13,12 +13,16 @@ from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.core import IdentityProcessor
-from ess.livedata.kafka.message_adapter import AdaptingMessageSource, MessageAdapter
-from ess.livedata.kafka.sink import (
-    KafkaSink,
-    SerializationError,
-    serialize_dataarray_to_da00,
+from ess.livedata.kafka.message_adapter import (
+    AdaptingMessageSource,
+    ConvertingMessageSink,
+    MessageAdapter,
 )
+from ess.livedata.kafka.schema_codecs import (
+    make_standard_converter,
+    make_standard_serializer,
+)
+from ess.livedata.kafka.sink import KafkaSink, SerializationError
 
 
 class FakeMonitorSource(MessageSource[sc.Variable]):
@@ -122,23 +126,25 @@ def run_service(
     kafka_config = load_config(namespace=config_names.kafka_upstream)
     if mode == 'ev44':
         adapter = None
-        serializer = serialize_variable_to_monitor_ev44
     else:
         adapter = EventsToHistogramAdapter(
             toa=sc.linspace('toa', 0, 71_000_000, num=1001, unit='ns')
         )
-        serializer = serialize_dataarray_to_da00
 
     source = FakeMonitorSource(instrument=instrument, num_monitors=num_monitors)
     if adapter is not None:
         source = AdaptingMessageSource(source=source, adapter=adapter)
 
-    processor = IdentityProcessor(
-        source=source,
-        sink=KafkaSink(
-            instrument=instrument, kafka_config=kafka_config, serializer=serializer
-        ),
+    schema_sink = KafkaSink(
+        instrument=instrument,
+        kafka_config=kafka_config,
+        schema_serializer=make_standard_serializer(),
     )
+    sink = ConvertingMessageSink(
+        schema_sink=schema_sink, converter=make_standard_converter()
+    )
+
+    processor = IdentityProcessor(source=source, sink=sink)
     service = Service(
         processor=processor,
         name=f'{instrument}_fake_{mode}_producer',

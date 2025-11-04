@@ -10,7 +10,12 @@ import scipp as sc
 from ess.livedata import Message, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
-from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_f144
+from ess.livedata.kafka.message_adapter import ConvertingMessageSink
+from ess.livedata.kafka.schema_codecs import (
+    make_standard_converter,
+    make_standard_serializer,
+)
+from ess.livedata.kafka.sink import KafkaSink
 
 
 class LogProducerWidget:
@@ -20,11 +25,14 @@ class LogProducerWidget:
         self._instrument = instrument
         self._logger = logger
 
-        self._sink = KafkaSink(
+        schema_sink = KafkaSink(
             kafka_config=load_config(namespace=config_names.kafka_upstream),
             instrument=instrument,
-            serializer=serialize_dataarray_to_f144,
+            schema_serializer=make_standard_serializer(),
             logger=logger,
+        )
+        self._sink = ConvertingMessageSink(
+            schema_sink=schema_sink, converter=make_standard_converter()
         )
 
         self._throttled_checkbox = pn.widgets.Checkbox(

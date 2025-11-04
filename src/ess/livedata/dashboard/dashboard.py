@@ -19,9 +19,16 @@ from ess.livedata.config.workflow_spec import ResultKey
 from ess.livedata.core.message import StreamKind
 from ess.livedata.handlers.config_handler import ConfigUpdate
 from ess.livedata.kafka import consumer as kafka_consumer
-from ess.livedata.kafka.message_adapter import AdaptingMessageSource
+from ess.livedata.kafka.message_adapter import (
+    AdaptingMessageSource,
+    ConvertingMessageSink,
+)
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
-from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_da00
+from ess.livedata.kafka.schema_codecs import (
+    make_standard_converter,
+    make_standard_serializer,
+)
+from ess.livedata.kafka.sink import KafkaSink
 from ess.livedata.kafka.source import BackgroundMessageSource
 
 from .command_service import CommandService
@@ -124,11 +131,14 @@ class DashboardBase(ServiceBase, ABC):
 
         # Create ROI publisher for publishing ROI updates to Kafka
         kafka_upstream_config = load_config(namespace=config_names.kafka_upstream)
-        roi_sink = KafkaSink(
+        roi_schema_sink = KafkaSink(
             kafka_config=kafka_upstream_config,
             instrument=instrument,
-            serializer=serialize_dataarray_to_da00,
+            schema_serializer=make_standard_serializer(),
             logger=self._logger,
+        )
+        roi_sink = ConvertingMessageSink(
+            schema_sink=roi_schema_sink, converter=make_standard_converter()
         )
         roi_publisher = ROIPublisher(sink=roi_sink, logger=self._logger)
 

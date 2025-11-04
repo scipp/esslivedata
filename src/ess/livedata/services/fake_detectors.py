@@ -16,6 +16,11 @@ from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.config.instruments import get_config
 from ess.livedata.core import IdentityProcessor
+from ess.livedata.kafka.message_adapter import ConvertingMessageSink
+from ess.livedata.kafka.schema_codecs import (
+    make_standard_converter,
+    make_standard_serializer,
+)
 from ess.livedata.kafka.sink import KafkaSink, SerializationError
 
 
@@ -174,18 +179,24 @@ def run_service(
     *, instrument: str, nexus_file: str | None = None, log_level: int = logging.INFO
 ) -> NoReturn:
     kafka_config = load_config(namespace=config_names.kafka_upstream)
-    serializer = serialize_detector_events_to_ev44
     name = 'fake_producer'
     Service.configure_logging(log_level)
     logger = logging.getLogger(f'{instrument}_{name}')
+
+    schema_sink = KafkaSink(
+        instrument=instrument,
+        kafka_config=kafka_config,
+        schema_serializer=make_standard_serializer(),
+    )
+    sink = ConvertingMessageSink(
+        schema_sink=schema_sink, converter=make_standard_converter()
+    )
 
     processor = IdentityProcessor(
         source=FakeDetectorSource(
             instrument=instrument, nexus_file=nexus_file, logger=logger
         ),
-        sink=KafkaSink(
-            instrument=instrument, kafka_config=kafka_config, serializer=serializer
-        ),
+        sink=sink,
     )
     service = Service(
         processor=processor,

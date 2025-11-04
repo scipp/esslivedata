@@ -17,7 +17,12 @@ from .core.orchestrating_processor import OrchestratingProcessor
 from .core.service import Service
 from .kafka import KafkaTopic
 from .kafka import consumer as kafka_consumer
-from .kafka.message_adapter import AdaptingMessageSource, MessageAdapter
+from .kafka.message_adapter import (
+    AdaptingMessageSource,
+    ConvertingMessageSink,
+    MessageAdapter,
+)
+from .kafka.schema_codecs import make_standard_converter, make_standard_serializer
 from .kafka.sink import KafkaSink, UnrollingSinkAdapter
 from .kafka.source import (
     BackgroundMessageSource,
@@ -207,8 +212,13 @@ class DataServiceRunner:
         builder = self._make_builder(**args)
 
         if sink_type == 'kafka':
-            sink = KafkaSink(
-                instrument=builder.instrument, kafka_config=kafka_downstream_config
+            schema_sink = KafkaSink(
+                instrument=builder.instrument,
+                kafka_config=kafka_downstream_config,
+                schema_serializer=make_standard_serializer(),
+            )
+            sink = ConvertingMessageSink(
+                schema_sink=schema_sink, converter=make_standard_converter()
             )
         else:
             sink = PlotToPngSink()
