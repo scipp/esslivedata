@@ -72,8 +72,6 @@ def dashboard_backend(request) -> Generator[DashboardBackend, None, None]:
 
     try:
         backend.start()
-        # Give backend time to initialize
-        time.sleep(1.0)
         yield backend
     finally:
         backend.stop()
