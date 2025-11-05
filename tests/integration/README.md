@@ -29,15 +29,38 @@ See `helpers.py` for synchronous waiting utilities (e.g., `wait_for_data`, `wait
 def test_my_workflow(integration_env):
     backend = integration_env.backend
 
-    # Start workflow, process messages, wait for results
-    backend.workflow_controller.start_workflow(...)
-    for _ in range(5):
+    # Create workflow with unique identifier for filtering
+    workflow_id = WorkflowId(
+        instrument='dummy',
+        namespace='monitor_data',
+        name='monitor_histogram',
+        version=1,
+    )
+
+    # Start workflow
+    backend.workflow_controller.start_workflow(workflow_id, ['monitor1'], config)
+
+    # Wait for data using helper, filtering by workflow_id
+    def check_for_job_data():
         backend.update()
+        for job_number, source_data in backend.job_service.job_data.items():
+            # Only check jobs belonging to OUR workflow
+            if backend.job_service.job_info.get(job_number) == workflow_id:
+                if 'monitor1' in source_data:
+                    return True
+        return False
 
-    # Assert expectations
-    assert result_is_valid(...)
+    wait_for_condition(check_for_job_data, timeout=10.0)
 
-    backend.workflow_controller.stop_workflow(...)
+    # Filter workflow-specific jobs for assertions
+    workflow_jobs = [
+        job_num for job_num, wf_id in backend.job_service.job_info.items()
+        if wf_id == workflow_id
+    ]
+    assert len(workflow_jobs) > 0, f"Expected at least one job for {workflow_id}"
+
+    # Clean up
+    backend.workflow_controller.stop_workflow(workflow_id)
 ```
 
 ### Using Different Instruments
@@ -48,8 +71,39 @@ def test_my_workflow(integration_env):
 @pytest.mark.instrument('bifrost')
 def test_bifrost_workflow(integration_env):
     backend = integration_env.backend
+
+    # Verify instrument matches marker
     assert integration_env.instrument == 'bifrost'
-    # Test implementation
+
+    # Create workflow with bifrost-specific namespace
+    workflow_id = WorkflowId(
+        instrument='bifrost',
+        namespace='monitor_data',
+        name='monitor_histogram',
+        version=1,
+    )
+
+    # Start workflow with instrument-specific source names
+    backend.workflow_controller.start_workflow(workflow_id, ['bifrost_monitor'], config)
+
+    # Wait for data filtered by workflow
+    def check_for_bifrost_data():
+        backend.update()
+        for job_number, wf_id in backend.job_service.job_info.items():
+            if wf_id == workflow_id:
+                return True
+        return False
+
+    wait_for_condition(check_for_bifrost_data, timeout=10.0)
+
+    # Assert on filtered data
+    workflow_jobs = [
+        job_num for job_num, wf_id in backend.job_service.job_info.items()
+        if wf_id == workflow_id
+    ]
+    assert len(workflow_jobs) > 0
+
+    backend.workflow_controller.stop_workflow(workflow_id)
 ```
 
 ### Writing Tests Robust to Fixture Scope Changes
@@ -153,26 +207,9 @@ time.sleep(2.0)  # Wait for data (use wait_for_condition instead)
 
 This pattern ensures tests remain valid whether fixtures are shared or isolated.
 
-## Debugging
-
-- Check service output via `service.get_stderr()` if a service fails to start
-- Use `-s` flag with pytest to see print statements: `pytest -m integration -s test_file.py`
-- For timeout issues, verify Kafka is running and services are producing data
-
-## Common Issues
-
-| Issue | Solution |
-|-------|----------|
-| `kafka.errors.NoBrokersAvailable` | Ensure Kafka is running (`docker-compose up kafka`) |
-| Service startup failure | Check `service.get_stderr()` for error messages |
-| Test timeout / `WaitTimeout` | Increase timeout values, verify services are running and producing data |
-| Port binding errors | Check for stray services: `pkill -f ess.livedata.services` |
-
 ## Best Practices
 
 1. **Write scope-agnostic tests**: Filter by `workflow_id`/`source_name` before assertions (see "Writing Tests Robust to Fixture Scope Changes")
-2. **Choose the right fixture**: Use `integration_env`, `dashboard_backend`, or specific service combinations
-3. **Call `backend.update()` regularly**: Ensures messages are processed from Kafka
-4. **Use helpers, not `time.sleep()`**: Use `wait_for_*` helpers from `helpers.py` for synchronization
+4. **Use helpers, not `time.sleep()` or `backend.update()`**: Use `wait_for_*` helpers from `helpers.py` for synchronization
 5. **Don't assume test ordering**: Tests may run in any order; don't rely on global state
 6. **Add clear docstrings**: Explain what each test verifies
