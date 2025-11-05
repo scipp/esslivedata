@@ -93,6 +93,7 @@ addopts = """
 --strict-markers
 --import-mode=importlib
 --benchmark-skip
+-m "not integration"
 -ra
 -v
 """
