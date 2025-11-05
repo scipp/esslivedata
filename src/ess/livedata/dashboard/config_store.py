@@ -3,12 +3,30 @@
 """
 Abstraction for persisting dashboard UI state.
 
-This module provides the ConfigStore type alias for storing dashboard preferences
-and UI state across sessions. This is separate from ConfigService, which handles
-runtime communication with backend services via Kafka.
+This module provides config stores for persisting dashboard preferences and UI state
+across sessions. This is separate from ConfigService, which handles runtime
+communication with backend services via Kafka.
 
-ConfigStore is for persistent storage (e.g., files, local storage) while
-ConfigService is for transient runtime coordination.
+Key Components
+--------------
+- **ConfigStore**: Type alias for any mutable mapping from WorkflowId to config dict
+- **InMemoryConfigStore**: Transient store with LRU eviction (for testing)
+- **FileBackedConfigStore**: Persistent YAML-based store with atomic writes
+- **ConfigStoreManager**: Thread-safe factory ensuring singleton stores per name
+
+Design Principles
+-----------------
+1. **Thread safety at manager level**: ConfigStoreManager uses a lock to ensure
+   multiple threads get the same store instance, preventing cache desynchronization.
+   Individual stores don't need thread safety because they're never shared directly.
+
+2. **No file locking**: FileBackedConfigStore uses atomic file operations (write to
+   temp, then rename) for crash safety, but not file locks. File locking would be
+   the wrong abstraction since the shared resource is the in-memory cache, not the
+   file itself.
+
+3. **Singleton per store name**: ConfigStoreManager ensures get_store('name') always
+   returns the same instance, so all dashboard components stay synchronized.
 """
 
 import logging
@@ -88,7 +106,11 @@ class FileBackedConfigStore(UserDict[WorkflowId, dict[str, Any]]):
     initialization and saved after each modification.
 
     This implementation uses atomic file operations (write to temp file, then
-    rename) to prevent corruption if the process crashes during a write.
+    rename) to prevent corruption if the process crashes during a write. It does
+    NOT use file locking, as it is designed for single-threaded use within one
+    process. When multiple threads need to share stores, thread safety is provided
+    at the ConfigStoreManager level, which ensures all threads get the same
+    in-memory instance rather than creating separate caches that could desync.
 
     Parameters
     ----------
@@ -239,9 +261,16 @@ class ConfigStoreManager:
 
     The manager maintains references to created stores, ensuring that multiple
     calls to get_store() with the same name return the same instance. This is
-    important for maintaining consistency when the same store is accessed from
-    multiple parts of the dashboard. Uses a lock to protect the store cache
-    from concurrent access by multiple threads.
+    critical for maintaining consistency - if different parts of the dashboard
+    created separate store instances, each would have its own in-memory cache
+    that could fall out of sync with the others.
+
+    Thread safety is implemented at the manager level (not at individual stores)
+    because the shared resource is the in-memory store cache, not the file on disk.
+    A lock protects the _stores dict from race conditions during concurrent access,
+    ensuring true singleton behavior even when multiple threads call get_store()
+    simultaneously. This approach is simpler and more efficient than file-level
+    locking, which would be the wrong abstraction layer.
 
     Parameters
     ----------
