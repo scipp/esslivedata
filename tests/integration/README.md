@@ -63,49 +63,6 @@ def test_my_workflow(integration_env):
     backend.workflow_controller.stop_workflow(workflow_id)
 ```
 
-### Using Different Instruments
-
-```python
-@pytest.mark.integration
-@pytest.mark.services('monitor')
-@pytest.mark.instrument('bifrost')
-def test_bifrost_workflow(integration_env):
-    backend = integration_env.backend
-
-    # Verify instrument matches marker
-    assert integration_env.instrument == 'bifrost'
-
-    # Create workflow with bifrost-specific namespace
-    workflow_id = WorkflowId(
-        instrument='bifrost',
-        namespace='monitor_data',
-        name='monitor_histogram',
-        version=1,
-    )
-
-    # Start workflow with instrument-specific source names
-    backend.workflow_controller.start_workflow(workflow_id, ['bifrost_monitor'], config)
-
-    # Wait for data filtered by workflow
-    def check_for_bifrost_data():
-        backend.update()
-        for job_number, wf_id in backend.job_service.job_info.items():
-            if wf_id == workflow_id:
-                return True
-        return False
-
-    wait_for_condition(check_for_bifrost_data, timeout=10.0)
-
-    # Assert on filtered data
-    workflow_jobs = [
-        job_num for job_num, wf_id in backend.job_service.job_info.items()
-        if wf_id == workflow_id
-    ]
-    assert len(workflow_jobs) > 0
-
-    backend.workflow_controller.stop_workflow(workflow_id)
-```
-
 ### Writing Tests Robust to Fixture Scope Changes
 
 **IMPORTANT**: Currently, integration test fixtures create new backend processes for every test (function scope). In the future, fixtures may be changed to session or module scope to improve performance by sharing processes across multiple tests.
