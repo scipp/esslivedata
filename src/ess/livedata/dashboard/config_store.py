@@ -11,7 +11,6 @@ ConfigStore is for persistent storage (e.g., files, local storage) while
 ConfigService is for transient runtime coordination.
 """
 
-import fcntl
 import logging
 import os
 from collections import UserDict
@@ -87,8 +86,8 @@ class FileBackedConfigStore(UserDict[WorkflowId, dict[str, Any]]):
     policy as InMemoryConfigStore. Configurations are loaded from the file on
     initialization and saved after each modification.
 
-    This implementation uses file locking (fcntl) to ensure thread-safety when
-    multiple processes access the same config file.
+    This implementation uses atomic file operations (write to temp file, then
+    rename) to prevent corruption if the process crashes during a write.
 
     Parameters
     ----------
@@ -141,10 +140,11 @@ class FileBackedConfigStore(UserDict[WorkflowId, dict[str, Any]]):
         # Dict maintains insertion order in Python 3.7+
         oldest_keys = list(self.data.keys())[:num_to_remove]
         for key in oldest_keys:
-            del self.data[key]
+            # Use dict.pop to avoid triggering __delitem__ which would save repeatedly
+            self.data.pop(key, None)
 
     def _load_from_file(self) -> None:
-        """Load configurations from YAML file with file locking."""
+        """Load configurations from YAML file."""
         if not self._file_path.exists():
             logger.debug(
                 "Config file %s does not exist, starting empty", self._file_path
@@ -153,25 +153,20 @@ class FileBackedConfigStore(UserDict[WorkflowId, dict[str, Any]]):
 
         try:
             with open(self._file_path) as f:
-                # Acquire shared lock for reading
-                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
-                try:
-                    raw_data = yaml.safe_load(f)
-                    if raw_data is None:
-                        logger.debug("Config file %s is empty", self._file_path)
-                        return
+                raw_data = yaml.safe_load(f)
+                if raw_data is None:
+                    logger.debug("Config file %s is empty", self._file_path)
+                    return
 
-                    # Deserialize WorkflowId keys from strings
-                    for key_str, value in raw_data.items():
-                        try:
-                            workflow_id = WorkflowId.from_string(key_str)
-                            self.data[workflow_id] = value
-                        except (ValueError, KeyError) as e:
-                            logger.warning(
-                                "Skipping invalid config entry '%s': %s", key_str, e
-                            )
-                finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                # Deserialize WorkflowId keys from strings
+                for key_str, value in raw_data.items():
+                    try:
+                        workflow_id = WorkflowId.from_string(key_str)
+                        self.data[workflow_id] = value
+                    except (ValueError, KeyError) as e:
+                        logger.warning(
+                            "Skipping invalid config entry '%s': %s", key_str, e
+                        )
 
         except yaml.YAMLError as e:
             logger.error("Failed to parse config file %s: %s", self._file_path, e)
@@ -183,7 +178,7 @@ class FileBackedConfigStore(UserDict[WorkflowId, dict[str, Any]]):
             logger.warning("Starting with empty config store")
 
     def _save_to_file(self) -> None:
-        """Save configurations to YAML file with file locking."""
+        """Save configurations to YAML file using atomic write operation."""
         try:
             # Serialize WorkflowId keys to strings for YAML
             serialized_data = {str(key): value for key, value in self.data.items()}
@@ -191,17 +186,12 @@ class FileBackedConfigStore(UserDict[WorkflowId, dict[str, Any]]):
             # Write atomically: write to temp file, then rename
             temp_path = self._file_path.with_suffix('.tmp')
             with open(temp_path, 'w') as f:
-                # Acquire exclusive lock for writing
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                try:
-                    yaml.safe_dump(
-                        serialized_data,
-                        f,
-                        default_flow_style=False,
-                        sort_keys=False,  # Preserve insertion order for LRU
-                    )
-                finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                yaml.safe_dump(
+                    serialized_data,
+                    f,
+                    default_flow_style=False,
+                    sort_keys=False,  # Preserve insertion order for LRU
+                )
 
             # Atomic rename
             temp_path.replace(self._file_path)
