@@ -6,8 +6,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Hashable
-from enum import Enum
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Generic, TypeVar
 
 import scipp as sc
 
@@ -18,19 +17,72 @@ from .data_service import DataService
 K = TypeVar('K', bound=Hashable)
 
 
-class BufferViewType(Enum):
-    """Types of views available for buffer subscribers."""
+class UpdateExtractor(ABC):
+    """Extracts a specific view of buffer data."""
 
-    FULL = "full"  # Complete buffer
-    DELTA = "delta"  # Only new data since last notification
-    WINDOW = "window"  # Specific window/slice
+    @abstractmethod
+    def extract(self, buffer: Buffer) -> sc.DataArray | None:
+        """
+        Extract data from a buffer.
+
+        Parameters
+        ----------
+        buffer:
+            The buffer to extract data from.
+
+        Returns
+        -------
+        :
+            The extracted data, or None if no data available.
+        """
+
+
+class FullHistoryExtractor(UpdateExtractor):
+    """Extracts the complete buffer history."""
+
+    def extract(self, buffer: Buffer) -> sc.DataArray | None:
+        return buffer.get_buffer()
+
+
+class WindowExtractor(UpdateExtractor):
+    """Extracts a window from the end of the buffer."""
+
+    def __init__(self, size: int | None = None) -> None:
+        """
+        Initialize window extractor.
+
+        Parameters
+        ----------
+        size:
+            Number of elements to extract from the end of the buffer.
+            If None, extracts the entire buffer.
+        """
+        self._size = size
+
+    def extract(self, buffer: Buffer) -> sc.DataArray | None:
+        return buffer.get_window(self._size)
+
+
+class DeltaExtractor(UpdateExtractor):
+    """Extracts only data added since last extraction."""
+
+    def __init__(self) -> None:
+        # Track the last size we saw for each buffer
+        self._last_sizes: dict[int, int] = {}
+
+    def extract(self, buffer: Buffer) -> sc.DataArray | None:
+        # TODO: Implement delta tracking properly
+        # For now, just return full buffer
+        # Need to track buffer state between calls
+        return buffer.get_buffer()
 
 
 class BufferSubscriber(ABC, Generic[K]):
     """
     Protocol for subscribers to HistoryBufferService.
 
-    Subscribers can configure what data they receive when buffers are updated.
+    Subscribers specify what data they need per key via UpdateExtractors
+    and receive batched updates for all relevant keys.
     """
 
     @property
@@ -38,83 +90,27 @@ class BufferSubscriber(ABC, Generic[K]):
     def keys(self) -> set[K]:
         """Return the set of buffer keys this subscriber depends on."""
 
+    @property
     @abstractmethod
-    def buffer_updated(
-        self, key: K, data: sc.DataArray | None, view_type: BufferViewType
-    ) -> None:
+    def extractors(self) -> dict[K, UpdateExtractor]:
         """
-        Called when a subscribed buffer is updated.
+        Return the extractors to use for obtaining buffer data.
+
+        Returns a mapping from key to the extractor to use for that key.
+        Keys not in this dict will use a default FullHistoryExtractor.
+        """
+
+    @abstractmethod
+    def buffer_updated(self, data: dict[K, sc.DataArray]) -> None:
+        """
+        Called when subscribed buffers are updated.
 
         Parameters
         ----------
-        key:
-            The key of the buffer that was updated.
         data:
-            The buffer data according to the configured view type.
-        view_type:
-            The type of view being provided.
+            Dictionary mapping keys to extracted buffer data.
+            Only includes keys that were updated and are in self.keys.
         """
-
-
-class PipeBase(Protocol):
-    """Protocol for downstream pipes that can receive data."""
-
-    def send(self, data: Any) -> None:
-        """Send data to the downstream pipe."""
-
-
-class SimpleBufferSubscriber(BufferSubscriber[K]):
-    """
-    Simple buffer subscriber that sends data to a pipe.
-
-    Provides configurable views of buffer data.
-    """
-
-    def __init__(
-        self,
-        keys: set[K],
-        pipe: PipeBase,
-        view_type: BufferViewType = BufferViewType.FULL,
-        window_size: int | None = None,
-    ) -> None:
-        """
-        Initialize a simple buffer subscriber.
-
-        Parameters
-        ----------
-        keys:
-            The set of keys to subscribe to.
-        pipe:
-            The pipe to send data to.
-        view_type:
-            The type of view to request.
-        window_size:
-            For WINDOW view type, the size of the window.
-        """
-        self._keys = keys
-        self._pipe = pipe
-        self._view_type = view_type
-        self._window_size = window_size
-
-    @property
-    def keys(self) -> set[K]:
-        return self._keys
-
-    @property
-    def view_type(self) -> BufferViewType:
-        """Get the configured view type."""
-        return self._view_type
-
-    @property
-    def window_size(self) -> int | None:
-        """Get the configured window size."""
-        return self._window_size
-
-    def buffer_updated(
-        self, key: K, data: sc.DataArray | None, view_type: BufferViewType
-    ) -> None:
-        if data is not None:
-            self._pipe.send({key: data})
 
 
 class _InternalDataSubscriber(Generic[K]):
@@ -285,27 +281,27 @@ class HistoryBufferService(Generic[K]):
         """
         for subscriber in self._subscribers:
             relevant_keys = subscriber.keys & updated_keys
+            if not relevant_keys:
+                continue
+
+            # Extract data for all relevant keys using per-key extractors
+            extractors = subscriber.extractors
+            extracted_data: dict[K, sc.DataArray] = {}
+
             for key in relevant_keys:
                 buffer = self._buffers.get(key)
                 if buffer is None:
                     continue
 
-                # Get data according to subscriber's view preference
-                if isinstance(subscriber, SimpleBufferSubscriber):
-                    view_type = subscriber.view_type
-                    if view_type == BufferViewType.FULL:
-                        data = buffer.get_buffer()
-                    elif view_type == BufferViewType.WINDOW:
-                        data = buffer.get_window(subscriber.window_size)
-                    else:  # DELTA - for now, just get the full buffer
-                        # TODO: Implement delta tracking
-                        data = buffer.get_buffer()
-                else:
-                    # Default to full buffer
-                    view_type = BufferViewType.FULL
-                    data = buffer.get_buffer()
+                # Use key-specific extractor or default to full history
+                extractor = extractors.get(key, FullHistoryExtractor())
+                data = extractor.extract(buffer)
+                if data is not None:
+                    extracted_data[key] = data
 
-                subscriber.buffer_updated(key, data, view_type)
+            # Call subscriber once with all extracted data
+            if extracted_data:
+                subscriber.buffer_updated(extracted_data)
 
     def register_subscriber(self, subscriber: BufferSubscriber[K]) -> None:
         """
