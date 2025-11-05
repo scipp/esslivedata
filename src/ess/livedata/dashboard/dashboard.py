@@ -25,7 +25,7 @@ from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_da00
 from ess.livedata.kafka.source import BackgroundMessageSource
 
 from .command_service import CommandService
-from .config_store import create_config_store
+from .config_store import ConfigStoreManager
 from .correlation_histogram import CorrelationHistogramController
 from .data_service import DataService
 from .job_controller import JobController
@@ -65,12 +65,12 @@ class DashboardBase(ServiceBase, ABC):
         self._exit_stack.__enter__()
 
         self._callback = None
-        # Separate config stores for workflow and plotter persistent UI state.
-        # Configs are persisted to disk for cross-session state preservation.
-        self._workflow_config_store = create_config_store(
-            instrument, 'workflow_configs'
-        )
-        self._plotter_config_store = create_config_store(instrument, 'plotter_configs')
+        # Config store manager ensures singleton behavior - multiple calls to
+        # get_store() with the same name return the same instance, keeping
+        # all dashboard components synchronized with the same in-memory cache.
+        self._config_manager = ConfigStoreManager(instrument=instrument)
+        self._workflow_config_store = self._config_manager.get_store('workflow_configs')
+        self._plotter_config_store = self._config_manager.get_store('plotter_configs')
         self._setup_data_infrastructure(instrument=instrument, dev=dev)
         self._logger.info("%s initialized", self.__class__.__name__)
 

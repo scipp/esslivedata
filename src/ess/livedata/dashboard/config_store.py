@@ -232,29 +232,21 @@ def get_config_dir(instrument: str, config_dir: Path | str | None = None) -> Pat
     return base_dir / instrument
 
 
-def create_config_store(
-    instrument: str,
-    name: str,
-    store_type: Literal["file", "memory"] = "file",
-    max_configs: int = 100,
-    cleanup_fraction: float = 0.2,
-    config_dir: Path | str | None = None,
-) -> ConfigStore:
+class ConfigStoreManager:
     """
-    Create a config store by name.
+    Manager for config stores ensuring singleton behavior per store name.
 
-    Factory function that creates either a file-backed or in-memory config store.
+    The manager maintains references to created stores, ensuring that multiple
+    calls to get_store() with the same name return the same instance. This is
+    important for maintaining consistency when the same store is accessed from
+    multiple parts of the dashboard.
 
     Parameters
     ----------
     instrument:
         The instrument name, used for per-instrument config directory.
-    name:
-        Name of the config store. For file-backed stores, this becomes
-        the filename (with .yaml extension). For memory stores, this is
-        used for identification only.
     store_type:
-        Type of store to create: "file" for persistent file-backed storage,
+        Type of stores to create: "file" for persistent file-backed storage,
         or "memory" for transient in-memory storage. Default is "file".
     max_configs:
         Maximum number of configurations per store. Default is 100.
@@ -264,33 +256,79 @@ def create_config_store(
         Override config directory path. If None, resolves from LIVEDATA_CONFIG_DIR
         environment variable or platform-specific config directory.
 
-    Returns
-    -------
-    :
-        A config store instance (either FileBackedConfigStore or
-        InMemoryConfigStore depending on store_type).
-
     Examples
     --------
-    >>> # File-backed store (default)
-    >>> workflow_store = create_config_store('dummy', 'workflow_configs')
-    >>> # Creates file at ~/.config/esslivedata/dummy/workflow_configs.yaml
+    >>> # Create manager for an instrument
+    >>> manager = ConfigStoreManager(instrument='dummy')
+    >>> workflow_store = manager.get_store('workflow_configs')
+    >>> plotter_store = manager.get_store('plotter_configs')
     >>>
-    >>> # In-memory store for testing
-    >>> workflow_store = create_config_store(
-    ...     'dummy', 'workflow_configs', store_type='memory'
-    ... )
+    >>> # Multiple calls return the same instance
+    >>> same_store = manager.get_store('workflow_configs')
+    >>> assert same_store is workflow_store
     """
-    if store_type == "file":
-        instrument_config_dir = get_config_dir(instrument, config_dir)
-        file_path = instrument_config_dir / f"{name}.yaml"
-        return FileBackedConfigStore(
-            file_path=file_path,
-            max_configs=max_configs,
-            cleanup_fraction=cleanup_fraction,
-        )
-    else:  # memory
-        return InMemoryConfigStore(
-            max_configs=max_configs,
-            cleanup_fraction=cleanup_fraction,
-        )
+
+    def __init__(
+        self,
+        instrument: str,
+        store_type: Literal["file", "memory"] = "file",
+        max_configs: int = 100,
+        cleanup_fraction: float = 0.2,
+        config_dir: Path | str | None = None,
+    ) -> None:
+        self._instrument = instrument
+        self._store_type = store_type
+        self._max_configs = max_configs
+        self._cleanup_fraction = cleanup_fraction
+        self._config_dir = get_config_dir(instrument, config_dir)
+        # Cache of created stores to ensure singleton behavior
+        self._stores: dict[str, ConfigStore] = {}
+
+    def get_store(self, name: str) -> ConfigStore:
+        """
+        Get or create a config store by name.
+
+        Returns the same instance for repeated calls with the same name,
+        ensuring all parts of the dashboard share the same in-memory cache.
+
+        Parameters
+        ----------
+        name:
+            Name of the config store. For file-backed stores, this becomes
+            the filename (with .yaml extension). For memory stores, this is
+            used for identification only.
+
+        Returns
+        -------
+        :
+            A config store instance (either FileBackedConfigStore or
+            InMemoryConfigStore depending on store_type).
+
+        Examples
+        --------
+        >>> manager = ConfigStoreManager(instrument='dummy')
+        >>> workflow_store = manager.get_store('workflow_configs')
+        >>> # Creates file at ~/.config/esslivedata/dummy/workflow_configs.yaml
+        >>>
+        >>> # Second call returns the same instance
+        >>> same_store = manager.get_store('workflow_configs')
+        >>> assert same_store is workflow_store
+        """
+        if name not in self._stores:
+            self._stores[name] = self._create_store(name)
+        return self._stores[name]
+
+    def _create_store(self, name: str) -> ConfigStore:
+        """Internal method to create a new config store instance."""
+        if self._store_type == "file":
+            file_path = self._config_dir / f"{name}.yaml"
+            return FileBackedConfigStore(
+                file_path=file_path,
+                max_configs=self._max_configs,
+                cleanup_fraction=self._cleanup_fraction,
+            )
+        else:  # memory
+            return InMemoryConfigStore(
+                max_configs=self._max_configs,
+                cleanup_fraction=self._cleanup_fraction,
+            )

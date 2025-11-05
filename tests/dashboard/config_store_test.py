@@ -10,9 +10,9 @@ import yaml
 
 from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.config_store import (
+    ConfigStoreManager,
     FileBackedConfigStore,
     InMemoryConfigStore,
-    create_config_store,
     get_config_dir,
 )
 
@@ -390,50 +390,67 @@ class TestFileBackedConfigStore:
         assert len(store) == 150
 
 
-class TestCreateConfigStore:
-    """Tests for create_config_store factory function."""
+class TestConfigStoreManager:
+    """Tests for ConfigStoreManager."""
 
     def test_creates_file_stores_by_default(self):
-        """Test that create_config_store creates file-backed stores by default."""
+        """Test that ConfigStoreManager creates file-backed stores by default."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            workflow_store = create_config_store(
-                'dummy', 'workflow_configs', config_dir=tmpdir
-            )
-            plotter_store = create_config_store(
-                'dummy', 'plotter_configs', config_dir=tmpdir
-            )
+            manager = ConfigStoreManager(instrument='dummy', config_dir=tmpdir)
+            workflow_store = manager.get_store('workflow_configs')
+            plotter_store = manager.get_store('plotter_configs')
 
             # Should be FileBackedConfigStore instances
             assert isinstance(workflow_store, FileBackedConfigStore)
             assert isinstance(plotter_store, FileBackedConfigStore)
 
             # Should create files in the correct location
-            assert (Path(tmpdir) / 'workflow_configs.yaml').parent.exists()
-            assert (Path(tmpdir) / 'plotter_configs.yaml').parent.exists()
+            assert (Path(tmpdir) / 'dummy' / 'workflow_configs.yaml').parent.exists()
+            assert (Path(tmpdir) / 'dummy' / 'plotter_configs.yaml').parent.exists()
 
     def test_creates_memory_stores(self):
-        """Test that create_config_store can create in-memory stores."""
-        workflow_store = create_config_store(
-            'dummy', 'workflow_configs', store_type='memory'
-        )
-        plotter_store = create_config_store(
-            'dummy', 'plotter_configs', store_type='memory'
-        )
+        """Test that ConfigStoreManager can create in-memory stores."""
+        manager = ConfigStoreManager(instrument='dummy', store_type='memory')
+        workflow_store = manager.get_store('workflow_configs')
+        plotter_store = manager.get_store('plotter_configs')
 
         # Should be InMemoryConfigStore instances
         assert isinstance(workflow_store, InMemoryConfigStore)
         assert isinstance(plotter_store, InMemoryConfigStore)
 
-    def test_respects_max_configs(self):
-        """Test that create_config_store passes max_configs to stores."""
+    def test_singleton_behavior(self):
+        """Test that multiple calls to get_store return the same instance."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = create_config_store(
-                'dummy',
-                'test_store',
+            manager = ConfigStoreManager(instrument='dummy', config_dir=tmpdir)
+
+            # First call creates the store
+            store1 = manager.get_store('workflow_configs')
+
+            # Second call returns the same instance
+            store2 = manager.get_store('workflow_configs')
+
+            assert store1 is store2
+
+            # Add data to first reference
+            wf_id = WorkflowId(
+                instrument='dummy', namespace='reduction', name='test', version=1
+            )
+            store1[wf_id] = {'params': {'value': 42}}
+
+            # Data should be visible through second reference
+            assert wf_id in store2
+            assert store2[wf_id] == {'params': {'value': 42}}
+
+    def test_respects_max_configs(self):
+        """Test that ConfigStoreManager passes max_configs to stores."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = ConfigStoreManager(
+                instrument='dummy',
                 config_dir=tmpdir,
                 max_configs=5,
                 cleanup_fraction=0.4,
             )
+            store = manager.get_store('test_store')
 
             # Add 6 configs to trigger eviction
             for i in range(6):
@@ -446,32 +463,32 @@ class TestCreateConfigStore:
             assert len(store) == 4
 
     def test_file_stores_persist_data(self):
-        """Test that file stores persist data."""
+        """Test that file stores created by manager persist data."""
         with tempfile.TemporaryDirectory() as tmpdir:
             wf_id = WorkflowId(
                 instrument='dummy', namespace='reduction', name='test', version=1
             )
             config_value = {'params': {'value': 42}}
 
-            # Create store and save data
-            store1 = create_config_store('dummy', 'workflow_configs', config_dir=tmpdir)
+            # Create manager and store data
+            manager1 = ConfigStoreManager(instrument='dummy', config_dir=tmpdir)
+            store1 = manager1.get_store('workflow_configs')
             store1[wf_id] = config_value
 
-            # Create new store and verify data persists
-            store2 = create_config_store('dummy', 'workflow_configs', config_dir=tmpdir)
+            # Create new manager and verify data persists
+            manager2 = ConfigStoreManager(instrument='dummy', config_dir=tmpdir)
+            store2 = manager2.get_store('workflow_configs')
 
             assert wf_id in store2
             assert store2[wf_id] == config_value
 
     def test_multiple_stores_independent(self):
-        """Test that multiple stores are independent."""
+        """Test that multiple stores created by manager are independent."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            workflow_store = create_config_store(
-                'dummy', 'workflow_configs', config_dir=tmpdir
-            )
-            plotter_store = create_config_store(
-                'dummy', 'plotter_configs', config_dir=tmpdir
-            )
+            manager = ConfigStoreManager(instrument='dummy', config_dir=tmpdir)
+
+            workflow_store = manager.get_store('workflow_configs')
+            plotter_store = manager.get_store('plotter_configs')
 
             wf_id1 = WorkflowId(
                 instrument='dummy', namespace='reduction', name='wf1', version=1
@@ -493,14 +510,13 @@ class TestCreateConfigStore:
     def test_different_instruments_isolated(self):
         """Test that configs for different instruments are stored separately."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create stores for different instruments
-            # get_config_dir will append instrument name to the config_dir
-            dummy_store = create_config_store(
-                'dummy', 'workflow_configs', config_dir=tmpdir
-            )
-            dream_store = create_config_store(
-                'dream', 'workflow_configs', config_dir=tmpdir
-            )
+            # Create managers for different instruments
+            manager_dummy = ConfigStoreManager(instrument='dummy', config_dir=tmpdir)
+            manager_dream = ConfigStoreManager(instrument='dream', config_dir=tmpdir)
+
+            # Get stores from each manager
+            dummy_store = manager_dummy.get_store('workflow_configs')
+            dream_store = manager_dream.get_store('workflow_configs')
 
             # Create WorkflowIds for each instrument
             dummy_wf_id = WorkflowId(
@@ -524,20 +540,18 @@ class TestCreateConfigStore:
             assert dream_wf_id not in dummy_store
 
             # Verify files are in separate directories
-            # (instrument name appended automatically)
             dummy_config_file = Path(tmpdir) / 'dummy' / 'workflow_configs.yaml'
             dream_config_file = Path(tmpdir) / 'dream' / 'workflow_configs.yaml'
             assert dummy_config_file.exists()
             assert dream_config_file.exists()
             assert dummy_config_file != dream_config_file
 
-            # Verify data persists separately when creating new stores
-            dummy_store2 = create_config_store(
-                'dummy', 'workflow_configs', config_dir=tmpdir
-            )
-            dream_store2 = create_config_store(
-                'dream', 'workflow_configs', config_dir=tmpdir
-            )
+            # Verify data persists separately when creating new managers
+            manager_dummy2 = ConfigStoreManager(instrument='dummy', config_dir=tmpdir)
+            manager_dream2 = ConfigStoreManager(instrument='dream', config_dir=tmpdir)
+
+            dummy_store2 = manager_dummy2.get_store('workflow_configs')
+            dream_store2 = manager_dream2.get_store('workflow_configs')
 
             # Each instrument should only have its own config
             assert dummy_wf_id in dummy_store2
