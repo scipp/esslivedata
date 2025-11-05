@@ -11,10 +11,9 @@ from typing import Generic, TypeVar
 import scipp as sc
 
 from .buffer import Buffer
-from .buffer_config import BufferConfig, BufferConfigRegistry, default_registry
 from .data_service import DataService
 
-K = TypeVar('K', bound=Hashable)
+K = TypeVar("K", bound=Hashable)
 
 
 class UpdateExtractor(ABC):
@@ -86,9 +85,10 @@ class BufferSubscriber(ABC, Generic[K]):
     """
 
     @property
-    @abstractmethod
     def keys(self) -> set[K]:
         """Return the set of buffer keys this subscriber depends on."""
+        # TODO How can we avoid rebuilding the set every time DataService calls this?
+        return set(self.extractors)
 
     @property
     @abstractmethod
@@ -122,12 +122,7 @@ class _InternalDataSubscriber(Generic[K]):
     @property
     def keys(self) -> set[K]:
         """Return the keys currently registered in the buffer service."""
-        # Include registered buffers, explicit configs, and pending lazy init
-        return (
-            self._buffer_service.keys
-            | set(self._buffer_service._explicit_configs.keys())
-            | self._buffer_service._pending_lazy_init
-        )
+        return self._buffer_service.get_tracked_keys()
 
     def trigger(self, store: dict[K, sc.DataArray]) -> None:
         """
@@ -138,22 +133,19 @@ class _InternalDataSubscriber(Generic[K]):
         store:
             Dictionary of updated data from DataService.
         """
-        self._buffer_service._process_data_service_update(store)
+        self._buffer_service.process_data_service_update(store)
 
 
 class HistoryBufferService(Generic[K]):
     """
     Service for maintaining historical buffers of data from DataService.
 
-    Subscribes to DataService updates and maintains configurable time/size-limited
-    buffers for specified keys. Provides subscription API for widgets that need
-    historical data.
+    Each subscriber gets its own set of buffers for the keys it needs.
     """
 
     def __init__(
         self,
         data_service: DataService[K, sc.DataArray],
-        config_registry: BufferConfigRegistry | None = None,
     ) -> None:
         """
         Initialize the history buffer service.
@@ -162,134 +154,84 @@ class HistoryBufferService(Generic[K]):
         ----------
         data_service:
             The DataService to subscribe to.
-        config_registry:
-            Registry for determining buffer configurations based on data type.
-            If None, uses the default registry.
         """
         self._data_service = data_service
-        self._config_registry = config_registry or default_registry
-        self._buffers: dict[K, Buffer] = {}
-        self._subscribers: list[BufferSubscriber[K]] = []
-        self._explicit_configs: dict[K, BufferConfig] = {}
-        self._pending_lazy_init: set[K] = set()  # Keys awaiting lazy initialization
+        # Each subscriber has its own buffers for its keys
+        self._buffers: dict[BufferSubscriber[K], dict[K, Buffer]] = {}
 
         # Subscribe to DataService
         self._internal_subscriber = _InternalDataSubscriber(self)
         self._data_service.register_subscriber(self._internal_subscriber)
 
-    @property
-    def keys(self) -> set[K]:
-        """Return the set of keys being buffered."""
-        return set(self._buffers.keys())
-
-    def register_key(
-        self,
-        key: K,
-        config: BufferConfig | None = None,
-        initial_data: sc.DataArray | None = None,
-    ) -> None:
+    def get_tracked_keys(self) -> set[K]:
         """
-        Register a key for buffering.
+        Return all keys that should be tracked from DataService.
 
-        Parameters
-        ----------
-        key:
-            The key to buffer.
-        config:
-            Optional explicit configuration. If None, configuration will be
-            determined from the first data received using the config registry.
-        initial_data:
-            Optional initial data to use for type detection if config is None.
+        Returns the union of all keys from all registered subscribers.
         """
-        if key in self._buffers:
-            return  # Already registered
+        all_keys: set[K] = set()
+        for subscriber in self._buffers:
+            all_keys.update(subscriber.keys)
+        return all_keys
 
-        if config is not None:
-            self._explicit_configs[key] = config
-            strategy = config.create_strategy()
-            self._buffers[key] = Buffer(strategy)
-            self._pending_lazy_init.discard(key)  # Remove from pending if present
-        elif initial_data is not None:
-            # Use initial data to determine config
-            config = self._config_registry.get_config(initial_data)
-            strategy = config.create_strategy()
-            self._buffers[key] = Buffer(strategy)
-            # Append the initial data
-            self._buffers[key].append(initial_data)
-            self._pending_lazy_init.discard(key)  # Remove from pending if present
-        else:
-            # Will be lazy-initialized on first data
-            self._pending_lazy_init.add(key)
-
-    def unregister_key(self, key: K) -> None:
-        """
-        Unregister a key from buffering.
-
-        Parameters
-        ----------
-        key:
-            The key to stop buffering.
-        """
-        if key in self._buffers:
-            del self._buffers[key]
-        if key in self._explicit_configs:
-            del self._explicit_configs[key]
-        self._pending_lazy_init.discard(key)
-
-    def _process_data_service_update(self, store: dict[K, sc.DataArray]) -> None:
+    def process_data_service_update(self, store: dict[K, sc.DataArray]) -> None:
         """
         Handle updates from DataService.
-
-        This is called by the internal subscriber when DataService notifies
-        of updates to registered keys.
 
         Parameters
         ----------
         store:
             Dictionary of updated data from DataService.
         """
-        # Process all updates
-        updated_keys = set()
+        # Append data to each subscriber's buffers
+        # and collect which subscribers to notify
+        subscribers_to_notify: set[BufferSubscriber[K]] = set()
 
-        for key, data in store.items():
-            # Lazy initialization if not yet configured
-            if key not in self._buffers:
-                if key in self._explicit_configs:
-                    config = self._explicit_configs[key]
-                else:
-                    config = self._config_registry.get_config(data)
-                strategy = config.create_strategy()
-                self._buffers[key] = Buffer(strategy)
-                # Remove from pending lazy init
-                self._pending_lazy_init.discard(key)
+        for subscriber, buffers in self._buffers.items():
+            for key, data in store.items():
+                if key in subscriber.keys:
+                    # Lazy initialize buffer if needed
+                    if key not in buffers:
+                        # TODO: Determine buffer strategy from extractor
+                        # For now, create with default strategy
+                        from .buffer_config import default_registry
 
-            # Append to buffer
-            self._buffers[key].append(data)
-            updated_keys.add(key)
+                        config = default_registry.get_config(data)
+                        strategy = config.create_strategy()
+                        buffers[key] = Buffer(strategy)
+
+                    # Append to this subscriber's buffer
+                    buffers[key].append(data)
+                    subscribers_to_notify.add(subscriber)
 
         # Notify subscribers
-        self._notify_subscribers(updated_keys)
+        self._notify_subscribers(subscribers_to_notify, set(store.keys()))
 
-    def _notify_subscribers(self, updated_keys: set[K]) -> None:
+    def _notify_subscribers(
+        self, subscribers: set[BufferSubscriber[K]], updated_keys: set[K]
+    ) -> None:
         """
         Notify subscribers about buffer updates.
 
         Parameters
         ----------
+        subscribers:
+            The set of subscribers that have relevant updates.
         updated_keys:
             The set of keys that were updated.
         """
-        for subscriber in self._subscribers:
+        for subscriber in subscribers:
             relevant_keys = subscriber.keys & updated_keys
             if not relevant_keys:
                 continue
 
             # Extract data for all relevant keys using per-key extractors
             extractors = subscriber.extractors
+            buffers = self._buffers[subscriber]
             extracted_data: dict[K, sc.DataArray] = {}
 
             for key in relevant_keys:
-                buffer = self._buffers.get(key)
+                buffer = buffers.get(key)
                 if buffer is None:
                     continue
 
@@ -312,69 +254,38 @@ class HistoryBufferService(Generic[K]):
         subscriber:
             The subscriber to register.
         """
-        self._subscribers.append(subscriber)
+        if subscriber not in self._buffers:
+            self._buffers[subscriber] = {}
 
-    def get_buffer(self, key: K) -> sc.DataArray | None:
+    def unregister_subscriber(self, subscriber: BufferSubscriber[K]) -> None:
         """
-        Get the complete buffered data for a key.
+        Unregister a subscriber.
 
         Parameters
         ----------
-        key:
-            The key to query.
-
-        Returns
-        -------
-        :
-            The buffered data, or None if key is not buffered.
+        subscriber:
+            The subscriber to unregister.
         """
-        buffer = self._buffers.get(key)
-        return buffer.get_buffer() if buffer else None
+        if subscriber in self._buffers:
+            del self._buffers[subscriber]
 
-    def get_window(self, key: K, size: int | None = None) -> sc.DataArray | None:
-        """
-        Get a window of buffered data for a key.
-
-        Parameters
-        ----------
-        key:
-            The key to query.
-        size:
-            The number of elements to return from the end of the buffer.
-
-        Returns
-        -------
-        :
-            The window of buffered data, or None if key is not buffered.
-        """
-        buffer = self._buffers.get(key)
-        return buffer.get_window(size) if buffer else None
-
-    def get_memory_usage(self) -> dict[K, float]:
+    def get_memory_usage(self) -> dict[BufferSubscriber[K], dict[K, float]]:
         """
         Get memory usage for all buffers.
 
         Returns
         -------
         :
-            Dictionary mapping keys to memory usage in megabytes.
+            Nested dictionary mapping subscribers to their buffers' keys
+            to memory usage in megabytes.
         """
-        return {key: buffer.memory_mb for key, buffer in self._buffers.items()}
-
-    def clear_buffer(self, key: K) -> None:
-        """
-        Clear a specific buffer.
-
-        Parameters
-        ----------
-        key:
-            The key of the buffer to clear.
-        """
-        buffer = self._buffers.get(key)
-        if buffer:
-            buffer.clear()
+        return {
+            subscriber: {key: buffer.memory_mb for key, buffer in buffers.items()}
+            for subscriber, buffers in self._buffers.items()
+        }
 
     def clear_all_buffers(self) -> None:
-        """Clear all buffers."""
-        for buffer in self._buffers.values():
-            buffer.clear()
+        """Clear all buffers for all subscribers."""
+        for buffers in self._buffers.values():
+            for buffer in buffers.values():
+                buffer.clear()
