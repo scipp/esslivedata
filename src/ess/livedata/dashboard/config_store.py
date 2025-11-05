@@ -13,6 +13,7 @@ ConfigService is for transient runtime coordination.
 
 import logging
 import os
+import threading
 from collections import UserDict
 from collections.abc import MutableMapping
 from pathlib import Path
@@ -234,12 +235,13 @@ def get_config_dir(instrument: str, config_dir: Path | str | None = None) -> Pat
 
 class ConfigStoreManager:
     """
-    Manager for config stores ensuring singleton behavior per store name.
+    Thread-safe manager for config stores ensuring singleton behavior per store name.
 
     The manager maintains references to created stores, ensuring that multiple
     calls to get_store() with the same name return the same instance. This is
     important for maintaining consistency when the same store is accessed from
-    multiple parts of the dashboard.
+    multiple parts of the dashboard. Uses a lock to protect the store cache
+    from concurrent access by multiple threads.
 
     Parameters
     ----------
@@ -283,6 +285,8 @@ class ConfigStoreManager:
         self._config_dir = get_config_dir(instrument, config_dir)
         # Cache of created stores to ensure singleton behavior
         self._stores: dict[str, ConfigStore] = {}
+        # Lock to protect the store cache from concurrent access
+        self._lock = threading.Lock()
 
     def get_store(self, name: str) -> ConfigStore:
         """
@@ -290,6 +294,7 @@ class ConfigStoreManager:
 
         Returns the same instance for repeated calls with the same name,
         ensuring all parts of the dashboard share the same in-memory cache.
+        Thread-safe: uses a lock to prevent race conditions when creating stores.
 
         Parameters
         ----------
@@ -314,9 +319,10 @@ class ConfigStoreManager:
         >>> same_store = manager.get_store('workflow_configs')
         >>> assert same_store is workflow_store
         """
-        if name not in self._stores:
-            self._stores[name] = self._create_store(name)
-        return self._stores[name]
+        with self._lock:
+            if name not in self._stores:
+                self._stores[name] = self._create_store(name)
+            return self._stores[name]
 
     def _create_store(self, name: str) -> ConfigStore:
         """Internal method to create a new config store instance."""

@@ -3,6 +3,7 @@
 """Tests for config store implementations."""
 
 import tempfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -561,6 +562,34 @@ class TestConfigStoreManager:
             assert dream_wf_id in dream_store2
             assert dream_store2[dream_wf_id] == dream_config
             assert dummy_wf_id not in dream_store2
+
+    def test_thread_safety(self):
+        """Test that concurrent get_store calls are thread-safe."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = ConfigStoreManager(instrument='dummy', config_dir=tmpdir)
+
+            # Shared list to collect store instances from threads
+            stores = []
+            num_threads = 10
+
+            def get_and_store():
+                store = manager.get_store('workflow_configs')
+                stores.append(store)
+
+            # Create and start multiple threads
+            threads = [
+                threading.Thread(target=get_and_store) for _ in range(num_threads)
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            # All threads should have received the same instance
+            assert len(stores) == num_threads
+            first_store = stores[0]
+            for store in stores:
+                assert store is first_store
 
 
 class TestGetConfigDir:
