@@ -136,22 +136,21 @@ def monitor_services(request) -> Generator[ServiceGroup, None, None]:
 
 
 @pytest.fixture
-def integration_env(
-    dashboard_backend: DashboardBackend, monitor_services: ServiceGroup, request
-) -> IntegrationEnv:
+def integration_env(dashboard_backend: DashboardBackend, request) -> IntegrationEnv:
     """
     Pytest fixture providing complete integration test environment.
 
     Combines dashboard backend and services into a single environment object.
-    This fixture depends on dashboard_backend and monitor_services, which
-    handle their own lifecycle management.
+    Tests must specify which services to use with a marker:
+
+    @pytest.mark.services('monitor')  # Uses monitor_services fixture
+    @pytest.mark.services('detector')  # Uses detector_services fixture
+    @pytest.mark.services('reduction')  # Uses reduction_services fixture
 
     Parameters
     ----------
     dashboard_backend:
         Dashboard backend fixture
-    monitor_services:
-        Monitor services fixture
     request:
         Pytest request object for accessing markers
 
@@ -160,6 +159,28 @@ def integration_env(
     :
         IntegrationEnv containing backend, services, and instrument name
     """
+    # Get services type from marker (required)
+    services_marker = request.node.get_closest_marker('services')
+    if not services_marker:
+        pytest.fail(
+            "integration_env fixture requires "
+            "@pytest.mark.services('monitor'|'detector'|'reduction')"
+        )
+    services_type = services_marker.args[0]
+
+    # Map service type to fixture name
+    fixture_name = f'{services_type}_services'
+
+    # Dynamically request the appropriate services fixture
+    try:
+        services = request.getfixturevalue(fixture_name)
+    except Exception as e:
+        pytest.fail(
+            f"Failed to load services fixture '{fixture_name}' "
+            f"for services type '{services_type}': {e}"
+        )
+
+    # Get instrument
     marker = request.node.get_closest_marker('instrument')
     instrument = marker.args[0] if marker else 'dummy'
 
@@ -173,7 +194,7 @@ def integration_env(
     while time.time() - start_time < timeout:
         combined_output = ''.join(
             service.get_stdout() + service.get_stderr()
-            for service in monitor_services.services.values()
+            for service in services.services.values()
         )
         if 'Kafka consumer ready and polling' in combined_output:
             logger.info("Services ready after %.3fs", time.time() - start_time)
@@ -186,7 +207,7 @@ def integration_env(
         )
 
     return IntegrationEnv(
-        backend=dashboard_backend, services=monitor_services, instrument=instrument
+        backend=dashboard_backend, services=services, instrument=instrument
     )
 
 

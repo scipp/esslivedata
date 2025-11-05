@@ -100,6 +100,7 @@ testpaths = "tests"
 markers = [
   "integration: Integration tests requiring Kafka and running services",
   "instrument: Specify instrument name for parameterized tests",
+  "services: Specify which services to use in integration_env fixture (monitor, detector, or reduction)",
 ]
 filterwarnings = [
   "error",

@@ -12,6 +12,7 @@ from .helpers import wait_for_workflow_job_data, wait_for_workflow_job_statuses
 
 
 @pytest.mark.integration
+@pytest.mark.services('monitor')
 def test_workflow_can_start_and_receive_data(integration_env: IntegrationEnv) -> None:
     """
     Test that a workflow can be started and receives data from backend services.
@@ -56,6 +57,7 @@ def test_workflow_can_start_and_receive_data(integration_env: IntegrationEnv) ->
 
 
 @pytest.mark.integration
+@pytest.mark.services('monitor')
 def test_workflow_status_updates(integration_env: IntegrationEnv) -> None:
     """
     Test that workflow status updates are received properly.
