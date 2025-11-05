@@ -241,6 +241,106 @@ def test_with_custom_services(dashboard_backend):
         pass
 ```
 
+### Writing Tests Robust to Fixture Scope Changes
+
+**IMPORTANT**: Currently, integration test fixtures create new backend processes for every test (function scope). In the future, fixtures may be changed to session or module scope to improve performance by sharing processes across multiple tests.
+
+Write tests that work regardless of whether fixtures are isolated or shared:
+
+#### DO: Filter by Test-Specific Identifiers
+
+Always filter global state by your test's workflow ID or source name before making assertions:
+
+```python
+@pytest.mark.integration
+def test_my_workflow(integration_env: IntegrationEnv):
+    backend = integration_env.backend
+    workflow_id = WorkflowId(
+        instrument='dummy',
+        namespace='monitor_data',
+        name='monitor_histogram',
+        version=1,
+    )
+
+    backend.workflow_controller.start_workflow(workflow_id, ['monitor1'], config)
+
+    # ✅ GOOD: Filter by workflow_id before checking
+    def check_for_job_data():
+        backend.update()
+        for job_number, source_data in backend.job_service.job_data.items():
+            # Only check jobs belonging to OUR workflow
+            if backend.job_service.job_info.get(job_number) == workflow_id:
+                if 'monitor1' in source_data:
+                    return True
+        return False
+
+    wait_for_condition(check_for_job_data, timeout=10.0)
+
+    # ✅ GOOD: Filter workflow-specific jobs
+    workflow_jobs = [
+        job_num for job_num, wf_id in backend.job_service.job_info.items()
+        if wf_id == workflow_id
+    ]
+    assert len(workflow_jobs) > 0, f"Expected at least one job for {workflow_id}"
+```
+
+#### DO: Use Existence Checks
+
+Test for the presence of expected data, not exact counts:
+
+```python
+# ✅ GOOD: Check for existence
+assert 'monitor1' in source_data
+
+# ✅ GOOD: Check for at least one
+assert len(workflow_jobs) > 0
+
+# ❌ BAD: Assumes no other tests have run
+assert len(backend.job_service.job_data) == 1
+```
+
+#### DO: Use Relative Assertions
+
+Make assertions about your test's data, not global state:
+
+```python
+# ✅ GOOD: Compare your own data
+assert data_after_config_change != data_before_config_change
+
+# ✅ GOOD: Check properties of your results
+assert result.sizes['time'] > 10
+
+# ❌ BAD: Assumes you're the first test
+assert job_number == 0
+```
+
+#### DON'T: Assert Global State
+
+Avoid assumptions about global state or ordering:
+
+```python
+# ❌ BAD: Assumes isolation
+assert len(backend.job_service.job_data) == 1
+assert len(backend.data_service.get_all_keys()) == 1
+assert backend.job_service.next_job_number == 1
+
+# ❌ BAD: Assumes you're first
+assert list(backend.job_service.job_info.keys())[0] == 0
+
+# ❌ BAD: Assumes specific timing
+time.sleep(2.0)  # Wait for data (use wait_for_condition instead)
+```
+
+#### Pattern Summary
+
+**Filter → Check → Assert**
+
+1. **Filter**: Narrow down to your test's data using workflow_id/source_name
+2. **Check**: Verify presence/properties of your filtered data
+3. **Assert**: Make claims only about your test's data
+
+This pattern ensures tests remain valid whether fixtures are shared or isolated.
+
 ## Debugging Integration Tests
 
 ### Enable Debug Logging
@@ -328,22 +428,25 @@ pkill -f ess.livedata.services
 
 ## Best Practices
 
-1. **Use appropriate fixtures**: Choose the fixture that matches your test needs (monitor_services, detector_services, etc.)
+1. **Write scope-agnostic tests**: Always filter by workflow_id/source_name before assertions. See "Writing Tests Robust to Fixture Scope Changes" above for detailed patterns.
 
-2. **Process messages regularly**: Call `backend.update()` frequently to process Kafka messages
+2. **Use appropriate fixtures**: Choose the fixture that matches your test needs (monitor_services, detector_services, etc.)
 
-3. **Use helpers for waiting**: Don't use `time.sleep()` for synchronization - use `wait_for_*` helpers instead
+3. **Process messages regularly**: Call `backend.update()` frequently to process Kafka messages
 
-4. **Clean up properly**: Use context managers or pytest fixtures to ensure services are stopped
+4. **Use helpers for waiting**: Don't use `time.sleep()` for synchronization - use `wait_for_*` helpers instead
 
-5. **Test in isolation**: Each test should be independent and not rely on state from other tests
+5. **Clean up properly**: Use context managers or pytest fixtures to ensure services are stopped
 
-6. **Be mindful of timing**: Integration tests involve real services and network I/O - be generous with timeouts
+6. **Test in isolation**: Each test should be independent and not rely on state from other tests
 
-7. **Document test purpose**: Add clear docstrings explaining what each test verifies
+7. **Be mindful of timing**: Integration tests involve real services and network I/O - be generous with timeouts
+
+8. **Document test purpose**: Add clear docstrings explaining what each test verifies
 
 ## Future Enhancements
 
+- **Fixture scope optimization**: Change fixtures to session/module scope to share backend processes across tests for improved performance (currently function-scoped)
 - **Testcontainers integration**: Automatically manage Kafka lifecycle
 - **Parallel test execution**: Run tests concurrently with isolated Kafka topics
 - **Performance testing**: Measure throughput and latency
