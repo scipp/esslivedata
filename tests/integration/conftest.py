@@ -35,6 +35,56 @@ class IntegrationEnv:
     instrument: str
 
 
+def _get_instrument_and_log_level(request):
+    """Extract instrument and log_level from pytest markers."""
+    instrument_marker = request.node.get_closest_marker('instrument')
+    instrument = instrument_marker.args[0] if instrument_marker else 'dummy'
+
+    log_level_marker = request.node.get_closest_marker('log_level')
+    log_level_name = log_level_marker.args[0] if log_level_marker else 'INFO'
+    log_level = getattr(logging, log_level_name)
+
+    return instrument, log_level
+
+
+def _create_service_group(
+    request, services_config: dict[str, tuple[str, dict]]
+) -> Generator[ServiceGroup, None, None]:
+    """Common service group creation and lifecycle management.
+
+    Parameters
+    ----------
+    request:
+        Pytest request object for accessing markers
+    services_config:
+        Mapping of service names to (module_path, extra_kwargs) tuples
+
+    Yields
+    ------
+    :
+        ServiceGroup instance
+    """
+    instrument, log_level = _get_instrument_and_log_level(request)
+
+    services_dict = {}
+    for name, (module_path, extra_kwargs) in services_config.items():
+        services_dict[name] = ServiceProcess(
+            module_path,
+            log_level=log_level,
+            instrument=instrument,
+            **extra_kwargs,
+        )
+
+    services = ServiceGroup(services_dict)
+    logger.info("Starting services for instrument: %s", instrument)
+
+    try:
+        services.start_all(startup_delay=5.0)
+        yield services
+    finally:
+        services.stop_all()
+
+
 @pytest.fixture
 def dashboard_backend(request) -> Generator[DashboardBackend, None, None]:
     """
@@ -178,37 +228,13 @@ def monitor_services(request) -> Generator[ServiceGroup, None, None]:
     :
         ServiceGroup containing fake_monitors and monitor_data
     """
-    # Get instrument from marker or use default
-    marker = request.node.get_closest_marker('instrument')
-    instrument = marker.args[0] if marker else 'dummy'
-
-    # Get log level from marker or use default
-    log_level_marker = request.node.get_closest_marker('log_level')
-    log_level = log_level_marker.args[0] if log_level_marker else 'INFO'
-
-    services = ServiceGroup(
+    yield from _create_service_group(
+        request,
         {
-            'fake_monitors': ServiceProcess(
-                'ess.livedata.services.fake_monitors',
-                log_level=log_level,
-                instrument=instrument,
-                mode='ev44',
-            ),
-            'monitor_data': ServiceProcess(
-                'ess.livedata.services.monitor_data',
-                log_level=log_level,
-                instrument=instrument,
-                dev=True,
-            ),
-        }
+            'fake_monitors': ('ess.livedata.services.fake_monitors', {'mode': 'ev44'}),
+            'monitor_data': ('ess.livedata.services.monitor_data', {'dev': True}),
+        },
     )
-
-    logger.info("Starting monitor services for instrument: %s", instrument)
-    try:
-        services.start_all(startup_delay=5.0)
-        yield services
-    finally:
-        services.stop_all()
 
 
 @pytest.fixture
@@ -224,35 +250,13 @@ def detector_services(request) -> Generator[ServiceGroup, None, None]:
     :
         ServiceGroup containing fake_detectors and detector_data
     """
-    marker = request.node.get_closest_marker('instrument')
-    instrument = marker.args[0] if marker else 'dummy'
-
-    # Get log level from marker or use default
-    log_level_marker = request.node.get_closest_marker('log_level')
-    log_level = log_level_marker.args[0] if log_level_marker else 'INFO'
-
-    services = ServiceGroup(
+    yield from _create_service_group(
+        request,
         {
-            'fake_detectors': ServiceProcess(
-                'ess.livedata.services.fake_detectors',
-                log_level=log_level,
-                instrument=instrument,
-            ),
-            'detector_data': ServiceProcess(
-                'ess.livedata.services.detector_data',
-                log_level=log_level,
-                instrument=instrument,
-                dev=True,
-            ),
-        }
+            'fake_detectors': ('ess.livedata.services.fake_detectors', {}),
+            'detector_data': ('ess.livedata.services.detector_data', {'dev': True}),
+        },
     )
-
-    logger.info("Starting detector services for instrument: %s", instrument)
-    try:
-        services.start_all(startup_delay=5.0)
-        yield services
-    finally:
-        services.stop_all()
 
 
 @pytest.fixture
@@ -268,38 +272,11 @@ def reduction_services(request) -> Generator[ServiceGroup, None, None]:
     :
         ServiceGroup containing all reduction pipeline services
     """
-    marker = request.node.get_closest_marker('instrument')
-    instrument = marker.args[0] if marker else 'dummy'
-
-    # Get log level from marker or use default
-    log_level_marker = request.node.get_closest_marker('log_level')
-    log_level = log_level_marker.args[0] if log_level_marker else 'INFO'
-
-    services = ServiceGroup(
+    yield from _create_service_group(
+        request,
         {
-            'fake_detectors': ServiceProcess(
-                'ess.livedata.services.fake_detectors',
-                log_level=log_level,
-                instrument=instrument,
-            ),
-            'detector_data': ServiceProcess(
-                'ess.livedata.services.detector_data',
-                log_level=log_level,
-                instrument=instrument,
-                dev=True,
-            ),
-            'data_reduction': ServiceProcess(
-                'ess.livedata.services.data_reduction',
-                log_level=log_level,
-                instrument=instrument,
-                dev=True,
-            ),
-        }
+            'fake_detectors': ('ess.livedata.services.fake_detectors', {}),
+            'detector_data': ('ess.livedata.services.detector_data', {'dev': True}),
+            'data_reduction': ('ess.livedata.services.data_reduction', {'dev': True}),
+        },
     )
-
-    logger.info("Starting reduction services for instrument: %s", instrument)
-    try:
-        services.start_all(startup_delay=5.0)
-        yield services
-    finally:
-        services.stop_all()
