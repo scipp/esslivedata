@@ -14,8 +14,6 @@ import scipp as sc
 from .buffer import Buffer
 from .buffer_config import BufferConfig, BufferConfigRegistry, default_registry
 from .data_service import DataService
-from .data_subscriber import DataSubscriber as BaseDataSubscriber
-from .data_subscriber import StreamAssembler
 
 K = TypeVar('K', bound=Hashable)
 
@@ -119,17 +117,10 @@ class SimpleBufferSubscriber(BufferSubscriber[K]):
             self._pipe.send({key: data})
 
 
-class _InternalDataSubscriber(StreamAssembler[K]):
-    """
-    Internal wrapper to subscribe HistoryBufferService to DataService.
-
-    This is needed because DataService expects either a DataSubscriber instance
-    or a callable, not a duck-typed object.
-    """
+class _InternalDataSubscriber(Generic[K]):
+    """Internal subscriber to connect HistoryBufferService to DataService."""
 
     def __init__(self, buffer_service: HistoryBufferService[K]):
-        # Start with empty keys - they'll be updated dynamically
-        super().__init__(set())
         self._buffer_service = buffer_service
 
     @property
@@ -142,14 +133,16 @@ class _InternalDataSubscriber(StreamAssembler[K]):
             | self._buffer_service._pending_lazy_init
         )
 
-    def assemble(self, data: dict[K, sc.DataArray]) -> dict[K, sc.DataArray]:
+    def trigger(self, store: dict[K, sc.DataArray]) -> None:
         """
         Process updates from DataService.
 
-        This method is called by DataSubscriber when data is updated.
+        Parameters
+        ----------
+        store:
+            Dictionary of updated data from DataService.
         """
-        self._buffer_service._process_data_service_update(data)
-        return data  # Return value not used
+        self._buffer_service._process_data_service_update(store)
 
 
 class HistoryBufferService(Generic[K]):
@@ -184,18 +177,9 @@ class HistoryBufferService(Generic[K]):
         self._explicit_configs: dict[K, BufferConfig] = {}
         self._pending_lazy_init: set[K] = set()  # Keys awaiting lazy initialization
 
-        # Subscribe to DataService using an internal wrapper
+        # Subscribe to DataService
         self._internal_subscriber = _InternalDataSubscriber(self)
-
-        # Create a proper DataSubscriber using a FakePipe that does nothing
-        class _NullPipe:
-            def send(self, data: Any) -> None:
-                pass
-
-        self._data_subscriber = BaseDataSubscriber(
-            self._internal_subscriber, _NullPipe()
-        )
-        self._data_service.register_subscriber(self._data_subscriber)
+        self._data_service.register_subscriber(self._internal_subscriber)
 
     @property
     def keys(self) -> set[K]:

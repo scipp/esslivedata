@@ -5,12 +5,21 @@ from __future__ import annotations
 from collections import UserDict
 from collections.abc import Callable, Hashable
 from contextlib import contextmanager
-from typing import TypeVar
-
-from .data_subscriber import DataSubscriber
+from typing import Any, Protocol, TypeVar
 
 K = TypeVar('K', bound=Hashable)
 V = TypeVar('V')
+
+
+class SubscriberProtocol(Protocol[K]):
+    """Protocol for subscribers with keys and trigger method."""
+
+    @property
+    def keys(self) -> set[K]:
+        """Return the set of data keys this subscriber depends on."""
+
+    def trigger(self, store: dict[K, Any]) -> None:
+        """Trigger the subscriber with updated data."""
 
 
 class DataService(UserDict[K, V]):
@@ -23,7 +32,7 @@ class DataService(UserDict[K, V]):
 
     def __init__(self) -> None:
         super().__init__()
-        self._subscribers: list[DataSubscriber[K]] = []
+        self._subscribers: list[SubscriberProtocol[K] | Callable[[set[K]], None]] = []
         self._key_change_subscribers: list[Callable[[set[K], set[K]], None]] = []
         self._pending_updates: set[K] = set()
         self._pending_key_additions: set[K] = set()
@@ -48,14 +57,17 @@ class DataService(UserDict[K, V]):
     def _in_transaction(self) -> bool:
         return self._transaction_depth > 0
 
-    def register_subscriber(self, subscriber: DataSubscriber[K]) -> None:
+    def register_subscriber(
+        self, subscriber: SubscriberProtocol[K] | Callable[[set[K]], None]
+    ) -> None:
         """
         Register a subscriber for updates.
 
         Parameters
         ----------
         subscriber:
-            The subscriber to register. Must implement the DataSubscriber interface.
+            The subscriber to register. Can be either an object with `keys` property
+            and `trigger()` method, or a callable that accepts a set of updated keys.
         """
         self._subscribers.append(subscriber)
 
@@ -83,15 +95,19 @@ class DataService(UserDict[K, V]):
             The set of data keys that were updated.
         """
         for subscriber in self._subscribers:
-            if not isinstance(subscriber, DataSubscriber):
+            # Duck-type check: does it have keys and trigger?
+            if hasattr(subscriber, 'keys') and hasattr(subscriber, 'trigger'):
+                if updated_keys & subscriber.keys:
+                    # Pass only the data that the subscriber is interested in
+                    subscriber_data = {
+                        key: self.data[key]
+                        for key in subscriber.keys
+                        if key in self.data
+                    }
+                    subscriber.trigger(subscriber_data)
+            else:
+                # Plain callable - gets key names only
                 subscriber(updated_keys)
-                continue
-            if updated_keys & subscriber.keys:
-                # Pass only the data that the subscriber is interested in
-                subscriber_data = {
-                    key: self.data[key] for key in subscriber.keys if key in self.data
-                }
-                subscriber.trigger(subscriber_data)
 
     def _notify_key_change_subscribers(self) -> None:
         """Notify subscribers about key changes (additions/removals)."""
