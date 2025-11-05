@@ -3,10 +3,8 @@
 """Common functionality for implementing dashboards."""
 
 import logging
-import os
 from abc import ABC, abstractmethod
 from contextlib import ExitStack
-from pathlib import Path
 
 import panel as pn
 import scipp as sc
@@ -27,7 +25,7 @@ from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_da00
 from ess.livedata.kafka.source import BackgroundMessageSource
 
 from .command_service import CommandService
-from .config_store import FileBackedConfigStore
+from .config_store import ConfigStoreManager
 from .correlation_histogram import CorrelationHistogramController
 from .data_service import DataService
 from .job_controller import JobController
@@ -43,38 +41,6 @@ from .workflow_controller import WorkflowController
 
 # Global throttling for sliders, etc.
 pn.config.throttled = True
-
-
-def _get_config_dir(instrument: str) -> Path:
-    """
-    Get the configuration directory for the dashboard.
-
-    Uses LIVEDATA_CONFIG_DIR environment variable if set, otherwise falls back
-    to XDG config directory (~/.config/esslivedata).
-
-    Parameters
-    ----------
-    instrument:
-        The instrument name, used as a subdirectory for per-instrument configs.
-
-    Returns
-    -------
-    :
-        Path to the instrument-specific config directory.
-    """
-    base_dir = os.environ.get('LIVEDATA_CONFIG_DIR')
-    if base_dir is None:
-        # XDG config directory fallback
-        xdg_config_home = os.environ.get('XDG_CONFIG_HOME')
-        if xdg_config_home is None:
-            xdg_config_home = Path.home() / '.config'
-        else:
-            xdg_config_home = Path(xdg_config_home)
-        base_dir = xdg_config_home / 'esslivedata'
-    else:
-        base_dir = Path(base_dir)
-
-    return base_dir / instrument
 
 
 class DashboardBase(ServiceBase, ABC):
@@ -101,17 +67,10 @@ class DashboardBase(ServiceBase, ABC):
         self._callback = None
         # Separate config stores for workflow and plotter persistent UI state.
         # Configs are persisted to disk for cross-session state preservation.
-        config_dir = _get_config_dir(instrument)
-        self._workflow_config_store = FileBackedConfigStore(
-            file_path=config_dir / 'workflow_configs.yaml',
-            max_configs=100,
-            cleanup_fraction=0.2,
-        )
-        self._plotter_config_store = FileBackedConfigStore(
-            file_path=config_dir / 'plotter_configs.yaml',
-            max_configs=100,
-            cleanup_fraction=0.2,
-        )
+        # ConfigStoreManager centralizes config directory setup and store creation.
+        self._config_manager = ConfigStoreManager(instrument=instrument)
+        self._workflow_config_store = self._config_manager.get_store('workflow_configs')
+        self._plotter_config_store = self._config_manager.get_store('plotter_configs')
         self._setup_data_infrastructure(instrument=instrument, dev=dev)
         self._logger.info("%s initialized", self.__class__.__name__)
 
