@@ -97,6 +97,10 @@ addopts = """
 -v
 """
 testpaths = "tests"
+markers = [
+  "integration: Integration tests requiring Kafka and running services",
+  "instrument: Specify instrument name for parameterized tests",
+]
 filterwarnings = [
   "error",
 ]
