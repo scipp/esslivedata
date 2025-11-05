@@ -90,15 +90,10 @@ def dashboard_backend(request) -> Generator[DashboardBackend, None, None]:
     """
     Pytest fixture providing a DashboardBackend instance.
 
-    The backend is automatically started and stopped, and uses the 'dummy'
-    instrument by default. Tests can override the instrument using a marker:
+    The backend is automatically started and stopped, using the 'dummy'
+    instrument by default. Tests can override the instrument and log level:
 
     @pytest.mark.instrument('bifrost')
-    def test_something(dashboard_backend):
-        ...
-
-    Tests can also override log level using a marker:
-
     @pytest.mark.log_level('DEBUG')
     def test_something(dashboard_backend):
         ...
@@ -209,19 +204,7 @@ def monitor_services(request) -> Generator[ServiceGroup, None, None]:
     Pytest fixture providing monitor-related services.
 
     Starts fake_monitors and monitor_data services for testing.
-    Uses the 'dummy' instrument by default.
-
-    Tests can override the instrument using a marker:
-
-    @pytest.mark.instrument('bifrost')
-    def test_something(monitor_services):
-        ...
-
-    Tests can also override log level using a marker:
-
-    @pytest.mark.log_level('DEBUG')
-    def test_something(monitor_services):
-        ...
+    Typically used through the integration_env fixture.
 
     Yields
     ------
@@ -243,7 +226,7 @@ def detector_services(request) -> Generator[ServiceGroup, None, None]:
     Pytest fixture providing detector-related services.
 
     Starts fake_detectors and detector_data services for testing.
-    Uses the 'dummy' instrument by default.
+    Typically used through the integration_env fixture.
 
     Yields
     ------
@@ -265,7 +248,7 @@ def reduction_services(request) -> Generator[ServiceGroup, None, None]:
     Pytest fixture providing data reduction services.
 
     Starts fake_detectors, detector_data, and data_reduction services for testing.
-    Uses the 'dummy' instrument by default.
+    Typically used through the integration_env fixture.
 
     Yields
     ------
