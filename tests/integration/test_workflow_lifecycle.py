@@ -8,7 +8,7 @@ from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
 
 from .conftest import IntegrationEnv
-from .helpers import wait_for_condition
+from .helpers import wait_for_workflow_job_data, wait_for_workflow_job_statuses
 
 
 @pytest.mark.integration
@@ -34,21 +34,25 @@ def test_workflow_can_start_and_receive_data(integration_env: IntegrationEnv) ->
     source_names = ['monitor1']
 
     # Start the workflow with default monitor parameters
-    backend.workflow_controller.start_workflow(
+    job_ids = backend.workflow_controller.start_workflow(
         workflow_id=workflow_id,
         source_names=source_names,
         config=MonitorDataParams(),
     )
 
-    # Process messages continuously until we receive job data
-    def check_for_job_data():
-        backend.update()
-        return len(backend.job_service.job_data) > 0
+    # We started one source, expect exactly one job
+    assert len(job_ids) == 1, f"Expected 1 job, got {len(job_ids)}"
+    job_id = job_ids[0]
+    assert job_id.source_name == 'monitor1'
 
-    wait_for_condition(check_for_job_data, timeout=10.0, poll_interval=0.5)
+    # Wait for job data to arrive for the specific job we created
+    wait_for_workflow_job_data(backend, workflow_id, source_names, timeout=10.0)
 
-    # Verify that we received job data
-    assert len(backend.job_service.job_data) > 0, "Expected to receive job data"
+    # Verify that we received data for the specific job
+    job_data = backend.job_service.job_data[job_id.job_number]
+    assert (
+        'monitor1' in job_data
+    ), f"Expected data for source 'monitor1', got sources: {list(job_data.keys())}"
 
 
 @pytest.mark.integration
@@ -70,16 +74,19 @@ def test_workflow_status_updates(integration_env: IntegrationEnv) -> None:
     source_names = ['monitor1']
 
     # Start workflow
-    backend.workflow_controller.start_workflow(
+    job_ids = backend.workflow_controller.start_workflow(
         workflow_id=workflow_id, source_names=source_names, config=MonitorDataParams()
     )
 
-    # Process messages and wait for status updates
-    def check_for_status_updates():
-        backend.update()
-        return len(backend.job_service.job_statuses) > 0
+    # We started one source, expect exactly one job
+    assert len(job_ids) == 1, f"Expected 1 job, got {len(job_ids)}"
+    job_id = job_ids[0]
 
-    wait_for_condition(check_for_status_updates, timeout=10.0, poll_interval=0.5)
+    # Wait for job status updates for the specific job we created
+    wait_for_workflow_job_statuses(backend, workflow_id, source_names, timeout=10.0)
 
-    # Verify we received status updates
-    assert len(backend.job_service.job_statuses) > 0, "Expected job status updates"
+    # Verify we received status updates for the specific job
+    assert job_id in backend.job_service.job_statuses, (
+        f"Expected status update for job {job_id}, "
+        f"got statuses for: {list(backend.job_service.job_statuses.keys())}"
+    )
