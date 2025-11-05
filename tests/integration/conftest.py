@@ -78,64 +78,6 @@ def dashboard_backend(request) -> Generator[DashboardBackend, None, None]:
 
 
 @pytest.fixture
-def monitor_services(request) -> Generator[ServiceGroup, None, None]:
-    """
-    Pytest fixture providing monitor-related services.
-
-    Starts fake_monitors and monitor_data services for testing.
-    Uses the 'dummy' instrument by default.
-
-    Tests can override the instrument using a marker:
-
-    @pytest.mark.instrument('bifrost')
-    def test_something(monitor_services):
-        ...
-
-    Tests can also override log level using a marker:
-
-    @pytest.mark.log_level('DEBUG')
-    def test_something(monitor_services):
-        ...
-
-    Yields
-    ------
-    :
-        ServiceGroup containing fake_monitors and monitor_data
-    """
-    # Get instrument from marker or use default
-    marker = request.node.get_closest_marker('instrument')
-    instrument = marker.args[0] if marker else 'dummy'
-
-    # Get log level from marker or use default
-    log_level_marker = request.node.get_closest_marker('log_level')
-    log_level = log_level_marker.args[0] if log_level_marker else 'INFO'
-
-    services = ServiceGroup(
-        {
-            'fake_monitors': ServiceProcess(
-                'ess.livedata.services.fake_monitors',
-                log_level=log_level,
-                instrument=instrument,
-                mode='ev44',
-            ),
-            'monitor_data': ServiceProcess(
-                'ess.livedata.services.monitor_data',
-                log_level=log_level,
-                instrument=instrument,
-                dev=True,
-            ),
-        }
-    )
-
-    logger.info("Starting monitor services for instrument: %s", instrument)
-    try:
-        services.start_all(startup_delay=5.0)
-        yield services
-    finally:
-        services.stop_all()
-
-
-@pytest.fixture
 def integration_env(dashboard_backend: DashboardBackend, request) -> IntegrationEnv:
     """
     Pytest fixture providing complete integration test environment.
@@ -212,6 +154,64 @@ def integration_env(dashboard_backend: DashboardBackend, request) -> Integration
 
 
 @pytest.fixture
+def monitor_services(request) -> Generator[ServiceGroup, None, None]:
+    """
+    Pytest fixture providing monitor-related services.
+
+    Starts fake_monitors and monitor_data services for testing.
+    Uses the 'dummy' instrument by default.
+
+    Tests can override the instrument using a marker:
+
+    @pytest.mark.instrument('bifrost')
+    def test_something(monitor_services):
+        ...
+
+    Tests can also override log level using a marker:
+
+    @pytest.mark.log_level('DEBUG')
+    def test_something(monitor_services):
+        ...
+
+    Yields
+    ------
+    :
+        ServiceGroup containing fake_monitors and monitor_data
+    """
+    # Get instrument from marker or use default
+    marker = request.node.get_closest_marker('instrument')
+    instrument = marker.args[0] if marker else 'dummy'
+
+    # Get log level from marker or use default
+    log_level_marker = request.node.get_closest_marker('log_level')
+    log_level = log_level_marker.args[0] if log_level_marker else 'INFO'
+
+    services = ServiceGroup(
+        {
+            'fake_monitors': ServiceProcess(
+                'ess.livedata.services.fake_monitors',
+                log_level=log_level,
+                instrument=instrument,
+                mode='ev44',
+            ),
+            'monitor_data': ServiceProcess(
+                'ess.livedata.services.monitor_data',
+                log_level=log_level,
+                instrument=instrument,
+                dev=True,
+            ),
+        }
+    )
+
+    logger.info("Starting monitor services for instrument: %s", instrument)
+    try:
+        services.start_all(startup_delay=5.0)
+        yield services
+    finally:
+        services.stop_all()
+
+
+@pytest.fixture
 def detector_services(request) -> Generator[ServiceGroup, None, None]:
     """
     Pytest fixture providing detector-related services.
@@ -260,7 +260,7 @@ def reduction_services(request) -> Generator[ServiceGroup, None, None]:
     """
     Pytest fixture providing data reduction services.
 
-    Starts fake_monitors, monitor_data, and data_reduction services for testing.
+    Starts fake_detectors, detector_data, and data_reduction services for testing.
     Uses the 'dummy' instrument by default.
 
     Yields
@@ -277,14 +277,13 @@ def reduction_services(request) -> Generator[ServiceGroup, None, None]:
 
     services = ServiceGroup(
         {
-            'fake_monitors': ServiceProcess(
-                'ess.livedata.services.fake_monitors',
+            'fake_detectors': ServiceProcess(
+                'ess.livedata.services.fake_detectors',
                 log_level=log_level,
                 instrument=instrument,
-                mode='ev44',
             ),
-            'monitor_data': ServiceProcess(
-                'ess.livedata.services.monitor_data',
+            'detector_data': ServiceProcess(
+                'ess.livedata.services.detector_data',
                 log_level=log_level,
                 instrument=instrument,
                 dev=True,
