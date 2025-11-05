@@ -27,7 +27,7 @@ def make_timeseries_service_builder(
     adapter = (
         RoutingAdapterBuilder(stream_mapping=stream_mapping)
         .with_logdata_route()
-        .with_livedata_config_route()
+        .with_livedata_commands_route()
         .build()
     )
     instrument_obj = instrument_registry[instrument]

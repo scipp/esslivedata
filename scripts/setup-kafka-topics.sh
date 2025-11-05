@@ -57,24 +57,34 @@ kafka-topics --create --bootstrap-server kafka:29092 \
 
 kafka-topics --create --bootstrap-server kafka:29092 \
   --topic ${LIVEDATA_INSTRUMENT}_livedata_commands \
-  --config cleanup.policy=compact \
-  --config retention.ms=-1 \
-  --config min.compaction.lag.ms=86400000 \
-  --config min.cleanable.dirty.ratio=0.5 \
+  --config cleanup.policy=delete \
+  --config retention.ms=172800000 \
   --config delete.retention.ms=86400000 \
   --config max.message.bytes=1048576 \
-  --config retention.bytes=-1
+  --config retention.bytes=-1 \
+  --config segment.bytes=67108864 \
+  --config segment.ms=86400000
+
+kafka-topics --create --bootstrap-server kafka:29092 \
+  --topic ${LIVEDATA_INSTRUMENT}_livedata_responses \
+  --config cleanup.policy=delete \
+  --config retention.ms=172800000 \
+  --config delete.retention.ms=86400000 \
+  --config max.message.bytes=1048576 \
+  --config retention.bytes=-1 \
+  --config segment.bytes=67108864 \
+  --config segment.ms=86400000
 
 # Status/heartbeat topic
 kafka-topics --create --bootstrap-server kafka:29092 \
   --topic ${LIVEDATA_INSTRUMENT}_livedata_heartbeat \
   --config cleanup.policy=delete \
-  --config retention.ms=60000 \
-  --config min.compaction.lag.ms=86400000 \
-  --config min.cleanable.dirty.ratio=0.5 \
+  --config retention.ms=172800000 \
   --config delete.retention.ms=86400000 \
   --config max.message.bytes=1048576 \
-  --config retention.bytes=-1
+  --config retention.bytes=-1 \
+  --config segment.bytes=67108864 \
+  --config segment.ms=86400000
 
 kafka-topics --create --bootstrap-server kafka:29092 \
   --topic ${LIVEDATA_INSTRUMENT}_livedata_data \
