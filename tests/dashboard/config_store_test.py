@@ -516,3 +516,69 @@ class TestConfigStoreManager:
             assert wf_id1 not in plotter_store
             assert wf_id2 in plotter_store
             assert wf_id2 not in workflow_store
+
+    def test_different_instruments_isolated(self):
+        """Test that configs for different instruments are stored separately."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create managers for different instruments
+            dummy_config_dir = Path(tmpdir) / 'dummy'
+            dream_config_dir = Path(tmpdir) / 'dream'
+
+            manager_dummy = ConfigStoreManager(
+                instrument='dummy', config_dir=dummy_config_dir
+            )
+            manager_dream = ConfigStoreManager(
+                instrument='dream', config_dir=dream_config_dir
+            )
+
+            # Get stores from each manager
+            dummy_store = manager_dummy.get_store('workflow_configs')
+            dream_store = manager_dream.get_store('workflow_configs')
+
+            # Create WorkflowIds for each instrument
+            dummy_wf_id = WorkflowId(
+                instrument='dummy', namespace='reduction', name='workflow1', version=1
+            )
+            dream_wf_id = WorkflowId(
+                instrument='dream', namespace='reduction', name='workflow1', version=1
+            )
+
+            dummy_config = {'params': {'threshold': 100.0}}
+            dream_config = {'params': {'threshold': 200.0}}
+
+            # Add configs to respective stores
+            dummy_store[dummy_wf_id] = dummy_config
+            dream_store[dream_wf_id] = dream_config
+
+            # Verify configs are in separate stores
+            assert dummy_wf_id in dummy_store
+            assert dummy_wf_id not in dream_store
+            assert dream_wf_id in dream_store
+            assert dream_wf_id not in dummy_store
+
+            # Verify files are in separate directories
+            dummy_config_file = dummy_config_dir / 'workflow_configs.yaml'
+            dream_config_file = dream_config_dir / 'workflow_configs.yaml'
+            assert dummy_config_file.exists()
+            assert dream_config_file.exists()
+            assert dummy_config_file != dream_config_file
+
+            # Verify data persists separately when creating new managers
+            manager_dummy2 = ConfigStoreManager(
+                instrument='dummy', config_dir=dummy_config_dir
+            )
+            manager_dream2 = ConfigStoreManager(
+                instrument='dream', config_dir=dream_config_dir
+            )
+
+            dummy_store2 = manager_dummy2.get_store('workflow_configs')
+            dream_store2 = manager_dream2.get_store('workflow_configs')
+
+            # Each instrument should only have its own config
+            assert dummy_wf_id in dummy_store2
+            assert dummy_store2[dummy_wf_id] == dummy_config
+            assert dream_wf_id not in dummy_store2
+
+            assert dream_wf_id in dream_store2
+            assert dream_store2[dream_wf_id] == dream_config
+            assert dummy_wf_id not in dream_store2
