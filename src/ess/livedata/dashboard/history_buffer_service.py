@@ -11,6 +11,7 @@ from typing import Generic, TypeVar
 import scipp as sc
 
 from .buffer import Buffer
+from .buffer_strategy import GrowingStorage, SlidingWindowStorage
 from .data_service import DataService
 
 K = TypeVar("K", bound=Hashable)
@@ -174,6 +175,54 @@ class HistoryBufferService(Generic[K]):
             all_keys.update(subscriber.keys)
         return all_keys
 
+    def _create_buffer_for_key(
+        self, subscriber: BufferSubscriber[K], key: K, data: sc.DataArray
+    ) -> Buffer:
+        """
+        Create a buffer for a key based on subscriber's extractor requirements.
+
+        Parameters
+        ----------
+        subscriber:
+            The subscriber requesting the buffer.
+        key:
+            The key for which to create a buffer.
+        data:
+            Sample data to determine dimension.
+
+        Returns
+        -------
+        :
+            A configured buffer for this key.
+        """
+        # Get the extractor for this key
+        extractor = subscriber.extractors.get(key, FullHistoryExtractor())
+
+        # Determine concat dimension
+        concat_dim = 'time' if 'time' in data.dims else data.dims[0]
+
+        # Create storage based on extractor type
+        if isinstance(extractor, WindowExtractor):
+            # For window extractors, use sliding window storage
+            # Allocate 2x the window size for efficiency
+            window_size = extractor._size if extractor._size else 1000
+            storage = SlidingWindowStorage(
+                max_size=window_size * 2, concat_dim=concat_dim
+            )
+        elif isinstance(extractor, DeltaExtractor):
+            # Delta extractor needs to keep history for delta calculation
+            # Use growing storage with reasonable limits
+            storage = GrowingStorage(
+                initial_size=100, max_size=10000, concat_dim=concat_dim
+            )
+        else:
+            # FullHistoryExtractor or unknown - use growing storage
+            storage = GrowingStorage(
+                initial_size=100, max_size=10000, concat_dim=concat_dim
+            )
+
+        return Buffer(storage, concat_dim=concat_dim)
+
     def process_data_service_update(self, store: dict[K, sc.DataArray]) -> None:
         """
         Handle updates from DataService.
@@ -192,13 +241,9 @@ class HistoryBufferService(Generic[K]):
                 if key in subscriber.keys:
                     # Lazy initialize buffer if needed
                     if key not in buffers:
-                        # TODO: Determine buffer strategy from extractor
-                        # For now, create with default strategy
-                        from .buffer_config import default_registry
-
-                        config = default_registry.get_config(data)
-                        strategy = config.create_strategy()
-                        buffers[key] = Buffer(strategy)
+                        buffers[key] = self._create_buffer_for_key(
+                            subscriber, key, data
+                        )
 
                     # Append to this subscriber's buffer
                     buffers[key].append(data)

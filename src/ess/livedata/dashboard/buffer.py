@@ -1,68 +1,61 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Buffer wrapper with metadata and thread safety."""
+"""Buffer interface on top of storage strategies."""
 
 from __future__ import annotations
 
-import threading
-from datetime import UTC, datetime
-
 import scipp as sc
 
-from .buffer_strategy import BufferStrategy
+from .buffer_strategy import StorageStrategy
 
 
 class Buffer:
     """
-    Thread-safe wrapper around a BufferStrategy with metadata tracking.
+    Buffer providing data access operations on top of a storage strategy.
 
-    Provides synchronized access to buffer operations and tracks metadata
-    like memory usage and last update time.
+    Wraps a low-level StorageStrategy and provides higher-level operations
+    like windowing for use by extractors.
     """
 
-    def __init__(self, strategy: BufferStrategy) -> None:
+    def __init__(self, strategy: StorageStrategy, concat_dim: str = 'time') -> None:
         """
-        Initialize a buffer with the given strategy.
+        Initialize a buffer with the given storage strategy.
 
         Parameters
         ----------
         strategy:
-            The buffer strategy to use for data management.
+            The storage strategy to use for data management.
+        concat_dim:
+            The dimension along which data is concatenated.
         """
         self._strategy = strategy
-        self._lock = threading.RLock()
-        self._last_update: datetime | None = None
-        self._total_appends = 0
+        self._concat_dim = concat_dim
 
     def append(self, data: sc.DataArray) -> None:
         """
-        Append new data to the buffer (thread-safe).
+        Append new data to the buffer.
 
         Parameters
         ----------
         data:
             The data to append.
         """
-        with self._lock:
-            self._strategy.append(data)
-            self._last_update = datetime.now(UTC)
-            self._total_appends += 1
+        self._strategy.append(data)
 
     def get_buffer(self) -> sc.DataArray | None:
         """
-        Get the complete buffered data (thread-safe).
+        Get the complete buffered data.
 
         Returns
         -------
         :
             The full buffer as a DataArray, or None if empty.
         """
-        with self._lock:
-            return self._strategy.get_buffer()
+        return self._strategy.get_all()
 
     def get_window(self, size: int | None = None) -> sc.DataArray | None:
         """
-        Get a window of buffered data (thread-safe).
+        Get a window of buffered data from the end.
 
         Parameters
         ----------
@@ -75,41 +68,19 @@ class Buffer:
         :
             A window of the buffer, or None if empty.
         """
-        with self._lock:
-            return self._strategy.get_window(size)
+        data = self._strategy.get_all()
+        if data is None or size is None:
+            return data
 
-    def estimate_memory(self) -> int:
-        """
-        Estimate the memory usage of the buffer in bytes (thread-safe).
-
-        Returns
-        -------
-        :
-            Estimated memory usage in bytes.
-        """
-        with self._lock:
-            return self._strategy.estimate_memory()
+        current_size = data.sizes[self._concat_dim]
+        actual_size = min(size, current_size)
+        return data[self._concat_dim, -actual_size:]
 
     def clear(self) -> None:
-        """Clear all data from the buffer (thread-safe)."""
-        with self._lock:
-            self._strategy.clear()
-            self._last_update = None
-            self._total_appends = 0
-
-    @property
-    def last_update(self) -> datetime | None:
-        """Get the timestamp of the last append operation."""
-        with self._lock:
-            return self._last_update
-
-    @property
-    def total_appends(self) -> int:
-        """Get the total number of append operations."""
-        with self._lock:
-            return self._total_appends
+        """Clear all data from the buffer."""
+        self._strategy.clear()
 
     @property
     def memory_mb(self) -> float:
         """Get the current memory usage in megabytes."""
-        return self.estimate_memory() / (1024 * 1024)
+        return self._strategy.estimate_memory() / (1024 * 1024)
