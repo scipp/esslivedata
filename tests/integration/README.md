@@ -25,6 +25,7 @@ See `helpers.py` for synchronous waiting utilities (e.g., `wait_for_data`, `wait
 
 ```python
 @pytest.mark.integration
+@pytest.mark.services('monitor')
 def test_my_workflow(integration_env):
     backend = integration_env.backend
 
@@ -43,6 +44,7 @@ def test_my_workflow(integration_env):
 
 ```python
 @pytest.mark.integration
+@pytest.mark.services('monitor')
 @pytest.mark.instrument('bifrost')
 def test_bifrost_workflow(integration_env):
     backend = integration_env.backend
@@ -62,6 +64,7 @@ Always filter global state by your test's workflow ID or source name before maki
 
 ```python
 @pytest.mark.integration
+@pytest.mark.services('monitor')
 def test_my_workflow(integration_env: IntegrationEnv):
     backend = integration_env.backend
     workflow_id = WorkflowId(
