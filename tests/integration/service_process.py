@@ -45,12 +45,21 @@ class ServiceProcess:
         self.process: subprocess.Popen | None = None
         self._stdout_lines: list[str] = []
         self._stderr_lines: list[str] = []
+        # Background threads are used to continuously read from stdout/stderr pipes.
+        # This prevents the subprocess from blocking when pipe buffers fill up,
+        # which would cause the service to hang. The threads also forward output
+        # to pytest for real-time visibility in test logs.
         self._stdout_thread: threading.Thread | None = None
         self._stderr_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
     def _stream_output(self, stream, output_list: list[str], stream_name: str) -> None:
-        """Read from a stream and forward lines to stderr for pytest capture."""
+        """Read from a stream and forward lines to stderr for pytest capture.
+
+        This runs in a background thread to continuously drain the subprocess pipes.
+        Without this, the subprocess would block when the pipe buffer fills up,
+        causing the service to hang indefinitely.
+        """
         try:
             for line in iter(stream.readline, ''):
                 if self._stop_event.is_set():
