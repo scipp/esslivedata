@@ -274,12 +274,12 @@ class ConfigStoreManager:
     created separate store instances, each would have its own in-memory cache
     that could fall out of sync with the others.
 
-    Thread safety is implemented at the manager level (not at individual stores)
-    because the shared resource is the in-memory store cache, not the file on disk.
-    A lock protects the _stores dict from race conditions during concurrent access,
-    ensuring true singleton behavior even when multiple threads call get_store()
-    simultaneously. This approach is simpler and more efficient than file-level
-    locking, which would be the wrong abstraction layer.
+    Thread safety works at two levels (both manager and stores). The manager lock
+    protects the _stores dict cache, ensuring true singleton behavior even when
+    multiple threads call get_store() simultaneously. Individual stores also have
+    their own locks to protect operations on the shared instance (dict access,
+    eviction, file writes). This two-level design is simpler and more efficient
+    than file-level locking, which would be the wrong abstraction layer.
 
     Parameters
     ----------
