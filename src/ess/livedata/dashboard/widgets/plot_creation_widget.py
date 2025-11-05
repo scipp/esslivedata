@@ -55,6 +55,7 @@ class PlotCreationWidget:
         self._job_status_widget = JobStatusListWidget(
             job_service=job_service, job_controller=job_controller
         )
+        # PlotCreationWidget is legacy; PlotGridTab placement here is temporary
         self._plot_grid_tab = PlotGridTab(
             job_service=job_service,
             job_controller=job_controller,

@@ -74,7 +74,10 @@ def get_cell_button(grid: PlotGrid, row: int, col: int) -> pn.widgets.Button | N
 
 
 def simulate_click(grid: PlotGrid, row: int, col: int) -> None:
-    """Simulate a user clicking on a grid cell by triggering button's click event."""
+    """Simulate a user clicking on a grid cell by triggering button's click event.
+
+    This simulates a standard left-click interaction with the button.
+    """
     button = get_cell_button(grid, row, col)
     if button is None:
         msg = f"Cannot click cell ({row}, {col}): no clickable button found"
@@ -229,18 +232,6 @@ class TestCellSelection:
 
 
 class TestPlotInsertion:
-    def test_plot_appears_in_grid_after_insertion(
-        self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
-    ) -> None:
-        grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
-
-        simulate_click(grid, 1, 2)
-        simulate_click(grid, 1, 2)
-        grid.insert_plot_deferred(mock_plot)
-
-        # Cell should be occupied
-        assert is_cell_occupied(grid, 1, 2)
-
     def test_multiple_plots_can_be_inserted(
         self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:

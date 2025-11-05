@@ -141,7 +141,6 @@ class PlotGrid:
         self._occupied_cells: dict[tuple[int, int, int, int], pn.Column] = {}
         self._first_click: tuple[int, int] | None = None
         self._highlighted_cell: pn.pane.HTML | None = None
-        self._plot_creation_in_flight: bool = False
         self._pending_selection: tuple[int, int, int, int] | None = None
 
         # Create the grid
@@ -235,12 +234,6 @@ class PlotGrid:
 
     def _on_cell_click(self, row: int, col: int) -> None:
         """Handle cell click for region selection."""
-        # Check if plot creation is already in progress
-        if self._plot_creation_in_flight:
-            # Probably not possible to get here since the modal for plot config blocks?
-            self._show_error('Plot creation in progress')
-            return
-
         if self._first_click is None:
             # First click - start selection
             self._first_click = (row, col)
@@ -263,9 +256,6 @@ class PlotGrid:
 
             # Clear selection highlight
             self._clear_selection()
-
-            # Set in-flight flag to prevent concurrent selections
-            self._plot_creation_in_flight = True
 
             # Request plot from callback (async, no return value)
             self._plot_request_callback()
@@ -451,21 +441,16 @@ class PlotGrid:
             self._show_error('No pending selection to insert plot into')
             return
 
-        try:
-            self._insert_plot(plot)
-        finally:
-            # Clear in-flight state regardless of success/failure
-            self._plot_creation_in_flight = False
+        self._insert_plot(plot)
 
     def cancel_pending_selection(self) -> None:
         """
         Abort the current plot creation workflow and reset state.
 
         This method should be called when the plot request callback is cancelled
-        or fails. It clears the pending selection and in-flight state.
+        or fails. It clears the pending selection.
         """
         self._pending_selection = None
-        self._plot_creation_in_flight = False
 
     @property
     def panel(self) -> pn.viewable.Viewable:

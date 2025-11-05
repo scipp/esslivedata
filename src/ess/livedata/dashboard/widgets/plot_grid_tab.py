@@ -39,7 +39,7 @@ class PlotGridTab:
         self._job_controller = job_controller
         self._plotting_controller = plotting_controller
 
-        # Create PlotGrid (3x3 fixed)
+        # Create PlotGrid (3x3 fixed for now; configurable tabs may be added later)
         self._plot_grid = PlotGrid(
             nrows=3, ncols=3, plot_request_callback=self._on_plot_requested
         )
