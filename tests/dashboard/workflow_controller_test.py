@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from collections.abc import Callable
+from typing import Any, NamedTuple
 
 import pydantic
 import pytest
 
+from ess.livedata.config.models import ConfigKey
 from ess.livedata.config.workflow_spec import (
     WorkflowConfig,
     WorkflowId,
@@ -12,9 +14,22 @@ from ess.livedata.config.workflow_spec import (
     WorkflowStatus,
     WorkflowStatusType,
 )
+from ess.livedata.core.message import COMMANDS_STREAM_ID
+from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.configuration_adapter import ConfigurationState
 from ess.livedata.dashboard.workflow_config_service import WorkflowConfigService
 from ess.livedata.dashboard.workflow_controller import WorkflowController
+from ess.livedata.fakes import FakeMessageSink
+from ess.livedata.handlers.config_handler import ConfigUpdate
+
+
+class WorkflowControllerFixture(NamedTuple):
+    """Container for workflow controller fixture components."""
+
+    controller: WorkflowController
+    fake_message_sink: FakeMessageSink
+    workflow_config_service: "FakeWorkflowConfigService"
+    config_store: dict[WorkflowId, dict]
 
 
 class SomeWorkflowParams(pydantic.BaseModel):
@@ -24,15 +39,45 @@ class SomeWorkflowParams(pydantic.BaseModel):
     mode: str = "fast"
 
 
+def get_sent_commands(sink: FakeMessageSink) -> list[tuple[ConfigKey, Any]]:
+    """Extract all sent commands from the sink."""
+    result = []
+    for messages in sink.published_messages:
+        result.extend(
+            (msg.value.config_key, msg.value.value)
+            for msg in messages
+            if msg.stream == COMMANDS_STREAM_ID and isinstance(msg.value, ConfigUpdate)
+        )
+    return result
+
+
+def get_sent_workflow_configs(
+    sink: FakeMessageSink,
+) -> list[tuple[str, WorkflowConfig]]:
+    """Extract workflow configs with source names from the sink."""
+    result = []
+    for messages in sink.published_messages:
+        result.extend(
+            (msg.value.config_key.source_name, msg.value.value)
+            for msg in messages
+            if msg.stream == COMMANDS_STREAM_ID
+            and isinstance(msg.value, ConfigUpdate)
+            and isinstance(msg.value.value, WorkflowConfig)
+        )
+    return result
+
+
+def get_batch_calls(sink: FakeMessageSink) -> list[int]:
+    """Extract batch call sizes from the sink."""
+    return [len(messages) for messages in sink.published_messages]
+
+
 class FakeWorkflowConfigService(WorkflowConfigService):
     """Fake service for testing WorkflowController."""
 
     def __init__(self):
-        self._sent_configs: list[tuple[str, WorkflowConfig]] = []
+        super().__init__()
         self._status_callbacks: dict[str, list[Callable[[WorkflowStatus], None]]] = {}
-
-    def send_workflow_config(self, source_name: str, config: WorkflowConfig) -> None:
-        self._sent_configs.append((source_name, config))
 
     def subscribe_to_workflow_status(
         self, source_name: str, callback: Callable[[WorkflowStatus], None]
@@ -45,14 +90,6 @@ class FakeWorkflowConfigService(WorkflowConfigService):
         """Test helper to simulate status updates."""
         for callback in self._status_callbacks.get(status.source_name, []):
             callback(status)
-
-    def get_sent_configs(self) -> list[tuple[str, WorkflowConfig]]:
-        """Test helper to get sent configs."""
-        return self._sent_configs.copy()
-
-    def clear_sent_configs(self) -> None:
-        """Test helper to clear sent configs."""
-        self._sent_configs.clear()
 
 
 @pytest.fixture
@@ -93,8 +130,20 @@ def workflow_registry(
 
 
 @pytest.fixture
-def fake_service() -> FakeWorkflowConfigService:
-    """Fake service for testing."""
+def fake_message_sink() -> FakeMessageSink:
+    """Fake message sink for testing."""
+    return FakeMessageSink()
+
+
+@pytest.fixture
+def command_service(fake_message_sink: FakeMessageSink) -> CommandService:
+    """Create a command service with fake sink."""
+    return CommandService(sink=fake_message_sink)
+
+
+@pytest.fixture
+def fake_workflow_config_service() -> FakeWorkflowConfigService:
+    """Fake workflow config service for testing."""
     return FakeWorkflowConfigService()
 
 
@@ -106,39 +155,44 @@ def fake_config_store() -> dict[WorkflowId, dict]:
 
 @pytest.fixture
 def workflow_controller(
-    fake_service: FakeWorkflowConfigService,
+    command_service: CommandService,
+    fake_message_sink: FakeMessageSink,
+    fake_workflow_config_service: FakeWorkflowConfigService,
     fake_config_store: dict[WorkflowId, dict],
     source_names: list[str],
     workflow_registry: dict[WorkflowId, WorkflowSpec],
-) -> tuple[WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]]:
+) -> WorkflowControllerFixture:
     """Workflow controller instance for testing."""
     controller = WorkflowController(
-        service=fake_service,
+        command_service=command_service,
+        workflow_config_service=fake_workflow_config_service,
         source_names=source_names,
         workflow_registry=workflow_registry,
         config_store=fake_config_store,
     )
-    return controller, fake_service, fake_config_store
+    return WorkflowControllerFixture(
+        controller=controller,
+        fake_message_sink=fake_message_sink,
+        workflow_config_service=fake_workflow_config_service,
+        config_store=fake_config_store,
+    )
 
 
 class TestWorkflowController:
     def test_start_workflow_sends_config_to_sources(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
         workflow_id: WorkflowId,
         source_names: list[str],
     ):
         """Test that start_workflow sends configuration to all specified sources."""
-        controller, service, _config_store = workflow_controller
         config = SomeWorkflowParams(threshold=150.0, mode="accurate")
 
         # Act
-        controller.start_workflow(workflow_id, source_names, config)
+        workflow_controller.controller.start_workflow(workflow_id, source_names, config)
 
         # Assert
-        sent_configs = service.get_sent_configs()
+        sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
         assert len(sent_configs) == len(source_names)
 
         for source_name in source_names:
@@ -152,21 +206,18 @@ class TestWorkflowController:
 
     def test_start_workflow_saves_persistent_config(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
         workflow_id: WorkflowId,
         source_names: list[str],
     ):
         """Test that start_workflow saves persistent configuration."""
-        controller, _service, config_store = workflow_controller
         config = SomeWorkflowParams(threshold=200.0, mode="fast")
 
         # Act
-        controller.start_workflow(workflow_id, source_names, config)
+        workflow_controller.controller.start_workflow(workflow_id, source_names, config)
 
-        # Assert
-        persistent_config_data = config_store.get(workflow_id)
+        # Assert - check ConfigStore instead of service
+        persistent_config_data = workflow_controller.config_store.get(workflow_id)
         assert persistent_config_data is not None
         persistent_config = ConfigurationState.model_validate(persistent_config_data)
         assert persistent_config.source_names == source_names
@@ -174,14 +225,11 @@ class TestWorkflowController:
 
     def test_start_workflow_updates_status_to_starting(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
         workflow_id: WorkflowId,
         source_names: list[str],
     ):
         """Test that start_workflow immediately updates status to STARTING."""
-        controller, service, _config_store = workflow_controller
         config = SomeWorkflowParams(threshold=75.0)
 
         # Set up callback to capture status
@@ -190,11 +238,13 @@ class TestWorkflowController:
         def capture_status(all_status):
             captured_status.update(all_status)
 
-        controller.subscribe_to_workflow_status_updates(capture_status)
+        workflow_controller.controller.subscribe_to_workflow_status_updates(
+            capture_status
+        )
         captured_status.clear()  # Clear initial callback
 
         # Act
-        controller.start_workflow(workflow_id, source_names, config)
+        workflow_controller.controller.start_workflow(workflow_id, source_names, config)
 
         # Assert
         for source_name in source_names:
@@ -205,34 +255,28 @@ class TestWorkflowController:
 
     def test_start_workflow_with_empty_config(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
         workflow_id: WorkflowId,
         source_names: list[str],
     ):
         """Test that start_workflow works with empty configuration."""
-        controller, service, _config_store = workflow_controller
         config = SomeWorkflowParams()  # Use defaults
 
         # Act
-        controller.start_workflow(workflow_id, source_names, config)
+        workflow_controller.controller.start_workflow(workflow_id, source_names, config)
 
         # Assert
-        sent_configs = service.get_sent_configs()
+        sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
         for _, workflow_config in sent_configs:
             assert workflow_config.identifier == workflow_id
             assert workflow_config.params == {"threshold": 100.0, "mode": "fast"}
 
     def test_start_workflow_with_single_source(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
         workflow_id: WorkflowId,
     ):
         """Test that start_workflow works with a single source."""
-        controller, service, _config_store = workflow_controller
         single_source = ["detector_1"]
         config = SomeWorkflowParams(threshold=300.0)
 
@@ -242,14 +286,18 @@ class TestWorkflowController:
         def capture_status(all_status):
             captured_status.update(all_status)
 
-        controller.subscribe_to_workflow_status_updates(capture_status)
+        workflow_controller.controller.subscribe_to_workflow_status_updates(
+            capture_status
+        )
         captured_status.clear()  # Clear initial callback
 
         # Act
-        controller.start_workflow(workflow_id, single_source, config)
+        workflow_controller.controller.start_workflow(
+            workflow_id, single_source, config
+        )
 
         # Assert
-        sent_configs = service.get_sent_configs()
+        sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
         assert len(sent_configs) == 1
         assert sent_configs[0][0] == "detector_1"
 
@@ -259,32 +307,33 @@ class TestWorkflowController:
 
     def test_start_workflow_raises_for_nonexistent_workflow(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
         source_names: list[str],
     ):
         """Test that start_workflow raises ValueError for non-existent workflow."""
-        controller, service, _config_store = workflow_controller
         nonexistent_workflow_id = "nonexistent_workflow"
         config = SomeWorkflowParams(threshold=100.0)
 
         # Act & Assert
         with pytest.raises(ValueError, match="Workflow spec for .* not found"):
-            controller.start_workflow(nonexistent_workflow_id, source_names, config)
+            workflow_controller.controller.start_workflow(
+                nonexistent_workflow_id, source_names, config
+            )
 
         # Should not have sent any configs
-        sent_configs = service.get_sent_configs()
+        sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
         assert len(sent_configs) == 0
 
     def test_persistent_config_stores_multiple_workflows(
         self,
-        fake_service: FakeWorkflowConfigService,
+        command_service: CommandService,
+        fake_message_sink: FakeMessageSink,
+        fake_workflow_config_service: FakeWorkflowConfigService,
         fake_config_store: dict[WorkflowId, dict],
         source_names: list[str],
     ):
         """Test that multiple workflow configurations can be stored persistently."""
-        service = fake_service
+        workflow_config_service = fake_workflow_config_service
         config_store = fake_config_store
 
         config_1 = SomeWorkflowParams(threshold=100.0, mode="fast")
@@ -316,7 +365,8 @@ class TestWorkflowController:
 
         registry = {workflow_id_1: workflow_spec_1, workflow_id_2: workflow_spec_2}
         controller = WorkflowController(
-            service=service,
+            command_service=command_service,
+            workflow_config_service=workflow_config_service,
             source_names=source_names,
             workflow_registry=registry,
             config_store=config_store,
@@ -341,26 +391,26 @@ class TestWorkflowController:
 
     def test_persistent_config_replaces_existing_workflow(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
         workflow_id: WorkflowId,
     ):
         """Test that starting a workflow replaces existing persistent configuration."""
-        controller, _service, config_store = workflow_controller
-
         # Start workflow with initial config
         initial_config = SomeWorkflowParams(threshold=100.0, mode="fast")
         initial_sources = ["detector_1"]
-        controller.start_workflow(workflow_id, initial_sources, initial_config)
+        workflow_controller.controller.start_workflow(
+            workflow_id, initial_sources, initial_config
+        )
 
         # Start same workflow with different config
         updated_config = SomeWorkflowParams(threshold=300.0, mode="accurate")
         updated_sources = ["detector_1", "detector_2"]
-        controller.start_workflow(workflow_id, updated_sources, updated_config)
+        workflow_controller.controller.start_workflow(
+            workflow_id, updated_sources, updated_config
+        )
 
         # Assert - check ConfigStore instead of service
-        workflow_config_data = config_store.get(workflow_id)
+        workflow_config_data = workflow_controller.config_store.get(workflow_id)
         assert workflow_config_data is not None
         workflow_config = ConfigurationState.model_validate(workflow_config_data)
 
@@ -370,21 +420,19 @@ class TestWorkflowController:
 
     def test_status_updates_from_service(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
         workflow_id: WorkflowId,
     ):
         """Test that controller handles status updates from service."""
-        controller, service, _config_store = workflow_controller
-
         # Set up callback to capture status
         captured_status = {}
 
         def capture_status(all_status):
             captured_status.update(all_status)
 
-        controller.subscribe_to_workflow_status_updates(capture_status)
+        workflow_controller.controller.subscribe_to_workflow_status_updates(
+            capture_status
+        )
 
         # Simulate status update from service
         new_status = WorkflowStatus(
@@ -392,7 +440,7 @@ class TestWorkflowController:
             workflow_id=workflow_id,
             status=WorkflowStatusType.RUNNING,
         )
-        service.simulate_status_update(new_status)
+        workflow_controller.workflow_config_service.simulate_status_update(new_status)
 
         # Check that controller received the update
         assert captured_status["detector_1"].status == WorkflowStatusType.RUNNING
@@ -400,17 +448,13 @@ class TestWorkflowController:
 
     def test_get_workflow_spec_returns_correct_spec(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
         workflow_id: WorkflowId,
         workflow_spec: WorkflowSpec,
     ):
         """Test that get_workflow_spec returns the correct specification."""
-        controller, service, _config_store = workflow_controller
-
         # Act
-        result = controller.get_workflow_spec(workflow_id)
+        result = workflow_controller.controller.get_workflow_spec(workflow_id)
 
         # Assert
         assert result == workflow_spec
@@ -419,36 +463,31 @@ class TestWorkflowController:
 
     def test_get_workflow_spec_returns_none_for_nonexistent(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
     ):
         """Test that get_workflow_spec returns None for non-existent workflow."""
-        controller, service, _config_store = workflow_controller
-
         # Act
-        result = controller.get_workflow_spec("nonexistent_workflow")
+        result = workflow_controller.controller.get_workflow_spec(
+            "nonexistent_workflow"
+        )
 
         # Assert
         assert result is None
 
     def test_get_workflow_config_returns_persistent_config(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
         workflow_id: WorkflowId,
         source_names: list[str],
     ):
         """Test that get_workflow_config returns saved persistent configuration."""
-        controller, service, _config_store = workflow_controller
         config = SomeWorkflowParams(threshold=150.0, mode="accurate")
 
         # Start workflow to create persistent config
-        controller.start_workflow(workflow_id, source_names, config)
+        workflow_controller.controller.start_workflow(workflow_id, source_names, config)
 
         # Act
-        result = controller.get_workflow_config(workflow_id)
+        result = workflow_controller.controller.get_workflow_config(workflow_id)
 
         # Assert
         assert result is not None
@@ -457,37 +496,33 @@ class TestWorkflowController:
 
     def test_get_workflow_config_returns_none_for_nonexistent(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
     ):
         """Test that get_workflow_config returns None for non-existent workflow."""
-        controller, service, _config_store = workflow_controller
         nonexistent_id = WorkflowId(
             instrument='test', namespace='test', name='nonexistent', version=1
         )
 
         # Act
-        result = controller.get_workflow_config(nonexistent_id)
+        result = workflow_controller.controller.get_workflow_config(nonexistent_id)
 
         # Assert
         assert result is None
 
     def test_subscribe_to_workflow_status_updates_calls_callback_immediately(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
     ):
         """Test that status updates subscription calls callback immediately."""
-        controller, service, _config_store = workflow_controller
         callback_called = []
 
         def test_callback(all_status):
             callback_called.append(all_status)
 
         # Act - subscribe should trigger immediate callback
-        controller.subscribe_to_workflow_status_updates(test_callback)
+        workflow_controller.controller.subscribe_to_workflow_status_updates(
+            test_callback
+        )
 
         # Assert
         assert len(callback_called) == 1
@@ -496,20 +531,19 @@ class TestWorkflowController:
 
     def test_subscribe_to_workflow_status_updates_calls_callback_on_status_change(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
         workflow_id: WorkflowId,
     ):
         """Test that status updates subscription works correctly."""
-        controller, service, _config_store = workflow_controller
         callback_called = []
 
         def test_callback(all_status):
             callback_called.append(all_status)
 
         # Subscribe (will trigger immediate callback)
-        controller.subscribe_to_workflow_status_updates(test_callback)
+        workflow_controller.controller.subscribe_to_workflow_status_updates(
+            test_callback
+        )
         initial_calls = len(callback_called)
 
         # Trigger status update
@@ -518,7 +552,7 @@ class TestWorkflowController:
             workflow_id=workflow_id,
             status=WorkflowStatusType.RUNNING,
         )
-        service.simulate_status_update(status)
+        workflow_controller.workflow_config_service.simulate_status_update(status)
 
         # Assert
         assert len(callback_called) == initial_calls + 1
@@ -528,13 +562,15 @@ class TestWorkflowController:
 
     def test_controller_initializes_all_sources_with_unknown_status(
         self,
-        fake_service: FakeWorkflowConfigService,
+        command_service: CommandService,
+        fake_workflow_config_service: FakeWorkflowConfigService,
         workflow_registry: dict[WorkflowId, WorkflowSpec],
     ):
         """Test that controller initializes all sources with UNKNOWN status."""
         source_names = ["detector_1", "detector_2", "detector_3"]
         controller = WorkflowController(
-            service=fake_service,
+            command_service=command_service,
+            workflow_config_service=fake_workflow_config_service,
             source_names=source_names,
             workflow_registry=workflow_registry,
         )
@@ -557,13 +593,10 @@ class TestWorkflowController:
 
     def test_workflow_status_callback_exception_handling(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
         workflow_id: WorkflowId,
     ):
         """Test that exceptions in workflow status callbacks are handled gracefully."""
-        controller, service, _config_store = workflow_controller
 
         def failing_callback(all_status: dict[str, WorkflowStatus]):
             raise Exception("Test exception")
@@ -576,8 +609,12 @@ class TestWorkflowController:
         working_callback.received_status = {}
 
         # Subscribe both callbacks
-        controller.subscribe_to_workflow_status_updates(failing_callback)
-        controller.subscribe_to_workflow_status_updates(working_callback)
+        workflow_controller.controller.subscribe_to_workflow_status_updates(
+            failing_callback
+        )
+        workflow_controller.controller.subscribe_to_workflow_status_updates(
+            working_callback
+        )
 
         # Reset call count after initial subscription calls
         working_callback.called = False
@@ -588,7 +625,7 @@ class TestWorkflowController:
             workflow_id=workflow_id,
             status=WorkflowStatusType.RUNNING,
         )
-        service.simulate_status_update(status)
+        workflow_controller.workflow_config_service.simulate_status_update(status)
 
         # Assert working callback was still called despite exception in failing one
         assert working_callback.called is True
@@ -600,13 +637,10 @@ class TestWorkflowController:
 
     def test_multiple_status_subscriptions_work_correctly(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
         workflow_id: WorkflowId,
     ):
         """Test that multiple status update subscriptions work correctly."""
-        controller, service, _config_store = workflow_controller
         callback1_calls = []
         callback2_calls = []
 
@@ -617,8 +651,8 @@ class TestWorkflowController:
             callback2_calls.append(all_status)
 
         # Subscribe both
-        controller.subscribe_to_workflow_status_updates(callback1)
-        controller.subscribe_to_workflow_status_updates(callback2)
+        workflow_controller.controller.subscribe_to_workflow_status_updates(callback1)
+        workflow_controller.controller.subscribe_to_workflow_status_updates(callback2)
 
         # Clear initial calls
         callback1_calls.clear()
@@ -630,7 +664,7 @@ class TestWorkflowController:
             workflow_id=workflow_id,
             status=WorkflowStatusType.RUNNING,
         )
-        service.simulate_status_update(status)
+        workflow_controller.workflow_config_service.simulate_status_update(status)
 
         # Assert both were called
         assert len(callback1_calls) == 1
@@ -645,44 +679,40 @@ class TestWorkflowController:
 
     def test_start_workflow_with_empty_source_names_list(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
         workflow_id: WorkflowId,
     ):
         """Test that start_workflow works with empty source names list."""
-        controller, service, config_store = workflow_controller
         config = SomeWorkflowParams(threshold=100.0)
 
         # Act
-        controller.start_workflow(workflow_id, [], config)
+        workflow_controller.controller.start_workflow(workflow_id, [], config)
 
         # Assert
-        sent_configs = service.get_sent_configs()
+        sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
         assert len(sent_configs) == 0  # No configs sent to sources
 
         # Should still save persistent config
-        persistent_config_data = config_store.get(workflow_id)
+        persistent_config_data = workflow_controller.config_store.get(workflow_id)
         assert persistent_config_data is not None
         persistent_config = ConfigurationState.model_validate(persistent_config_data)
         assert persistent_config.source_names == []
 
     def test_callback_receives_complete_workflow_status_dict(
         self,
-        workflow_controller: tuple[
-            WorkflowController, FakeWorkflowConfigService, dict[WorkflowId, dict]
-        ],
+        workflow_controller: WorkflowControllerFixture,
         workflow_id: WorkflowId,
         source_names: list[str],
     ):
         """Test that status callbacks receive complete status dict for all sources."""
-        controller, service, _config_store = workflow_controller
         received_status = {}
 
         def capture_status(all_status: dict[str, WorkflowStatus]):
             received_status.update(all_status)
 
-        controller.subscribe_to_workflow_status_updates(capture_status)
+        workflow_controller.controller.subscribe_to_workflow_status_updates(
+            capture_status
+        )
 
         # Verify initial state contains all sources
         assert len(received_status) == len(source_names)
@@ -697,9 +727,30 @@ class TestWorkflowController:
             workflow_id=workflow_id,
             status=WorkflowStatusType.RUNNING,
         )
-        service.simulate_status_update(status)
+        workflow_controller.workflow_config_service.simulate_status_update(status)
 
         # Should still receive status for all sources, not just the updated one
         assert len(received_status) == len(source_names)
         assert received_status["detector_1"].status == WorkflowStatusType.RUNNING
         assert received_status["detector_2"].status == WorkflowStatusType.UNKNOWN
+
+    def test_start_workflow_sends_commands_in_batch(
+        self,
+        workflow_controller: WorkflowControllerFixture,
+        workflow_id: WorkflowId,
+        source_names: list[str],
+    ):
+        """Test that start_workflow sends commands in a single batch."""
+        config = SomeWorkflowParams(threshold=150.0, mode="accurate")
+
+        # Act
+        workflow_controller.controller.start_workflow(workflow_id, source_names, config)
+
+        # Assert - should have made exactly one batch call with all sources
+        batch_calls = get_batch_calls(workflow_controller.fake_message_sink)
+        assert len(batch_calls) == 1
+        assert batch_calls[0] == len(source_names)
+
+        # Verify all commands were sent
+        sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
+        assert len(sent_configs) == len(source_names)

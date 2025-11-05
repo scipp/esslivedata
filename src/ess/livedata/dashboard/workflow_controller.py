@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping
 
 import pydantic
 
+import ess.livedata.config.keys as keys
 from ess.livedata.config.workflow_spec import (
     ResultKey,
     WorkflowConfig,
@@ -20,11 +21,12 @@ from ess.livedata.config.workflow_spec import (
     WorkflowStatusType,
 )
 
+from .command_service import CommandService
 from .config_store import ConfigStore
 from .configuration_adapter import ConfigurationState
 from .correlation_histogram import CorrelationHistogramController, make_workflow_spec
 from .data_service import DataService
-from .workflow_config_service import ConfigServiceAdapter, WorkflowConfigService
+from .workflow_config_service import WorkflowConfigService
 from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
 
@@ -50,7 +52,8 @@ class WorkflowController:
     def __init__(
         self,
         *,
-        service: WorkflowConfigService,
+        command_service: CommandService,
+        workflow_config_service: WorkflowConfigService,
         source_names: list[str],
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         config_store: ConfigStore | None = None,
@@ -62,8 +65,10 @@ class WorkflowController:
 
         Parameters
         ----------
-        service
-            Service for runtime workflow communication with backend services.
+        command_service
+            Service for sending workflow commands to backend services.
+        workflow_config_service
+            Service for receiving workflow status updates from backend services.
         source_names
             List of source names to monitor for workflow status updates.
         workflow_registry
@@ -75,7 +80,8 @@ class WorkflowController:
         correlation_histogram_controller
             Optional controller for correlation histogram workflows.
         """
-        self._service = service
+        self._command_service = command_service
+        self._workflow_config_service = workflow_config_service
         self._config_store = config_store
         self._logger = logging.getLogger(__name__)
 
@@ -109,32 +115,11 @@ class WorkflowController:
         # Subscribe to updates
         self._setup_subscriptions()
 
-    @classmethod
-    def from_config_service(
-        cls,
-        *,
-        config_service,
-        source_names: list[str],
-        workflow_registry: Mapping[WorkflowId, WorkflowSpec],
-        config_store: ConfigStore | None = None,
-        data_service: DataService[ResultKey, object] | None = None,
-        correlation_histogram_controller: CorrelationHistogramController | None = None,
-    ) -> WorkflowController:
-        """Create WorkflowController from ConfigService and ConfigStore."""
-        return cls(
-            service=ConfigServiceAdapter(config_service),
-            source_names=source_names,
-            workflow_registry=workflow_registry,
-            config_store=config_store,
-            data_service=data_service,
-            correlation_histogram_controller=correlation_histogram_controller,
-        )
-
     def _setup_subscriptions(self) -> None:
         """Setup subscriptions to service updates."""
         # Subscribe to workflow status for each source
         for source_name in self._source_names:
-            self._service.subscribe_to_workflow_status(
+            self._workflow_config_service.subscribe_to_workflow_status(
                 source_name, self._update_workflow_status
             )
 
@@ -192,11 +177,15 @@ class WorkflowController:
             )
             self._config_store[workflow_id] = config_state.model_dump()
 
-        # Send workflow config to each source
-        for source_name in source_names:
-            self._service.send_workflow_config(source_name, workflow_config)
+        # Send workflow config to all sources in a batch
+        commands = [
+            (keys.WORKFLOW_CONFIG.create_key(source_name=source_name), workflow_config)
+            for source_name in source_names
+        ]
+        self._command_service.send_batch(commands)
 
-            # Set status to STARTING for immediate UI feedback
+        # Set status to STARTING for immediate UI feedback
+        for source_name in source_names:
             self._workflow_status[source_name] = WorkflowStatus(
                 source_name=source_name,
                 workflow_id=workflow_id,

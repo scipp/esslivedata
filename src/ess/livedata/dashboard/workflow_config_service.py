@@ -1,60 +1,97 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-Provides a protocol and an adapter for managing workflow configurations.
+Service for managing workflow status updates from backend services.
 
-This is not a real service but an adapter that wraps :py:class:`ConfigService` to
-make it compatible with the :py:class:`WorkflowConfigService` protocol. This simplifies
-the implementation and testing of :py:class:`WorkflowController`.
+Processes workflow status response messages and notifies subscribers of changes.
 """
 
+import json
+import logging
+from collections import defaultdict
 from collections.abc import Callable
-from typing import Protocol
 
-import ess.livedata.config.keys as keys
-from ess.livedata.config.workflow_spec import (
-    WorkflowConfig,
-    WorkflowStatus,
-)
+import pydantic
 
-from .config_service import ConfigService
+from ess.livedata.config.workflow_spec import WorkflowStatus
+from ess.livedata.kafka.message_adapter import RawConfigItem
 
 
-class WorkflowConfigService(Protocol):
+class WorkflowConfigService:
     """
-    Protocol for workflow controller runtime communication dependencies.
+    Service for managing workflow status updates.
 
-    This protocol handles runtime coordination with backend services via Kafka.
-    For persistent UI state storage, see ConfigStore protocol instead.
+    Processes workflow status response messages from backend services and
+    maintains subscription callbacks for status changes.
     """
 
-    def send_workflow_config(self, source_name: str, config: WorkflowConfig) -> None:
-        """Send workflow configuration to a source."""
-        ...
+    def __init__(self, logger: logging.Logger | None = None):
+        self._logger = logger or logging.getLogger(__name__)
+        self._subscribers: dict[str, list[Callable[[WorkflowStatus], None]]] = (
+            defaultdict(list)
+        )
+        self._last_status: dict[str, WorkflowStatus] = {}
 
     def subscribe_to_workflow_status(
         self, source_name: str, callback: Callable[[WorkflowStatus], None]
     ) -> None:
         """Subscribe to workflow status updates for a source."""
-        ...
+        self._subscribers[source_name].append(callback)
 
+        # If we already have status for this source, call immediately
+        if source_name in self._last_status:
+            callback(self._last_status[source_name])
 
-class ConfigServiceAdapter(WorkflowConfigService):
-    """
-    Adapter to make ConfigService compatible with WorkflowConfigService protocol.
-    """
+    def process_response(self, raw_item: RawConfigItem) -> None:
+        """
+        Process a single config response message item.
 
-    def __init__(self, config_service: ConfigService):
-        self._config_service = config_service
+        Parameters
+        ----------
+        raw_item:
+            The raw config item value from the response message.
+        """
+        try:
+            # Decode message
+            key_str = raw_item.key.decode('utf-8')
+            value_dict = json.loads(raw_item.value.decode('utf-8'))
 
-    def send_workflow_config(self, source_name: str, config: WorkflowConfig) -> None:
-        """Send workflow configuration to a source."""
-        config_key = keys.WORKFLOW_CONFIG.create_key(source_name=source_name)
-        self._config_service.update_config(config_key, config)
+            # Parse ConfigKey
+            from ess.livedata.config.models import ConfigKey
 
-    def subscribe_to_workflow_status(
-        self, source_name: str, callback: Callable[[WorkflowStatus], None]
-    ) -> None:
-        """Subscribe to workflow status updates for a source."""
-        workflow_status_key = keys.WORKFLOW_STATUS.create_key(source_name=source_name)
-        self._config_service.subscribe(workflow_status_key, callback)
+            config_key = ConfigKey.from_string(key_str)
+
+            # Check if this is a workflow_status message
+            if config_key.key == "workflow_status":
+                source_name = config_key.source_name
+                if source_name is None:
+                    return
+
+                # Validate to WorkflowStatus
+                try:
+                    status = WorkflowStatus.model_validate(value_dict)
+                except pydantic.ValidationError as e:
+                    self._logger.error(
+                        "Invalid workflow status for %s: %s", source_name, e
+                    )
+                    return
+
+                # Check if value changed
+                old_status = self._last_status.get(source_name)
+                if old_status == status:
+                    return
+
+                # Update cache
+                self._last_status[source_name] = status
+
+                # Notify subscribers
+                for callback in self._subscribers.get(source_name, []):
+                    try:
+                        callback(status)
+                    except Exception:
+                        self._logger.exception(
+                            "Error in workflow status callback for %s", source_name
+                        )
+
+        except Exception:
+            self._logger.exception("Error processing config response")

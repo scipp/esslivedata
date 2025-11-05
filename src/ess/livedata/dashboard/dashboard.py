@@ -3,7 +3,6 @@
 """Common functionality for implementing dashboards."""
 
 import logging
-import threading
 from abc import ABC, abstractmethod
 from contextlib import ExitStack
 
@@ -15,32 +14,29 @@ from ess.livedata import ServiceBase
 from ess.livedata.config import config_names, instrument_registry
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.config.instruments import get_config
-from ess.livedata.config.schema_registry import get_schema_registry
 from ess.livedata.config.streams import get_stream_mapping, stream_kind_to_topic
 from ess.livedata.config.workflow_spec import ResultKey
 from ess.livedata.core.message import StreamKind
+from ess.livedata.handlers.config_handler import ConfigUpdate
 from ess.livedata.kafka import consumer as kafka_consumer
 from ess.livedata.kafka.message_adapter import AdaptingMessageSource
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_da00
 from ess.livedata.kafka.source import BackgroundMessageSource
 
-from .config_service import ConfigService
+from .command_service import CommandService
 from .config_store import InMemoryConfigStore
-from .controller_factory import ControllerFactory
 from .correlation_histogram import CorrelationHistogramController
 from .data_service import DataService
 from .job_controller import JobController
 from .job_service import JobService
-from .kafka_transport import KafkaTransport
-from .message_bridge import BackgroundMessageBridge
 from .orchestrator import Orchestrator
 from .plotting_controller import PlottingController
 from .roi_publisher import ROIPublisher
-from .schema_validator import PydanticSchemaValidator
 from .stream_manager import StreamManager
 from .widgets.plot_creation_widget import PlotCreationWidget
 from .widgets.reduction_widget import ReductionWidget
+from .workflow_config_service import WorkflowConfigService
 from .workflow_controller import WorkflowController
 
 # Global throttling for sliders, etc.
@@ -79,7 +75,6 @@ class DashboardBase(ServiceBase, ABC):
         self._plotter_config_store = InMemoryConfigStore(
             max_configs=100, cleanup_fraction=0.2
         )
-        self._setup_config_service()
         self._setup_data_infrastructure(instrument=instrument, dev=dev)
         self._logger.info("%s initialized", self.__class__.__name__)
 
@@ -102,54 +97,18 @@ class DashboardBase(ServiceBase, ABC):
         # Currently unused, should this allow for defining a custom layout where plots
         # should be placed?
 
-    def _setup_config_service(self) -> None:
-        """Set up configuration service with Kafka bridge."""
-        kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
-
-        # Dashboard subscribes to RESPONSES to receive backend status updates.
-        # Dashboard publishes to COMMANDS to send configuration to backend services.
-        commands_topic = stream_kind_to_topic(
-            instrument=self._instrument, kind=StreamKind.LIVEDATA_COMMANDS
-        )
-        responses_topic = stream_kind_to_topic(
-            instrument=self._instrument, kind=StreamKind.LIVEDATA_RESPONSES
-        )
-
-        consumer = self._exit_stack.enter_context(
-            kafka_consumer.make_consumer_from_config(
-                topics=[responses_topic],
-                config={**kafka_downstream_config, 'auto.offset.reset': 'latest'},
-                group='dashboard',
-            )
-        )
-
-        kafka_transport = KafkaTransport(
-            kafka_config=kafka_downstream_config,
-            consumer=consumer,
-            publish_topic=commands_topic,
-            logger=self._logger,
-        )
-        self._kafka_bridge = BackgroundMessageBridge(
-            transport=kafka_transport, logger=self._logger
-        )
-        self._config_service = ConfigService(
-            message_bridge=self._kafka_bridge,
-            schema_validator=PydanticSchemaValidator(
-                schema_registry=get_schema_registry()
-            ),
-        )
-        self._controller_factory = ControllerFactory(
-            config_service=self._config_service,
-            schema_registry=get_schema_registry(),
-        )
-
-        self._kafka_bridge_thread = threading.Thread(
-            target=self._kafka_bridge.start, daemon=True
-        )
-        self._logger.info("Config service setup complete")
-
     def _setup_data_infrastructure(self, instrument: str, dev: bool) -> None:
         """Set up data services, forwarder, and orchestrator."""
+        # Sink for commands
+        kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
+        command_sink = KafkaSink[ConfigUpdate](
+            kafka_config=kafka_downstream_config,
+            instrument=self._instrument,
+            logger=self._logger,
+        )
+        self._command_service = CommandService(sink=command_sink, logger=self._logger)
+        self._workflow_config_service = WorkflowConfigService(logger=self._logger)
+
         # da00 of backend services converted to scipp.DataArray
         ScippDataService = DataService[ResultKey, sc.DataArray]
         self._data_service = ScippDataService()
@@ -160,7 +119,7 @@ class DashboardBase(ServiceBase, ABC):
             data_service=self._data_service, logger=self._logger
         )
         self._job_controller = JobController(
-            config_service=self._config_service, job_service=self._job_service
+            command_service=self._command_service, job_service=self._job_service
         )
 
         # Create ROI publisher for publishing ROI updates to Kafka
@@ -184,31 +143,35 @@ class DashboardBase(ServiceBase, ABC):
             self._setup_kafka_consumer(instrument=instrument, dev=dev),
             data_service=self._data_service,
             job_service=self._job_service,
+            workflow_config_service=self._workflow_config_service,
         )
         self._logger.info("Data infrastructure setup complete")
 
     def _setup_kafka_consumer(
         self, instrument: str, dev: bool
     ) -> AdaptingMessageSource:
-        """Set up Kafka consumer for data streams."""
+        """Set up unified Kafka consumer for all dashboard message streams."""
         consumer_config = load_config(
             namespace=config_names.reduced_data_consumer, env=''
         )
         kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
-        data_topic = stream_kind_to_topic(
-            instrument=self._instrument, kind=StreamKind.LIVEDATA_DATA
-        )
-        status_topic = stream_kind_to_topic(
-            instrument=self._instrument, kind=StreamKind.LIVEDATA_STATUS
-        )
+        topics = [
+            stream_kind_to_topic(instrument=self._instrument, kind=kind)
+            for kind in [
+                StreamKind.LIVEDATA_DATA,
+                StreamKind.LIVEDATA_STATUS,
+                StreamKind.LIVEDATA_RESPONSES,
+            ]
+        ]
         consumer = self._exit_stack.enter_context(
             kafka_consumer.make_consumer_from_config(
-                topics=[data_topic, status_topic],
+                topics=topics,
                 config={**consumer_config, **kafka_downstream_config},
                 group='dashboard',
             )
         )
-        source = self._exit_stack.enter_context(
+        # Store BackgroundMessageSource for lifecycle management (start/stop)
+        self._background_source = self._exit_stack.enter_context(
             BackgroundMessageSource(consumer=consumer)
         )
         stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
@@ -216,17 +179,19 @@ class DashboardBase(ServiceBase, ABC):
             RoutingAdapterBuilder(stream_mapping=stream_mapping)
             .with_livedata_data_route()
             .with_livedata_status_route()
+            .with_livedata_responses_route()
             .build()
         )
-        return AdaptingMessageSource(source=source, adapter=adapter)
+        return AdaptingMessageSource(source=self._background_source, adapter=adapter)
 
     def _setup_workflow_management(self) -> None:
         """Initialize workflow controller and reduction widget."""
         self._correlation_controller = CorrelationHistogramController(
             self._data_service
         )
-        self._workflow_controller = WorkflowController.from_config_service(
-            config_service=self._config_service,
+        self._workflow_controller = WorkflowController(
+            command_service=self._command_service,
+            workflow_config_service=self._workflow_config_service,
             source_names=sorted(self._processor_factory.source_names),
             workflow_registry=self._processor_factory,
             config_store=self._workflow_config_store,
@@ -275,7 +240,6 @@ class DashboardBase(ServiceBase, ABC):
         def _safe_step():
             try:
                 self._step()
-                self._config_service.process_incoming_messages()
             except Exception:
                 self._logger.exception("Error in periodic update step.")
 
@@ -314,7 +278,7 @@ class DashboardBase(ServiceBase, ABC):
 
     def _start_impl(self) -> None:
         """Start the dashboard service."""
-        self._kafka_bridge_thread.start()
+        self._background_source.start()
 
     def run_forever(self) -> None:
         """Run the dashboard server."""
@@ -335,6 +299,6 @@ class DashboardBase(ServiceBase, ABC):
 
     def _stop_impl(self) -> None:
         """Clean shutdown of all components."""
-        self._kafka_bridge.stop()
-        self._kafka_bridge_thread.join()
+        if hasattr(self, '_background_source'):
+            self._background_source.stop()
         self._exit_stack.__exit__(None, None, None)
