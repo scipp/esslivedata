@@ -77,7 +77,7 @@ class DeltaExtractor(UpdateExtractor):
         return buffer.get_buffer()
 
 
-class BufferSubscriber(ABC, Generic[K]):
+class HistorySubscriber(ABC, Generic[K]):
     """
     Protocol for subscribers to HistoryBufferService.
 
@@ -102,7 +102,7 @@ class BufferSubscriber(ABC, Generic[K]):
         """
 
     @abstractmethod
-    def buffer_updated(self, data: dict[K, sc.DataArray]) -> None:
+    def on_update(self, data: dict[K, sc.DataArray]) -> None:
         """
         Called when subscribed buffers are updated.
 
@@ -158,7 +158,7 @@ class HistoryBufferService(Generic[K]):
         """
         self._data_service = data_service
         # Each subscriber has its own buffers for its keys
-        self._buffers: dict[BufferSubscriber[K], dict[K, Buffer]] = {}
+        self._buffers: dict[HistorySubscriber[K], dict[K, Buffer]] = {}
 
         # Subscribe to DataService
         self._internal_subscriber = _InternalDataSubscriber(self)
@@ -176,7 +176,7 @@ class HistoryBufferService(Generic[K]):
         return all_keys
 
     def _create_buffer_for_key(
-        self, subscriber: BufferSubscriber[K], key: K, data: sc.DataArray
+        self, subscriber: HistorySubscriber[K], key: K, data: sc.DataArray
     ) -> Buffer:
         """
         Create a buffer for a key based on subscriber's extractor requirements.
@@ -199,7 +199,7 @@ class HistoryBufferService(Generic[K]):
         extractor = subscriber.extractors.get(key, FullHistoryExtractor())
 
         # Determine concat dimension
-        concat_dim = 'time' if 'time' in data.dims else data.dims[0]
+        concat_dim = "time" if "time" in data.dims else data.dims[0]
 
         # Create storage based on extractor type
         if isinstance(extractor, WindowExtractor):
@@ -232,9 +232,8 @@ class HistoryBufferService(Generic[K]):
         store:
             Dictionary of updated data from DataService.
         """
-        # Append data to each subscriber's buffers
-        # and collect which subscribers to notify
-        subscribers_to_notify: set[BufferSubscriber[K]] = set()
+        # Append to each subscriber's buffers and collect which subscribers to notify
+        subscribers_to_notify: set[HistorySubscriber[K]] = set()
 
         for subscriber, buffers in self._buffers.items():
             for key, data in store.items():
@@ -253,7 +252,7 @@ class HistoryBufferService(Generic[K]):
         self._notify_subscribers(subscribers_to_notify, set(store.keys()))
 
     def _notify_subscribers(
-        self, subscribers: set[BufferSubscriber[K]], updated_keys: set[K]
+        self, subscribers: set[HistorySubscriber[K]], updated_keys: set[K]
     ) -> None:
         """
         Notify subscribers about buffer updates.
@@ -288,9 +287,9 @@ class HistoryBufferService(Generic[K]):
 
             # Call subscriber once with all extracted data
             if extracted_data:
-                subscriber.buffer_updated(extracted_data)
+                subscriber.on_update(extracted_data)
 
-    def register_subscriber(self, subscriber: BufferSubscriber[K]) -> None:
+    def register_subscriber(self, subscriber: HistorySubscriber[K]) -> None:
         """
         Register a subscriber for buffer updates.
 
@@ -302,7 +301,7 @@ class HistoryBufferService(Generic[K]):
         if subscriber not in self._buffers:
             self._buffers[subscriber] = {}
 
-    def unregister_subscriber(self, subscriber: BufferSubscriber[K]) -> None:
+    def unregister_subscriber(self, subscriber: HistorySubscriber[K]) -> None:
         """
         Unregister a subscriber.
 
@@ -314,7 +313,7 @@ class HistoryBufferService(Generic[K]):
         if subscriber in self._buffers:
             del self._buffers[subscriber]
 
-    def get_memory_usage(self) -> dict[BufferSubscriber[K], dict[K, float]]:
+    def get_memory_usage(self) -> dict[HistorySubscriber[K], dict[K, float]]:
         """
         Get memory usage for all buffers.
 
