@@ -2,19 +2,13 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Integration tests for workflow lifecycle (start, data updates, stop)."""
 
-import pydantic
 import pytest
 
 from ess.livedata.config.workflow_spec import WorkflowId
+from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
 
 from .conftest import IntegrationEnv
 from .helpers import wait_for_condition
-
-
-class EmptyParams(pydantic.BaseModel):
-    """Empty parameter model for workflows without parameters."""
-
-    pass
 
 
 @pytest.mark.integration
@@ -30,20 +24,20 @@ def test_workflow_can_start_and_receive_data(integration_env: IntegrationEnv) ->
     """
     backend = integration_env.backend
 
-    # Define workflow parameters
+    # Define workflow parameters for monitor histogram workflow
     workflow_id = WorkflowId(
         instrument='dummy',
-        namespace='data_reduction',
-        name='total_counts',
+        namespace='monitor_data',
+        name='monitor_histogram',
         version=1,
     )
-    source_names = ['panel_0']
+    source_names = ['monitor1']
 
-    # Start the workflow (using empty params for workflows without parameters)
+    # Start the workflow with default monitor parameters
     backend.workflow_controller.start_workflow(
         workflow_id=workflow_id,
         source_names=source_names,
-        config=EmptyParams(),
+        config=MonitorDataParams(),
     )
 
     # Process messages continuously until we receive job data
@@ -69,15 +63,15 @@ def test_workflow_status_updates(integration_env: IntegrationEnv) -> None:
 
     workflow_id = WorkflowId(
         instrument='dummy',
-        namespace='data_reduction',
-        name='total_counts',
+        namespace='monitor_data',
+        name='monitor_histogram',
         version=1,
     )
-    source_names = ['panel_0']
+    source_names = ['monitor1']
 
     # Start workflow
     backend.workflow_controller.start_workflow(
-        workflow_id=workflow_id, source_names=source_names, config=EmptyParams()
+        workflow_id=workflow_id, source_names=source_names, config=MonitorDataParams()
     )
 
     # Process messages and wait for status updates
@@ -111,14 +105,14 @@ def test_workflow_multi_turn_interaction(integration_env: IntegrationEnv) -> Non
     # Start workflow
     workflow_id = WorkflowId(
         instrument='dummy',
-        namespace='data_reduction',
-        name='total_counts',
+        namespace='monitor_data',
+        name='monitor_histogram',
         version=1,
     )
-    source_names = ['panel_0']
+    source_names = ['monitor1']
 
     backend.workflow_controller.start_workflow(
-        workflow_id=workflow_id, source_names=source_names, config=EmptyParams()
+        workflow_id=workflow_id, source_names=source_names, config=MonitorDataParams()
     )
 
     # Update and wait for initial data
