@@ -16,14 +16,15 @@ Key Components
 
 Design Principles
 -----------------
-1. **Thread safety at manager level**: ConfigStoreManager uses a lock to ensure
-   multiple threads get the same store instance, preventing cache desynchronization.
-   Individual stores don't need thread safety because they're never shared directly.
+1. **Two-level thread safety**: Thread safety is implemented at BOTH levels:
+   - **Manager level**: Lock ensures get_store('name') returns the same singleton
+     instance to all threads, preventing separate cache instances from desyncing.
+   - **Store level**: Lock protects operations on the shared store instance, ensuring
+     concurrent reads/writes/evictions don't corrupt the in-memory dict or file.
 
 2. **No file locking**: FileBackedConfigStore uses atomic file operations (write to
-   temp, then rename) for crash safety, but not file locks. File locking would be
-   the wrong abstraction since the shared resource is the in-memory cache, not the
-   file itself.
+   temp, then rename) for crash safety, but not file locks. Store locks protect
+   in-memory operations; atomic writes handle the file safely.
 
 3. **Singleton per store name**: ConfigStoreManager ensures get_store('name') always
    returns the same instance, so all dashboard components stay synchronized.
@@ -50,7 +51,7 @@ ConfigStore = MutableMapping[WorkflowId, dict[str, Any]]
 
 class InMemoryConfigStore(UserDict[WorkflowId, dict[str, Any]]):
     """
-    In-memory implementation of ConfigStore with optional LRU eviction.
+    Thread-safe in-memory implementation of ConfigStore with optional LRU eviction.
 
     This store uses LRU (Least Recently Used) eviction because it needs to handle
     configurations for multiple use cases with different cleanup strategies:
@@ -79,14 +80,17 @@ class InMemoryConfigStore(UserDict[WorkflowId, dict[str, Any]]):
         super().__init__()
         self._max_configs = max_configs
         self._cleanup_fraction = cleanup_fraction
+        # Lock to protect all operations on this store instance
+        self._lock = threading.Lock()
 
     def __setitem__(self, key: WorkflowId, value: dict[str, Any]) -> None:
         """Save configuration with automatic LRU eviction."""
-        super().__setitem__(key, value)
+        with self._lock:
+            super().__setitem__(key, value)
 
-        # Automatic LRU eviction if limit exceeded
-        if self._max_configs and len(self.data) > self._max_configs:
-            self._evict_oldest()
+            # Automatic LRU eviction if limit exceeded
+            if self._max_configs and len(self.data) > self._max_configs:
+                self._evict_oldest()
 
     def _evict_oldest(self) -> None:
         """Remove oldest configs based on cleanup fraction."""
@@ -99,18 +103,19 @@ class InMemoryConfigStore(UserDict[WorkflowId, dict[str, Any]]):
 
 class FileBackedConfigStore(UserDict[WorkflowId, dict[str, Any]]):
     """
-    File-backed implementation of ConfigStore with optional LRU eviction.
+    Thread-safe file-backed implementation of ConfigStore with optional LRU eviction.
 
     Persists configurations to a YAML file on disk, with the same LRU eviction
     policy as InMemoryConfigStore. Configurations are loaded from the file on
     initialization and saved after each modification.
 
     This implementation uses atomic file operations (write to temp file, then
-    rename) to prevent corruption if the process crashes during a write. It does
-    NOT use file locking, as it is designed for single-threaded use within one
-    process. When multiple threads need to share stores, thread safety is provided
-    at the ConfigStoreManager level, which ensures all threads get the same
-    in-memory instance rather than creating separate caches that could desync.
+    rename) for crash safety, and a lock to protect concurrent operations on the
+    in-memory cache. It does NOT use file locking - the lock protects in-memory
+    operations (dict access, eviction logic), while atomic writes handle file
+    persistence safely. This design works in conjunction with ConfigStoreManager,
+    which ensures all threads share the same store instance rather than creating
+    separate caches that could desync.
 
     Parameters
     ----------
@@ -134,6 +139,8 @@ class FileBackedConfigStore(UserDict[WorkflowId, dict[str, Any]]):
         self._file_path = Path(file_path)
         self._max_configs = max_configs
         self._cleanup_fraction = cleanup_fraction
+        # Lock to protect all operations on this store instance
+        self._lock = threading.Lock()
 
         # Ensure parent directory exists
         self._file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -143,19 +150,21 @@ class FileBackedConfigStore(UserDict[WorkflowId, dict[str, Any]]):
 
     def __setitem__(self, key: WorkflowId, value: dict[str, Any]) -> None:
         """Save configuration with automatic LRU eviction and file persistence."""
-        super().__setitem__(key, value)
+        with self._lock:
+            super().__setitem__(key, value)
 
-        # Automatic LRU eviction if limit exceeded
-        if self._max_configs and len(self.data) > self._max_configs:
-            self._evict_oldest()
+            # Automatic LRU eviction if limit exceeded
+            if self._max_configs and len(self.data) > self._max_configs:
+                self._evict_oldest()
 
-        # Persist to file after modification
-        self._save_to_file()
+            # Persist to file after modification
+            self._save_to_file()
 
     def __delitem__(self, key: WorkflowId) -> None:
         """Delete configuration and persist to file."""
-        super().__delitem__(key)
-        self._save_to_file()
+        with self._lock:
+            super().__delitem__(key)
+            self._save_to_file()
 
     def _evict_oldest(self) -> None:
         """Remove oldest configs based on cleanup fraction."""
