@@ -165,8 +165,27 @@ def integration_env(
     marker = request.node.get_closest_marker('instrument')
     instrument = marker.args[0] if marker else 'dummy'
 
-    # Give everything time to stabilize
-    time.sleep(2.0)
+    # Wait for Kafka consumers to complete group coordination and be ready to poll.
+    # Services log "Service started" when their threads start, but their Kafka
+    # consumers need additional time to join consumer groups, complete partition
+    # assignment, and begin polling. We wait for "Kafka consumer ready" log message.
+    logger.info("Waiting for services to be ready for message consumption...")
+    start_time = time.time()
+    timeout = 5.0
+    while time.time() - start_time < timeout:
+        combined_output = ''.join(
+            service.get_stdout() + service.get_stderr()
+            for service in monitor_services.services.values()
+        )
+        if 'Kafka consumer ready and polling' in combined_output:
+            logger.info("Services ready after %.3fs", time.time() - start_time)
+            break
+        time.sleep(0.05)
+    else:
+        logger.warning(
+            "Did not see 'Kafka consumer ready' within %.1fs, proceeding anyway",
+            timeout,
+        )
 
     return IntegrationEnv(
         backend=dashboard_backend, services=monitor_services, instrument=instrument
