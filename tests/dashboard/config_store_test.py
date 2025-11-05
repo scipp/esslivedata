@@ -10,9 +10,10 @@ import yaml
 
 from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.config_store import (
-    ConfigStoreManager,
     FileBackedConfigStore,
     InMemoryConfigStore,
+    create_config_store,
+    get_config_dir,
 )
 
 
@@ -389,16 +390,18 @@ class TestFileBackedConfigStore:
         assert len(store) == 150
 
 
-class TestConfigStoreManager:
-    """Tests for ConfigStoreManager."""
+class TestCreateConfigStore:
+    """Tests for create_config_store factory function."""
 
     def test_creates_file_stores_by_default(self):
-        """Test that ConfigStoreManager creates file-backed stores by default."""
+        """Test that create_config_store creates file-backed stores by default."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            manager = ConfigStoreManager(instrument='dummy', config_dir=tmpdir)
-
-            workflow_store = manager.get_store('workflow_configs')
-            plotter_store = manager.get_store('plotter_configs')
+            workflow_store = create_config_store(
+                'dummy', 'workflow_configs', config_dir=tmpdir
+            )
+            plotter_store = create_config_store(
+                'dummy', 'plotter_configs', config_dir=tmpdir
+            )
 
             # Should be FileBackedConfigStore instances
             assert isinstance(workflow_store, FileBackedConfigStore)
@@ -409,27 +412,28 @@ class TestConfigStoreManager:
             assert (Path(tmpdir) / 'plotter_configs.yaml').parent.exists()
 
     def test_creates_memory_stores(self):
-        """Test that ConfigStoreManager can create in-memory stores."""
-        manager = ConfigStoreManager(instrument='dummy', store_type='memory')
-
-        workflow_store = manager.get_store('workflow_configs')
-        plotter_store = manager.get_store('plotter_configs')
+        """Test that create_config_store can create in-memory stores."""
+        workflow_store = create_config_store(
+            'dummy', 'workflow_configs', store_type='memory'
+        )
+        plotter_store = create_config_store(
+            'dummy', 'plotter_configs', store_type='memory'
+        )
 
         # Should be InMemoryConfigStore instances
         assert isinstance(workflow_store, InMemoryConfigStore)
         assert isinstance(plotter_store, InMemoryConfigStore)
 
     def test_respects_max_configs(self):
-        """Test that ConfigStoreManager passes max_configs to stores."""
+        """Test that create_config_store passes max_configs to stores."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            manager = ConfigStoreManager(
-                instrument='dummy',
+            store = create_config_store(
+                'dummy',
+                'test_store',
                 config_dir=tmpdir,
                 max_configs=5,
                 cleanup_fraction=0.4,
             )
-
-            store = manager.get_store('test_store')
 
             # Add 6 configs to trigger eviction
             for i in range(6):
@@ -441,64 +445,33 @@ class TestConfigStoreManager:
             # Should have evicted 40% (2 configs), leaving 4
             assert len(store) == 4
 
-    def test_config_dir_property(self):
-        """Test that ConfigStoreManager exposes config_dir property."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            manager = ConfigStoreManager(instrument='dummy', config_dir=tmpdir)
-            assert manager.config_dir == Path(tmpdir)
-
-    def test_store_type_property(self):
-        """Test that ConfigStoreManager exposes store_type property."""
-        manager = ConfigStoreManager(instrument='dummy', store_type='file')
-        assert manager.store_type == 'file'
-
-        manager = ConfigStoreManager(instrument='dummy', store_type='memory')
-        assert manager.store_type == 'memory'
-
-    def test_resolves_config_dir_from_env(self, monkeypatch):
-        """Test that ConfigStoreManager resolves config dir from LIVEDATA_CONFIG_DIR."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            monkeypatch.setenv('LIVEDATA_CONFIG_DIR', tmpdir)
-            manager = ConfigStoreManager(instrument='dummy')
-
-            assert manager.config_dir == Path(tmpdir) / 'dummy'
-
-    def test_resolves_config_dir_from_xdg(self, monkeypatch):
-        """Test that ConfigStoreManager uses XDG_CONFIG_HOME as fallback."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            monkeypatch.delenv('LIVEDATA_CONFIG_DIR', raising=False)
-            monkeypatch.setenv('XDG_CONFIG_HOME', tmpdir)
-            manager = ConfigStoreManager(instrument='dummy')
-
-            assert manager.config_dir == Path(tmpdir) / 'esslivedata' / 'dummy'
-
     def test_file_stores_persist_data(self):
-        """Test that file stores created by manager persist data."""
+        """Test that file stores persist data."""
         with tempfile.TemporaryDirectory() as tmpdir:
             wf_id = WorkflowId(
                 instrument='dummy', namespace='reduction', name='test', version=1
             )
             config_value = {'params': {'value': 42}}
 
-            # Create manager and store data
-            manager1 = ConfigStoreManager(instrument='dummy', config_dir=tmpdir)
-            store1 = manager1.get_store('workflow_configs')
+            # Create store and save data
+            store1 = create_config_store('dummy', 'workflow_configs', config_dir=tmpdir)
             store1[wf_id] = config_value
 
-            # Create new manager and verify data persists
-            manager2 = ConfigStoreManager(instrument='dummy', config_dir=tmpdir)
-            store2 = manager2.get_store('workflow_configs')
+            # Create new store and verify data persists
+            store2 = create_config_store('dummy', 'workflow_configs', config_dir=tmpdir)
 
             assert wf_id in store2
             assert store2[wf_id] == config_value
 
     def test_multiple_stores_independent(self):
-        """Test that multiple stores created by manager are independent."""
+        """Test that multiple stores are independent."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            manager = ConfigStoreManager(instrument='dummy', config_dir=tmpdir)
-
-            workflow_store = manager.get_store('workflow_configs')
-            plotter_store = manager.get_store('plotter_configs')
+            workflow_store = create_config_store(
+                'dummy', 'workflow_configs', config_dir=tmpdir
+            )
+            plotter_store = create_config_store(
+                'dummy', 'plotter_configs', config_dir=tmpdir
+            )
 
             wf_id1 = WorkflowId(
                 instrument='dummy', namespace='reduction', name='wf1', version=1
@@ -520,20 +493,14 @@ class TestConfigStoreManager:
     def test_different_instruments_isolated(self):
         """Test that configs for different instruments are stored separately."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create managers for different instruments
-            dummy_config_dir = Path(tmpdir) / 'dummy'
-            dream_config_dir = Path(tmpdir) / 'dream'
-
-            manager_dummy = ConfigStoreManager(
-                instrument='dummy', config_dir=dummy_config_dir
+            # Create stores for different instruments
+            # get_config_dir will append instrument name to the config_dir
+            dummy_store = create_config_store(
+                'dummy', 'workflow_configs', config_dir=tmpdir
             )
-            manager_dream = ConfigStoreManager(
-                instrument='dream', config_dir=dream_config_dir
+            dream_store = create_config_store(
+                'dream', 'workflow_configs', config_dir=tmpdir
             )
-
-            # Get stores from each manager
-            dummy_store = manager_dummy.get_store('workflow_configs')
-            dream_store = manager_dream.get_store('workflow_configs')
 
             # Create WorkflowIds for each instrument
             dummy_wf_id = WorkflowId(
@@ -557,22 +524,20 @@ class TestConfigStoreManager:
             assert dream_wf_id not in dummy_store
 
             # Verify files are in separate directories
-            dummy_config_file = dummy_config_dir / 'workflow_configs.yaml'
-            dream_config_file = dream_config_dir / 'workflow_configs.yaml'
+            # (instrument name appended automatically)
+            dummy_config_file = Path(tmpdir) / 'dummy' / 'workflow_configs.yaml'
+            dream_config_file = Path(tmpdir) / 'dream' / 'workflow_configs.yaml'
             assert dummy_config_file.exists()
             assert dream_config_file.exists()
             assert dummy_config_file != dream_config_file
 
-            # Verify data persists separately when creating new managers
-            manager_dummy2 = ConfigStoreManager(
-                instrument='dummy', config_dir=dummy_config_dir
+            # Verify data persists separately when creating new stores
+            dummy_store2 = create_config_store(
+                'dummy', 'workflow_configs', config_dir=tmpdir
             )
-            manager_dream2 = ConfigStoreManager(
-                instrument='dream', config_dir=dream_config_dir
+            dream_store2 = create_config_store(
+                'dream', 'workflow_configs', config_dir=tmpdir
             )
-
-            dummy_store2 = manager_dummy2.get_store('workflow_configs')
-            dream_store2 = manager_dream2.get_store('workflow_configs')
 
             # Each instrument should only have its own config
             assert dummy_wf_id in dummy_store2
@@ -582,3 +547,29 @@ class TestConfigStoreManager:
             assert dream_wf_id in dream_store2
             assert dream_store2[dream_wf_id] == dream_config
             assert dummy_wf_id not in dream_store2
+
+
+class TestGetConfigDir:
+    """Tests for get_config_dir function."""
+
+    def test_uses_explicit_config_dir(self):
+        """Test that explicit config_dir parameter is used when provided."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_dir = get_config_dir('dummy', config_dir=tmpdir)
+            assert config_dir == Path(tmpdir) / 'dummy'
+
+    def test_resolves_from_env(self, monkeypatch):
+        """Test that get_config_dir resolves from LIVEDATA_CONFIG_DIR."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            monkeypatch.setenv('LIVEDATA_CONFIG_DIR', tmpdir)
+            config_dir = get_config_dir('dummy')
+            assert config_dir == Path(tmpdir) / 'dummy'
+
+    def test_uses_platformdirs_as_fallback(self, monkeypatch):
+        """Test that get_config_dir uses platformdirs when env var not set."""
+        monkeypatch.delenv('LIVEDATA_CONFIG_DIR', raising=False)
+        config_dir = get_config_dir('dummy')
+        # Should contain the instrument name
+        assert config_dir.name == 'dummy'
+        # Parent should be esslivedata config directory
+        assert 'esslivedata' in str(config_dir.parent)

@@ -19,6 +19,7 @@ from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Any, Literal
 
+import platformdirs
 import yaml
 
 from ess.livedata.config.workflow_spec import WorkflowId
@@ -210,18 +211,58 @@ class FileBackedConfigStore(UserDict[WorkflowId, dict[str, Any]]):
             # Don't raise - continue operation even if persistence fails
 
 
-class ConfigStoreManager:
+def get_config_dir(instrument: str, config_dir: Path | str | None = None) -> Path:
     """
-    Manager for creating and configuring config stores.
+    Resolve the configuration directory path for an instrument.
 
-    Centralizes config directory setup and provides a factory for creating
-    config stores by name. Hides implementation details (FileBackedConfigStore
-    vs InMemoryConfigStore) from consumers.
+    Uses LIVEDATA_CONFIG_DIR environment variable if set, otherwise uses
+    platformdirs to determine the appropriate user config directory.
 
     Parameters
     ----------
     instrument:
         The instrument name, used for per-instrument config directory.
+    config_dir:
+        Override config directory path. If None, resolves from LIVEDATA_CONFIG_DIR
+        environment variable or platform-specific config directory.
+
+    Returns
+    -------
+    :
+        Path to the instrument-specific config directory.
+    """
+    if config_dir is not None:
+        base_dir = Path(config_dir)
+    elif (env_dir := os.environ.get('LIVEDATA_CONFIG_DIR')) is not None:
+        base_dir = Path(env_dir)
+    else:
+        # Use platformdirs for cross-platform config directory resolution
+        base_dir = Path(platformdirs.user_config_dir('esslivedata', appauthor=False))
+
+    return base_dir / instrument
+
+
+def create_config_store(
+    instrument: str,
+    name: str,
+    store_type: Literal["file", "memory"] = "file",
+    max_configs: int = 100,
+    cleanup_fraction: float = 0.2,
+    config_dir: Path | str | None = None,
+) -> ConfigStore:
+    """
+    Create a config store by name.
+
+    Factory function that creates either a file-backed or in-memory config store.
+
+    Parameters
+    ----------
+    instrument:
+        The instrument name, used for per-instrument config directory.
+    name:
+        Name of the config store. For file-backed stores, this becomes
+        the filename (with .yaml extension). For memory stores, this is
+        used for identification only.
     store_type:
         Type of store to create: "file" for persistent file-backed storage,
         or "memory" for transient in-memory storage. Default is "file".
@@ -231,107 +272,35 @@ class ConfigStoreManager:
         Fraction of configs to remove when limit exceeded. Default is 0.2 (20%).
     config_dir:
         Override config directory path. If None, resolves from LIVEDATA_CONFIG_DIR
-        environment variable or XDG config directory.
+        environment variable or platform-specific config directory.
+
+    Returns
+    -------
+    :
+        A config store instance (either FileBackedConfigStore or
+        InMemoryConfigStore depending on store_type).
 
     Examples
     --------
-    >>> # File-backed stores (default)
-    >>> manager = ConfigStoreManager(instrument='dummy')
-    >>> workflow_store = manager.get_store('workflow_configs')
-    >>> plotter_store = manager.get_store('plotter_configs')
+    >>> # File-backed store (default)
+    >>> workflow_store = create_config_store('dummy', 'workflow_configs')
+    >>> # Creates file at ~/.config/esslivedata/dummy/workflow_configs.yaml
     >>>
-    >>> # In-memory stores for testing
-    >>> manager = ConfigStoreManager(instrument='dummy', store_type='memory')
-    >>> workflow_store = manager.get_store('workflow_configs')
+    >>> # In-memory store for testing
+    >>> workflow_store = create_config_store(
+    ...     'dummy', 'workflow_configs', store_type='memory'
+    ... )
     """
-
-    def __init__(
-        self,
-        instrument: str,
-        store_type: Literal["file", "memory"] = "file",
-        max_configs: int = 100,
-        cleanup_fraction: float = 0.2,
-        config_dir: Path | str | None = None,
-    ) -> None:
-        self._instrument = instrument
-        self._store_type = store_type
-        self._max_configs = max_configs
-        self._cleanup_fraction = cleanup_fraction
-        self._config_dir = (
-            Path(config_dir) if config_dir else self._resolve_config_dir()
+    if store_type == "file":
+        instrument_config_dir = get_config_dir(instrument, config_dir)
+        file_path = instrument_config_dir / f"{name}.yaml"
+        return FileBackedConfigStore(
+            file_path=file_path,
+            max_configs=max_configs,
+            cleanup_fraction=cleanup_fraction,
         )
-
-    def _resolve_config_dir(self) -> Path:
-        """
-        Resolve the configuration directory path.
-
-        Uses LIVEDATA_CONFIG_DIR environment variable if set, otherwise falls back
-        to XDG config directory (~/.config/esslivedata).
-
-        Returns
-        -------
-        :
-            Path to the instrument-specific config directory.
-        """
-        base_dir = os.environ.get('LIVEDATA_CONFIG_DIR')
-        if base_dir is None:
-            # XDG config directory fallback
-            xdg_config_home = os.environ.get('XDG_CONFIG_HOME')
-            if xdg_config_home is None:
-                xdg_config_home = Path.home() / '.config'
-            else:
-                xdg_config_home = Path(xdg_config_home)
-            base_dir = xdg_config_home / 'esslivedata'
-        else:
-            base_dir = Path(base_dir)
-
-        return base_dir / self._instrument
-
-    @property
-    def config_dir(self) -> Path:
-        """The resolved config directory path."""
-        return self._config_dir
-
-    @property
-    def store_type(self) -> str:
-        """The type of stores created by this manager ('file' or 'memory')."""
-        return self._store_type
-
-    def get_store(self, name: str) -> ConfigStore:
-        """
-        Create a config store by name.
-
-        Parameters
-        ----------
-        name:
-            Name of the config store. For file-backed stores, this becomes
-            the filename (with .yaml extension). For memory stores, this is
-            used for identification only.
-
-        Returns
-        -------
-        :
-            A config store instance (either FileBackedConfigStore or
-            InMemoryConfigStore depending on store_type).
-
-        Examples
-        --------
-        >>> manager = ConfigStoreManager(instrument='dummy')
-        >>> workflow_store = manager.get_store('workflow_configs')
-        >>> # Creates file at ~/.config/esslivedata/dummy/workflow_configs.yaml
-        >>>
-        >>> plotter_store = manager.get_store('plotter_configs')
-        >>> # Creates file at ~/.config/esslivedata/dummy/plotter_configs.yaml
-        """
-        if self._store_type == "file":
-            file_path = self._config_dir / f"{name}.yaml"
-            return FileBackedConfigStore(
-                file_path=file_path,
-                max_configs=self._max_configs,
-                cleanup_fraction=self._cleanup_fraction,
-            )
-        else:  # memory
-            return InMemoryConfigStore(
-                max_configs=self._max_configs,
-                cleanup_fraction=self._cleanup_fraction,
-            )
+    else:  # memory
+        return InMemoryConfigStore(
+            max_configs=max_configs,
+            cleanup_fraction=cleanup_fraction,
+        )
