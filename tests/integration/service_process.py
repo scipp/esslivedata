@@ -124,16 +124,18 @@ class ServiceProcess:
             self.process.kill()
             self.process.wait()
 
-        # Capture any remaining output
+        # Capture any remaining output and close pipes
         if self.process.stdout:
             remaining_stdout = self.process.stdout.read()
             if remaining_stdout:
                 self._stdout_lines.append(remaining_stdout)
+            self.process.stdout.close()
 
         if self.process.stderr:
             remaining_stderr = self.process.stderr.read()
             if remaining_stderr:
                 self._stderr_lines.append(remaining_stderr)
+            self.process.stderr.close()
 
     def is_running(self) -> bool:
         """Check if the service process is currently running."""

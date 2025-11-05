@@ -101,10 +101,12 @@ class DashboardBase(ServiceBase, ABC):
         """Set up data services, forwarder, and orchestrator."""
         # Sink for commands
         kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
-        command_sink = KafkaSink[ConfigUpdate](
-            kafka_config=kafka_downstream_config,
-            instrument=self._instrument,
-            logger=self._logger,
+        command_sink = self._exit_stack.enter_context(
+            KafkaSink[ConfigUpdate](
+                kafka_config=kafka_downstream_config,
+                instrument=self._instrument,
+                logger=self._logger,
+            )
         )
         self._command_service = CommandService(sink=command_sink, logger=self._logger)
         self._workflow_config_service = WorkflowConfigService(logger=self._logger)
@@ -124,11 +126,13 @@ class DashboardBase(ServiceBase, ABC):
 
         # Create ROI publisher for publishing ROI updates to Kafka
         kafka_upstream_config = load_config(namespace=config_names.kafka_upstream)
-        roi_sink = KafkaSink(
-            kafka_config=kafka_upstream_config,
-            instrument=instrument,
-            serializer=serialize_dataarray_to_da00,
-            logger=self._logger,
+        roi_sink = self._exit_stack.enter_context(
+            KafkaSink(
+                kafka_config=kafka_upstream_config,
+                instrument=instrument,
+                serializer=serialize_dataarray_to_da00,
+                logger=self._logger,
+            )
         )
         roi_publisher = ROIPublisher(sink=roi_sink, logger=self._logger)
 

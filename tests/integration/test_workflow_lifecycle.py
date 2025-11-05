@@ -8,6 +8,7 @@ import pytest
 from ess.livedata.config.workflow_spec import WorkflowId
 
 from .conftest import IntegrationEnv
+from .helpers import wait_for_condition
 
 
 class EmptyParams(pydantic.BaseModel):
@@ -26,7 +27,6 @@ def test_workflow_can_start_and_receive_data(integration_env: IntegrationEnv) ->
     2. Process messages by calling backend.update()
     3. Wait for workflow response using helpers
     4. Wait for data to arrive
-    5. Stop the workflow
     """
     backend = integration_env.backend
 
@@ -46,30 +46,15 @@ def test_workflow_can_start_and_receive_data(integration_env: IntegrationEnv) ->
         config=EmptyParams(),
     )
 
-    # Process messages to get the workflow started response
-    for _ in range(5):
+    # Process messages continuously until we receive job data
+    def check_for_job_data():
         backend.update()
+        return len(backend.job_service.job_data) > 0
 
-    # Wait for workflow config to be acknowledged
-    # (WorkflowConfigService should receive the config)
-    # Note: In a real test, you'd want to verify the config was received
+    wait_for_condition(check_for_job_data, timeout=10.0, poll_interval=0.5)
 
-    # Give services time to process and start producing data
-    import time
-
-    time.sleep(2.0)
-
-    # Process more messages to get data updates
-    for _ in range(10):
-        backend.update()
-        time.sleep(0.5)
-
-    # Check that we have job data (the workflow should have produced something)
-    # Note: This is a basic check - in a real test you'd verify specific data
+    # Verify that we received job data
     assert len(backend.job_service.job_data) > 0, "Expected to receive job data"
-
-    # Note: Workflows continue running until services are stopped
-    # There is no explicit stop_workflow method in the current implementation
 
 
 @pytest.mark.integration
@@ -77,7 +62,8 @@ def test_workflow_status_updates(integration_env: IntegrationEnv) -> None:
     """
     Test that workflow status updates are received properly.
 
-    This test verifies that we can wait for specific job statuses.
+    This test verifies that we can wait for specific job statuses and retrieve
+    job data as expected.
     """
     backend = integration_env.backend
 
@@ -94,15 +80,14 @@ def test_workflow_status_updates(integration_env: IntegrationEnv) -> None:
         workflow_id=workflow_id, source_names=source_names, config=EmptyParams()
     )
 
-    # Process messages
-    for _ in range(10):
+    # Process messages and wait for status updates
+    def check_for_status_updates():
         backend.update()
-        import time
+        return len(backend.job_service.job_statuses) > 0
 
-        time.sleep(0.3)
+    wait_for_condition(check_for_status_updates, timeout=10.0, poll_interval=0.5)
 
-    # We should have received at least one status update
-    # Note: The actual status values depend on the backend implementation
+    # Verify we received status updates
     assert len(backend.job_service.job_statuses) > 0, "Expected job status updates"
 
 

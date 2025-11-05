@@ -2,6 +2,7 @@
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
 import logging
 from dataclasses import replace
+from types import TracebackType
 from typing import Any, Generic, Protocol, TypeVar
 
 import confluent_kafka as kafka
@@ -116,6 +117,29 @@ class KafkaSink(MessageSink[T]):
             self._producer.flush(timeout=3)
         except kafka.KafkaException as e:
             self._logger.error("Error flushing producer: %s", e)
+
+    def close(self) -> None:
+        """Close the Kafka producer and release resources."""
+        if hasattr(self, '_producer'):
+            try:
+                self._producer.flush(timeout=5)
+            except kafka.KafkaException as e:
+                self._logger.error("Error flushing producer during close: %s", e)
+            # The confluent_kafka Producer cleans up when deleted
+            del self._producer
+
+    def __enter__(self) -> 'KafkaSink[T]':
+        """Enter context manager."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Exit context manager."""
+        self.close()
 
 
 class UnrollingSinkAdapter(MessageSink[T | sc.DataGroup[T]]):
