@@ -47,6 +47,12 @@ def dashboard_backend(request) -> Generator[DashboardBackend, None, None]:
     def test_something(dashboard_backend):
         ...
 
+    Tests can also override log level using a marker:
+
+    @pytest.mark.log_level('DEBUG')
+    def test_something(dashboard_backend):
+        ...
+
     Yields
     ------
     :
@@ -56,8 +62,13 @@ def dashboard_backend(request) -> Generator[DashboardBackend, None, None]:
     marker = request.node.get_closest_marker('instrument')
     instrument = marker.args[0] if marker else 'dummy'
 
+    # Get log level from marker or use default
+    log_level_marker = request.node.get_closest_marker('log_level')
+    log_level_name = log_level_marker.args[0] if log_level_marker else 'INFO'
+    log_level = getattr(logging, log_level_name)
+
     logger.info("Creating dashboard backend for instrument: %s", instrument)
-    backend = DashboardBackend(instrument=instrument, dev=True, log_level=logging.INFO)
+    backend = DashboardBackend(instrument=instrument, dev=True, log_level=log_level)
 
     try:
         backend.start()
@@ -82,6 +93,12 @@ def monitor_services(request) -> Generator[ServiceGroup, None, None]:
     def test_something(monitor_services):
         ...
 
+    Tests can also override log level using a marker:
+
+    @pytest.mark.log_level('DEBUG')
+    def test_something(monitor_services):
+        ...
+
     Yields
     ------
     :
@@ -91,22 +108,30 @@ def monitor_services(request) -> Generator[ServiceGroup, None, None]:
     marker = request.node.get_closest_marker('instrument')
     instrument = marker.args[0] if marker else 'dummy'
 
+    # Get log level from marker or use default
+    log_level_marker = request.node.get_closest_marker('log_level')
+    log_level = log_level_marker.args[0] if log_level_marker else 'INFO'
+
     services = ServiceGroup(
         {
             'fake_monitors': ServiceProcess(
                 'ess.livedata.services.fake_monitors',
+                log_level=log_level,
                 instrument=instrument,
                 mode='ev44',
             ),
             'monitor_data': ServiceProcess(
-                'ess.livedata.services.monitor_data', instrument=instrument, dev=True
+                'ess.livedata.services.monitor_data',
+                log_level=log_level,
+                instrument=instrument,
+                dev=True,
             ),
         }
     )
 
     logger.info("Starting monitor services for instrument: %s", instrument)
     try:
-        services.start_all(startup_delay=3.0)
+        services.start_all(startup_delay=5.0)
         yield services
     finally:
         services.stop_all()
@@ -164,20 +189,29 @@ def detector_services(request) -> Generator[ServiceGroup, None, None]:
     marker = request.node.get_closest_marker('instrument')
     instrument = marker.args[0] if marker else 'dummy'
 
+    # Get log level from marker or use default
+    log_level_marker = request.node.get_closest_marker('log_level')
+    log_level = log_level_marker.args[0] if log_level_marker else 'INFO'
+
     services = ServiceGroup(
         {
             'fake_detectors': ServiceProcess(
-                'ess.livedata.services.fake_detectors', instrument=instrument
+                'ess.livedata.services.fake_detectors',
+                log_level=log_level,
+                instrument=instrument,
             ),
             'detector_data': ServiceProcess(
-                'ess.livedata.services.detector_data', instrument=instrument, dev=True
+                'ess.livedata.services.detector_data',
+                log_level=log_level,
+                instrument=instrument,
+                dev=True,
             ),
         }
     )
 
     logger.info("Starting detector services for instrument: %s", instrument)
     try:
-        services.start_all(startup_delay=3.0)
+        services.start_all(startup_delay=5.0)
         yield services
     finally:
         services.stop_all()
@@ -199,25 +233,36 @@ def reduction_services(request) -> Generator[ServiceGroup, None, None]:
     marker = request.node.get_closest_marker('instrument')
     instrument = marker.args[0] if marker else 'dummy'
 
+    # Get log level from marker or use default
+    log_level_marker = request.node.get_closest_marker('log_level')
+    log_level = log_level_marker.args[0] if log_level_marker else 'INFO'
+
     services = ServiceGroup(
         {
             'fake_monitors': ServiceProcess(
                 'ess.livedata.services.fake_monitors',
+                log_level=log_level,
                 instrument=instrument,
                 mode='ev44',
             ),
             'monitor_data': ServiceProcess(
-                'ess.livedata.services.monitor_data', instrument=instrument, dev=True
+                'ess.livedata.services.monitor_data',
+                log_level=log_level,
+                instrument=instrument,
+                dev=True,
             ),
             'data_reduction': ServiceProcess(
-                'ess.livedata.services.data_reduction', instrument=instrument, dev=True
+                'ess.livedata.services.data_reduction',
+                log_level=log_level,
+                instrument=instrument,
+                dev=True,
             ),
         }
     )
 
     logger.info("Starting reduction services for instrument: %s", instrument)
     try:
-        services.start_all(startup_delay=3.0)
+        services.start_all(startup_delay=5.0)
         yield services
     finally:
         services.stop_all()

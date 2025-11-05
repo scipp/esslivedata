@@ -5,6 +5,7 @@
 import logging
 import subprocess
 import sys
+import threading
 import time
 from types import TracebackType
 from typing import Any
@@ -24,17 +25,45 @@ class ServiceProcess:
     ----------
     service_module:
         Python module name to run (e.g., 'ess.livedata.services.fake_monitors')
+    log_level:
+        Logging level for the subprocess (DEBUG, INFO, WARNING, ERROR, CRITICAL)
     **kwargs:
         Service-specific arguments passed as command-line flags
         (e.g., instrument='dummy', dev=True becomes --instrument dummy --dev)
     """
 
-    def __init__(self, service_module: str, **kwargs: Any):
+    def __init__(
+        self,
+        service_module: str,
+        *,
+        log_level: str = 'INFO',
+        **kwargs: Any,
+    ):
         self.service_module = service_module
+        self.log_level = log_level
         self.kwargs = kwargs
         self.process: subprocess.Popen | None = None
         self._stdout_lines: list[str] = []
         self._stderr_lines: list[str] = []
+        self._stdout_thread: threading.Thread | None = None
+        self._stderr_thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+
+    def _stream_output(self, stream, output_list: list[str], stream_name: str) -> None:
+        """Read from a stream and forward lines to stderr for pytest capture."""
+        try:
+            for line in iter(stream.readline, ''):
+                if self._stop_event.is_set():
+                    break
+                if line:
+                    output_list.append(line)
+                    # Forward to stderr - pytest will capture this
+                    # Prefix with service name for clarity
+                    sys.stderr.write(f"[{self.service_module}] {line}")
+                    sys.stderr.flush()
+        except ValueError:
+            # Stream was closed
+            pass
 
     def start(self, startup_delay: float = 2.0) -> None:
         """
@@ -47,6 +76,9 @@ class ServiceProcess:
         """
         # Build command line arguments
         args = [sys.executable, '-m', self.service_module]
+
+        # Add log level to command line
+        args.extend(['--log-level', self.log_level])
 
         for key, value in self.kwargs.items():
             # Convert Python naming to CLI flags (underscore to hyphen)
@@ -71,21 +103,64 @@ class ServiceProcess:
             bufsize=1,  # Line buffered
         )
 
-        # Give the service time to start up
-        time.sleep(startup_delay)
+        # Start threads to stream output
+        self._stop_event.clear()
+        self._stdout_thread = threading.Thread(
+            target=self._stream_output,
+            args=(self.process.stdout, self._stdout_lines, 'stdout'),
+            daemon=True,
+        )
+        self._stderr_thread = threading.Thread(
+            target=self._stream_output,
+            args=(self.process.stderr, self._stderr_lines, 'stderr'),
+            daemon=True,
+        )
+        self._stdout_thread.start()
+        self._stderr_thread.start()
 
-        # Check if process started successfully
-        if self.process.poll() is not None:
-            stdout, stderr = self.process.communicate()
-            raise RuntimeError(
-                f"Service {self.service_module} failed to start.\n"
-                f"Exit code: {self.process.returncode}\n"
-                f"STDOUT: {stdout}\n"
-                f"STDERR: {stderr}"
+        # Wait for service to report it has started (or crash)
+        start_time = time.time()
+        service_started = False
+        while time.time() - start_time < startup_delay:
+            # Check if process crashed
+            if self.process.poll() is not None:
+                # Wait for threads to finish reading any error output
+                self._stop_event.set()
+                if self._stdout_thread:
+                    self._stdout_thread.join(timeout=1.0)
+                if self._stderr_thread:
+                    self._stderr_thread.join(timeout=1.0)
+
+                stdout = ''.join(self._stdout_lines)
+                stderr = ''.join(self._stderr_lines)
+                raise RuntimeError(
+                    f"Service {self.service_module} failed to start.\n"
+                    f"Exit code: {self.process.returncode}\n"
+                    f"STDOUT: {stdout}\n"
+                    f"STDERR: {stderr}"
+                )
+
+            # Check if we've seen "Service started" in output
+            combined_output = ''.join(self._stdout_lines + self._stderr_lines)
+            if 'Service started' in combined_output:
+                service_started = True
+                break
+
+            time.sleep(0.01)  # Small sleep to avoid busy-waiting
+
+        if not service_started:
+            logger.warning(
+                "Did not see 'Service started' message for %s within %.1fs, "
+                "but process is still running",
+                self.service_module,
+                startup_delay,
             )
 
         logger.info(
-            "Service %s started with PID %s", self.service_module, self.process.pid
+            "Service %s started with PID %s (took %.3fs)",
+            self.service_module,
+            self.process.pid,
+            time.time() - start_time,
         )
 
     def stop(self, timeout: float = 10.0) -> None:
@@ -124,17 +199,21 @@ class ServiceProcess:
             self.process.kill()
             self.process.wait()
 
-        # Capture any remaining output and close pipes
-        if self.process.stdout:
-            remaining_stdout = self.process.stdout.read()
-            if remaining_stdout:
-                self._stdout_lines.append(remaining_stdout)
-            self.process.stdout.close()
+        # Signal threads to stop and wait for them to finish
+        self._stop_event.set()
+        if self._stdout_thread and self._stdout_thread.is_alive():
+            self._stdout_thread.join(timeout=0.1)
+            if self._stdout_thread.is_alive():
+                logger.warning("stdout thread did not stop for %s", self.service_module)
+        if self._stderr_thread and self._stderr_thread.is_alive():
+            self._stderr_thread.join(timeout=0.1)
+            if self._stderr_thread.is_alive():
+                logger.warning("stderr thread did not stop for %s", self.service_module)
 
+        # Close pipes
+        if self.process.stdout:
+            self.process.stdout.close()
         if self.process.stderr:
-            remaining_stderr = self.process.stderr.read()
-            if remaining_stderr:
-                self._stderr_lines.append(remaining_stderr)
             self.process.stderr.close()
 
     def is_running(self) -> bool:
@@ -145,24 +224,10 @@ class ServiceProcess:
 
     def get_stdout(self) -> str:
         """Get accumulated stdout from the service."""
-        if self.process and self.process.stdout:
-            # Read any available output without blocking
-            import select
-
-            if select.select([self.process.stdout], [], [], 0)[0]:
-                self._stdout_lines.append(self.process.stdout.read())
-
         return ''.join(self._stdout_lines)
 
     def get_stderr(self) -> str:
         """Get accumulated stderr from the service."""
-        if self.process and self.process.stderr:
-            # Read any available output without blocking
-            import select
-
-            if select.select([self.process.stderr], [], [], 0)[0]:
-                self._stderr_lines.append(self.process.stderr.read())
-
         return ''.join(self._stderr_lines)
 
     def __enter__(self) -> 'ServiceProcess':
