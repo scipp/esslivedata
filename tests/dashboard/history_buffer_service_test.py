@@ -61,8 +61,8 @@ class SimpleSubscriber(HistorySubscriber[str]):
         return self._updates
 
 
-class TestHistoryBufferServiceBasic:
-    """Test basic HistoryBufferService functionality without DataService."""
+class TestHistoryBufferService:
+    """Test HistoryBufferService functionality without DataService."""
 
     def test_add_data_single_key(self):
         """Test adding data to a single key."""
@@ -256,25 +256,6 @@ class TestHistoryBufferServiceBasic:
         data2 = make_data(5)
         service.add_data({"data": data2})
         assert len(subscriber.get_updates()) == 2
-
-    def test_lazy_buffer_initialization(self):
-        """Test that buffers are created lazily for each subscriber."""
-        service = HistoryBufferService[str](data_service=None)
-
-        subscriber = SimpleSubscriber(
-            extractors={"data": FullHistoryExtractor()},
-        )
-        service.register_subscriber(subscriber)
-
-        # Initially no updates
-        assert len(subscriber.get_updates()) == 0
-
-        # Add data - buffer should be created
-        data = make_data(5)
-        service.add_data({"data": data})
-
-        # Subscriber should have received the update
-        assert len(subscriber.get_updates()) == 1
 
     def test_multiple_subscribers_independent_buffers(self):
         """Test that multiple subscribers maintain independent buffers."""
