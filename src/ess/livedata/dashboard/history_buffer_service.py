@@ -47,7 +47,7 @@ class FullHistoryExtractor(UpdateExtractor):
 class WindowExtractor(UpdateExtractor):
     """Extracts a window from the end of the buffer."""
 
-    def __init__(self, size: int | None = None) -> None:
+    def __init__(self, size: int) -> None:
         """
         Initialize window extractor.
 
@@ -55,12 +55,11 @@ class WindowExtractor(UpdateExtractor):
         ----------
         size:
             Number of elements to extract from the end of the buffer.
-            If None, extracts the entire buffer.
         """
         self._size = size
 
     @property
-    def window_size(self) -> int | None:
+    def window_size(self) -> int:
         """Return the window size."""
         return self._size
 
@@ -142,14 +141,13 @@ class HistoryBufferService(Generic[K]):
     Each subscriber gets its own set of buffers for the keys it needs.
     """
 
-    # Default buffer configuration
-    DEFAULT_WINDOW_SIZE = 1000  # Default window size for WindowExtractor with no size
-    DEFAULT_INITIAL_CAPACITY = 100  # Initial allocation for all buffers
-    DEFAULT_MAX_SIZE = 10000  # Max size for full history buffers
+    # Maximum size for full history buffers
+    DEFAULT_MAX_SIZE = 10000
 
     def __init__(
         self,
         data_service: DataService[K, sc.DataArray] | None = None,
+        concat_dim: str = "time",
     ) -> None:
         """
         Initialize the history buffer service.
@@ -159,8 +157,11 @@ class HistoryBufferService(Generic[K]):
         data_service:
             The DataService to subscribe to. If None, data must be added
             via add_data() method.
+        concat_dim:
+            The dimension along which to concatenate data. Defaults to "time".
         """
         self._data_service = data_service
+        self._concat_dim = concat_dim
         # Each subscriber has its own buffers for its keys
         self._buffers: dict[HistorySubscriber[K], dict[K, Buffer]] = {}
 
@@ -181,7 +182,7 @@ class HistoryBufferService(Generic[K]):
         return all_keys
 
     def _create_buffer_for_key(
-        self, subscriber: HistorySubscriber[K], key: K, data: sc.DataArray
+        self, subscriber: HistorySubscriber[K], key: K
     ) -> Buffer:
         """
         Create a buffer for a key based on subscriber's extractor requirements.
@@ -192,44 +193,26 @@ class HistoryBufferService(Generic[K]):
             The subscriber requesting the buffer.
         key:
             The key for which to create a buffer.
-        data:
-            Sample data to determine dimension.
 
         Returns
         -------
         :
             A configured buffer for this key.
         """
-        # Get the extractor for this key
+        buffer_impl = DataArrayBuffer(concat_dim=self._concat_dim)
         extractor = subscriber.extractors.get(key, FullHistoryExtractor())
 
-        # Determine concat dimension
-        concat_dim = "time" if "time" in data.dims else data.dims[0]
-
-        # Create buffer based on extractor type
-        buffer_impl = DataArrayBuffer(concat_dim=concat_dim)
-
         if isinstance(extractor, WindowExtractor):
-            # For window extractors, use sliding window with the requested size
-            window_size = (
-                extractor.window_size
-                if extractor.window_size
-                else self.DEFAULT_WINDOW_SIZE
-            )
             return Buffer(
-                max_size=window_size,
+                max_size=extractor.window_size,
                 buffer_impl=buffer_impl,
-                initial_capacity=min(self.DEFAULT_INITIAL_CAPACITY, window_size),
-                overallocation_factor=2.0,  # 2x for window extractors
-                concat_dim=concat_dim,
+                concat_dim=self._concat_dim,
             )
         else:
-            # FullHistoryExtractor or unknown - use growing buffer
             return Buffer(
                 max_size=self.DEFAULT_MAX_SIZE,
                 buffer_impl=buffer_impl,
-                initial_capacity=self.DEFAULT_INITIAL_CAPACITY,
-                concat_dim=concat_dim,
+                concat_dim=self._concat_dim,
             )
 
     def add_data(self, store: dict[K, sc.DataArray]) -> None:
@@ -252,9 +235,7 @@ class HistoryBufferService(Generic[K]):
                 if key in subscriber.keys:
                     # Lazy initialize buffer if needed
                     if key not in buffers:
-                        buffers[key] = self._create_buffer_for_key(
-                            subscriber, key, data
-                        )
+                        buffers[key] = self._create_buffer_for_key(subscriber, key)
 
                     # Append to this subscriber's buffer
                     buffers[key].append(data)
