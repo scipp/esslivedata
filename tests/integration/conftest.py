@@ -42,9 +42,8 @@ def _get_instrument_and_log_level(request):
 
     log_level_marker = request.node.get_closest_marker('log_level')
     log_level_name = log_level_marker.args[0] if log_level_marker else 'INFO'
-    log_level = getattr(logging, log_level_name)
 
-    return instrument, log_level
+    return instrument, log_level_name
 
 
 def _create_service_group(
@@ -110,10 +109,11 @@ def dashboard_backend(request) -> Generator[DashboardBackend, None, None]:
     # Get log level from marker or use default
     log_level_marker = request.node.get_closest_marker('log_level')
     log_level_name = log_level_marker.args[0] if log_level_marker else 'INFO'
-    log_level = getattr(logging, log_level_name)
 
     logger.info("Creating dashboard backend for instrument: %s", instrument)
-    backend = DashboardBackend(instrument=instrument, dev=True, log_level=log_level)
+    backend = DashboardBackend(
+        instrument=instrument, dev=True, log_level=log_level_name
+    )
 
     try:
         backend.start()

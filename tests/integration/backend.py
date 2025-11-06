@@ -31,7 +31,7 @@ class DashboardBackend:
         *,
         instrument: str = 'dummy',
         dev: bool = True,
-        log_level: int = logging.INFO,
+        log_level: int | str = logging.INFO,
     ):
         self._instrument = instrument
         self._dev = dev
