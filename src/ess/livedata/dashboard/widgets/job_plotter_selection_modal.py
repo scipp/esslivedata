@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -305,12 +304,15 @@ class PlotterSelectionStep(WizardStep[JobOutputSelection, PlotterSelection]):
 
     def _make_unique_title_mapping(
         self, available_plots: dict[str, PlotterSpec]
-    ) -> OrderedDict[str, str]:
+    ) -> dict[str, str]:
         """Create mapping from unique display titles to internal plot names."""
         title_counts: dict[str, int] = {}
-        result: OrderedDict[str, str] = OrderedDict()
+        result: dict[str, str] = {}
 
-        for name, spec in available_plots.items():
+        # Sort alphabetically by title for better UX
+        sorted_plots = sorted(available_plots.items(), key=lambda x: x[1].title)
+
+        for name, spec in sorted_plots:
             title = spec.title
             count = title_counts.get(title, 0)
             title_counts[title] = count + 1
