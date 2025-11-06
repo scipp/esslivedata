@@ -92,7 +92,6 @@ class HistorySubscriber(ABC, Generic[K]):
         Return the extractors to use for obtaining buffer data.
 
         Returns a mapping from key to the extractor to use for that key.
-        Keys not in this dict will use a default FullHistoryExtractor.
         """
 
     @abstractmethod
@@ -200,7 +199,7 @@ class HistoryBufferService(Generic[K]):
             A configured buffer for this key.
         """
         buffer_impl = DataArrayBuffer(concat_dim=self._concat_dim)
-        extractor = subscriber.extractors.get(key, FullHistoryExtractor())
+        extractor = subscriber.extractors[key]
 
         if isinstance(extractor, WindowExtractor):
             return Buffer(
@@ -272,8 +271,8 @@ class HistoryBufferService(Generic[K]):
                 if buffer is None:
                     continue
 
-                # Use key-specific extractor or default to full history
-                extractor = extractors.get(key, FullHistoryExtractor())
+                # Use key-specific extractor
+                extractor = extractors[key]
                 data = extractor.extract(buffer)
                 if data is not None:
                     extracted_data[key] = data

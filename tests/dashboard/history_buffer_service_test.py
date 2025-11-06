@@ -41,11 +41,9 @@ class SimpleSubscriber(HistorySubscriber[str]):
 
     def __init__(
         self,
-        keys: set[str] | None = None,
         extractors: dict[str, UpdateExtractor] | None = None,
     ) -> None:
-        """Initialize with optional key set and extractors."""
-        self._keys = keys or set()
+        """Initialize with extractors."""
         self._extractors = extractors or {}
         self._updates: list[dict[str, sc.DataArray]] = []
 
@@ -53,11 +51,6 @@ class SimpleSubscriber(HistorySubscriber[str]):
     def extractors(self) -> dict[str, UpdateExtractor]:
         """Return extractors."""
         return self._extractors
-
-    @property
-    def keys(self) -> set[str]:
-        """Return tracked keys."""
-        return self._keys
 
     def on_update(self, data: dict[str, sc.DataArray]) -> None:
         """Collect updates."""
@@ -76,7 +69,6 @@ class TestHistoryBufferServiceBasic:
         service = HistoryBufferService[str](data_service=None)
 
         subscriber = SimpleSubscriber(
-            keys={"data"},
             extractors={"data": FullHistoryExtractor()},
         )
         service.register_subscriber(subscriber)
@@ -96,8 +88,10 @@ class TestHistoryBufferServiceBasic:
         service = HistoryBufferService[str](data_service=None)
 
         subscriber = SimpleSubscriber(
-            keys={"key1", "key2"},
-            extractors={},
+            extractors={
+                "key1": FullHistoryExtractor(),
+                "key2": FullHistoryExtractor(),
+            },
         )
         service.register_subscriber(subscriber)
 
@@ -117,7 +111,6 @@ class TestHistoryBufferServiceBasic:
         service = HistoryBufferService[str](data_service=None)
 
         subscriber = SimpleSubscriber(
-            keys={"data"},
             extractors={"data": WindowExtractor(size=3)},
         )
         service.register_subscriber(subscriber)
@@ -140,7 +133,6 @@ class TestHistoryBufferServiceBasic:
         service = HistoryBufferService[str](data_service=None)
 
         subscriber = SimpleSubscriber(
-            keys={"data"},
             extractors={"data": FullHistoryExtractor()},
         )
         service.register_subscriber(subscriber)
@@ -164,8 +156,12 @@ class TestHistoryBufferServiceBasic:
         """Test that subscribers only get keys they care about."""
         service = HistoryBufferService[str](data_service=None)
 
-        subscriber1 = SimpleSubscriber(keys={"key1"})
-        subscriber2 = SimpleSubscriber(keys={"key2"})
+        subscriber1 = SimpleSubscriber(
+            extractors={"key1": FullHistoryExtractor()},
+        )
+        subscriber2 = SimpleSubscriber(
+            extractors={"key2": FullHistoryExtractor()},
+        )
         service.register_subscriber(subscriber1)
         service.register_subscriber(subscriber2)
 
@@ -183,7 +179,9 @@ class TestHistoryBufferServiceBasic:
         """Test unregistering a subscriber."""
         service = HistoryBufferService[str](data_service=None)
 
-        subscriber = SimpleSubscriber(keys={"data"})
+        subscriber = SimpleSubscriber(
+            extractors={"data": FullHistoryExtractor()},
+        )
         service.register_subscriber(subscriber)
 
         # Add data
@@ -202,7 +200,9 @@ class TestHistoryBufferServiceBasic:
         """Test that subscribers aren't notified for keys they don't care about."""
         service = HistoryBufferService[str](data_service=None)
 
-        subscriber = SimpleSubscriber(keys={"key1"})
+        subscriber = SimpleSubscriber(
+            extractors={"key1": FullHistoryExtractor()},
+        )
         service.register_subscriber(subscriber)
 
         # Add data for a different key
@@ -216,8 +216,18 @@ class TestHistoryBufferServiceBasic:
         """Test tracking of all keys across subscribers."""
         service = HistoryBufferService[str](data_service=None)
 
-        subscriber1 = SimpleSubscriber(keys={"key1", "key2"})
-        subscriber2 = SimpleSubscriber(keys={"key2", "key3"})
+        subscriber1 = SimpleSubscriber(
+            extractors={
+                "key1": FullHistoryExtractor(),
+                "key2": FullHistoryExtractor(),
+            },
+        )
+        subscriber2 = SimpleSubscriber(
+            extractors={
+                "key2": FullHistoryExtractor(),
+                "key3": FullHistoryExtractor(),
+            },
+        )
         service.register_subscriber(subscriber1)
         service.register_subscriber(subscriber2)
 
@@ -228,7 +238,9 @@ class TestHistoryBufferServiceBasic:
         """Test clearing all buffers."""
         service = HistoryBufferService[str](data_service=None)
 
-        subscriber = SimpleSubscriber(keys={"data"})
+        subscriber = SimpleSubscriber(
+            extractors={"data": FullHistoryExtractor()},
+        )
         service.register_subscriber(subscriber)
 
         # Add data
@@ -249,7 +261,9 @@ class TestHistoryBufferServiceBasic:
         """Test that buffers are created lazily for each subscriber."""
         service = HistoryBufferService[str](data_service=None)
 
-        subscriber = SimpleSubscriber(keys={"data"})
+        subscriber = SimpleSubscriber(
+            extractors={"data": FullHistoryExtractor()},
+        )
         service.register_subscriber(subscriber)
 
         # Initially no updates
@@ -267,11 +281,9 @@ class TestHistoryBufferServiceBasic:
         service = HistoryBufferService[str](data_service=None)
 
         subscriber1 = SimpleSubscriber(
-            keys={"data"},
             extractors={"data": FullHistoryExtractor()},
         )
         subscriber2 = SimpleSubscriber(
-            keys={"data"},
             extractors={"data": WindowExtractor(size=2)},
         )
         service.register_subscriber(subscriber1)
@@ -290,7 +302,9 @@ class TestHistoryBufferServiceBasic:
         """Test with multidimensional data."""
         service = HistoryBufferService[str](data_service=None)
 
-        subscriber = SimpleSubscriber(keys={"data"})
+        subscriber = SimpleSubscriber(
+            extractors={"data": FullHistoryExtractor()},
+        )
         service.register_subscriber(subscriber)
 
         # Add 2D data
