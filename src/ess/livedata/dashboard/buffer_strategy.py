@@ -4,8 +4,7 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import Protocol, TypeVar
+from typing import Generic, Protocol, TypeVar
 
 import scipp as sc
 
@@ -13,63 +12,11 @@ import scipp as sc
 T = TypeVar('T')
 
 
-class StorageStrategy(ABC):
-    """
-    Low-level storage strategy for buffer data.
-
-    Manages data accumulation and eviction using pre-allocated buffers with
-    in-place writes. This avoids the O(n²) complexity of naive concatenation,
-    where each append requires copying all existing data: n appends of size m
-    each would be O(n·m²) total. Instead, we pre-allocate with doubling
-    capacity and use numpy-level indexing for O(1) appends, achieving
-    O(n·m) amortized complexity.
-
-    Always maintains contiguous views of stored data.
-    """
-
-    @abstractmethod
-    def append(self, data: sc.DataArray) -> None:
-        """
-        Append new data to storage.
-
-        Parameters
-        ----------
-        data:
-            The data to append. Must be compatible with existing stored data.
-        """
-
-    @abstractmethod
-    def get_all(self) -> sc.DataArray | None:
-        """
-        Get all stored data.
-
-        Returns
-        -------
-        :
-            The complete stored data as a contiguous DataArray, or None if empty.
-        """
-
-    @abstractmethod
-    def estimate_memory(self) -> int:
-        """
-        Estimate memory usage in bytes.
-
-        Returns
-        -------
-        :
-            Estimated memory usage in bytes.
-        """
-
-    @abstractmethod
-    def clear(self) -> None:
-        """Clear all stored data."""
-
-
 class BufferInterface(Protocol[T]):
     """
     Protocol for buffer implementations.
 
-    Defines the minimal interface needed by BufferStorage. Implementations
+    Defines the minimal interface needed by Buffer. Implementations
     handle the details of allocating, writing, shifting, and viewing buffers.
     """
 
@@ -161,6 +108,181 @@ class BufferInterface(Protocol[T]):
         """
         ...
 
+    def get_size(self, data: T) -> int:
+        """
+        Get size of data along the relevant dimension.
+
+        Parameters
+        ----------
+        data:
+            Data to measure.
+
+        Returns
+        -------
+        :
+            Size along the relevant dimension.
+        """
+        ...
+
+
+class DataArrayBuffer:
+    """
+    Buffer implementation for sc.DataArray.
+
+    Handles DataArray complexity including:
+    - Data variable allocation
+    - Concat dimension coordinates (auto-generated during allocation)
+    - Non-concat coordinates (assumed constant across updates)
+    - Concat-dependent coordinates (pre-allocated)
+    - Masks
+    """
+
+    def __init__(self, concat_dim: str = 'time') -> None:
+        """
+        Initialize DataArray buffer implementation.
+
+        Parameters
+        ----------
+        concat_dim:
+            The dimension along which to concatenate data.
+        """
+        self._concat_dim = concat_dim
+
+    def allocate(self, template: sc.DataArray, capacity: int) -> sc.DataArray:
+        """Allocate a new DataArray buffer with given capacity."""
+        # Determine shape with expanded concat dimension
+        shape = [
+            capacity if dim == self._concat_dim else size
+            for dim, size in zip(template.dims, template.shape, strict=True)
+        ]
+
+        # Create zeros array with correct structure
+        data_var = sc.zeros(dims=template.dims, shape=shape, dtype=template.data.dtype)
+
+        # Create DataArray with concat dimension coordinate
+        coords = {
+            self._concat_dim: sc.array(
+                dims=[self._concat_dim],
+                values=list(range(capacity)),
+                dtype='int64',
+            )
+        }
+
+        # Add non-concat coordinates from template
+        # Only add those that don't depend on the concat dimension
+        coords.update(
+            {
+                coord_name: coord
+                for coord_name, coord in template.coords.items()
+                if (
+                    coord_name != self._concat_dim
+                    and self._concat_dim not in coord.dims
+                )
+            }
+        )
+
+        buffer_data = sc.DataArray(data=data_var, coords=coords)
+
+        # Pre-allocate coordinates that depend on concat dimension
+        for coord_name, coord in template.coords.items():
+            if coord_name != self._concat_dim and self._concat_dim in coord.dims:
+                coord_shape = [
+                    capacity if dim == self._concat_dim else template.sizes[dim]
+                    for dim in coord.dims
+                ]
+                buffer_data.coords[coord_name] = sc.zeros(
+                    dims=coord.dims,
+                    shape=coord_shape,
+                    dtype=coord.dtype,
+                )
+
+        # Pre-allocate masks
+        for mask_name, mask in template.masks.items():
+            mask_shape = [
+                capacity if dim == self._concat_dim else s
+                for dim, s in zip(mask.dims, mask.shape, strict=True)
+            ]
+            buffer_data.masks[mask_name] = sc.zeros(
+                dims=mask.dims,
+                shape=mask_shape,
+                dtype=mask.dtype,
+            )
+
+        return buffer_data
+
+    def write_slice(
+        self, buffer: sc.DataArray, start: int, end: int, data: sc.DataArray
+    ) -> None:
+        """Write data to buffer slice in-place."""
+        size = end - start
+        if data.sizes[self._concat_dim] != size:
+            raise ValueError(
+                f"Size mismatch: expected {size}, got {data.sizes[self._concat_dim]}"
+            )
+
+        # In-place write using numpy array access
+        buffer.data.values[start:end] = data.data.values
+        buffer.coords[self._concat_dim].values[start:end] = data.coords[
+            self._concat_dim
+        ].values
+
+        # Copy concat-dependent coords
+        for coord_name, coord in data.coords.items():
+            if coord_name != self._concat_dim and self._concat_dim in coord.dims:
+                buffer.coords[coord_name].values[start:end] = coord.values
+
+        # Copy masks
+        for mask_name, mask in data.masks.items():
+            if self._concat_dim in mask.dims:
+                buffer.masks[mask_name].values[start:end] = mask.values
+
+    def shift(
+        self, buffer: sc.DataArray, src_start: int, src_end: int, dst_start: int
+    ) -> None:
+        """Shift buffer data in-place."""
+        size = src_end - src_start
+        dst_end = dst_start + size
+
+        # Shift data
+        buffer.data.values[dst_start:dst_end] = buffer.data.values[src_start:src_end]
+
+        # Shift concat dimension coordinate
+        buffer.coords[self._concat_dim].values[dst_start:dst_end] = buffer.coords[
+            self._concat_dim
+        ].values[src_start:src_end]
+
+        # Shift concat-dependent coords
+        for coord_name, coord in buffer.coords.items():
+            if coord_name != self._concat_dim and self._concat_dim in coord.dims:
+                coord.values[dst_start:dst_end] = coord.values[src_start:src_end]
+
+        # Shift masks
+        for mask in buffer.masks.values():
+            if self._concat_dim in mask.dims:
+                mask.values[dst_start:dst_end] = mask.values[src_start:src_end]
+
+    def get_view(self, buffer: sc.DataArray, start: int, end: int) -> sc.DataArray:
+        """Get a copy of buffer slice."""
+        return buffer[self._concat_dim, start:end].copy()
+
+    def estimate_memory(self, buffer: sc.DataArray) -> int:
+        """Estimate memory usage in bytes."""
+        total = buffer.data.values.nbytes
+
+        # Add coordinate memory
+        for coord in buffer.coords.values():
+            total += coord.values.nbytes
+
+        # Add mask memory
+        for mask in buffer.masks.values():
+            total += mask.values.nbytes
+
+        return total
+
+    def get_size(self, data: sc.DataArray) -> int:
+        """Get size along concatenation dimension."""
+        return data.sizes[self._concat_dim]
+
 
 class VariableBuffer:
     """
@@ -215,14 +337,22 @@ class VariableBuffer:
         """Estimate memory usage in bytes."""
         return buffer.values.nbytes
 
+    def get_size(self, data: sc.Variable) -> int:
+        """Get size along concatenation dimension."""
+        return data.sizes[self._concat_dim]
 
-class BufferStorage(StorageStrategy):
+
+class Buffer(Generic[T]):
     """
-    Unified buffer storage with configurable over-allocation.
+    Generic buffer with automatic growth and sliding window management.
 
-    Generic implementation that works with any BufferInterface implementation.
-    Handles growth, sliding window, and shift-on-overflow logic without
-    knowing the details of the underlying buffer type.
+    Works with any BufferInterface implementation and handles growth,
+    sliding window, and shift-on-overflow logic without knowing the
+    details of the underlying buffer type.
+
+    Uses pre-allocated buffers with in-place writes to avoid O(n²) complexity
+    of naive concatenation. Pre-allocates with doubling capacity and uses
+    numpy-level indexing for O(1) appends, achieving O(n·m) amortized complexity.
 
     The overallocation_factor controls the memory/performance trade-off:
     - 2.0x: 100% overhead, 2x write amplification
@@ -233,12 +363,13 @@ class BufferStorage(StorageStrategy):
     def __init__(
         self,
         max_size: int,
-        buffer_impl: BufferInterface,
+        buffer_impl: BufferInterface[T],
         initial_capacity: int = 100,
         overallocation_factor: float = 2.5,
+        concat_dim: str = 'time',
     ) -> None:
         """
-        Initialize unified buffer storage.
+        Initialize buffer.
 
         Parameters
         ----------
@@ -251,6 +382,8 @@ class BufferStorage(StorageStrategy):
         overallocation_factor:
             Buffer capacity = max_size * overallocation_factor.
             Must be > 1.0.
+        concat_dim:
+            The dimension along which data is concatenated.
 
         Raises
         ------
@@ -269,20 +402,15 @@ class BufferStorage(StorageStrategy):
         self._initial_capacity = initial_capacity
         self._overallocation_factor = overallocation_factor
         self._max_capacity = int(max_size * overallocation_factor)
+        self._concat_dim = concat_dim
 
         self._buffer = None
         self._end = 0
         self._capacity = 0
 
-    def _ensure_capacity(self, data) -> None:
+    def _ensure_capacity(self, data: T) -> None:
         """Ensure buffer has capacity for new data."""
-        # Get size from the data (works for both Variable and DataArray)
-        if hasattr(data, 'sizes'):
-            # DataArray
-            new_size = next(iter(data.sizes.values()))
-        else:
-            # Variable
-            new_size = data.shape[0]
+        new_size = self._buffer_impl.get_size(data)
 
         if self._buffer is None:
             # Initial allocation
@@ -308,7 +436,7 @@ class BufferStorage(StorageStrategy):
             if self._end + new_size > self._capacity < self._max_capacity:
                 self._grow_buffer(data, new_capacity)
 
-    def _grow_buffer(self, template, new_capacity: int) -> None:
+    def _grow_buffer(self, template: T, new_capacity: int) -> None:
         """Grow buffer by allocating larger buffer and copying data."""
         if self._buffer is None:
             raise RuntimeError("Cannot grow buffer before initialization")
@@ -339,17 +467,13 @@ class BufferStorage(StorageStrategy):
         )
         self._end = self._max_size
 
-    def append(self, data) -> None:
+    def append(self, data: T) -> None:
         """Append new data to storage."""
         self._ensure_capacity(data)
         if self._buffer is None:
             raise RuntimeError("Buffer initialization failed")
 
-        if hasattr(data, 'sizes'):
-            new_size = next(iter(data.sizes.values()))
-        else:
-            new_size = data.shape[0]
-
+        new_size = self._buffer_impl.get_size(data)
         start = self._end
         end = self._end + new_size
 
@@ -362,7 +486,7 @@ class BufferStorage(StorageStrategy):
         if self._capacity >= self._max_capacity and self._end > self._max_size:
             self._shift_to_sliding_window()
 
-    def get_all(self):
+    def get_all(self) -> T | None:
         """Get all stored data."""
         if self._buffer is None:
             return None
@@ -379,3 +503,33 @@ class BufferStorage(StorageStrategy):
         self._buffer = None
         self._end = 0
         self._capacity = 0
+
+    def get_window(self, size: int | None = None) -> T | None:
+        """
+        Get a window of buffered data from the end.
+
+        Parameters
+        ----------
+        size:
+            The number of elements to return from the end of the buffer.
+            If None, returns the entire buffer.
+
+        Returns
+        -------
+        :
+            A window of the buffer, or None if empty.
+        """
+        if self._buffer is None:
+            return None
+        if size is None:
+            return self._buffer_impl.get_view(self._buffer, 0, self._end)
+
+        # Get window from the end
+        actual_size = min(size, self._end)
+        start = self._end - actual_size
+        return self._buffer_impl.get_view(self._buffer, start, self._end)
+
+    @property
+    def memory_mb(self) -> float:
+        """Get the current memory usage in megabytes."""
+        return self.estimate_memory() / (1024 * 1024)

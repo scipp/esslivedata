@@ -10,8 +10,7 @@ from typing import Generic, TypeVar
 
 import scipp as sc
 
-from .buffer import Buffer
-from .buffer_strategy import GrowingStorage, SlidingWindowStorage
+from .buffer_strategy import Buffer, DataArrayBuffer
 from .data_service import DataService
 
 K = TypeVar("K", bound=Hashable)
@@ -201,27 +200,35 @@ class HistoryBufferService(Generic[K]):
         # Determine concat dimension
         concat_dim = "time" if "time" in data.dims else data.dims[0]
 
-        # Create storage based on extractor type
+        # Create buffer based on extractor type
+        buffer_impl = DataArrayBuffer(concat_dim=concat_dim)
+
         if isinstance(extractor, WindowExtractor):
-            # For window extractors, use sliding window storage
-            # Allocate 2x the window size for efficiency
+            # For window extractors, use sliding window with the requested size
             window_size = extractor._size if extractor._size else 1000
-            storage = SlidingWindowStorage(
-                max_size=window_size * 2, concat_dim=concat_dim
+            return Buffer(
+                max_size=window_size,
+                buffer_impl=buffer_impl,
+                initial_capacity=min(100, window_size),
+                overallocation_factor=2.0,  # 2x for window extractors
+                concat_dim=concat_dim,
             )
         elif isinstance(extractor, DeltaExtractor):
             # Delta extractor needs to keep history for delta calculation
-            # Use growing storage with reasonable limits
-            storage = GrowingStorage(
-                initial_size=100, max_size=10000, concat_dim=concat_dim
+            return Buffer(
+                max_size=10000,
+                buffer_impl=buffer_impl,
+                initial_capacity=100,
+                concat_dim=concat_dim,
             )
         else:
-            # FullHistoryExtractor or unknown - use growing storage
-            storage = GrowingStorage(
-                initial_size=100, max_size=10000, concat_dim=concat_dim
+            # FullHistoryExtractor or unknown - use growing buffer
+            return Buffer(
+                max_size=10000,
+                buffer_impl=buffer_impl,
+                initial_capacity=100,
+                concat_dim=concat_dim,
             )
-
-        return Buffer(storage, concat_dim=concat_dim)
 
     def process_data_service_update(self, store: dict[K, sc.DataArray]) -> None:
         """

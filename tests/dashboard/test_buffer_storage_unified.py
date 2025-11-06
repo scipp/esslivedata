@@ -1,25 +1,23 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Tests for unified BufferStorage using TDD.
+"""Tests for unified Buffer using TDD.
 
-Tests BufferStorage against simple VariableBuffer implementation to verify
+Tests Buffer against simple VariableBuffer implementation to verify
 the storage logic is correct and agnostic to the underlying buffer type.
 """
 
 import scipp as sc
 
-from ess.livedata.dashboard.buffer_strategy import BufferStorage, VariableBuffer
+from ess.livedata.dashboard.buffer_strategy import Buffer, VariableBuffer
 
 
 class TestBufferStorageWithVariableBuffer:
-    """Test BufferStorage with simple Variable buffers."""
+    """Test Buffer with simple Variable buffers."""
 
     def test_empty_buffer(self):
         """Test that empty buffer returns None."""
         buffer_impl = VariableBuffer(concat_dim='time')
-        storage = BufferStorage(
-            max_size=10, buffer_impl=buffer_impl, initial_capacity=5
-        )
+        storage = Buffer(max_size=10, buffer_impl=buffer_impl, initial_capacity=5)
 
         assert storage.get_all() is None
         assert storage.estimate_memory() == 0
@@ -27,9 +25,7 @@ class TestBufferStorageWithVariableBuffer:
     def test_append_single_element(self):
         """Test appending a single element."""
         buffer_impl = VariableBuffer(concat_dim='time')
-        storage = BufferStorage(
-            max_size=10, buffer_impl=buffer_impl, initial_capacity=5
-        )
+        storage = Buffer(max_size=10, buffer_impl=buffer_impl, initial_capacity=5)
 
         data = sc.array(dims=['time'], values=[42], dtype='int64')
         storage.append(data)
@@ -42,9 +38,7 @@ class TestBufferStorageWithVariableBuffer:
     def test_append_multiple_elements(self):
         """Test appending multiple elements."""
         buffer_impl = VariableBuffer(concat_dim='time')
-        storage = BufferStorage(
-            max_size=10, buffer_impl=buffer_impl, initial_capacity=5
-        )
+        storage = Buffer(max_size=10, buffer_impl=buffer_impl, initial_capacity=5)
 
         data1 = sc.array(dims=['time'], values=[1, 2, 3], dtype='int64')
         data2 = sc.array(dims=['time'], values=[4, 5], dtype='int64')
@@ -60,9 +54,7 @@ class TestBufferStorageWithVariableBuffer:
     def test_growth_phase_doubles_capacity(self):
         """Test that capacity doubles during growth phase."""
         buffer_impl = VariableBuffer(concat_dim='time')
-        storage = BufferStorage(
-            max_size=20, buffer_impl=buffer_impl, initial_capacity=2
-        )
+        storage = Buffer(max_size=20, buffer_impl=buffer_impl, initial_capacity=2)
 
         # Add data progressively to trigger doubling
         for i in range(10):
@@ -77,7 +69,7 @@ class TestBufferStorageWithVariableBuffer:
     def test_sliding_window_maintains_max_size(self):
         """Test that sliding window keeps only last max_size elements."""
         buffer_impl = VariableBuffer(concat_dim='time')
-        storage = BufferStorage(
+        storage = Buffer(
             max_size=5,
             buffer_impl=buffer_impl,
             initial_capacity=2,
@@ -98,7 +90,7 @@ class TestBufferStorageWithVariableBuffer:
     def test_overallocation_factor_controls_capacity(self):
         """Test that overallocation_factor affects when shifting occurs."""
         buffer_impl = VariableBuffer(concat_dim='time')
-        storage = BufferStorage(
+        storage = Buffer(
             max_size=4,
             buffer_impl=buffer_impl,
             initial_capacity=2,
@@ -117,7 +109,7 @@ class TestBufferStorageWithVariableBuffer:
     def test_shift_on_overflow_no_regrow_cycles(self):
         """Test that shift doesn't trigger repeated regrow cycles."""
         buffer_impl = VariableBuffer(concat_dim='time')
-        storage = BufferStorage(
+        storage = Buffer(
             max_size=4,
             buffer_impl=buffer_impl,
             initial_capacity=2,
@@ -137,9 +129,7 @@ class TestBufferStorageWithVariableBuffer:
     def test_clear(self):
         """Test clearing storage."""
         buffer_impl = VariableBuffer(concat_dim='time')
-        storage = BufferStorage(
-            max_size=10, buffer_impl=buffer_impl, initial_capacity=5
-        )
+        storage = Buffer(max_size=10, buffer_impl=buffer_impl, initial_capacity=5)
 
         data = sc.array(dims=['time'], values=[1, 2, 3], dtype='int64')
         storage.append(data)
@@ -152,9 +142,7 @@ class TestBufferStorageWithVariableBuffer:
     def test_multidimensional_variable(self):
         """Test with multidimensional Variable."""
         buffer_impl = VariableBuffer(concat_dim='time')
-        storage = BufferStorage(
-            max_size=10, buffer_impl=buffer_impl, initial_capacity=5
-        )
+        storage = Buffer(max_size=10, buffer_impl=buffer_impl, initial_capacity=5)
 
         # 2D data: time x x
         data1 = sc.array(dims=['time', 'x'], values=[[1, 2], [3, 4]], dtype='int64')
