@@ -74,7 +74,12 @@ class BufferInterface(Protocol[T]):
 
     def get_view(self, buffer: T, start: int, end: int) -> T:
         """
-        Get a view/copy of a buffer slice.
+        Get a view of a buffer slice.
+
+        The returned view shares memory with the buffer and may be invalidated
+        by subsequent buffer operations (growth, shifting). Callers must use
+        the view immediately or copy it if needed for later use. Modifications
+        to the view will affect the underlying buffer.
 
         Parameters
         ----------
@@ -88,7 +93,7 @@ class BufferInterface(Protocol[T]):
         Returns
         -------
         :
-            View or copy of the buffer slice.
+            View of the buffer slice. Valid only until next buffer operation.
         """
         ...
 
@@ -251,8 +256,8 @@ class DataArrayBuffer:
                 mask.values[dst_start:dst_end] = mask.values[src_start:src_end]
 
     def get_view(self, buffer: sc.DataArray, start: int, end: int) -> sc.DataArray:
-        """Get a copy of buffer slice."""
-        return buffer[self._concat_dim, start:end].copy()
+        """Get a view of buffer slice."""
+        return buffer[self._concat_dim, start:end]
 
     def get_size(self, data: sc.DataArray) -> int:
         """Get size along concatenation dimension."""
@@ -310,8 +315,8 @@ class VariableBuffer:
         buffer.values[dst_start:dst_end] = buffer.values[src_start:src_end]
 
     def get_view(self, buffer: sc.Variable, start: int, end: int) -> sc.Variable:
-        """Get a copy of buffer slice."""
-        return buffer[self._concat_dim, start:end].copy()
+        """Get a view of buffer slice."""
+        return buffer[self._concat_dim, start:end]
 
     def get_size(self, data: sc.Variable) -> int:
         """Get size along concatenation dimension."""

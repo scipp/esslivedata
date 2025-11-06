@@ -99,10 +99,18 @@ class HistorySubscriber(ABC, Generic[K]):
         """
         Called when subscribed buffers are updated.
 
+        IMPORTANT: The data arrays are views into internal buffers and are only
+        valid during this callback. They share memory with the underlying buffers
+        and may be invalidated by future updates. Subscribers must either:
+        1. Use the data immediately (e.g., pass to plotting library), OR
+        2. Call .copy() on any data that needs to be retained.
+
+        Do not modify the data arrays, as this will corrupt the internal buffers.
+
         Parameters
         ----------
         data:
-            Dictionary mapping keys to extracted buffer data.
+            Dictionary mapping keys to extracted buffer data views.
             Only includes keys that were updated and are in self.keys.
         """
 

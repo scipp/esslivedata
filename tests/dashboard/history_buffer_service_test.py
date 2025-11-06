@@ -54,7 +54,8 @@ class SimpleSubscriber(HistorySubscriber[str]):
 
     def on_update(self, data: dict[str, sc.DataArray]) -> None:
         """Collect updates."""
-        self._updates.append(data.copy())
+        # Deep copy since we're storing for later assertions (views are ephemeral)
+        self._updates.append({key: val.copy() for key, val in data.items()})
 
     def get_updates(self) -> list[dict[str, sc.DataArray]]:
         """Return all collected updates."""
