@@ -4,7 +4,6 @@
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable
 from contextlib import ExitStack
 
 import panel as pn
@@ -14,7 +13,7 @@ from ess.livedata import ServiceBase
 
 from .dashboard_services import DashboardServices
 from .kafka_transport import DashboardKafkaTransport
-from .transport import NullTransport
+from .transport import NullTransport, Transport
 from .widgets.plot_creation_widget import PlotCreationWidget
 from .widgets.reduction_widget import ReductionWidget
 
@@ -46,8 +45,8 @@ class DashboardBase(ServiceBase, ABC):
 
         self._callback = None
 
-        # Create transport factory based on transport type
-        transport_factory = self._create_transport_factory(transport)
+        # Create transport instance based on transport type
+        transport_instance = self._create_transport(transport)
 
         # Setup all dashboard services
         self._services = DashboardServices(
@@ -56,7 +55,7 @@ class DashboardBase(ServiceBase, ABC):
             exit_stack=self._exit_stack,
             logger=self._logger,
             pipe_factory=streams.Pipe,
-            transport_factory=transport_factory,
+            transport=transport_instance,
         )
 
         # Create reduction widget (GUI-specific)
@@ -69,12 +68,9 @@ class DashboardBase(ServiceBase, ABC):
         # Global unit format
         Dimension.unit_format = ' [{unit}]'
 
-    @staticmethod
-    def _create_transport_factory(
-        transport: str,
-    ) -> Callable:
+    def _create_transport(self, transport: str) -> Transport:
         """
-        Create transport factory based on transport type.
+        Create transport instance based on transport type.
 
         Parameters
         ----------
@@ -84,22 +80,14 @@ class DashboardBase(ServiceBase, ABC):
         Returns
         -------
         :
-            Factory function that creates Transport instances
+            Transport instance
         """
         if transport == 'kafka':
-
-            def kafka_factory(instrument: str, dev: bool, logger: logging.Logger):
-                return DashboardKafkaTransport(
-                    instrument=instrument, dev=dev, logger=logger
-                )
-
-            return kafka_factory
+            return DashboardKafkaTransport(
+                instrument=self._instrument, dev=self._dev, logger=self._logger
+            )
         elif transport == 'none':
-
-            def null_factory(instrument: str, dev: bool, logger: logging.Logger):
-                return NullTransport()
-
-            return null_factory
+            return NullTransport()
         else:
             raise ValueError(f"Unknown transport type: {transport}")
 

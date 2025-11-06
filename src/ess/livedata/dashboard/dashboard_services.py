@@ -19,7 +19,6 @@ from .correlation_histogram import CorrelationHistogramController
 from .data_service import DataService
 from .job_controller import JobController
 from .job_service import JobService
-from .kafka_transport import DashboardKafkaTransport
 from .orchestrator import Orchestrator
 from .plotting_controller import PlottingController
 from .roi_publisher import ROIPublisher
@@ -52,10 +51,10 @@ class DashboardServices:
         Factory function for creating pipes for StreamManager.
         For GUI: use holoviews.streams.Pipe
         For tests: use lambda data: None (no-op)
-    transport_factory:
-        Factory function that returns a Transport instance.
-        For Kafka: lambda instrument, dev, logger: DashboardKafkaTransport(...)
-        For testing: lambda instrument, dev, logger: NullTransport()
+    transport:
+        Transport instance for message sources and sinks.
+        For Kafka: DashboardKafkaTransport(instrument, dev, logger)
+        For testing: NullTransport()
     """
 
     def __init__(
@@ -66,19 +65,14 @@ class DashboardServices:
         exit_stack: ExitStack,
         logger: logging.Logger,
         pipe_factory: Callable[[Any], Any],
-        transport_factory: Callable[[str, bool, logging.Logger], Transport]
-        | None = None,
+        transport: Transport,
     ):
         self._instrument = instrument
         self._dev = dev
         self._exit_stack = exit_stack
         self._logger = logger
         self._pipe_factory = pipe_factory
-
-        # Default to Kafka transport if not specified
-        if transport_factory is None:
-            transport_factory = self._create_default_transport_factory()
-        self._transport_factory = transport_factory
+        self._transport = transport
 
         # Config stores for workflow and plotter persistent UI state
         self.workflow_config_store = InMemoryConfigStore(
@@ -102,22 +96,9 @@ class DashboardServices:
         """Stop background tasks (e.g., message polling)."""
         self._transport.stop()
 
-    def _create_default_transport_factory(self) -> Callable:
-        """Create default Kafka transport factory."""
-
-        def factory(instrument: str, dev: bool, logger: logging.Logger) -> Transport:
-            return DashboardKafkaTransport(
-                instrument=instrument, dev=dev, logger=logger
-            )
-
-        return factory
-
     def _setup_data_infrastructure(self) -> None:
         """Set up data services, forwarder, and orchestrator."""
         # Set up transport and get resources
-        self._transport = self._transport_factory(
-            self._instrument, self._dev, self._logger
-        )
         transport_resources = self._exit_stack.enter_context(self._transport)
 
         self.command_service = CommandService(

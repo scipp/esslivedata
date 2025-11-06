@@ -7,6 +7,7 @@ from contextlib import ExitStack
 from types import TracebackType
 
 from ess.livedata.dashboard.dashboard_services import DashboardServices
+from ess.livedata.dashboard.kafka_transport import DashboardKafkaTransport
 
 
 class DashboardBackend:
@@ -41,6 +42,11 @@ class DashboardBackend:
         self._exit_stack = ExitStack()
         self._exit_stack.__enter__()
 
+        # Create Kafka transport for integration tests
+        transport = DashboardKafkaTransport(
+            instrument=instrument, dev=dev, logger=self._logger
+        )
+
         # Setup all dashboard services (no GUI components)
         self._services = DashboardServices(
             instrument=instrument,
@@ -48,6 +54,7 @@ class DashboardBackend:
             exit_stack=self._exit_stack,
             logger=self._logger,
             pipe_factory=lambda data: None,  # No-op for tests
+            transport=transport,
         )
 
         self._logger.info("DashboardBackend initialized for %s", instrument)
