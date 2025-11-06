@@ -100,7 +100,7 @@ class LivedataApp:
             key=str(key).encode('utf-8'),
             value=json.dumps(value).encode('utf-8'),
             topic=stream_kind_to_topic(
-                instrument=self.instrument, kind=StreamKind.LIVEDATA_CONFIG
+                instrument=self.instrument, kind=StreamKind.LIVEDATA_COMMANDS
             ),
             timestamp=0,
         )

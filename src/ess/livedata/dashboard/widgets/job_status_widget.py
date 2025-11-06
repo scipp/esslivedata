@@ -535,14 +535,18 @@ class JobStatusListWidget:
     def _bulk_reset(self, event) -> None:
         """Reset all selected jobs."""
         selected_job_ids = self._get_selected_job_ids()
-        for job_id in selected_job_ids:
-            self._job_controller.send_job_action(job_id, JobAction.reset)
+        if selected_job_ids:
+            self._job_controller.send_job_actions_batch(
+                selected_job_ids, JobAction.reset
+            )
 
     def _bulk_stop(self, event) -> None:
         """Stop all selected jobs."""
         selected_job_ids = self._get_selected_job_ids()
-        for job_id in selected_job_ids:
-            self._job_controller.send_job_action(job_id, JobAction.stop)
+        if selected_job_ids:
+            self._job_controller.send_job_actions_batch(
+                selected_job_ids, JobAction.stop
+            )
 
     def panel(self) -> pn.layout.Column:
         """Get the main panel for this widget."""

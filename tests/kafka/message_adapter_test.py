@@ -9,7 +9,8 @@ from streaming_data_types import dataarray_da00, eventdata_ev44, logdata_f144
 from streaming_data_types.exceptions import WrongSchemaException
 
 from ess.livedata.core.message import (
-    CONFIG_STREAM_ID,
+    COMMANDS_STREAM_ID,
+    RESPONSES_STREAM_ID,
     Message,
     MessageSource,
     StreamId,
@@ -19,6 +20,7 @@ from ess.livedata.handlers.accumulators import DetectorEvents
 from ess.livedata.kafka.message_adapter import (
     AdaptingMessageSource,
     ChainedAdapter,
+    CommandsAdapter,
     Da00ToScippAdapter,
     Ev44ToDetectorEventsAdapter,
     Ev44ToMonitorEventsAdapter,
@@ -30,8 +32,8 @@ from ess.livedata.kafka.message_adapter import (
     KafkaToEv44Adapter,
     KafkaToF144Adapter,
     KafkaToMonitorEventsAdapter,
-    LivedataConfigMessageAdapter,
     RawConfigItem,
+    ResponsesAdapter,
     RouteBySchemaAdapter,
     RouteByTopicAdapter,
 )
@@ -481,17 +483,29 @@ def fake_message_with_value(message: KafkaMessage, value: str) -> Message[str]:
     return Message(timestamp=1234, stream=StreamId(name="dummy"), value=value)
 
 
-class TestLivedataConfigMessageAdapter:
+class TestCommandsAdapter:
     def test_adapter(self) -> None:
         key = b'my_source/my_service/my_key'
         encoded = json.dumps('my_value').encode('utf-8')
         message = FakeKafkaMessage(
             key=key, value=encoded, topic="dummy_livedata_commands"
         )
-        adapter = LivedataConfigMessageAdapter()
+        adapter = CommandsAdapter()
         adapted_message = adapter.adapt(message)
-        # So it gets routed to config handler
-        assert adapted_message.stream == CONFIG_STREAM_ID
+        assert adapted_message.stream == COMMANDS_STREAM_ID
+        assert adapted_message.value == RawConfigItem(key=key, value=encoded)
+
+
+class TestResponsesAdapter:
+    def test_adapter(self) -> None:
+        key = b'my_source/my_service/my_key'
+        encoded = json.dumps('my_value').encode('utf-8')
+        message = FakeKafkaMessage(
+            key=key, value=encoded, topic="dummy_livedata_responses"
+        )
+        adapter = ResponsesAdapter()
+        adapted_message = adapter.adapt(message)
+        assert adapted_message.stream == RESPONSES_STREAM_ID
         assert adapted_message.value == RawConfigItem(key=key, value=encoded)
 
 

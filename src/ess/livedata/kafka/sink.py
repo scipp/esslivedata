@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
-import json
 import logging
 from dataclasses import replace
 from typing import Any, Generic, Protocol, TypeVar
@@ -11,7 +10,7 @@ from streaming_data_types import dataarray_da00, logdata_f144
 
 from ..config.streams import stream_kind_to_topic
 from ..config.workflow_spec import ResultKey
-from ..core.message import CONFIG_STREAM_ID, STATUS_STREAM_ID, Message, MessageSink
+from ..core.message import STATUS_STREAM_ID, Message, MessageSink, StreamKind
 from .scipp_da00_compat import scipp_to_da00
 from .x5f2_compat import job_status_to_x5f2
 
@@ -82,9 +81,12 @@ class KafkaSink(MessageSink[T]):
                 topic = stream_kind_to_topic(
                     instrument=self._instrument, kind=msg.stream.kind
                 )
-                if msg.stream == CONFIG_STREAM_ID:
+                if msg.stream.kind in (
+                    StreamKind.LIVEDATA_COMMANDS,
+                    StreamKind.LIVEDATA_RESPONSES,
+                ):
                     key_bytes = str(msg.value.config_key).encode('utf-8')
-                    value = json.dumps(msg.value.value.model_dump()).encode('utf-8')
+                    value = msg.value.value.model_dump_json().encode('utf-8')
                 elif msg.stream == STATUS_STREAM_ID:
                     key_bytes = None
                     value = job_status_to_x5f2(msg.value)
