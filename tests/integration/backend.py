@@ -95,7 +95,7 @@ class DashboardBackend:
 
     def start(self) -> None:
         """Start the background message source."""
-        self._services.background_source.start()
+        self._services.start()
         self._logger.info("DashboardBackend started")
 
     def update(self) -> None:
@@ -104,7 +104,7 @@ class DashboardBackend:
 
     def stop(self) -> None:
         """Stop the background message source and clean up resources."""
-        self._services.background_source.stop()
+        self._services.stop()
         self._exit_stack.__exit__(None, None, None)
         self._logger.info("DashboardBackend stopped")
 
