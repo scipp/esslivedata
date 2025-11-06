@@ -275,14 +275,17 @@ class PlotterSelectionStep(WizardStep[JobOutputSelection, PlotterSelection]):
 
     def _create_radio_buttons(self, available_plots: dict[str, PlotterSpec]) -> None:
         """Create radio button group for plotter selection."""
-        # Build mapping from display name to plot name
+        # Build mapping from plot name (unique) to title (display label)
+        # RadioButtonGroup displays keys and stores values in the 'value' property
         self._plot_name_map = {
-            spec.title: name for name, spec in available_plots.items()
+            name: spec.title for name, spec in available_plots.items()
         }
-        options = list(self._plot_name_map.keys())
+        options = self._plot_name_map
 
         # Select first option by default
-        initial_value = options[0] if options else None
+        initial_value = (
+            next(iter(self._plot_name_map.keys())) if self._plot_name_map else None
+        )
 
         self._radio_group = pn.widgets.RadioButtonGroup(
             name="Plotter Type",
@@ -297,14 +300,13 @@ class PlotterSelectionStep(WizardStep[JobOutputSelection, PlotterSelection]):
 
         # Initialize with the selected value
         if initial_value is not None:
-            self._selected_plot_name = self._plot_name_map[initial_value]
+            self._selected_plot_name = initial_value
             self._notify_ready_changed(True)
 
     def _on_plotter_selection_change(self, event) -> None:
         """Handle plotter selection change."""
         if event.new is not None:
-            # Map display name back to plot name
-            self._selected_plot_name = self._plot_name_map[event.new]
+            self._selected_plot_name = event.new
             self._notify_ready_changed(True)
         else:
             self._selected_plot_name = None
@@ -504,7 +506,9 @@ class JobPlotterSelectionModal:
             height=700,
         )
 
-        # Watch for modal close events (X button or ESC key)
+        # Watch for modal close events (X button or ESC key).
+        # Panel's Modal widget uses 'open' as a boolean state property:
+        # when it transitions to False, the modal is closed.
         self._modal.param.watch(self._on_modal_closed, 'open')
 
     def _on_wizard_complete(self, result: PlotResult) -> None:
