@@ -45,9 +45,6 @@ class DashboardBase(ServiceBase, ABC):
 
         self._callback = None
 
-        # Create transport instance based on transport type
-        transport_instance = self._create_transport(transport)
-
         # Setup all dashboard services
         self._services = DashboardServices(
             instrument=instrument,
@@ -55,7 +52,7 @@ class DashboardBase(ServiceBase, ABC):
             exit_stack=self._exit_stack,
             logger=self._logger,
             pipe_factory=streams.Pipe,
-            transport=transport_instance,
+            transport=self._create_transport(transport),
         )
 
         # Create reduction widget (GUI-specific)
