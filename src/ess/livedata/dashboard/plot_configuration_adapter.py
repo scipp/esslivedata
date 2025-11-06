@@ -24,20 +24,18 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         plotting_controller: PlottingController,
         success_callback,
     ):
+        config_state = plotting_controller.get_persistent_plotter_config(
+            job_number=job_number,
+            output_name=output_name,
+            plot_name=plot_spec.name,
+        )
+        super().__init__(config_state=config_state)
         self._job_number = job_number
         self._output_name = output_name
         self._plot_spec = plot_spec
         self._available_sources = available_sources
         self._plotting_controller = plotting_controller
         self._success_callback = success_callback
-
-        self._persisted_config = (
-            self._plotting_controller.get_persistent_plotter_config(
-                job_number=self._job_number,
-                output_name=self._output_name,
-                plot_name=self._plot_spec.name,
-            )
-        )
 
     @property
     def title(self) -> str:
@@ -53,24 +51,6 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
     @property
     def source_names(self) -> list[str]:
         return self._available_sources
-
-    @property
-    def initial_source_names(self) -> list[str]:
-        if self._persisted_config is not None:
-            # Filter persisted source names to only include those still available
-            persisted_sources = [
-                name
-                for name in self._persisted_config.source_names
-                if name in self._available_sources
-            ]
-            return persisted_sources if persisted_sources else self._available_sources
-        return self._available_sources
-
-    @property
-    def initial_parameter_values(self) -> dict[str, Any]:
-        if self._persisted_config is not None:
-            return self._persisted_config.config.params
-        return {}
 
     def start_action(
         self,
