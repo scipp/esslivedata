@@ -129,12 +129,15 @@ class _InternalDataSubscriber(Generic[K]):
         store:
             Dictionary of updated data from DataService.
         """
-        self._buffer_service.process_data_service_update(store)
+        self._buffer_service.add_data(store)
 
 
 class HistoryBufferService(Generic[K]):
     """
-    Service for maintaining historical buffers of data from DataService.
+    Service for maintaining historical buffers of data.
+
+    Data can be added either directly via add_data() or by subscribing to a
+    DataService (if provided at initialization).
 
     Each subscriber gets its own set of buffers for the keys it needs.
     """
@@ -146,7 +149,7 @@ class HistoryBufferService(Generic[K]):
 
     def __init__(
         self,
-        data_service: DataService[K, sc.DataArray],
+        data_service: DataService[K, sc.DataArray] | None = None,
     ) -> None:
         """
         Initialize the history buffer service.
@@ -154,19 +157,21 @@ class HistoryBufferService(Generic[K]):
         Parameters
         ----------
         data_service:
-            The DataService to subscribe to.
+            The DataService to subscribe to. If None, data must be added
+            via add_data() method.
         """
         self._data_service = data_service
         # Each subscriber has its own buffers for its keys
         self._buffers: dict[HistorySubscriber[K], dict[K, Buffer]] = {}
 
-        # Subscribe to DataService
-        self._internal_subscriber = _InternalDataSubscriber(self)
-        self._data_service.register_subscriber(self._internal_subscriber)
+        # Subscribe to DataService if provided
+        if self._data_service is not None:
+            self._internal_subscriber = _InternalDataSubscriber(self)
+            self._data_service.register_subscriber(self._internal_subscriber)
 
     def get_tracked_keys(self) -> set[K]:
         """
-        Return all keys that should be tracked from DataService.
+        Return all keys currently tracked by registered subscribers.
 
         Returns the union of all keys from all registered subscribers.
         """
@@ -227,14 +232,17 @@ class HistoryBufferService(Generic[K]):
                 concat_dim=concat_dim,
             )
 
-    def process_data_service_update(self, store: dict[K, sc.DataArray]) -> None:
+    def add_data(self, store: dict[K, sc.DataArray]) -> None:
         """
-        Handle updates from DataService.
+        Add a batch of data to the buffers.
+
+        Appends data to subscriber buffers for relevant keys and notifies
+        subscribers with extracted views of the buffered data.
 
         Parameters
         ----------
         store:
-            Dictionary of updated data from DataService.
+            Dictionary mapping keys to data arrays to buffer.
         """
         # Append to each subscriber's buffers and collect which subscribers to notify
         subscribers_to_notify: set[HistorySubscriber[K]] = set()
