@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -275,11 +276,10 @@ class PlotterSelectionStep(WizardStep[JobOutputSelection, PlotterSelection]):
 
     def _create_radio_buttons(self, available_plots: dict[str, PlotterSpec]) -> None:
         """Create radio button group for plotter selection."""
-        # Build mapping from plot name (unique) to title (display label)
-        # RadioButtonGroup displays keys and stores values in the 'value' property
-        self._plot_name_map = {
-            name: spec.title for name, spec in available_plots.items()
-        }
+        # Build mapping from display title to plot name.
+        # RadioButtonGroup displays keys (titles) and stores values (plot names).
+        # Handle potential duplicate titles by making them unique.
+        self._plot_name_map = self._make_unique_title_mapping(available_plots)
         options = self._plot_name_map
 
         # Select first option by default
@@ -300,13 +300,31 @@ class PlotterSelectionStep(WizardStep[JobOutputSelection, PlotterSelection]):
 
         # Initialize with the selected value
         if initial_value is not None:
-            self._selected_plot_name = initial_value
+            self._selected_plot_name = self._plot_name_map[initial_value]
             self._notify_ready_changed(True)
+
+    def _make_unique_title_mapping(
+        self, available_plots: dict[str, PlotterSpec]
+    ) -> OrderedDict[str, str]:
+        """Create mapping from unique display titles to internal plot names."""
+        title_counts: dict[str, int] = {}
+        result: OrderedDict[str, str] = OrderedDict()
+
+        for name, spec in available_plots.items():
+            title = spec.title
+            count = title_counts.get(title, 0)
+            title_counts[title] = count + 1
+
+            # Make title unique if we've seen it before
+            unique_title = f"{title} ({count + 1})" if count > 0 else title
+            result[unique_title] = name
+
+        return result
 
     def _on_plotter_selection_change(self, event) -> None:
         """Handle plotter selection change."""
         if event.new is not None:
-            self._selected_plot_name = event.new
+            self._selected_plot_name = self._plot_name_map[event.new]
             self._notify_ready_changed(True)
         else:
             self._selected_plot_name = None
