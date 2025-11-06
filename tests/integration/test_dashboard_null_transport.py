@@ -13,42 +13,15 @@ In the future, the test markers should be refined to distinguish between:
 - Tests requiring subprocesses but no external services (this test)
 """
 
-import socket
-import subprocess
-import sys
 import time
 import urllib.request
 
+from .service_process import ServiceProcess
 
-def _wait_for_port(port: int, timeout: float = 10.0) -> bool:
+
+def _wait_for_http_response(port: int, timeout: float = 10.0) -> bool:
     """
-    Wait for a port to be listening.
-
-    Parameters
-    ----------
-    port:
-        Port number to check
-    timeout:
-        Maximum time to wait in seconds
-
-    Returns
-    -------
-    :
-        True if port is listening, False if timeout exceeded
-    """
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        try:
-            with socket.create_connection(('localhost', port), timeout=1.0):
-                return True
-        except (OSError, TimeoutError):
-            time.sleep(0.1)
-    return False
-
-
-def _wait_for_http_response(port: int, timeout: float = 10.0) -> tuple[bool, str]:
-    """
-    Wait for an HTTP response from the port.
+    Wait for an HTTP 200 response from the port.
 
     Parameters
     ----------
@@ -60,8 +33,7 @@ def _wait_for_http_response(port: int, timeout: float = 10.0) -> tuple[bool, str
     Returns
     -------
     :
-        Tuple of (success, content). Success is True if we got a 200 response.
-        Content is the response body (empty string if failed).
+        True if we got a 200 response with non-empty content, False otherwise.
     """
     start_time = time.time()
     while time.time() - start_time < timeout:
@@ -71,10 +43,10 @@ def _wait_for_http_response(port: int, timeout: float = 10.0) -> tuple[bool, str
             ) as response:
                 if response.status == 200:
                     content = response.read().decode('utf-8')
-                    return True, content
+                    return bool(content)  # Should have HTML content
         except (urllib.error.URLError, OSError, TimeoutError):
             time.sleep(0.1)
-    return False, ""
+    return False
 
 
 class TestDashboardNullTransport:
@@ -82,48 +54,16 @@ class TestDashboardNullTransport:
 
     def test_dashboard_starts_with_null_transport(self) -> None:
         """Verify dashboard can start with --transport none without Kafka."""
-        # Start the dashboard process
-        process = subprocess.Popen(  # noqa: S603
-            [
-                sys.executable,
-                '-m',
-                'ess.livedata.dashboard.reduction',
-                '--instrument',
-                'dummy',
-                '--transport',
-                'none',
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+        service = ServiceProcess(
+            'ess.livedata.dashboard.reduction',
+            instrument='dummy',
+            transport='none',
         )
 
-        try:
-            # Wait for the dashboard to start and listen on port 5009
-            port_ready = _wait_for_port(5009, timeout=10.0)
-            assert port_ready, "Dashboard failed to open port 5009 within timeout"
-
+        with service:
             # Wait for HTTP response from the dashboard
-            http_ready, content = _wait_for_http_response(5009, timeout=10.0)
+            http_ready = _wait_for_http_response(5009, timeout=10.0)
             assert http_ready, "Dashboard did not respond to HTTP request"
-            assert (
-                content
-            ), "Dashboard returned empty response"  # Should have HTML content
 
             # Verify the process is still running
-            assert process.poll() is None, "Dashboard process exited unexpectedly"
-
-        finally:
-            # Clean up: terminate the process
-            process.terminate()
-            try:
-                process.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-            finally:
-                # Close pipes to avoid resource warnings
-                if process.stdout:
-                    process.stdout.close()
-                if process.stderr:
-                    process.stderr.close()
+            assert service.is_running(), "Dashboard process exited unexpectedly"
