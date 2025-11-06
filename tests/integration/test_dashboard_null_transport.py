@@ -17,6 +17,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.request
 
 
 def _wait_for_port(port: int, timeout: float = 10.0) -> bool:
@@ -45,6 +46,37 @@ def _wait_for_port(port: int, timeout: float = 10.0) -> bool:
     return False
 
 
+def _wait_for_http_response(port: int, timeout: float = 10.0) -> tuple[bool, str]:
+    """
+    Wait for an HTTP response from the port.
+
+    Parameters
+    ----------
+    port:
+        Port number to connect to
+    timeout:
+        Maximum time to wait in seconds
+
+    Returns
+    -------
+    :
+        Tuple of (success, content). Success is True if we got a 200 response.
+        Content is the response body (empty string if failed).
+    """
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            with urllib.request.urlopen(
+                f'http://localhost:{port}/', timeout=1.0
+            ) as response:
+                if response.status == 200:
+                    content = response.read().decode('utf-8')
+                    return True, content
+        except (urllib.error.URLError, OSError, TimeoutError):
+            time.sleep(0.1)
+    return False, ""
+
+
 class TestDashboardNullTransport:
     """Integration tests for dashboard with null transport."""
 
@@ -70,6 +102,13 @@ class TestDashboardNullTransport:
             # Wait for the dashboard to start and listen on port 5009
             port_ready = _wait_for_port(5009, timeout=10.0)
             assert port_ready, "Dashboard failed to open port 5009 within timeout"
+
+            # Wait for HTTP response from the dashboard
+            http_ready, content = _wait_for_http_response(5009, timeout=10.0)
+            assert http_ready, "Dashboard did not respond to HTTP request"
+            assert (
+                content
+            ), "Dashboard returned empty response"  # Should have HTML content
 
             # Verify the process is still running
             assert process.poll() is None, "Dashboard process exited unexpectedly"
