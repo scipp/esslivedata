@@ -4,6 +4,7 @@
 
 import logging
 from contextlib import ExitStack
+from types import TracebackType
 
 import scipp as sc
 
@@ -103,7 +104,12 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
             self._exit_stack.close()
             raise
 
-    def __exit__(self, _exc_type, _exc_val, _exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Clean up all Kafka resources."""
         self._exit_stack.close()
         self._logger.info("DashboardKafkaTransport cleaned up")
