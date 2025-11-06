@@ -12,13 +12,13 @@ Key Components
 - **ConfigStore**: Type alias for any mutable mapping from WorkflowId to config dict
 - **InMemoryConfigStore**: Transient store with LRU eviction (for testing)
 - **FileBackedConfigStore**: Persistent YAML-based store with atomic writes
-- **ConfigStoreManager**: Thread-safe factory ensuring singleton stores per name
+- **ConfigStoreManager**: Thread-safe factory with one cached store instance per name
 
 Design Principles
 -----------------
 1. **Two-level thread safety**: Thread safety is implemented at BOTH levels:
-   - **Manager level**: Lock ensures get_store('name') returns the same singleton
-     instance to all threads, preventing separate cache instances from desyncing.
+   - **Manager level**: Lock ensures get_store('name') returns the same cached
+     instance to all threads, preventing race conditions during store creation.
    - **Store level**: Lock protects operations on the shared store instance, ensuring
      concurrent reads/writes/evictions don't corrupt the in-memory dict or file.
 
@@ -26,8 +26,9 @@ Design Principles
    temp, then rename) for crash safety, but not file locks. Store locks protect
    in-memory operations; atomic writes handle the file safely.
 
-3. **Singleton per store name**: ConfigStoreManager ensures get_store('name') always
-   returns the same instance, so all dashboard components stay synchronized.
+3. **Cached instances per store name**: ConfigStoreManager caches store instances
+   by name, ensuring get_store('name') always returns the same instance from that
+   manager. In practice, there's only one manager per dashboard application.
 """
 
 import logging
@@ -216,8 +217,8 @@ class FileBackedConfigStore(UserDict[WorkflowId, dict[str, Any]]):
             serialized_data = {str(key): value for key, value in self.data.items()}
 
             # Write atomically: write to temp file, then rename
-            temp_path = self._file_path.with_suffix('.tmp')
-            with open(temp_path, 'w') as f:
+            temp_path = self._file_path.with_suffix(".tmp")
+            with open(temp_path, "w") as f:
                 yaml.safe_dump(
                     serialized_data,
                     f,
@@ -255,31 +256,24 @@ def get_config_dir(instrument: str, config_dir: Path | str | None = None) -> Pat
     """
     if config_dir is not None:
         base_dir = Path(config_dir)
-    elif (env_dir := os.environ.get('LIVEDATA_CONFIG_DIR')) is not None:
+    elif (env_dir := os.environ.get("LIVEDATA_CONFIG_DIR")) is not None:
         base_dir = Path(env_dir)
     else:
         # Use platformdirs for cross-platform config directory resolution
-        base_dir = Path(platformdirs.user_config_dir('esslivedata', appauthor=False))
+        base_dir = Path(platformdirs.user_config_dir("esslivedata", appauthor=False))
 
     return base_dir / instrument
 
 
 class ConfigStoreManager:
     """
-    Thread-safe manager for config stores ensuring singleton behavior per store name.
+    Thread-safe manager for config stores maintaining cached instances per store name.
 
-    The manager maintains references to created stores, ensuring that multiple
-    calls to get_store() with the same name return the same instance. This is
-    critical for maintaining consistency - if different parts of the dashboard
-    created separate store instances, each would have its own in-memory cache
-    that could fall out of sync with the others.
-
-    Thread safety works at two levels (both manager and stores). The manager lock
-    protects the _stores dict cache, ensuring true singleton behavior even when
-    multiple threads call get_store() simultaneously. Individual stores also have
-    their own locks to protect operations on the shared instance (dict access,
-    eviction, file writes). This two-level design is simpler and more efficient
-    than file-level locking, which would be the wrong abstraction layer.
+    The manager caches created stores, ensuring that multiple calls to get_store()
+    with the same name return the same instance. This is critical for maintaining
+    consistency - each ConfigStore is thread-safe and thus prevents conflicts, but we
+    need to prevent creating multiple ConfigStore instances that point to the same file.
+    This works based on the assumption that there is only a single store manager.
 
     Parameters
     ----------
@@ -295,17 +289,6 @@ class ConfigStoreManager:
     config_dir:
         Override config directory path. If None, resolves from LIVEDATA_CONFIG_DIR
         environment variable or platform-specific config directory.
-
-    Examples
-    --------
-    >>> # Create manager for an instrument
-    >>> manager = ConfigStoreManager(instrument='dummy')
-    >>> workflow_store = manager.get_store('workflow_configs')
-    >>> plotter_store = manager.get_store('plotter_configs')
-    >>>
-    >>> # Multiple calls return the same instance
-    >>> same_store = manager.get_store('workflow_configs')
-    >>> assert same_store is workflow_store
     """
 
     def __init__(
@@ -321,7 +304,7 @@ class ConfigStoreManager:
         self._max_configs = max_configs
         self._cleanup_fraction = cleanup_fraction
         self._config_dir = get_config_dir(instrument, config_dir)
-        # Cache of created stores to ensure singleton behavior
+        # Cache of created stores to ensure consistent instances per name
         self._stores: dict[str, ConfigStore] = {}
         # Lock to protect the store cache from concurrent access
         self._lock = threading.Lock()
@@ -330,7 +313,7 @@ class ConfigStoreManager:
         """
         Get or create a config store by name.
 
-        Returns the same instance for repeated calls with the same name,
+        Returns the same cached instance for repeated calls with the same name,
         ensuring all parts of the dashboard share the same in-memory cache.
         Thread-safe: uses a lock to prevent race conditions when creating stores.
 
@@ -353,7 +336,7 @@ class ConfigStoreManager:
         >>> workflow_store = manager.get_store('workflow_configs')
         >>> # Creates file at ~/.config/esslivedata/dummy/workflow_configs.yaml
         >>>
-        >>> # Second call returns the same instance
+        >>> # Repeated calls return the cached instance
         >>> same_store = manager.get_store('workflow_configs')
         >>> assert same_store is workflow_store
         """

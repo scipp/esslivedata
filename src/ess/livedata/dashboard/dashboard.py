@@ -65,9 +65,8 @@ class DashboardBase(ServiceBase, ABC):
         self._exit_stack.__enter__()
 
         self._callback = None
-        # Config store manager ensures singleton behavior - multiple calls to
-        # get_store() with the same name return the same instance, keeping
-        # all dashboard components synchronized with the same in-memory cache.
+        # Unique config store manager that must be used by al dashboard components to
+        # create stores to avoid conflicts.
         self._config_manager = ConfigStoreManager(instrument=instrument)
         self._workflow_config_store = self._config_manager.get_store('workflow_configs')
         self._plotter_config_store = self._config_manager.get_store('plotter_configs')
