@@ -189,41 +189,12 @@ services:
       KAFKA2_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:-DUMMY}
     command: sh -c "python -m pip install -e . && python -m ess.livedata.services.detector_data --instrument $LIVEDATA_INSTRUMENT"
 
-  monitors-dashboard:
-    profiles:
-      - monitor
-    image: python:3.12
-    container_name: monitors-dashboard
-    depends_on:
-      init-kafka:
-        condition: service_completed_successfully
-      kafka:
-        condition: service_healthy
-    volumes:
-      - .:/app
-    working_dir: /app
-    ports:
-      - "5007:5007"
-    environment:
-      LIVEDATA_ENV: docker
-      LIVEDATA_INSTRUMENT: ${LIVEDATA_INSTRUMENT:-dummy}
-      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:29092}
-      KAFKA_SECURITY_PROTOCOL: ${KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}
-      KAFKA_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-SCRAM-SHA-256}
-      KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME:-DUMMY}
-      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:-DUMMY}
-      KAFKA2_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:29092}
-      KAFKA2_SECURITY_PROTOCOL: ${KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}
-      KAFKA2_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-SCRAM-SHA-256}
-      KAFKA2_SASL_USERNAME: ${KAFKA_SASL_USERNAME:-DUMMY}
-      KAFKA2_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:-DUMMY}
-    command: sh -c "python -m pip install -e .[dashboard] && gunicorn ess.livedata.dashboard.monitors_wsgi:application -b 0.0.0.0:5007"
-
   reduction-dashboard:
     profiles:
       - reduction
     image: python:3.12
     container_name: reduction-dashboard
+    restart: unless-stopped
     depends_on:
       init-kafka:
         condition: service_completed_successfully
@@ -247,4 +218,4 @@ services:
       KAFKA2_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-SCRAM-SHA-256}
       KAFKA2_SASL_USERNAME: ${KAFKA_SASL_USERNAME:-DUMMY}
       KAFKA2_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:-DUMMY}
-    command: sh -c "python -m pip install -e .[dashboard] && gunicorn ess.livedata.dashboard.reduction_wsgi:application -b 0.0.0.0:5009"
+    command: sh -c "python -m pip install -e .[dashboard] && python -m ess.livedata.dashboard.reduction --instrument $LIVEDATA_INSTRUMENT"

@@ -70,7 +70,6 @@ odin = [
 ]
 dashboard = [
   "bokeh",
-  "gunicorn",
   "holoviews",
   "panel",
   "param",

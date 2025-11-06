@@ -134,11 +134,8 @@ python -m ess.livedata.services.detector_data --instrument dummy --dev
 python -m ess.livedata.services.data_reduction --instrument dummy --dev
 python -m ess.livedata.services.timeseries --instrument dummy --dev
 
-# Run dashboard in development mode
+# Run dashboard (port 5009)
 python -m ess.livedata.dashboard.reduction --instrument dummy
-
-# Run dashboard in production mode with gunicorn (port 5009)
-LIVEDATA_INSTRUMENT=dummy gunicorn ess.livedata.dashboard.reduction_wsgi:application
 ```
 
 Note: Use `--sink png` argument with processing services to save outputs as PNG files instead of publishing to Kafka for testing.
