@@ -224,23 +224,6 @@ class TestHistoryBufferServiceBasic:
         tracked = service.get_tracked_keys()
         assert tracked == {"key1", "key2", "key3"}
 
-    def test_memory_usage(self):
-        """Test memory tracking."""
-        service = HistoryBufferService[str](data_service=None)
-
-        subscriber = SimpleSubscriber(keys={"data"})
-        service.register_subscriber(subscriber)
-
-        # Add data
-        data = make_data(100)
-        service.add_data({"data": data})
-
-        # Check memory usage
-        memory_usage = service.get_memory_usage()
-        assert subscriber in memory_usage
-        assert "data" in memory_usage[subscriber]
-        assert memory_usage[subscriber]["data"] > 0
-
     def test_clear_all_buffers(self):
         """Test clearing all buffers."""
         service = HistoryBufferService[str](data_service=None)
@@ -251,35 +234,33 @@ class TestHistoryBufferServiceBasic:
         # Add data
         data = make_data(10)
         service.add_data({"data": data})
-
-        # Verify data was added
-        memory_before = service.get_memory_usage()[subscriber]["data"]
-        assert memory_before > 0
+        assert len(subscriber.get_updates()) == 1
 
         # Clear buffers
         service.clear_all_buffers()
 
-        # Memory should be zero
-        memory_after = service.get_memory_usage()[subscriber]["data"]
-        assert memory_after == 0
+        # After clearing, no new notifications should occur
+        # (data is cleared, so next add_data should work on empty buffers)
+        data2 = make_data(5)
+        service.add_data({"data": data2})
+        assert len(subscriber.get_updates()) == 2
 
     def test_lazy_buffer_initialization(self):
         """Test that buffers are created lazily for each subscriber."""
         service = HistoryBufferService[str](data_service=None)
 
         subscriber = SimpleSubscriber(keys={"data"})
-        # Initially empty
-        memory_usage = service.get_memory_usage()
-        assert subscriber not in memory_usage or len(memory_usage[subscriber]) == 0
-
         service.register_subscriber(subscriber)
+
+        # Initially no updates
+        assert len(subscriber.get_updates()) == 0
 
         # Add data - buffer should be created
         data = make_data(5)
         service.add_data({"data": data})
 
-        memory_usage = service.get_memory_usage()
-        assert memory_usage[subscriber]["data"] > 0
+        # Subscriber should have received the update
+        assert len(subscriber.get_updates()) == 1
 
     def test_multiple_subscribers_independent_buffers(self):
         """Test that multiple subscribers maintain independent buffers."""

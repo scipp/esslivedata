@@ -306,21 +306,6 @@ class HistoryBufferService(Generic[K]):
         if subscriber in self._buffers:
             del self._buffers[subscriber]
 
-    def get_memory_usage(self) -> dict[HistorySubscriber[K], dict[K, float]]:
-        """
-        Get memory usage for all buffers.
-
-        Returns
-        -------
-        :
-            Nested dictionary mapping subscribers to their buffers' keys
-            to memory usage in megabytes.
-        """
-        return {
-            subscriber: {key: buffer.memory_mb for key, buffer in buffers.items()}
-            for subscriber, buffers in self._buffers.items()
-        }
-
     def clear_all_buffers(self) -> None:
         """Clear all buffers for all subscribers."""
         for buffers in self._buffers.values():

@@ -92,22 +92,6 @@ class BufferInterface(Protocol[T]):
         """
         ...
 
-    def estimate_memory(self, buffer: T) -> int:
-        """
-        Estimate memory usage of buffer in bytes.
-
-        Parameters
-        ----------
-        buffer:
-            Buffer to estimate.
-
-        Returns
-        -------
-        :
-            Memory usage in bytes.
-        """
-        ...
-
     def get_size(self, data: T) -> int:
         """
         Get size of data along the relevant dimension.
@@ -270,20 +254,6 @@ class DataArrayBuffer:
         """Get a copy of buffer slice."""
         return buffer[self._concat_dim, start:end].copy()
 
-    def estimate_memory(self, buffer: sc.DataArray) -> int:
-        """Estimate memory usage in bytes."""
-        total = buffer.data.values.nbytes
-
-        # Add coordinate memory
-        for coord in buffer.coords.values():
-            total += coord.values.nbytes
-
-        # Add mask memory
-        for mask in buffer.masks.values():
-            total += mask.values.nbytes
-
-        return total
-
     def get_size(self, data: sc.DataArray) -> int:
         """Get size along concatenation dimension."""
         return data.sizes[self._concat_dim]
@@ -342,10 +312,6 @@ class VariableBuffer:
     def get_view(self, buffer: sc.Variable, start: int, end: int) -> sc.Variable:
         """Get a copy of buffer slice."""
         return buffer[self._concat_dim, start:end].copy()
-
-    def estimate_memory(self, buffer: sc.Variable) -> int:
-        """Estimate memory usage in bytes."""
-        return buffer.values.nbytes
 
     def get_size(self, data: sc.Variable) -> int:
         """Get size along concatenation dimension."""
@@ -502,12 +468,6 @@ class Buffer(Generic[T]):
             return None
         return self._buffer_impl.get_view(self._buffer, 0, self._end)
 
-    def estimate_memory(self) -> int:
-        """Estimate memory usage in bytes."""
-        if self._buffer is None:
-            return 0
-        return self._buffer_impl.estimate_memory(self._buffer)
-
     def clear(self) -> None:
         """Clear all stored data."""
         self._buffer = None
@@ -538,8 +498,3 @@ class Buffer(Generic[T]):
         actual_size = min(size, self._end)
         start = self._end - actual_size
         return self._buffer_impl.get_view(self._buffer, start, self._end)
-
-    @property
-    def memory_mb(self) -> float:
-        """Get the current memory usage in megabytes."""
-        return self.estimate_memory() / (1024 * 1024)
