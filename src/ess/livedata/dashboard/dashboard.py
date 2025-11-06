@@ -4,6 +4,7 @@
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from contextlib import ExitStack
 
 import panel as pn
@@ -12,6 +13,8 @@ from holoviews import Dimension, streams
 from ess.livedata import ServiceBase
 
 from .dashboard_services import DashboardServices
+from .kafka_transport import DashboardKafkaTransport
+from .transport import NullTransport
 from .widgets.plot_creation_widget import PlotCreationWidget
 from .widgets.reduction_widget import ReductionWidget
 
@@ -30,6 +33,7 @@ class DashboardBase(ServiceBase, ABC):
         log_level: int = logging.INFO,
         dashboard_name: str,
         port: int = 5007,
+        transport: str = 'kafka',
     ):
         name = f'{instrument}_{dashboard_name}'
         super().__init__(name=name, log_level=log_level)
@@ -42,6 +46,9 @@ class DashboardBase(ServiceBase, ABC):
 
         self._callback = None
 
+        # Create transport factory based on transport type
+        transport_factory = self._create_transport_factory(transport)
+
         # Setup all dashboard services
         self._services = DashboardServices(
             instrument=instrument,
@@ -49,6 +56,7 @@ class DashboardBase(ServiceBase, ABC):
             exit_stack=self._exit_stack,
             logger=self._logger,
             pipe_factory=streams.Pipe,
+            transport_factory=transport_factory,
         )
 
         # Create reduction widget (GUI-specific)
@@ -60,6 +68,40 @@ class DashboardBase(ServiceBase, ABC):
 
         # Global unit format
         Dimension.unit_format = ' [{unit}]'
+
+    @staticmethod
+    def _create_transport_factory(
+        transport: str,
+    ) -> Callable:
+        """
+        Create transport factory based on transport type.
+
+        Parameters
+        ----------
+        transport:
+            Transport type ('kafka' or 'none')
+
+        Returns
+        -------
+        :
+            Factory function that creates Transport instances
+        """
+        if transport == 'kafka':
+
+            def kafka_factory(instrument: str, dev: bool, logger: logging.Logger):
+                return DashboardKafkaTransport(
+                    instrument=instrument, dev=dev, logger=logger
+                )
+
+            return kafka_factory
+        elif transport == 'none':
+
+            def null_factory(instrument: str, dev: bool, logger: logging.Logger):
+                return NullTransport()
+
+            return null_factory
+        else:
+            raise ValueError(f"Unknown transport type: {transport}")
 
     @abstractmethod
     def create_sidebar_content(self) -> pn.viewable.Viewable:
