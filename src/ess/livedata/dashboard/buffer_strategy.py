@@ -214,6 +214,11 @@ class DataArrayBuffer:
         self, buffer: sc.DataArray, start: int, end: int, data: sc.DataArray
     ) -> None:
         """Write data to buffer slice in-place."""
+        if self._concat_dim not in data.dims:
+            raise ValueError(
+                f"Concat dimension '{self._concat_dim}' not found in data. "
+                f"Available dimensions: {data.dims}"
+            )
         size = end - start
         if data.sizes[self._concat_dim] != size:
             raise ValueError(
@@ -314,6 +319,11 @@ class VariableBuffer:
         self, buffer: sc.Variable, start: int, end: int, data: sc.Variable
     ) -> None:
         """Write data to buffer slice in-place."""
+        if self._concat_dim not in data.dims:
+            raise ValueError(
+                f"Concat dimension '{self._concat_dim}' not found in data. "
+                f"Available dimensions: {data.dims}"
+            )
         size = end - start
         if data.sizes[self._concat_dim] != size:
             raise ValueError(

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Hashable
+from functools import cached_property
 from typing import Generic, TypeVar
 
 import scipp as sc
@@ -40,7 +41,7 @@ class FullHistoryExtractor(UpdateExtractor):
     """Extracts the complete buffer history."""
 
     def extract(self, buffer: Buffer) -> sc.DataArray | None:
-        return buffer.get_buffer()
+        return buffer.get_all()
 
 
 class WindowExtractor(UpdateExtractor):
@@ -58,22 +59,13 @@ class WindowExtractor(UpdateExtractor):
         """
         self._size = size
 
+    @property
+    def window_size(self) -> int | None:
+        """Return the window size."""
+        return self._size
+
     def extract(self, buffer: Buffer) -> sc.DataArray | None:
         return buffer.get_window(self._size)
-
-
-class DeltaExtractor(UpdateExtractor):
-    """Extracts only data added since last extraction."""
-
-    def __init__(self) -> None:
-        # Track the last size we saw for each buffer
-        self._last_sizes: dict[int, int] = {}
-
-    def extract(self, buffer: Buffer) -> sc.DataArray | None:
-        # TODO: Implement delta tracking properly
-        # For now, just return full buffer
-        # Need to track buffer state between calls
-        return buffer.get_buffer()
 
 
 class HistorySubscriber(ABC, Generic[K]):
@@ -84,10 +76,14 @@ class HistorySubscriber(ABC, Generic[K]):
     and receive batched updates for all relevant keys.
     """
 
-    @property
+    @cached_property
     def keys(self) -> set[K]:
-        """Return the set of buffer keys this subscriber depends on."""
-        # TODO How can we avoid rebuilding the set every time DataService calls this?
+        """
+        Return the set of buffer keys this subscriber depends on.
+
+        Cached after first access. If extractors changes after instantiation,
+        the cache will not update automatically.
+        """
         return set(self.extractors)
 
     @property
@@ -142,6 +138,11 @@ class HistoryBufferService(Generic[K]):
 
     Each subscriber gets its own set of buffers for the keys it needs.
     """
+
+    # Default buffer configuration
+    DEFAULT_WINDOW_SIZE = 1000  # Default window size for WindowExtractor with no size
+    DEFAULT_INITIAL_CAPACITY = 100  # Initial allocation for all buffers
+    DEFAULT_MAX_SIZE = 10000  # Max size for full history buffers
 
     def __init__(
         self,
@@ -205,28 +206,24 @@ class HistoryBufferService(Generic[K]):
 
         if isinstance(extractor, WindowExtractor):
             # For window extractors, use sliding window with the requested size
-            window_size = extractor._size if extractor._size else 1000
+            window_size = (
+                extractor.window_size
+                if extractor.window_size
+                else self.DEFAULT_WINDOW_SIZE
+            )
             return Buffer(
                 max_size=window_size,
                 buffer_impl=buffer_impl,
-                initial_capacity=min(100, window_size),
+                initial_capacity=min(self.DEFAULT_INITIAL_CAPACITY, window_size),
                 overallocation_factor=2.0,  # 2x for window extractors
-                concat_dim=concat_dim,
-            )
-        elif isinstance(extractor, DeltaExtractor):
-            # Delta extractor needs to keep history for delta calculation
-            return Buffer(
-                max_size=10000,
-                buffer_impl=buffer_impl,
-                initial_capacity=100,
                 concat_dim=concat_dim,
             )
         else:
             # FullHistoryExtractor or unknown - use growing buffer
             return Buffer(
-                max_size=10000,
+                max_size=self.DEFAULT_MAX_SIZE,
                 buffer_impl=buffer_impl,
-                initial_capacity=100,
+                initial_capacity=self.DEFAULT_INITIAL_CAPACITY,
                 concat_dim=concat_dim,
             )
 
