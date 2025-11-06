@@ -149,7 +149,7 @@ class DashboardBase(ServiceBase, ABC):
 
     def _start_impl(self) -> None:
         """Start the dashboard service."""
-        self._services.background_source.start()
+        self._services.start()
 
     def run_forever(self) -> None:
         """Run the dashboard server."""
@@ -170,5 +170,5 @@ class DashboardBase(ServiceBase, ABC):
 
     def _stop_impl(self) -> None:
         """Clean shutdown of all components."""
-        self._services.background_source.stop()
+        self._services.stop()
         self._exit_stack.__exit__(None, None, None)

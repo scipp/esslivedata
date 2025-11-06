@@ -49,6 +49,7 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
         self._dev = dev
         self._logger = logger
         self._exit_stack = ExitStack()
+        self._background_source = None
 
     def __enter__(self) -> DashboardResources:
         """Set up Kafka connections and return dashboard resources."""
@@ -107,6 +108,18 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
         self._exit_stack.close()
         self._logger.info("DashboardKafkaTransport cleaned up")
 
+    def start(self) -> None:
+        """Start background message polling."""
+        if self._background_source is not None:
+            self._background_source.start()
+            self._logger.info("Background message polling started")
+
+    def stop(self) -> None:
+        """Stop background message polling."""
+        if self._background_source is not None:
+            self._background_source.stop()
+            self._logger.info("Background message polling stopped")
+
     def _create_message_source(
         self,
         *,
@@ -133,8 +146,8 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
             )
         )
 
-        # Create background source
-        background_source = self._exit_stack.enter_context(
+        # Create background source and store for lifecycle management
+        self._background_source = self._exit_stack.enter_context(
             BackgroundMessageSource(consumer=consumer)
         )
 
@@ -148,4 +161,4 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
             .build()
         )
 
-        return AdaptingMessageSource(source=background_source, adapter=adapter)
+        return AdaptingMessageSource(source=self._background_source, adapter=adapter)

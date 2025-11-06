@@ -82,16 +82,23 @@ class DashboardServices:
 
         self._logger.info("DashboardServices initialized for %s", instrument)
 
+    def start(self) -> None:
+        """Start background tasks (e.g., message polling)."""
+        self._transport.start()
+
+    def stop(self) -> None:
+        """Stop background tasks (e.g., message polling)."""
+        self._transport.stop()
+
     def _setup_data_infrastructure(self) -> None:
         """Set up data services, forwarder, and orchestrator."""
         # Set up Kafka transport and get resources
-        transport_resources = self._exit_stack.enter_context(
-            DashboardKafkaTransport(
-                instrument=self._instrument,
-                dev=self._dev,
-                logger=self._logger,
-            )
+        self._transport = DashboardKafkaTransport(
+            instrument=self._instrument,
+            dev=self._dev,
+            logger=self._logger,
         )
+        transport_resources = self._exit_stack.enter_context(self._transport)
 
         self.command_service = CommandService(
             sink=transport_resources.command_sink, logger=self._logger

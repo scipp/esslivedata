@@ -61,3 +61,35 @@ def test_null_transport_context_manager_works():
 
     # Exit doesn't raise
     transport.__exit__(None, None, None)
+
+
+def test_null_transport_start_stop():
+    """NullTransport start() and stop() are no-ops."""
+    transport = NullTransport()
+
+    # start() and stop() should not raise
+    transport.start()
+    transport.stop()
+
+    # Can call multiple times
+    transport.start()
+    transport.start()
+    transport.stop()
+    transport.stop()
+
+
+def test_null_transport_lifecycle():
+    """Test complete lifecycle with context manager and start/stop."""
+    with NullTransport() as resources:
+        # Resources should be available
+        assert resources is not None
+        assert resources.message_source is not None
+        assert resources.command_sink is not None
+        assert resources.roi_sink is not None
+
+    # Can create and use again
+    transport = NullTransport()
+    with transport:
+        transport.start()
+        # Should be able to use resources
+        transport.stop()

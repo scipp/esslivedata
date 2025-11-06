@@ -18,7 +18,8 @@ class Transport(Protocol, Generic[TResources]):
     (e.g., Kafka, null/fake for testing) without changing dashboard code.
 
     The transport is a context manager that sets up resources on entry
-    and cleans them up on exit.
+    and cleans them up on exit. It also provides start/stop methods for
+    managing background tasks (e.g., background message polling).
     """
 
     def __enter__(self) -> TResources:
@@ -44,6 +45,24 @@ class Transport(Protocol, Generic[TResources]):
             Exception value if an exception occurred.
         exc_tb:
             Exception traceback if an exception occurred.
+        """
+        ...
+
+    def start(self) -> None:
+        """
+        Start any background tasks.
+
+        For Kafka transport, this starts background message polling.
+        For null transport, this is a no-op.
+        """
+        ...
+
+    def stop(self) -> None:
+        """
+        Stop any background tasks.
+
+        For Kafka transport, this stops background message polling.
+        For null transport, this is a no-op.
         """
         ...
 
@@ -102,4 +121,12 @@ class NullTransport:
 
     def __exit__(self, _exc_type, _exc_val, _exc_tb) -> None:
         """Nothing to clean up."""
+        pass
+
+    def start(self) -> None:
+        """Nothing to start."""
+        pass
+
+    def stop(self) -> None:
+        """Nothing to stop."""
         pass
