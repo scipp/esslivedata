@@ -7,8 +7,7 @@ import logging
 from ..config.models import RectangleROI
 from ..config.roi_names import get_roi_mapper
 from ..config.workflow_spec import JobId
-from ..core.message import Message, StreamId, StreamKind
-from ..kafka.sink import KafkaSink
+from ..core.message import Message, MessageSink, StreamId, StreamKind
 
 
 class ROIPublisher:
@@ -21,12 +20,12 @@ class ROIPublisher:
     Parameters
     ----------
     sink:
-        Kafka sink for publishing messages.
+        Message sink for publishing messages.
     logger:
         Logger instance. If None, creates a logger using the module name.
     """
 
-    def __init__(self, sink: KafkaSink, logger: logging.Logger | None = None):
+    def __init__(self, sink: MessageSink, logger: logging.Logger | None = None):
         self._sink = sink
         self._logger = logger or logging.getLogger(__name__)
         self._roi_mapper = get_roi_mapper()
