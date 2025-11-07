@@ -22,15 +22,32 @@ class ServiceProcess:
     (e.g., fake_monitors, monitor_data) with proper argument handling,
     lifecycle management, and cleanup.
 
+    Service readiness is detected by matching log output against expected
+    messages. This is a pragmatic approach for testing, though production
+    deployments should use proper health/liveness endpoints (future enhancement).
+
     Parameters
     ----------
     service_module:
         Python module name to run (e.g., 'ess.livedata.services.fake_monitors')
     log_level:
         Logging level for the subprocess (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    readiness_messages:
+        Log messages to wait for during startup. Services are considered ready
+        when ALL messages have appeared in the output. Defaults to waiting for
+        "Service started". For services with Kafka consumers, consider also
+        waiting for "Kafka consumer ready and polling" to ensure functional
+        readiness.
     **kwargs:
         Service-specific arguments passed as command-line flags
         (e.g., instrument='dummy', dev=True becomes --instrument dummy --dev)
+
+    Notes
+    -----
+    Long-term improvement: Replace log message matching with HTTP health/liveness
+    endpoints that can verify actual service functionality (e.g., Kafka connectivity,
+    resource availability). This would provide more robust readiness detection and
+    align with standard production practices.
     """
 
     def __init__(
@@ -38,10 +55,12 @@ class ServiceProcess:
         service_module: str,
         *,
         log_level: str = 'INFO',
+        readiness_messages: list[str] | None = None,
         **kwargs: Any,
     ):
         self.service_module = service_module
         self.log_level = log_level
+        self.readiness_messages = readiness_messages or ['Service started']
         self.kwargs = kwargs
         self.process: subprocess.Popen | None = None
         self._stdout_lines: list[str] = []
@@ -107,9 +126,14 @@ class ServiceProcess:
         self._stderr_thread.start()
 
     def _wait_for_service_ready(self, startup_delay: float) -> None:
-        """Wait for the service to report it has started or crash during startup."""
+        """
+        Wait for the service to report readiness or crash during startup.
+
+        Checks for all configured readiness messages. Services are considered
+        ready only when ALL messages have appeared in the output.
+        """
         start_time = time.time()
-        service_started = False
+        missing_messages = set(self.readiness_messages)
 
         while time.time() - start_time < startup_delay:
             if self.process.poll() is not None:
@@ -129,22 +153,34 @@ class ServiceProcess:
                 )
 
             combined_output = ''.join(self._stdout_lines + self._stderr_lines)
-            if 'Service started' in combined_output:
-                service_started = True
+
+            # Check which readiness messages have appeared
+            for msg in list(missing_messages):
+                if msg in combined_output:
+                    missing_messages.remove(msg)
+                    logger.debug(
+                        "Service %s: detected readiness message '%s'",
+                        self.service_module,
+                        msg,
+                    )
+
+            # All readiness messages found
+            if not missing_messages:
                 break
 
             time.sleep(0.01)
 
-        if not service_started:
+        if missing_messages:
             logger.warning(
-                "Did not see 'Service started' message for %s within %.1fs, "
-                "but process is still running",
+                "Service %s: did not see all readiness messages within %.1fs, "
+                "but process is still running. Missing: %s",
                 self.service_module,
                 startup_delay,
+                missing_messages,
             )
 
         logger.info(
-            "Service %s started with PID %s (took %.3fs)",
+            "Service %s ready with PID %s (took %.3fs)",
             self.service_module,
             self.process.pid,
             time.time() - start_time,

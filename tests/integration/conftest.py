@@ -3,7 +3,6 @@
 """Pytest fixtures for integration tests."""
 
 import logging
-import time
 from collections.abc import Generator
 from dataclasses import dataclass
 
@@ -67,10 +66,14 @@ def _create_service_group(
 
     services_dict = {}
     for name, (module_path, extra_kwargs) in services_config.items():
+        # Services with Kafka consumers should wait for both process start
+        # and Kafka consumer readiness to ensure functional availability
+        readiness_messages = extra_kwargs.pop('readiness_messages', None)
         services_dict[name] = ServiceProcess(
             module_path,
             log_level=log_level,
             instrument=instrument,
+            readiness_messages=readiness_messages,
             **extra_kwargs,
         )
 
@@ -78,7 +81,7 @@ def _create_service_group(
     logger.info("Starting services for instrument: %s", instrument)
 
     try:
-        services.start_all(startup_delay=5.0)
+        services.start_all(startup_delay=10.0)
         yield services
     finally:
         services.stop_all()
@@ -160,27 +163,9 @@ def integration_env(dashboard_backend: DashboardBackend, request) -> Integration
     marker = request.node.get_closest_marker('instrument')
     instrument = marker.args[0] if marker else 'dummy'
 
-    # Wait for Kafka consumers to complete group coordination and be ready to poll.
-    # Services log "Service started" when their threads start, but their Kafka
-    # consumers need additional time to join consumer groups, complete partition
-    # assignment, and begin polling. We wait for "Kafka consumer ready" log message.
-    logger.info("Waiting for services to be ready for message consumption...")
-    start_time = time.monotonic()
-    timeout = 5.0
-    while time.monotonic() - start_time < timeout:
-        combined_output = ''.join(
-            service.get_stdout() + service.get_stderr()
-            for service in services.services.values()
-        )
-        if 'Kafka consumer ready and polling' in combined_output:
-            logger.info("Services ready after %.3fs", time.monotonic() - start_time)
-            break
-        time.sleep(0.05)
-    else:
-        logger.warning(
-            "Did not see 'Kafka consumer ready' within %.1fs, proceeding anyway",
-            timeout,
-        )
+    # Service readiness (including Kafka consumer readiness) is now handled
+    # by ServiceProcess via configurable readiness_messages. No need to wait
+    # here - services are already confirmed ready when start_all() completes.
 
     return IntegrationEnv(
         backend=dashboard_backend, services=services, instrument=instrument
@@ -203,8 +188,20 @@ def monitor_services(request) -> Generator[ServiceGroup, None, None]:
     yield from _create_service_group(
         request,
         {
-            'fake_monitors': ('ess.livedata.services.fake_monitors', {'mode': 'ev44'}),
-            'monitor_data': ('ess.livedata.services.monitor_data', {'dev': True}),
+            'fake_monitors': (
+                'ess.livedata.services.fake_monitors',
+                {'mode': 'ev44'},
+            ),
+            'monitor_data': (
+                'ess.livedata.services.monitor_data',
+                {
+                    'dev': True,
+                    'readiness_messages': [
+                        'Service started',
+                        'Kafka consumer ready and polling',
+                    ],
+                },
+            ),
         },
     )
 
@@ -226,7 +223,16 @@ def detector_services(request) -> Generator[ServiceGroup, None, None]:
         request,
         {
             'fake_detectors': ('ess.livedata.services.fake_detectors', {}),
-            'detector_data': ('ess.livedata.services.detector_data', {'dev': True}),
+            'detector_data': (
+                'ess.livedata.services.detector_data',
+                {
+                    'dev': True,
+                    'readiness_messages': [
+                        'Service started',
+                        'Kafka consumer ready and polling',
+                    ],
+                },
+            ),
         },
     )
 
@@ -248,7 +254,25 @@ def reduction_services(request) -> Generator[ServiceGroup, None, None]:
         request,
         {
             'fake_detectors': ('ess.livedata.services.fake_detectors', {}),
-            'detector_data': ('ess.livedata.services.detector_data', {'dev': True}),
-            'data_reduction': ('ess.livedata.services.data_reduction', {'dev': True}),
+            'detector_data': (
+                'ess.livedata.services.detector_data',
+                {
+                    'dev': True,
+                    'readiness_messages': [
+                        'Service started',
+                        'Kafka consumer ready and polling',
+                    ],
+                },
+            ),
+            'data_reduction': (
+                'ess.livedata.services.data_reduction',
+                {
+                    'dev': True,
+                    'readiness_messages': [
+                        'Service started',
+                        'Kafka consumer ready and polling',
+                    ],
+                },
+            ),
         },
     )
