@@ -65,11 +65,15 @@ class KafkaSink(MessageSink[T]):
         serializer: Serializer[T] = serialize_dataarray_to_da00,
     ):
         self._logger = logger or logging.getLogger(__name__)
-        self._producer = kafka.Producer(kafka_config)
+        self._kafka_config = kafka_config
+        self._producer: kafka.Producer | None = None
         self._serializer = serializer
         self._instrument = instrument
 
     def publish_messages(self, messages: Message[T]) -> None:
+        if self._producer is None:
+            raise RuntimeError("KafkaSink must be used as a context manager")
+
         def delivery_callback(err, msg):
             if err is not None:
                 self._logger.error(
@@ -129,7 +133,8 @@ class KafkaSink(MessageSink[T]):
             del self._producer
 
     def __enter__(self) -> 'KafkaSink[T]':
-        """Enter context manager."""
+        """Enter context manager - initialize the Kafka producer."""
+        self._producer = kafka.Producer(self._kafka_config)
         return self
 
     def __exit__(

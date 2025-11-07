@@ -119,6 +119,8 @@ def run_service(
     num_monitors: int = 2,
     log_level: int = logging.INFO,
 ) -> NoReturn:
+    from contextlib import ExitStack
+
     kafka_config = load_config(namespace=config_names.kafka_upstream)
     if mode == 'ev44':
         adapter = None
@@ -133,18 +135,24 @@ def run_service(
     if adapter is not None:
         source = AdaptingMessageSource(source=source, adapter=adapter)
 
-    processor = IdentityProcessor(
-        source=source,
-        sink=KafkaSink(
-            instrument=instrument, kafka_config=kafka_config, serializer=serializer
-        ),
-    )
-    service = Service(
-        processor=processor,
-        name=f'{instrument}_fake_{mode}_producer',
-        log_level=log_level,
-    )
-    service.start()
+    resources = ExitStack()
+    with resources:
+        sink = resources.enter_context(
+            KafkaSink(
+                instrument=instrument, kafka_config=kafka_config, serializer=serializer
+            )
+        )
+        processor = IdentityProcessor(
+            source=source,
+            sink=sink,
+        )
+        service = Service(
+            processor=processor,
+            name=f'{instrument}_fake_{mode}_producer',
+            log_level=log_level,
+            resources=resources.pop_all(),
+        )
+        service.start()
 
 
 def main() -> NoReturn:

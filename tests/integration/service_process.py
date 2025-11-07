@@ -74,45 +74,23 @@ class ServiceProcess:
             # Stream was closed
             pass
 
-    def start(self, startup_delay: float = 2.0) -> None:
-        """
-        Start the service subprocess.
-
-        Parameters
-        ----------
-        startup_delay:
-            Time to wait after starting the service for it to initialize (seconds)
-        """
-        # Build command line arguments
+    def _build_command_args(self) -> list[str]:
+        """Build command line arguments for the service subprocess."""
         args = [sys.executable, '-m', self.service_module]
-
-        # Add log level to command line
         args.extend(['--log-level', self.log_level])
 
         for key, value in self.kwargs.items():
-            # Convert Python naming to CLI flags (underscore to hyphen)
             flag_name = key.replace('_', '-')
-
             if isinstance(value, bool):
-                # Boolean flags: only add if True
                 if value:
                     args.append(f'--{flag_name}')
             else:
-                # Regular arguments
                 args.extend([f'--{flag_name}', str(value)])
 
-        logger.info("Starting service: %s with args: %s", self.service_module, args)
+        return args
 
-        # Start subprocess with pipes for stdout/stderr
-        self.process = subprocess.Popen(  # noqa: S603
-            args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,  # Line buffered
-        )
-
-        # Start threads to stream output
+    def _start_output_threads(self) -> None:
+        """Start background threads to capture stdout and stderr."""
         self._stop_event.clear()
         self._stdout_thread = threading.Thread(
             target=self._stream_output,
@@ -127,13 +105,13 @@ class ServiceProcess:
         self._stdout_thread.start()
         self._stderr_thread.start()
 
-        # Wait for service to report it has started (or crash)
+    def _wait_for_service_ready(self, startup_delay: float) -> None:
+        """Wait for the service to report it has started or crash during startup."""
         start_time = time.time()
         service_started = False
+
         while time.time() - start_time < startup_delay:
-            # Check if process crashed
             if self.process.poll() is not None:
-                # Wait for threads to finish reading any error output
                 self._stop_event.set()
                 if self._stdout_thread:
                     self._stdout_thread.join(timeout=1.0)
@@ -149,13 +127,12 @@ class ServiceProcess:
                     f"STDERR: {stderr}"
                 )
 
-            # Check if we've seen "Service started" in output
             combined_output = ''.join(self._stdout_lines + self._stderr_lines)
             if 'Service started' in combined_output:
                 service_started = True
                 break
 
-            time.sleep(0.01)  # Small sleep to avoid busy-waiting
+            time.sleep(0.01)
 
         if not service_started:
             logger.warning(
@@ -171,6 +148,29 @@ class ServiceProcess:
             self.process.pid,
             time.time() - start_time,
         )
+
+    def start(self, startup_delay: float = 2.0) -> None:
+        """
+        Start the service subprocess.
+
+        Parameters
+        ----------
+        startup_delay:
+            Time to wait after starting the service for it to initialize (seconds)
+        """
+        args = self._build_command_args()
+        logger.info("Starting service: %s with args: %s", self.service_module, args)
+
+        self.process = subprocess.Popen(  # noqa: S603
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+
+        self._start_output_threads()
+        self._wait_for_service_ready(startup_delay)
 
     def stop(self, timeout: float = 10.0) -> None:
         """

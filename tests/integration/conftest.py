@@ -102,24 +102,13 @@ def dashboard_backend(request) -> Generator[DashboardBackend, None, None]:
     :
         DashboardBackend instance
     """
-    # Get instrument from marker or use default
-    marker = request.node.get_closest_marker('instrument')
-    instrument = marker.args[0] if marker else 'dummy'
-
-    # Get log level from marker or use default
-    log_level_marker = request.node.get_closest_marker('log_level')
-    log_level_name = log_level_marker.args[0] if log_level_marker else 'INFO'
+    instrument, log_level_name = _get_instrument_and_log_level(request)
 
     logger.info("Creating dashboard backend for instrument: %s", instrument)
-    backend = DashboardBackend(
+    with DashboardBackend(
         instrument=instrument, dev=True, log_level=log_level_name
-    )
-
-    try:
-        backend.start()
+    ) as backend:
         yield backend
-    finally:
-        backend.stop()
 
 
 @pytest.fixture
@@ -176,15 +165,15 @@ def integration_env(dashboard_backend: DashboardBackend, request) -> Integration
     # consumers need additional time to join consumer groups, complete partition
     # assignment, and begin polling. We wait for "Kafka consumer ready" log message.
     logger.info("Waiting for services to be ready for message consumption...")
-    start_time = time.time()
+    start_time = time.monotonic()
     timeout = 5.0
-    while time.time() - start_time < timeout:
+    while time.monotonic() - start_time < timeout:
         combined_output = ''.join(
             service.get_stdout() + service.get_stderr()
             for service in services.services.values()
         )
         if 'Kafka consumer ready and polling' in combined_output:
-            logger.info("Services ready after %.3fs", time.time() - start_time)
+            logger.info("Services ready after %.3fs", time.monotonic() - start_time)
             break
         time.sleep(0.05)
     else:
