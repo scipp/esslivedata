@@ -79,8 +79,13 @@ class ServiceProcess:
         This runs in a background thread to continuously drain the subprocess pipes.
         Without this, the subprocess would block when the pipe buffer fills up,
         causing the service to hang indefinitely.
+
+        Note: stream.readline() is a blocking I/O call that efficiently waits for
+        data without spinning (consuming CPU). The thread sleeps until data arrives.
         """
         try:
+            # iter(stream.readline, '') blocks on readline() until data arrives or EOF
+            # This is efficient - the thread sleeps while waiting, no CPU spinning
             for line in iter(stream.readline, ''):
                 if self._stop_event.is_set():
                     break
