@@ -17,7 +17,15 @@ See `conftest.py` for fixture details:
 
 ## Test Helpers
 
-See `helpers.py` for synchronous waiting utilities (e.g., `wait_for_data`, `wait_for_condition`). Avoid using `time.sleep()`—use helpers instead.
+See `helpers.py` for utilities that filter by `workflow_id` and wait for conditions:
+
+- `wait_for_workflow_job_data()` - Wait for job data, handles `backend.update()` and filtering
+- `wait_for_workflow_job_statuses()` - Wait for job status updates
+- `get_workflow_jobs()` - Get job numbers for a workflow
+- `get_workflow_job_data()` - Get job data filtered by workflow and sources
+- `wait_for_condition()` - Generic condition waiter
+
+**Always use helpers instead of `time.sleep()` or manual `backend.update()` loops.**
 
 ## Writing Integration Tests
 
@@ -29,35 +37,26 @@ See `helpers.py` for synchronous waiting utilities (e.g., `wait_for_data`, `wait
 def test_my_workflow(integration_env):
     backend = integration_env.backend
 
-    # Create workflow with unique identifier for filtering
+    # Define the workflow type to test
     workflow_id = WorkflowId(
         instrument='dummy',
         namespace='monitor_data',
         name='monitor_histogram',
         version=1,
     )
+    source_names = ['monitor1']
 
-    # Start workflow
-    backend.workflow_controller.start_workflow(workflow_id, ['monitor1'], config)
+    # Start workflow (returns job_ids with unique UUIDs for each source)
+    job_ids = backend.workflow_controller.start_workflow(
+        workflow_id, source_names, config
+    )
 
-    # Wait for data using helper, filtering by workflow_id
-    def check_for_job_data():
-        backend.update()
-        for job_number, source_data in backend.job_service.job_data.items():
-            # Only check jobs belonging to OUR workflow
-            if backend.job_service.job_info.get(job_number) == workflow_id:
-                if 'monitor1' in source_data:
-                    return True
-        return False
+    # Use helper to wait for data (handles backend.update() and filtering)
+    wait_for_workflow_job_data(backend, workflow_id, source_names, timeout=10.0)
 
-    wait_for_condition(check_for_job_data, timeout=10.0)
-
-    # Filter workflow-specific jobs for assertions
-    workflow_jobs = [
-        job_num for job_num, wf_id in backend.job_service.job_info.items()
-        if wf_id == workflow_id
-    ]
-    assert len(workflow_jobs) > 0, f"Expected at least one job for {workflow_id}"
+    # Make assertions about the jobs we created
+    job_data = backend.job_service.job_data[job_ids[0].job_number]
+    assert 'monitor1' in job_data
 
     # Clean up
     backend.workflow_controller.stop_workflow(workflow_id)
@@ -69,104 +68,61 @@ def test_my_workflow(integration_env):
 
 Write tests that work regardless of whether fixtures are isolated or shared:
 
-#### DO: Filter by Test-Specific Identifiers
+#### DO: Use Helper Functions to Filter by Workflow
 
-Always filter global state by your test's workflow ID or source name before making assertions:
+The helper functions in `helpers.py` automatically filter by `workflow_id`, isolating your test's jobs from other workflows:
 
 ```python
 @pytest.mark.integration
 @pytest.mark.services('monitor')
 def test_my_workflow(integration_env: IntegrationEnv):
     backend = integration_env.backend
-    workflow_id = WorkflowId(
-        instrument='dummy',
-        namespace='monitor_data',
-        name='monitor_histogram',
-        version=1,
+    workflow_id = WorkflowId(...)
+    source_names = ['monitor1']
+
+    job_ids = backend.workflow_controller.start_workflow(
+        workflow_id, source_names, config
     )
 
-    backend.workflow_controller.start_workflow(workflow_id, ['monitor1'], config)
+    # ✅ GOOD: Use helpers that filter by workflow_id automatically
+    wait_for_workflow_job_data(backend, workflow_id, source_names, timeout=10.0)
 
-    # ✅ GOOD: Filter by workflow_id before checking
-    def check_for_job_data():
-        backend.update()
-        for job_number, source_data in backend.job_service.job_data.items():
-            # Only check jobs belonging to OUR workflow
-            if backend.job_service.job_info.get(job_number) == workflow_id:
-                if 'monitor1' in source_data:
-                    return True
-        return False
-
-    wait_for_condition(check_for_job_data, timeout=10.0)
-
-    # ✅ GOOD: Filter workflow-specific jobs
-    workflow_jobs = [
-        job_num for job_num, wf_id in backend.job_service.job_info.items()
-        if wf_id == workflow_id
-    ]
-    assert len(workflow_jobs) > 0, f"Expected at least one job for {workflow_id}"
+    # Retrieve filtered data using helpers
+    job_data = get_workflow_job_data(backend.job_service, workflow_id, source_names)
+    assert len(job_data) > 0
 ```
 
-#### DO: Use Existence Checks
-
-Test for the presence of expected data, not exact counts:
+#### DO: Use Existence Checks, Not Exact Counts
 
 ```python
-# ✅ GOOD: Check for existence
-assert 'monitor1' in source_data
+# ✅ GOOD: Check for existence in your filtered data
+assert 'monitor1' in job_data
+assert len(job_data) > 0
 
-# ✅ GOOD: Check for at least one
-assert len(workflow_jobs) > 0
-
-# ❌ BAD: Assumes no other tests have run
+# ❌ BAD: Assumes no other workflows running
 assert len(backend.job_service.job_data) == 1
 ```
 
-#### DO: Use Relative Assertions
-
-Make assertions about your test's data, not global state:
+#### DO: Assert Properties, Not Global State
 
 ```python
-# ✅ GOOD: Compare your own data
-assert data_after_config_change != data_before_config_change
-
-# ✅ GOOD: Check properties of your results
+# ✅ GOOD: Properties of your test's results
 assert result.sizes['time'] > 10
+assert data_after_change != data_before_change
 
-# ❌ BAD: Assumes you're the first test
-assert job_number == 0
-```
-
-#### DON'T: Assert Global State
-
-Avoid assumptions about global state or ordering:
-
-```python
-# ❌ BAD: Assumes isolation
-assert len(backend.job_service.job_data) == 1
-assert len(backend.data_service.get_all_keys()) == 1
+# ❌ BAD: Assumes you're the first/only test
+assert job_ids[0].job_number == 0
 assert backend.job_service.next_job_number == 1
-
-# ❌ BAD: Assumes you're first
-assert list(backend.job_service.job_info.keys())[0] == 0
-
-# ❌ BAD: Assumes specific timing
-time.sleep(2.0)  # Wait for data (use wait_for_condition instead)
 ```
 
-#### Pattern Summary
+#### Summary: Filter → Assert
 
-**Filter → Check → Assert**
-
-1. **Filter**: Narrow down to your test's data using workflow_id/source_name
-2. **Check**: Verify presence/properties of your filtered data
-3. **Assert**: Make claims only about your test's data
-
-This pattern ensures tests remain valid whether fixtures are shared or isolated.
+1. **Filter**: Use helpers to get data for your `workflow_id`
+2. **Assert**: Check properties/presence of your filtered data only
 
 ## Best Practices
 
-1. **Write scope-agnostic tests**: Filter by `workflow_id`/`source_name` before assertions (see "Writing Tests Robust to Fixture Scope Changes")
-4. **Use helpers, not `time.sleep()` or `backend.update()`**: Use `wait_for_*` helpers from `helpers.py` for synchronization
-5. **Don't assume test ordering**: Tests may run in any order; don't rely on global state
-6. **Add clear docstrings**: Explain what each test verifies
+1. **Use helpers from `helpers.py`**: They automatically filter by `workflow_id` and handle `backend.update()`
+2. **Assert on filtered data only**: Never assert global state (job counts, job numbers, etc.)
+3. **Use existence checks**: Test for presence (`> 0`), not exact counts
+4. **Add clear docstrings**: Explain what each test verifies
