@@ -19,6 +19,7 @@ from .plot_params import (
     PlotParams1d,
     PlotParams2d,
     PlotParams3d,
+    PlotParamsSlidingWindow,
     PlotScale,
     PlotScaleParams,
     PlotScaleParams2d,
@@ -481,3 +482,181 @@ class SlicerPlotter(Plotter):
         image = to_holoviews(plot_data)
 
         return image.opts(framewise=framewise, **self._base_opts)
+
+
+class SlidingWindowPlotter(Plotter):
+    """Plotter for time-series data with sliding window summation."""
+
+    def __init__(
+        self,
+        max_window_length: float,
+        time_dim: str,
+        scale_opts_1d: PlotScaleParams,
+        scale_opts_2d: PlotScaleParams2d,
+        **kwargs,
+    ):
+        """
+        Initialize the sliding window plotter.
+
+        Parameters
+        ----------
+        max_window_length:
+            Maximum window length in seconds.
+        time_dim:
+            Name of the time dimension to sum over.
+        scale_opts_1d:
+            Scaling options for 1D plots (when input is 2D).
+        scale_opts_2d:
+            Scaling options for 2D plots (when input is 3D).
+        **kwargs:
+            Additional keyword arguments passed to the base class.
+        """
+        super().__init__(**kwargs)
+        self._max_window_length = max_window_length
+        self._time_dim = time_dim
+        self._scale_opts_1d = scale_opts_1d
+        self._scale_opts_2d = scale_opts_2d
+        self._base_opts_1d = {
+            'logx': scale_opts_1d.x_scale == PlotScale.log,
+            'logy': scale_opts_1d.y_scale == PlotScale.log,
+        }
+        self._base_opts_2d = self._make_2d_base_opts(scale_opts_2d)
+        self._kdims: list[hv.Dimension] | None = None
+
+    @classmethod
+    def from_params(cls, params: PlotParamsSlidingWindow):
+        """Create SlidingWindowPlotter from PlotParamsSlidingWindow."""
+        return cls(
+            max_window_length=params.max_window_length,
+            time_dim=params.time_dim,
+            scale_opts_1d=params.plot_scale_1d,
+            scale_opts_2d=params.plot_scale_2d,
+            value_margin_factor=0.1,
+            layout_params=params.layout,
+            aspect_params=params.plot_aspect,
+        )
+
+    def initialize_from_data(self, data: dict[ResultKey, sc.DataArray]) -> None:
+        """
+        Initialize the sliding window from initial data.
+
+        Creates kdims for the window length slider.
+
+        Parameters
+        ----------
+        data:
+            Dictionary of initial data arrays.
+        """
+        if not data:
+            raise ValueError("No data provided to initialize_from_data")
+
+        # Create window length slider from 1s to max_window_length
+        window_slider = hv.Dimension(
+            'window_length',
+            range=(1.0, self._max_window_length),
+            default=min(10.0, self._max_window_length),
+            label='Window Length',
+            unit='s',
+        )
+
+        self._kdims = [window_slider]
+
+    @property
+    def kdims(self) -> list[hv.Dimension] | None:
+        """
+        Return kdims for interactive window length slider.
+
+        Returns
+        -------
+        :
+            List containing the window length slider Dimension,
+            or None if not yet initialized.
+        """
+        return self._kdims
+
+    def plot(
+        self,
+        data: sc.DataArray,
+        data_key: ResultKey,
+        *,
+        window_length: float = 10.0,
+        **kwargs,
+    ) -> hv.Curve | hv.Image:
+        """
+        Create a plot from time-series data with sliding window summation.
+
+        Parameters
+        ----------
+        data:
+            2D or 3D DataArray with a time dimension.
+        data_key:
+            Key identifying this data.
+        window_length:
+            Length of the sliding window in seconds.
+        **kwargs:
+            Additional keyword arguments (unused).
+
+        Returns
+        -------
+        :
+            A HoloViews Curve (for 2D input) or Image (for 3D input) element.
+        """
+        if self._time_dim not in data.dims:
+            raise ValueError(
+                f"Time dimension '{self._time_dim}' not found in data. "
+                f"Available dimensions: {list(data.dims)}"
+            )
+
+        if self._time_dim not in data.coords:
+            raise ValueError(
+                f"Time dimension '{self._time_dim}' has no coordinate. "
+                "Cannot perform time-based windowing."
+            )
+
+        # Get the time coordinate
+        time_coord = data.coords[self._time_dim]
+
+        # Get the maximum time value
+        if data.coords.is_edges(self._time_dim):
+            max_time = time_coord[-1]
+        else:
+            max_time = time_coord[data.sizes[self._time_dim] - 1]
+
+        # Calculate the window start time
+        window_start = max_time - sc.scalar(window_length, unit=time_coord.unit)
+
+        # Slice the data to get only the last window_length seconds
+        windowed_data = data[self._time_dim, window_start:]
+
+        # Sum over the time dimension
+        summed_data = windowed_data.sum(self._time_dim)
+
+        # Determine output dimensionality and plot accordingly
+        if summed_data.ndim == 1:
+            # 2D input → 1D output (line plot)
+            # Handle histogram vs curve based on edges
+            if summed_data.coords.is_edges(summed_data.dim):
+                da = summed_data.assign_coords(
+                    {summed_data.dim: sc.midpoints(summed_data.coords[summed_data.dim])}
+                )
+            else:
+                da = summed_data
+
+            framewise = self._update_autoscaler_and_get_framewise(da, data_key)
+            curve = to_holoviews(da)
+            return curve.opts(framewise=framewise, **self._base_opts_1d)
+
+        elif summed_data.ndim == 2:
+            # 3D input → 2D output (image plot)
+            use_log_scale = self._scale_opts_2d.color_scale == PlotScale.log
+            plot_data = self._prepare_2d_image_data(summed_data, use_log_scale)
+
+            framewise = self._update_autoscaler_and_get_framewise(plot_data, data_key)
+            image = to_holoviews(plot_data)
+            return image.opts(framewise=framewise, **self._base_opts_2d)
+
+        else:
+            raise ValueError(
+                f"After summing over '{self._time_dim}', expected 1D or 2D data, "
+                f"got {summed_data.ndim}D"
+            )

@@ -170,3 +170,28 @@ class PlotParamsROIDetector(PlotParams2d):
         default_factory=ROIOptions,
         description="Options for ROI selection and display.",
     )
+
+
+class PlotParamsSlidingWindow(PlotParamsBase):
+    """Parameters for sliding window plots."""
+
+    max_window_length: float = pydantic.Field(
+        default=60.0,
+        description="Maximum window length in seconds.",
+        title="Max Window Length (s)",
+        ge=1.0,
+        le=3600.0,
+    )
+    time_dim: str = pydantic.Field(
+        default='time',
+        description="Name of the time dimension to sum over.",
+        title="Time Dimension",
+    )
+    plot_scale_1d: PlotScaleParams = pydantic.Field(
+        default_factory=PlotScaleParams,
+        description="Scaling options for 1D plots (when input is 2D).",
+    )
+    plot_scale_2d: PlotScaleParams2d = pydantic.Field(
+        default_factory=PlotScaleParams2d,
+        description="Scaling options for 2D plots (when input is 3D).",
+    )
