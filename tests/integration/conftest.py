@@ -126,6 +126,10 @@ def integration_env(dashboard_backend: DashboardBackend, request) -> Integration
     @pytest.mark.services('detector')  # Uses detector_services fixture
     @pytest.mark.services('reduction')  # Uses reduction_services fixture
 
+    Design note: Each test uses exactly ONE service group to focus on a single
+    service pipeline. Multiple service groups per test are not supported - tests
+    should be scoped to one workflow type (monitor, detector, or reduction).
+
     Parameters
     ----------
     dashboard_backend:
@@ -139,12 +143,22 @@ def integration_env(dashboard_backend: DashboardBackend, request) -> Integration
         IntegrationEnv containing backend, services, and instrument name
     """
     # Get services type from marker (required)
+    # Design: Single service group per test to focus on one service pipeline
     services_marker = request.node.get_closest_marker('services')
     if not services_marker:
         pytest.fail(
             "integration_env fixture requires "
             "@pytest.mark.services('monitor'|'detector'|'reduction')"
         )
+
+    # Validate single service group (not multiple)
+    if len(services_marker.args) != 1:
+        pytest.fail(
+            f"@pytest.mark.services() expects exactly one argument, "
+            f"got {len(services_marker.args)}. Each test should focus on a "
+            f"single service group: 'monitor', 'detector', or 'reduction'."
+        )
+
     services_type = services_marker.args[0]
 
     # Map service type to fixture name
