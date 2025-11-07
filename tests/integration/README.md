@@ -62,67 +62,15 @@ def test_my_workflow(integration_env):
     backend.workflow_controller.stop_workflow(workflow_id)
 ```
 
-### Writing Tests Robust to Fixture Scope Changes
-
-**IMPORTANT**: Currently, integration test fixtures create new backend processes for every test (function scope). In the future, fixtures may be changed to session or module scope to improve performance by sharing processes across multiple tests.
-
-Write tests that work regardless of whether fixtures are isolated or shared:
-
-#### DO: Use Helper Functions to Filter by Workflow
-
-The helper functions in `helpers.py` automatically filter by `workflow_id`, isolating your test's jobs from other workflows:
-
-```python
-@pytest.mark.integration
-@pytest.mark.services('monitor')
-def test_my_workflow(integration_env: IntegrationEnv):
-    backend = integration_env.backend
-    workflow_id = WorkflowId(...)
-    source_names = ['monitor1']
-
-    job_ids = backend.workflow_controller.start_workflow(
-        workflow_id, source_names, config
-    )
-
-    # ✅ GOOD: Use helpers that filter by workflow_id automatically
-    wait_for_workflow_job_data(backend, workflow_id, source_names, timeout=10.0)
-
-    # Retrieve filtered data using helpers
-    job_data = get_workflow_job_data(backend.job_service, workflow_id, source_names)
-    assert len(job_data) > 0
-```
-
-#### DO: Use Existence Checks, Not Exact Counts
-
-```python
-# ✅ GOOD: Check for existence in your filtered data
-assert 'monitor1' in job_data
-assert len(job_data) > 0
-
-# ❌ BAD: Assumes no other workflows running
-assert len(backend.job_service.job_data) == 1
-```
-
-#### DO: Assert Properties, Not Global State
-
-```python
-# ✅ GOOD: Properties of your test's results
-assert result.sizes['time'] > 10
-assert data_after_change != data_before_change
-
-# ❌ BAD: Assumes you're the first/only test
-assert job_ids[0].job_number == 0
-assert backend.job_service.next_job_number == 1
-```
-
-#### Summary: Filter → Assert
-
-1. **Filter**: Use helpers to get data for your `workflow_id`
-2. **Assert**: Check properties/presence of your filtered data only
-
 ## Best Practices
 
-1. **Use helpers from `helpers.py`**: They automatically filter by `workflow_id` and handle `backend.update()`
-2. **Assert on filtered data only**: Never assert global state (job counts, job numbers, etc.)
-3. **Use existence checks**: Test for presence (`> 0`), not exact counts
-4. **Add clear docstrings**: Explain what each test verifies
+1. **Use helpers from `helpers.py`**: They handle `backend.update()` and filter by `workflow_id`
+2. **Check properties, not global state**: Assert on your test's data, not total job counts or job numbers
+3. **Add clear docstrings**: Explain what each test verifies
+
+Example of what to avoid:
+```python
+# ❌ BAD: Assumes no other workflows or tests
+assert len(backend.job_service.job_data) == 1
+assert job_ids[0].job_number == 0
+```
