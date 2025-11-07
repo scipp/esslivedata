@@ -297,3 +297,60 @@ class TestHistoryBufferService:
         result = subscriber.get_updates()[0]["data"]
         assert result.sizes["time"] == 5
         assert result.sizes["x"] == 3
+
+    def test_0d_scalars_to_timeseries(self):
+        """Test building timeseries from 0D scalars."""
+        service = HistoryBufferService[str](data_service=None)
+
+        subscriber = SimpleSubscriber(
+            extractors={"temperature": FullHistoryExtractor()},
+        )
+        service.register_subscriber(subscriber)
+
+        # Add 0D scalar measurements
+        for i in range(5):
+            scalar = sc.DataArray(sc.scalar(20.0 + i, dtype='float64'))
+            service.add_data({"temperature": scalar})
+
+        updates = subscriber.get_updates()
+        assert len(updates) == 5
+
+        # Final result should be 1D timeseries
+        final = updates[-1]["temperature"]
+        assert final.sizes["time"] == 5
+        assert list(final.data.values) == [20.0, 21.0, 22.0, 23.0, 24.0]
+
+    def test_2d_images_to_3d_stack(self):
+        """Test stacking 2D images into 3D."""
+        service = HistoryBufferService[str](data_service=None)
+
+        subscriber = SimpleSubscriber(
+            extractors={"detector": FullHistoryExtractor()},
+        )
+        service.register_subscriber(subscriber)
+
+        # Add 2D images
+        for i in range(3):
+            image = sc.DataArray(
+                data=sc.array(
+                    dims=['y', 'x'],
+                    values=[[i * 10 + 1, i * 10 + 2], [i * 10 + 3, i * 10 + 4]],
+                    dtype='int64',
+                ),
+                coords={
+                    'y': sc.array(dims=['y'], values=[0, 1], dtype='int64'),
+                    'x': sc.array(dims=['x'], values=[0, 1], dtype='int64'),
+                },
+            )
+            service.add_data({"detector": image})
+
+        updates = subscriber.get_updates()
+        assert len(updates) == 3
+
+        # Final result should be 3D stack
+        final = updates[-1]["detector"]
+        assert final.sizes["time"] == 3
+        assert final.sizes["y"] == 2
+        assert final.sizes["x"] == 2
+        assert final.data.values[0, 0, 0] == 1
+        assert final.data.values[2, 1, 1] == 24

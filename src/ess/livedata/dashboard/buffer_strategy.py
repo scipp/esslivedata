@@ -140,13 +140,19 @@ class DataArrayBuffer:
     def allocate(self, template: sc.DataArray, capacity: int) -> sc.DataArray:
         """Allocate a new DataArray buffer with given capacity."""
         # Determine shape with expanded concat dimension
-        shape = [
-            capacity if dim == self._concat_dim else size
-            for dim, size in zip(template.dims, template.shape, strict=True)
-        ]
+        if self._concat_dim in template.dims:
+            shape = [
+                capacity if dim == self._concat_dim else size
+                for dim, size in zip(template.dims, template.shape, strict=True)
+            ]
+            dims = template.dims
+        else:
+            # Data doesn't have concat dim - add it as first dimension
+            dims = (self._concat_dim, *template.dims)
+            shape = [capacity, *list(template.shape)]
 
         # Create zeros array with correct structure
-        data_var = sc.zeros(dims=template.dims, shape=shape, dtype=template.data.dtype)
+        data_var = sc.zeros(dims=dims, shape=shape, dtype=template.data.dtype)
 
         # Create DataArray with concat dimension coordinate
         coords = {
@@ -175,10 +181,19 @@ class DataArrayBuffer:
         # Pre-allocate coordinates that depend on concat dimension
         for coord_name, coord in template.coords.items():
             if coord_name != self._concat_dim and self._concat_dim in coord.dims:
-                coord_shape = [
-                    capacity if dim == self._concat_dim else template.sizes[dim]
-                    for dim in coord.dims
-                ]
+                # Determine the shape for the coord in the buffer
+                if self._concat_dim in template.dims:
+                    coord_shape = [
+                        capacity if dim == self._concat_dim else template.sizes[dim]
+                        for dim in coord.dims
+                    ]
+                else:
+                    # Template didn't have concat dim, coord shouldn't either
+                    # Add concat dim to coord
+                    coord_shape = [
+                        capacity if dim == self._concat_dim else coord.sizes[dim]
+                        for dim in coord.dims
+                    ]
                 buffer_data.coords[coord_name] = sc.zeros(
                     dims=coord.dims,
                     shape=coord_shape,
@@ -187,12 +202,18 @@ class DataArrayBuffer:
 
         # Pre-allocate masks
         for mask_name, mask in template.masks.items():
-            mask_shape = [
-                capacity if dim == self._concat_dim else s
-                for dim, s in zip(mask.dims, mask.shape, strict=True)
-            ]
+            if self._concat_dim in template.dims:
+                mask_shape = [
+                    capacity if dim == self._concat_dim else s
+                    for dim, s in zip(mask.dims, mask.shape, strict=True)
+                ]
+                mask_dims = mask.dims
+            else:
+                # Template didn't have concat dim - add it to mask
+                mask_dims = (self._concat_dim, *mask.dims)
+                mask_shape = [capacity, *list(mask.shape)]
             buffer_data.masks[mask_name] = sc.zeros(
-                dims=mask.dims,
+                dims=mask_dims,
                 shape=mask_shape,
                 dtype=mask.dtype,
             )
@@ -203,32 +224,53 @@ class DataArrayBuffer:
         self, buffer: sc.DataArray, start: int, end: int, data: sc.DataArray
     ) -> None:
         """Write data to buffer slice in-place."""
-        if self._concat_dim not in data.dims:
-            raise ValueError(
-                f"Concat dimension '{self._concat_dim}' not found in data. "
-                f"Available dimensions: {data.dims}"
-            )
         size = end - start
-        if data.sizes[self._concat_dim] != size:
-            raise ValueError(
-                f"Size mismatch: expected {size}, got {data.sizes[self._concat_dim]}"
-            )
 
-        # In-place write using numpy array access
-        buffer.data.values[start:end] = data.data.values
-        buffer.coords[self._concat_dim].values[start:end] = data.coords[
-            self._concat_dim
-        ].values
+        if self._concat_dim not in data.dims:
+            # Data doesn't have concat dim - treat as single frame
+            if size != 1:
+                raise ValueError(
+                    f"Data without concat dimension must have size 1, got {size}"
+                )
+            # Write to single slice, broadcasting over non-concat dimensions
+            buffer.data.values[start] = data.data.values
 
-        # Copy concat-dependent coords
-        for coord_name, coord in data.coords.items():
-            if coord_name != self._concat_dim and self._concat_dim in coord.dims:
-                buffer.coords[coord_name].values[start:end] = coord.values
+            # Update concat dimension coordinate
+            buffer.coords[self._concat_dim].values[start] = start
 
-        # Copy masks
-        for mask_name, mask in data.masks.items():
-            if self._concat_dim in mask.dims:
-                buffer.masks[mask_name].values[start:end] = mask.values
+            # Copy coords (none should depend on concat_dim for data without it)
+            for coord_name in data.coords.keys():
+                if coord_name != self._concat_dim:
+                    # Non-concat coords should already be in buffer
+                    pass
+
+            # Copy masks
+            for mask_name, mask in data.masks.items():
+                buffer.masks[mask_name].values[start] = mask.values
+        else:
+            # Data has concat dim - normal write
+            if data.sizes[self._concat_dim] != size:
+                msg = (
+                    f"Size mismatch: expected {size}, "
+                    f"got {data.sizes[self._concat_dim]}"
+                )
+                raise ValueError(msg)
+
+            # In-place write using numpy array access
+            buffer.data.values[start:end] = data.data.values
+            buffer.coords[self._concat_dim].values[start:end] = data.coords[
+                self._concat_dim
+            ].values
+
+            # Copy concat-dependent coords
+            for coord_name, coord in data.coords.items():
+                if coord_name != self._concat_dim and self._concat_dim in coord.dims:
+                    buffer.coords[coord_name].values[start:end] = coord.values
+
+            # Copy masks
+            for mask_name, mask in data.masks.items():
+                if self._concat_dim in mask.dims:
+                    buffer.masks[mask_name].values[start:end] = mask.values
 
     def shift(
         self, buffer: sc.DataArray, src_start: int, src_end: int, dst_start: int
@@ -261,6 +303,9 @@ class DataArrayBuffer:
 
     def get_size(self, data: sc.DataArray) -> int:
         """Get size along concatenation dimension."""
+        if self._concat_dim not in data.dims:
+            # Data doesn't have concat dim - treat as single frame
+            return 1
         return data.sizes[self._concat_dim]
 
 
@@ -284,27 +329,41 @@ class VariableBuffer:
 
     def allocate(self, template: sc.Variable, capacity: int) -> sc.Variable:
         """Allocate a new Variable buffer with given capacity."""
-        shape = [
-            capacity if dim == self._concat_dim else size
-            for dim, size in zip(template.dims, template.shape, strict=True)
-        ]
-        return sc.zeros(dims=template.dims, shape=shape, dtype=template.dtype)
+        if self._concat_dim in template.dims:
+            shape = [
+                capacity if dim == self._concat_dim else size
+                for dim, size in zip(template.dims, template.shape, strict=True)
+            ]
+            dims = template.dims
+        else:
+            # Data doesn't have concat dim - add it as first dimension
+            dims = (self._concat_dim, *template.dims)
+            shape = [capacity, *list(template.shape)]
+        return sc.zeros(dims=dims, shape=shape, dtype=template.dtype)
 
     def write_slice(
         self, buffer: sc.Variable, start: int, end: int, data: sc.Variable
     ) -> None:
         """Write data to buffer slice in-place."""
-        if self._concat_dim not in data.dims:
-            raise ValueError(
-                f"Concat dimension '{self._concat_dim}' not found in data. "
-                f"Available dimensions: {data.dims}"
-            )
         size = end - start
-        if data.sizes[self._concat_dim] != size:
-            raise ValueError(
-                f"Size mismatch: expected {size}, got {data.sizes[self._concat_dim]}"
-            )
-        buffer.values[start:end] = data.values
+
+        if self._concat_dim not in data.dims:
+            # Data doesn't have concat dim - treat as single frame
+            if size != 1:
+                raise ValueError(
+                    f"Data without concat dimension must have size 1, got {size}"
+                )
+            # Write to single slice, broadcasting over non-concat dimensions
+            buffer.values[start] = data.values
+        else:
+            # Data has concat dim - normal write
+            if data.sizes[self._concat_dim] != size:
+                msg = (
+                    f"Size mismatch: expected {size}, "
+                    f"got {data.sizes[self._concat_dim]}"
+                )
+                raise ValueError(msg)
+            buffer.values[start:end] = data.values
 
     def shift(
         self, buffer: sc.Variable, src_start: int, src_end: int, dst_start: int
@@ -320,6 +379,9 @@ class VariableBuffer:
 
     def get_size(self, data: sc.Variable) -> int:
         """Get size along concatenation dimension."""
+        if self._concat_dim not in data.dims:
+            # Data doesn't have concat dim - treat as single frame
+            return 1
         return data.sizes[self._concat_dim]
 
 
