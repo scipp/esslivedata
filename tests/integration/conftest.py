@@ -8,8 +8,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from .backend import DashboardBackend
-from .service_process import ServiceGroup, ServiceProcess
+from tests.integration.backend import DashboardBackend
+from tests.integration.service_process import ServiceGroup, ServiceProcess
 
 logger = logging.getLogger(__name__)
 
