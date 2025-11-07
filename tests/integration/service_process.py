@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import ExitStack
 from types import TracebackType
 from typing import Any
 
@@ -176,6 +177,9 @@ class ServiceProcess:
         """
         Stop the service subprocess gracefully.
 
+        Uses ExitStack to ensure all cleanup steps complete even if some raise
+        exceptions, preventing resource leaks from partially-completed shutdowns.
+
         Parameters
         ----------
         timeout:
@@ -193,37 +197,46 @@ class ServiceProcess:
             "Stopping service %s (PID %s)", self.service_module, self.process.pid
         )
 
-        # Try graceful termination first
-        self.process.terminate()
+        # Use ExitStack to ensure all cleanup happens even if exceptions occur
+        with ExitStack() as cleanup_stack:
+            # Register pipe cleanup
+            if self.process.stdout:
+                cleanup_stack.callback(self.process.stdout.close)
+            if self.process.stderr:
+                cleanup_stack.callback(self.process.stderr.close)
 
-        try:
-            self.process.wait(timeout=timeout)
-            logger.info("Service %s stopped gracefully", self.service_module)
-        except subprocess.TimeoutExpired:
-            logger.warning(
-                "Service %s did not stop within %s seconds, killing",
-                self.service_module,
-                timeout,
-            )
-            self.process.kill()
-            self.process.wait()
+            # Register thread cleanup
+            def stop_threads():
+                self._stop_event.set()
+                if self._stdout_thread and self._stdout_thread.is_alive():
+                    self._stdout_thread.join(timeout=0.1)
+                    if self._stdout_thread.is_alive():
+                        logger.warning(
+                            "stdout thread did not stop for %s", self.service_module
+                        )
+                if self._stderr_thread and self._stderr_thread.is_alive():
+                    self._stderr_thread.join(timeout=0.1)
+                    if self._stderr_thread.is_alive():
+                        logger.warning(
+                            "stderr thread did not stop for %s", self.service_module
+                        )
 
-        # Signal threads to stop and wait for them to finish
-        self._stop_event.set()
-        if self._stdout_thread and self._stdout_thread.is_alive():
-            self._stdout_thread.join(timeout=0.1)
-            if self._stdout_thread.is_alive():
-                logger.warning("stdout thread did not stop for %s", self.service_module)
-        if self._stderr_thread and self._stderr_thread.is_alive():
-            self._stderr_thread.join(timeout=0.1)
-            if self._stderr_thread.is_alive():
-                logger.warning("stderr thread did not stop for %s", self.service_module)
+            cleanup_stack.callback(stop_threads)
 
-        # Close pipes
-        if self.process.stdout:
-            self.process.stdout.close()
-        if self.process.stderr:
-            self.process.stderr.close()
+            # Terminate/kill the process (done first, cleanup happens via ExitStack)
+            self.process.terminate()
+
+            try:
+                self.process.wait(timeout=timeout)
+                logger.info("Service %s stopped gracefully", self.service_module)
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "Service %s did not stop within %s seconds, killing",
+                    self.service_module,
+                    timeout,
+                )
+                self.process.kill()
+                self.process.wait()
 
     def is_running(self) -> bool:
         """Check if the service process is currently running."""
@@ -261,6 +274,9 @@ class ServiceGroup:
     This is useful for starting multiple interdependent services
     (e.g., fake_monitors + monitor_data) with proper ordering and cleanup.
 
+    Uses ExitStack to ensure robust cleanup: if any service fails to stop,
+    all other services will still be stopped.
+
     Parameters
     ----------
     services:
@@ -274,28 +290,52 @@ class ServiceGroup:
         """
         Start all services in the group.
 
+        If any service fails to start, all previously started services are
+        stopped to prevent orphaned processes.
+
         Parameters
         ----------
         startup_delay:
             Time to wait after starting each service (seconds)
         """
-        for name, service in self.services.items():
-            logger.info("Starting service group member: %s", name)
-            service.start(startup_delay=startup_delay)
+        # Use ExitStack to track started services for automatic cleanup on failure
+        with ExitStack() as stack:
+            for name, service in self.services.items():
+                logger.info("Starting service group member: %s", name)
+                service.start(startup_delay=startup_delay)
+                # Register cleanup in case a later service fails to start
+                stack.callback(service.stop)
+            # All services started successfully, don't clean up
+            stack.pop_all()
 
     def stop_all(self, timeout: float = 10.0) -> None:
         """
         Stop all services in the group (in reverse order).
+
+        Uses ExitStack to ensure all services are stopped even if some raise
+        exceptions during shutdown. Exceptions are logged but don't prevent
+        other services from being stopped.
 
         Parameters
         ----------
         timeout:
             Maximum time to wait for each service to stop (seconds)
         """
-        # Stop in reverse order
-        for name, service in reversed(list(self.services.items())):
-            logger.info("Stopping service group member: %s", name)
-            service.stop(timeout=timeout)
+        # Use ExitStack to ensure all services get stopped even if some raise
+        with ExitStack() as stack:
+            # Register all services for cleanup (in reverse order)
+            for name, service in reversed(list(self.services.items())):
+
+                def make_stop_callback(service_name: str, svc: ServiceProcess):
+                    """Create a closure that stops a specific service."""
+
+                    def stop_callback():
+                        logger.info("Stopping service group member: %s", service_name)
+                        svc.stop(timeout=timeout)
+
+                    return stop_callback
+
+                stack.callback(make_stop_callback(name, service))
 
     def __enter__(self) -> 'ServiceGroup':
         """Enter context manager - starts all services."""
