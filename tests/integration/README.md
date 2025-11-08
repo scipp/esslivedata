@@ -17,12 +17,10 @@ See `conftest.py` for fixture details:
 
 ## Test Helpers
 
-See `helpers.py` for utilities that filter by `workflow_id` and wait for conditions:
+See `helpers.py` for utilities that wait for specific jobs:
 
-- `wait_for_workflow_job_data()` - Wait for job data, handles `backend.update()` and filtering
-- `wait_for_workflow_job_statuses()` - Wait for job status updates
-- `get_workflow_jobs()` - Get job numbers for a workflow
-- `get_workflow_job_data()` - Get job data filtered by workflow and sources
+- `wait_for_job_data()` - Wait for data to arrive for specific job(s)
+- `wait_for_job_statuses()` - Wait for status updates for specific job(s)
 - `wait_for_condition()` - Generic condition waiter
 
 **Always use helpers instead of `time.sleep()` or manual `backend.update()` loops.**
@@ -51,8 +49,8 @@ def test_my_workflow(integration_env):
         workflow_id, source_names, config
     )
 
-    # Use helper to wait for data (handles backend.update() and filtering)
-    wait_for_workflow_job_data(backend, workflow_id, source_names, timeout=10.0)
+    # Use helper to wait for data for the specific jobs we created
+    wait_for_job_data(backend, job_ids, timeout=10.0)
 
     # Make assertions about the jobs we created
     job_data = backend.job_service.job_data[job_ids[0].job_number]
@@ -64,9 +62,10 @@ def test_my_workflow(integration_env):
 
 ## Best Practices
 
-1. **Use helpers from `helpers.py`**: They handle `backend.update()` and filter by `workflow_id`
-2. **Check properties, not global state**: Assert on your test's data, not total job counts or job numbers
-3. **Add clear docstrings**: Explain what each test verifies
+1. **Use helpers from `helpers.py`**: They handle `backend.update()` and wait for specific jobs
+2. **Wait for the specific jobs you created**: Pass the `job_ids` returned from `start_workflow()` to the helpers
+3. **Check properties, not global state**: Assert on your test's data, not total job counts
+4. **Add clear docstrings**: Explain what each test verifies
 
 Example of what to avoid:
 ```python

@@ -18,11 +18,9 @@ from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
 from tests.integration.helpers import (
     WaitTimeout,
-    get_workflow_job_data,
-    get_workflow_job_statuses,
-    get_workflow_jobs,
     wait_for_condition,
-    wait_for_workflow_job_data,
+    wait_for_job_data,
+    wait_for_job_statuses,
 )
 
 
@@ -77,398 +75,6 @@ def job_service(data_service: DataService[ResultKey, Any]) -> JobService:
     return JobService(data_service=data_service)
 
 
-class TestGetWorkflowJobs:
-    """Tests for get_workflow_jobs helper."""
-
-    def test_returns_only_matching_workflow(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
-    ):
-        """get_workflow_jobs should only return jobs for specified workflow."""
-        workflow_a = make_workflow_id('workflow_a')
-        workflow_b = make_workflow_id('workflow_b')
-
-        # Add data to populate job_info - JobService needs data to map jobs to workflows
-        data_service[
-            ResultKey(
-                workflow_id=workflow_a,
-                job_id=make_job_id(make_job_number(1), 'source1'),
-                output_name=None,
-            )
-        ] = 'data1'
-        data_service[
-            ResultKey(
-                workflow_id=workflow_b,
-                job_id=make_job_id(make_job_number(2), 'source1'),
-                output_name=None,
-            )
-        ] = 'data2'
-        data_service[
-            ResultKey(
-                workflow_id=workflow_a,
-                job_id=make_job_id(make_job_number(3), 'source1'),
-                output_name=None,
-            )
-        ] = 'data3'
-
-        result = get_workflow_jobs(job_service, workflow_a)
-
-        assert result == [make_job_number(1), make_job_number(3)]
-
-    def test_returns_empty_for_unknown_workflow(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
-    ):
-        """get_workflow_jobs should return empty list for non-existent workflow."""
-        workflow_a = make_workflow_id('workflow_a')
-
-        # Add data to populate job_info
-        data_service[
-            ResultKey(
-                workflow_id=workflow_a,
-                job_id=make_job_id(make_job_number(1), 'source1'),
-                output_name=None,
-            )
-        ] = 'data1'
-
-        result = get_workflow_jobs(job_service, make_workflow_id('nonexistent'))
-
-        assert result == []
-
-
-class TestGetWorkflowJobData:
-    """Tests for get_workflow_job_data helper."""
-
-    def test_filters_by_workflow(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
-    ):
-        """get_workflow_job_data must only return data from specified workflow."""
-        workflow_a = make_workflow_id('workflow_a')
-        workflow_b = make_workflow_id('workflow_b')
-        job_1 = make_job_number(1)
-        job_2 = make_job_number(2)
-
-        # Add job status to establish workflow_id mapping
-        job_service.status_updated(
-            JobStatus(
-                job_id=make_job_id(job_1, 'source1'),
-                workflow_id=workflow_a,
-                state=JobState.active,
-            )
-        )
-        job_service.status_updated(
-            JobStatus(
-                job_id=make_job_id(job_2, 'source1'),
-                workflow_id=workflow_b,
-                state=JobState.active,
-            )
-        )
-
-        # Add data via DataService - JobService.data_updated() called automatically
-        data_service[
-            ResultKey(
-                workflow_id=workflow_a,
-                job_id=make_job_id(job_1, 'source1'),
-                output_name='output1',
-            )
-        ] = 'data1'
-        data_service[
-            ResultKey(
-                workflow_id=workflow_b,
-                job_id=make_job_id(job_2, 'source1'),
-                output_name='output1',
-            )
-        ] = 'data2'
-
-        result = get_workflow_job_data(job_service, workflow_a)
-
-        # CRITICAL: Must not return data from workflow_b!
-        assert job_1 in result
-        assert job_2 not in result
-        assert result[job_1] == {'source1': {'output1': 'data1'}}
-
-    def test_filters_by_source_names(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
-    ):
-        """get_workflow_job_data must filter by source names when provided."""
-        workflow_a = make_workflow_id('workflow_a')
-        job_1 = make_job_number(1)
-
-        # Add job status for all sources
-        for source_name in ['source1', 'source2', 'source3']:
-            job_service.status_updated(
-                JobStatus(
-                    job_id=make_job_id(job_1, source_name),
-                    workflow_id=workflow_a,
-                    state=JobState.active,
-                )
-            )
-
-        # Add data via DataService for all sources
-        data_service[
-            ResultKey(
-                workflow_id=workflow_a,
-                job_id=make_job_id(job_1, 'source1'),
-                output_name='output1',
-            )
-        ] = 'data1'
-        data_service[
-            ResultKey(
-                workflow_id=workflow_a,
-                job_id=make_job_id(job_1, 'source2'),
-                output_name='output2',
-            )
-        ] = 'data2'
-        data_service[
-            ResultKey(
-                workflow_id=workflow_a,
-                job_id=make_job_id(job_1, 'source3'),
-                output_name='output3',
-            )
-        ] = 'data3'
-
-        result = get_workflow_job_data(
-            job_service,
-            workflow_a,
-            source_names=['source1', 'source3'],
-        )
-
-        # CRITICAL: Must only return requested sources!
-        assert job_1 in result
-        assert 'source1' in result[job_1]
-        assert 'source3' in result[job_1]
-        assert 'source2' not in result[job_1]
-
-    def test_excludes_jobs_with_no_matching_sources(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
-    ):
-        """Jobs with no matching sources should not appear in result."""
-        workflow_a = make_workflow_id('workflow_a')
-        job_1 = make_job_number(1)
-        job_2 = make_job_number(2)
-
-        # Add job statuses
-        job_service.status_updated(
-            JobStatus(
-                job_id=make_job_id(job_1, 'source1'),
-                workflow_id=workflow_a,
-                state=JobState.active,
-            )
-        )
-        job_service.status_updated(
-            JobStatus(
-                job_id=make_job_id(job_2, 'other_source'),
-                workflow_id=workflow_a,
-                state=JobState.active,
-            )
-        )
-
-        # Add data
-        data_service[
-            ResultKey(
-                workflow_id=workflow_a,
-                job_id=make_job_id(job_1, 'source1'),
-                output_name='output1',
-            )
-        ] = 'data1'
-        data_service[
-            ResultKey(
-                workflow_id=workflow_a,
-                job_id=make_job_id(job_2, 'other_source'),
-                output_name='output2',
-            )
-        ] = 'data2'
-
-        result = get_workflow_job_data(
-            job_service, workflow_a, source_names=['source1']
-        )
-
-        # Job 2 has no matching sources, should not appear
-        assert job_1 in result
-        assert job_2 not in result
-
-    def test_returns_all_sources_when_none_specified(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
-    ):
-        """When source_names is None, should return all sources."""
-        workflow_a = make_workflow_id('workflow_a')
-        job_1 = make_job_number(1)
-
-        # Add job statuses for both sources
-        job_service.status_updated(
-            JobStatus(
-                job_id=make_job_id(job_1, 'source1'),
-                workflow_id=workflow_a,
-                state=JobState.active,
-            )
-        )
-        job_service.status_updated(
-            JobStatus(
-                job_id=make_job_id(job_1, 'source2'),
-                workflow_id=workflow_a,
-                state=JobState.active,
-            )
-        )
-
-        # Add data
-        data_service[
-            ResultKey(
-                workflow_id=workflow_a,
-                job_id=make_job_id(job_1, 'source1'),
-                output_name='output1',
-            )
-        ] = 'data1'
-        data_service[
-            ResultKey(
-                workflow_id=workflow_a,
-                job_id=make_job_id(job_1, 'source2'),
-                output_name='output2',
-            )
-        ] = 'data2'
-
-        result = get_workflow_job_data(job_service, workflow_a, source_names=None)
-
-        assert job_1 in result
-        assert 'source1' in result[job_1]
-        assert 'source2' in result[job_1]
-
-
-class TestGetWorkflowJobStatuses:
-    """Tests for get_workflow_job_statuses helper."""
-
-    def test_filters_by_workflow(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
-    ):
-        """Must only return statuses from specified workflow."""
-        workflow_a = make_workflow_id('workflow_a')
-        workflow_b = make_workflow_id('workflow_b')
-
-        # Add data to populate job_info
-        data_service[
-            ResultKey(
-                workflow_id=workflow_a,
-                job_id=make_job_id(make_job_number(1), 'source1'),
-                output_name=None,
-            )
-        ] = 'data1'
-        data_service[
-            ResultKey(
-                workflow_id=workflow_b,
-                job_id=make_job_id(make_job_number(2), 'source1'),
-                output_name=None,
-            )
-        ] = 'data2'
-
-        # Add job statuses
-        job_service.status_updated(
-            JobStatus(
-                job_id=make_job_id(make_job_number(1), 'source1'),
-                workflow_id=workflow_a,
-                state=JobState.active,
-            )
-        )
-        job_service.status_updated(
-            JobStatus(
-                job_id=make_job_id(make_job_number(2), 'source1'),
-                workflow_id=workflow_b,
-                state=JobState.finishing,
-            )
-        )
-
-        result = get_workflow_job_statuses(job_service, workflow_a)
-
-        # CRITICAL: Must not return statuses from workflow_b!
-        assert make_job_id(make_job_number(1), 'source1') in result
-        assert make_job_id(make_job_number(2), 'source1') not in result
-
-    def test_filters_by_source_names(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
-    ):
-        """Must filter by source names when provided."""
-        workflow_a = make_workflow_id('workflow_a')
-        job_1 = make_job_number(1)
-
-        # Add data to populate job_info
-        for source_name in ['source1', 'source2', 'source3']:
-            data_service[
-                ResultKey(
-                    workflow_id=workflow_a,
-                    job_id=make_job_id(job_1, source_name),
-                    output_name=None,
-                )
-            ] = f'data_{source_name}'
-
-        # Add job statuses for multiple sources
-        job_service.status_updated(
-            JobStatus(
-                job_id=make_job_id(job_1, 'source1'),
-                workflow_id=workflow_a,
-                state=JobState.active,
-            )
-        )
-        job_service.status_updated(
-            JobStatus(
-                job_id=make_job_id(job_1, 'source2'),
-                workflow_id=workflow_a,
-                state=JobState.finishing,
-            )
-        )
-        job_service.status_updated(
-            JobStatus(
-                job_id=make_job_id(job_1, 'source3'),
-                workflow_id=workflow_a,
-                state=JobState.error,
-            )
-        )
-
-        result = get_workflow_job_statuses(
-            job_service,
-            workflow_a,
-            source_names=['source1', 'source3'],
-        )
-
-        # CRITICAL: Must only return requested sources!
-        assert make_job_id(job_1, 'source1') in result
-        assert make_job_id(job_1, 'source3') in result
-        assert make_job_id(job_1, 'source2') not in result
-
-    def test_returns_all_sources_when_none_specified(
-        self, job_service: JobService, data_service: DataService[ResultKey, Any]
-    ):
-        """When source_names is None, should return all sources."""
-        workflow_a = make_workflow_id('workflow_a')
-        job_1 = make_job_number(1)
-
-        # Add data to populate job_info
-        for source_name in ['source1', 'source2']:
-            data_service[
-                ResultKey(
-                    workflow_id=workflow_a,
-                    job_id=make_job_id(job_1, source_name),
-                    output_name=None,
-                )
-            ] = f'data_{source_name}'
-
-        # Add job statuses for multiple sources
-        job_service.status_updated(
-            JobStatus(
-                job_id=make_job_id(job_1, 'source1'),
-                workflow_id=workflow_a,
-                state=JobState.active,
-            )
-        )
-        job_service.status_updated(
-            JobStatus(
-                job_id=make_job_id(job_1, 'source2'),
-                workflow_id=workflow_a,
-                state=JobState.finishing,
-            )
-        )
-
-        result = get_workflow_job_statuses(job_service, workflow_a, source_names=None)
-
-        assert make_job_id(job_1, 'source1') in result
-        assert make_job_id(job_1, 'source2') in result
-
-
 class TestWaitForCondition:
     """Tests for wait_for_condition helper."""
 
@@ -494,148 +100,226 @@ class TestWaitForCondition:
             wait_for_condition(always_false, timeout=0.2, poll_interval=0.05)
 
 
-class TestWaitForWorkflowJobData:
-    """Tests for wait_for_workflow_job_data helper."""
+class TestWaitForJobData:
+    """Tests for wait_for_job_data helper."""
 
-    def test_succeeds_when_data_arrives(
+    def test_succeeds_when_data_arrives_for_single_job(
         self, job_service: JobService, data_service: DataService[ResultKey, Any]
     ):
-        """wait_for_workflow_job_data should return when correct data arrives."""
+        """wait_for_job_data should return when data arrives for single job."""
         backend = IntegrationTestBackend(job_service)
         workflow_a = make_workflow_id('workflow_a')
         job_1 = make_job_number(1)
+        job_id = make_job_id(job_1, 'source1')
 
         # Simulate data arriving after a few updates
         def simulate_data_arrival():
             if backend.update_count == 2:
-                # Add job status
-                job_service.status_updated(
-                    JobStatus(
-                        job_id=make_job_id(job_1, 'source1'),
-                        workflow_id=workflow_a,
-                        state=JobState.active,
-                    )
-                )
-                # Add data
                 data_service[
                     ResultKey(
                         workflow_id=workflow_a,
-                        job_id=make_job_id(job_1, 'source1'),
+                        job_id=job_id,
                         output_name='output1',
                     )
                 ] = 'data'
 
         backend.on_update_callbacks.append(simulate_data_arrival)
 
-        wait_for_workflow_job_data(
-            backend,
-            workflow_a,
-            ['source1'],
-            timeout=2.0,
-            poll_interval=0.05,
-        )
+        result = wait_for_job_data(backend, [job_id], timeout=2.0, poll_interval=0.05)
 
-        # Should have succeeded
+        assert backend.update_count >= 2
+        # Should return dict mapping JobId to job_data
+        assert job_id in result
+        assert 'source1' in result[job_id]
+        assert result[job_id]['source1']['output1'] == 'data'
+
+    def test_succeeds_when_data_arrives_for_all_jobs(
+        self, job_service: JobService, data_service: DataService[ResultKey, Any]
+    ):
+        """wait_for_job_data should return when data arrives for all specified jobs."""
+        backend = IntegrationTestBackend(job_service)
+        workflow_a = make_workflow_id('workflow_a')
+        job_1 = make_job_number(1)
+        job_ids = [
+            make_job_id(job_1, 'source1'),
+            make_job_id(job_1, 'source2'),
+        ]
+
+        # Simulate data arriving after a few updates
+        def simulate_data_arrival():
+            if backend.update_count == 2:
+                for job_id in job_ids:
+                    data_service[
+                        ResultKey(
+                            workflow_id=workflow_a,
+                            job_id=job_id,
+                            output_name='output1',
+                        )
+                    ] = 'data'
+
+        backend.on_update_callbacks.append(simulate_data_arrival)
+
+        wait_for_job_data(backend, job_ids, timeout=2.0, poll_interval=0.05)
+
         assert backend.update_count >= 2
 
-    def test_must_not_succeed_for_wrong_workflow(
+    def test_must_not_succeed_if_only_some_jobs_have_data(
         self, job_service: JobService, data_service: DataService[ResultKey, Any]
     ):
-        """CRITICAL: must NOT succeed for wrong workflow data."""
+        """CRITICAL: must NOT succeed if only some jobs have data (require all)."""
         backend = IntegrationTestBackend(job_service)
         workflow_a = make_workflow_id('workflow_a')
-        workflow_b = make_workflow_id('workflow_b')
         job_1 = make_job_number(1)
+        job_ids = [
+            make_job_id(job_1, 'source1'),
+            make_job_id(job_1, 'source2'),
+        ]
 
-        # Add data for different workflow
-        job_service.status_updated(
-            JobStatus(
-                job_id=make_job_id(job_1, 'source1'),
-                workflow_id=workflow_b,
-                state=JobState.active,
-            )
-        )
+        # Add data for only the first job
         data_service[
             ResultKey(
-                workflow_id=workflow_b,
-                job_id=make_job_id(job_1, 'source1'),
+                workflow_id=workflow_a,
+                job_id=job_ids[0],
                 output_name='output1',
             )
         ] = 'data'
 
         with pytest.raises(WaitTimeout):
-            wait_for_workflow_job_data(
-                backend,
-                workflow_a,  # Looking for workflow_a
-                ['source1'],
-                timeout=0.3,
-                poll_interval=0.05,
-            )
+            wait_for_job_data(backend, job_ids, timeout=0.3, poll_interval=0.05)
 
-    def test_must_not_succeed_for_wrong_source(
+    def test_must_not_succeed_for_wrong_job(
         self, job_service: JobService, data_service: DataService[ResultKey, Any]
     ):
-        """CRITICAL: wait_for_workflow_job_data must NOT succeed for wrong source."""
+        """CRITICAL: must NOT succeed when data arrives for different job."""
         backend = IntegrationTestBackend(job_service)
         workflow_a = make_workflow_id('workflow_a')
         job_1 = make_job_number(1)
+        job_id_expected = make_job_id(job_1, 'source1')
+        job_id_other = make_job_id(job_1, 'other_source')
 
-        # Add data for correct workflow but wrong source
-        job_service.status_updated(
-            JobStatus(
-                job_id=make_job_id(job_1, 'other_source'),
-                workflow_id=workflow_a,
-                state=JobState.active,
-            )
-        )
+        # Add data for different job
         data_service[
             ResultKey(
                 workflow_id=workflow_a,
-                job_id=make_job_id(job_1, 'other_source'),
+                job_id=job_id_other,
                 output_name='output1',
             )
         ] = 'data'
 
         with pytest.raises(WaitTimeout):
-            wait_for_workflow_job_data(
-                backend,
-                workflow_a,
-                ['source1'],  # Looking for source1
-                timeout=0.3,
-                poll_interval=0.05,
+            wait_for_job_data(
+                backend, [job_id_expected], timeout=0.3, poll_interval=0.05
             )
 
-    def test_succeeds_with_any_requested_source(
+
+class TestWaitForJobStatuses:
+    """Tests for wait_for_job_statuses helper."""
+
+    def test_succeeds_when_status_arrives_for_single_job(
         self, job_service: JobService, data_service: DataService[ResultKey, Any]
     ):
-        """Should succeed if ANY requested source has data."""
+        """wait_for_job_statuses should return when status arrives for single job."""
         backend = IntegrationTestBackend(job_service)
         workflow_a = make_workflow_id('workflow_a')
         job_1 = make_job_number(1)
+        job_id = make_job_id(job_1, 'source1')
 
-        # Add data for one of multiple requested sources
+        # Simulate status arriving after a few updates
+        def simulate_status_arrival():
+            if backend.update_count == 2:
+                job_service.status_updated(
+                    JobStatus(
+                        job_id=job_id,
+                        workflow_id=workflow_a,
+                        state=JobState.active,
+                    )
+                )
+
+        backend.on_update_callbacks.append(simulate_status_arrival)
+
+        result = wait_for_job_statuses(
+            backend, [job_id], timeout=2.0, poll_interval=0.05
+        )
+
+        assert backend.update_count >= 2
+        # Should return dict mapping JobId to status
+        assert job_id in result
+        assert result[job_id].state == JobState.active
+
+    def test_succeeds_when_status_arrives_for_all_jobs(
+        self, job_service: JobService, data_service: DataService[ResultKey, Any]
+    ):
+        """wait_for_job_statuses should return when status arrives for all jobs."""
+        backend = IntegrationTestBackend(job_service)
+        workflow_a = make_workflow_id('workflow_a')
+        job_1 = make_job_number(1)
+        job_ids = [
+            make_job_id(job_1, 'source1'),
+            make_job_id(job_1, 'source2'),
+        ]
+
+        # Simulate status arriving after a few updates
+        def simulate_status_arrival():
+            if backend.update_count == 2:
+                for job_id in job_ids:
+                    job_service.status_updated(
+                        JobStatus(
+                            job_id=job_id,
+                            workflow_id=workflow_a,
+                            state=JobState.active,
+                        )
+                    )
+
+        backend.on_update_callbacks.append(simulate_status_arrival)
+
+        wait_for_job_statuses(backend, job_ids, timeout=2.0, poll_interval=0.05)
+
+        assert backend.update_count >= 2
+
+    def test_must_not_succeed_if_only_some_jobs_have_status(
+        self, job_service: JobService, data_service: DataService[ResultKey, Any]
+    ):
+        """CRITICAL: must NOT succeed if only some jobs have status (require all)."""
+        backend = IntegrationTestBackend(job_service)
+        workflow_a = make_workflow_id('workflow_a')
+        job_1 = make_job_number(1)
+        job_ids = [
+            make_job_id(job_1, 'source1'),
+            make_job_id(job_1, 'source2'),
+        ]
+
+        # Add status for only the first job
         job_service.status_updated(
             JobStatus(
-                job_id=make_job_id(job_1, 'source2'),
+                job_id=job_ids[0],
                 workflow_id=workflow_a,
                 state=JobState.active,
             )
         )
-        data_service[
-            ResultKey(
-                workflow_id=workflow_a,
-                job_id=make_job_id(job_1, 'source2'),
-                output_name='output1',
-            )
-        ] = 'data'
 
-        wait_for_workflow_job_data(
-            backend,
-            workflow_a,
-            ['source1', 'source2', 'source3'],  # source2 has data
-            timeout=1.0,
-            poll_interval=0.05,
+        with pytest.raises(WaitTimeout):
+            wait_for_job_statuses(backend, job_ids, timeout=0.3, poll_interval=0.05)
+
+    def test_must_not_succeed_for_wrong_job(
+        self, job_service: JobService, data_service: DataService[ResultKey, Any]
+    ):
+        """CRITICAL: must NOT succeed when status arrives for different job."""
+        backend = IntegrationTestBackend(job_service)
+        workflow_a = make_workflow_id('workflow_a')
+        job_1 = make_job_number(1)
+        job_id_expected = make_job_id(job_1, 'source1')
+        job_id_other = make_job_id(job_1, 'other_source')
+
+        # Add status for different job
+        job_service.status_updated(
+            JobStatus(
+                job_id=job_id_other,
+                workflow_id=workflow_a,
+                state=JobState.active,
+            )
         )
 
-        # Should succeed because source2 has data
-        assert job_1 in job_service.job_data
+        with pytest.raises(WaitTimeout):
+            wait_for_job_statuses(
+                backend, [job_id_expected], timeout=0.3, poll_interval=0.05
+            )
