@@ -38,7 +38,7 @@ class BufferInterface(Protocol[T]):
         """
         ...
 
-    def write_slice(self, buffer: T, start: int, end: int, data: T) -> None:
+    def write_slice(self, buffer: T, start: int, data: T) -> None:
         """
         Write data to a buffer slice in-place.
 
@@ -48,10 +48,9 @@ class BufferInterface(Protocol[T]):
             Pre-allocated buffer to write into.
         start:
             Start index along concat dimension.
-        end:
-            End index along concat dimension (exclusive).
         data:
-            Data to write. Size must match (end - start).
+            Data to write. Will be written starting at start with size determined
+            by get_size(data).
         """
         ...
 
@@ -221,73 +220,45 @@ class DataArrayBuffer:
         return buffer_data
 
     def write_slice(
-        self, buffer: sc.DataArray, start: int, end: int, data: sc.DataArray
+        self, buffer: sc.DataArray, start: int, data: sc.DataArray
     ) -> None:
         """Write data to buffer slice in-place."""
-        size = end - start
+        size = self.get_size(data)
+        end = start + size
 
-        if self._concat_dim not in data.dims:
-            # Data doesn't have concat dim - treat as single frame
-            if size != 1:
-                raise ValueError(
-                    f"Data without concat dimension must have size 1, got {size}"
-                )
-            # Write to single slice along concat dimension
-            # Get the slice and flatten for assignment
-            buffer_slice = buffer[self._concat_dim, start]
-
-            # Handle different data types and dimensions
-            if data.data.dtype == sc.DType.string:
-                # Element-by-element assignment for strings
-                for i, val in enumerate(data.data.values):
-                    buffer_slice.data.values[i] = val
-            elif data.data.ndim == 0:
-                # Scalar data - use .value property
-                buffer_slice.data.value = data.data.value
-            else:
-                # Normal assignment - use values for numpy-level access
-                buffer_slice.data.values[...] = data.data.values
-
-            # Update concat dimension coordinate
-            buffer.coords[self._concat_dim].values[start] = start
-
-            # Copy coords (none should depend on concat_dim for data without it)
-            for coord_name in data.coords.keys():
-                if coord_name != self._concat_dim:
-                    # Non-concat coords should already be in buffer
-                    pass
-
-            # Copy masks
-            for mask_name, mask in data.masks.items():
-                if mask.dtype == sc.DType.string:
-                    for i, val in enumerate(mask.values):
-                        buffer_slice.masks[mask_name].values[i] = val
-                else:
-                    buffer_slice.masks[mask_name].values[...] = mask.values
+        # Write data using slice notation - works for both cases via broadcasting:
+        # - Data with concat_dim: direct assignment
+        # - Data without concat_dim: numpy broadcasts to (1, *other_dims)
+        # Special case: strings require element-by-element assignment
+        if data.data.dtype == sc.DType.string:
+            buffer_slice = buffer[self._concat_dim, start:end]
+            data_flat = list(data.data.values)
+            buffer_flat = buffer_slice.data.values
+            for i, val in enumerate(data_flat):
+                buffer_flat[i] = val
         else:
-            # Data has concat dim - normal write
-            if data.sizes[self._concat_dim] != size:
-                msg = (
-                    f"Size mismatch: expected {size}, "
-                    f"got {data.sizes[self._concat_dim]}"
-                )
-                raise ValueError(msg)
-
-            # In-place write using numpy array access
             buffer.data.values[start:end] = data.data.values
+
+        # Handle concat dimension coordinate
+        if self._concat_dim in data.coords:
+            # Data has concat coord - copy it
             buffer.coords[self._concat_dim].values[start:end] = data.coords[
                 self._concat_dim
             ].values
+        else:
+            # Data doesn't have concat coord - use indices
+            import numpy as np
 
-            # Copy concat-dependent coords
-            for coord_name, coord in data.coords.items():
-                if coord_name != self._concat_dim and self._concat_dim in coord.dims:
-                    buffer.coords[coord_name].values[start:end] = coord.values
+            buffer.coords[self._concat_dim].values[start:end] = np.arange(start, end)
 
-            # Copy masks
-            for mask_name, mask in data.masks.items():
-                if self._concat_dim in mask.dims:
-                    buffer.masks[mask_name].values[start:end] = mask.values
+        # Copy concat-dependent coords (only if data has concat_dim)
+        for coord_name, coord in data.coords.items():
+            if coord_name != self._concat_dim and self._concat_dim in coord.dims:
+                buffer.coords[coord_name].values[start:end] = coord.values
+
+        # Copy masks - broadcasting handles concat_dim presence/absence
+        for mask_name, mask in data.masks.items():
+            buffer.masks[mask_name].values[start:end] = mask.values
 
     def shift(
         self, buffer: sc.DataArray, src_start: int, src_end: int, dst_start: int
@@ -359,28 +330,17 @@ class VariableBuffer:
         return sc.zeros(dims=dims, shape=shape, dtype=template.dtype)
 
     def write_slice(
-        self, buffer: sc.Variable, start: int, end: int, data: sc.Variable
+        self, buffer: sc.Variable, start: int, data: sc.Variable
     ) -> None:
         """Write data to buffer slice in-place."""
-        size = end - start
+        size = self.get_size(data)
+        end = start + size
 
-        if self._concat_dim not in data.dims:
-            # Data doesn't have concat dim - treat as single frame
-            if size != 1:
-                raise ValueError(
-                    f"Data without concat dimension must have size 1, got {size}"
-                )
-            # Write to single slice, broadcasting over non-concat dimensions
-            buffer.values[start] = data.values
-        else:
-            # Data has concat dim - normal write
-            if data.sizes[self._concat_dim] != size:
-                msg = (
-                    f"Size mismatch: expected {size}, "
-                    f"got {data.sizes[self._concat_dim]}"
-                )
-                raise ValueError(msg)
-            buffer.values[start:end] = data.values
+        # Use slice notation consistently - numpy broadcasts when needed
+        # This works for both:
+        # - Data with concat_dim: direct assignment
+        # - Data without concat_dim: numpy broadcasts to (1, *other_dims)
+        buffer.values[start:end] = data.values
 
     def shift(
         self, buffer: sc.Variable, src_start: int, src_end: int, dst_start: int
@@ -420,7 +380,7 @@ class ListBuffer:
         """Allocate empty list."""
         return []
 
-    def write_slice(self, buffer: list, start: int, end: int, data: any) -> None:
+    def write_slice(self, buffer: list, start: int, data: any) -> None:
         """Append data to list."""
         if isinstance(data, list):
             buffer.extend(data)
@@ -550,7 +510,6 @@ class Buffer(Generic[T]):
         self._buffer_impl.write_slice(
             new_buffer,
             0,
-            self._end,
             self._buffer_impl.get_view(self._buffer, 0, self._end),
         )
 
@@ -577,11 +536,10 @@ class Buffer(Generic[T]):
 
         new_size = self._buffer_impl.get_size(data)
         start = self._end
-        end = self._end + new_size
 
         # Write data using buffer implementation
-        self._buffer_impl.write_slice(self._buffer, start, end, data)
-        self._end = end
+        self._buffer_impl.write_slice(self._buffer, start, data)
+        self._end = start + new_size
 
         # Only trim if we've hit max_capacity AND exceed max_size
         # During growth phase, keep all data
