@@ -28,13 +28,38 @@ class StreamManager(Generic[P]):
         self._pipe_factory = pipe_factory
 
     def make_merging_stream(
-        self, items: dict[ResultKey, Any], extractors: dict[ResultKey, Any]
+        self,
+        items: dict[ResultKey, Any] | set[ResultKey],
+        extractors: dict[ResultKey, Any],
     ) -> P:
         """Create a merging stream for the given set of data keys."""
-        assembler = MergingStreamAssembler(set(items))
-        pipe = self._pipe_factory(items)
+        # Convert to set if needed for assembler
+        items_set = set(items) if isinstance(items, dict) else items
+        assembler = MergingStreamAssembler(items_set)
+        # For pipe, use empty dict if items is a set (no initial data available)
+        pipe_data = items if isinstance(items, dict) else {}
+        pipe = self._pipe_factory(pipe_data)
         subscriber = DataSubscriber(assembler, pipe, extractors)
         self.data_service.register_subscriber(subscriber)
+
+        # Trigger subscriber immediately with existing data to ensure extractors
+        # are applied to the initial data before the DynamicMap is rendered
+        existing_data = {
+            key: self.data_service[key] for key in items_set if key in self.data_service
+        }
+        if existing_data:
+            # Extract data using subscriber's extractors rather than
+            # default LatestValueExtractor
+            extracted_data = {}
+            for key in subscriber.keys:
+                if key in self.data_service._buffers:
+                    extractor = subscriber.extractors[key]
+                    data = extractor.extract(self.data_service._buffers[key])
+                    if data is not None:
+                        extracted_data[key] = data
+            if extracted_data:
+                subscriber.trigger(extracted_data)
+
         return pipe
 
     def make_merging_stream_from_keys(
