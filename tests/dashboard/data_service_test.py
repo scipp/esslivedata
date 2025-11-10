@@ -6,7 +6,10 @@ from typing import Any
 
 import pytest
 
-from ess.livedata.dashboard.data_service import DataService
+from ess.livedata.dashboard.data_service import (
+    DataService,
+    Subscriber,
+)
 from ess.livedata.dashboard.data_subscriber import DataSubscriber, Pipe, StreamAssembler
 
 
@@ -744,19 +747,19 @@ class TestExtractorBasedSubscription:
         from ess.livedata.dashboard.data_service import DataService, WindowExtractor
 
         # Create a simple subscriber class for testing
-        class WindowSubscriber:
+        class WindowSubscriber(Subscriber[str]):
             def __init__(self, keys: set[str], window_size: int):
-                self._keys = keys
+                self._assembler_keys = keys
                 self._window_size = window_size
                 self.received_data: list[dict] = []
-
-            @property
-            def keys(self) -> set[str]:
-                return self._keys
+                super().__init__()
 
             @property
             def extractors(self) -> dict[str, WindowExtractor]:
-                return {key: WindowExtractor(self._window_size) for key in self._keys}
+                return {
+                    key: WindowExtractor(self._window_size)
+                    for key in self._assembler_keys
+                }
 
             def trigger(self, data: dict) -> None:
                 self.received_data.append(data)
@@ -789,19 +792,16 @@ class TestExtractorBasedSubscription:
             WindowExtractor,
         )
 
-        class TestSubscriber:
+        class TestSubscriber(Subscriber[str]):
             def __init__(self, keys: set[str], extractor):
-                self._keys = keys
+                self._keys_set = keys
                 self._extractor = extractor
                 self.received_data: list[dict] = []
-
-            @property
-            def keys(self) -> set[str]:
-                return self._keys
+                super().__init__()
 
             @property
             def extractors(self) -> dict:
-                return {key: self._extractor for key in self._keys}
+                return {key: self._extractor for key in self._keys_set}
 
             def trigger(self, data: dict) -> None:
                 self.received_data.append(data)
@@ -850,13 +850,10 @@ class TestExtractorBasedSubscription:
             WindowExtractor,
         )
 
-        class MultiKeySubscriber:
+        class MultiKeySubscriber(Subscriber[str]):
             def __init__(self):
                 self.received_data: list[dict] = []
-
-            @property
-            def keys(self) -> set[str]:
-                return {"latest", "window"}
+                super().__init__()
 
             @property
             def extractors(self) -> dict:

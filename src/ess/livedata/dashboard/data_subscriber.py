@@ -7,6 +7,7 @@ from collections.abc import Hashable
 from typing import Any, Generic, Protocol, TypeVar
 
 from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.dashboard.data_service import Subscriber
 
 
 class PipeBase(Protocol):
@@ -85,7 +86,7 @@ class StreamAssembler(ABC, Generic[Key]):
         """
 
 
-class DataSubscriber(Generic[Key]):
+class DataSubscriber(Subscriber[Key]):
     """Unified subscriber that uses a StreamAssembler to process data."""
 
     def __init__(self, assembler: StreamAssembler[Key], pipe: PipeBase) -> None:
@@ -101,11 +102,8 @@ class DataSubscriber(Generic[Key]):
         """
         self._assembler = assembler
         self._pipe = pipe
-
-    @property
-    def keys(self) -> set[Key]:
-        """Return the set of data keys this subscriber depends on."""
-        return self._assembler.keys
+        # Initialize parent class to cache keys
+        super().__init__()
 
     @property
     def extractors(self) -> dict[Key, Any]:
@@ -116,7 +114,7 @@ class DataSubscriber(Generic[Key]):
         """
         from .data_service import LatestValueExtractor
 
-        return {key: LatestValueExtractor() for key in self.keys}
+        return {key: LatestValueExtractor() for key in self._assembler.keys}
 
     def trigger(self, store: dict[Key, Any]) -> None:
         """

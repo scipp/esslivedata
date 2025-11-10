@@ -196,18 +196,22 @@ class ListBuffer(BufferInterface[list]):
         return 1
 ```
 
-### 4. SubscriberProtocol Update
+### 4. Subscriber Base Class
 
 ```python
-class SubscriberProtocol(Protocol[K]):
+class Subscriber(ABC, Generic[K]):
+    """Base class for subscribers with cached keys and extractors."""
+
     @property
     def keys(self) -> set[K]:
         """Return the set of data keys this subscriber depends on."""
 
     @property
+    @abstractmethod
     def extractors(self) -> dict[K, UpdateExtractor]:
         """Return extractors for obtaining data views."""
 
+    @abstractmethod
     def trigger(self, store: dict[K, Any]) -> None:
         """Trigger the subscriber with extracted data."""
 ```
@@ -296,7 +300,7 @@ class DataService(MutableMapping[K, V]):
     def __init__(self, buffer_factory: BufferFactory[V]) -> None:
         self._buffer_factory = buffer_factory
         self._buffers: dict[K, Buffer[V]] = {}
-        self._subscribers: list[SubscriberProtocol[K] | Callable[[set[K]], None]] = []
+        self._subscribers: list[Subscriber[K] | Callable[[set[K]], None]] = []
         # ... transaction fields (unchanged)
 ```
 

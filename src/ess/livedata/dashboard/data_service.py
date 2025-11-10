@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable, Iterator, MutableMapping
 from contextlib import contextmanager
-from typing import Any, Protocol, TypeVar
+from typing import Any, Generic, TypeVar
 
 from .buffer_strategy import Buffer, BufferFactory
 
@@ -140,14 +140,21 @@ class FullHistoryExtractor(UpdateExtractor):
         return buffer.get_all()
 
 
-class SubscriberProtocol(Protocol[K]):
-    """Protocol for subscribers with keys and trigger method."""
+class Subscriber(ABC, Generic[K]):
+    """Base class for subscribers with cached keys and extractors."""
+
+    def __init__(self) -> None:
+        """Initialize subscriber and cache keys from extractors."""
+        # Cache keys from extractors to avoid repeated computation
+        self._keys = set(self.extractors.keys())
 
     @property
     def keys(self) -> set[K]:
         """Return the set of data keys this subscriber depends on."""
+        return self._keys
 
     @property
+    @abstractmethod
     def extractors(self) -> dict[K, UpdateExtractor]:
         """
         Return extractors for obtaining data views.
@@ -155,6 +162,7 @@ class SubscriberProtocol(Protocol[K]):
         Returns a mapping from key to the extractor to use for that key.
         """
 
+    @abstractmethod
     def trigger(self, store: dict[K, Any]) -> None:
         """Trigger the subscriber with updated data."""
 
@@ -184,7 +192,7 @@ class DataService(MutableMapping[K, V]):
         self._buffer_factory = buffer_factory
         self._buffers: dict[K, Buffer[V]] = {}
         self._default_extractor = LatestValueExtractor()
-        self._subscribers: list[SubscriberProtocol[K]] = []
+        self._subscribers: list[Subscriber[K]] = []
         self._update_callbacks: list[Callable[[set[K]], None]] = []
         self._key_change_subscribers: list[Callable[[set[K], set[K]], None]] = []
         self._pending_updates: set[K] = set()
@@ -231,22 +239,21 @@ class DataService(MutableMapping[K, V]):
         max_size = 1  # Default: latest value only
 
         for subscriber in self._subscribers:
-            if key in subscriber.keys:
-                extractors = subscriber.extractors
-                if key in extractors:
-                    extractor = extractors[key]
-                    max_size = max(max_size, extractor.get_required_size())
+            extractors = subscriber.extractors
+            if key in extractors:
+                extractor = extractors[key]
+                max_size = max(max_size, extractor.get_required_size())
 
         return max_size
 
-    def register_subscriber(self, subscriber: SubscriberProtocol[K]) -> None:
+    def register_subscriber(self, subscriber: Subscriber[K]) -> None:
         """
         Register a subscriber for updates with extractor-based data access.
 
         Parameters
         ----------
         subscriber:
-            The subscriber to register. Must implement SubscriberProtocol with
+            The subscriber to register. Must be a Subscriber with
             keys, extractors, and trigger() method.
         """
         self._subscribers.append(subscriber)
@@ -305,8 +312,8 @@ class DataService(MutableMapping[K, V]):
 
                 for key in subscriber.keys:
                     if key in self._buffers:
-                        # Use subscriber's extractor for this key
-                        extractor = extractors.get(key, self._default_extractor)
+                        # Use subscriber's extractor for this key (always present)
+                        extractor = extractors[key]
                         data = extractor.extract(self._buffers[key])
                         if data is not None:
                             subscriber_data[key] = data
