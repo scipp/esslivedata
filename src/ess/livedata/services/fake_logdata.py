@@ -113,21 +113,29 @@ class FakeLogdataSource(MessageSource[sc.DataArray]):
 
 
 def run_service(*, instrument: str, log_level: int = logging.INFO) -> NoReturn:
+    from contextlib import ExitStack
+
     kafka_config = load_config(namespace=config_names.kafka_upstream)
     serializer = serialize_dataarray_to_f144
 
-    processor = IdentityProcessor(
-        source=FakeLogdataSource(instrument=instrument),
-        sink=KafkaSink(
-            instrument=instrument, kafka_config=kafka_config, serializer=serializer
-        ),
-    )
-    service = Service(
-        processor=processor,
-        name=f'{instrument}_fake_f144_producer',
-        log_level=log_level,
-    )
-    service.start()
+    resources = ExitStack()
+    with resources:
+        sink = resources.enter_context(
+            KafkaSink(
+                instrument=instrument, kafka_config=kafka_config, serializer=serializer
+            )
+        )
+        processor = IdentityProcessor(
+            source=FakeLogdataSource(instrument=instrument),
+            sink=sink,
+        )
+        service = Service(
+            processor=processor,
+            name=f'{instrument}_fake_f144_producer',
+            log_level=log_level,
+            resources=resources.pop_all(),
+        )
+        service.start()
 
 
 def main() -> NoReturn:

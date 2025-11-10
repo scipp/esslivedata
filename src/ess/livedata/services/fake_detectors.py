@@ -173,26 +173,34 @@ def serialize_detector_events_to_ev44(
 def run_service(
     *, instrument: str, nexus_file: str | None = None, log_level: int = logging.INFO
 ) -> NoReturn:
+    from contextlib import ExitStack
+
     kafka_config = load_config(namespace=config_names.kafka_upstream)
     serializer = serialize_detector_events_to_ev44
     name = 'fake_producer'
     Service.configure_logging(log_level)
     logger = logging.getLogger(f'{instrument}_{name}')
 
-    processor = IdentityProcessor(
-        source=FakeDetectorSource(
-            instrument=instrument, nexus_file=nexus_file, logger=logger
-        ),
-        sink=KafkaSink(
-            instrument=instrument, kafka_config=kafka_config, serializer=serializer
-        ),
-    )
-    service = Service(
-        processor=processor,
-        name=f'{instrument}_{name}',
-        log_level=log_level,
-    )
-    service.start()
+    resources = ExitStack()
+    with resources:
+        sink = resources.enter_context(
+            KafkaSink(
+                instrument=instrument, kafka_config=kafka_config, serializer=serializer
+            )
+        )
+        processor = IdentityProcessor(
+            source=FakeDetectorSource(
+                instrument=instrument, nexus_file=nexus_file, logger=logger
+            ),
+            sink=sink,
+        )
+        service = Service(
+            processor=processor,
+            name=f'{instrument}_{name}',
+            log_level=log_level,
+            resources=resources.pop_all(),
+        )
+        service.start()
 
 
 def main() -> NoReturn:

@@ -3,14 +3,13 @@
 """Pytest fixtures for integration tests."""
 
 import logging
-import time
 from collections.abc import Generator
 from dataclasses import dataclass
 
 import pytest
 
-from .backend import DashboardBackend
-from .service_process import ServiceGroup, ServiceProcess
+from tests.integration.backend import DashboardBackend
+from tests.integration.service_process import ServiceGroup, ServiceProcess
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +66,14 @@ def _create_service_group(
 
     services_dict = {}
     for name, (module_path, extra_kwargs) in services_config.items():
+        # Services with Kafka consumers should wait for both process start
+        # and Kafka consumer readiness to ensure functional availability
+        readiness_messages = extra_kwargs.pop('readiness_messages', None)
         services_dict[name] = ServiceProcess(
             module_path,
             log_level=log_level,
             instrument=instrument,
+            readiness_messages=readiness_messages,
             **extra_kwargs,
         )
 
@@ -78,7 +81,7 @@ def _create_service_group(
     logger.info("Starting services for instrument: %s", instrument)
 
     try:
-        services.start_all(startup_delay=5.0)
+        services.start_all(startup_delay=10.0)
         yield services
     finally:
         services.stop_all()
@@ -102,24 +105,13 @@ def dashboard_backend(request) -> Generator[DashboardBackend, None, None]:
     :
         DashboardBackend instance
     """
-    # Get instrument from marker or use default
-    marker = request.node.get_closest_marker('instrument')
-    instrument = marker.args[0] if marker else 'dummy'
-
-    # Get log level from marker or use default
-    log_level_marker = request.node.get_closest_marker('log_level')
-    log_level_name = log_level_marker.args[0] if log_level_marker else 'INFO'
+    instrument, log_level_name = _get_instrument_and_log_level(request)
 
     logger.info("Creating dashboard backend for instrument: %s", instrument)
-    backend = DashboardBackend(
+    with DashboardBackend(
         instrument=instrument, dev=True, log_level=log_level_name
-    )
-
-    try:
-        backend.start()
+    ) as backend:
         yield backend
-    finally:
-        backend.stop()
 
 
 @pytest.fixture
@@ -134,6 +126,10 @@ def integration_env(dashboard_backend: DashboardBackend, request) -> Integration
     @pytest.mark.services('detector')  # Uses detector_services fixture
     @pytest.mark.services('reduction')  # Uses reduction_services fixture
 
+    Design note: Each test uses exactly ONE service group to focus on a single
+    service pipeline. Multiple service groups per test are not supported - tests
+    should be scoped to one workflow type (monitor, detector, or reduction).
+
     Parameters
     ----------
     dashboard_backend:
@@ -147,12 +143,22 @@ def integration_env(dashboard_backend: DashboardBackend, request) -> Integration
         IntegrationEnv containing backend, services, and instrument name
     """
     # Get services type from marker (required)
+    # Design: Single service group per test to focus on one service pipeline
     services_marker = request.node.get_closest_marker('services')
     if not services_marker:
         pytest.fail(
             "integration_env fixture requires "
             "@pytest.mark.services('monitor'|'detector'|'reduction')"
         )
+
+    # Validate single service group (not multiple)
+    if len(services_marker.args) != 1:
+        pytest.fail(
+            f"@pytest.mark.services() expects exactly one argument, "
+            f"got {len(services_marker.args)}. Each test should focus on a "
+            f"single service group: 'monitor', 'detector', or 'reduction'."
+        )
+
     services_type = services_marker.args[0]
 
     # Map service type to fixture name
@@ -171,27 +177,9 @@ def integration_env(dashboard_backend: DashboardBackend, request) -> Integration
     marker = request.node.get_closest_marker('instrument')
     instrument = marker.args[0] if marker else 'dummy'
 
-    # Wait for Kafka consumers to complete group coordination and be ready to poll.
-    # Services log "Service started" when their threads start, but their Kafka
-    # consumers need additional time to join consumer groups, complete partition
-    # assignment, and begin polling. We wait for "Kafka consumer ready" log message.
-    logger.info("Waiting for services to be ready for message consumption...")
-    start_time = time.time()
-    timeout = 5.0
-    while time.time() - start_time < timeout:
-        combined_output = ''.join(
-            service.get_stdout() + service.get_stderr()
-            for service in services.services.values()
-        )
-        if 'Kafka consumer ready and polling' in combined_output:
-            logger.info("Services ready after %.3fs", time.time() - start_time)
-            break
-        time.sleep(0.05)
-    else:
-        logger.warning(
-            "Did not see 'Kafka consumer ready' within %.1fs, proceeding anyway",
-            timeout,
-        )
+    # Service readiness (including Kafka consumer readiness) is now handled
+    # by ServiceProcess via configurable readiness_messages. No need to wait
+    # here - services are already confirmed ready when start_all() completes.
 
     return IntegrationEnv(
         backend=dashboard_backend, services=services, instrument=instrument
@@ -214,8 +202,20 @@ def monitor_services(request) -> Generator[ServiceGroup, None, None]:
     yield from _create_service_group(
         request,
         {
-            'fake_monitors': ('ess.livedata.services.fake_monitors', {'mode': 'ev44'}),
-            'monitor_data': ('ess.livedata.services.monitor_data', {'dev': True}),
+            'fake_monitors': (
+                'ess.livedata.services.fake_monitors',
+                {'mode': 'ev44'},
+            ),
+            'monitor_data': (
+                'ess.livedata.services.monitor_data',
+                {
+                    'dev': True,
+                    'readiness_messages': [
+                        'Service started',
+                        'Kafka consumer ready and polling',
+                    ],
+                },
+            ),
         },
     )
 
@@ -237,7 +237,16 @@ def detector_services(request) -> Generator[ServiceGroup, None, None]:
         request,
         {
             'fake_detectors': ('ess.livedata.services.fake_detectors', {}),
-            'detector_data': ('ess.livedata.services.detector_data', {'dev': True}),
+            'detector_data': (
+                'ess.livedata.services.detector_data',
+                {
+                    'dev': True,
+                    'readiness_messages': [
+                        'Service started',
+                        'Kafka consumer ready and polling',
+                    ],
+                },
+            ),
         },
     )
 
@@ -259,7 +268,25 @@ def reduction_services(request) -> Generator[ServiceGroup, None, None]:
         request,
         {
             'fake_detectors': ('ess.livedata.services.fake_detectors', {}),
-            'detector_data': ('ess.livedata.services.detector_data', {'dev': True}),
-            'data_reduction': ('ess.livedata.services.data_reduction', {'dev': True}),
+            'detector_data': (
+                'ess.livedata.services.detector_data',
+                {
+                    'dev': True,
+                    'readiness_messages': [
+                        'Service started',
+                        'Kafka consumer ready and polling',
+                    ],
+                },
+            ),
+            'data_reduction': (
+                'ess.livedata.services.data_reduction',
+                {
+                    'dev': True,
+                    'readiness_messages': [
+                        'Service started',
+                        'Kafka consumer ready and polling',
+                    ],
+                },
+            ),
         },
     )

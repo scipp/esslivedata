@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import ExitStack
 from types import TracebackType
 from typing import Any
 
@@ -21,15 +22,32 @@ class ServiceProcess:
     (e.g., fake_monitors, monitor_data) with proper argument handling,
     lifecycle management, and cleanup.
 
+    Service readiness is detected by matching log output against expected
+    messages. This is a pragmatic approach for testing, though production
+    deployments should use proper health/liveness endpoints (future enhancement).
+
     Parameters
     ----------
     service_module:
         Python module name to run (e.g., 'ess.livedata.services.fake_monitors')
     log_level:
         Logging level for the subprocess (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    readiness_messages:
+        Log messages to wait for during startup. Services are considered ready
+        when ALL messages have appeared in the output. Defaults to waiting for
+        "Service started". For services with Kafka consumers, consider also
+        waiting for "Kafka consumer ready and polling" to ensure functional
+        readiness.
     **kwargs:
         Service-specific arguments passed as command-line flags
         (e.g., instrument='dummy', dev=True becomes --instrument dummy --dev)
+
+    Notes
+    -----
+    Long-term improvement: Replace log message matching with HTTP health/liveness
+    endpoints that can verify actual service functionality (e.g., Kafka connectivity,
+    resource availability). This would provide more robust readiness detection and
+    align with standard production practices.
     """
 
     def __init__(
@@ -37,10 +55,12 @@ class ServiceProcess:
         service_module: str,
         *,
         log_level: str = 'INFO',
+        readiness_messages: list[str] | None = None,
         **kwargs: Any,
     ):
         self.service_module = service_module
         self.log_level = log_level
+        self.readiness_messages = readiness_messages or ['Service started']
         self.kwargs = kwargs
         self.process: subprocess.Popen | None = None
         self._stdout_lines: list[str] = []
@@ -59,8 +79,13 @@ class ServiceProcess:
         This runs in a background thread to continuously drain the subprocess pipes.
         Without this, the subprocess would block when the pipe buffer fills up,
         causing the service to hang indefinitely.
+
+        Note: stream.readline() is a blocking I/O call that efficiently waits for
+        data without spinning (consuming CPU). The thread sleeps until data arrives.
         """
         try:
+            # iter(stream.readline, '') blocks on readline() until data arrives or EOF
+            # This is efficient - the thread sleeps while waiting, no CPU spinning
             for line in iter(stream.readline, ''):
                 if self._stop_event.is_set():
                     break
@@ -74,45 +99,23 @@ class ServiceProcess:
             # Stream was closed
             pass
 
-    def start(self, startup_delay: float = 2.0) -> None:
-        """
-        Start the service subprocess.
-
-        Parameters
-        ----------
-        startup_delay:
-            Time to wait after starting the service for it to initialize (seconds)
-        """
-        # Build command line arguments
+    def _build_command_args(self) -> list[str]:
+        """Build command line arguments for the service subprocess."""
         args = [sys.executable, '-m', self.service_module]
-
-        # Add log level to command line
         args.extend(['--log-level', self.log_level])
 
         for key, value in self.kwargs.items():
-            # Convert Python naming to CLI flags (underscore to hyphen)
             flag_name = key.replace('_', '-')
-
             if isinstance(value, bool):
-                # Boolean flags: only add if True
                 if value:
                     args.append(f'--{flag_name}')
             else:
-                # Regular arguments
                 args.extend([f'--{flag_name}', str(value)])
 
-        logger.info("Starting service: %s with args: %s", self.service_module, args)
+        return args
 
-        # Start subprocess with pipes for stdout/stderr
-        self.process = subprocess.Popen(  # noqa: S603
-            args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,  # Line buffered
-        )
-
-        # Start threads to stream output
+    def _start_output_threads(self) -> None:
+        """Start background threads to capture stdout and stderr."""
         self._stop_event.clear()
         self._stdout_thread = threading.Thread(
             target=self._stream_output,
@@ -127,13 +130,18 @@ class ServiceProcess:
         self._stdout_thread.start()
         self._stderr_thread.start()
 
-        # Wait for service to report it has started (or crash)
+    def _wait_for_service_ready(self, startup_delay: float) -> None:
+        """
+        Wait for the service to report readiness or crash during startup.
+
+        Checks for all configured readiness messages. Services are considered
+        ready only when ALL messages have appeared in the output.
+        """
         start_time = time.time()
-        service_started = False
+        missing_messages = set(self.readiness_messages)
+
         while time.time() - start_time < startup_delay:
-            # Check if process crashed
             if self.process.poll() is not None:
-                # Wait for threads to finish reading any error output
                 self._stop_event.set()
                 if self._stdout_thread:
                     self._stdout_thread.join(timeout=1.0)
@@ -149,32 +157,69 @@ class ServiceProcess:
                     f"STDERR: {stderr}"
                 )
 
-            # Check if we've seen "Service started" in output
             combined_output = ''.join(self._stdout_lines + self._stderr_lines)
-            if 'Service started' in combined_output:
-                service_started = True
+
+            # Check which readiness messages have appeared
+            for msg in list(missing_messages):
+                if msg in combined_output:
+                    missing_messages.remove(msg)
+                    logger.debug(
+                        "Service %s: detected readiness message '%s'",
+                        self.service_module,
+                        msg,
+                    )
+
+            # All readiness messages found
+            if not missing_messages:
                 break
 
-            time.sleep(0.01)  # Small sleep to avoid busy-waiting
+            time.sleep(0.01)
 
-        if not service_started:
+        if missing_messages:
             logger.warning(
-                "Did not see 'Service started' message for %s within %.1fs, "
-                "but process is still running",
+                "Service %s: did not see all readiness messages within %.1fs, "
+                "but process is still running. Missing: %s",
                 self.service_module,
                 startup_delay,
+                missing_messages,
             )
 
         logger.info(
-            "Service %s started with PID %s (took %.3fs)",
+            "Service %s ready with PID %s (took %.3fs)",
             self.service_module,
             self.process.pid,
             time.time() - start_time,
         )
 
+    def start(self, startup_delay: float = 2.0) -> None:
+        """
+        Start the service subprocess.
+
+        Parameters
+        ----------
+        startup_delay:
+            Time to wait after starting the service for it to initialize (seconds)
+        """
+        args = self._build_command_args()
+        logger.info("Starting service: %s with args: %s", self.service_module, args)
+
+        self.process = subprocess.Popen(  # noqa: S603
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+
+        self._start_output_threads()
+        self._wait_for_service_ready(startup_delay)
+
     def stop(self, timeout: float = 10.0) -> None:
         """
         Stop the service subprocess gracefully.
+
+        Uses ExitStack to ensure all cleanup steps complete even if some raise
+        exceptions, preventing resource leaks from partially-completed shutdowns.
 
         Parameters
         ----------
@@ -193,37 +238,46 @@ class ServiceProcess:
             "Stopping service %s (PID %s)", self.service_module, self.process.pid
         )
 
-        # Try graceful termination first
-        self.process.terminate()
+        # Use ExitStack to ensure all cleanup happens even if exceptions occur
+        with ExitStack() as cleanup_stack:
+            # Register pipe cleanup
+            if self.process.stdout:
+                cleanup_stack.callback(self.process.stdout.close)
+            if self.process.stderr:
+                cleanup_stack.callback(self.process.stderr.close)
 
-        try:
-            self.process.wait(timeout=timeout)
-            logger.info("Service %s stopped gracefully", self.service_module)
-        except subprocess.TimeoutExpired:
-            logger.warning(
-                "Service %s did not stop within %s seconds, killing",
-                self.service_module,
-                timeout,
-            )
-            self.process.kill()
-            self.process.wait()
+            # Register thread cleanup
+            def stop_threads():
+                self._stop_event.set()
+                if self._stdout_thread and self._stdout_thread.is_alive():
+                    self._stdout_thread.join(timeout=0.1)
+                    if self._stdout_thread.is_alive():
+                        logger.warning(
+                            "stdout thread did not stop for %s", self.service_module
+                        )
+                if self._stderr_thread and self._stderr_thread.is_alive():
+                    self._stderr_thread.join(timeout=0.1)
+                    if self._stderr_thread.is_alive():
+                        logger.warning(
+                            "stderr thread did not stop for %s", self.service_module
+                        )
 
-        # Signal threads to stop and wait for them to finish
-        self._stop_event.set()
-        if self._stdout_thread and self._stdout_thread.is_alive():
-            self._stdout_thread.join(timeout=0.1)
-            if self._stdout_thread.is_alive():
-                logger.warning("stdout thread did not stop for %s", self.service_module)
-        if self._stderr_thread and self._stderr_thread.is_alive():
-            self._stderr_thread.join(timeout=0.1)
-            if self._stderr_thread.is_alive():
-                logger.warning("stderr thread did not stop for %s", self.service_module)
+            cleanup_stack.callback(stop_threads)
 
-        # Close pipes
-        if self.process.stdout:
-            self.process.stdout.close()
-        if self.process.stderr:
-            self.process.stderr.close()
+            # Terminate/kill the process (done first, cleanup happens via ExitStack)
+            self.process.terminate()
+
+            try:
+                self.process.wait(timeout=timeout)
+                logger.info("Service %s stopped gracefully", self.service_module)
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "Service %s did not stop within %s seconds, killing",
+                    self.service_module,
+                    timeout,
+                )
+                self.process.kill()
+                self.process.wait()
 
     def is_running(self) -> bool:
         """Check if the service process is currently running."""
@@ -261,6 +315,9 @@ class ServiceGroup:
     This is useful for starting multiple interdependent services
     (e.g., fake_monitors + monitor_data) with proper ordering and cleanup.
 
+    Uses ExitStack to ensure robust cleanup: if any service fails to stop,
+    all other services will still be stopped.
+
     Parameters
     ----------
     services:
@@ -274,28 +331,52 @@ class ServiceGroup:
         """
         Start all services in the group.
 
+        If any service fails to start, all previously started services are
+        stopped to prevent orphaned processes.
+
         Parameters
         ----------
         startup_delay:
             Time to wait after starting each service (seconds)
         """
-        for name, service in self.services.items():
-            logger.info("Starting service group member: %s", name)
-            service.start(startup_delay=startup_delay)
+        # Use ExitStack to track started services for automatic cleanup on failure
+        with ExitStack() as stack:
+            for name, service in self.services.items():
+                logger.info("Starting service group member: %s", name)
+                service.start(startup_delay=startup_delay)
+                # Register cleanup in case a later service fails to start
+                stack.callback(service.stop)
+            # All services started successfully, don't clean up
+            stack.pop_all()
 
     def stop_all(self, timeout: float = 10.0) -> None:
         """
         Stop all services in the group (in reverse order).
+
+        Uses ExitStack to ensure all services are stopped even if some raise
+        exceptions during shutdown. Exceptions are logged but don't prevent
+        other services from being stopped.
 
         Parameters
         ----------
         timeout:
             Maximum time to wait for each service to stop (seconds)
         """
-        # Stop in reverse order
-        for name, service in reversed(list(self.services.items())):
-            logger.info("Stopping service group member: %s", name)
-            service.stop(timeout=timeout)
+        # Use ExitStack to ensure all services get stopped even if some raise
+        with ExitStack() as stack:
+            # Register all services for cleanup (in reverse order)
+            for name, service in reversed(list(self.services.items())):
+
+                def make_stop_callback(service_name: str, svc: ServiceProcess):
+                    """Create a closure that stops a specific service."""
+
+                    def stop_callback():
+                        logger.info("Stopping service group member: %s", service_name)
+                        svc.stop(timeout=timeout)
+
+                    return stop_callback
+
+                stack.callback(make_stop_callback(name, service))
 
     def __enter__(self) -> 'ServiceGroup':
         """Enter context manager - starts all services."""

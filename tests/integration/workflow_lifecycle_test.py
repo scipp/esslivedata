@@ -6,9 +6,11 @@ import pytest
 
 from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
-
-from .conftest import IntegrationEnv
-from .helpers import wait_for_workflow_job_data, wait_for_workflow_job_statuses
+from tests.integration.conftest import IntegrationEnv
+from tests.integration.helpers import (
+    wait_for_job_data,
+    wait_for_job_statuses,
+)
 
 
 @pytest.mark.integration
@@ -46,11 +48,11 @@ def test_workflow_can_start_and_receive_data(integration_env: IntegrationEnv) ->
     job_id = job_ids[0]
     assert job_id.source_name == 'monitor1'
 
-    # Wait for job data to arrive for the specific job we created
-    wait_for_workflow_job_data(backend, workflow_id, source_names, timeout=10.0)
+    # Wait for job data to arrive for the specific jobs we created
+    all_job_data = wait_for_job_data(backend, job_ids, timeout=10.0)
 
     # Verify that we received data for the specific job
-    job_data = backend.job_service.job_data[job_id.job_number]
+    job_data = all_job_data[job_id]
     assert (
         'monitor1' in job_data
     ), f"Expected data for source 'monitor1', got sources: {list(job_data.keys())}"
@@ -84,11 +86,11 @@ def test_workflow_status_updates(integration_env: IntegrationEnv) -> None:
     assert len(job_ids) == 1, f"Expected 1 job, got {len(job_ids)}"
     job_id = job_ids[0]
 
-    # Wait for job status updates for the specific job we created
-    wait_for_workflow_job_statuses(backend, workflow_id, source_names, timeout=10.0)
+    # Wait for job status updates for the specific jobs we created
+    all_statuses = wait_for_job_statuses(backend, job_ids, timeout=10.0)
 
     # Verify we received status updates for the specific job
-    assert job_id in backend.job_service.job_statuses, (
+    assert job_id in all_statuses, (
         f"Expected status update for job {job_id}, "
-        f"got statuses for: {list(backend.job_service.job_statuses.keys())}"
+        f"got statuses for: {list(all_statuses.keys())}"
     )
