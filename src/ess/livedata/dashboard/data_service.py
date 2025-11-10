@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable, Iterator, MutableMapping
 from contextlib import contextmanager
 from typing import Any, Protocol, TypeVar
@@ -12,12 +13,147 @@ K = TypeVar('K', bound=Hashable)
 V = TypeVar('V')
 
 
+class UpdateExtractor(ABC):
+    """Extracts a specific view of buffer data."""
+
+    @abstractmethod
+    def extract(self, buffer: Buffer) -> Any:
+        """
+        Extract data from a buffer.
+
+        Parameters
+        ----------
+        buffer:
+            The buffer to extract data from.
+
+        Returns
+        -------
+        :
+            The extracted data, or None if no data available.
+        """
+
+    @abstractmethod
+    def get_required_size(self) -> int:
+        """
+        Return the minimum buffer size required by this extractor.
+
+        Returns
+        -------
+        :
+            Required buffer size (1 for latest value, n for window, large for full).
+        """
+
+
+class LatestValueExtractor(UpdateExtractor):
+    """Extracts the latest single value, unwrapping the concat dimension."""
+
+    def __init__(self, concat_dim: str = 'time') -> None:
+        """
+        Initialize latest value extractor.
+
+        Parameters
+        ----------
+        concat_dim:
+            The dimension to unwrap when extracting from scipp objects.
+        """
+        self._concat_dim = concat_dim
+
+    def get_required_size(self) -> int:
+        """Latest value only needs buffer size of 1."""
+        return 1
+
+    def extract(self, buffer: Buffer) -> Any:
+        """
+        Extract the latest value from the buffer.
+
+        For list buffers, returns the last element.
+        For scipp DataArray/Variable, unwraps the concat dimension.
+        """
+        view = buffer.get_window(1)
+        if view is None:
+            return None
+
+        # Unwrap based on type
+        if isinstance(view, list):
+            return view[0] if view else None
+
+        # Import scipp only when needed to avoid circular imports
+        import scipp as sc
+
+        if isinstance(view, sc.DataArray):
+            if self._concat_dim in view.dims:
+                # Slice to remove concat dimension
+                result = view[self._concat_dim, 0]
+                # Drop the now-scalar concat coordinate to restore original structure
+                if self._concat_dim in result.coords:
+                    result = result.drop_coords(self._concat_dim)
+                return result
+            return view
+        elif isinstance(view, sc.Variable):
+            if self._concat_dim in view.dims:
+                return view[self._concat_dim, 0]
+            return view
+        else:
+            return view
+
+
+class WindowExtractor(UpdateExtractor):
+    """Extracts a window from the end of the buffer."""
+
+    def __init__(self, size: int) -> None:
+        """
+        Initialize window extractor.
+
+        Parameters
+        ----------
+        size:
+            Number of elements to extract from the end of the buffer.
+        """
+        self._size = size
+
+    @property
+    def window_size(self) -> int:
+        """Return the window size."""
+        return self._size
+
+    def get_required_size(self) -> int:
+        """Window extractor requires buffer size equal to window size."""
+        return self._size
+
+    def extract(self, buffer: Buffer) -> Any:
+        """Extract a window of data from the end of the buffer."""
+        return buffer.get_window(self._size)
+
+
+class FullHistoryExtractor(UpdateExtractor):
+    """Extracts the complete buffer history."""
+
+    # Maximum size for full history buffers
+    DEFAULT_MAX_SIZE = 10000
+
+    def get_required_size(self) -> int:
+        """Full history requires large buffer."""
+        return self.DEFAULT_MAX_SIZE
+
+    def extract(self, buffer: Buffer) -> Any:
+        """Extract all data from the buffer."""
+        return buffer.get_all()
+
+
 class SubscriberProtocol(Protocol[K]):
     """Protocol for subscribers with keys and trigger method."""
 
     @property
     def keys(self) -> set[K]:
         """Return the set of data keys this subscriber depends on."""
+
+    @property
+    def extractors(self) -> dict[K, UpdateExtractor]:
+        """
+        Return extractors for obtaining data views.
+
+        Returns a mapping from key to the extractor to use for that key.
+        """
 
     def trigger(self, store: dict[K, Any]) -> None:
         """Trigger the subscriber with updated data."""
@@ -43,14 +179,13 @@ class DataService(MutableMapping[K, V]):
         buffer_factory:
             Factory for creating buffers. If None, uses default factory.
         """
-        from .history_buffer_service import LatestValueExtractor
-
         if buffer_factory is None:
             buffer_factory = BufferFactory()
         self._buffer_factory = buffer_factory
         self._buffers: dict[K, Buffer[V]] = {}
-        self._extractor = LatestValueExtractor()
-        self._subscribers: list[SubscriberProtocol[K] | Callable[[set[K]], None]] = []
+        self._default_extractor = LatestValueExtractor()
+        self._subscribers: list[SubscriberProtocol[K]] = []
+        self._update_callbacks: list[Callable[[set[K]], None]] = []
         self._key_change_subscribers: list[Callable[[set[K], set[K]], None]] = []
         self._pending_updates: set[K] = set()
         self._pending_key_additions: set[K] = set()
@@ -75,19 +210,68 @@ class DataService(MutableMapping[K, V]):
     def _in_transaction(self) -> bool:
         return self._transaction_depth > 0
 
-    def register_subscriber(
-        self, subscriber: SubscriberProtocol[K] | Callable[[set[K]], None]
-    ) -> None:
+    def _get_required_buffer_size(self, key: K) -> int:
         """
-        Register a subscriber for updates.
+        Calculate required buffer size for a key based on all subscribers.
+
+        Examines all subscribers' extractor requirements for this key and returns
+        the maximum required size.
+
+        Parameters
+        ----------
+        key:
+            The key to calculate buffer size for.
+
+        Returns
+        -------
+        :
+            Maximum buffer size required by all subscribers for this key.
+            Defaults to 1 if no subscribers need this key.
+        """
+        max_size = 1  # Default: latest value only
+
+        for subscriber in self._subscribers:
+            if key in subscriber.keys:
+                extractors = subscriber.extractors
+                if key in extractors:
+                    extractor = extractors[key]
+                    max_size = max(max_size, extractor.get_required_size())
+
+        return max_size
+
+    def register_subscriber(self, subscriber: SubscriberProtocol[K]) -> None:
+        """
+        Register a subscriber for updates with extractor-based data access.
 
         Parameters
         ----------
         subscriber:
-            The subscriber to register. Can be either an object with `keys` property
-            and `trigger()` method, or a callable that accepts a set of updated keys.
+            The subscriber to register. Must implement SubscriberProtocol with
+            keys, extractors, and trigger() method.
         """
         self._subscribers.append(subscriber)
+
+        # Update buffer sizes for keys this subscriber needs
+        for key in subscriber.keys:
+            if key in self._buffers:
+                required_size = self._get_required_buffer_size(key)
+                # Resize buffer if needed (Buffer handles growth, never shrinks)
+                self._buffers[key].set_max_size(required_size)
+
+    def register_update_callback(self, callback: Callable[[set[K]], None]) -> None:
+        """
+        Register a callback for key update notifications.
+
+        Callback receives only the set of updated key names, not the data.
+        Use this for infrastructure that needs to know what changed but will
+        query data itself.
+
+        Parameters
+        ----------
+        callback:
+            Callable that accepts a set of updated keys.
+        """
+        self._update_callbacks.append(callback)
 
     def subscribe_to_changed_keys(
         self, subscriber: Callable[[set[K], set[K]], None]
@@ -112,20 +296,27 @@ class DataService(MutableMapping[K, V]):
         updated_keys
             The set of data keys that were updated.
         """
+        # Notify extractor-based subscribers
         for subscriber in self._subscribers:
-            # Duck-type check: does it have keys and trigger?
-            if hasattr(subscriber, 'keys') and hasattr(subscriber, 'trigger'):
-                if updated_keys & subscriber.keys:
-                    # Pass only the data that the subscriber is interested in
-                    subscriber_data = {
-                        key: self._extractor.extract(self._buffers[key])
-                        for key in subscriber.keys
-                        if key in self._buffers
-                    }
+            if updated_keys & subscriber.keys:
+                # Extract data using per-key extractors
+                subscriber_data = {}
+                extractors = subscriber.extractors
+
+                for key in subscriber.keys:
+                    if key in self._buffers:
+                        # Use subscriber's extractor for this key
+                        extractor = extractors.get(key, self._default_extractor)
+                        data = extractor.extract(self._buffers[key])
+                        if data is not None:
+                            subscriber_data[key] = data
+
+                if subscriber_data:
                     subscriber.trigger(subscriber_data)
-            else:
-                # Plain callable - gets key names only
-                subscriber(updated_keys)
+
+        # Notify update callbacks with just key names
+        for callback in self._update_callbacks:
+            callback(updated_keys)
 
     def _notify_key_change_subscribers(self) -> None:
         """Notify subscribers about key changes (additions/removals)."""
@@ -141,13 +332,17 @@ class DataService(MutableMapping[K, V]):
         """Get the latest value for a key."""
         if key not in self._buffers:
             raise KeyError(key)
-        return self._extractor.extract(self._buffers[key])
+        return self._default_extractor.extract(self._buffers[key])
 
     def __setitem__(self, key: K, value: V) -> None:
         """Set a value, storing it in a buffer."""
         if key not in self._buffers:
             self._pending_key_additions.add(key)
-            self._buffers[key] = self._buffer_factory.create_buffer(value, max_size=1)
+            # Use dynamic buffer sizing based on subscriber requirements
+            required_size = self._get_required_buffer_size(key)
+            self._buffers[key] = self._buffer_factory.create_buffer(
+                value, max_size=required_size
+            )
             self._buffers[key].append(value)
         else:
             try:

@@ -219,9 +219,7 @@ class DataArrayBuffer:
 
         return buffer_data
 
-    def write_slice(
-        self, buffer: sc.DataArray, start: int, data: sc.DataArray
-    ) -> None:
+    def write_slice(self, buffer: sc.DataArray, start: int, data: sc.DataArray) -> None:
         """Write data to buffer slice in-place."""
         size = self.get_size(data)
         end = start + size
@@ -329,9 +327,7 @@ class VariableBuffer:
             shape = [capacity, *list(template.shape)]
         return sc.zeros(dims=dims, shape=shape, dtype=template.dtype)
 
-    def write_slice(
-        self, buffer: sc.Variable, start: int, data: sc.Variable
-    ) -> None:
+    def write_slice(self, buffer: sc.Variable, start: int, data: sc.Variable) -> None:
         """Write data to buffer slice in-place."""
         size = self.get_size(data)
         end = start + size
@@ -469,6 +465,19 @@ class Buffer(Generic[T]):
         self._buffer = None
         self._end = 0
         self._capacity = 0
+
+    def set_max_size(self, new_max_size: int) -> None:
+        """
+        Update the maximum buffer size (can only grow, never shrink).
+
+        Parameters
+        ----------
+        new_max_size:
+            New maximum size. If smaller than current max_size, no change is made.
+        """
+        if new_max_size > self._max_size:
+            self._max_size = new_max_size
+            self._max_capacity = int(new_max_size * self._overallocation_factor)
 
     def _ensure_capacity(self, data: T) -> None:
         """Ensure buffer has capacity for new data."""

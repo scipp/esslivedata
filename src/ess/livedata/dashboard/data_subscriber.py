@@ -107,6 +107,17 @@ class DataSubscriber(Generic[Key]):
         """Return the set of data keys this subscriber depends on."""
         return self._assembler.keys
 
+    @property
+    def extractors(self) -> dict[Key, Any]:
+        """
+        Return extractors for obtaining data views.
+
+        DataSubscriber uses LatestValueExtractor for all keys by default.
+        """
+        from .data_service import LatestValueExtractor
+
+        return {key: LatestValueExtractor() for key in self.keys}
+
     def trigger(self, store: dict[Key, Any]) -> None:
         """
         Trigger the subscriber with the current data store.
