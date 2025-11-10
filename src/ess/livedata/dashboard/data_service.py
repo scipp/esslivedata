@@ -148,12 +148,18 @@ class DataService(MutableMapping[K, V]):
         if key not in self._buffers:
             self._pending_key_additions.add(key)
             self._buffers[key] = self._buffer_factory.create_buffer(value, max_size=1)
+            self._buffers[key].append(value)
         else:
-            # For size-1 buffers, replace entirely if value changes
-            # This allows updating with different-shaped data
-            self._buffers[key].clear()
-            self._buffers[key] = self._buffer_factory.create_buffer(value, max_size=1)
-        self._buffers[key].append(value)
+            try:
+                # Try to append to existing buffer
+                self._buffers[key].append(value)
+            except Exception:
+                # Data is incompatible (shape/dims changed) - clear and recreate
+                # Buffer.clear() sets internal buffer to None, so next append
+                # will allocate a new buffer using the new value as template
+                self._buffers[key].clear()
+                self._buffers[key].append(value)
+
         self._pending_updates.add(key)
         self._notify_if_not_in_transaction()
 
