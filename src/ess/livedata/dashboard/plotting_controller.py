@@ -292,7 +292,12 @@ class PlottingController:
                 plots.extend([detector_with_boxes, roi_spectrum])
             return hv.Layout(plots).cols(2).opts(shared_axes=False)
 
-        pipe = self._stream_manager.make_merging_stream(items)
+        # Look up required extractor type from plotter specification
+        spec = plotter_registry.get_spec(plot_name)
+        extractor_type = spec.data_requirements.required_extractor
+        extractors = {key: extractor_type() for key in items.keys()}
+
+        pipe = self._stream_manager.make_merging_stream(items, extractors=extractors)
         plotter = plotter_registry.create_plotter(plot_name, params=params)
 
         # Initialize plotter with initial data to determine kdims

@@ -11,6 +11,7 @@ from typing import Any, Generic, Protocol, TypeVar
 import pydantic
 import scipp as sc
 
+from .data_service import FullHistoryExtractor, LatestValueExtractor, UpdateExtractor
 from .plot_params import PlotParamsROIDetector
 from .plots import (
     ImagePlotter,
@@ -28,6 +29,7 @@ class DataRequirements:
 
     min_dims: int
     max_dims: int
+    required_extractor: type[UpdateExtractor]
     required_coords: list[str] = field(default_factory=list)
     multiple_datasets: bool = True
     custom_validators: list[Callable[[sc.DataArray], bool]] = field(
@@ -156,7 +158,9 @@ plotter_registry.register_plotter(
     name='image',
     title='Image',
     description='Plot the data as a images.',
-    data_requirements=DataRequirements(min_dims=2, max_dims=2),
+    data_requirements=DataRequirements(
+        min_dims=2, max_dims=2, required_extractor=LatestValueExtractor
+    ),
     factory=ImagePlotter.from_params,
 )
 
@@ -165,7 +169,26 @@ plotter_registry.register_plotter(
     name='lines',
     title='Lines',
     description='Plot the data as line plots.',
-    data_requirements=DataRequirements(min_dims=1, max_dims=1, multiple_datasets=True),
+    data_requirements=DataRequirements(
+        min_dims=1,
+        max_dims=1,
+        multiple_datasets=True,
+        required_extractor=LatestValueExtractor,
+    ),
+    factory=LinePlotter.from_params,
+)
+
+
+plotter_registry.register_plotter(
+    name='timeseries',
+    title='Time Series',
+    description='Plot the temporal evolution of scalar values as line plots.',
+    data_requirements=DataRequirements(
+        min_dims=0,
+        max_dims=0,
+        multiple_datasets=True,
+        required_extractor=FullHistoryExtractor,
+    ),
     factory=LinePlotter.from_params,
 )
 
@@ -178,6 +201,7 @@ plotter_registry.register_plotter(
         min_dims=3,
         max_dims=3,
         multiple_datasets=False,
+        required_extractor=LatestValueExtractor,
         custom_validators=[_all_coords_evenly_spaced],
     ),
     factory=SlicerPlotter.from_params,
@@ -218,6 +242,7 @@ plotter_registry.register_plotter(
         min_dims=2,
         max_dims=2,
         multiple_datasets=True,
+        required_extractor=LatestValueExtractor,
     ),
     factory=_roi_detector_plotter_factory,
 )
@@ -235,6 +260,7 @@ plotter_registry.register_plotter(
         min_dims=2,
         max_dims=3,
         multiple_datasets=True,
+        required_extractor=LatestValueExtractor,
     ),
     factory=SlidingWindowPlotter.from_params,
 )

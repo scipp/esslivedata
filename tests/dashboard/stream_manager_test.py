@@ -9,7 +9,7 @@ import pytest
 import scipp as sc
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
-from ess.livedata.dashboard.data_service import DataService
+from ess.livedata.dashboard.data_service import DataService, LatestValueExtractor
 from ess.livedata.dashboard.data_subscriber import (
     Pipe,
     StreamAssembler,
@@ -95,8 +95,9 @@ class TestStreamManager:
                 job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
             )
         }
+        extractors = {key: LatestValueExtractor() for key in keys}
 
-        pipe = manager.make_merging_stream(keys)
+        pipe = manager.make_merging_stream(keys, extractors)
 
         assert isinstance(pipe, FakePipe)
         assert fake_pipe_factory.call_count == 1
@@ -122,7 +123,8 @@ class TestStreamManager:
         )
 
         keys = {key1, key2}
-        pipe = manager.make_merging_stream(keys)
+        extractors = {key: LatestValueExtractor() for key in keys}
+        pipe = manager.make_merging_stream(keys, extractors)
 
         # Send data for only one key
         data_service[key1] = sample_data
@@ -153,8 +155,10 @@ class TestStreamManager:
             job_id=JobId(source_name="source2", job_number=uuid.uuid4()),
         )
 
-        pipe1 = manager.make_merging_stream({key1})
-        pipe2 = manager.make_merging_stream({key2})
+        extractors1 = {key1: LatestValueExtractor()}
+        extractors2 = {key2: LatestValueExtractor()}
+        pipe1 = manager.make_merging_stream({key1}, extractors1)
+        pipe2 = manager.make_merging_stream({key2}, extractors2)
 
         # Send data for key1
         data_service[key1] = sample_data
@@ -184,8 +188,9 @@ class TestStreamManager:
             ),
             job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
         )
+        extractors = {key: LatestValueExtractor()}
 
-        pipe = manager.make_merging_stream({key})
+        pipe = manager.make_merging_stream({key}, extractors)
 
         # Publish data
         data_service[key] = sample_data
@@ -216,7 +221,8 @@ class TestStreamManager:
         )
 
         keys = {key1, key2}
-        pipe = manager.make_merging_stream(keys)
+        extractors = {key: LatestValueExtractor() for key in keys}
+        pipe = manager.make_merging_stream(keys, extractors)
 
         # Publish data for both keys
         sample_data2 = sc.DataArray(
@@ -246,8 +252,9 @@ class TestStreamManager:
             ),
             job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
         )
+        extractors = {key: LatestValueExtractor()}
 
-        pipe = manager.make_merging_stream({key})
+        pipe = manager.make_merging_stream({key}, extractors)
 
         # Send initial data
         data_service[key] = sample_data
@@ -271,7 +278,7 @@ class TestStreamManager:
         )
 
         # Create stream with empty key set
-        pipe = manager.make_merging_stream(set())
+        pipe = manager.make_merging_stream(set(), {})
 
         # Publish some data
         key = ResultKey(
@@ -302,8 +309,9 @@ class TestStreamManager:
         )
 
         # Create two streams that both include the shared key
-        pipe1 = manager.make_merging_stream({shared_key})
-        pipe2 = manager.make_merging_stream({shared_key})
+        extractors = {shared_key: LatestValueExtractor()}
+        pipe1 = manager.make_merging_stream({shared_key}, extractors)
+        pipe2 = manager.make_merging_stream({shared_key}, extractors)
 
         # Publish data to shared key
         data_service[shared_key] = sample_data
@@ -336,8 +344,9 @@ class TestStreamManager:
             ),
             job_id=JobId(source_name="unrelated_source", job_number=uuid.uuid4()),
         )
+        extractors = {target_key: LatestValueExtractor()}
 
-        pipe = manager.make_merging_stream({target_key})
+        pipe = manager.make_merging_stream({target_key}, extractors)
 
         # Publish data for unrelated key
         data_service[unrelated_key] = sample_data
@@ -379,9 +388,12 @@ class TestStreamManager:
         )
 
         # Create streams with overlapping keys
-        pipe1 = manager.make_merging_stream({key_a, key_b})  # a, b
-        pipe2 = manager.make_merging_stream({key_b, key_c})  # b, c
-        pipe3 = manager.make_merging_stream({key_a})  # a only
+        extractors1 = {key_a: LatestValueExtractor(), key_b: LatestValueExtractor()}
+        extractors2 = {key_b: LatestValueExtractor(), key_c: LatestValueExtractor()}
+        extractors3 = {key_a: LatestValueExtractor()}
+        pipe1 = manager.make_merging_stream({key_a, key_b}, extractors1)  # a, b
+        pipe2 = manager.make_merging_stream({key_b, key_c}, extractors2)  # b, c
+        pipe3 = manager.make_merging_stream({key_a}, extractors3)  # a only
 
         # Create sample data
         data_a = sc.DataArray(data=sc.array(dims=[], values=[1]))

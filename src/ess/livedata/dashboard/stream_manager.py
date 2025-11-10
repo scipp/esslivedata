@@ -27,11 +27,13 @@ class StreamManager(Generic[P]):
         self.data_service = data_service
         self._pipe_factory = pipe_factory
 
-    def make_merging_stream(self, items: dict[ResultKey, Any]) -> P:
+    def make_merging_stream(
+        self, items: dict[ResultKey, Any], extractors: dict[ResultKey, Any]
+    ) -> P:
         """Create a merging stream for the given set of data keys."""
         assembler = MergingStreamAssembler(set(items))
         pipe = self._pipe_factory(items)
-        subscriber = DataSubscriber(assembler, pipe)
+        subscriber = DataSubscriber(assembler, pipe, extractors)
         self.data_service.register_subscriber(subscriber)
         return pipe
 
@@ -39,6 +41,7 @@ class StreamManager(Generic[P]):
         self,
         keys: list[ResultKey],
         assembler_factory: Callable[[set[ResultKey]], Any] = MergingStreamAssembler,
+        extractors: dict[ResultKey, Any] | None = None,
     ) -> P:
         """
         Create a merging stream for the given result keys, starting with no data.
@@ -55,16 +58,24 @@ class StreamManager(Generic[P]):
         assembler_factory:
             Optional callable that creates an assembler from a set of keys.
             Use functools.partial to bind additional arguments (e.g., filter_fn).
+        extractors:
+            Optional dictionary mapping keys to their UpdateExtractor instances.
+            If None, LatestValueExtractor is used for all keys.
 
         Returns
         -------
         :
             A pipe that will receive merged data updates for the given keys.
         """
+        from .data_service import LatestValueExtractor
+
+        if extractors is None:
+            extractors = {key: LatestValueExtractor() for key in keys}
+
         assembler = assembler_factory(set(keys))
         pipe = self._pipe_factory(
             {key: self.data_service[key] for key in keys if key in self.data_service}
         )
-        subscriber = DataSubscriber(assembler, pipe)
+        subscriber = DataSubscriber(assembler, pipe, extractors)
         self.data_service.register_subscriber(subscriber)
         return pipe

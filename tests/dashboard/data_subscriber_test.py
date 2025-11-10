@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
+from ess.livedata.dashboard.data_service import LatestValueExtractor
 from ess.livedata.dashboard.data_subscriber import (
     DataSubscriber,
     MergingStreamAssembler,
@@ -58,24 +59,36 @@ def fake_pipe() -> FakePipe:
 
 
 @pytest.fixture
+def sample_extractors(sample_keys: set[str]) -> dict[str, LatestValueExtractor]:
+    """Sample extractors for testing."""
+    return {key: LatestValueExtractor() for key in sample_keys}
+
+
+@pytest.fixture
 def subscriber(
-    fake_assembler: FakeStreamAssembler, fake_pipe: FakePipe
+    fake_assembler: FakeStreamAssembler,
+    fake_pipe: FakePipe,
+    sample_extractors: dict[str, LatestValueExtractor],
 ) -> DataSubscriber[str]:
     """DataSubscriber instance for testing."""
-    return DataSubscriber(fake_assembler, fake_pipe)
+    return DataSubscriber(fake_assembler, fake_pipe, sample_extractors)
 
 
 class TestDataSubscriber:
     """Test cases for DataSubscriber class."""
 
     def test_init_stores_assembler_and_pipe(
-        self, fake_assembler: FakeStreamAssembler, fake_pipe: FakePipe
+        self,
+        fake_assembler: FakeStreamAssembler,
+        fake_pipe: FakePipe,
+        sample_extractors: dict[str, LatestValueExtractor],
     ) -> None:
         """Test that initialization stores the assembler and pipe correctly."""
-        subscriber = DataSubscriber(fake_assembler, fake_pipe)
+        subscriber = DataSubscriber(fake_assembler, fake_pipe, sample_extractors)
 
         assert subscriber._assembler is fake_assembler
         assert subscriber._pipe is fake_pipe
+        assert subscriber._extractors is sample_extractors
 
     def test_keys_returns_assembler_keys(
         self, subscriber: DataSubscriber, sample_keys: set[str]
@@ -193,11 +206,12 @@ class TestDataSubscriber:
     def test_trigger_with_different_assembled_data(self, sample_keys: set[str]) -> None:
         """Test trigger method with assembler that returns different data types."""
         assembled_values = [42, {'result': 'success'}, [1, 2, 3], None]
+        extractors = {key: LatestValueExtractor() for key in sample_keys}
 
         for value in assembled_values:
             assembler = FakeStreamAssembler(sample_keys, value)
             pipe = FakePipe()
-            subscriber = DataSubscriber(assembler, pipe)
+            subscriber = DataSubscriber(assembler, pipe, extractors)
 
             store = {'key1': 'test_value'}
             subscriber.trigger(store)

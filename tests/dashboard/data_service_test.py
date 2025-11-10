@@ -8,6 +8,7 @@ import pytest
 
 from ess.livedata.dashboard.data_service import (
     DataService,
+    LatestValueExtractor,
     Subscriber,
 )
 from ess.livedata.dashboard.data_subscriber import DataSubscriber, Pipe, StreamAssembler
@@ -34,7 +35,8 @@ def create_test_subscriber(keys: set[str]) -> tuple[DataSubscriber[str], FakePip
     """Create a test subscriber with the given keys."""
     assembler = FakeDataAssembler(keys)
     pipe = FakePipe()
-    subscriber = DataSubscriber(assembler, pipe)
+    extractors = {key: LatestValueExtractor() for key in keys}
+    subscriber = DataSubscriber(assembler, pipe, extractors)
     return subscriber, pipe
 
 
@@ -379,7 +381,8 @@ class TestDataServiceUpdatingSubscribers:
 
         class UpdatingSubscriber(DataSubscriber[str]):
             def __init__(self, keys: set[str], service: DataService[str, int]):
-                super().__init__(FakeDataAssembler(keys), FakePipe())
+                extractors = {key: LatestValueExtractor() for key in keys}
+                super().__init__(FakeDataAssembler(keys), FakePipe(), extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -403,7 +406,8 @@ class TestDataServiceUpdatingSubscribers:
 
         class UpdatingSubscriber(DataSubscriber[str]):
             def __init__(self, keys: set[str], service: DataService[str, int]):
-                super().__init__(FakeDataAssembler(keys), FakePipe())
+                extractors = {key: LatestValueExtractor() for key in keys}
+                super().__init__(FakeDataAssembler(keys), FakePipe(), extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -434,7 +438,8 @@ class TestDataServiceUpdatingSubscribers:
                 service: DataService[str, int],
                 multiplier: int,
             ):
-                super().__init__(FakeDataAssembler(keys), FakePipe())
+                extractors = {key: LatestValueExtractor() for key in keys}
+                super().__init__(FakeDataAssembler(keys), FakePipe(), extractors)
                 self._service = service
                 self._multiplier = multiplier
 
@@ -461,7 +466,8 @@ class TestDataServiceUpdatingSubscribers:
 
         class FirstLevelSubscriber(DataSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                super().__init__(FakeDataAssembler({"input"}), FakePipe())
+                extractors = {key: LatestValueExtractor() for key in {"input"}}
+                super().__init__(FakeDataAssembler({"input"}), FakePipe(), extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -471,7 +477,8 @@ class TestDataServiceUpdatingSubscribers:
 
         class SecondLevelSubscriber(DataSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                super().__init__(FakeDataAssembler({"level1"}), FakePipe())
+                extractors = {key: LatestValueExtractor() for key in {"level1"}}
+                super().__init__(FakeDataAssembler({"level1"}), FakePipe(), extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -496,7 +503,8 @@ class TestDataServiceUpdatingSubscribers:
 
         class FirstLevelSubscriber(DataSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                super().__init__(FakeDataAssembler({"input"}), FakePipe())
+                extractors = {key: LatestValueExtractor() for key in {"input"}}
+                super().__init__(FakeDataAssembler({"input"}), FakePipe(), extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -506,7 +514,8 @@ class TestDataServiceUpdatingSubscribers:
 
         class SecondLevelSubscriber(DataSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                super().__init__(FakeDataAssembler({"level1"}), FakePipe())
+                extractors = {key: LatestValueExtractor() for key in {"level1"}}
+                super().__init__(FakeDataAssembler({"level1"}), FakePipe(), extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -538,7 +547,8 @@ class TestDataServiceUpdatingSubscribers:
 
         class MultiUpdateSubscriber(DataSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                super().__init__(FakeDataAssembler({"input"}), FakePipe())
+                extractors = {key: LatestValueExtractor() for key in {"input"}}
+                super().__init__(FakeDataAssembler({"input"}), FakePipe(), extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -567,7 +577,8 @@ class TestDataServiceUpdatingSubscribers:
 
         class OverwriteSubscriber(DataSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                super().__init__(FakeDataAssembler({"input"}), FakePipe())
+                extractors = {key: LatestValueExtractor() for key in {"input"}}
+                super().__init__(FakeDataAssembler({"input"}), FakePipe(), extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -590,7 +601,12 @@ class TestDataServiceUpdatingSubscribers:
 
         class CircularSubscriber(DataSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                super().__init__(FakeDataAssembler({"input", "output"}), FakePipe())
+                extractors = {
+                    key: LatestValueExtractor() for key in {"input", "output"}
+                }
+                super().__init__(
+                    FakeDataAssembler({"input", "output"}), FakePipe(), extractors
+                )
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -619,7 +635,8 @@ class TestDataServiceUpdatingSubscribers:
 
         class DeletingSubscriber(DataSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                super().__init__(FakeDataAssembler({"trigger"}), FakePipe())
+                extractors = {key: LatestValueExtractor() for key in {"trigger"}}
+                super().__init__(FakeDataAssembler({"trigger"}), FakePipe(), extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -643,7 +660,8 @@ class TestDataServiceUpdatingSubscribers:
 
         class ComplexSubscriber(DataSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                super().__init__(FakeDataAssembler({"input"}), FakePipe())
+                extractors = {key: LatestValueExtractor() for key in {"input"}}
+                super().__init__(FakeDataAssembler({"input"}), FakePipe(), extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -680,7 +698,8 @@ class TestDataServiceUpdatingSubscribers:
             def __init__(
                 self, input_key: str, output_key: str, service: DataService[str, int]
             ):
-                super().__init__(FakeDataAssembler({input_key}), FakePipe())
+                extractors = {key: LatestValueExtractor() for key in {input_key}}
+                super().__init__(FakeDataAssembler({input_key}), FakePipe(), extractors)
                 self._input_key = input_key
                 self._output_key = output_key
                 self._service = service
@@ -712,7 +731,8 @@ class TestDataServiceUpdatingSubscribers:
 
         class MixedSubscriber(DataSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                super().__init__(FakeDataAssembler({"input"}), FakePipe())
+                extractors = {key: LatestValueExtractor() for key in {"input"}}
+                super().__init__(FakeDataAssembler({"input"}), FakePipe(), extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:

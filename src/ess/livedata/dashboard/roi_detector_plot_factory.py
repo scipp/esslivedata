@@ -532,8 +532,11 @@ class ROIDetectorPlotFactory:
 
         roi_pipe = ROIReadbackPipe(on_roi_data_update)
 
+        from .data_service import LatestValueExtractor
+
         assembler = MergingStreamAssembler({roi_readback_key})
-        subscriber = DataSubscriber(assembler, roi_pipe)
+        extractors = {roi_readback_key: LatestValueExtractor()}
+        subscriber = DataSubscriber(assembler, roi_pipe, extractors)
         self._stream_manager.data_service.register_subscriber(subscriber)
 
     def create_roi_detector_plot_components(
@@ -577,7 +580,12 @@ class ROIDetectorPlotFactory:
         # FIXME: Memory leak - subscribers registered via stream_manager are never
         # unregistered. When this plot is closed, the subscriber remains in
         # DataService._subscribers, preventing garbage collection of plot components.
-        merged_detector_pipe = self._stream_manager.make_merging_stream(detector_items)
+        from .data_service import LatestValueExtractor
+
+        extractors = {detector_key: LatestValueExtractor()}
+        merged_detector_pipe = self._stream_manager.make_merging_stream(
+            detector_items, extractors
+        )
 
         detector_plotter = ImagePlotter(
             value_margin_factor=0.1,

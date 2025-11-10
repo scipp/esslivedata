@@ -89,7 +89,12 @@ class StreamAssembler(ABC, Generic[Key]):
 class DataSubscriber(Subscriber[Key]):
     """Unified subscriber that uses a StreamAssembler to process data."""
 
-    def __init__(self, assembler: StreamAssembler[Key], pipe: PipeBase) -> None:
+    def __init__(
+        self,
+        assembler: StreamAssembler[Key],
+        pipe: PipeBase,
+        extractors: dict[Key, Any],
+    ) -> None:
         """
         Initialize the subscriber with an assembler and pipe.
 
@@ -99,22 +104,19 @@ class DataSubscriber(Subscriber[Key]):
             The assembler responsible for processing the data.
         pipe:
             The pipe to send assembled data to.
+        extractors:
+            Dictionary mapping keys to their UpdateExtractor instances.
         """
         self._assembler = assembler
         self._pipe = pipe
+        self._extractors = extractors
         # Initialize parent class to cache keys
         super().__init__()
 
     @property
     def extractors(self) -> dict[Key, Any]:
-        """
-        Return extractors for obtaining data views.
-
-        DataSubscriber uses LatestValueExtractor for all keys by default.
-        """
-        from .data_service import LatestValueExtractor
-
-        return {key: LatestValueExtractor() for key in self._assembler.keys}
+        """Return extractors for obtaining data views."""
+        return self._extractors
 
     def trigger(self, store: dict[Key, Any]) -> None:
         """
