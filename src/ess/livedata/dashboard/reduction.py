@@ -30,7 +30,7 @@ class ReductionApp(DashboardBase):
         self._dev_widget = None
         if dev:
             self._dev_widget = LogProducerWidget(
-                instrument=instrument, logger=self._logger
+                instrument=instrument, logger=self._logger, exit_stack=self._exit_stack
             )
 
         self._logger.info("Reduction dashboard initialized")
