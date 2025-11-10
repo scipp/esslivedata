@@ -2,10 +2,11 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-from collections import UserDict
-from collections.abc import Callable, Hashable
+from collections.abc import Callable, Hashable, Iterator, MutableMapping
 from contextlib import contextmanager
 from typing import Any, Protocol, TypeVar
+
+from .buffer_strategy import Buffer, BufferFactory
 
 K = TypeVar('K', bound=Hashable)
 V = TypeVar('V')
@@ -22,16 +23,33 @@ class SubscriberProtocol(Protocol[K]):
         """Trigger the subscriber with updated data."""
 
 
-class DataService(UserDict[K, V]):
+class DataService(MutableMapping[K, V]):
     """
     A service for managing and retrieving data and derived data.
 
     New data is set from upstream Kafka topics. Subscribers are typically plots that
     provide a live view of the data.
+
+    Uses buffers internally for storage, but presents a dict-like interface
+    that returns the latest value for each key.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, buffer_factory: BufferFactory | None = None) -> None:
+        """
+        Initialize DataService.
+
+        Parameters
+        ----------
+        buffer_factory:
+            Factory for creating buffers. If None, uses default factory.
+        """
+        from .history_buffer_service import LatestValueExtractor
+
+        if buffer_factory is None:
+            buffer_factory = BufferFactory()
+        self._buffer_factory = buffer_factory
+        self._buffers: dict[K, Buffer[V]] = {}
+        self._extractor = LatestValueExtractor()
         self._subscribers: list[SubscriberProtocol[K] | Callable[[set[K]], None]] = []
         self._key_change_subscribers: list[Callable[[set[K], set[K]], None]] = []
         self._pending_updates: set[K] = set()
@@ -83,7 +101,7 @@ class DataService(UserDict[K, V]):
             A callable that accepts two sets: added_keys and removed_keys.
         """
         self._key_change_subscribers.append(subscriber)
-        subscriber(set(self.data.keys()), set())
+        subscriber(set(self._buffers.keys()), set())
 
     def _notify_subscribers(self, updated_keys: set[K]) -> None:
         """
@@ -100,9 +118,9 @@ class DataService(UserDict[K, V]):
                 if updated_keys & subscriber.keys:
                     # Pass only the data that the subscriber is interested in
                     subscriber_data = {
-                        key: self.data[key]
+                        key: self._extractor.extract(self._buffers[key])
                         for key in subscriber.keys
-                        if key in self.data
+                        if key in self._buffers
                     }
                     subscriber.trigger(subscriber_data)
             else:
@@ -119,18 +137,40 @@ class DataService(UserDict[K, V]):
                 self._pending_key_additions.copy(), self._pending_key_removals.copy()
             )
 
+    def __getitem__(self, key: K) -> V:
+        """Get the latest value for a key."""
+        if key not in self._buffers:
+            raise KeyError(key)
+        return self._extractor.extract(self._buffers[key])
+
     def __setitem__(self, key: K, value: V) -> None:
-        if key not in self.data:
+        """Set a value, storing it in a buffer."""
+        if key not in self._buffers:
             self._pending_key_additions.add(key)
-        super().__setitem__(key, value)
+            self._buffers[key] = self._buffer_factory.create_buffer(value, max_size=1)
+        else:
+            # For size-1 buffers, replace entirely if value changes
+            # This allows updating with different-shaped data
+            self._buffers[key].clear()
+            self._buffers[key] = self._buffer_factory.create_buffer(value, max_size=1)
+        self._buffers[key].append(value)
         self._pending_updates.add(key)
         self._notify_if_not_in_transaction()
 
     def __delitem__(self, key: K) -> None:
+        """Delete a key and its buffer."""
         self._pending_key_removals.add(key)
-        super().__delitem__(key)
+        del self._buffers[key]
         self._pending_updates.add(key)
         self._notify_if_not_in_transaction()
+
+    def __iter__(self) -> Iterator[K]:
+        """Iterate over keys."""
+        return iter(self._buffers)
+
+    def __len__(self) -> int:
+        """Return the number of keys."""
+        return len(self._buffers)
 
     def _notify_if_not_in_transaction(self) -> None:
         """Notify subscribers if not in a transaction."""

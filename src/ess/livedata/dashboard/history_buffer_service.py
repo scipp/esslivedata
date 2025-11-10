@@ -7,7 +7,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Hashable
 from functools import cached_property
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 import scipp as sc
 
@@ -21,7 +21,7 @@ class UpdateExtractor(ABC):
     """Extracts a specific view of buffer data."""
 
     @abstractmethod
-    def extract(self, buffer: Buffer) -> sc.DataArray | None:
+    def extract(self, buffer: Buffer) -> Any:
         """
         Extract data from a buffer.
 
@@ -40,7 +40,7 @@ class UpdateExtractor(ABC):
 class FullHistoryExtractor(UpdateExtractor):
     """Extracts the complete buffer history."""
 
-    def extract(self, buffer: Buffer) -> sc.DataArray | None:
+    def extract(self, buffer: Buffer) -> Any:
         return buffer.get_all()
 
 
@@ -63,8 +63,53 @@ class WindowExtractor(UpdateExtractor):
         """Return the window size."""
         return self._size
 
-    def extract(self, buffer: Buffer) -> sc.DataArray | None:
+    def extract(self, buffer: Buffer) -> Any:
         return buffer.get_window(self._size)
+
+
+class LatestValueExtractor(UpdateExtractor):
+    """Extracts the latest single value, unwrapping the concat dimension."""
+
+    def __init__(self, concat_dim: str = 'time') -> None:
+        """
+        Initialize latest value extractor.
+
+        Parameters
+        ----------
+        concat_dim:
+            The dimension to unwrap when extracting from scipp objects.
+        """
+        self._concat_dim = concat_dim
+
+    def extract(self, buffer: Buffer) -> Any:
+        """
+        Extract the latest value from the buffer.
+
+        For list buffers, returns the last element.
+        For scipp DataArray/Variable, unwraps the concat dimension.
+        """
+        view = buffer.get_window(1)
+        if view is None:
+            return None
+
+        # Unwrap based on type
+        if isinstance(view, list):
+            return view[0] if view else None
+        elif isinstance(view, sc.DataArray):
+            if self._concat_dim in view.dims:
+                # Slice to remove concat dimension
+                result = view[self._concat_dim, 0]
+                # Drop the now-scalar concat coordinate to restore original structure
+                if self._concat_dim in result.coords:
+                    result = result.drop_coords(self._concat_dim)
+                return result
+            return view
+        elif isinstance(view, sc.Variable):
+            if self._concat_dim in view.dims:
+                return view[self._concat_dim, 0]
+            return view
+        else:
+            return view
 
 
 class HistorySubscriber(ABC, Generic[K]):

@@ -232,8 +232,21 @@ class DataArrayBuffer:
                 raise ValueError(
                     f"Data without concat dimension must have size 1, got {size}"
                 )
-            # Write to single slice, broadcasting over non-concat dimensions
-            buffer.data.values[start] = data.data.values
+            # Write to single slice along concat dimension
+            # Get the slice and flatten for assignment
+            buffer_slice = buffer[self._concat_dim, start]
+
+            # Handle different data types and dimensions
+            if data.data.dtype == sc.DType.string:
+                # Element-by-element assignment for strings
+                for i, val in enumerate(data.data.values):
+                    buffer_slice.data.values[i] = val
+            elif data.data.ndim == 0:
+                # Scalar data - use .value property
+                buffer_slice.data.value = data.data.value
+            else:
+                # Normal assignment - use values for numpy-level access
+                buffer_slice.data.values[...] = data.data.values
 
             # Update concat dimension coordinate
             buffer.coords[self._concat_dim].values[start] = start
@@ -246,7 +259,11 @@ class DataArrayBuffer:
 
             # Copy masks
             for mask_name, mask in data.masks.items():
-                buffer.masks[mask_name].values[start] = mask.values
+                if mask.dtype == sc.DType.string:
+                    for i, val in enumerate(mask.values):
+                        buffer_slice.masks[mask_name].values[i] = val
+                else:
+                    buffer_slice.masks[mask_name].values[...] = mask.values
         else:
             # Data has concat dim - normal write
             if data.sizes[self._concat_dim] != size:
@@ -383,6 +400,48 @@ class VariableBuffer:
             # Data doesn't have concat dim - treat as single frame
             return 1
         return data.sizes[self._concat_dim]
+
+
+class ListBuffer:
+    """Simple list-based buffer for non-scipp types."""
+
+    def __init__(self, concat_dim: str = 'time') -> None:
+        """
+        Initialize list buffer implementation.
+
+        Parameters
+        ----------
+        concat_dim:
+            Ignored for ListBuffer (kept for interface compatibility).
+        """
+        self._concat_dim = concat_dim
+
+    def allocate(self, template: any, capacity: int) -> list:
+        """Allocate empty list."""
+        return []
+
+    def write_slice(self, buffer: list, start: int, end: int, data: any) -> None:
+        """Append data to list."""
+        if isinstance(data, list):
+            buffer.extend(data)
+        else:
+            buffer.append(data)
+
+    def shift(self, buffer: list, src_start: int, src_end: int, dst_start: int) -> None:
+        """Shift list elements."""
+        size = src_end - src_start
+        dst_end = dst_start + size
+        buffer[dst_start:dst_end] = buffer[src_start:src_end]
+
+    def get_view(self, buffer: list, start: int, end: int) -> list:
+        """Get slice of list."""
+        return buffer[start:end]
+
+    def get_size(self, data: any) -> int:
+        """Get size of data."""
+        if isinstance(data, list):
+            return len(data)
+        return 1
 
 
 class Buffer(Generic[T]):
@@ -565,3 +624,68 @@ class Buffer(Generic[T]):
         actual_size = min(size, self._end)
         start = self._end - actual_size
         return self._buffer_impl.get_view(self._buffer, start, self._end)
+
+
+class BufferFactory:
+    """
+    Factory that creates appropriate buffers based on data type.
+
+    Maintains a registry of type → BufferInterface mappings.
+    """
+
+    def __init__(
+        self,
+        concat_dim: str = "time",
+        initial_capacity: int = 100,
+        overallocation_factor: float = 2.5,
+    ) -> None:
+        """
+        Initialize buffer factory.
+
+        Parameters
+        ----------
+        concat_dim:
+            The dimension along which to concatenate data.
+        initial_capacity:
+            Initial buffer allocation.
+        overallocation_factor:
+            Buffer capacity multiplier.
+        """
+        self._concat_dim = concat_dim
+        self._initial_capacity = initial_capacity
+        self._overallocation_factor = overallocation_factor
+
+    def create_buffer(self, template: T, max_size: int) -> Buffer[T]:
+        """
+        Create buffer appropriate for the data type.
+
+        Parameters
+        ----------
+        template:
+            Sample data used to determine buffer type.
+        max_size:
+            Maximum number of elements to maintain.
+
+        Returns
+        -------
+        :
+            Configured buffer instance.
+        """
+        data_type = type(template)
+
+        # Dispatch to appropriate buffer implementation
+        if data_type == sc.DataArray:
+            buffer_impl = DataArrayBuffer(concat_dim=self._concat_dim)
+        elif data_type == sc.Variable:
+            buffer_impl = VariableBuffer(concat_dim=self._concat_dim)
+        else:
+            # Default fallback for simple types (int, str, etc.)
+            buffer_impl = ListBuffer(concat_dim=self._concat_dim)
+
+        return Buffer(
+            max_size=max_size,
+            buffer_impl=buffer_impl,
+            initial_capacity=self._initial_capacity,
+            overallocation_factor=self._overallocation_factor,
+            concat_dim=self._concat_dim,
+        )
