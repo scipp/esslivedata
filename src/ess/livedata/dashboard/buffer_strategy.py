@@ -416,6 +416,9 @@ class Buffer(Generic[T]):
     - 2.0x: 100% overhead, 2x write amplification
     - 2.5x: 150% overhead, 1.67x write amplification (recommended)
     - 3.0x: 200% overhead, 1.5x write amplification
+
+    Special case: when max_size==1, uses simple value replacement instead of
+    complex buffer management for efficiency.
     """
 
     def __init__(
@@ -462,9 +465,14 @@ class Buffer(Generic[T]):
         self._max_capacity = int(max_size * overallocation_factor)
         self._concat_dim = concat_dim
 
-        self._buffer = None
-        self._end = 0
-        self._capacity = 0
+        # For max_size==1, use simple value storage instead of complex buffering
+        self._single_value_mode = max_size == 1
+        if self._single_value_mode:
+            self._value: T | None = None
+        else:
+            self._buffer = None
+            self._end = 0
+            self._capacity = 0
 
     def set_max_size(self, new_max_size: int) -> None:
         """
@@ -476,8 +484,22 @@ class Buffer(Generic[T]):
             New maximum size. If smaller than current max_size, no change is made.
         """
         if new_max_size > self._max_size:
-            self._max_size = new_max_size
-            self._max_capacity = int(new_max_size * self._overallocation_factor)
+            # Check if we need to transition from single-value to buffer mode
+            if self._single_value_mode and new_max_size > 1:
+                # Convert to buffer mode
+                old_value = self._value
+                self._single_value_mode = False
+                self._max_size = new_max_size
+                self._max_capacity = int(new_max_size * self._overallocation_factor)
+                self._buffer = None
+                self._end = 0
+                self._capacity = 0
+                # Re-append the value if it exists using buffer logic
+                if old_value is not None:
+                    self.append(old_value)
+            else:
+                self._max_size = new_max_size
+                self._max_capacity = int(new_max_size * self._overallocation_factor)
 
     def _ensure_capacity(self, data: T) -> None:
         """Ensure buffer has capacity for new data."""
@@ -539,6 +561,11 @@ class Buffer(Generic[T]):
 
     def append(self, data: T) -> None:
         """Append new data to storage."""
+        # Special case: max_size==1, just replace the value
+        if self._single_value_mode:
+            self._value = data
+            return
+
         self._ensure_capacity(data)
         if self._buffer is None:
             raise RuntimeError("Buffer initialization failed")
@@ -557,15 +584,20 @@ class Buffer(Generic[T]):
 
     def get_all(self) -> T | None:
         """Get all stored data."""
+        if self._single_value_mode:
+            return self._value
         if self._buffer is None:
             return None
         return self._buffer_impl.get_view(self._buffer, 0, self._end)
 
     def clear(self) -> None:
         """Clear all stored data."""
-        self._buffer = None
-        self._end = 0
-        self._capacity = 0
+        if self._single_value_mode:
+            self._value = None
+        else:
+            self._buffer = None
+            self._end = 0
+            self._capacity = 0
 
     def get_window(self, size: int | None = None) -> T | None:
         """
@@ -582,6 +614,8 @@ class Buffer(Generic[T]):
         :
             A window of the buffer, or None if empty.
         """
+        if self._single_value_mode:
+            return self._value
         if self._buffer is None:
             return None
         if size is None:

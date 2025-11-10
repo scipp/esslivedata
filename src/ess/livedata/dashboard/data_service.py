@@ -349,9 +349,11 @@ class DataService(MutableMapping[K, V]):
                 # Try to append to existing buffer
                 self._buffers[key].append(value)
             except Exception:
-                # Data is incompatible (shape/dims changed) - clear and recreate
+                # Data is incompatible (shape/dims changed) - clear and recreate.
+                # Note: This is mainly for buffer mode (max_size > 1). For max_size==1,
+                # Buffer uses simple value replacement and won't raise exceptions.
                 # Buffer.clear() sets internal buffer to None, so next append
-                # will allocate a new buffer using the new value as template
+                # will allocate a new buffer using the new value as template.
                 self._buffers[key].clear()
                 self._buffers[key].append(value)
 
