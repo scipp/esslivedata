@@ -231,9 +231,9 @@ class DataArrayBuffer(ScippBuffer[sc.DataArray], BufferInterface[sc.DataArray]):
 
     Handles DataArray complexity including:
     - Data variable allocation
-    - Concat dimension coordinates (auto-generated during allocation)
-    - Non-concat coordinates (assumed constant across updates)
-    - Concat-dependent coordinates (pre-allocated)
+    - Concat dimension coordinates (lazy-allocated when first slice provides them)
+    - Non-concat coordinates (preserved from input data)
+    - Concat-dependent coordinates (pre-allocated from template)
     - Masks
     """
 
@@ -265,27 +265,13 @@ class DataArrayBuffer(ScippBuffer[sc.DataArray], BufferInterface[sc.DataArray]):
         # Create zeros array with correct structure
         data_var = sc.zeros(dims=dims, shape=shape, dtype=template.data.dtype)
 
-        # Create DataArray with concat dimension coordinate
-        coords = {
-            self._concat_dim: sc.array(
-                dims=[self._concat_dim],
-                values=list(range(capacity)),
-                dtype='int64',
-            )
-        }
-
         # Add non-concat coordinates from template
         # Only add those that don't depend on the concat dimension
-        coords.update(
-            {
-                coord_name: coord
-                for coord_name, coord in template.coords.items()
-                if (
-                    coord_name != self._concat_dim
-                    and self._concat_dim not in coord.dims
-                )
-            }
-        )
+        coords = {
+            coord_name: coord
+            for coord_name, coord in template.coords.items()
+            if (coord_name != self._concat_dim and self._concat_dim not in coord.dims)
+        }
 
         buffer_data = sc.DataArray(data=data_var, coords=coords)
 
@@ -351,15 +337,18 @@ class DataArrayBuffer(ScippBuffer[sc.DataArray], BufferInterface[sc.DataArray]):
 
         # Handle concat dimension coordinate
         if self._concat_dim in data.coords:
-            # Data has concat coord - copy it
+            # Data has concat coord - add it to buffer
+            if self._concat_dim not in buffer.coords:
+                # Need to allocate the coordinate in the buffer first
+                buffer.coords[self._concat_dim] = sc.zeros(
+                    dims=[self._concat_dim],
+                    shape=[buffer.sizes[self._concat_dim]],
+                    dtype=data.coords[self._concat_dim].dtype,
+                )
+            # Copy the coordinate values
             buffer.coords[self._concat_dim].values[start:end] = data.coords[
                 self._concat_dim
             ].values
-        else:
-            # Data doesn't have concat coord - use indices
-            import numpy as np
-
-            buffer.coords[self._concat_dim].values[start:end] = np.arange(start, end)
 
         # Copy concat-dependent coords (only if data has concat_dim)
         for coord_name, coord in data.coords.items():
@@ -380,10 +369,11 @@ class DataArrayBuffer(ScippBuffer[sc.DataArray], BufferInterface[sc.DataArray]):
         # Shift data
         buffer.data.values[dst_start:dst_end] = buffer.data.values[src_start:src_end]
 
-        # Shift concat dimension coordinate
-        buffer.coords[self._concat_dim].values[dst_start:dst_end] = buffer.coords[
-            self._concat_dim
-        ].values[src_start:src_end]
+        # Shift concat dimension coordinate if it exists
+        if self._concat_dim in buffer.coords:
+            buffer.coords[self._concat_dim].values[dst_start:dst_end] = buffer.coords[
+                self._concat_dim
+            ].values[src_start:src_end]
 
         # Shift concat-dependent coords
         for coord_name, coord in buffer.coords.items():
