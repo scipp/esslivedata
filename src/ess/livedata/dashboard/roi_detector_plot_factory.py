@@ -19,7 +19,7 @@ from .data_subscriber import (
     DataSubscriber,
     MergingStreamAssembler,
 )
-from .extractors import LatestValueExtractor
+from .extractors import LatestValueExtractor, create_extractors_from_params
 from .plot_params import LayoutParams, PlotParamsROIDetector
 from .plots import ImagePlotter, LinePlotter, PlotAspect, PlotAspectType
 from .roi_publisher import ROIPublisher
@@ -751,7 +751,8 @@ class ROIDetectorPlotFactory:
         # FIXME: Memory leak - subscribers registered via stream_manager are never
         # unregistered. When this plot is closed, the subscriber remains in
         # DataService._subscribers, preventing garbage collection of plot components.
-        spectrum_pipe = self._stream_manager.make_merging_stream(spectrum_keys)
+        extractors = create_extractors_from_params(spectrum_keys, params)
+        spectrum_pipe = self._stream_manager.make_merging_stream(extractors)
 
         spectrum_plotter = LinePlotter(
             value_margin_factor=0.1,

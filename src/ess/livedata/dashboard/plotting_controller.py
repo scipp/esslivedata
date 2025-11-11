@@ -19,12 +19,10 @@ from ess.livedata.config.workflow_spec import (
 from .config_store import ConfigStore
 from .configuration_adapter import ConfigurationState
 from .extractors import (
-    LatestValueExtractor,
     UpdateExtractor,
-    WindowAggregatingExtractor,
+    create_extractors_from_params,
 )
 from .job_service import JobService
-from .plot_params import WindowMode
 from .plotting import PlotterSpec, plotter_registry
 from .roi_detector_plot_factory import ROIDetectorPlotFactory
 from .roi_publisher import ROIPublisher
@@ -257,26 +255,7 @@ class PlottingController:
         :
             Dictionary mapping result keys to extractor instances.
         """
-        if spec.data_requirements.required_extractor is not None:
-            # Plotter requires specific extractor (e.g., TimeSeriesPlotter)
-            extractor_type = spec.data_requirements.required_extractor
-            return {key: extractor_type() for key in keys}
-
-        # No fixed requirement - check if params have window config
-        if hasattr(params, 'window'):
-            if params.window.mode == WindowMode.latest:
-                return {key: LatestValueExtractor() for key in keys}
-            else:  # mode == WindowMode.window
-                return {
-                    key: WindowAggregatingExtractor(
-                        window_duration_seconds=params.window.window_duration_seconds,
-                        aggregation=params.window.aggregation.value,
-                    )
-                    for key in keys
-                }
-
-        # Fallback to latest value extractor
-        return {key: LatestValueExtractor() for key in keys}
+        return create_extractors_from_params(keys, params, spec)
 
     def create_plot(
         self,
