@@ -195,6 +195,24 @@ class BufferInterface(Protocol[T]):
         """
         ...
 
+    def get_temporal_coverage(self, buffer: T, end: int) -> float | None:
+        """
+        Get the time span currently covered by buffer.
+
+        Parameters
+        ----------
+        buffer:
+            Buffer to measure.
+        end:
+            End index of valid data in buffer (exclusive).
+
+        Returns
+        -------
+        :
+            Time span in seconds, or None if buffer is empty or has no time coordinate.
+        """
+        ...
+
 
 class ScippBuffer(Generic[ScippT]):
     """
@@ -291,6 +309,43 @@ class ScippBuffer(Generic[ScippT]):
         latest_time = time_coord[-1]
         duration = sc.scalar(duration_seconds, unit='s').to(unit=time_coord.unit)
         return active[self._concat_dim, latest_time - duration :]
+
+    def get_temporal_coverage(self, buffer: ScippT, end: int) -> float | None:
+        """
+        Get time span covered by buffer.
+
+        Calculates the difference between the first and last time coordinates.
+
+        Parameters
+        ----------
+        buffer:
+            Buffer to measure.
+        end:
+            End index of valid data in buffer (exclusive).
+
+        Returns
+        -------
+        :
+            Time span in seconds, or None if buffer is empty or has no time coordinate.
+        """
+        if end == 0:
+            return None
+
+        # Get active section of buffer
+        active = self.get_view(buffer, 0, end)
+
+        # Check for time coordinate
+        if not hasattr(active, 'coords') or self._concat_dim not in active.coords:
+            return None
+
+        time_coord = active.coords[self._concat_dim]
+        if len(time_coord) < 2:
+            # Need at least 2 points to measure coverage
+            return 0.0
+
+        # Calculate time span and convert to seconds
+        time_span = time_coord[-1] - time_coord[0]
+        return float(time_span.to(unit='s').value)
 
 
 class DataArrayBuffer(ScippBuffer[sc.DataArray], BufferInterface[sc.DataArray]):  # type: ignore[type-arg]
@@ -578,6 +633,17 @@ class ListBuffer(BufferInterface[list]):
             "duration-based extraction."
         )
 
+    def get_temporal_coverage(self, buffer: list, end: int) -> float | None:
+        """
+        Temporal coverage not available for list buffers.
+
+        Returns
+        -------
+        :
+            Always None (list buffers have no time coordinate information).
+        """
+        return None
+
 
 class SingleValueStorage(Generic[T]):
     """
@@ -627,6 +693,28 @@ class SingleValueStorage(Generic[T]):
     def clear(self) -> None:
         """Clear the stored value."""
         self._value = None
+
+    def get_frame_count(self) -> int:
+        """
+        Get the number of frames currently stored.
+
+        Returns
+        -------
+        :
+            1 if value exists, 0 if empty.
+        """
+        return 1 if self._value is not None else 0
+
+    def get_temporal_coverage(self) -> float | None:
+        """
+        Get temporal coverage.
+
+        Returns
+        -------
+        :
+            None (single value has no temporal span).
+        """
+        return None
 
 
 class StreamingBuffer(Generic[T]):
@@ -871,6 +959,30 @@ class StreamingBuffer(Generic[T]):
             self._buffer, self._end, duration_seconds
         )
 
+    def get_frame_count(self) -> int:
+        """
+        Get the number of frames currently stored.
+
+        Returns
+        -------
+        :
+            Number of frames in buffer.
+        """
+        return self._end
+
+    def get_temporal_coverage(self) -> float | None:
+        """
+        Get the time span currently covered by buffer.
+
+        Returns
+        -------
+        :
+            Time span in seconds, or None if buffer has no time coordinate.
+        """
+        if self._buffer is None:
+            return None
+        return self._buffer_impl.get_temporal_coverage(self._buffer, self._end)
+
 
 class Buffer(Generic[T]):
     """
@@ -1026,6 +1138,28 @@ class Buffer(Generic[T]):
             Window of data covering approximately the duration, or None if empty.
         """
         return self._storage.get_window_by_duration(duration_seconds)
+
+    def get_frame_count(self) -> int:
+        """
+        Get the number of frames currently stored.
+
+        Returns
+        -------
+        :
+            Number of frames in buffer.
+        """
+        return self._storage.get_frame_count()
+
+    def get_temporal_coverage(self) -> float | None:
+        """
+        Get the time span currently covered by buffer.
+
+        Returns
+        -------
+        :
+            Time span in seconds, or None if buffer has no time coordinate.
+        """
+        return self._storage.get_temporal_coverage()
 
 
 class BufferFactory:

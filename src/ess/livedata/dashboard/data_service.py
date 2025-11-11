@@ -7,8 +7,10 @@ from collections.abc import Callable, Hashable, Iterator, Mapping, MutableMappin
 from contextlib import contextmanager
 from typing import Any, Generic, TypeVar
 
+from .buffer_manager import BufferManager
 from .buffer_strategy import Buffer, BufferFactory
 from .extractors import LatestValueExtractor, UpdateExtractor
+from .temporal_requirements import TemporalRequirement
 
 K = TypeVar('K', bound=Hashable)
 V = TypeVar('V')
@@ -52,7 +54,11 @@ class DataService(MutableMapping[K, V]):
     that returns the latest value for each key.
     """
 
-    def __init__(self, buffer_factory: BufferFactory | None = None) -> None:
+    def __init__(
+        self,
+        buffer_factory: BufferFactory | None = None,
+        buffer_manager: BufferManager | None = None,
+    ) -> None:
         """
         Initialize DataService.
 
@@ -60,10 +66,15 @@ class DataService(MutableMapping[K, V]):
         ----------
         buffer_factory:
             Factory for creating buffers. If None, uses default factory.
+        buffer_manager:
+            Manager for buffer sizing. If None, creates one with buffer_factory.
         """
         if buffer_factory is None:
             buffer_factory = BufferFactory()
+        if buffer_manager is None:
+            buffer_manager = BufferManager(buffer_factory)
         self._buffer_factory = buffer_factory
+        self._buffer_manager = buffer_manager
         self._buffers: dict[K, Buffer[V]] = {}
         self._default_extractor = LatestValueExtractor()
         self._subscribers: list[Subscriber[K]] = []
@@ -92,33 +103,31 @@ class DataService(MutableMapping[K, V]):
     def _in_transaction(self) -> bool:
         return self._transaction_depth > 0
 
-    def _get_required_buffer_size(self, key: K) -> int:
+    def _get_temporal_requirements(self, key: K) -> list[TemporalRequirement]:
         """
-        Calculate required buffer size for a key based on all subscribers.
+        Collect temporal requirements for a key from all subscribers.
 
-        Examines all subscribers' extractor requirements for this key and returns
-        the maximum required size.
+        Examines all subscribers' extractor requirements for this key.
 
         Parameters
         ----------
         key:
-            The key to calculate buffer size for.
+            The key to collect requirements for.
 
         Returns
         -------
         :
-            Maximum buffer size required by all subscribers for this key.
-            Defaults to 1 if no subscribers need this key.
+            List of temporal requirements from all subscribers for this key.
         """
-        max_size = 1  # Default: latest value only
+        requirements = []
 
         for subscriber in self._subscribers:
             extractors = subscriber.extractors
             if key in extractors:
                 extractor = extractors[key]
-                max_size = max(max_size, extractor.get_required_size())
+                requirements.append(extractor.get_temporal_requirement())
 
-        return max_size
+        return requirements
 
     def _build_subscriber_data(self, subscriber: Subscriber[K]) -> dict[K, Any]:
         """
@@ -161,12 +170,13 @@ class DataService(MutableMapping[K, V]):
         """
         self._subscribers.append(subscriber)
 
-        # Update buffer sizes for keys this subscriber needs
+        # Add requirements for keys this subscriber needs
         for key in subscriber.keys:
             if key in self._buffers:
-                required_size = self._get_required_buffer_size(key)
-                # Resize buffer if needed (Buffer handles growth, never shrinks)
-                self._buffers[key].set_max_size(required_size)
+                extractor = subscriber.extractors[key]
+                requirement = extractor.get_temporal_requirement()
+                # Add requirement to existing buffer
+                self._buffer_manager.add_requirement(self._buffers[key], requirement)
 
         # Trigger immediately with existing data using subscriber's extractors
         existing_data = self._build_subscriber_data(subscriber)
@@ -242,12 +252,12 @@ class DataService(MutableMapping[K, V]):
         """Set a value, storing it in a buffer."""
         if key not in self._buffers:
             self._pending_key_additions.add(key)
-            # Use dynamic buffer sizing based on subscriber requirements
-            required_size = self._get_required_buffer_size(key)
-            self._buffers[key] = self._buffer_factory.create_buffer(
-                value, max_size=required_size
-            )
-        self._buffers[key].append(value)
+            # Collect temporal requirements from all subscribers
+            requirements = self._get_temporal_requirements(key)
+            # Create buffer using BufferManager
+            self._buffers[key] = self._buffer_manager.create_buffer(value, requirements)
+        # Update buffer using BufferManager (handles growth)
+        self._buffer_manager.update_buffer(self._buffers[key], value)
         self._pending_updates.add(key)
         self._notify_if_not_in_transaction()
 

@@ -6,6 +6,12 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 from .buffer_strategy import Buffer
+from .temporal_requirements import (
+    CompleteHistory,
+    LatestFrame,
+    TemporalRequirement,
+    TimeWindow,
+)
 
 if TYPE_CHECKING:
     import pydantic
@@ -35,23 +41,23 @@ class UpdateExtractor(ABC):
         """
 
     @abstractmethod
-    def get_required_size(self) -> int:
+    def get_temporal_requirement(self) -> TemporalRequirement:
         """
-        Return the minimum buffer size required by this extractor.
+        Return the temporal requirement for this extractor.
 
         Returns
         -------
         :
-            Required buffer size (1 for latest value, n for window, large for full).
+            Temporal requirement describing needed time coverage.
         """
 
 
 class LatestValueExtractor(UpdateExtractor):
     """Extracts the latest single value, unwrapping the concat dimension."""
 
-    def get_required_size(self) -> int:
-        """Latest value only needs buffer size of 1."""
-        return 1
+    def get_temporal_requirement(self) -> TemporalRequirement:
+        """Latest value only needs the most recent frame."""
+        return LatestFrame()
 
     def extract(self, buffer: Buffer) -> Any:
         """Extract the latest value from the buffer, unwrapped."""
@@ -61,12 +67,9 @@ class LatestValueExtractor(UpdateExtractor):
 class FullHistoryExtractor(UpdateExtractor):
     """Extracts the complete buffer history."""
 
-    # Maximum size for full history buffers
-    DEFAULT_MAX_SIZE = 10000
-
-    def get_required_size(self) -> int:
-        """Full history requires large buffer."""
-        return self.DEFAULT_MAX_SIZE
+    def get_temporal_requirement(self) -> TemporalRequirement:
+        """Full history requires all available data."""
+        return CompleteHistory()
 
     def extract(self, buffer: Buffer) -> Any:
         """Extract all data from the buffer."""
@@ -98,13 +101,9 @@ class WindowAggregatingExtractor(UpdateExtractor):
         self._aggregation = aggregation
         self._concat_dim = concat_dim
 
-    def get_required_size(self) -> int:
-        """
-        Estimate required buffer size (conservative).
-
-        Assumes maximum 20 Hz frame rate for headroom.
-        """
-        return max(100, int(self._window_duration_seconds * 20))
+    def get_temporal_requirement(self) -> TemporalRequirement:
+        """Requires temporal coverage of specified duration."""
+        return TimeWindow(duration_seconds=self._window_duration_seconds)
 
     def extract(self, buffer: Buffer) -> Any:
         """Extract a window of data and aggregate over the time dimension."""

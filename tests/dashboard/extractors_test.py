@@ -11,6 +11,11 @@ from ess.livedata.dashboard.extractors import (
     LatestValueExtractor,
     WindowAggregatingExtractor,
 )
+from ess.livedata.dashboard.temporal_requirements import (
+    CompleteHistory,
+    LatestFrame,
+    TimeWindow,
+)
 
 
 @pytest.fixture
@@ -68,10 +73,11 @@ class TestLatestValueExtractor:
         assert result.ndim == 0
         assert result.value == 5  # Last value from second append
 
-    def test_get_required_size(self):
-        """Test that LatestValueExtractor requires size 1."""
+    def test_get_temporal_requirement(self):
+        """Test that LatestValueExtractor returns LatestFrame requirement."""
         extractor = LatestValueExtractor()
-        assert extractor.get_required_size() == 1
+        requirement = extractor.get_temporal_requirement()
+        assert isinstance(requirement, LatestFrame)
 
     def test_extract_empty_buffer_returns_none(self, buffer_factory: BufferFactory):
         """Test that extracting from empty buffer returns None."""
@@ -85,10 +91,11 @@ class TestLatestValueExtractor:
 class TestFullHistoryExtractor:
     """Tests for FullHistoryExtractor."""
 
-    def test_get_required_size(self):
-        """Test that FullHistoryExtractor requires large buffer size."""
+    def test_get_temporal_requirement(self):
+        """Test that FullHistoryExtractor returns CompleteHistory requirement."""
         extractor = FullHistoryExtractor()
-        assert extractor.get_required_size() == 10000
+        requirement = extractor.get_temporal_requirement()
+        assert isinstance(requirement, CompleteHistory)
 
     def test_extract_all_data(self, buffer_factory: BufferFactory):
         """Test extracting all data from buffer."""
@@ -114,9 +121,9 @@ class TestFullHistoryExtractor:
         result = extractor.extract(buffer)
         assert result.sizes['time'] == 5
 
-    def test_default_max_size(self):
-        """Test default max size constant."""
-        assert FullHistoryExtractor.DEFAULT_MAX_SIZE == 10000
+    def test_complete_history_max_frames(self):
+        """Test CompleteHistory max frames constant."""
+        assert CompleteHistory.MAX_FRAMES == 10000
 
 
 class TestExtractorIntegration:
@@ -169,11 +176,12 @@ class TestExtractorIntegration:
 class TestWindowAggregatingExtractor:
     """Tests for WindowAggregatingExtractor."""
 
-    def test_get_required_size(self):
-        """Test that WindowAggregatingExtractor estimates required buffer size."""
-        # 1.0 second at 20 Hz headroom = 20 frames minimum
-        extractor = WindowAggregatingExtractor(window_duration_seconds=1.0)
-        assert extractor.get_required_size() == max(100, int(1.0 * 20))
+    def test_get_temporal_requirement(self):
+        """Test that WindowAggregatingExtractor returns TimeWindow requirement."""
+        extractor = WindowAggregatingExtractor(window_duration_seconds=5.0)
+        requirement = extractor.get_temporal_requirement()
+        assert isinstance(requirement, TimeWindow)
+        assert requirement.duration_seconds == 5.0
 
     def test_sum_aggregation_scipp(self, buffer_factory: BufferFactory):
         """Test sum aggregation over time dimension."""
