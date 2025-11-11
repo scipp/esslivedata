@@ -245,7 +245,7 @@ sciline==25.8.0
     #   essreduce
     #   esssans
     #   essspectroscopy
-scipp==25.8.0
+scipp==25.11.0
     # via
     #   essdiffraction
     #   essreduce

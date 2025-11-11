@@ -98,7 +98,7 @@ requests==2.32.5
     # via pooch
 sciline==25.8.0
     # via essreduce
-scipp==25.8.0
+scipp==25.11.0
     # via
     #   -r base.in
     #   essreduce
