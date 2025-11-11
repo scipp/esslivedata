@@ -109,7 +109,8 @@ class BufferManager(Generic[T]):
         """
         Update buffer with new data and apply retention policy.
 
-        Appends data, observes metrics, and resizes if needed to meet requirements.
+        Checks requirements and resizes if needed BEFORE appending to prevent
+        data loss from premature sliding window shifts.
 
         Parameters
         ----------
@@ -118,19 +119,18 @@ class BufferManager(Generic[T]):
         data:
             New data to append.
         """
-        # Append data first
-        buffer.append(data)
-
         # Get requirements for this buffer
         buffer_id = id(buffer)
         requirements = self._requirements.get(buffer_id, [])
 
-        if not requirements:
-            return
+        if requirements:
+            # Check if buffer meets requirements, resize if needed BEFORE appending
+            # This prevents data loss when buffer is at capacity
+            if not self.validate_coverage(buffer, requirements):
+                self._resize_buffer(buffer, requirements)
 
-        # Check if buffer meets requirements, resize if needed
-        if not self.validate_coverage(buffer, requirements):
-            self._resize_buffer(buffer, requirements)
+        # Now append data - buffer is properly sized
+        buffer.append(data)
 
     def validate_coverage(
         self, buffer: Buffer[T], requirements: list[TemporalRequirement]
@@ -159,12 +159,11 @@ class BufferManager(Generic[T]):
                     return False
             elif isinstance(requirement, TimeWindow):
                 # For temporal requirements, check actual time coverage
-                if temporal_coverage is None:
-                    # No time coordinate - can't validate temporal requirement yet
-                    # Buffer will grow adaptively based on frame count
-                    return True
-                if temporal_coverage < requirement.duration_seconds:
-                    return False
+                if temporal_coverage is not None:
+                    if temporal_coverage < requirement.duration_seconds:
+                        return False
+                # If no time coordinate, can't validate
+                # Continue checking other requirements
             elif isinstance(requirement, CompleteHistory):
                 # For complete history, buffer should grow until MAX_FRAMES
                 if frame_count < requirement.MAX_FRAMES:
