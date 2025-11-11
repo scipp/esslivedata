@@ -289,17 +289,8 @@ class ScippBuffer(Generic[ScippT]):
         # Calculate cutoff time using scipp's unit handling
         time_coord = active.coords[self._concat_dim]
         latest_time = time_coord[-1]
-
-        if time_coord.unit is not None:
-            # Convert duration to same unit as time coordinate and compute cutoff
-            duration = sc.scalar(duration_seconds, unit='s').to(unit=time_coord.unit)
-            cutoff_time = int((latest_time - duration).value)
-        else:
-            # No unit: assume nanoseconds (for backwards compatibility)
-            cutoff_time = int(latest_time.value - duration_seconds * 1e9)
-
-        # Use scipp label-based indexing
-        return active[self._concat_dim, cutoff_time:]
+        duration = sc.scalar(duration_seconds, unit='s').to(unit=time_coord.unit)
+        return active[self._concat_dim, latest_time - duration :]
 
 
 class DataArrayBuffer(ScippBuffer[sc.DataArray], BufferInterface[sc.DataArray]):  # type: ignore[type-arg]
