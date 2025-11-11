@@ -247,20 +247,7 @@ class DataService(MutableMapping[K, V]):
             self._buffers[key] = self._buffer_factory.create_buffer(
                 value, max_size=required_size
             )
-            self._buffers[key].append(value)
-        else:
-            try:
-                # Try to append to existing buffer
-                self._buffers[key].append(value)
-            except Exception:
-                # Data is incompatible (shape/dims changed) - clear and recreate.
-                # Note: This is mainly for buffer mode (max_size > 1). For max_size==1,
-                # Buffer uses simple value replacement and won't raise exceptions.
-                # Buffer.clear() sets internal buffer to None, so next append
-                # will allocate a new buffer using the new value as template.
-                self._buffers[key].clear()
-                self._buffers[key].append(value)
-
+        self._buffers[key].append(value)
         self._pending_updates.add(key)
         self._notify_if_not_in_transaction()
 

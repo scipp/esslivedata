@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Generic, Protocol, TypeVar
 
 import scipp as sc
+
+logger = logging.getLogger(__name__)
 
 # Type variable for buffer types
 T = TypeVar('T')
@@ -673,21 +676,37 @@ class StreamingBuffer(Generic[T]):
 
     def append(self, data: T) -> None:
         """Append new data to storage."""
-        self._ensure_capacity(data)
-        if self._buffer is None:
-            raise RuntimeError("Buffer initialization failed")
+        try:
+            self._ensure_capacity(data)
+            if self._buffer is None:
+                raise RuntimeError("Buffer initialization failed")
 
-        new_size = self._buffer_impl.get_size(data)
-        start = self._end
+            new_size = self._buffer_impl.get_size(data)
+            start = self._end
 
-        # Write data using buffer implementation
-        self._buffer_impl.write_slice(self._buffer, start, data)
-        self._end = start + new_size
+            # Write data using buffer implementation
+            self._buffer_impl.write_slice(self._buffer, start, data)
+            self._end = start + new_size
 
-        # Only trim if we've hit max_capacity AND exceed max_size
-        # During growth phase, keep all data
-        if self._capacity >= self._max_capacity and self._end > self._max_size:
-            self._shift_to_sliding_window()
+            # Only trim if we've hit max_capacity AND exceed max_size
+            # During growth phase, keep all data
+            if self._capacity >= self._max_capacity and self._end > self._max_size:
+                self._shift_to_sliding_window()
+        except Exception as e:
+            # Data is incompatible with existing buffer (shape/dims changed).
+            # Clear and reallocate with new structure.
+            logger.info(
+                "Data structure changed, clearing buffer and reallocating: %s",
+                e,
+            )
+            self.clear()
+            # Retry append - will allocate new buffer with correct structure
+            self._ensure_capacity(data)
+            if self._buffer is None:
+                raise RuntimeError("Buffer initialization failed") from e
+            new_size = self._buffer_impl.get_size(data)
+            self._buffer_impl.write_slice(self._buffer, 0, data)
+            self._end = new_size
 
     def get_all(self) -> T | None:
         """Get all stored data."""
