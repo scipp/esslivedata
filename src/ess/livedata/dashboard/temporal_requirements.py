@@ -56,12 +56,9 @@ class CompleteHistory(TemporalRequirement):
     """
     Requirement for all available history.
 
-    May have practical upper limit for memory constraints.
+    Never satisfied - buffer will grow up to practical limits.
     """
-
-    # Practical upper limit to prevent unbounded growth
-    MAX_FRAMES = 10000
 
     def __repr__(self) -> str:
         """String representation."""
-        return f"CompleteHistory(max={self.MAX_FRAMES})"
+        return "CompleteHistory()"

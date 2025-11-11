@@ -119,10 +119,11 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
 
         state = self._states[key]
 
-        # Compute if buffer needs to grow to satisfy requirements
-        state.needs_growth = self._compute_needs_growth(state)
+        # Check cached flag and resize if needed
         if state.needs_growth:
-            self._resize_buffer(state)
+            state.needs_growth = self._compute_needs_growth(state)
+            if state.needs_growth:
+                self._resize_buffer(state)
 
         # Append data - buffer is properly sized
         state.buffer.append(data)
@@ -194,8 +195,9 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
                 return frame_count >= min_frames
 
         elif isinstance(requirement, CompleteHistory):
-            # Complete history needs to reach max capacity
-            return frame_count >= CompleteHistory.MAX_FRAMES
+            # Complete history is never fulfilled - always want more data
+            # Growth is limited by MAX_CAPACITY check in _compute_needs_growth
+            return False
 
         return True
 

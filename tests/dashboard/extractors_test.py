@@ -121,10 +121,6 @@ class TestFullHistoryExtractor:
         result = extractor.extract(buffer)
         assert result.sizes['time'] == 5
 
-    def test_complete_history_max_frames(self):
-        """Test CompleteHistory max frames constant."""
-        assert CompleteHistory.MAX_FRAMES == 10000
-
 
 class TestExtractorIntegration:
     """Integration tests for extractors with different data types."""

@@ -233,13 +233,13 @@ class TestBufferManagerValidation:
         key = 'test_key'
         buffer_manager.create_buffer(key, template, [CompleteHistory()])
 
-        # Add some data (but less than MAX_FRAMES)
+        # Add some data
         for i in range(10):
             buffer_manager.update_buffer(key, sc.scalar(i, unit='counts'))
 
-        # Check frame count is less than MAX_FRAMES
+        # Buffer should grow towards MAX_CAPACITY (CompleteHistory is never satisfied)
         buffer = buffer_manager.get_buffer(key)
-        assert buffer.get_frame_count() < CompleteHistory.MAX_FRAMES
+        assert buffer.get_frame_count() > 1  # Should have grown beyond initial size
 
 
 class TestBufferManagerAddRequirement:
@@ -290,5 +290,4 @@ class TestTemporalRequirements:
     def test_complete_history_repr(self):
         """Test CompleteHistory string representation."""
         req = CompleteHistory()
-        assert "CompleteHistory" in repr(req)
-        assert "10000" in repr(req)
+        assert repr(req) == "CompleteHistory()"
