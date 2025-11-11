@@ -10,7 +10,6 @@ from ess.livedata.dashboard.extractors import (
     FullHistoryExtractor,
     LatestValueExtractor,
     WindowAggregatingExtractor,
-    WindowExtractor,
 )
 
 
@@ -83,70 +82,6 @@ class TestLatestValueExtractor:
         assert result is None
 
 
-class TestWindowExtractor:
-    """Tests for WindowExtractor."""
-
-    def test_window_size_property(self):
-        """Test window_size property."""
-        extractor = WindowExtractor(5)
-        assert extractor.window_size == 5
-
-    def test_get_required_size(self):
-        """Test that WindowExtractor requires size equal to window size."""
-        extractor = WindowExtractor(10)
-        assert extractor.get_required_size() == 10
-
-    def test_extract_window_from_list(self, buffer_factory: BufferFactory):
-        """Test extracting window from list buffer."""
-        extractor = WindowExtractor(2)
-        buffer = buffer_factory.create_buffer(0, max_size=2)
-        buffer.append(10)
-        buffer.append(20)
-        buffer.append(30)
-
-        result = extractor.extract(buffer)
-        assert result == [20, 30]
-
-    def test_extract_window_from_scipp(self, buffer_factory: BufferFactory):
-        """Test extracting window from scipp buffer."""
-        extractor = WindowExtractor(3)
-        data = sc.arange('time', 5, unit='counts')
-
-        buffer = buffer_factory.create_buffer(data[0:1], max_size=3)
-        for i in range(5):
-            buffer.append(data[i : i + 1])
-
-        result = extractor.extract(buffer)
-        assert result.sizes['time'] == 3
-
-    def test_extract_window_larger_than_buffer(self, buffer_factory: BufferFactory):
-        """Test extracting window larger than current buffer contents."""
-        extractor = WindowExtractor(10)
-        buffer = buffer_factory.create_buffer(0, max_size=10)
-        buffer.append(10)
-        buffer.append(20)
-
-        result = extractor.extract(buffer)
-        # Should still work, returning available data
-        assert len(result) == 2
-
-    def test_different_window_sizes(self, buffer_factory: BufferFactory):
-        """Test extractors with different window sizes."""
-        buffer = buffer_factory.create_buffer(0, max_size=10)
-        for i in range(10):
-            buffer.append(i)
-
-        # Extract window of 3
-        extractor3 = WindowExtractor(3)
-        result3 = extractor3.extract(buffer)
-        assert result3 == [7, 8, 9]
-
-        # Extract window of 5
-        extractor5 = WindowExtractor(5)
-        result5 = extractor5.extract(buffer)
-        assert result5 == [5, 6, 7, 8, 9]
-
-
 class TestFullHistoryExtractor:
     """Tests for FullHistoryExtractor."""
 
@@ -196,11 +131,9 @@ class TestExtractorIntegration:
             buffer.append(val)
 
         latest = LatestValueExtractor()
-        window = WindowExtractor(3)
         history = FullHistoryExtractor()
 
         assert latest.extract(buffer) == 9
-        assert window.extract(buffer) == [7, 8, 9]
         assert history.extract(buffer) == values
 
     def test_extractors_with_custom_concat_dim(self, buffer_factory: BufferFactory):

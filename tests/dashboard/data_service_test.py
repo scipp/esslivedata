@@ -853,57 +853,14 @@ class TestDataServiceUpdatingSubscribers:
 class TestExtractorBasedSubscription:
     """Tests for extractor-based subscription with dynamic buffer sizing."""
 
-    def test_window_extractor_gets_windowed_data(self):
-        """Test that subscriber with WindowExtractor gets windowed data."""
-        import scipp as sc
-
-        from ess.livedata.dashboard.data_service import DataService
-        from ess.livedata.dashboard.extractors import WindowExtractor
-
-        # Create a simple subscriber class for testing
-        class WindowSubscriber(Subscriber[str]):
-            def __init__(self, keys: set[str], window_size: int):
-                self._assembler_keys = keys
-                self._window_size = window_size
-                self.received_data: list[dict] = []
-                super().__init__()
-
-            @property
-            def extractors(self) -> dict[str, WindowExtractor]:
-                return {
-                    key: WindowExtractor(self._window_size)
-                    for key in self._assembler_keys
-                }
-
-            def trigger(self, data: dict) -> None:
-                self.received_data.append(data)
-
-        # Create service and subscriber
-        service = DataService()
-        subscriber = WindowSubscriber({"data"}, window_size=3)
-        service.register_subscriber(subscriber)
-
-        # Add data progressively
-        for i in range(5):
-            data = sc.scalar(i, unit='counts')
-            service["data"] = data
-
-        # Subscriber should have received 6 updates (1 initial trigger + 5 data updates)
-        assert len(subscriber.received_data) == 6
-
-        # Last update should contain window of last 3 values
-        last_received = subscriber.received_data[-1]["data"]
-        # Window of size 3 from last updates (2, 3, 4)
-        assert last_received.sizes == {'time': 3}
-
     def test_buffer_size_determined_by_max_extractor_requirement(self):
         """Test that buffer size is set to max requirement among subscribers."""
         import scipp as sc
 
         from ess.livedata.dashboard.data_service import DataService
         from ess.livedata.dashboard.extractors import (
+            FullHistoryExtractor,
             LatestValueExtractor,
-            WindowExtractor,
         )
 
         class TestSubscriber(Subscriber[str]):
@@ -930,11 +887,11 @@ class TestExtractorBasedSubscription:
         # Add first data point - buffer should be size 1
         service["data"] = sc.scalar(1, unit='counts')
 
-        # Register subscriber with WindowExtractor(size=10)
-        sub2 = TestSubscriber({"data"}, WindowExtractor(10))
+        # Register subscriber with FullHistoryExtractor (size 10000)
+        sub2 = TestSubscriber({"data"}, FullHistoryExtractor())
         service.register_subscriber(sub2)
 
-        # Buffer should now grow to size 10
+        # Buffer should now grow to size 10000
         # Add more data to verify buffering works
         for i in range(2, 12):
             service["data"] = sc.scalar(i, unit='counts')
@@ -950,9 +907,9 @@ class TestExtractorBasedSubscription:
         assert last_from_sub1.ndim == 0  # Scalar (unwrapped)
         assert last_from_sub1.value == 11
 
-        # sub2 should get window of last 10 values
+        # sub2 should get all history
         last_from_sub2 = sub2.received_data[-1]["data"]
-        assert last_from_sub2.sizes == {'time': 10}
+        assert last_from_sub2.sizes == {'time': 11}
 
     def test_multiple_keys_with_different_extractors(self):
         """Test subscriber with different extractors per key."""
@@ -960,8 +917,8 @@ class TestExtractorBasedSubscription:
 
         from ess.livedata.dashboard.data_service import DataService
         from ess.livedata.dashboard.extractors import (
+            FullHistoryExtractor,
             LatestValueExtractor,
-            WindowExtractor,
         )
 
         class MultiKeySubscriber(Subscriber[str]):
@@ -973,7 +930,7 @@ class TestExtractorBasedSubscription:
             def extractors(self) -> dict:
                 return {
                     "latest": LatestValueExtractor(),
-                    "window": WindowExtractor(3),
+                    "history": FullHistoryExtractor(),
                 }
 
             def trigger(self, data: dict) -> None:
@@ -986,7 +943,7 @@ class TestExtractorBasedSubscription:
         # Add data to both keys
         for i in range(5):
             service["latest"] = sc.scalar(i * 10, unit='counts')
-            service["window"] = sc.scalar(i * 100, unit='counts')
+            service["history"] = sc.scalar(i * 100, unit='counts')
 
         # Should have received updates (batched in transaction would be less,
         # but here each setitem triggers separately)
@@ -999,6 +956,6 @@ class TestExtractorBasedSubscription:
         if "latest" in last_data:
             assert last_data["latest"].ndim == 0
 
-        # "window" should have time dimension
-        if "window" in last_data:
-            assert "time" in last_data["window"].dims
+        # "history" should return all accumulated values with time dimension
+        if "history" in last_data:
+            assert "time" in last_data["history"].dims

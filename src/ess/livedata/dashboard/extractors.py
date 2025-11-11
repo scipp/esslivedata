@@ -58,34 +58,6 @@ class LatestValueExtractor(UpdateExtractor):
         return buffer.get_latest()
 
 
-class WindowExtractor(UpdateExtractor):
-    """Extracts a window from the end of the buffer."""
-
-    def __init__(self, size: int) -> None:
-        """
-        Initialize window extractor.
-
-        Parameters
-        ----------
-        size:
-            Number of elements to extract from the end of the buffer.
-        """
-        self._size = size
-
-    @property
-    def window_size(self) -> int:
-        """Return the window size."""
-        return self._size
-
-    def get_required_size(self) -> int:
-        """Window extractor requires buffer size equal to window size."""
-        return self._size
-
-    def extract(self, buffer: Buffer) -> Any:
-        """Extract a window of data from the end of the buffer."""
-        return buffer.get_window(self._size)
-
-
 class FullHistoryExtractor(UpdateExtractor):
     """Extracts the complete buffer history."""
 
