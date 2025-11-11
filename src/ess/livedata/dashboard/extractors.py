@@ -92,3 +92,55 @@ class FullHistoryExtractor(UpdateExtractor):
     def extract(self, buffer: Buffer) -> Any:
         """Extract all data from the buffer."""
         return buffer.get_all()
+
+
+class WindowAggregatingExtractor(UpdateExtractor):
+    """Extracts a window from the buffer and aggregates over the time dimension."""
+
+    def __init__(
+        self, window_size: int, aggregation: str = 'sum', concat_dim: str = 'time'
+    ) -> None:
+        """
+        Initialize window aggregating extractor.
+
+        Parameters
+        ----------
+        window_size:
+            Number of frames to extract from the end of the buffer.
+        aggregation:
+            Aggregation method: 'sum', 'mean', 'last', or 'max'.
+        concat_dim:
+            Name of the dimension to aggregate over.
+        """
+        self._window_size = window_size
+        self._aggregation = aggregation
+        self._concat_dim = concat_dim
+
+    def get_required_size(self) -> int:
+        """Window aggregating extractor requires buffer size equal to window size."""
+        return self._window_size
+
+    def extract(self, buffer: Buffer) -> Any:
+        """Extract a window of data and aggregate over the time dimension."""
+        data = buffer.get_window(self._window_size)
+
+        if data is None:
+            return None
+
+        # Check if concat dimension exists in the data
+        if not hasattr(data, 'dims') or self._concat_dim not in data.dims:
+            # Data doesn't have the expected dimension structure, return as-is
+            return data
+
+        # Aggregate over the concat dimension
+        if self._aggregation == 'sum':
+            return data.sum(self._concat_dim)
+        elif self._aggregation == 'mean':
+            return data.mean(self._concat_dim)
+        elif self._aggregation == 'last':
+            # Return the last frame (equivalent to latest)
+            return data[self._concat_dim, -1]
+        elif self._aggregation == 'max':
+            return data.max(self._concat_dim)
+        else:
+            raise ValueError(f"Unknown aggregation method: {self._aggregation}")

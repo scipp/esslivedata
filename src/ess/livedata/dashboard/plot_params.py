@@ -14,6 +14,22 @@ def _get_default_max_roi_count() -> int:
     return get_roi_mapper().total_rois
 
 
+class WindowMode(str, enum.Enum):
+    """Enumeration of extraction modes."""
+
+    latest = 'latest'
+    window = 'window'
+
+
+class WindowAggregation(str, enum.Enum):
+    """Enumeration of aggregation methods for window mode."""
+
+    sum = 'sum'
+    mean = 'mean'
+    last = 'last'
+    max = 'max'
+
+
 class PlotScale(str, enum.Enum):
     """Enumeration of plot scales."""
 
@@ -111,6 +127,28 @@ class LayoutParams(pydantic.BaseModel):
     )
 
 
+class WindowParams(pydantic.BaseModel):
+    """Parameters for windowing and aggregation."""
+
+    mode: WindowMode = pydantic.Field(
+        default=WindowMode.latest,
+        description="Extraction mode: 'latest' for single frame, 'window' for window.",
+        title="Mode",
+    )
+    window_size: int = pydantic.Field(
+        default=10,
+        description="Number of frames to aggregate in window mode.",
+        title="Window Size",
+        ge=1,
+        le=100,
+    )
+    aggregation: WindowAggregation = pydantic.Field(
+        default=WindowAggregation.sum,
+        description="Aggregation method for window mode.",
+        title="Aggregation",
+    )
+
+
 class PlotParamsBase(pydantic.BaseModel):
     """Base class for plot parameters."""
 
@@ -127,6 +165,10 @@ class PlotParamsBase(pydantic.BaseModel):
 class PlotParams1d(PlotParamsBase):
     """Common parameters for 1d plots."""
 
+    window: WindowParams = pydantic.Field(
+        default_factory=WindowParams,
+        description="Windowing and aggregation options.",
+    )
     plot_scale: PlotScaleParams = pydantic.Field(
         default_factory=PlotScaleParams,
         description="Scaling options for the plot axes.",
@@ -136,6 +178,10 @@ class PlotParams1d(PlotParamsBase):
 class PlotParams2d(PlotParamsBase):
     """Common parameters for 2d plots."""
 
+    window: WindowParams = pydantic.Field(
+        default_factory=WindowParams,
+        description="Windowing and aggregation options.",
+    )
     plot_scale: PlotScaleParams2d = pydantic.Field(
         default_factory=PlotScaleParams2d,
         description="Scaling options for the plot and color axes.",
@@ -145,6 +191,10 @@ class PlotParams2d(PlotParamsBase):
 class PlotParams3d(PlotParamsBase):
     """Parameters for 3D slicer plots."""
 
+    window: WindowParams = pydantic.Field(
+        default_factory=WindowParams,
+        description="Windowing and aggregation options.",
+    )
     plot_scale: PlotScaleParams2d = pydantic.Field(
         default_factory=PlotScaleParams2d,
         description="Scaling options for the plot axes and color.",

@@ -18,7 +18,13 @@ from ess.livedata.config.workflow_spec import (
 
 from .config_store import ConfigStore
 from .configuration_adapter import ConfigurationState
+from .extractors import (
+    LatestValueExtractor,
+    UpdateExtractor,
+    WindowAggregatingExtractor,
+)
 from .job_service import JobService
+from .plot_params import WindowMode
 from .plotting import PlotterSpec, plotter_registry
 from .roi_detector_plot_factory import ROIDetectorPlotFactory
 from .roi_publisher import ROIPublisher
@@ -228,6 +234,50 @@ class PlottingController:
         )
         self._config_store[plotter_id] = config_state.model_dump()
 
+    def _create_extractors(
+        self,
+        keys: list[ResultKey],
+        spec: PlotterSpec,
+        params: pydantic.BaseModel,
+    ) -> dict[ResultKey, UpdateExtractor]:
+        """
+        Create extractors based on plotter requirements and parameters.
+
+        Parameters
+        ----------
+        keys:
+            Result keys to create extractors for.
+        spec:
+            Plotter specification containing data requirements.
+        params:
+            Plotter parameters potentially containing window configuration.
+
+        Returns
+        -------
+        :
+            Dictionary mapping result keys to extractor instances.
+        """
+        if spec.data_requirements.required_extractor is not None:
+            # Plotter requires specific extractor (e.g., TimeSeriesPlotter)
+            extractor_type = spec.data_requirements.required_extractor
+            return {key: extractor_type() for key in keys}
+
+        # No fixed requirement - check if params have window config
+        if hasattr(params, 'window'):
+            if params.window.mode == WindowMode.latest:
+                return {key: LatestValueExtractor() for key in keys}
+            else:  # mode == WindowMode.window
+                return {
+                    key: WindowAggregatingExtractor(
+                        window_size=params.window.window_size,
+                        aggregation=params.window.aggregation.value,
+                    )
+                    for key in keys
+                }
+
+        # Fallback to latest value extractor
+        return {key: LatestValueExtractor() for key in keys}
+
     def create_plot(
         self,
         job_number: JobNumber,
@@ -293,10 +343,9 @@ class PlottingController:
                 plots.extend([detector_with_boxes, roi_spectrum])
             return hv.Layout(plots).cols(2).opts(shared_axes=False)
 
-        # Look up required extractor type from plotter specification
+        # Create extractors based on plotter requirements and params
         spec = plotter_registry.get_spec(plot_name)
-        extractor_type = spec.data_requirements.required_extractor
-        extractors = {key: extractor_type() for key in keys}
+        extractors = self._create_extractors(keys, spec, params)
 
         pipe = self._stream_manager.make_merging_stream(extractors)
         plotter = plotter_registry.create_plotter(plot_name, params=params)

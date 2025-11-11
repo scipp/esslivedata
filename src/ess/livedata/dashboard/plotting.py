@@ -33,7 +33,7 @@ class DataRequirements:
 
     min_dims: int
     max_dims: int
-    required_extractor: type[UpdateExtractor]
+    required_extractor: type[UpdateExtractor] | None = None
     required_coords: list[str] = field(default_factory=list)
     multiple_datasets: bool = True
     custom_validators: list[Callable[[sc.DataArray], bool]] = field(
@@ -162,9 +162,7 @@ plotter_registry.register_plotter(
     name='image',
     title='Image',
     description='Plot the data as a images.',
-    data_requirements=DataRequirements(
-        min_dims=2, max_dims=2, required_extractor=LatestValueExtractor
-    ),
+    data_requirements=DataRequirements(min_dims=2, max_dims=2, required_extractor=None),
     factory=ImagePlotter.from_params,
 )
 
@@ -177,7 +175,7 @@ plotter_registry.register_plotter(
         min_dims=1,
         max_dims=1,
         multiple_datasets=True,
-        required_extractor=LatestValueExtractor,
+        required_extractor=None,
     ),
     factory=LinePlotter.from_params,
 )
@@ -205,7 +203,7 @@ plotter_registry.register_plotter(
         min_dims=3,
         max_dims=3,
         multiple_datasets=False,
-        required_extractor=LatestValueExtractor,
+        required_extractor=None,
         custom_validators=[_all_coords_evenly_spaced],
     ),
     factory=SlicerPlotter.from_params,

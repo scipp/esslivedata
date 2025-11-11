@@ -9,6 +9,7 @@ from ess.livedata.dashboard.buffer_strategy import BufferFactory
 from ess.livedata.dashboard.extractors import (
     FullHistoryExtractor,
     LatestValueExtractor,
+    WindowAggregatingExtractor,
     WindowExtractor,
 )
 
@@ -230,3 +231,130 @@ class TestExtractorIntegration:
         result = extractor.extract(buffer)
         # Result should be the scalar value
         assert isinstance(result, sc.Variable) or result == data
+
+
+class TestWindowAggregatingExtractor:
+    """Tests for WindowAggregatingExtractor."""
+
+    def test_get_required_size(self):
+        """Test that WindowAggregatingExtractor requires size equal to window size."""
+        extractor = WindowAggregatingExtractor(window_size=5)
+        assert extractor.get_required_size() == 5
+
+    def test_sum_aggregation_scipp(self, buffer_factory: BufferFactory):
+        """Test sum aggregation over time dimension."""
+        extractor = WindowAggregatingExtractor(window_size=3, aggregation='sum')
+
+        # Create 2D data with time dimension
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.arange('x', 3, unit='m')},
+        )
+
+        buffer = buffer_factory.create_buffer(data, max_size=3)
+        buffer.append(data)
+        buffer.append(data * 2)
+        buffer.append(data * 3)
+
+        result = extractor.extract(buffer)
+
+        # Result should be summed over time (no time dimension)
+        assert 'time' not in result.dims
+        # Sum: [1,2,3] + [2,4,6] + [3,6,9] = [6,12,18]
+        assert sc.allclose(result.data, sc.array(dims=['x'], values=[6.0, 12.0, 18.0]))
+
+    def test_mean_aggregation_scipp(self, buffer_factory: BufferFactory):
+        """Test mean aggregation over time dimension."""
+        extractor = WindowAggregatingExtractor(window_size=3, aggregation='mean')
+
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.arange('x', 3, unit='m')},
+        )
+
+        buffer = buffer_factory.create_buffer(data, max_size=3)
+        buffer.append(data)
+        buffer.append(data * 2)
+        buffer.append(data * 4)
+
+        result = extractor.extract(buffer)
+
+        # Mean: ([1,2,3] + [2,4,6] + [4,8,12]) / 3 = [7,14,21] / 3
+        expected = sc.array(dims=['x'], values=[7.0 / 3, 14.0 / 3, 21.0 / 3])
+        assert sc.allclose(result.data, expected)
+
+    def test_last_aggregation_scipp(self, buffer_factory: BufferFactory):
+        """Test last aggregation (returns last frame)."""
+        extractor = WindowAggregatingExtractor(window_size=3, aggregation='last')
+
+        data1 = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.arange('x', 3, unit='m')},
+        )
+        data2 = sc.DataArray(
+            sc.array(dims=['x'], values=[4.0, 5.0, 6.0], unit='counts'),
+            coords={'x': sc.arange('x', 3, unit='m')},
+        )
+
+        buffer = buffer_factory.create_buffer(data1, max_size=3)
+        buffer.append(data1)
+        buffer.append(data2)
+
+        result = extractor.extract(buffer)
+
+        # Should return the last frame
+        assert 'time' not in result.dims
+        assert sc.allclose(result.data, sc.array(dims=['x'], values=[4.0, 5.0, 6.0]))
+
+    def test_max_aggregation_scipp(self, buffer_factory: BufferFactory):
+        """Test max aggregation over time dimension."""
+        extractor = WindowAggregatingExtractor(window_size=3, aggregation='max')
+
+        data1 = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 5.0, 2.0], unit='counts'),
+            coords={'x': sc.arange('x', 3, unit='m')},
+        )
+        data2 = sc.DataArray(
+            sc.array(dims=['x'], values=[3.0, 2.0, 4.0], unit='counts'),
+            coords={'x': sc.arange('x', 3, unit='m')},
+        )
+
+        buffer = buffer_factory.create_buffer(data1, max_size=3)
+        buffer.append(data1)
+        buffer.append(data2)
+
+        result = extractor.extract(buffer)
+
+        # Max of [1,5,2] and [3,2,4] = [3,5,4]
+        assert sc.allclose(result.data, sc.array(dims=['x'], values=[3.0, 5.0, 4.0]))
+
+    def test_extract_empty_buffer_returns_none(self, buffer_factory: BufferFactory):
+        """Test that extracting from empty buffer returns None."""
+        extractor = WindowAggregatingExtractor(window_size=3, aggregation='sum')
+        buffer = buffer_factory.create_buffer(sc.scalar(1.0), max_size=3)
+
+        result = extractor.extract(buffer)
+        assert result is None
+
+    def test_extract_non_scipp_data_returns_as_is(self, buffer_factory: BufferFactory):
+        """Test that non-scipp data without dims is returned as-is."""
+        extractor = WindowAggregatingExtractor(window_size=3, aggregation='sum')
+        buffer = buffer_factory.create_buffer(42, max_size=3)
+        buffer.append(42)
+
+        result = extractor.extract(buffer)
+        # Should return the raw data since it doesn't have dims
+        assert result == [42]
+
+    def test_invalid_aggregation_raises_error(self, buffer_factory: BufferFactory):
+        """Test that invalid aggregation method raises error."""
+        extractor = WindowAggregatingExtractor(window_size=2, aggregation='invalid')
+
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0], unit='counts'),
+        )
+        buffer = buffer_factory.create_buffer(data, max_size=2)
+        buffer.append(data)
+
+        with pytest.raises(ValueError, match="Unknown aggregation method"):
+            extractor.extract(buffer)
