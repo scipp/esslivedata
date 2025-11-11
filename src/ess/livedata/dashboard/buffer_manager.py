@@ -33,7 +33,7 @@ class _BufferState(Generic[T]):
 
     buffer: Buffer[T]
     requirements: list[TemporalRequirement] = field(default_factory=list)
-    needs_growth: bool = True
+    needs_growth: bool = field(default=False)
 
 
 class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
@@ -93,9 +93,12 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
             raise ValueError(f"Buffer with key {key} already exists")
 
         buffer = self._buffer_factory.create_buffer(template, max_size=1)
-        self._states[key] = _BufferState(
-            buffer=buffer, requirements=list(requirements), needs_growth=True
+        state = _BufferState(buffer=buffer, requirements=list(requirements))
+        # Compute initial needs_growth based on whether requirements are fulfilled
+        state.needs_growth = any(
+            not self._is_requirement_fulfilled(req, buffer) for req in requirements
         )
+        self._states[key] = state
 
     def update_buffer(self, key: K, data: T) -> None:
         """
@@ -116,107 +119,106 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
 
         state = self._states[key]
 
-        # Cheap flag check - only validate/resize if growth is still needed
-        if state.needs_growth and state.requirements:
-            if not self._validate_coverage(key):
-                self._resize_buffer(key)
-            else:
-                # Target coverage reached - disable further checks for efficiency
-                state.needs_growth = False
+        # Compute if buffer needs to grow to satisfy requirements
+        state.needs_growth = self._compute_needs_growth(state)
+        if state.needs_growth:
+            self._resize_buffer(state)
 
         # Append data - buffer is properly sized
         state.buffer.append(data)
 
-    def _validate_coverage(self, key: K) -> bool:
+    def _compute_needs_growth(self, state: _BufferState[T]) -> bool:
         """
-        Check if buffer currently provides sufficient coverage.
+        Compute whether buffer needs to grow to satisfy requirements.
+
+        Returns True if any requirement is unfulfilled AND buffer is not at capacity.
 
         Parameters
         ----------
-        key:
-            Key identifying the buffer to validate.
+        state:
+            The buffer state to check.
 
         Returns
         -------
         :
-            True if buffer satisfies all requirements, False otherwise.
+            True if buffer should grow, False otherwise.
         """
-        state = self._states[key]
-        temporal_coverage = state.buffer.get_temporal_coverage()
         frame_count = state.buffer.get_frame_count()
 
+        # Already at max capacity - don't grow further
+        if frame_count >= MAX_CAPACITY:
+            return False
+
+        # Check if any requirement is unfulfilled
         for requirement in state.requirements:
-            if isinstance(requirement, LatestFrame):
-                if frame_count < 1:
-                    return False
-            elif isinstance(requirement, TimeWindow):
-                # For temporal requirements, check actual time coverage
-                if temporal_coverage is not None:
-                    # Need at least 2 frames to calculate temporal coverage
-                    if frame_count < 2:
-                        return False
-                    if temporal_coverage < requirement.duration_seconds:
-                        return False
-                else:
-                    # No time coordinate - use heuristic (assume 10 Hz)
-                    # Buffer should have at least duration * 10 frames
-                    expected_frames = max(100, int(requirement.duration_seconds * 10))
-                    if frame_count < expected_frames:
-                        return False
-            elif isinstance(requirement, CompleteHistory):
-                # For complete history, buffer should grow until MAX_FRAMES
-                if frame_count < requirement.MAX_FRAMES:
-                    # Not yet at maximum capacity, should resize
-                    return False
+            if not self._is_requirement_fulfilled(requirement, state.buffer):
+                return True
 
-        return True
+        return False
 
-    def _resize_buffer(self, key: K) -> None:
+    def _is_requirement_fulfilled(
+        self, requirement: TemporalRequirement, buffer: Buffer[T]
+    ) -> bool:
         """
-        Resize buffer to satisfy requirements.
+        Check if a single requirement is satisfied by current buffer state.
 
         Parameters
         ----------
-        key:
-            Key identifying the buffer to resize.
+        requirement:
+            The temporal requirement to check.
+        buffer:
+            The buffer to check against.
+
+        Returns
+        -------
+        :
+            True if requirement is satisfied, False otherwise.
         """
-        state = self._states[key]
+        frame_count = buffer.get_frame_count()
+
+        if isinstance(requirement, LatestFrame):
+            return frame_count >= 1
+
+        elif isinstance(requirement, TimeWindow):
+            # Need at least 2 frames to have meaningful temporal coverage
+            if frame_count < 2:
+                return False
+
+            temporal_coverage = buffer.get_temporal_coverage()
+            if temporal_coverage is not None:
+                # Have time coordinate - use actual temporal coverage
+                return temporal_coverage >= requirement.duration_seconds
+            else:
+                # No time coordinate - use simple heuristic (assume 10 Hz)
+                min_frames = int(requirement.duration_seconds * 10)
+                return frame_count >= min_frames
+
+        elif isinstance(requirement, CompleteHistory):
+            # Complete history needs to reach max capacity
+            return frame_count >= CompleteHistory.MAX_FRAMES
+
+        return True
+
+    def _resize_buffer(self, state: _BufferState[T]) -> None:
+        """
+        Resize buffer by doubling its size (capped at MAX_CAPACITY).
+
+        Parameters
+        ----------
+        state:
+            The buffer state to resize.
+        """
         current_size = state.buffer.get_frame_count()
-        temporal_coverage = state.buffer.get_temporal_coverage()
 
-        # Calculate new size based on requirements
-        new_size = current_size
+        # Double the size, capped at maximum
+        new_size = min(int(current_size * GROWTH_FACTOR), MAX_CAPACITY)
 
-        for requirement in state.requirements:
-            if isinstance(requirement, TimeWindow):
-                if temporal_coverage is not None and temporal_coverage > 0:
-                    # We have time coverage - calculate needed frames
-                    frames_per_second = current_size / temporal_coverage
-                    # 20% headroom
-                    needed_frames = int(
-                        requirement.duration_seconds * frames_per_second * 1.2
-                    )
-                    new_size = max(new_size, needed_frames)
-                else:
-                    # No time coverage - use heuristic (assume 10 Hz)
-                    target_frames = max(100, int(requirement.duration_seconds * 10))
-                    new_size = max(new_size, target_frames)
-            elif isinstance(requirement, CompleteHistory):
-                # Grow towards max
-                new_size = max(new_size, int(current_size * GROWTH_FACTOR))
-
-        # Cap at maximum and ensure we actually grow
-        new_size = min(max(new_size, int(current_size * GROWTH_FACTOR)), MAX_CAPACITY)
-
-        if new_size > current_size:
-            logger.debug(
-                "Resizing buffer %s from %d to %d frames (coverage: %s s)",
-                key,
-                current_size,
-                new_size,
-                temporal_coverage,
-            )
-            state.buffer.set_max_size(new_size)
+        logger.debug(
+            "Growing buffer from %d to %d frames",
+            current_size,
+            new_size,
+        )
+        state.buffer.set_max_size(new_size)
 
     def add_requirement(self, key: K, requirement: TemporalRequirement) -> None:
         """
@@ -236,11 +238,10 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
 
         state = self._states[key]
         state.requirements.append(requirement)
-        state.needs_growth = True  # Re-enable growth checks
 
         # Check if resize needed immediately
-        if not self._validate_coverage(key):
-            self._resize_buffer(key)
+        if self._compute_needs_growth(state):
+            self._resize_buffer(state)
 
     def get_buffer(self, key: K) -> Buffer[T]:
         """
