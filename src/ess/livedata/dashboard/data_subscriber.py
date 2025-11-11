@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Hashable
+from collections.abc import Callable, Hashable, Mapping
 from typing import Any, Generic, Protocol, TypeVar
 
 from ess.livedata.config.workflow_spec import ResultKey
-from ess.livedata.dashboard.data_service import Subscriber
+from ess.livedata.dashboard.data_service import Subscriber, UpdateExtractor
 
 
 class PipeBase(Protocol):
@@ -41,6 +41,7 @@ class Pipe(PipeBase):
 
 
 Key = TypeVar('Key', bound=Hashable)
+P = TypeVar('P', bound=PipeBase)
 
 
 class StreamAssembler(ABC, Generic[Key]):
@@ -86,37 +87,45 @@ class StreamAssembler(ABC, Generic[Key]):
         """
 
 
-class DataSubscriber(Subscriber[Key]):
+class DataSubscriber(Subscriber[Key], Generic[Key, P]):
     """Unified subscriber that uses a StreamAssembler to process data."""
 
     def __init__(
         self,
         assembler: StreamAssembler[Key],
-        pipe: PipeBase,
-        extractors: dict[Key, Any],
+        pipe_factory: Callable[[dict[Key, Any]], P],
+        extractors: Mapping[Key, UpdateExtractor],
     ) -> None:
         """
-        Initialize the subscriber with an assembler and pipe.
+        Initialize the subscriber with an assembler and pipe factory.
 
         Parameters
         ----------
         assembler:
             The assembler responsible for processing the data.
-        pipe:
-            The pipe to send assembled data to.
+        pipe_factory:
+            Factory function to create the pipe on first trigger.
         extractors:
-            Dictionary mapping keys to their UpdateExtractor instances.
+            Mapping from keys to their UpdateExtractor instances.
         """
         self._assembler = assembler
-        self._pipe = pipe
+        self._pipe_factory = pipe_factory
+        self._pipe: P | None = None
         self._extractors = extractors
         # Initialize parent class to cache keys
         super().__init__()
 
     @property
-    def extractors(self) -> dict[Key, Any]:
+    def extractors(self) -> Mapping[Key, UpdateExtractor]:
         """Return extractors for obtaining data views."""
         return self._extractors
+
+    @property
+    def pipe(self) -> P:
+        """Return the pipe (must be created by first trigger)."""
+        if self._pipe is None:
+            raise RuntimeError("Pipe not yet initialized - subscriber not triggered")
+        return self._pipe
 
     def trigger(self, store: dict[Key, Any]) -> None:
         """
@@ -129,7 +138,13 @@ class DataSubscriber(Subscriber[Key]):
         """
         data = {key: store[key] for key in self.keys if key in store}
         assembled_data = self._assembler.assemble(data)
-        self._pipe.send(assembled_data)
+
+        if self._pipe is None:
+            # First trigger - create pipe with correctly extracted data
+            self._pipe = self._pipe_factory(assembled_data)
+        else:
+            # Subsequent triggers - send to existing pipe
+            self._pipe.send(assembled_data)
 
 
 class MergingStreamAssembler(StreamAssembler):

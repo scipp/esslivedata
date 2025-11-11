@@ -297,7 +297,7 @@ class PlottingController:
         extractor_type = spec.data_requirements.required_extractor
         extractors = {key: extractor_type() for key in items.keys()}
 
-        pipe = self._stream_manager.make_merging_stream(items, extractors=extractors)
+        pipe = self._stream_manager.make_merging_stream(extractors)
         plotter = plotter_registry.create_plotter(plot_name, params=params)
 
         # Initialize plotter with initial data to determine kdims

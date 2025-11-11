@@ -33,7 +33,8 @@ class FakeStreamAssembler(StreamAssembler[str]):
 class FakePipe(Pipe):
     """Fake implementation of Pipe for testing."""
 
-    def __init__(self) -> None:
+    def __init__(self, data: Any = None) -> None:
+        self.init_data = data
         self.send_calls: list[Any] = []
 
     def send(self, data: Any) -> None:
@@ -59,6 +60,17 @@ def fake_pipe() -> FakePipe:
 
 
 @pytest.fixture
+def fake_pipe_factory():
+    """Fake pipe factory for testing."""
+
+    def factory(data: Any) -> FakePipe:
+        """Factory that creates a new FakePipe with the given data."""
+        return FakePipe(data)
+
+    return factory
+
+
+@pytest.fixture
 def sample_extractors(sample_keys: set[str]) -> dict[str, LatestValueExtractor]:
     """Sample extractors for testing."""
     return {key: LatestValueExtractor() for key in sample_keys}
@@ -67,27 +79,30 @@ def sample_extractors(sample_keys: set[str]) -> dict[str, LatestValueExtractor]:
 @pytest.fixture
 def subscriber(
     fake_assembler: FakeStreamAssembler,
-    fake_pipe: FakePipe,
+    fake_pipe_factory,
     sample_extractors: dict[str, LatestValueExtractor],
 ) -> DataSubscriber[str]:
     """DataSubscriber instance for testing."""
-    return DataSubscriber(fake_assembler, fake_pipe, sample_extractors)
+    return DataSubscriber(fake_assembler, fake_pipe_factory, sample_extractors)
 
 
 class TestDataSubscriber:
     """Test cases for DataSubscriber class."""
 
-    def test_init_stores_assembler_and_pipe(
+    def test_init_stores_assembler_and_pipe_factory(
         self,
         fake_assembler: FakeStreamAssembler,
-        fake_pipe: FakePipe,
+        fake_pipe_factory,
         sample_extractors: dict[str, LatestValueExtractor],
     ) -> None:
-        """Test that initialization stores the assembler and pipe correctly."""
-        subscriber = DataSubscriber(fake_assembler, fake_pipe, sample_extractors)
+        """Test that initialization stores the assembler and pipe factory correctly."""
+        subscriber = DataSubscriber(
+            fake_assembler, fake_pipe_factory, sample_extractors
+        )
 
         assert subscriber._assembler is fake_assembler
-        assert subscriber._pipe is fake_pipe
+        assert subscriber._pipe_factory is fake_pipe_factory
+        assert subscriber._pipe is None  # Pipe not yet created
         assert subscriber._extractors is sample_extractors
 
     def test_keys_returns_assembler_keys(
@@ -96,11 +111,27 @@ class TestDataSubscriber:
         """Test that keys property returns the assembler's keys."""
         assert subscriber.keys == sample_keys
 
+    def test_pipe_created_on_first_trigger(
+        self,
+        subscriber: DataSubscriber,
+    ) -> None:
+        """Test that pipe is created on first trigger."""
+        # Before trigger, accessing pipe raises error
+        with pytest.raises(RuntimeError, match="not yet initialized"):
+            _ = subscriber.pipe
+
+        # Trigger subscriber
+        subscriber.trigger({'key1': 'value1'})
+
+        # After trigger, pipe is accessible and has correct data
+        pipe = subscriber.pipe
+        assert isinstance(pipe, FakePipe)
+        assert pipe.init_data == 'assembled_data'
+
     def test_trigger_with_complete_data(
         self,
         subscriber: DataSubscriber,
         fake_assembler: FakeStreamAssembler,
-        fake_pipe: FakePipe,
     ) -> None:
         """Test trigger method when all required keys are present in store."""
         store = {
@@ -117,15 +148,15 @@ class TestDataSubscriber:
         expected_data = {'key1': 'value1', 'key2': 'value2', 'key3': 'value3'}
         assert fake_assembler.assemble_calls[0] == expected_data
 
-        # Verify pipe was called with assembled data
-        assert len(fake_pipe.send_calls) == 1
-        assert fake_pipe.send_calls[0] == 'assembled_data'
+        # Verify pipe was created with assembled data (first trigger)
+        pipe = subscriber.pipe
+        assert pipe.init_data == 'assembled_data'
+        assert len(pipe.send_calls) == 0  # First trigger creates, doesn't send
 
     def test_trigger_with_partial_data(
         self,
         subscriber: DataSubscriber,
         fake_assembler: FakeStreamAssembler,
-        fake_pipe: FakePipe,
     ) -> None:
         """Test trigger method when only some required keys are present in store."""
         store = {'key1': 'value1', 'key3': 'value3', 'unrelated_key': 'unrelated_value'}
@@ -137,15 +168,15 @@ class TestDataSubscriber:
         expected_data = {'key1': 'value1', 'key3': 'value3'}
         assert fake_assembler.assemble_calls[0] == expected_data
 
-        # Verify pipe was called
-        assert len(fake_pipe.send_calls) == 1
-        assert fake_pipe.send_calls[0] == 'assembled_data'
+        # Verify pipe was created with assembled data
+        pipe = subscriber.pipe
+        assert pipe.init_data == 'assembled_data'
+        assert len(pipe.send_calls) == 0
 
     def test_trigger_with_empty_store(
         self,
         subscriber: DataSubscriber,
         fake_assembler: FakeStreamAssembler,
-        fake_pipe: FakePipe,
     ) -> None:
         """Test trigger method with an empty store."""
         store: dict[str, Any] = {}
@@ -156,15 +187,15 @@ class TestDataSubscriber:
         assert len(fake_assembler.assemble_calls) == 1
         assert fake_assembler.assemble_calls[0] == {}
 
-        # Verify pipe was called
-        assert len(fake_pipe.send_calls) == 1
-        assert fake_pipe.send_calls[0] == 'assembled_data'
+        # Verify pipe was created with assembled data
+        pipe = subscriber.pipe
+        assert pipe.init_data == 'assembled_data'
+        assert len(pipe.send_calls) == 0
 
     def test_trigger_with_no_matching_keys(
         self,
         subscriber: DataSubscriber,
         fake_assembler: FakeStreamAssembler,
-        fake_pipe: FakePipe,
     ) -> None:
         """Test trigger method when store contains no matching keys."""
         store = {'other_key1': 'value1', 'other_key2': 'value2'}
@@ -175,15 +206,15 @@ class TestDataSubscriber:
         assert len(fake_assembler.assemble_calls) == 1
         assert fake_assembler.assemble_calls[0] == {}
 
-        # Verify pipe was called
-        assert len(fake_pipe.send_calls) == 1
-        assert fake_pipe.send_calls[0] == 'assembled_data'
+        # Verify pipe was created with assembled data
+        pipe = subscriber.pipe
+        assert pipe.init_data == 'assembled_data'
+        assert len(pipe.send_calls) == 0
 
     def test_trigger_multiple_calls(
         self,
         subscriber: DataSubscriber,
         fake_assembler: FakeStreamAssembler,
-        fake_pipe: FakePipe,
     ) -> None:
         """Test multiple calls to trigger method."""
         store1 = {'key1': 'value1', 'key2': 'value2'}
@@ -200,8 +231,11 @@ class TestDataSubscriber:
             'key3': 'value3',
         }
 
-        assert len(fake_pipe.send_calls) == 2
-        assert all(call == 'assembled_data' for call in fake_pipe.send_calls)
+        # First call creates pipe, second call sends
+        pipe = subscriber.pipe
+        assert pipe.init_data == 'assembled_data'
+        assert len(pipe.send_calls) == 1
+        assert pipe.send_calls[0] == 'assembled_data'
 
     def test_trigger_with_different_assembled_data(self, sample_keys: set[str]) -> None:
         """Test trigger method with assembler that returns different data types."""
@@ -210,14 +244,16 @@ class TestDataSubscriber:
 
         for value in assembled_values:
             assembler = FakeStreamAssembler(sample_keys, value)
-            pipe = FakePipe()
-            subscriber = DataSubscriber(assembler, pipe, extractors)
+            pipe_factory = lambda data: FakePipe(data)  # noqa: E731
+            subscriber = DataSubscriber(assembler, pipe_factory, extractors)
 
             store = {'key1': 'test_value'}
             subscriber.trigger(store)
 
-            assert len(pipe.send_calls) == 1
-            assert pipe.send_calls[0] == value
+            # First trigger creates pipe with data
+            pipe = subscriber.pipe
+            assert pipe.init_data == value
+            assert len(pipe.send_calls) == 0
 
 
 class TestMergingStreamAssembler:

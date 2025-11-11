@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Hashable, Iterator, MutableMapping
+from collections.abc import Callable, Hashable, Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
 from typing import Any, Generic, TypeVar
 
@@ -155,7 +155,7 @@ class Subscriber(ABC, Generic[K]):
 
     @property
     @abstractmethod
-    def extractors(self) -> dict[K, UpdateExtractor]:
+    def extractors(self) -> Mapping[K, UpdateExtractor]:
         """
         Return extractors for obtaining data views.
 
@@ -250,6 +250,8 @@ class DataService(MutableMapping[K, V]):
         """
         Register a subscriber for updates with extractor-based data access.
 
+        Triggers the subscriber immediately with existing data using its extractors.
+
         Parameters
         ----------
         subscriber:
@@ -264,6 +266,16 @@ class DataService(MutableMapping[K, V]):
                 required_size = self._get_required_buffer_size(key)
                 # Resize buffer if needed (Buffer handles growth, never shrinks)
                 self._buffers[key].set_max_size(required_size)
+
+        # Trigger immediately with existing data using subscriber's extractors
+        existing_data = {}
+        for key in subscriber.keys:
+            if key in self._buffers:
+                data = subscriber.extractors[key].extract(self._buffers[key])
+                if data is not None:
+                    existing_data[key] = data
+
+        subscriber.trigger(existing_data)
 
     def register_update_callback(self, callback: Callable[[set[K]], None]) -> None:
         """

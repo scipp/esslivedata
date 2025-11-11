@@ -97,7 +97,7 @@ class TestStreamManager:
         }
         extractors = {key: LatestValueExtractor() for key in keys}
 
-        pipe = manager.make_merging_stream(keys, extractors)
+        pipe = manager.make_merging_stream(extractors)
 
         assert isinstance(pipe, FakePipe)
         assert fake_pipe_factory.call_count == 1
@@ -124,7 +124,7 @@ class TestStreamManager:
 
         keys = {key1, key2}
         extractors = {key: LatestValueExtractor() for key in keys}
-        pipe = manager.make_merging_stream(keys, extractors)
+        pipe = manager.make_merging_stream(extractors)
 
         # Send data for only one key
         data_service[key1] = sample_data
@@ -157,8 +157,8 @@ class TestStreamManager:
 
         extractors1 = {key1: LatestValueExtractor()}
         extractors2 = {key2: LatestValueExtractor()}
-        pipe1 = manager.make_merging_stream({key1}, extractors1)
-        pipe2 = manager.make_merging_stream({key2}, extractors2)
+        pipe1 = manager.make_merging_stream(extractors1)
+        pipe2 = manager.make_merging_stream(extractors2)
 
         # Send data for key1
         data_service[key1] = sample_data
@@ -190,7 +190,7 @@ class TestStreamManager:
         )
         extractors = {key: LatestValueExtractor()}
 
-        pipe = manager.make_merging_stream({key}, extractors)
+        pipe = manager.make_merging_stream(extractors)
 
         # Publish data
         data_service[key] = sample_data
@@ -222,7 +222,7 @@ class TestStreamManager:
 
         keys = {key1, key2}
         extractors = {key: LatestValueExtractor() for key in keys}
-        pipe = manager.make_merging_stream(keys, extractors)
+        pipe = manager.make_merging_stream(extractors)
 
         # Publish data for both keys
         sample_data2 = sc.DataArray(
@@ -254,7 +254,7 @@ class TestStreamManager:
         )
         extractors = {key: LatestValueExtractor()}
 
-        pipe = manager.make_merging_stream({key}, extractors)
+        pipe = manager.make_merging_stream(extractors)
 
         # Send initial data
         data_service[key] = sample_data
@@ -278,7 +278,7 @@ class TestStreamManager:
         )
 
         # Create stream with empty key set
-        pipe = manager.make_merging_stream(set(), {})
+        pipe = manager.make_merging_stream([])
 
         # Publish some data
         key = ResultKey(
@@ -310,8 +310,8 @@ class TestStreamManager:
 
         # Create two streams that both include the shared key
         extractors = {shared_key: LatestValueExtractor()}
-        pipe1 = manager.make_merging_stream({shared_key}, extractors)
-        pipe2 = manager.make_merging_stream({shared_key}, extractors)
+        pipe1 = manager.make_merging_stream(extractors)
+        pipe2 = manager.make_merging_stream(extractors)
 
         # Publish data to shared key
         data_service[shared_key] = sample_data
@@ -346,7 +346,7 @@ class TestStreamManager:
         )
         extractors = {target_key: LatestValueExtractor()}
 
-        pipe = manager.make_merging_stream({target_key}, extractors)
+        pipe = manager.make_merging_stream(extractors)
 
         # Publish data for unrelated key
         data_service[unrelated_key] = sample_data
@@ -391,9 +391,9 @@ class TestStreamManager:
         extractors1 = {key_a: LatestValueExtractor(), key_b: LatestValueExtractor()}
         extractors2 = {key_b: LatestValueExtractor(), key_c: LatestValueExtractor()}
         extractors3 = {key_a: LatestValueExtractor()}
-        pipe1 = manager.make_merging_stream({key_a, key_b}, extractors1)  # a, b
-        pipe2 = manager.make_merging_stream({key_b, key_c}, extractors2)  # b, c
-        pipe3 = manager.make_merging_stream({key_a}, extractors3)  # a only
+        pipe1 = manager.make_merging_stream(extractors1)  # a, b
+        pipe2 = manager.make_merging_stream(extractors2)  # b, c
+        pipe3 = manager.make_merging_stream(extractors3)  # a only
 
         # Create sample data
         data_a = sc.DataArray(data=sc.array(dims=[], values=[1]))
@@ -420,13 +420,13 @@ class TestStreamManager:
         assert pipe3.send_calls[0] == {key_a: data_a}
 
 
-class TestStreamManagerMakeMergingStreamFromKeys:
-    """Test cases for make_merging_stream_from_keys method."""
+class TestStreamManagerMakeMergingStreamWithoutInitialData:
+    """Test cases for make_merging_stream when subscribing to keys without data."""
 
-    def test_make_merging_stream_from_keys_initializes_with_empty_dict(
+    def test_make_merging_stream_initializes_with_empty_dict(
         self, data_service, fake_pipe_factory
     ):
-        """Test that make_merging_stream_from_keys initializes pipe with empty dict."""
+        """Test that make_merging_stream initializes pipe with empty dict."""
         manager = StreamManager(
             data_service=data_service, pipe_factory=fake_pipe_factory
         )
@@ -439,14 +439,14 @@ class TestStreamManagerMakeMergingStreamFromKeys:
         )
         keys = [key]
 
-        pipe = manager.make_merging_stream_from_keys(keys)
+        pipe = manager.make_merging_stream(keys)
 
         # Should initialize with empty dict
         assert isinstance(pipe, FakePipe)
         assert pipe.data == {}
         assert len(data_service._subscribers) == 1
 
-    def test_make_merging_stream_from_keys_receives_data_when_available(
+    def test_make_merging_stream_receives_data_when_available(
         self, data_service, fake_pipe_factory, sample_data
     ):
         """Test that pipe receives data when it becomes available."""
@@ -463,7 +463,7 @@ class TestStreamManagerMakeMergingStreamFromKeys:
         keys = [key]
 
         # Create stream first (no data yet)
-        pipe = manager.make_merging_stream_from_keys(keys)
+        pipe = manager.make_merging_stream(keys)
 
         # Initially empty
         assert pipe.data == {}
@@ -475,7 +475,7 @@ class TestStreamManagerMakeMergingStreamFromKeys:
         assert len(pipe.send_calls) == 1
         assert pipe.send_calls[0] == {key: sample_data}
 
-    def test_make_merging_stream_from_keys_with_multiple_keys(
+    def test_make_merging_stream_with_multiple_keys(
         self, data_service, fake_pipe_factory, sample_data
     ):
         """Test subscribing to multiple keys that don't have data yet."""
@@ -497,7 +497,7 @@ class TestStreamManagerMakeMergingStreamFromKeys:
         )
         keys = [key1, key2]
 
-        pipe = manager.make_merging_stream_from_keys(keys)
+        pipe = manager.make_merging_stream(keys)
 
         # Initially empty
         assert pipe.data == {}
@@ -510,7 +510,7 @@ class TestStreamManagerMakeMergingStreamFromKeys:
         assert key1 in pipe.send_calls[0]
         assert key2 not in pipe.send_calls[0]
 
-    def test_make_merging_stream_from_keys_uses_default_assembler(
+    def test_make_merging_stream_uses_default_assembler(
         self, data_service, fake_pipe_factory, sample_data
     ):
         """Test that default assembler is MergingStreamAssembler."""
@@ -525,7 +525,7 @@ class TestStreamManagerMakeMergingStreamFromKeys:
             job_id=JobId(source_name="source", job_number=uuid.uuid4()),
         )
 
-        pipe = manager.make_merging_stream_from_keys([key])
+        pipe = manager.make_merging_stream([key])
 
         # Publish data
         data_service[key] = sample_data
@@ -534,15 +534,13 @@ class TestStreamManagerMakeMergingStreamFromKeys:
         assert len(pipe.send_calls) == 1
         assert pipe.send_calls[0] == {key: sample_data}
 
-    def test_make_merging_stream_from_keys_with_empty_list(
-        self, data_service, fake_pipe_factory
-    ):
+    def test_make_merging_stream_with_empty_list(self, data_service, fake_pipe_factory):
         """Test with empty keys list."""
         manager = StreamManager(
             data_service=data_service, pipe_factory=fake_pipe_factory
         )
 
-        pipe = manager.make_merging_stream_from_keys([])
+        pipe = manager.make_merging_stream([])
 
         # Should initialize with empty dict
         assert pipe.data == {}
@@ -559,7 +557,7 @@ class TestStreamManagerMakeMergingStreamFromKeys:
         # Should not receive any data
         assert len(pipe.send_calls) == 0
 
-    def test_make_merging_stream_from_keys_roi_spectrum_use_case(
+    def test_make_merging_stream_roi_spectrum_use_case(
         self, data_service, fake_pipe_factory
     ):
         """Test ROI spectrum subscription (subscribe upfront, data comes later)."""
@@ -583,7 +581,7 @@ class TestStreamManagerMakeMergingStreamFromKeys:
             for i in range(3)
         ]
 
-        pipe = manager.make_merging_stream_from_keys(keys)
+        pipe = manager.make_merging_stream(keys)
 
         # Initially empty
         assert pipe.data == {}
