@@ -246,6 +246,33 @@ class DataService(MutableMapping[K, V]):
 
         return max_size
 
+    def _build_subscriber_data(self, subscriber: Subscriber[K]) -> dict[K, Any]:
+        """
+        Extract data for a subscriber based on its extractors.
+
+        Parameters
+        ----------
+        subscriber:
+            The subscriber to extract data for.
+
+        Returns
+        -------
+        :
+            Dictionary mapping keys to extracted data (None values filtered out).
+        """
+        subscriber_data = {}
+        extractors = subscriber.extractors
+
+        for key in subscriber.keys:
+            if key in self._buffers:
+                # Use subscriber's extractor for this key (always present)
+                extractor = extractors[key]
+                data = extractor.extract(self._buffers[key])
+                if data is not None:
+                    subscriber_data[key] = data
+
+        return subscriber_data
+
     def register_subscriber(self, subscriber: Subscriber[K]) -> None:
         """
         Register a subscriber for updates with extractor-based data access.
@@ -268,13 +295,7 @@ class DataService(MutableMapping[K, V]):
                 self._buffers[key].set_max_size(required_size)
 
         # Trigger immediately with existing data using subscriber's extractors
-        existing_data = {}
-        for key in subscriber.keys:
-            if key in self._buffers:
-                data = subscriber.extractors[key].extract(self._buffers[key])
-                if data is not None:
-                    existing_data[key] = data
-
+        existing_data = self._build_subscriber_data(subscriber)
         subscriber.trigger(existing_data)
 
     def register_update_callback(self, callback: Callable[[set[K]], None]) -> None:
@@ -319,17 +340,7 @@ class DataService(MutableMapping[K, V]):
         for subscriber in self._subscribers:
             if updated_keys & subscriber.keys:
                 # Extract data using per-key extractors
-                subscriber_data = {}
-                extractors = subscriber.extractors
-
-                for key in subscriber.keys:
-                    if key in self._buffers:
-                        # Use subscriber's extractor for this key (always present)
-                        extractor = extractors[key]
-                        data = extractor.extract(self._buffers[key])
-                        if data is not None:
-                            subscriber_data[key] = data
-
+                subscriber_data = self._build_subscriber_data(subscriber)
                 if subscriber_data:
                     subscriber.trigger(subscriber_data)
 
