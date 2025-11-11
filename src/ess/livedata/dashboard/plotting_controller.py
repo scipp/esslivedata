@@ -270,20 +270,21 @@ class PlottingController:
             plot_name=plot_name,
             params=params,
         )
-        items = {
+        # Build result keys for all sources
+        keys = [
             self.get_result_key(
                 job_number=job_number, source_name=source_name, output_name=output_name
-            ): self._job_service.job_data[job_number][source_name][output_name]
+            )
             for source_name in source_names
-        }
+        ]
 
         # Special case for roi_detector: call factory once per detector
         if plot_name == 'roi_detector':
             plot_components = [
                 self._roi_detector_plot_factory.create_roi_detector_plot_components(
-                    detector_key=key, detector_data=data, params=params
+                    detector_key=key, params=params
                 )
-                for key, data in items.items()
+                for key in keys
             ]
             # Each component returns (detector_with_boxes, roi_spectrum, plot_state)
             # Flatten detector and spectrum plots into a layout with 2 columns
@@ -295,13 +296,13 @@ class PlottingController:
         # Look up required extractor type from plotter specification
         spec = plotter_registry.get_spec(plot_name)
         extractor_type = spec.data_requirements.required_extractor
-        extractors = {key: extractor_type() for key in items.keys()}
+        extractors = {key: extractor_type() for key in keys}
 
         pipe = self._stream_manager.make_merging_stream(extractors)
         plotter = plotter_registry.create_plotter(plot_name, params=params)
 
-        # Initialize plotter with initial data to determine kdims
-        plotter.initialize_from_data(items)
+        # Initialize plotter with extracted data from pipe to determine kdims
+        plotter.initialize_from_data(pipe.data)
 
         # Create DynamicMap with kdims (None if plotter doesn't use them)
         dmap = hv.DynamicMap(plotter, streams=[pipe], kdims=plotter.kdims, cache_size=1)

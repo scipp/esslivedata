@@ -544,7 +544,6 @@ class ROIDetectorPlotFactory:
     def create_roi_detector_plot_components(
         self,
         detector_key: ResultKey,
-        detector_data: sc.DataArray,
         params: PlotParamsROIDetector,
     ) -> tuple[hv.DynamicMap, hv.DynamicMap, ROIPlotState]:
         """
@@ -561,12 +560,14 @@ class ROIDetectorPlotFactory:
         Initial ROI configurations are automatically loaded from DataService via
         the ROI readback subscription if available.
 
+        The detector data must be present in DataService at detector_key before
+        calling this method, as it will be accessed via extractors.
+
         Parameters
         ----------
         detector_key:
-            ResultKey identifying the detector output.
-        detector_data:
-            Initial data for the detector plot.
+            ResultKey identifying the detector output. The detector data must
+            already be present in DataService at this key.
         params:
             The plotter parameters (PlotParamsROIDetector).
 
@@ -578,7 +579,6 @@ class ROIDetectorPlotFactory:
         if not isinstance(params, PlotParamsROIDetector):
             raise TypeError("roi_detector requires PlotParamsROIDetector")
 
-        detector_items = {detector_key: detector_data}
         # FIXME: Memory leak - subscribers registered via stream_manager are never
         # unregistered. When this plot is closed, the subscriber remains in
         # DataService._subscribers, preventing garbage collection of plot components.
@@ -593,7 +593,8 @@ class ROIDetectorPlotFactory:
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
         )
-        detector_plotter.initialize_from_data(detector_items)
+        # Use extracted data from pipe for plotter initialization
+        detector_plotter.initialize_from_data(merged_detector_pipe.data)
 
         detector_dmap = hv.DynamicMap(
             detector_plotter, streams=[merged_detector_pipe], cache_size=1
@@ -651,10 +652,11 @@ class ROIDetectorPlotFactory:
             source=request_dmap, num_objects=max_roi_count, data=initial_box_data
         )
 
-        # Extract coordinate units
-        x_dim, y_dim = detector_data.dims[1], detector_data.dims[0]
-        x_unit = self._extract_unit_for_dim(detector_data, x_dim)
-        y_unit = self._extract_unit_for_dim(detector_data, y_dim)
+        # Extract coordinate units from the extracted detector data in pipe
+        data_for_dims = merged_detector_pipe.data[detector_key]
+        x_dim, y_dim = data_for_dims.dims[1], data_for_dims.dims[0]
+        x_unit = self._extract_unit_for_dim(data_for_dims, x_dim)
+        y_unit = self._extract_unit_for_dim(data_for_dims, y_dim)
 
         # Create stream for broadcasting active ROI indices to spectrum plot
         # Use a custom Stream class to avoid parameter name clash with spectrum_pipe
