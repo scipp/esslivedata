@@ -9,11 +9,12 @@ import pytest
 import scipp as sc
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
-from ess.livedata.dashboard.data_service import DataService, LatestValueExtractor
+from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.data_subscriber import (
     Pipe,
     StreamAssembler,
 )
+from ess.livedata.dashboard.extractors import LatestValueExtractor
 from ess.livedata.dashboard.stream_manager import StreamManager
 
 

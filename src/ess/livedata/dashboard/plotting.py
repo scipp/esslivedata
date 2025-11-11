@@ -11,7 +11,11 @@ from typing import Any, Generic, Protocol, TypeVar
 import pydantic
 import scipp as sc
 
-from .data_service import FullHistoryExtractor, LatestValueExtractor, UpdateExtractor
+from .extractors import (
+    FullHistoryExtractor,
+    LatestValueExtractor,
+    UpdateExtractor,
+)
 from .plot_params import PlotParamsROIDetector
 from .plots import (
     ImagePlotter,

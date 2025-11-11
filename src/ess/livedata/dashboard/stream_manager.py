@@ -9,8 +9,9 @@ from typing import Any, Generic, TypeVar
 
 from ess.livedata.config.workflow_spec import ResultKey
 
-from .data_service import DataService, UpdateExtractor
+from .data_service import DataService
 from .data_subscriber import DataSubscriber, MergingStreamAssembler, Pipe
+from .extractors import UpdateExtractor
 
 P = TypeVar('P', bound=Pipe)
 
@@ -51,7 +52,7 @@ class StreamManager(Generic[P]):
         :
             A pipe that will receive merged data updates for the given keys.
         """
-        from .data_service import LatestValueExtractor
+        from .extractors import LatestValueExtractor
 
         if isinstance(keys, dict):
             # Dict provided: keys are dict keys, extractors are dict values

@@ -8,13 +8,13 @@ from typing import Any
 import pytest
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
-from ess.livedata.dashboard.data_service import LatestValueExtractor
 from ess.livedata.dashboard.data_subscriber import (
     DataSubscriber,
     MergingStreamAssembler,
     Pipe,
     StreamAssembler,
 )
+from ess.livedata.dashboard.extractors import LatestValueExtractor
 
 
 class FakeStreamAssembler(StreamAssembler[str]):

@@ -15,11 +15,11 @@ from ess.livedata.config.models import ROI, Interval, RectangleROI
 from ess.livedata.config.roi_names import get_roi_mapper
 from ess.livedata.config.workflow_spec import ResultKey
 
-from .data_service import LatestValueExtractor
 from .data_subscriber import (
     DataSubscriber,
     MergingStreamAssembler,
 )
+from .extractors import LatestValueExtractor
 from .plot_params import LayoutParams, PlotParamsROIDetector
 from .plots import ImagePlotter, LinePlotter, PlotAspect, PlotAspectType
 from .roi_publisher import ROIPublisher

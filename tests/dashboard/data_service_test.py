@@ -7,12 +7,9 @@ from typing import Any
 
 import pytest
 
-from ess.livedata.dashboard.data_service import (
-    DataService,
-    LatestValueExtractor,
-    Subscriber,
-)
+from ess.livedata.dashboard.data_service import DataService, Subscriber
 from ess.livedata.dashboard.data_subscriber import DataSubscriber, Pipe, StreamAssembler
+from ess.livedata.dashboard.extractors import LatestValueExtractor
 
 
 class FakeDataAssembler(StreamAssembler[str]):
@@ -860,7 +857,8 @@ class TestExtractorBasedSubscription:
         """Test that subscriber with WindowExtractor gets windowed data."""
         import scipp as sc
 
-        from ess.livedata.dashboard.data_service import DataService, WindowExtractor
+        from ess.livedata.dashboard.data_service import DataService
+        from ess.livedata.dashboard.extractors import WindowExtractor
 
         # Create a simple subscriber class for testing
         class WindowSubscriber(Subscriber[str]):
@@ -902,8 +900,8 @@ class TestExtractorBasedSubscription:
         """Test that buffer size is set to max requirement among subscribers."""
         import scipp as sc
 
-        from ess.livedata.dashboard.data_service import (
-            DataService,
+        from ess.livedata.dashboard.data_service import DataService
+        from ess.livedata.dashboard.extractors import (
             LatestValueExtractor,
             WindowExtractor,
         )
@@ -960,8 +958,8 @@ class TestExtractorBasedSubscription:
         """Test subscriber with different extractors per key."""
         import scipp as sc
 
-        from ess.livedata.dashboard.data_service import (
-            DataService,
+        from ess.livedata.dashboard.data_service import DataService
+        from ess.livedata.dashboard.extractors import (
             LatestValueExtractor,
             WindowExtractor,
         )

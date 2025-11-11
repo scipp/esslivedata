@@ -7,7 +7,8 @@ from collections.abc import Callable, Hashable, Mapping
 from typing import Any, Generic, Protocol, TypeVar
 
 from ess.livedata.config.workflow_spec import ResultKey
-from ess.livedata.dashboard.data_service import Subscriber, UpdateExtractor
+from ess.livedata.dashboard.data_service import Subscriber
+from ess.livedata.dashboard.extractors import UpdateExtractor
 
 
 class PipeBase(Protocol):
