@@ -149,7 +149,6 @@ class TestBufferManagerUpdateAndResize:
         # After 5 points at 0.1s spacing, coverage should be 0.4s
         buffer = buffer_manager.get_buffer(key)
         coverage = buffer.get_temporal_coverage()
-        assert coverage is not None
         assert coverage == pytest.approx(0.4, abs=0.01)
 
         # Add more points to reach 1.0s coverage
@@ -163,7 +162,6 @@ class TestBufferManagerUpdateAndResize:
         # Coverage should now be >= 1.0s
         buffer = buffer_manager.get_buffer(key)
         coverage = buffer.get_temporal_coverage()
-        assert coverage is not None
         assert coverage >= 1.0
 
 
@@ -195,12 +193,12 @@ class TestBufferManagerValidation:
         key = 'test_key'
         buffer_manager.create_buffer(key, template, [TimeWindow(duration_seconds=1.0)])
 
-        # Add scalar data (no time coordinate)
-        buffer_manager.update_buffer(key, sc.scalar(1, unit='counts'))
-
-        # Buffer should have data
-        buffer = buffer_manager.get_buffer(key)
-        assert buffer.get_frame_count() == 1
+        # Adding data without time coordinate should raise ValueError
+        # when checking if requirements are fulfilled
+        with pytest.raises(
+            ValueError, match="(without coordinates|no.*time.*coordinate)"
+        ):
+            buffer_manager.update_buffer(key, sc.scalar(1, unit='counts'))
 
     def test_validate_coverage_time_window_with_insufficient_coverage(
         self, buffer_manager: BufferManager
@@ -224,7 +222,6 @@ class TestBufferManagerValidation:
         # Check coverage is insufficient
         buffer = buffer_manager.get_buffer(key)
         coverage = buffer.get_temporal_coverage()
-        assert coverage is not None
         assert coverage < 2.0
 
     def test_validate_coverage_complete_history(self, buffer_manager: BufferManager):

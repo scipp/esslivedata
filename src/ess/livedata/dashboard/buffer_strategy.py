@@ -195,7 +195,7 @@ class BufferInterface(Protocol[T]):
         """
         ...
 
-    def get_temporal_coverage(self, buffer: T, end: int) -> float | None:
+    def get_temporal_coverage(self, buffer: T, end: int) -> float:
         """
         Get the time span currently covered by buffer.
 
@@ -209,7 +209,12 @@ class BufferInterface(Protocol[T]):
         Returns
         -------
         :
-            Time span in seconds, or None if buffer is empty or has no time coordinate.
+            Time span in seconds. Returns 0.0 for empty buffers or single frames.
+
+        Raises
+        ------
+        ValueError:
+            If buffer has data but no time coordinate.
         """
         ...
 
@@ -310,7 +315,7 @@ class ScippBuffer(Generic[ScippT]):
         duration = sc.scalar(duration_seconds, unit='s').to(unit=time_coord.unit)
         return active[self._concat_dim, latest_time - duration :]
 
-    def get_temporal_coverage(self, buffer: ScippT, end: int) -> float | None:
+    def get_temporal_coverage(self, buffer: ScippT, end: int) -> float:
         """
         Get time span covered by buffer.
 
@@ -326,17 +331,25 @@ class ScippBuffer(Generic[ScippT]):
         Returns
         -------
         :
-            Time span in seconds, or None if buffer is empty or has no time coordinate.
+            Time span in seconds. Returns 0.0 for empty buffers or single frames.
+
+        Raises
+        ------
+        ValueError:
+            If buffer has data but no time coordinate.
         """
         if end == 0:
-            return None
+            return 0.0
 
         # Get active section of buffer
         active = self.get_view(buffer, 0, end)
 
         # Check for time coordinate
         if not hasattr(active, 'coords') or self._concat_dim not in active.coords:
-            return None
+            raise ValueError(
+                f"Buffer has data but no '{self._concat_dim}' coordinate. "
+                "TimeWindow requirements need time coordinate data."
+            )
 
         time_coord = active.coords[self._concat_dim]
         if len(time_coord) < 2:
@@ -633,16 +646,20 @@ class ListBuffer(BufferInterface[list]):
             "duration-based extraction."
         )
 
-    def get_temporal_coverage(self, buffer: list, end: int) -> float | None:
+    def get_temporal_coverage(self, buffer: list, end: int) -> float:
         """
         Temporal coverage not available for list buffers.
 
-        Returns
-        -------
-        :
-            Always None (list buffers have no time coordinate information).
+        Raises
+        ------
+        ValueError:
+            List buffers have no time coordinate information.
         """
-        return None
+        raise ValueError(
+            "List buffers have no time coordinate information. "
+            "TimeWindow requirements are only supported for scipp DataArray/Variable "
+            "with time coordinates."
+        )
 
 
 class SingleValueStorage(Generic[T]):
@@ -705,16 +722,42 @@ class SingleValueStorage(Generic[T]):
         """
         return 1 if self._value is not None else 0
 
-    def get_temporal_coverage(self) -> float | None:
+    def get_temporal_coverage(self) -> float:
         """
         Get temporal coverage.
 
         Returns
         -------
         :
-            None (single value has no temporal span).
+            0.0 (single value has no temporal span).
+
+        Raises
+        ------
+        ValueError:
+            If value exists but has no time coordinate (for scipp data types).
         """
-        return None
+        if self._value is None:
+            return 0.0
+
+        # Check if data has time coordinate (for scipp types)
+        if hasattr(self._value, 'coords'):
+            # DataArray - check for time coordinate
+            concat_dim = getattr(self._buffer_impl, '_concat_dim', 'time')
+            if concat_dim not in self._value.coords:
+                raise ValueError(
+                    f"Buffer has data but no '{concat_dim}' coordinate. "
+                    "TimeWindow requirements need time coordinate data."
+                )
+        elif hasattr(self._value, 'dims'):
+            # Variable - Variables don't have coords, so raise error
+            raise ValueError(
+                "Buffer has Variable data without coordinates. "
+                "TimeWindow requirements need time coordinate data. "
+                "Use DataArray with time coordinate instead."
+            )
+
+        # Has time coordinate or is non-scipp data, return 0.0 (single frame)
+        return 0.0
 
 
 class StreamingBuffer(Generic[T]):
@@ -970,17 +1013,22 @@ class StreamingBuffer(Generic[T]):
         """
         return self._end
 
-    def get_temporal_coverage(self) -> float | None:
+    def get_temporal_coverage(self) -> float:
         """
         Get the time span currently covered by buffer.
 
         Returns
         -------
         :
-            Time span in seconds, or None if buffer has no time coordinate.
+            Time span in seconds. Returns 0.0 for empty buffers.
+
+        Raises
+        ------
+        ValueError:
+            If buffer has data but no time coordinate.
         """
         if self._buffer is None:
-            return None
+            return 0.0
         return self._buffer_impl.get_temporal_coverage(self._buffer, self._end)
 
 
@@ -1150,14 +1198,19 @@ class Buffer(Generic[T]):
         """
         return self._storage.get_frame_count()
 
-    def get_temporal_coverage(self) -> float | None:
+    def get_temporal_coverage(self) -> float:
         """
         Get the time span currently covered by buffer.
 
         Returns
         -------
         :
-            Time span in seconds, or None if buffer has no time coordinate.
+            Time span in seconds. Returns 0.0 for empty buffers.
+
+        Raises
+        ------
+        ValueError:
+            If buffer has data but no time coordinate.
         """
         return self._storage.get_temporal_coverage()
 

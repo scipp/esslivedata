@@ -128,6 +128,12 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
         # Append data - buffer is properly sized
         state.buffer.append(data)
 
+        # Recompute needs_growth after appending to validate requirements
+        # with actual data. This catches configuration errors (e.g., TimeWindow
+        # without time coordinate)
+        if state.needs_growth:
+            state.needs_growth = self._compute_needs_growth(state)
+
     def _compute_needs_growth(self, state: _BufferState[T]) -> bool:
         """
         Compute whether buffer needs to grow to satisfy requirements.
@@ -175,24 +181,13 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
         :
             True if requirement is satisfied, False otherwise.
         """
-        frame_count = buffer.get_frame_count()
-
         if isinstance(requirement, LatestFrame):
-            return frame_count >= 1
+            # Buffer always starts with max_size >= 1, sufficient for LatestFrame
+            return True
 
         elif isinstance(requirement, TimeWindow):
-            # Need at least 2 frames to have meaningful temporal coverage
-            if frame_count < 2:
-                return False
-
             temporal_coverage = buffer.get_temporal_coverage()
-            if temporal_coverage is not None:
-                # Have time coordinate - use actual temporal coverage
-                return temporal_coverage >= requirement.duration_seconds
-            else:
-                # No time coordinate - use simple heuristic (assume 10 Hz)
-                min_frames = int(requirement.duration_seconds * 10)
-                return frame_count >= min_frames
+            return temporal_coverage >= requirement.duration_seconds
 
         elif isinstance(requirement, CompleteHistory):
             # Complete history is never fulfilled - always want more data
@@ -242,7 +237,8 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
         state.requirements.append(requirement)
 
         # Check if resize needed immediately
-        if self._compute_needs_growth(state):
+        state.needs_growth = self._compute_needs_growth(state)
+        if state.needs_growth:
             self._resize_buffer(state)
 
     def get_buffer(self, key: K) -> Buffer[T]:
