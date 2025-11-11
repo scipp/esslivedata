@@ -789,16 +789,32 @@ class Buffer(Generic[T]):
         self._overallocation_factor = overallocation_factor
 
         # Create appropriate storage based on max_size
+        self._storage = self._create_storage(max_size)
+
+    def _create_storage(
+        self, max_size: int
+    ) -> SingleValueStorage[T] | StreamingBuffer[T]:
+        """
+        Create appropriate storage implementation based on max_size.
+
+        Parameters
+        ----------
+        max_size:
+            Maximum number of data points to maintain.
+
+        Returns
+        -------
+        :
+            SingleValueStorage for max_size=1, StreamingBuffer otherwise.
+        """
         if max_size == 1:
-            self._storage: SingleValueStorage[T] | StreamingBuffer[T] = (
-                SingleValueStorage(buffer_impl)
-            )
+            return SingleValueStorage(self._buffer_impl)
         else:
-            self._storage = StreamingBuffer(
+            return StreamingBuffer(
                 max_size=max_size,
-                buffer_impl=buffer_impl,
-                initial_capacity=initial_capacity,
-                overallocation_factor=overallocation_factor,
+                buffer_impl=self._buffer_impl,
+                initial_capacity=self._initial_capacity,
+                overallocation_factor=self._overallocation_factor,
             )
 
     def set_max_size(self, new_max_size: int) -> None:
@@ -813,29 +829,18 @@ class Buffer(Generic[T]):
         new_max_size:
             New maximum size. If smaller than current max_size, no change is made.
         """
-        if new_max_size > self._max_size:
-            # Check if we need to transition from single-value to streaming mode
-            if isinstance(self._storage, SingleValueStorage) and new_max_size > 1:
-                # Save current value
-                old_value = self._storage.get_all()
-
-                # Switch to streaming buffer
-                self._storage = StreamingBuffer(
-                    max_size=new_max_size,
-                    buffer_impl=self._buffer_impl,
-                    initial_capacity=self._initial_capacity,
-                    overallocation_factor=self._overallocation_factor,
-                )
-
-                # Re-append the value if it exists
-                if old_value is not None:
-                    self._storage.append(old_value)
-
-                self._max_size = new_max_size
-            elif isinstance(self._storage, StreamingBuffer):
-                # Already in streaming mode, just grow
-                self._storage.set_max_size(new_max_size)
-                self._max_size = new_max_size
+        if new_max_size <= self._max_size:
+            return
+        # Check if we need to transition from single-value to streaming mode
+        if isinstance(self._storage, SingleValueStorage) and new_max_size > 1:
+            old_value = self._storage.get_all()
+            self._storage = self._create_storage(new_max_size)
+            if old_value is not None:
+                self._storage.append(old_value)
+        elif isinstance(self._storage, StreamingBuffer):
+            # Already in streaming mode, just grow
+            self._storage.set_max_size(new_max_size)
+        self._max_size = new_max_size
 
     def append(self, data: T) -> None:
         """Append new data to storage."""
