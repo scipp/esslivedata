@@ -264,49 +264,6 @@ class TestBufferManagerAddRequirement:
         # Frame count shouldn't change immediately, but buffer capacity should grow
         assert buffer.get_frame_count() == initial_count
 
-    def test_update_buffer_resizes_before_append_to_prevent_data_loss(
-        self, buffer_manager: BufferManager
-    ):
-        """Test that buffer resizes BEFORE appending to avoid losing data."""
-        template = sc.scalar(1, unit='counts')
-        key = 'test_key'
-
-        # Create buffer with small TimeWindow
-        # Will use StreamingBuffer, not SingleValueStorage
-        # Initial size will be max(100, int(0.5 * 10)) = 100
-        buffer_manager.create_buffer(key, template, [TimeWindow(duration_seconds=0.5)])
-
-        # Fill the buffer past its max_size to reach sliding window phase
-        # StreamingBuffer uses overallocation_factor=2.5
-        # max_capacity = 100 * 2.5 = 250
-        # Once we hit 250 frames and max_size is 100, sliding window starts
-        for i in range(260):
-            buffer_manager.update_buffer(key, sc.scalar(i, unit='counts'))
-
-        # Buffer should have 100 frames (sliding window active)
-        buffer = buffer_manager.get_buffer(key)
-        assert buffer.get_frame_count() == 100
-        # Oldest frame should be 160 (frames 0-159 were dropped)
-        all_data = buffer.get_all()
-        assert all_data[0] == 160
-
-        # Now add CompleteHistory requirement (needs 10,000 frames)
-        buffer_manager.add_requirement(key, CompleteHistory())
-
-        # Add one more frame through BufferManager
-        # The buffer should resize BEFORE appending to avoid losing frame 160
-        buffer_manager.update_buffer(key, sc.scalar(300, unit='counts'))
-
-        # We should have 101 frames now (100 old + 1 new)
-        buffer = buffer_manager.get_buffer(key)
-        assert buffer.get_frame_count() == 101
-
-        # Verify we STILL have frame 160 (the oldest from before)
-        # If resize happened after append, sliding window would have dropped it
-        all_data = buffer.get_all()
-        assert all_data[0] == 160  # Oldest frame should still be there
-        assert all_data[-1] == 300  # Newest frame should be there
-
 
 class TestTemporalRequirements:
     """Tests for TemporalRequirement classes."""

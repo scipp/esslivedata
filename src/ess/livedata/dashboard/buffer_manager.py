@@ -23,7 +23,6 @@ K = TypeVar('K', bound=Hashable)
 T = TypeVar('T')
 
 # Growth parameters
-INITIAL_CAPACITY = 100  # Conservative default for new buffers
 MAX_CAPACITY = 10000  # Upper limit to prevent runaway growth
 GROWTH_FACTOR = 2.0  # Double buffer size when growing
 
@@ -79,7 +78,7 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
         """
         Create a buffer sized to satisfy temporal requirements.
 
-        Starts with conservative default size, will resize based on observations.
+        Starts with size 1, will resize adaptively based on observations.
 
         Parameters
         ----------
@@ -93,44 +92,10 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
         if key in self._states:
             raise ValueError(f"Buffer with key {key} already exists")
 
-        initial_size = self._calculate_initial_size(requirements)
-        buffer = self._buffer_factory.create_buffer(template, max_size=initial_size)
+        buffer = self._buffer_factory.create_buffer(template, max_size=1)
         self._states[key] = _BufferState(
             buffer=buffer, requirements=list(requirements), needs_growth=True
         )
-
-    def _calculate_initial_size(self, requirements: list[TemporalRequirement]) -> int:
-        """
-        Calculate initial buffer size from temporal requirements.
-
-        Uses conservative estimates since actual frame rate is unknown.
-
-        Parameters
-        ----------
-        requirements:
-            List of temporal requirements.
-
-        Returns
-        -------
-        :
-            Initial buffer size in frames.
-        """
-        max_size = 1
-
-        for requirement in requirements:
-            if isinstance(requirement, LatestFrame):
-                max_size = max(max_size, 1)
-            elif isinstance(requirement, TimeWindow):
-                # Conservative: assume 10 Hz for initial allocation
-                # Will grow based on actual observations
-                estimated_frames = max(
-                    INITIAL_CAPACITY, int(requirement.duration_seconds * 10)
-                )
-                max_size = max(max_size, min(estimated_frames, MAX_CAPACITY))
-            elif isinstance(requirement, CompleteHistory):
-                max_size = max(max_size, requirement.MAX_FRAMES)
-
-        return max_size
 
     def update_buffer(self, key: K, data: T) -> None:
         """
@@ -187,10 +152,17 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
             elif isinstance(requirement, TimeWindow):
                 # For temporal requirements, check actual time coverage
                 if temporal_coverage is not None:
+                    # Need at least 2 frames to calculate temporal coverage
+                    if frame_count < 2:
+                        return False
                     if temporal_coverage < requirement.duration_seconds:
                         return False
-                # If no time coordinate, can't validate
-                # Continue checking other requirements
+                else:
+                    # No time coordinate - use heuristic (assume 10 Hz)
+                    # Buffer should have at least duration * 10 frames
+                    expected_frames = max(100, int(requirement.duration_seconds * 10))
+                    if frame_count < expected_frames:
+                        return False
             elif isinstance(requirement, CompleteHistory):
                 # For complete history, buffer should grow until MAX_FRAMES
                 if frame_count < requirement.MAX_FRAMES:
@@ -226,8 +198,9 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
                     )
                     new_size = max(new_size, needed_frames)
                 else:
-                    # No time coverage yet - grow by factor
-                    new_size = max(new_size, int(current_size * GROWTH_FACTOR))
+                    # No time coverage - use heuristic (assume 10 Hz)
+                    target_frames = max(100, int(requirement.duration_seconds * 10))
+                    new_size = max(new_size, target_frames)
             elif isinstance(requirement, CompleteHistory):
                 # Grow towards max
                 new_size = max(new_size, int(current_size * GROWTH_FACTOR))
