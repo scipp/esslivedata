@@ -269,7 +269,7 @@ class PlottingController:
             else:  # mode == WindowMode.window
                 return {
                     key: WindowAggregatingExtractor(
-                        window_size=params.window.window_size,
+                        window_duration_seconds=params.window.window_duration_seconds,
                         aggregation=params.window.aggregation.value,
                     )
                     for key in keys

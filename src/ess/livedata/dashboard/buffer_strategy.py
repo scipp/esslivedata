@@ -175,6 +175,26 @@ class BufferInterface(Protocol[T]):
         """
         ...
 
+    def get_window_by_duration(self, buffer: T, end: int, duration_seconds: float) -> T:
+        """
+        Get a window covering approximately the specified time duration.
+
+        Parameters
+        ----------
+        buffer:
+            Buffer to extract from.
+        end:
+            End index of valid data in buffer (exclusive).
+        duration_seconds:
+            Approximate time duration in seconds.
+
+        Returns
+        -------
+        :
+            Window of data covering approximately the duration.
+        """
+        ...
+
 
 class ScippBuffer(Generic[ScippT]):
     """
@@ -223,6 +243,19 @@ class ScippBuffer(Generic[ScippT]):
 
         # Extract the single element along concat dimension
         return view[self._concat_dim, 0]
+
+    def get_window_by_duration(
+        self, buffer: ScippT, end: int, duration_seconds: float
+    ) -> ScippT:
+        """
+        Get window by time duration (naive implementation).
+
+        Assumes nominal 14 Hz frame rate (ESS).
+        """
+        # Naive conversion: duration → frame count at 14 Hz
+        frame_count = max(1, int(duration_seconds * 14.0))
+        start = max(0, end - frame_count)
+        return self.get_view(buffer, start, end)
 
 
 class DataArrayBuffer(ScippBuffer[sc.DataArray], BufferInterface[sc.DataArray]):  # type: ignore[type-arg]
@@ -491,6 +524,18 @@ class ListBuffer(BufferInterface[list]):
             return view[0]
         return view
 
+    def get_window_by_duration(
+        self, buffer: list, end: int, duration_seconds: float
+    ) -> list:
+        """
+        Get window by time duration (naive implementation).
+
+        Assumes nominal 14 Hz frame rate for list-based buffers.
+        """
+        frame_count = max(1, int(duration_seconds * 14.0))
+        start = max(0, end - frame_count)
+        return buffer[start:end]
+
 
 class SingleValueStorage(Generic[T]):
     """
@@ -526,6 +571,10 @@ class SingleValueStorage(Generic[T]):
 
     def get_latest(self) -> T | None:
         """Get the stored value."""
+        return self._value
+
+    def get_window_by_duration(self, duration_seconds: float) -> T | None:
+        """Get the stored value (duration parameter ignored)."""
         return self._value
 
     def clear(self) -> None:
@@ -755,6 +804,26 @@ class StreamingBuffer(Generic[T]):
         view = self._buffer_impl.get_view(self._buffer, self._end - 1, self._end)
         return self._buffer_impl.unwrap_window(view)
 
+    def get_window_by_duration(self, duration_seconds: float) -> T | None:
+        """
+        Get window by time duration.
+
+        Parameters
+        ----------
+        duration_seconds:
+            Approximate time duration in seconds.
+
+        Returns
+        -------
+        :
+            Window of data covering approximately the duration, or None if empty.
+        """
+        if self._buffer is None:
+            return None
+        return self._buffer_impl.get_window_by_duration(
+            self._buffer, self._end, duration_seconds
+        )
+
 
 class Buffer(Generic[T]):
     """
@@ -894,6 +963,22 @@ class Buffer(Generic[T]):
             The latest value without concat dimension, or None if empty.
         """
         return self._storage.get_latest()
+
+    def get_window_by_duration(self, duration_seconds: float) -> T | None:
+        """
+        Get window by time duration.
+
+        Parameters
+        ----------
+        duration_seconds:
+            Approximate time duration in seconds.
+
+        Returns
+        -------
+        :
+            Window of data covering approximately the duration, or None if empty.
+        """
+        return self._storage.get_window_by_duration(duration_seconds)
 
 
 class BufferFactory:

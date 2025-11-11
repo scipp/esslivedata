@@ -135,12 +135,12 @@ class WindowParams(pydantic.BaseModel):
         description="Extraction mode: 'latest' for single frame, 'window' for window.",
         title="Mode",
     )
-    window_size: int = pydantic.Field(
-        default=10,
-        description="Number of frames to aggregate in window mode.",
-        title="Window Size",
-        ge=1,
-        le=100,
+    window_duration_seconds: float = pydantic.Field(
+        default=1.0,
+        description="Time duration to aggregate in window mode (seconds).",
+        title="Window Duration (s)",
+        ge=0.1,
+        le=60.0,
     )
     aggregation: WindowAggregation = pydantic.Field(
         default=WindowAggregation.sum,

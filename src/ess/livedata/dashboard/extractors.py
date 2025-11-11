@@ -98,31 +98,38 @@ class WindowAggregatingExtractor(UpdateExtractor):
     """Extracts a window from the buffer and aggregates over the time dimension."""
 
     def __init__(
-        self, window_size: int, aggregation: str = 'sum', concat_dim: str = 'time'
+        self,
+        window_duration_seconds: float,
+        aggregation: str = 'sum',
+        concat_dim: str = 'time',
     ) -> None:
         """
         Initialize window aggregating extractor.
 
         Parameters
         ----------
-        window_size:
-            Number of frames to extract from the end of the buffer.
+        window_duration_seconds:
+            Time duration to extract from the end of the buffer (seconds).
         aggregation:
             Aggregation method: 'sum', 'mean', 'last', or 'max'.
         concat_dim:
             Name of the dimension to aggregate over.
         """
-        self._window_size = window_size
+        self._window_duration_seconds = window_duration_seconds
         self._aggregation = aggregation
         self._concat_dim = concat_dim
 
     def get_required_size(self) -> int:
-        """Window aggregating extractor requires buffer size equal to window size."""
-        return self._window_size
+        """
+        Estimate required buffer size (conservative).
+
+        Assumes maximum 20 Hz frame rate for headroom.
+        """
+        return max(100, int(self._window_duration_seconds * 20))
 
     def extract(self, buffer: Buffer) -> Any:
         """Extract a window of data and aggregate over the time dimension."""
-        data = buffer.get_window(self._window_size)
+        data = buffer.get_window_by_duration(self._window_duration_seconds)
 
         if data is None:
             return None

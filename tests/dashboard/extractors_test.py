@@ -237,13 +237,17 @@ class TestWindowAggregatingExtractor:
     """Tests for WindowAggregatingExtractor."""
 
     def test_get_required_size(self):
-        """Test that WindowAggregatingExtractor requires size equal to window size."""
-        extractor = WindowAggregatingExtractor(window_size=5)
-        assert extractor.get_required_size() == 5
+        """Test that WindowAggregatingExtractor estimates required buffer size."""
+        # 1.0 second at 20 Hz headroom = 20 frames minimum
+        extractor = WindowAggregatingExtractor(window_duration_seconds=1.0)
+        assert extractor.get_required_size() == max(100, int(1.0 * 20))
 
     def test_sum_aggregation_scipp(self, buffer_factory: BufferFactory):
         """Test sum aggregation over time dimension."""
-        extractor = WindowAggregatingExtractor(window_size=3, aggregation='sum')
+        # Duration that gives exactly 3 frames at 14 Hz: 3/14 ≈ 0.214 seconds
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=3 / 14, aggregation='sum'
+        )
 
         # Create 2D data with time dimension
         data = sc.DataArray(
@@ -265,7 +269,10 @@ class TestWindowAggregatingExtractor:
 
     def test_mean_aggregation_scipp(self, buffer_factory: BufferFactory):
         """Test mean aggregation over time dimension."""
-        extractor = WindowAggregatingExtractor(window_size=3, aggregation='mean')
+        # Duration that gives exactly 3 frames at 14 Hz
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=3 / 14, aggregation='mean'
+        )
 
         data = sc.DataArray(
             sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
@@ -285,7 +292,10 @@ class TestWindowAggregatingExtractor:
 
     def test_last_aggregation_scipp(self, buffer_factory: BufferFactory):
         """Test last aggregation (returns last frame)."""
-        extractor = WindowAggregatingExtractor(window_size=3, aggregation='last')
+        # Duration that gives exactly 3 frames at 14 Hz
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=3 / 14, aggregation='last'
+        )
 
         data1 = sc.DataArray(
             sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
@@ -308,7 +318,10 @@ class TestWindowAggregatingExtractor:
 
     def test_max_aggregation_scipp(self, buffer_factory: BufferFactory):
         """Test max aggregation over time dimension."""
-        extractor = WindowAggregatingExtractor(window_size=3, aggregation='max')
+        # Duration that gives exactly 3 frames at 14 Hz
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=3 / 14, aggregation='max'
+        )
 
         data1 = sc.DataArray(
             sc.array(dims=['x'], values=[1.0, 5.0, 2.0], unit='counts'),
@@ -330,7 +343,9 @@ class TestWindowAggregatingExtractor:
 
     def test_extract_empty_buffer_returns_none(self, buffer_factory: BufferFactory):
         """Test that extracting from empty buffer returns None."""
-        extractor = WindowAggregatingExtractor(window_size=3, aggregation='sum')
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=3 / 14, aggregation='sum'
+        )
         buffer = buffer_factory.create_buffer(sc.scalar(1.0), max_size=3)
 
         result = extractor.extract(buffer)
@@ -338,7 +353,9 @@ class TestWindowAggregatingExtractor:
 
     def test_extract_non_scipp_data_returns_as_is(self, buffer_factory: BufferFactory):
         """Test that non-scipp data without dims is returned as-is."""
-        extractor = WindowAggregatingExtractor(window_size=3, aggregation='sum')
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=3 / 14, aggregation='sum'
+        )
         buffer = buffer_factory.create_buffer(42, max_size=3)
         buffer.append(42)
 
@@ -348,7 +365,9 @@ class TestWindowAggregatingExtractor:
 
     def test_invalid_aggregation_raises_error(self, buffer_factory: BufferFactory):
         """Test that invalid aggregation method raises error."""
-        extractor = WindowAggregatingExtractor(window_size=2, aggregation='invalid')
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=2 / 14, aggregation='invalid'
+        )
 
         data = sc.DataArray(
             sc.array(dims=['x'], values=[1.0], unit='counts'),
