@@ -54,6 +54,7 @@ class DetectorView(Workflow):
         self._toa_edges = params.toa_edges.get_edges()
         self._rois_updated = False  # Track ROI updates at workflow level
         self._roi_mapper = get_roi_mapper()
+        self._current_start_time: int | None = None
 
     def apply_toa_range(self, data: sc.DataArray) -> sc.DataArray:
         if not self._use_toa_range:
@@ -98,6 +99,11 @@ class DetectorView(Workflow):
             raise ValueError(
                 "DetectorViewProcessor expects exactly one detector data item."
             )
+
+        # Track start time of first detector data since last finalize
+        if self._current_start_time is None:
+            self._current_start_time = start_time
+
         raw = next(iter(detector_data.values()))
         filtered = self.apply_toa_range(raw)
         self._view.add_events(filtered)
@@ -105,6 +111,11 @@ class DetectorView(Workflow):
             roi_state.add_data(raw)
 
     def finalize(self) -> dict[str, sc.DataArray]:
+        if self._current_start_time is None:
+            raise RuntimeError(
+                "finalize called without any detector data accumulated via accumulate"
+            )
+
         cumulative = self._view.cumulative.copy()
         # This is a hack to get the current counts. Should be updated once
         # ess.reduce.live.raw.RollingDetectorView has been modified to support this.
@@ -112,6 +123,12 @@ class DetectorView(Workflow):
         if self._previous is not None:
             current = current - self._previous
         self._previous = cumulative
+
+        # Add time coord to current result
+        time_coord = sc.scalar(self._current_start_time, unit='ns')
+        current = current.assign_coords(time=time_coord)
+        self._current_start_time = None
+
         result = sc.DataGroup(cumulative=cumulative, current=current)
         view_result = dict(result * self._inv_weights if self._use_weights else result)
 
@@ -119,7 +136,10 @@ class DetectorView(Workflow):
         for idx, roi_state in self._rois.items():
             roi_delta = roi_state.get_delta()
 
-            roi_result[self._roi_mapper.current_key(idx)] = roi_delta
+            # Add time coord to ROI current result
+            roi_result[self._roi_mapper.current_key(idx)] = roi_delta.assign_coords(
+                time=time_coord
+            )
             roi_result[self._roi_mapper.cumulative_key(idx)] = (
                 roi_state.cumulative.copy()
             )
@@ -145,6 +165,7 @@ class DetectorView(Workflow):
     def clear(self) -> None:
         self._view.clear_counts()
         self._previous = None
+        self._current_start_time = None
         for roi_state in self._rois.values():
             roi_state.clear()
 

@@ -169,18 +169,89 @@ class TestDetectorViewBasics:
     """Basic tests for DetectorView without ROI."""
 
     def test_detector_view_initialization(
-        self, mock_rolling_view: RollingDetectorView
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
     ) -> None:
         """Test that DetectorView can be initialized with default parameters."""
         params = DetectorViewParams()
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
         assert view is not None
+        # Accumulate some detector data before finalize
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=1000, end_time=2000
+        )
         # Verify no ROI results are present when no ROI configured
         result = view.finalize()
         assert 'cumulative' in result
         assert 'current' in result
         assert not any(key.startswith('roi_') for key in result)
+
+    def test_current_has_time_coord(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that 'current' result has time coord from first accumulate call."""
+        params = DetectorViewParams()
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # Accumulate with specific start_time
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=1000, end_time=2000
+        )
+        result = view.finalize()
+
+        # Verify time coord is present on current
+        assert 'time' in result['current'].coords
+        assert result['current'].coords['time'].value == 1000
+        assert result['current'].coords['time'].unit == 'ns'
+        # cumulative should not have time coord
+        assert 'time' not in result['cumulative'].coords
+
+    def test_time_coord_tracks_first_accumulate(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that time coord uses first accumulate start_time, not later ones."""
+        params = DetectorViewParams()
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # First accumulate with start_time=1000
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=1000, end_time=2000
+        )
+        # Second accumulate with different start_time
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=3000, end_time=4000
+        )
+
+        result = view.finalize()
+
+        # Time should be from first accumulate
+        assert result['current'].coords['time'].value == 1000
+
+        # After finalize, next accumulate should track new start_time
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=5000, end_time=6000
+        )
+        result2 = view.finalize()
+        assert result2['current'].coords['time'].value == 5000
+
+    def test_finalize_without_accumulate_raises(
+        self, mock_rolling_view: RollingDetectorView
+    ) -> None:
+        """Test that finalize raises if called without accumulate."""
+        params = DetectorViewParams()
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        with pytest.raises(
+            RuntimeError,
+            match="finalize called without any detector data accumulated",
+        ):
+            view.finalize()
 
     def test_accumulate_detector_data_without_roi(
         self,
@@ -225,17 +296,23 @@ class TestDetectorViewBasics:
         # Clear the view
         view.clear()
 
-        # After clear, finalize should return zero counts
+        # After clear, accumulate new data then finalize should return zero counts
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=2000, end_time=3000
+        )
         result2 = view.finalize()
-        assert sc.sum(result2['current']).value == 0
-        assert sc.sum(result2['cumulative']).value == 0
+        assert sc.sum(result2['current']).value == TOTAL_SAMPLE_EVENTS
+        assert sc.sum(result2['cumulative']).value == TOTAL_SAMPLE_EVENTS
 
 
 class TestDetectorViewROIMechanism:
     """Tests for ROI configuration and histogram accumulation."""
 
     def test_roi_configuration_via_accumulate(
-        self, mock_rolling_view: RollingDetectorView, standard_roi: RectangleROI
+        self,
+        mock_rolling_view: RollingDetectorView,
+        standard_roi: RectangleROI,
+        sample_detector_events: sc.DataArray,
     ) -> None:
         """Test that ROI configuration can be set via accumulate."""
         params = DetectorViewParams()
@@ -244,6 +321,10 @@ class TestDetectorViewROIMechanism:
         # Send ROI configuration
         view.accumulate(
             roi_to_accumulate_data(standard_roi), start_time=1000, end_time=2000
+        )
+        # Add detector data before finalize
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=1000, end_time=2000
         )
 
         # Verify ROI configuration is active via finalize output
@@ -266,9 +347,12 @@ class TestDetectorViewROIMechanism:
         assert echoed_roi.y.max == 25.0
 
     def test_roi_only_does_not_process_events(
-        self, mock_rolling_view: RollingDetectorView, standard_roi: RectangleROI
+        self,
+        mock_rolling_view: RollingDetectorView,
+        standard_roi: RectangleROI,
+        sample_detector_events: sc.DataArray,
     ) -> None:
-        """Test that sending only ROI (no detector data) produces empty histograms."""
+        """Test that ROI configuration persists when detector data arrives."""
         params = DetectorViewParams()
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
@@ -277,14 +361,18 @@ class TestDetectorViewROIMechanism:
             roi_to_accumulate_data(standard_roi), start_time=1000, end_time=2000
         )
 
-        # ROI should be configured but no histogram data accumulated yet
+        # Now send detector data
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=1000, end_time=2000
+        )
+
+        # ROI should be configured and histogram data accumulated
         result = view.finalize()
-        # ROI results should be present (even if empty/zero) once ROI is configured
+        # ROI results should be present
         assert_has_roi_results(result)
         assert_roi_config_published(result)
-        # All counts should be zero since no events were accumulated
-        assert sc.sum(result['roi_cumulative_0']).value == 0
-        assert sc.sum(result['roi_current_0']).value == 0
+        # Counts should match events within ROI
+        assert_roi_event_count(result, STANDARD_ROI_EVENTS)
 
     def test_accumulate_with_roi_produces_histogram(
         self,
@@ -322,6 +410,42 @@ class TestDetectorViewROIMechanism:
 
         # Verify expected event count
         assert_roi_event_count(result, STANDARD_ROI_EVENTS)
+
+    def test_roi_current_has_time_coord(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+        standard_roi: RectangleROI,
+        standard_toa_edges: TOAEdges,
+    ) -> None:
+        """Test that ROI current results have time coord matching detector view."""
+        params = DetectorViewParams(toa_edges=standard_toa_edges)
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # Configure ROI
+        view.accumulate(
+            roi_to_accumulate_data(standard_roi), start_time=1000, end_time=2000
+        )
+
+        # Accumulate detector events
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=2500, end_time=3000
+        )
+
+        result = view.finalize()
+
+        # Verify time coord on ROI current
+        assert 'time' in result['roi_current_0'].coords
+        assert result['roi_current_0'].coords['time'].value == 2500
+        assert result['roi_current_0'].coords['time'].unit == 'ns'
+
+        # Verify it matches detector view current time coord
+        assert (
+            result['roi_current_0'].coords['time'] == result['current'].coords['time']
+        )
+
+        # ROI cumulative should not have time coord
+        assert 'time' not in result['roi_cumulative_0'].coords
 
     def test_roi_cumulative_accumulation(
         self,
@@ -410,11 +534,15 @@ class TestDetectorViewROIMechanism:
         # Clear should reset cumulative
         view.clear()
 
-        # After clear, ROI cumulative should be reset to zero
+        # After clear, accumulate new data
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=2000, end_time=3000
+        )
         result2 = view.finalize()
         assert_has_roi_results(result2)  # ROI config still active
-        assert sc.sum(result2['roi_cumulative_0']).value == 0
-        assert sc.sum(result2['roi_current_0']).value == 0
+        # Cumulative should be reset (only contains events from after clear)
+        assert sc.sum(result2['roi_cumulative_0']).value == STANDARD_ROI_EVENTS
+        assert sc.sum(result2['roi_current_0']).value == STANDARD_ROI_EVENTS
 
     def test_roi_change_resets_cumulative(
         self,
@@ -648,7 +776,9 @@ class TestDetectorViewEdgeCases:
     """Edge cases and error conditions."""
 
     def test_accumulate_empty_dict_does_nothing(
-        self, mock_rolling_view: RollingDetectorView
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
     ) -> None:
         """Test that accumulate with empty dict returns early without error."""
         params = DetectorViewParams()
@@ -657,11 +787,16 @@ class TestDetectorViewEdgeCases:
         # Empty dict should not raise - consistent with roi-only behavior
         view.accumulate({}, start_time=1000, end_time=2000)
 
+        # Add detector data before finalize
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=2000, end_time=3000
+        )
+
         result = view.finalize()
         assert 'cumulative' in result
         assert 'current' in result
-        # No events accumulated
-        assert sc.sum(result['cumulative']).value == 0
+        # Events from sample_detector_events
+        assert sc.sum(result['cumulative']).value == TOTAL_SAMPLE_EVENTS
 
     def test_accumulate_multiple_detector_keys_raises_error(
         self,
@@ -687,9 +822,11 @@ class TestDetectorViewEdgeCases:
             )
 
     def test_multiple_roi_updates_without_detector_data(
-        self, mock_rolling_view: RollingDetectorView
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
     ) -> None:
-        """Test multiple ROI updates without any detector data."""
+        """Test multiple ROI updates followed by detector data."""
         params = DetectorViewParams()
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
@@ -712,14 +849,21 @@ class TestDetectorViewEdgeCases:
             end_time=2000,
         )
 
+        # Now add detector data
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=2000, end_time=3000
+        )
+
         result = view.finalize()
 
-        # Should have ROI configured but with zero events
+        # Should have ROI configured with accumulated events
         assert 'roi_cumulative_0' in result
         assert 'roi_current_0' in result
         assert 'roi_rectangle' in result
-        assert sc.sum(result['roi_cumulative_0']).value == 0
-        assert sc.sum(result['roi_current_0']).value == 0
+        # roi2 only covers pixel 10 (single event at x=20mm, y=20mm)
+        expected_events = 1
+        assert sc.sum(result['roi_cumulative_0']).value == expected_events
+        assert sc.sum(result['roi_current_0']).value == expected_events
 
     def test_detector_data_with_no_events_in_roi(
         self,
