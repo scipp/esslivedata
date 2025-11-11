@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
-import json
 import logging
 from dataclasses import replace
+from types import TracebackType
 from typing import Any, Generic, Protocol, TypeVar
 
 import confluent_kafka as kafka
@@ -11,7 +11,7 @@ from streaming_data_types import dataarray_da00, logdata_f144
 
 from ..config.streams import stream_kind_to_topic
 from ..config.workflow_spec import ResultKey
-from ..core.message import CONFIG_STREAM_ID, STATUS_STREAM_ID, Message, MessageSink
+from ..core.message import STATUS_STREAM_ID, Message, MessageSink, StreamKind
 from .scipp_da00_compat import scipp_to_da00
 from .x5f2_compat import job_status_to_x5f2
 
@@ -65,11 +65,15 @@ class KafkaSink(MessageSink[T]):
         serializer: Serializer[T] = serialize_dataarray_to_da00,
     ):
         self._logger = logger or logging.getLogger(__name__)
-        self._producer = kafka.Producer(kafka_config)
+        self._kafka_config = kafka_config
+        self._producer: kafka.Producer | None = None
         self._serializer = serializer
         self._instrument = instrument
 
     def publish_messages(self, messages: Message[T]) -> None:
+        if self._producer is None:
+            raise RuntimeError("KafkaSink must be used as a context manager")
+
         def delivery_callback(err, msg):
             if err is not None:
                 self._logger.error(
@@ -82,9 +86,12 @@ class KafkaSink(MessageSink[T]):
                 topic = stream_kind_to_topic(
                     instrument=self._instrument, kind=msg.stream.kind
                 )
-                if msg.stream == CONFIG_STREAM_ID:
+                if msg.stream.kind in (
+                    StreamKind.LIVEDATA_COMMANDS,
+                    StreamKind.LIVEDATA_RESPONSES,
+                ):
                     key_bytes = str(msg.value.config_key).encode('utf-8')
-                    value = json.dumps(msg.value.value.model_dump()).encode('utf-8')
+                    value = msg.value.value.model_dump_json().encode('utf-8')
                 elif msg.stream == STATUS_STREAM_ID:
                     key_bytes = None
                     value = job_status_to_x5f2(msg.value)
@@ -114,6 +121,30 @@ class KafkaSink(MessageSink[T]):
             self._producer.flush(timeout=3)
         except kafka.KafkaException as e:
             self._logger.error("Error flushing producer: %s", e)
+
+    def close(self) -> None:
+        """Close the Kafka producer and release resources."""
+        if hasattr(self, '_producer'):
+            try:
+                self._producer.flush(timeout=5)
+            except kafka.KafkaException as e:
+                self._logger.error("Error flushing producer during close: %s", e)
+            # The confluent_kafka Producer cleans up when deleted
+            del self._producer
+
+    def __enter__(self) -> 'KafkaSink[T]':
+        """Enter context manager - initialize the Kafka producer."""
+        self._producer = kafka.Producer(self._kafka_config)
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Exit context manager."""
+        self.close()
 
 
 class UnrollingSinkAdapter(MessageSink[T | sc.DataGroup[T]]):

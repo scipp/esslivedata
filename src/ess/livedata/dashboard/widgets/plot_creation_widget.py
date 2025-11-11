@@ -2,98 +2,20 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-from typing import Any
-
 import holoviews as hv
 import pandas as pd
 import panel as pn
-import pydantic
 
 from ess.livedata.config.workflow_spec import JobNumber
-from ess.livedata.dashboard.configuration_adapter import ConfigurationAdapter
 from ess.livedata.dashboard.job_controller import JobController
 from ess.livedata.dashboard.job_service import JobService
-from ess.livedata.dashboard.plotting import PlotterSpec
 from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.workflow_controller import WorkflowController
 
+from ..plot_configuration_adapter import PlotConfigurationAdapter
 from .configuration_widget import ConfigurationModal
 from .job_status_widget import JobStatusListWidget
-
-
-class PlotConfigurationAdapter(ConfigurationAdapter):
-    """Adapter for plot configuration modal."""
-
-    def __init__(
-        self,
-        job_number: JobNumber,
-        output_name: str | None,
-        plot_spec: PlotterSpec,
-        available_sources: list[str],
-        plotting_controller: PlottingController,
-        success_callback,
-    ):
-        self._job_number = job_number
-        self._output_name = output_name
-        self._plot_spec = plot_spec
-        self._available_sources = available_sources
-        self._plotting_controller = plotting_controller
-        self._success_callback = success_callback
-
-        self._persisted_config = (
-            self._plotting_controller.get_persistent_plotter_config(
-                job_number=self._job_number,
-                output_name=self._output_name,
-                plot_name=self._plot_spec.name,
-            )
-        )
-
-    @property
-    def title(self) -> str:
-        return f"Configure {self._plot_spec.title}"
-
-    @property
-    def description(self) -> str:
-        return self._plot_spec.description
-
-    def model_class(self) -> type[pydantic.BaseModel] | None:
-        return self._plot_spec.params
-
-    @property
-    def source_names(self) -> list[str]:
-        return self._available_sources
-
-    @property
-    def initial_source_names(self) -> list[str]:
-        if self._persisted_config is not None:
-            # Filter persisted source names to only include those still available
-            persisted_sources = [
-                name
-                for name in self._persisted_config.source_names
-                if name in self._available_sources
-            ]
-            return persisted_sources if persisted_sources else self._available_sources
-        return self._available_sources
-
-    @property
-    def initial_parameter_values(self) -> dict[str, Any]:
-        if self._persisted_config is not None:
-            return self._persisted_config.config.params
-        return {}
-
-    def start_action(
-        self,
-        selected_sources: list[str],
-        parameter_values: Any,
-    ) -> None:
-        plot = self._plotting_controller.create_plot(
-            job_number=self._job_number,
-            source_names=selected_sources,
-            output_name=self._output_name,
-            plot_name=self._plot_spec.name,
-            params=parameter_values,
-        )
-        self._success_callback(plot, selected_sources)
+from .plot_grid_tab import PlotGridTab
 
 
 class PlotCreationWidget:
@@ -133,6 +55,12 @@ class PlotCreationWidget:
         self._job_status_widget = JobStatusListWidget(
             job_service=job_service, job_controller=job_controller
         )
+        # PlotCreationWidget is legacy; PlotGridTab placement here is temporary
+        self._plot_grid_tab = PlotGridTab(
+            job_service=job_service,
+            job_controller=job_controller,
+            plotting_controller=plotting_controller,
+        )
         self._job_output_table = self._create_job_output_table()
         self._plot_selector = self._create_plot_selector()
         self._create_button = self._create_plot_button()
@@ -154,6 +82,7 @@ class PlotCreationWidget:
         self._main_tabs = pn.Tabs(
             ("Jobs", self._job_status_widget.panel()),
             ("Create Plot", self._creation_tab),
+            ("Plot Grid", self._plot_grid_tab.widget),
             ("Plots", self._plot_tabs),
             sizing_mode='stretch_width',
             closable=False,

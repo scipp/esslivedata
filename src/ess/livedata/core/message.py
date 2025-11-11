@@ -20,7 +20,8 @@ class StreamKind(str, Enum):
     MONITOR_EVENTS = "monitor_events"
     DETECTOR_EVENTS = "detector_events"
     LOG = "log"
-    LIVEDATA_CONFIG = "livedata_config"
+    LIVEDATA_COMMANDS = "livedata_commands"
+    LIVEDATA_RESPONSES = "livedata_responses"
     LIVEDATA_DATA = "livedata_data"
     LIVEDATA_ROI = "livedata_roi"
     LIVEDATA_STATUS = "livedata_status"
@@ -32,7 +33,8 @@ class StreamId:
     name: str
 
 
-CONFIG_STREAM_ID = StreamId(kind=StreamKind.LIVEDATA_CONFIG, name='')
+COMMANDS_STREAM_ID = StreamId(kind=StreamKind.LIVEDATA_COMMANDS, name='')
+RESPONSES_STREAM_ID = StreamId(kind=StreamKind.LIVEDATA_RESPONSES, name='')
 STATUS_STREAM_ID = StreamId(kind=StreamKind.LIVEDATA_STATUS, name='')
 
 

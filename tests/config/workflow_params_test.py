@@ -27,6 +27,7 @@ class FakeConfigurationAdapter(ConfigurationAdapter):
     """Fake adapter for testing."""
 
     def __init__(self, spec: WorkflowSpec) -> None:
+        super().__init__(config_state=None)
         self._spec = spec
 
     @property
@@ -37,7 +38,7 @@ class FakeConfigurationAdapter(ConfigurationAdapter):
     def description(self) -> str:
         return self._spec.description
 
-    def model_class(self, aux_source_names) -> type[pydantic.BaseModel] | None:
+    def model_class(self) -> type[pydantic.BaseModel] | None:
         return self._spec.params
 
     @property
@@ -56,7 +57,6 @@ class FakeConfigurationAdapter(ConfigurationAdapter):
         self,
         selected_sources: list[str],
         parameter_values: object,
-        aux_source_names=None,
     ) -> None:
         pass
 

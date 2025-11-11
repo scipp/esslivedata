@@ -32,8 +32,9 @@ class StreamMapping:
         detectors: StreamLUT,
         monitors: StreamLUT,
         log_topics: set[KafkaTopic] | None = None,
-        livedata_config_topic: str,
+        livedata_commands_topic: str,
         livedata_data_topic: str,
+        livedata_responses_topic: str,
         livedata_roi_topic: str,
         livedata_status_topic: str,
     ) -> None:
@@ -43,20 +44,26 @@ class StreamMapping:
         # Currently we simply reuse the source_name as the stream name
         self._logs = None
         self._log_topics = log_topics or set()
-        self._livedata_config_topic = livedata_config_topic
+        self._livedata_commands_topic = livedata_commands_topic
         self._livedata_data_topic = livedata_data_topic
+        self._livedata_responses_topic = livedata_responses_topic
         self._livedata_roi_topic = livedata_roi_topic
         self._livedata_status_topic = livedata_status_topic
 
     @property
-    def livedata_config_topic(self) -> KafkaTopic:
-        """Returns the livedata config topic."""
-        return self._livedata_config_topic
+    def livedata_commands_topic(self) -> KafkaTopic:
+        """Returns the livedata commands topic."""
+        return self._livedata_commands_topic
 
     @property
     def livedata_data_topic(self) -> KafkaTopic:
         """Returns the livedata data topic."""
         return self._livedata_data_topic
+
+    @property
+    def livedata_responses_topic(self) -> KafkaTopic:
+        """Returns the livedata responses topic."""
+        return self._livedata_responses_topic
 
     @property
     def livedata_roi_topic(self) -> KafkaTopic:

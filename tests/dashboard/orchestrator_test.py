@@ -6,7 +6,13 @@ import pytest
 import scipp as sc
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
-from ess.livedata.core.message import Message, StreamId, StreamKind
+from ess.livedata.core.message import (
+    RESPONSES_STREAM_ID,
+    STATUS_STREAM_ID,
+    Message,
+    StreamId,
+    StreamKind,
+)
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.orchestrator import Orchestrator
@@ -29,6 +35,24 @@ class FakeMessageSource:
             timestamp=timestamp,
             stream=StreamId(kind=StreamKind.LIVEDATA_DATA, name=stream_name),
             value=data,
+        )
+        self._messages.append(message)
+
+    def add_config_message(self, config_data: dict, timestamp: int = 1000):
+        """Add a config message to be returned by get_messages."""
+        message = Message(
+            timestamp=timestamp,
+            stream=RESPONSES_STREAM_ID,
+            value=config_data,
+        )
+        self._messages.append(message)
+
+    def add_status_message(self, status_data: dict, timestamp: int = 1000):
+        """Add a status message to be returned by get_messages."""
+        message = Message(
+            timestamp=timestamp,
+            stream=STATUS_STREAM_ID,
+            value=status_data,
         )
         self._messages.append(message)
 
@@ -291,6 +315,123 @@ class TestOrchestrator:
 
         assert transaction_started
         assert result_key in data_service
+
+
+class FakeWorkflowConfigService:
+    """Fake workflow config service that records processed responses."""
+
+    def __init__(self):
+        self.processed_responses = []
+
+    def process_response(self, response) -> None:
+        """Record the processed response."""
+        self.processed_responses.append(response)
+
+
+class TestOrchestratorConfigProcessing:
+    def test_forward_with_config_message(self) -> None:
+        """Test that config messages are forwarded to workflow config service."""
+        source = FakeMessageSource()
+        data_service = DataService()
+        job_service = JobService(data_service=data_service)
+        workflow_config_service = FakeWorkflowConfigService()
+        orchestrator = Orchestrator(
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            workflow_config_service=workflow_config_service,
+        )
+
+        config_data = {"key": "value"}
+        orchestrator.forward(RESPONSES_STREAM_ID, config_data)
+
+        assert len(workflow_config_service.processed_responses) == 1
+        assert workflow_config_service.processed_responses[0] == config_data
+
+    def test_update_with_config_message(self) -> None:
+        """Test that config messages are processed in update."""
+        source = FakeMessageSource()
+        data_service = DataService()
+        job_service = JobService(data_service=data_service)
+        workflow_config_service = FakeWorkflowConfigService()
+        orchestrator = Orchestrator(
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            workflow_config_service=workflow_config_service,
+        )
+
+        config_data = {"instrument": "test"}
+        source.add_config_message(config_data)
+
+        orchestrator.update()
+
+        assert len(workflow_config_service.processed_responses) == 1
+        assert workflow_config_service.processed_responses[0] == config_data
+
+    def test_forward_with_config_message_no_processor(self) -> None:
+        """Test that config messages are handled gracefully without service."""
+        source = FakeMessageSource()
+        data_service = DataService()
+        job_service = JobService(data_service=data_service)
+        orchestrator = Orchestrator(
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            workflow_config_service=None,
+        )
+
+        config_data = {"key": "value"}
+        # Should not raise an exception
+        orchestrator.forward(RESPONSES_STREAM_ID, config_data)
+
+    def test_update_with_mixed_config_and_data_messages(self) -> None:
+        """Test that config and data messages are batched in transaction."""
+        source = FakeMessageSource()
+        data_service = DataService()
+        job_service = JobService(data_service=data_service)
+        workflow_config_service = FakeWorkflowConfigService()
+        orchestrator = Orchestrator(
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            workflow_config_service=workflow_config_service,
+        )
+
+        workflow_id = WorkflowId(
+            instrument="test_instrument",
+            namespace="test_namespace",
+            name="test_workflow",
+            version=1,
+        )
+        job_id = JobId(source_name="detector1", job_number=make_job_number())
+        result_key = ResultKey(workflow_id=workflow_id, job_id=job_id)
+
+        config_data = {"instrument": "test"}
+        data = sc.DataArray(sc.array(dims=['x'], values=[1, 2, 3]))
+
+        source.add_config_message(config_data)
+        source.add_message(result_key.model_dump_json(), data)
+
+        # Track transaction calls
+        transaction_count = 0
+        original_transaction = data_service.transaction
+
+        def counting_transaction():
+            nonlocal transaction_count
+            transaction_count += 1
+            return original_transaction()
+
+        data_service.transaction = counting_transaction
+
+        orchestrator.update()
+
+        # Both messages should be processed
+        assert len(workflow_config_service.processed_responses) == 1
+        assert workflow_config_service.processed_responses[0] == config_data
+        assert result_key in data_service
+        # Should use only one transaction for batching
+        assert transaction_count == 1
 
 
 def _data_stream_id(key: ResultKey) -> StreamId:
