@@ -21,21 +21,10 @@ This allows for testing the service outputs without running the dashboard.
 
 ### Dashboard
 
-#### Development Mode
-
-The dashboard can be run in development mode using:
+The dashboard can be run using:
 
 ```sh
 python -m ess.livedata.dashboard.reduction --instrument dummy
-```
-
-#### Production Mode
-
-The dashboard can be run in production mode using gunicorn:
-
-```sh
-# Reduction dashboard (runs on port 5009)
-LIVEDATA_INSTRUMENT=dummy gunicorn ess.livedata.dashboard.reduction_wsgi:application
 ```
 
 Navigate to `http://localhost:5009` for the reduction dashboard.
@@ -72,11 +61,7 @@ python -m ess.livedata.services.monitor_data --instrument dummy
 Run the reduction dashboard:
 
 ```sh
-# Development mode (runs on port 5009)
 python -m ess.livedata.dashboard.reduction --instrument dummy
-
-# Or production mode with gunicorn
-LIVEDATA_INSTRUMENT=dummy gunicorn ess.livedata.dashboard.reduction_wsgi:application
 ```
 
 Navigate to `http://localhost:5009` to see the dashboard.
