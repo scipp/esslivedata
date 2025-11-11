@@ -22,7 +22,6 @@ from .plots import (
     LinePlotter,
     Plotter,
     SlicerPlotter,
-    SlidingWindowPlotter,
 )
 from .scipp_to_holoviews import _all_coords_evenly_spaced
 
@@ -247,22 +246,4 @@ plotter_registry.register_plotter(
         required_extractor=LatestValueExtractor,
     ),
     factory=_roi_detector_plotter_factory,
-)
-
-
-plotter_registry.register_plotter(
-    name='sliding_window',
-    title='Sliding Window',
-    description=(
-        'Sum data over a sliding time window. '
-        'Displays 1D line plot for 2D input data, or 2D image for 3D input data. '
-        'The time dimension is summed over the selected window length.'
-    ),
-    data_requirements=DataRequirements(
-        min_dims=2,
-        max_dims=3,
-        multiple_datasets=True,
-        required_extractor=LatestValueExtractor,
-    ),
-    factory=SlidingWindowPlotter.from_params,
 )

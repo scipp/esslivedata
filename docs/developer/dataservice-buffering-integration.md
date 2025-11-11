@@ -10,7 +10,7 @@ The current architecture has a fundamental issue with the transaction mechanism 
 
 This is:
 - ✅ **Perfect** for regular plotters (they only want the latest image/data)
-- ❌ **Fatal** for time-series buffers that need every update (SlidingWindowPlotter)
+- ❌ **Fatal** for time-series buffers that need windowed aggregation
 
 Current workaround (HistoryBufferService) subscribes to DataService but gets coalesced data, missing intermediate updates.
 
@@ -21,7 +21,7 @@ Current workaround (HistoryBufferService) subscribes to DataService but gets coa
 ### Key Insight
 All plotters subscribe to the same service and specify what they need via an `UpdateExtractor`:
 - **Regular plotters**: `LatestValueExtractor` (extracts last element)
-- **SlidingWindowPlotter**: `WindowExtractor(size=100)`
+- **Windowed plotters**: `WindowAggregatingExtractor(size=100, aggregation='sum')`
 - **Future use cases**: `FullHistoryExtractor`, custom extractors
 
 ## Design Details
