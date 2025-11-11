@@ -244,22 +244,43 @@ class TestWindowAggregatingExtractor:
 
     def test_sum_aggregation_scipp(self, buffer_factory: BufferFactory):
         """Test sum aggregation over time dimension."""
-        # Duration that gives exactly 3 frames at 14 Hz: 3/14 ≈ 0.214 seconds
-        extractor = WindowAggregatingExtractor(
-            window_duration_seconds=3 / 14, aggregation='sum'
-        )
+        # Create frames with realistic timestamps (spaced ~71ms apart at 14 Hz)
+        t0 = 0  # Start at time=0
+        dt_ns = int(1e9 / 14)  # ~71.4 ms in nanoseconds
 
-        # Create 2D data with time dimension
-        data = sc.DataArray(
+        data1 = sc.DataArray(
             sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
-            coords={'x': sc.arange('x', 3, unit='m')},
+            coords={
+                'x': sc.arange('x', 3, unit='m'),
+                'time': sc.array(dims=[], values=t0, unit='ns', dtype='int64'),
+            },
+        )
+        data2 = sc.DataArray(
+            sc.array(dims=['x'], values=[2.0, 4.0, 6.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 3, unit='m'),
+                'time': sc.array(dims=[], values=t0 + dt_ns, unit='ns', dtype='int64'),
+            },
+        )
+        data3 = sc.DataArray(
+            sc.array(dims=['x'], values=[3.0, 6.0, 9.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 3, unit='m'),
+                'time': sc.array(
+                    dims=[], values=t0 + 2 * dt_ns, unit='ns', dtype='int64'
+                ),
+            },
         )
 
-        buffer = buffer_factory.create_buffer(data, max_size=3)
-        buffer.append(data)
-        buffer.append(data * 2)
-        buffer.append(data * 3)
+        buffer = buffer_factory.create_buffer(data1, max_size=10)
+        buffer.append(data1)
+        buffer.append(data2)
+        buffer.append(data3)
 
+        # Extract window of 0.2 seconds (should get all 3 frames at 14 Hz)
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=0.2, aggregation='sum'
+        )
         result = extractor.extract(buffer)
 
         # Result should be summed over time (no time dimension)
@@ -269,21 +290,41 @@ class TestWindowAggregatingExtractor:
 
     def test_mean_aggregation_scipp(self, buffer_factory: BufferFactory):
         """Test mean aggregation over time dimension."""
-        # Duration that gives exactly 3 frames at 14 Hz
-        extractor = WindowAggregatingExtractor(
-            window_duration_seconds=3 / 14, aggregation='mean'
-        )
+        t0 = 0
+        dt_ns = int(1e9 / 14)
 
-        data = sc.DataArray(
+        data1 = sc.DataArray(
             sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
-            coords={'x': sc.arange('x', 3, unit='m')},
+            coords={
+                'x': sc.arange('x', 3, unit='m'),
+                'time': sc.array(dims=[], values=t0, unit='ns', dtype='int64'),
+            },
+        )
+        data2 = sc.DataArray(
+            sc.array(dims=['x'], values=[2.0, 4.0, 6.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 3, unit='m'),
+                'time': sc.array(dims=[], values=t0 + dt_ns, unit='ns', dtype='int64'),
+            },
+        )
+        data3 = sc.DataArray(
+            sc.array(dims=['x'], values=[4.0, 8.0, 12.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 3, unit='m'),
+                'time': sc.array(
+                    dims=[], values=t0 + 2 * dt_ns, unit='ns', dtype='int64'
+                ),
+            },
         )
 
-        buffer = buffer_factory.create_buffer(data, max_size=3)
-        buffer.append(data)
-        buffer.append(data * 2)
-        buffer.append(data * 4)
+        buffer = buffer_factory.create_buffer(data1, max_size=10)
+        buffer.append(data1)
+        buffer.append(data2)
+        buffer.append(data3)
 
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=0.2, aggregation='mean'
+        )
         result = extractor.extract(buffer)
 
         # Mean: ([1,2,3] + [2,4,6] + [4,8,12]) / 3 = [7,14,21] / 3
@@ -292,24 +333,31 @@ class TestWindowAggregatingExtractor:
 
     def test_last_aggregation_scipp(self, buffer_factory: BufferFactory):
         """Test last aggregation (returns last frame)."""
-        # Duration that gives exactly 3 frames at 14 Hz
-        extractor = WindowAggregatingExtractor(
-            window_duration_seconds=3 / 14, aggregation='last'
-        )
+        t0 = 0
+        dt_ns = int(1e9 / 14)
 
         data1 = sc.DataArray(
             sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
-            coords={'x': sc.arange('x', 3, unit='m')},
+            coords={
+                'x': sc.arange('x', 3, unit='m'),
+                'time': sc.array(dims=[], values=t0, unit='ns', dtype='int64'),
+            },
         )
         data2 = sc.DataArray(
             sc.array(dims=['x'], values=[4.0, 5.0, 6.0], unit='counts'),
-            coords={'x': sc.arange('x', 3, unit='m')},
+            coords={
+                'x': sc.arange('x', 3, unit='m'),
+                'time': sc.array(dims=[], values=t0 + dt_ns, unit='ns', dtype='int64'),
+            },
         )
 
-        buffer = buffer_factory.create_buffer(data1, max_size=3)
+        buffer = buffer_factory.create_buffer(data1, max_size=10)
         buffer.append(data1)
         buffer.append(data2)
 
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=0.2, aggregation='last'
+        )
         result = extractor.extract(buffer)
 
         # Should return the last frame
@@ -318,24 +366,31 @@ class TestWindowAggregatingExtractor:
 
     def test_max_aggregation_scipp(self, buffer_factory: BufferFactory):
         """Test max aggregation over time dimension."""
-        # Duration that gives exactly 3 frames at 14 Hz
-        extractor = WindowAggregatingExtractor(
-            window_duration_seconds=3 / 14, aggregation='max'
-        )
+        t0 = 0
+        dt_ns = int(1e9 / 14)
 
         data1 = sc.DataArray(
             sc.array(dims=['x'], values=[1.0, 5.0, 2.0], unit='counts'),
-            coords={'x': sc.arange('x', 3, unit='m')},
+            coords={
+                'x': sc.arange('x', 3, unit='m'),
+                'time': sc.array(dims=[], values=t0, unit='ns', dtype='int64'),
+            },
         )
         data2 = sc.DataArray(
             sc.array(dims=['x'], values=[3.0, 2.0, 4.0], unit='counts'),
-            coords={'x': sc.arange('x', 3, unit='m')},
+            coords={
+                'x': sc.arange('x', 3, unit='m'),
+                'time': sc.array(dims=[], values=t0 + dt_ns, unit='ns', dtype='int64'),
+            },
         )
 
-        buffer = buffer_factory.create_buffer(data1, max_size=3)
+        buffer = buffer_factory.create_buffer(data1, max_size=10)
         buffer.append(data1)
         buffer.append(data2)
 
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=0.2, aggregation='max'
+        )
         result = extractor.extract(buffer)
 
         # Max of [1,5,2] and [3,2,4] = [3,5,4]
@@ -343,37 +398,64 @@ class TestWindowAggregatingExtractor:
 
     def test_extract_empty_buffer_returns_none(self, buffer_factory: BufferFactory):
         """Test that extracting from empty buffer returns None."""
-        extractor = WindowAggregatingExtractor(
-            window_duration_seconds=3 / 14, aggregation='sum'
+        data = sc.DataArray(
+            sc.scalar(1.0, unit='counts'),
+            coords={'time': sc.array(dims=[], values=0, unit='ns', dtype='int64')},
         )
-        buffer = buffer_factory.create_buffer(sc.scalar(1.0), max_size=3)
+        buffer = buffer_factory.create_buffer(data, max_size=10)
 
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=0.2, aggregation='sum'
+        )
         result = extractor.extract(buffer)
         assert result is None
 
-    def test_extract_non_scipp_data_returns_as_is(self, buffer_factory: BufferFactory):
-        """Test that non-scipp data without dims is returned as-is."""
+    def test_extract_non_scipp_data_raises_error(self, buffer_factory: BufferFactory):
+        """Test that non-scipp data raises NotImplementedError for window extraction."""
         extractor = WindowAggregatingExtractor(
-            window_duration_seconds=3 / 14, aggregation='sum'
+            window_duration_seconds=0.2, aggregation='sum'
         )
-        buffer = buffer_factory.create_buffer(42, max_size=3)
+        buffer = buffer_factory.create_buffer(42, max_size=10)
         buffer.append(42)
 
-        result = extractor.extract(buffer)
-        # Should return the raw data since it doesn't have dims
-        assert result == [42]
+        # ListBuffer doesn't support time-based windowing
+        with pytest.raises(NotImplementedError, match="Time-based windowing"):
+            extractor.extract(buffer)
 
     def test_invalid_aggregation_raises_error(self, buffer_factory: BufferFactory):
         """Test that invalid aggregation method raises error."""
         extractor = WindowAggregatingExtractor(
-            window_duration_seconds=2 / 14, aggregation='invalid'
+            window_duration_seconds=0.2, aggregation='invalid'
         )
 
         data = sc.DataArray(
             sc.array(dims=['x'], values=[1.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 1, unit='m'),
+                'time': sc.array(dims=[], values=0, unit='ns', dtype='int64'),
+            },
         )
-        buffer = buffer_factory.create_buffer(data, max_size=2)
+        buffer = buffer_factory.create_buffer(data, max_size=10)
         buffer.append(data)
 
         with pytest.raises(ValueError, match="Unknown aggregation method"):
+            extractor.extract(buffer)
+
+    def test_extract_without_time_coord_raises_error(
+        self, buffer_factory: BufferFactory
+    ):
+        """Test that data without time coordinate raises error."""
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=0.2, aggregation='sum'
+        )
+
+        # Data without time coordinate
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={'x': sc.arange('x', 2, unit='m')},
+        )
+        buffer = buffer_factory.create_buffer(data, max_size=10)
+        buffer.append(data)
+
+        with pytest.raises(ValueError, match="no 'time' coordinate"):
             extractor.extract(buffer)

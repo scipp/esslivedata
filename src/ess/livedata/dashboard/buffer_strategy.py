@@ -248,13 +248,63 @@ class ScippBuffer(Generic[ScippT]):
         self, buffer: ScippT, end: int, duration_seconds: float
     ) -> ScippT:
         """
-        Get window by time duration (naive implementation).
+        Get window by time duration using actual time coordinate.
 
-        Assumes nominal 14 Hz frame rate (ESS).
+        Extracts all frames where time >= (latest_time - duration_seconds).
+        Requires buffer to have a time coordinate.
+
+        Parameters
+        ----------
+        buffer:
+            Buffer to extract from.
+        end:
+            End index of valid data in buffer (exclusive).
+        duration_seconds:
+            Time duration in seconds.
+
+        Returns
+        -------
+        :
+            Window of data covering the specified duration.
+
+        Raises
+        ------
+        ValueError:
+            If buffer has no time coordinate.
         """
-        # Naive conversion: duration → frame count at 14 Hz
-        frame_count = max(1, int(duration_seconds * 14.0))
-        start = max(0, end - frame_count)
+        if end == 0:
+            # Empty buffer
+            return self.get_view(buffer, 0, 0)
+
+        # Get time coordinate
+        if not hasattr(buffer, 'coords') or self._concat_dim not in buffer.coords:
+            raise ValueError(
+                f"Buffer has no '{self._concat_dim}' coordinate. "
+                "Time-based windowing requires time coordinate data."
+            )
+
+        time_coord = buffer.coords[self._concat_dim]
+
+        # Get the latest timestamp (last valid frame)
+        latest_time_ns = time_coord.values[end - 1]
+
+        # Calculate cutoff time
+        duration_ns = duration_seconds * 1e9
+        cutoff_time_ns = latest_time_ns - duration_ns
+
+        # Find start index where time >= cutoff_time
+        # Use binary search for efficiency
+        import numpy as np
+
+        time_values = time_coord.values[:end]
+        # Find first index where time >= cutoff
+        indices = np.searchsorted(time_values, cutoff_time_ns, side='left')
+        start = max(0, int(indices))
+
+        # Ensure we get at least one frame
+        if start >= end:
+            start = end - 1
+
         return self.get_view(buffer, start, end)
 
 
@@ -528,13 +578,18 @@ class ListBuffer(BufferInterface[list]):
         self, buffer: list, end: int, duration_seconds: float
     ) -> list:
         """
-        Get window by time duration (naive implementation).
+        Time-based windowing not supported for list buffers.
 
-        Assumes nominal 14 Hz frame rate for list-based buffers.
+        Raises
+        ------
+        NotImplementedError:
+            List buffers have no time coordinate information.
         """
-        frame_count = max(1, int(duration_seconds * 14.0))
-        start = max(0, end - frame_count)
-        return buffer[start:end]
+        raise NotImplementedError(
+            "Time-based windowing is not supported for list buffers. "
+            "Only scipp DataArray/Variable buffers with time coordinates support "
+            "duration-based extraction."
+        )
 
 
 class SingleValueStorage(Generic[T]):
@@ -574,7 +629,12 @@ class SingleValueStorage(Generic[T]):
         return self._value
 
     def get_window_by_duration(self, duration_seconds: float) -> T | None:
-        """Get the stored value (duration parameter ignored)."""
+        """
+        Get the stored value (duration parameter ignored).
+
+        For single-value storage, duration-based extraction returns the single
+        stored value, same as get_latest() and get_window().
+        """
         return self._value
 
     def clear(self) -> None:
