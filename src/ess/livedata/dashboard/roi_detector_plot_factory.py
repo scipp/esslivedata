@@ -530,13 +530,15 @@ class ROIDetectorPlotFactory:
             def send(self, data):
                 self.callback(data)
 
-        roi_pipe = ROIReadbackPipe(on_roi_data_update)
+        def roi_pipe_factory(data):
+            """Factory function to create ROIReadbackPipe with callback."""
+            return ROIReadbackPipe(on_roi_data_update)
 
         from .data_service import LatestValueExtractor
 
         assembler = MergingStreamAssembler({roi_readback_key})
         extractors = {roi_readback_key: LatestValueExtractor()}
-        subscriber = DataSubscriber(assembler, roi_pipe, extractors)
+        subscriber = DataSubscriber(assembler, roi_pipe_factory, extractors)
         self._stream_manager.data_service.register_subscriber(subscriber)
 
     def create_roi_detector_plot_components(

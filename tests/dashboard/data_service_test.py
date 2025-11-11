@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -24,20 +25,33 @@ class FakeDataAssembler(StreamAssembler[str]):
 class FakePipe(Pipe):
     """Fake pipe for testing."""
 
-    def __init__(self) -> None:
+    def __init__(self, data: Any = None) -> None:
+        self.init_data = data
         self.sent_data: list[dict[str, Any]] = []
 
     def send(self, data: Any) -> None:
         self.sent_data.append(data)
 
 
-def create_test_subscriber(keys: set[str]) -> tuple[DataSubscriber[str], FakePipe]:
-    """Create a test subscriber with the given keys."""
+def create_test_subscriber(keys: set[str]) -> tuple[DataSubscriber[str], Callable]:
+    """
+    Create a test subscriber with the given keys.
+
+    Returns the subscriber and a callable to get the pipe after it's created.
+    """
     assembler = FakeDataAssembler(keys)
-    pipe = FakePipe()
     extractors = {key: LatestValueExtractor() for key in keys}
-    subscriber = DataSubscriber(assembler, pipe, extractors)
-    return subscriber, pipe
+
+    def pipe_factory(data: Any) -> FakePipe:
+        return FakePipe(data)
+
+    subscriber = DataSubscriber(assembler, pipe_factory, extractors)
+
+    def get_pipe() -> FakePipe:
+        """Get the pipe (created on first trigger)."""
+        return subscriber.pipe
+
+    return subscriber, get_pipe
 
 
 @pytest.fixture
@@ -67,35 +81,39 @@ def test_setitem_without_subscribers_no_error(data_service: DataService[str, int
 
 
 def test_register_subscriber_adds_to_list(data_service: DataService[str, int]):
-    subscriber, _ = create_test_subscriber({"key1"})
+    subscriber, get_pipe = create_test_subscriber({"key1"})
     data_service.register_subscriber(subscriber)
+    # Verify pipe was created and subscriber was added
+    _ = get_pipe()  # Ensure pipe exists
 
 
 def test_setitem_notifies_matching_subscriber(data_service: DataService[str, int]):
-    subscriber, pipe = create_test_subscriber({"key1", "key2"})
+    subscriber, get_pipe = create_test_subscriber({"key1", "key2"})
     data_service.register_subscriber(subscriber)
 
     data_service["key1"] = 42
 
+    pipe = get_pipe()
     assert len(pipe.sent_data) == 1
     assert pipe.sent_data[0] == {"key1": 42}
 
 
 def test_setitem_ignores_non_matching_subscriber(data_service: DataService[str, int]):
-    subscriber, pipe = create_test_subscriber({"other_key"})
+    subscriber, get_pipe = create_test_subscriber({"other_key"})
     data_service.register_subscriber(subscriber)
 
     data_service["key1"] = 42
 
+    pipe = get_pipe()
     assert len(pipe.sent_data) == 0
 
 
 def test_setitem_notifies_multiple_matching_subscribers(
     data_service: DataService[str, int],
 ):
-    subscriber1, pipe1 = create_test_subscriber({"key1"})
-    subscriber2, pipe2 = create_test_subscriber({"key1", "key2"})
-    subscriber3, pipe3 = create_test_subscriber({"key2"})
+    subscriber1, get_pipe1 = create_test_subscriber({"key1"})
+    subscriber2, get_pipe2 = create_test_subscriber({"key1", "key2"})
+    subscriber3, get_pipe3 = create_test_subscriber({"key2"})
 
     data_service.register_subscriber(subscriber1)
     data_service.register_subscriber(subscriber2)
@@ -103,6 +121,7 @@ def test_setitem_notifies_multiple_matching_subscribers(
 
     data_service["key1"] = 42
 
+    pipe1, pipe2, pipe3 = get_pipe1(), get_pipe2(), get_pipe3()
     assert len(pipe1.sent_data) == 1
     assert len(pipe2.sent_data) == 1
     assert len(pipe3.sent_data) == 0
@@ -111,21 +130,23 @@ def test_setitem_notifies_multiple_matching_subscribers(
 def test_setitem_multiple_updates_notify_separately(
     data_service: DataService[str, int],
 ):
-    subscriber, pipe = create_test_subscriber({"key1", "key2"})
+    subscriber, get_pipe = create_test_subscriber({"key1", "key2"})
     data_service.register_subscriber(subscriber)
 
     data_service["key1"] = 42
     data_service["key2"] = 84
 
+    pipe = get_pipe()
     assert len(pipe.sent_data) == 2
     assert pipe.sent_data[0] == {"key1": 42}
     assert pipe.sent_data[1] == {"key1": 42, "key2": 84}
 
 
 def test_transaction_batches_notifications(data_service: DataService[str, int]):
-    subscriber, pipe = create_test_subscriber({"key1", "key2"})
+    subscriber, get_pipe = create_test_subscriber({"key1", "key2"})
     data_service.register_subscriber(subscriber)
 
+    pipe = get_pipe()
     with data_service.transaction():
         data_service["key1"] = 42
         data_service["key2"] = 84
@@ -138,9 +159,10 @@ def test_transaction_batches_notifications(data_service: DataService[str, int]):
 
 
 def test_transaction_nested_batches_correctly(data_service: DataService[str, int]):
-    subscriber, pipe = create_test_subscriber({"key1", "key2", "key3"})
+    subscriber, get_pipe = create_test_subscriber({"key1", "key2", "key3"})
     data_service.register_subscriber(subscriber)
 
+    pipe = get_pipe()
     with data_service.transaction():
         data_service["key1"] = 42
         with data_service.transaction():
@@ -156,7 +178,7 @@ def test_transaction_nested_batches_correctly(data_service: DataService[str, int
 
 
 def test_transaction_exception_still_notifies(data_service: DataService[str, int]):
-    subscriber, pipe = create_test_subscriber({"key1"})
+    subscriber, get_pipe = create_test_subscriber({"key1"})
     data_service.register_subscriber(subscriber)
 
     try:
@@ -168,6 +190,7 @@ def test_transaction_exception_still_notifies(data_service: DataService[str, int
         pass
 
     # Notification should still happen
+    pipe = get_pipe()
     assert len(pipe.sent_data) == 1
     assert pipe.sent_data[0] == {"key1": 42}
 
@@ -190,12 +213,13 @@ def test_dictionary_operations_work(
 
 
 def test_update_method_triggers_notifications(data_service: DataService[str, int]):
-    subscriber, pipe = create_test_subscriber({"key1", "key2"})
+    subscriber, get_pipe = create_test_subscriber({"key1", "key2"})
     data_service.register_subscriber(subscriber)
 
     data_service.update({"key1": 42, "key2": 84})
 
     # Should trigger notifications for each key
+    pipe = get_pipe()
     assert len(pipe.sent_data) == 2
 
 
@@ -229,7 +253,7 @@ def test_setdefault_behavior(data_service: DataService[str, int]):
 
 
 def test_subscriber_gets_full_data_dict(data_service: DataService[str, int]):
-    subscriber, pipe = create_test_subscriber({"key1"})
+    subscriber, get_pipe = create_test_subscriber({"key1"})
     data_service.register_subscriber(subscriber)
 
     # Add some initial data
@@ -237,11 +261,12 @@ def test_subscriber_gets_full_data_dict(data_service: DataService[str, int]):
     data_service["key1"] = 42
 
     # Subscriber should get the full data dict
+    pipe = get_pipe()
     assert pipe.sent_data[-1] == {"key1": 42}
 
 
 def test_subscriber_only_gets_subscribed_keys(data_service: DataService[str, int]):
-    subscriber, pipe = create_test_subscriber({"key1", "key3"})
+    subscriber, get_pipe = create_test_subscriber({"key1", "key3"})
     data_service.register_subscriber(subscriber)
 
     # Add data for subscribed and unsubscribed keys
@@ -251,6 +276,7 @@ def test_subscriber_only_gets_subscribed_keys(data_service: DataService[str, int
     data_service["unrelated"] = 999  # Not subscribed to this key
 
     # Subscriber should only receive data for keys it's interested in
+    pipe = get_pipe()
     expected_data = {"key1": 42, "key3": 126}
     assert pipe.sent_data[-1] == expected_data
 
@@ -260,9 +286,10 @@ def test_subscriber_only_gets_subscribed_keys(data_service: DataService[str, int
 
 
 def test_empty_transaction_no_notifications(data_service: DataService[str, int]):
-    subscriber, pipe = create_test_subscriber({"key1"})
+    subscriber, get_pipe = create_test_subscriber({"key1"})
     data_service.register_subscriber(subscriber)
 
+    pipe = get_pipe()
     with data_service.transaction():
         pass  # No changes
 
@@ -270,12 +297,13 @@ def test_empty_transaction_no_notifications(data_service: DataService[str, int])
 
 
 def test_delitem_notifies_subscribers(data_service: DataService[str, int]):
-    subscriber, pipe = create_test_subscriber({"key1", "key2"})
+    subscriber, get_pipe = create_test_subscriber({"key1", "key2"})
     data_service.register_subscriber(subscriber)
 
     # Add some data first
     data_service["key1"] = 42
     data_service["key2"] = 84
+    pipe = get_pipe()
     pipe.sent_data.clear()  # Clear previous notifications
 
     # Delete a key
@@ -290,12 +318,13 @@ def test_delitem_notifies_subscribers(data_service: DataService[str, int]):
 def test_delitem_in_transaction_batches_notifications(
     data_service: DataService[str, int],
 ):
-    subscriber, pipe = create_test_subscriber({"key1", "key2"})
+    subscriber, get_pipe = create_test_subscriber({"key1", "key2"})
     data_service.register_subscriber(subscriber)
 
     # Add some data first
     data_service["key1"] = 42
     data_service["key2"] = 84
+    pipe = get_pipe()
     pipe.sent_data.clear()  # Clear previous notifications
 
     with data_service.transaction():
@@ -310,11 +339,12 @@ def test_delitem_in_transaction_batches_notifications(
 
 
 def test_transaction_set_then_del_same_key(data_service: DataService[str, int]):
-    subscriber, pipe = create_test_subscriber({"key1", "key2"})
+    subscriber, get_pipe = create_test_subscriber({"key1", "key2"})
     data_service.register_subscriber(subscriber)
 
     # Add some initial data
     data_service["key2"] = 84
+    pipe = get_pipe()
     pipe.sent_data.clear()
 
     with data_service.transaction():
@@ -330,12 +360,13 @@ def test_transaction_set_then_del_same_key(data_service: DataService[str, int]):
 
 
 def test_transaction_del_then_set_same_key(data_service: DataService[str, int]):
-    subscriber, pipe = create_test_subscriber({"key1", "key2"})
+    subscriber, get_pipe = create_test_subscriber({"key1", "key2"})
     data_service.register_subscriber(subscriber)
 
     # Add some initial data
     data_service["key1"] = 42
     data_service["key2"] = 84
+    pipe = get_pipe()
     pipe.sent_data.clear()
 
     with data_service.transaction():
@@ -351,11 +382,12 @@ def test_transaction_del_then_set_same_key(data_service: DataService[str, int]):
 
 
 def test_transaction_multiple_operations_same_key(data_service: DataService[str, int]):
-    subscriber, pipe = create_test_subscriber({"key1"})
+    subscriber, get_pipe = create_test_subscriber({"key1"})
     data_service.register_subscriber(subscriber)
 
     # Add initial data
     data_service["key1"] = 10
+    pipe = get_pipe()
     pipe.sent_data.clear()
 
     with data_service.transaction():
@@ -379,10 +411,14 @@ class TestDataServiceUpdatingSubscribers:
         """Test subscriber updating service outside of transaction."""
         service = DataService[str, int]()
 
-        class UpdatingSubscriber(DataSubscriber[str]):
+        class UpdatingSubscriber(DataSubscriber):
             def __init__(self, keys: set[str], service: DataService[str, int]):
                 extractors = {key: LatestValueExtractor() for key in keys}
-                super().__init__(FakeDataAssembler(keys), FakePipe(), extractors)
+
+                def pipe_factory(data):
+                    return FakePipe(data)
+
+                super().__init__(FakeDataAssembler(keys), pipe_factory, extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -404,10 +440,14 @@ class TestDataServiceUpdatingSubscribers:
         """Test subscriber updating service at end of transaction."""
         service = DataService[str, int]()
 
-        class UpdatingSubscriber(DataSubscriber[str]):
+        class UpdatingSubscriber(DataSubscriber):
             def __init__(self, keys: set[str], service: DataService[str, int]):
                 extractors = {key: LatestValueExtractor() for key in keys}
-                super().__init__(FakeDataAssembler(keys), FakePipe(), extractors)
+
+                def pipe_factory(data):
+                    return FakePipe(data)
+
+                super().__init__(FakeDataAssembler(keys), pipe_factory, extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -431,7 +471,7 @@ class TestDataServiceUpdatingSubscribers:
         """Test multiple subscribers updating different derived data."""
         service = DataService[str, int]()
 
-        class MultiplierSubscriber(DataSubscriber[str]):
+        class MultiplierSubscriber(DataSubscriber):
             def __init__(
                 self,
                 keys: set[str],
@@ -439,7 +479,11 @@ class TestDataServiceUpdatingSubscribers:
                 multiplier: int,
             ):
                 extractors = {key: LatestValueExtractor() for key in keys}
-                super().__init__(FakeDataAssembler(keys), FakePipe(), extractors)
+
+                def pipe_factory(data):
+                    return FakePipe(data)
+
+                super().__init__(FakeDataAssembler(keys), pipe_factory, extractors)
                 self._service = service
                 self._multiplier = multiplier
 
@@ -464,10 +508,14 @@ class TestDataServiceUpdatingSubscribers:
         """Test subscribers that depend on derived data from other subscribers."""
         service = DataService[str, int]()
 
-        class FirstLevelSubscriber(DataSubscriber[str]):
+        class FirstLevelSubscriber(DataSubscriber):
             def __init__(self, service: DataService[str, int]):
                 extractors = {key: LatestValueExtractor() for key in {"input"}}
-                super().__init__(FakeDataAssembler({"input"}), FakePipe(), extractors)
+
+                def pipe_factory(data):
+                    return FakePipe(data)
+
+                super().__init__(FakeDataAssembler({"input"}), pipe_factory, extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -475,10 +523,16 @@ class TestDataServiceUpdatingSubscribers:
                 if "input" in store:
                     self._service["level1"] = store["input"] * 2
 
-        class SecondLevelSubscriber(DataSubscriber[str]):
+        class SecondLevelSubscriber(DataSubscriber):
             def __init__(self, service: DataService[str, int]):
                 extractors = {key: LatestValueExtractor() for key in {"level1"}}
-                super().__init__(FakeDataAssembler({"level1"}), FakePipe(), extractors)
+
+                def pipe_factory(data):
+                    return FakePipe(data)
+
+                super().__init__(
+                    FakeDataAssembler({"level1"}), pipe_factory, extractors
+                )
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -501,10 +555,14 @@ class TestDataServiceUpdatingSubscribers:
         """Test cascading updates within a transaction."""
         service = DataService[str, int]()
 
-        class FirstLevelSubscriber(DataSubscriber[str]):
+        class FirstLevelSubscriber(DataSubscriber):
             def __init__(self, service: DataService[str, int]):
                 extractors = {key: LatestValueExtractor() for key in {"input"}}
-                super().__init__(FakeDataAssembler({"input"}), FakePipe(), extractors)
+
+                def pipe_factory(data):
+                    return FakePipe(data)
+
+                super().__init__(FakeDataAssembler({"input"}), pipe_factory, extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -512,10 +570,16 @@ class TestDataServiceUpdatingSubscribers:
                 if "input" in store:
                     self._service["level1"] = store["input"] * 2
 
-        class SecondLevelSubscriber(DataSubscriber[str]):
+        class SecondLevelSubscriber(DataSubscriber):
             def __init__(self, service: DataService[str, int]):
                 extractors = {key: LatestValueExtractor() for key in {"level1"}}
-                super().__init__(FakeDataAssembler({"level1"}), FakePipe(), extractors)
+
+                def pipe_factory(data):
+                    return FakePipe(data)
+
+                super().__init__(
+                    FakeDataAssembler({"level1"}), pipe_factory, extractors
+                )
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -545,10 +609,14 @@ class TestDataServiceUpdatingSubscribers:
         """Test subscriber that updates multiple derived keys at once."""
         service = DataService[str, int]()
 
-        class MultiUpdateSubscriber(DataSubscriber[str]):
+        class MultiUpdateSubscriber(DataSubscriber):
             def __init__(self, service: DataService[str, int]):
                 extractors = {key: LatestValueExtractor() for key in {"input"}}
-                super().__init__(FakeDataAssembler({"input"}), FakePipe(), extractors)
+
+                def pipe_factory(data):
+                    return FakePipe(data)
+
+                super().__init__(FakeDataAssembler({"input"}), pipe_factory, extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -575,10 +643,14 @@ class TestDataServiceUpdatingSubscribers:
         service = DataService[str, int]()
         service["existing"] = 100
 
-        class OverwriteSubscriber(DataSubscriber[str]):
+        class OverwriteSubscriber(DataSubscriber):
             def __init__(self, service: DataService[str, int]):
                 extractors = {key: LatestValueExtractor() for key in {"input"}}
-                super().__init__(FakeDataAssembler({"input"}), FakePipe(), extractors)
+
+                def pipe_factory(data):
+                    return FakePipe(data)
+
+                super().__init__(FakeDataAssembler({"input"}), pipe_factory, extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -599,13 +671,17 @@ class TestDataServiceUpdatingSubscribers:
         service = DataService[str, int]()
         update_count = {"count": 0}
 
-        class CircularSubscriber(DataSubscriber[str]):
+        class CircularSubscriber(DataSubscriber):
             def __init__(self, service: DataService[str, int]):
                 extractors = {
                     key: LatestValueExtractor() for key in {"input", "output"}
                 }
+
+                def pipe_factory(data):
+                    return FakePipe(data)
+
                 super().__init__(
-                    FakeDataAssembler({"input", "output"}), FakePipe(), extractors
+                    FakeDataAssembler({"input", "output"}), pipe_factory, extractors
                 )
                 self._service = service
 
@@ -633,10 +709,16 @@ class TestDataServiceUpdatingSubscribers:
         service = DataService[str, int]()
         service["to_delete"] = 999
 
-        class DeletingSubscriber(DataSubscriber[str]):
+        class DeletingSubscriber(DataSubscriber):
             def __init__(self, service: DataService[str, int]):
                 extractors = {key: LatestValueExtractor() for key in {"trigger"}}
-                super().__init__(FakeDataAssembler({"trigger"}), FakePipe(), extractors)
+
+                def pipe_factory(data):
+                    return FakePipe(data)
+
+                super().__init__(
+                    FakeDataAssembler({"trigger"}), pipe_factory, extractors
+                )
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -658,10 +740,14 @@ class TestDataServiceUpdatingSubscribers:
         """Test complex scenario with nested transactions and subscriber updates."""
         service = DataService[str, int]()
 
-        class ComplexSubscriber(DataSubscriber[str]):
+        class ComplexSubscriber(DataSubscriber):
             def __init__(self, service: DataService[str, int]):
                 extractors = {key: LatestValueExtractor() for key in {"input"}}
-                super().__init__(FakeDataAssembler({"input"}), FakePipe(), extractors)
+
+                def pipe_factory(data):
+                    return FakePipe(data)
+
+                super().__init__(FakeDataAssembler({"input"}), pipe_factory, extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -694,12 +780,18 @@ class TestDataServiceUpdatingSubscribers:
         """Test scenario requiring multiple notification rounds."""
         service = DataService[str, int]()
 
-        class ChainSubscriber(DataSubscriber[str]):
+        class ChainSubscriber(DataSubscriber):
             def __init__(
                 self, input_key: str, output_key: str, service: DataService[str, int]
             ):
                 extractors = {key: LatestValueExtractor() for key in {input_key}}
-                super().__init__(FakeDataAssembler({input_key}), FakePipe(), extractors)
+
+                def pipe_factory(data):
+                    return FakePipe(data)
+
+                super().__init__(
+                    FakeDataAssembler({input_key}), pipe_factory, extractors
+                )
                 self._input_key = input_key
                 self._output_key = output_key
                 self._service = service
@@ -729,10 +821,14 @@ class TestDataServiceUpdatingSubscribers:
         """Test mixing immediate updates with transactional updates from subscribers."""
         service = DataService[str, int]()
 
-        class MixedSubscriber(DataSubscriber[str]):
+        class MixedSubscriber(DataSubscriber):
             def __init__(self, service: DataService[str, int]):
                 extractors = {key: LatestValueExtractor() for key in {"input"}}
-                super().__init__(FakeDataAssembler({"input"}), FakePipe(), extractors)
+
+                def pipe_factory(data):
+                    return FakePipe(data)
+
+                super().__init__(FakeDataAssembler({"input"}), pipe_factory, extractors)
                 self._service = service
 
             def trigger(self, store: dict[str, int]) -> None:
@@ -794,8 +890,8 @@ class TestExtractorBasedSubscription:
             data = sc.scalar(i, unit='counts')
             service["data"] = data
 
-        # Subscriber should have received 5 updates
-        assert len(subscriber.received_data) == 5
+        # Subscriber should have received 6 updates (1 initial trigger + 5 data updates)
+        assert len(subscriber.received_data) == 6
 
         # Last update should contain window of last 3 values
         last_received = subscriber.received_data[-1]["data"]
@@ -846,10 +942,10 @@ class TestExtractorBasedSubscription:
             service["data"] = sc.scalar(i, unit='counts')
 
         # Both subscribers should have received all updates
-        # sub1: 1 update before sub2 registration + 10 after = 11
-        assert len(sub1.received_data) == 11
-        # sub2: 10 updates (after registration)
-        assert len(sub2.received_data) == 10
+        # sub1: 1 initial trigger + 1 update before sub2 registration + 10 after = 12
+        assert len(sub1.received_data) == 12
+        # sub2: 1 initial trigger on registration + 10 updates = 11
+        assert len(sub2.received_data) == 11
 
         # sub1 should get latest value only (unwrapped)
         last_from_sub1 = sub1.received_data[-1]["data"]
