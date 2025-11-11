@@ -80,11 +80,11 @@ class TestStreamProcessorWorkflow:
         )
 
         # Set context data
-        workflow.accumulate({'context': Context(5)})
+        workflow.accumulate({'context': Context(5)}, start_time=1000, end_time=2000)
 
         # Accumulate dynamic data
-        workflow.accumulate({'streamed': Streamed(10)})
-        workflow.accumulate({'streamed': Streamed(20)})
+        workflow.accumulate({'streamed': Streamed(10)}, start_time=1000, end_time=2000)
+        workflow.accumulate({'streamed': Streamed(20)}, start_time=1000, end_time=2000)
 
         # Finalize and check result
         result = workflow.finalize()
@@ -102,15 +102,15 @@ class TestStreamProcessorWorkflow:
         )
 
         # Accumulate some data
-        workflow.accumulate({'context': Context(5)})
-        workflow.accumulate({'streamed': Streamed(10)})
+        workflow.accumulate({'context': Context(5)}, start_time=1000, end_time=2000)
+        workflow.accumulate({'streamed': Streamed(10)}, start_time=1000, end_time=2000)
 
         # Clear and start fresh
         workflow.clear()
 
         # Set new context and data
-        workflow.accumulate({'context': Context(2)})
-        workflow.accumulate({'streamed': Streamed(15)})
+        workflow.accumulate({'context': Context(2)}, start_time=1000, end_time=2000)
+        workflow.accumulate({'streamed': Streamed(15)}, start_time=1000, end_time=2000)
 
         result = workflow.finalize()
         # Expected: context (2) * static (2) = 4, streamed: 15, final: 15 + 4 = 19
@@ -127,13 +127,13 @@ class TestStreamProcessorWorkflow:
         )
 
         # Accumulate with only context
-        workflow.accumulate({'context': Context(3)})
+        workflow.accumulate({'context': Context(3)}, start_time=1000, end_time=2000)
 
         # Accumulate with only streamed data
-        workflow.accumulate({'streamed': Streamed(7)})
+        workflow.accumulate({'streamed': Streamed(7)}, start_time=1000, end_time=2000)
 
         # Accumulate with unknown keys (should be ignored)
-        workflow.accumulate({'unknown': 42})
+        workflow.accumulate({'unknown': 42}, start_time=1000, end_time=2000)
 
         result = workflow.finalize()
         # Expected: context (3) * static (2) = 6, streamed: 7, final: 7 + 6 = 13
@@ -149,8 +149,8 @@ class TestStreamProcessorWorkflow:
             accumulators=(ProcessedStreamed,),
         )
 
-        workflow.accumulate({'context': Context(4)})
-        workflow.accumulate({'streamed': Streamed(5)})
+        workflow.accumulate({'context': Context(4)}, start_time=1000, end_time=2000)
+        workflow.accumulate({'streamed': Streamed(5)}, start_time=1000, end_time=2000)
 
         result = workflow.finalize()
         # Expected: context (4) * static (2) = 8, streamed: 5, final: 5 + 8 = 13
@@ -167,7 +167,7 @@ class TestStreamProcessorWorkflow:
         )
 
         # Only accumulate dynamic data
-        workflow.accumulate({'streamed': Streamed(25)})
+        workflow.accumulate({'streamed': Streamed(25)}, start_time=1000, end_time=2000)
 
         result = workflow.finalize()
         # Expected: streamed (25) + static (2) = 27

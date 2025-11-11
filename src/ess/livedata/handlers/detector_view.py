@@ -64,7 +64,9 @@ class DetectorView(Workflow):
         # into a coordinate, since scipp does not support filtering on data variables.
         return data.bins.assign_coords(toa=data.bins.data).bins['toa', low:high]
 
-    def accumulate(self, data: dict[Hashable, Any]) -> None:
+    def accumulate(
+        self, data: dict[Hashable, Any], *, start_time: int, end_time: int
+    ) -> None:
         """
         Add data to the accumulator.
 
@@ -74,6 +76,10 @@ class DetectorView(Workflow):
             Data to be added. Expected to contain detector event data and optionally
             ROI configuration. Detector data is assumed to be ev44 data that was
             passed through :py:class:`GroupIntoPixels`.
+        start_time:
+            Start time of the data window in nanoseconds since epoch.
+        end_time:
+            End time of the data window in nanoseconds since epoch.
         """
         # Check for ROI configuration update (auxiliary data)
         # Stream name is 'roi' (from 'roi_rectangle' after job_id prefix stripped)

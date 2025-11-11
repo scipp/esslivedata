@@ -26,7 +26,13 @@ class MonitorStreamProcessor(Workflow):
         """Factory method for creating MonitorStreamProcessor from params."""
         return MonitorStreamProcessor(edges=params.toa_edges.get_edges())
 
-    def accumulate(self, data: dict[Hashable, sc.DataArray | np.ndarray]) -> None:
+    def accumulate(
+        self,
+        data: dict[Hashable, sc.DataArray | np.ndarray],
+        *,
+        start_time: int,
+        end_time: int,
+    ) -> None:
         if len(data) != 1:
             raise ValueError("MonitorStreamProcessor expects exactly one data item.")
         raw = next(iter(data.values()))
