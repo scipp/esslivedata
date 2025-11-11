@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Generic, Protocol, TypeVar
+from typing import Any, Generic, Protocol, TypeVar
 
 import scipp as sc
 
@@ -13,6 +13,28 @@ logger = logging.getLogger(__name__)
 
 # Type variable for buffer types
 T = TypeVar('T')
+
+
+class ScippLike(Protocol):
+    """Protocol for objects with scipp-like interface (dims, sizes attributes)."""
+
+    @property
+    def dims(self) -> tuple[str, ...]:
+        """Dimension names."""
+        ...
+
+    @property
+    def sizes(self) -> dict[str, int]:
+        """Dimension sizes."""
+        ...
+
+    def __getitem__(self, key: Any) -> Any:
+        """Index into data."""
+        ...
+
+
+# Type variable constrained to scipp-like objects
+ScippT = TypeVar('ScippT', bound=ScippLike)
 
 
 class BufferInterface(Protocol[T]):
@@ -154,7 +176,56 @@ class BufferInterface(Protocol[T]):
         ...
 
 
-class DataArrayBuffer:
+class ScippBuffer(Generic[ScippT]):
+    """
+    Base class for scipp-based buffer implementations (DataArray, Variable).
+
+    Provides common methods for dimension-based buffers with shared concat
+    dimension logic.
+    """
+
+    def __init__(self, concat_dim: str = 'time') -> None:
+        """
+        Initialize scipp buffer implementation.
+
+        Parameters
+        ----------
+        concat_dim:
+            The dimension along which to concatenate data.
+        """
+        self._concat_dim = concat_dim
+
+    def get_size(self, data: ScippT) -> int:
+        """Get size along concatenation dimension."""
+        if self._concat_dim not in data.dims:
+            # Data doesn't have concat dim - treat as single frame
+            return 1
+        return data.sizes[self._concat_dim]
+
+    def get_view(self, buffer: ScippT, start: int, end: int) -> ScippT:
+        """Get a view of buffer slice."""
+        return buffer[self._concat_dim, start:end]
+
+    def extract_latest_frame(self, data: ScippT) -> ScippT:
+        """Extract the latest frame from incoming data, removing concat dimension."""
+        if self._concat_dim not in data.dims:
+            # Data doesn't have concat dim - already a single frame
+            return data
+
+        # Extract last frame along concat dimension
+        return data[self._concat_dim, -1]
+
+    def unwrap_window(self, view: ScippT) -> ScippT:
+        """Unwrap a size-1 buffer view to a scalar value."""
+        if self._concat_dim not in view.dims:
+            # View doesn't have concat dim - already unwrapped
+            return view
+
+        # Extract the single element along concat dimension
+        return view[self._concat_dim, 0]
+
+
+class DataArrayBuffer(ScippBuffer[sc.DataArray], BufferInterface[sc.DataArray]):  # type: ignore[type-arg]
     """
     Buffer implementation for sc.DataArray.
 
@@ -175,7 +246,7 @@ class DataArrayBuffer:
         concat_dim:
             The dimension along which to concatenate data.
         """
-        self._concat_dim = concat_dim
+        super().__init__(concat_dim)
 
     def allocate(self, template: sc.DataArray, capacity: int) -> sc.DataArray:
         """Allocate a new DataArray buffer with given capacity."""
@@ -324,49 +395,8 @@ class DataArrayBuffer:
             if self._concat_dim in mask.dims:
                 mask.values[dst_start:dst_end] = mask.values[src_start:src_end]
 
-    def get_view(self, buffer: sc.DataArray, start: int, end: int) -> sc.DataArray:
-        """Get a view of buffer slice."""
-        return buffer[self._concat_dim, start:end]
 
-    def get_size(self, data: sc.DataArray) -> int:
-        """Get size along concatenation dimension."""
-        if self._concat_dim not in data.dims:
-            # Data doesn't have concat dim - treat as single frame
-            return 1
-        return data.sizes[self._concat_dim]
-
-    def extract_latest_frame(self, data: sc.DataArray) -> sc.DataArray:
-        """Extract the latest frame from incoming data, removing concat dimension."""
-        if self._concat_dim not in data.dims:
-            # Data doesn't have concat dim - already a single frame
-            return data
-
-        # Extract last frame along concat dimension
-        result = data[self._concat_dim, -1]
-
-        # Drop the now-scalar concat coordinate to restore original structure
-        if self._concat_dim in result.coords:
-            result = result.drop_coords(self._concat_dim)
-
-        return result
-
-    def unwrap_window(self, view: sc.DataArray) -> sc.DataArray:
-        """Unwrap a size-1 buffer view to a scalar value."""
-        if self._concat_dim not in view.dims:
-            # View doesn't have concat dim - already unwrapped
-            return view
-
-        # Extract the single element along concat dimension
-        result = view[self._concat_dim, 0]
-
-        # Drop the now-scalar concat coordinate
-        if self._concat_dim in result.coords:
-            result = result.drop_coords(self._concat_dim)
-
-        return result
-
-
-class VariableBuffer:
+class VariableBuffer(ScippBuffer[sc.Variable], BufferInterface[sc.Variable]):  # type: ignore[type-arg]
     """
     Simple buffer implementation for sc.Variable.
 
@@ -382,7 +412,7 @@ class VariableBuffer:
         concat_dim:
             The dimension along which to concatenate data.
         """
-        self._concat_dim = concat_dim
+        super().__init__(concat_dim)
 
     def allocate(self, template: sc.Variable, capacity: int) -> sc.Variable:
         """Allocate a new Variable buffer with given capacity."""
@@ -417,37 +447,8 @@ class VariableBuffer:
         dst_end = dst_start + size
         buffer.values[dst_start:dst_end] = buffer.values[src_start:src_end]
 
-    def get_view(self, buffer: sc.Variable, start: int, end: int) -> sc.Variable:
-        """Get a view of buffer slice."""
-        return buffer[self._concat_dim, start:end]
 
-    def get_size(self, data: sc.Variable) -> int:
-        """Get size along concatenation dimension."""
-        if self._concat_dim not in data.dims:
-            # Data doesn't have concat dim - treat as single frame
-            return 1
-        return data.sizes[self._concat_dim]
-
-    def extract_latest_frame(self, data: sc.Variable) -> sc.Variable:
-        """Extract the latest frame from incoming data, removing concat dimension."""
-        if self._concat_dim not in data.dims:
-            # Data doesn't have concat dim - already a single frame
-            return data
-
-        # Extract last frame along concat dimension
-        return data[self._concat_dim, -1]
-
-    def unwrap_window(self, view: sc.Variable) -> sc.Variable:
-        """Unwrap a size-1 buffer view to a scalar value."""
-        if self._concat_dim not in view.dims:
-            # View doesn't have concat dim - already unwrapped
-            return view
-
-        # Extract the single element along concat dimension
-        return view[self._concat_dim, 0]
-
-
-class ListBuffer:
+class ListBuffer(BufferInterface[list]):
     """Simple list-based buffer for non-scipp types."""
 
     def __init__(self, concat_dim: str = 'time') -> None:
@@ -461,11 +462,11 @@ class ListBuffer:
         """
         self._concat_dim = concat_dim
 
-    def allocate(self, template: any, capacity: int) -> list:
+    def allocate(self, template: Any, capacity: int) -> list:
         """Allocate empty list."""
         return []
 
-    def write_slice(self, buffer: list, start: int, data: any) -> None:
+    def write_slice(self, buffer: list, start: int, data: Any) -> None:
         """Append data to list."""
         if isinstance(data, list):
             buffer.extend(data)
@@ -482,19 +483,19 @@ class ListBuffer:
         """Get slice of list."""
         return buffer[start:end]
 
-    def get_size(self, data: any) -> int:
+    def get_size(self, data: Any) -> int:
         """Get size of data."""
         if isinstance(data, list):
             return len(data)
         return 1
 
-    def extract_latest_frame(self, data: any) -> any:
+    def extract_latest_frame(self, data: Any) -> Any:
         """Extract the latest frame from incoming data."""
         if isinstance(data, list) and len(data) > 0:
             return data[-1]
         return data
 
-    def unwrap_window(self, view: list) -> any:
+    def unwrap_window(self, view: list) -> Any:
         """Unwrap a size-1 buffer view to a scalar value."""
         if isinstance(view, list) and len(view) > 0:
             return view[0]
@@ -963,7 +964,7 @@ class BufferFactory:
 
         return Buffer(
             max_size=max_size,
-            buffer_impl=buffer_impl,
+            buffer_impl=buffer_impl,  # type: ignore[arg-type]
             initial_capacity=self._initial_capacity,
             overallocation_factor=self._overallocation_factor,
         )
