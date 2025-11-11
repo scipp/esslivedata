@@ -135,10 +135,15 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
 
     def _consume_loop(self) -> None:
         """Main loop for background message consumption."""
+        consumer_ready = False
         try:
             while not self._stop_event.is_set():
                 try:
                     messages = self._consumer.consume(self._num_messages, self._timeout)
+                    if not consumer_ready:
+                        # First consume() completes consumer group coordination
+                        self._logger.info("Kafka consumer ready and polling")
+                        consumer_ready = True
                     if messages:
                         try:
                             self._queue.put_nowait(messages)

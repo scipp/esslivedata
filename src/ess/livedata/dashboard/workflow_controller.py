@@ -13,6 +13,7 @@ import pydantic
 
 import ess.livedata.config.keys as keys
 from ess.livedata.config.workflow_spec import (
+    JobId,
     ResultKey,
     WorkflowConfig,
     WorkflowId,
@@ -136,8 +137,24 @@ class WorkflowController:
         source_names: list[str],
         config: pydantic.BaseModel,
         aux_source_names: pydantic.BaseModel | None = None,
-    ) -> None:
+    ) -> list[JobId]:
         """Start a workflow with given configuration.
+
+        Parameters
+        ----------
+        workflow_id:
+            The workflow to start
+        source_names:
+            List of source names to process
+        config:
+            Workflow configuration parameters
+        aux_source_names:
+            Optional auxiliary source names
+
+        Returns
+        -------
+        :
+            List of JobIds created (one per source)
 
         Raises
         ------
@@ -194,6 +211,12 @@ class WorkflowController:
         # Notify once, will update whole list of source names
         for callback in self._workflow_status_callbacks:
             self._notify_workflow_status_update(callback)
+
+        # Return the created job IDs
+        return [
+            JobId(source_name=source_name, job_number=workflow_config.job_number)
+            for source_name in source_names
+        ]
 
     def create_workflow_adapter(self, workflow_id: WorkflowId):
         """Create a workflow configuration adapter for the given workflow ID."""

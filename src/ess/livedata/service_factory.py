@@ -207,16 +207,19 @@ class DataServiceRunner:
         builder = self._make_builder(**args)
 
         if sink_type == 'kafka':
-            sink = KafkaSink(
+            kafka_sink = KafkaSink(
                 instrument=builder.instrument, kafka_config=kafka_downstream_config
             )
         else:
-            sink = PlotToPngSink()
-        sink = UnrollingSinkAdapter(sink)
+            kafka_sink = PlotToPngSink()
 
-        with builder.from_consumer_config(
-            kafka_config={**consumer_config, **kafka_upstream_config},
-            sink=sink,
-            use_background_source=True,
-        ) as service:
-            service.start()
+        with ExitStack() as resources:
+            sink = resources.enter_context(kafka_sink)
+            sink = UnrollingSinkAdapter(sink)
+
+            with builder.from_consumer_config(
+                kafka_config={**consumer_config, **kafka_upstream_config},
+                sink=sink,
+                use_background_source=True,
+            ) as service:
+                service.start()

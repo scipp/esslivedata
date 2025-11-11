@@ -10,7 +10,7 @@ from ess.livedata import Service
 from .dashboard import DashboardBase
 from .widgets.log_producer_widget import LogProducerWidget
 
-pn.extension('holoviews', 'modal', template='material')
+pn.extension('holoviews', 'modal', notifications=True, template='material')
 hv.extension('bokeh')
 
 
@@ -30,7 +30,7 @@ class ReductionApp(DashboardBase):
         self._dev_widget = None
         if dev:
             self._dev_widget = LogProducerWidget(
-                instrument=instrument, logger=self._logger
+                instrument=instrument, logger=self._logger, exit_stack=self._exit_stack
             )
 
         self._logger.info("Reduction dashboard initialized")
