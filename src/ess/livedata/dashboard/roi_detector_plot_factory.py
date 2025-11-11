@@ -15,6 +15,7 @@ from ess.livedata.config.models import ROI, Interval, RectangleROI
 from ess.livedata.config.roi_names import get_roi_mapper
 from ess.livedata.config.workflow_spec import ResultKey
 
+from .data_service import LatestValueExtractor
 from .data_subscriber import (
     DataSubscriber,
     MergingStreamAssembler,
@@ -534,8 +535,6 @@ class ROIDetectorPlotFactory:
             """Factory function to create ROIReadbackPipe with callback."""
             return ROIReadbackPipe(on_roi_data_update)
 
-        from .data_service import LatestValueExtractor
-
         assembler = MergingStreamAssembler({roi_readback_key})
         extractors = {roi_readback_key: LatestValueExtractor()}
         subscriber = DataSubscriber(assembler, roi_pipe_factory, extractors)
@@ -582,8 +581,6 @@ class ROIDetectorPlotFactory:
         # FIXME: Memory leak - subscribers registered via stream_manager are never
         # unregistered. When this plot is closed, the subscriber remains in
         # DataService._subscribers, preventing garbage collection of plot components.
-        from .data_service import LatestValueExtractor
-
         extractors = {detector_key: LatestValueExtractor()}
         merged_detector_pipe = self._stream_manager.make_merging_stream(extractors)
 
