@@ -276,36 +276,30 @@ class ScippBuffer(Generic[ScippT]):
             # Empty buffer
             return self.get_view(buffer, 0, 0)
 
-        # Get time coordinate
-        if not hasattr(buffer, 'coords') or self._concat_dim not in buffer.coords:
+        # Get active section of buffer
+        active = self.get_view(buffer, 0, end)
+
+        # Check for time coordinate
+        if not hasattr(active, 'coords') or self._concat_dim not in active.coords:
             raise ValueError(
                 f"Buffer has no '{self._concat_dim}' coordinate. "
                 "Time-based windowing requires time coordinate data."
             )
 
-        time_coord = buffer.coords[self._concat_dim]
+        # Calculate cutoff time using scipp's unit handling
+        time_coord = active.coords[self._concat_dim]
+        latest_time = time_coord[-1]
 
-        # Get the latest timestamp (last valid frame)
-        latest_time_ns = time_coord.values[end - 1]
+        if time_coord.unit is not None:
+            # Convert duration to same unit as time coordinate and compute cutoff
+            duration = sc.scalar(duration_seconds, unit='s').to(unit=time_coord.unit)
+            cutoff_time = int((latest_time - duration).value)
+        else:
+            # No unit: assume nanoseconds (for backwards compatibility)
+            cutoff_time = int(latest_time.value - duration_seconds * 1e9)
 
-        # Calculate cutoff time
-        duration_ns = duration_seconds * 1e9
-        cutoff_time_ns = latest_time_ns - duration_ns
-
-        # Find start index where time >= cutoff_time
-        # Use binary search for efficiency
-        import numpy as np
-
-        time_values = time_coord.values[:end]
-        # Find first index where time >= cutoff
-        indices = np.searchsorted(time_values, cutoff_time_ns, side='left')
-        start = max(0, int(indices))
-
-        # Ensure we get at least one frame
-        if start >= end:
-            start = end - 1
-
-        return self.get_view(buffer, start, end)
+        # Use scipp label-based indexing
+        return active[self._concat_dim, cutoff_time:]
 
 
 class DataArrayBuffer(ScippBuffer[sc.DataArray], BufferInterface[sc.DataArray]):  # type: ignore[type-arg]
@@ -423,10 +417,12 @@ class DataArrayBuffer(ScippBuffer[sc.DataArray], BufferInterface[sc.DataArray]):
             # Data has concat coord - add it to buffer
             if self._concat_dim not in buffer.coords:
                 # Need to allocate the coordinate in the buffer first
+                coord_template = data.coords[self._concat_dim]
                 buffer.coords[self._concat_dim] = sc.zeros(
                     dims=[self._concat_dim],
                     shape=[buffer.sizes[self._concat_dim]],
-                    dtype=data.coords[self._concat_dim].dtype,
+                    dtype=coord_template.dtype,
+                    unit=coord_template.unit,
                 )
             # Copy the coordinate values
             buffer.coords[self._concat_dim].values[start:end] = data.coords[
