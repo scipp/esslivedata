@@ -650,10 +650,10 @@ class ROIDetectorPlotFactory:
         )
 
         # Extract coordinate units from the extracted detector data in pipe
-        data_for_dims = merged_detector_pipe.data[detector_key]
-        x_dim, y_dim = data_for_dims.dims[1], data_for_dims.dims[0]
-        x_unit = self._extract_unit_for_dim(data_for_dims, x_dim)
-        y_unit = self._extract_unit_for_dim(data_for_dims, y_dim)
+        detector_data = merged_detector_pipe.data[detector_key]
+        x_dim, y_dim = detector_data.dims[1], detector_data.dims[0]
+        x_unit = self._extract_unit_for_dim(detector_data, x_dim)
+        y_unit = self._extract_unit_for_dim(detector_data, y_dim)
 
         # Create stream for broadcasting active ROI indices to spectrum plot
         # Use a custom Stream class to avoid parameter name clash with spectrum_pipe
