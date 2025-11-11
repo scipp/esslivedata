@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from typing import Any, Generic, TypeVar
 
 from .buffer_manager import BufferManager
-from .buffer_strategy import Buffer, BufferFactory
+from .buffer_strategy import BufferFactory
 from .extractors import LatestValueExtractor, UpdateExtractor
 from .temporal_requirements import TemporalRequirement
 
@@ -75,7 +75,6 @@ class DataService(MutableMapping[K, V]):
             buffer_manager = BufferManager(buffer_factory)
         self._buffer_factory = buffer_factory
         self._buffer_manager = buffer_manager
-        self._buffers: dict[K, Buffer[V]] = {}
         self._default_extractor = LatestValueExtractor()
         self._subscribers: list[Subscriber[K]] = []
         self._update_callbacks: list[Callable[[set[K]], None]] = []
@@ -147,10 +146,11 @@ class DataService(MutableMapping[K, V]):
         extractors = subscriber.extractors
 
         for key in subscriber.keys:
-            if key in self._buffers:
+            if key in self._buffer_manager:
                 # Use subscriber's extractor for this key (always present)
                 extractor = extractors[key]
-                data = extractor.extract(self._buffers[key])
+                buffer = self._buffer_manager[key]
+                data = extractor.extract(buffer)
                 if data is not None:
                     subscriber_data[key] = data
 
@@ -172,11 +172,11 @@ class DataService(MutableMapping[K, V]):
 
         # Add requirements for keys this subscriber needs
         for key in subscriber.keys:
-            if key in self._buffers:
+            if key in self._buffer_manager:
                 extractor = subscriber.extractors[key]
                 requirement = extractor.get_temporal_requirement()
                 # Add requirement to existing buffer
-                self._buffer_manager.add_requirement(self._buffers[key], requirement)
+                self._buffer_manager.add_requirement(key, requirement)
 
         # Trigger immediately with existing data using subscriber's extractors
         existing_data = self._build_subscriber_data(subscriber)
@@ -209,7 +209,7 @@ class DataService(MutableMapping[K, V]):
             A callable that accepts two sets: added_keys and removed_keys.
         """
         self._key_change_subscribers.append(subscriber)
-        subscriber(set(self._buffers.keys()), set())
+        subscriber(set(self._buffer_manager.keys()), set())
 
     def _notify_subscribers(self, updated_keys: set[K]) -> None:
         """
@@ -244,37 +244,38 @@ class DataService(MutableMapping[K, V]):
 
     def __getitem__(self, key: K) -> V:
         """Get the latest value for a key."""
-        if key not in self._buffers:
+        if key not in self._buffer_manager:
             raise KeyError(key)
-        return self._default_extractor.extract(self._buffers[key])
+        buffer = self._buffer_manager[key]
+        return self._default_extractor.extract(buffer)
 
     def __setitem__(self, key: K, value: V) -> None:
         """Set a value, storing it in a buffer."""
-        if key not in self._buffers:
+        if key not in self._buffer_manager:
             self._pending_key_additions.add(key)
             # Collect temporal requirements from all subscribers
             requirements = self._get_temporal_requirements(key)
             # Create buffer using BufferManager
-            self._buffers[key] = self._buffer_manager.create_buffer(value, requirements)
+            self._buffer_manager.create_buffer(key, value, requirements)
         # Update buffer using BufferManager (handles growth)
-        self._buffer_manager.update_buffer(self._buffers[key], value)
+        self._buffer_manager.update_buffer(key, value)
         self._pending_updates.add(key)
         self._notify_if_not_in_transaction()
 
     def __delitem__(self, key: K) -> None:
         """Delete a key and its buffer."""
         self._pending_key_removals.add(key)
-        del self._buffers[key]
+        self._buffer_manager.delete_buffer(key)
         self._pending_updates.add(key)
         self._notify_if_not_in_transaction()
 
     def __iter__(self) -> Iterator[K]:
         """Iterate over keys."""
-        return iter(self._buffers)
+        return iter(self._buffer_manager)
 
     def __len__(self) -> int:
         """Return the number of keys."""
-        return len(self._buffers)
+        return len(self._buffer_manager)
 
     def _notify_if_not_in_transaction(self) -> None:
         """Notify subscribers if not in a transaction."""

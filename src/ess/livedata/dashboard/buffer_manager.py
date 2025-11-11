@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Hashable, Iterator, Mapping
+from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
 from .buffer_strategy import Buffer, BufferFactory
@@ -17,6 +19,7 @@ from .temporal_requirements import (
 
 logger = logging.getLogger(__name__)
 
+K = TypeVar('K', bound=Hashable)
 T = TypeVar('T')
 
 # Growth parameters
@@ -25,12 +28,23 @@ MAX_CAPACITY = 10000  # Upper limit to prevent runaway growth
 GROWTH_FACTOR = 2.0  # Double buffer size when growing
 
 
-class BufferManager(Generic[T]):
+@dataclass
+class _BufferState(Generic[T]):
+    """Internal state for a managed buffer."""
+
+    buffer: Buffer[T]
+    requirements: list[TemporalRequirement] = field(default_factory=list)
+    needs_growth: bool = True
+
+
+class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
     """
     Manages buffer sizing based on temporal requirements.
 
-    Translates temporal requirements (time-based) into spatial sizing decisions
-    (frame counts) by observing actual buffer metrics.
+    Owns and manages buffers, translating temporal requirements (time-based)
+    into spatial sizing decisions (frame counts) by observing actual buffer metrics.
+
+    Implements Mapping interface for read-only dictionary-like access to buffers.
     """
 
     def __init__(self, buffer_factory: BufferFactory | None = None) -> None:
@@ -45,11 +59,23 @@ class BufferManager(Generic[T]):
         if buffer_factory is None:
             buffer_factory = BufferFactory()
         self._buffer_factory = buffer_factory
-        self._requirements: dict[int, list[TemporalRequirement]] = {}
+        self._states: dict[K, _BufferState[T]] = {}
+
+    def __getitem__(self, key: K) -> Buffer[T]:
+        """Get buffer for a key (Mapping interface)."""
+        return self._states[key].buffer
+
+    def __iter__(self) -> Iterator[K]:
+        """Iterate over keys (Mapping interface)."""
+        return iter(self._states)
+
+    def __len__(self) -> int:
+        """Return number of buffers (Mapping interface)."""
+        return len(self._states)
 
     def create_buffer(
-        self, template: T, requirements: list[TemporalRequirement]
-    ) -> Buffer[T]:
+        self, key: K, template: T, requirements: list[TemporalRequirement]
+    ) -> None:
         """
         Create a buffer sized to satisfy temporal requirements.
 
@@ -57,20 +83,21 @@ class BufferManager(Generic[T]):
 
         Parameters
         ----------
+        key:
+            Key to identify this buffer.
         template:
             Sample data to determine buffer type.
         requirements:
             List of temporal requirements to satisfy.
-
-        Returns
-        -------
-        :
-            Newly created buffer.
         """
+        if key in self._states:
+            raise ValueError(f"Buffer with key {key} already exists")
+
         initial_size = self._calculate_initial_size(requirements)
         buffer = self._buffer_factory.create_buffer(template, max_size=initial_size)
-        self._requirements[id(buffer)] = list(requirements)
-        return buffer
+        self._states[key] = _BufferState(
+            buffer=buffer, requirements=list(requirements), needs_growth=True
+        )
 
     def _calculate_initial_size(self, requirements: list[TemporalRequirement]) -> int:
         """
@@ -105,7 +132,7 @@ class BufferManager(Generic[T]):
 
         return max_size
 
-    def update_buffer(self, buffer: Buffer[T], data: T) -> None:
+    def update_buffer(self, key: K, data: T) -> None:
         """
         Update buffer with new data and apply retention policy.
 
@@ -114,46 +141,46 @@ class BufferManager(Generic[T]):
 
         Parameters
         ----------
-        buffer:
-            Buffer to update.
+        key:
+            Key identifying the buffer to update.
         data:
             New data to append.
         """
-        # Get requirements for this buffer
-        buffer_id = id(buffer)
-        requirements = self._requirements.get(buffer_id, [])
+        if key not in self._states:
+            raise KeyError(f"No buffer found for key {key}")
 
-        if requirements:
-            # Check if buffer meets requirements, resize if needed BEFORE appending
-            # This prevents data loss when buffer is at capacity
-            if not self.validate_coverage(buffer, requirements):
-                self._resize_buffer(buffer, requirements)
+        state = self._states[key]
 
-        # Now append data - buffer is properly sized
-        buffer.append(data)
+        # Cheap flag check - only validate/resize if growth is still needed
+        if state.needs_growth and state.requirements:
+            if not self._validate_coverage(key):
+                self._resize_buffer(key)
+            else:
+                # Target coverage reached - disable further checks for efficiency
+                state.needs_growth = False
 
-    def validate_coverage(
-        self, buffer: Buffer[T], requirements: list[TemporalRequirement]
-    ) -> bool:
+        # Append data - buffer is properly sized
+        state.buffer.append(data)
+
+    def _validate_coverage(self, key: K) -> bool:
         """
         Check if buffer currently provides sufficient coverage.
 
         Parameters
         ----------
-        buffer:
-            Buffer to validate.
-        requirements:
-            List of temporal requirements to check.
+        key:
+            Key identifying the buffer to validate.
 
         Returns
         -------
         :
             True if buffer satisfies all requirements, False otherwise.
         """
-        temporal_coverage = buffer.get_temporal_coverage()
-        frame_count = buffer.get_frame_count()
+        state = self._states[key]
+        temporal_coverage = state.buffer.get_temporal_coverage()
+        frame_count = state.buffer.get_frame_count()
 
-        for requirement in requirements:
+        for requirement in state.requirements:
             if isinstance(requirement, LatestFrame):
                 if frame_count < 1:
                     return False
@@ -172,26 +199,23 @@ class BufferManager(Generic[T]):
 
         return True
 
-    def _resize_buffer(
-        self, buffer: Buffer[T], requirements: list[TemporalRequirement]
-    ) -> None:
+    def _resize_buffer(self, key: K) -> None:
         """
         Resize buffer to satisfy requirements.
 
         Parameters
         ----------
-        buffer:
-            Buffer to resize.
-        requirements:
-            List of temporal requirements to satisfy.
+        key:
+            Key identifying the buffer to resize.
         """
-        current_size = buffer.get_frame_count()
-        temporal_coverage = buffer.get_temporal_coverage()
+        state = self._states[key]
+        current_size = state.buffer.get_frame_count()
+        temporal_coverage = state.buffer.get_temporal_coverage()
 
         # Calculate new size based on requirements
         new_size = current_size
 
-        for requirement in requirements:
+        for requirement in state.requirements:
             if isinstance(requirement, TimeWindow):
                 if temporal_coverage is not None and temporal_coverage > 0:
                     # We have time coverage - calculate needed frames
@@ -213,16 +237,15 @@ class BufferManager(Generic[T]):
 
         if new_size > current_size:
             logger.debug(
-                "Resizing buffer from %d to %d frames (coverage: %s s)",
+                "Resizing buffer %s from %d to %d frames (coverage: %s s)",
+                key,
                 current_size,
                 new_size,
                 temporal_coverage,
             )
-            buffer.set_max_size(new_size)
+            state.buffer.set_max_size(new_size)
 
-    def add_requirement(
-        self, buffer: Buffer[T], requirement: TemporalRequirement
-    ) -> None:
+    def add_requirement(self, key: K, requirement: TemporalRequirement) -> None:
         """
         Register additional temporal requirement for an existing buffer.
 
@@ -230,17 +253,72 @@ class BufferManager(Generic[T]):
 
         Parameters
         ----------
-        buffer:
-            Buffer to add requirement to.
+        key:
+            Key identifying the buffer to add requirement to.
         requirement:
             New temporal requirement.
         """
-        buffer_id = id(buffer)
-        if buffer_id not in self._requirements:
-            self._requirements[buffer_id] = []
+        if key not in self._states:
+            raise KeyError(f"No buffer found for key {key}")
 
-        self._requirements[buffer_id].append(requirement)
+        state = self._states[key]
+        state.requirements.append(requirement)
+        state.needs_growth = True  # Re-enable growth checks
 
         # Check if resize needed immediately
-        if not self.validate_coverage(buffer, self._requirements[buffer_id]):
-            self._resize_buffer(buffer, self._requirements[buffer_id])
+        if not self._validate_coverage(key):
+            self._resize_buffer(key)
+
+    def get_buffer(self, key: K) -> Buffer[T]:
+        """
+        Get buffer for a key.
+
+        Parameters
+        ----------
+        key:
+            Key identifying the buffer.
+
+        Returns
+        -------
+        :
+            The buffer for this key.
+
+        Notes
+        -----
+        Prefer using dictionary access: `buffer_manager[key]` instead of
+        `buffer_manager.get_buffer(key)`.
+        """
+        return self[key]
+
+    def has_buffer(self, key: K) -> bool:
+        """
+        Check if a buffer exists for a key.
+
+        Parameters
+        ----------
+        key:
+            Key to check.
+
+        Returns
+        -------
+        :
+            True if buffer exists for this key.
+
+        Notes
+        -----
+        Prefer using membership test: `key in buffer_manager` instead of
+        `buffer_manager.has_buffer(key)`.
+        """
+        return key in self
+
+    def delete_buffer(self, key: K) -> None:
+        """
+        Delete a buffer and its associated state.
+
+        Parameters
+        ----------
+        key:
+            Key identifying the buffer to delete.
+        """
+        if key in self._states:
+            del self._states[key]
