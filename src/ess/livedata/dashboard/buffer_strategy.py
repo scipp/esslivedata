@@ -112,6 +112,44 @@ class BufferInterface(Protocol[T]):
         """
         ...
 
+    def extract_latest_frame(self, data: T) -> T:
+        """
+        Extract the latest frame from incoming data, removing concat dimension.
+
+        Handles batched data by taking the last frame along concat_dim.
+        If data doesn't have concat_dim, returns as-is.
+
+        Parameters
+        ----------
+        data:
+            Incoming data that may contain multiple frames.
+
+        Returns
+        -------
+        :
+            Single frame without concat dimension.
+        """
+        ...
+
+    def unwrap_window(self, view: T) -> T:
+        """
+        Unwrap a size-1 buffer view to a scalar value.
+
+        The view is guaranteed to have exactly 1 element along concat_dim.
+        This method removes that dimension to return the underlying data.
+
+        Parameters
+        ----------
+        view:
+            A buffer view with exactly 1 element along concat_dim.
+
+        Returns
+        -------
+        :
+            The unwrapped data without the concat dimension.
+        """
+        ...
+
 
 class DataArrayBuffer:
     """
@@ -294,6 +332,36 @@ class DataArrayBuffer:
             return 1
         return data.sizes[self._concat_dim]
 
+    def extract_latest_frame(self, data: sc.DataArray) -> sc.DataArray:
+        """Extract the latest frame from incoming data, removing concat dimension."""
+        if self._concat_dim not in data.dims:
+            # Data doesn't have concat dim - already a single frame
+            return data
+
+        # Extract last frame along concat dimension
+        result = data[self._concat_dim, -1]
+
+        # Drop the now-scalar concat coordinate to restore original structure
+        if self._concat_dim in result.coords:
+            result = result.drop_coords(self._concat_dim)
+
+        return result
+
+    def unwrap_window(self, view: sc.DataArray) -> sc.DataArray:
+        """Unwrap a size-1 buffer view to a scalar value."""
+        if self._concat_dim not in view.dims:
+            # View doesn't have concat dim - already unwrapped
+            return view
+
+        # Extract the single element along concat dimension
+        result = view[self._concat_dim, 0]
+
+        # Drop the now-scalar concat coordinate
+        if self._concat_dim in result.coords:
+            result = result.drop_coords(self._concat_dim)
+
+        return result
+
 
 class VariableBuffer:
     """
@@ -357,6 +425,24 @@ class VariableBuffer:
             return 1
         return data.sizes[self._concat_dim]
 
+    def extract_latest_frame(self, data: sc.Variable) -> sc.Variable:
+        """Extract the latest frame from incoming data, removing concat dimension."""
+        if self._concat_dim not in data.dims:
+            # Data doesn't have concat dim - already a single frame
+            return data
+
+        # Extract last frame along concat dimension
+        return data[self._concat_dim, -1]
+
+    def unwrap_window(self, view: sc.Variable) -> sc.Variable:
+        """Unwrap a size-1 buffer view to a scalar value."""
+        if self._concat_dim not in view.dims:
+            # View doesn't have concat dim - already unwrapped
+            return view
+
+        # Extract the single element along concat dimension
+        return view[self._concat_dim, 0]
+
 
 class ListBuffer:
     """Simple list-based buffer for non-scipp types."""
@@ -399,14 +485,66 @@ class ListBuffer:
             return len(data)
         return 1
 
+    def extract_latest_frame(self, data: any) -> any:
+        """Extract the latest frame from incoming data."""
+        if isinstance(data, list) and len(data) > 0:
+            return data[-1]
+        return data
 
-class Buffer(Generic[T]):
+    def unwrap_window(self, view: list) -> any:
+        """Unwrap a size-1 buffer view to a scalar value."""
+        if isinstance(view, list) and len(view) > 0:
+            return view[0]
+        return view
+
+
+class SingleValueStorage(Generic[T]):
     """
-    Generic buffer with automatic growth and sliding window management.
+    Storage for single values with automatic replacement.
 
-    Works with any BufferInterface implementation and handles growth,
-    sliding window, and shift-on-overflow logic without knowing the
-    details of the underlying buffer type.
+    Optimized storage for when only the latest value is needed (max_size=1).
+    Uses simple value replacement instead of complex buffer management.
+    """
+
+    def __init__(self, buffer_impl: BufferInterface[T]) -> None:
+        """
+        Initialize single-value storage.
+
+        Parameters
+        ----------
+        buffer_impl:
+            Buffer implementation for extracting latest frame from incoming data.
+        """
+        self._buffer_impl = buffer_impl
+        self._value: T | None = None
+
+    def append(self, data: T) -> None:
+        """Replace stored value with latest frame from incoming data."""
+        self._value = self._buffer_impl.extract_latest_frame(data)
+
+    def get_all(self) -> T | None:
+        """Get the stored value."""
+        return self._value
+
+    def get_window(self, size: int | None = None) -> T | None:
+        """Get the stored value (size parameter ignored)."""
+        return self._value
+
+    def get_latest(self) -> T | None:
+        """Get the stored value."""
+        return self._value
+
+    def clear(self) -> None:
+        """Clear the stored value."""
+        self._value = None
+
+
+class StreamingBuffer(Generic[T]):
+    """
+    Buffer with automatic growth and sliding window management.
+
+    Handles complex buffer management including growth, shifting, and
+    windowing logic for max_size > 1.
 
     Uses pre-allocated buffers with in-place writes to avoid O(n²) complexity
     of naive concatenation. Pre-allocates with doubling capacity and uses
@@ -416,9 +554,6 @@ class Buffer(Generic[T]):
     - 2.0x: 100% overhead, 2x write amplification
     - 2.5x: 150% overhead, 1.67x write amplification (recommended)
     - 3.0x: 200% overhead, 1.5x write amplification
-
-    Special case: when max_size==1, uses simple value replacement instead of
-    complex buffer management for efficiency.
     """
 
     def __init__(
@@ -427,10 +562,9 @@ class Buffer(Generic[T]):
         buffer_impl: BufferInterface[T],
         initial_capacity: int = 100,
         overallocation_factor: float = 2.5,
-        concat_dim: str = 'time',
     ) -> None:
         """
-        Initialize buffer.
+        Initialize streaming buffer.
 
         Parameters
         ----------
@@ -443,8 +577,6 @@ class Buffer(Generic[T]):
         overallocation_factor:
             Buffer capacity = max_size * overallocation_factor.
             Must be > 1.0.
-        concat_dim:
-            The dimension along which data is concatenated.
 
         Raises
         ------
@@ -463,16 +595,10 @@ class Buffer(Generic[T]):
         self._initial_capacity = initial_capacity
         self._overallocation_factor = overallocation_factor
         self._max_capacity = int(max_size * overallocation_factor)
-        self._concat_dim = concat_dim
 
-        # For max_size==1, use simple value storage instead of complex buffering
-        self._single_value_mode = max_size == 1
-        if self._single_value_mode:
-            self._value: T | None = None
-        else:
-            self._buffer = None
-            self._end = 0
-            self._capacity = 0
+        self._buffer = None
+        self._end = 0
+        self._capacity = 0
 
     def set_max_size(self, new_max_size: int) -> None:
         """
@@ -484,22 +610,8 @@ class Buffer(Generic[T]):
             New maximum size. If smaller than current max_size, no change is made.
         """
         if new_max_size > self._max_size:
-            # Check if we need to transition from single-value to buffer mode
-            if self._single_value_mode and new_max_size > 1:
-                # Convert to buffer mode
-                old_value = self._value
-                self._single_value_mode = False
-                self._max_size = new_max_size
-                self._max_capacity = int(new_max_size * self._overallocation_factor)
-                self._buffer = None
-                self._end = 0
-                self._capacity = 0
-                # Re-append the value if it exists using buffer logic
-                if old_value is not None:
-                    self.append(old_value)
-            else:
-                self._max_size = new_max_size
-                self._max_capacity = int(new_max_size * self._overallocation_factor)
+            self._max_size = new_max_size
+            self._max_capacity = int(new_max_size * self._overallocation_factor)
 
     def _ensure_capacity(self, data: T) -> None:
         """Ensure buffer has capacity for new data."""
@@ -561,11 +673,6 @@ class Buffer(Generic[T]):
 
     def append(self, data: T) -> None:
         """Append new data to storage."""
-        # Special case: max_size==1, just replace the value
-        if self._single_value_mode:
-            self._value = data
-            return
-
         self._ensure_capacity(data)
         if self._buffer is None:
             raise RuntimeError("Buffer initialization failed")
@@ -584,20 +691,15 @@ class Buffer(Generic[T]):
 
     def get_all(self) -> T | None:
         """Get all stored data."""
-        if self._single_value_mode:
-            return self._value
         if self._buffer is None:
             return None
         return self._buffer_impl.get_view(self._buffer, 0, self._end)
 
     def clear(self) -> None:
         """Clear all stored data."""
-        if self._single_value_mode:
-            self._value = None
-        else:
-            self._buffer = None
-            self._end = 0
-            self._capacity = 0
+        self._buffer = None
+        self._end = 0
+        self._capacity = 0
 
     def get_window(self, size: int | None = None) -> T | None:
         """
@@ -614,8 +716,6 @@ class Buffer(Generic[T]):
         :
             A window of the buffer, or None if empty.
         """
-        if self._single_value_mode:
-            return self._value
         if self._buffer is None:
             return None
         if size is None:
@@ -625,6 +725,160 @@ class Buffer(Generic[T]):
         actual_size = min(size, self._end)
         start = self._end - actual_size
         return self._buffer_impl.get_view(self._buffer, start, self._end)
+
+    def get_latest(self) -> T | None:
+        """
+        Get the latest single value, unwrapped.
+
+        Returns the most recent data point without the concat dimension,
+        ready for use without further processing.
+
+        Returns
+        -------
+        :
+            The latest value without concat dimension, or None if empty.
+        """
+        if self._buffer is None or self._end == 0:
+            return None
+
+        # Get last frame as a size-1 window, then unwrap it
+        view = self._buffer_impl.get_view(self._buffer, self._end - 1, self._end)
+        return self._buffer_impl.unwrap_window(view)
+
+
+class Buffer(Generic[T]):
+    """
+    Unified buffer interface with automatic mode selection.
+
+    Delegates to SingleValueStorage for max_size=1 (optimized single-value mode)
+    or StreamingBuffer for max_size>1 (complex buffer management with growth
+    and sliding window).
+
+    Handles transparent transition from single-value to streaming mode when
+    max_size is increased via set_max_size().
+    """
+
+    def __init__(
+        self,
+        max_size: int,
+        buffer_impl: BufferInterface[T],
+        initial_capacity: int = 100,
+        overallocation_factor: float = 2.5,
+    ) -> None:
+        """
+        Initialize buffer.
+
+        Parameters
+        ----------
+        max_size:
+            Maximum number of data points to maintain (sliding window size).
+        buffer_impl:
+            Buffer implementation (e.g., VariableBuffer, DataArrayBuffer).
+        initial_capacity:
+            Initial buffer allocation (ignored for max_size=1).
+        overallocation_factor:
+            Buffer capacity = max_size * overallocation_factor (ignored for max_size=1).
+            Must be > 1.0.
+        """
+        if max_size <= 0:
+            raise ValueError("max_size must be positive")
+
+        self._max_size = max_size
+        self._buffer_impl = buffer_impl
+        self._initial_capacity = initial_capacity
+        self._overallocation_factor = overallocation_factor
+
+        # Create appropriate storage based on max_size
+        if max_size == 1:
+            self._storage: SingleValueStorage[T] | StreamingBuffer[T] = (
+                SingleValueStorage(buffer_impl)
+            )
+        else:
+            self._storage = StreamingBuffer(
+                max_size=max_size,
+                buffer_impl=buffer_impl,
+                initial_capacity=initial_capacity,
+                overallocation_factor=overallocation_factor,
+            )
+
+    def set_max_size(self, new_max_size: int) -> None:
+        """
+        Update the maximum buffer size (can only grow, never shrink).
+
+        If transitioning from max_size=1 to max_size>1, switches from
+        SingleValueStorage to StreamingBuffer and preserves existing value.
+
+        Parameters
+        ----------
+        new_max_size:
+            New maximum size. If smaller than current max_size, no change is made.
+        """
+        if new_max_size > self._max_size:
+            # Check if we need to transition from single-value to streaming mode
+            if isinstance(self._storage, SingleValueStorage) and new_max_size > 1:
+                # Save current value
+                old_value = self._storage.get_all()
+
+                # Switch to streaming buffer
+                self._storage = StreamingBuffer(
+                    max_size=new_max_size,
+                    buffer_impl=self._buffer_impl,
+                    initial_capacity=self._initial_capacity,
+                    overallocation_factor=self._overallocation_factor,
+                )
+
+                # Re-append the value if it exists
+                if old_value is not None:
+                    self._storage.append(old_value)
+
+                self._max_size = new_max_size
+            elif isinstance(self._storage, StreamingBuffer):
+                # Already in streaming mode, just grow
+                self._storage.set_max_size(new_max_size)
+                self._max_size = new_max_size
+
+    def append(self, data: T) -> None:
+        """Append new data to storage."""
+        self._storage.append(data)
+
+    def get_all(self) -> T | None:
+        """Get all stored data."""
+        return self._storage.get_all()
+
+    def clear(self) -> None:
+        """Clear all stored data."""
+        self._storage.clear()
+
+    def get_window(self, size: int | None = None) -> T | None:
+        """
+        Get a window of buffered data from the end.
+
+        Parameters
+        ----------
+        size:
+            The number of elements to return from the end of the buffer.
+            If None, returns the entire buffer.
+
+        Returns
+        -------
+        :
+            A window of the buffer, or None if empty.
+        """
+        return self._storage.get_window(size)
+
+    def get_latest(self) -> T | None:
+        """
+        Get the latest single value, unwrapped.
+
+        Returns the most recent data point without the concat dimension,
+        ready for use without further processing.
+
+        Returns
+        -------
+        :
+            The latest value without concat dimension, or None if empty.
+        """
+        return self._storage.get_latest()
 
 
 class BufferFactory:
@@ -688,5 +942,4 @@ class BufferFactory:
             buffer_impl=buffer_impl,
             initial_capacity=self._initial_capacity,
             overallocation_factor=self._overallocation_factor,
-            concat_dim=self._concat_dim,
         )

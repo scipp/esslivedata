@@ -34,15 +34,16 @@ class TestLatestValueExtractor:
         assert result == 30
 
     def test_extract_latest_from_list(self, buffer_factory: BufferFactory):
-        """Test extracting latest value from list buffer."""
+        """Test extracting latest value from list buffer with batched data."""
         extractor = LatestValueExtractor()
         buffer = buffer_factory.create_buffer([1, 2, 3], max_size=1)
         buffer.append([1, 2, 3])
         buffer.append([4, 5, 6])
 
         result = extractor.extract(buffer)
-        # For list buffers, get_window returns the list as-is, then we take [0]
-        assert result == 4
+        # For list buffers in single_value_mode with batched data,
+        # extract_latest_frame extracts the last element from the batch
+        assert result == 6
 
     def test_extract_latest_from_scipp_dataarray(self, buffer_factory: BufferFactory):
         """Test extracting and unwrapping latest value from scipp DataArray."""
@@ -204,8 +205,8 @@ class TestExtractorIntegration:
     def test_extractors_with_custom_concat_dim(self, buffer_factory: BufferFactory):
         """Test LatestValueExtractor with custom concat dimension."""
         # The buffer uses 'time' as the concat dimension internally
-        # This test verifies that we can specify a different concat_dim if needed
-        extractor = LatestValueExtractor(concat_dim='time')
+        # The extractor delegates unwrapping to the buffer implementation
+        extractor = LatestValueExtractor()
         data = sc.arange('time', 3, unit='counts')
 
         buffer = buffer_factory.create_buffer(data[0:1], max_size=3)
@@ -219,7 +220,7 @@ class TestExtractorIntegration:
 
     def test_extractor_with_non_concat_data(self, buffer_factory: BufferFactory):
         """Test extractor with data that doesn't have concat dimension."""
-        extractor = LatestValueExtractor(concat_dim='time')
+        extractor = LatestValueExtractor()
         # Create data without 'time' dimension
         data = sc.scalar(42, unit='counts')
 

@@ -42,54 +42,13 @@ class UpdateExtractor(ABC):
 class LatestValueExtractor(UpdateExtractor):
     """Extracts the latest single value, unwrapping the concat dimension."""
 
-    def __init__(self, concat_dim: str = 'time') -> None:
-        """
-        Initialize latest value extractor.
-
-        Parameters
-        ----------
-        concat_dim:
-            The dimension to unwrap when extracting from scipp objects.
-        """
-        self._concat_dim = concat_dim
-
     def get_required_size(self) -> int:
         """Latest value only needs buffer size of 1."""
         return 1
 
     def extract(self, buffer: Buffer) -> Any:
-        """
-        Extract the latest value from the buffer.
-
-        For list buffers, returns the last element.
-        For scipp DataArray/Variable, unwraps the concat dimension.
-        """
-        view = buffer.get_window(1)
-        if view is None:
-            return None
-
-        # Unwrap based on type
-        if isinstance(view, list):
-            return view[0] if view else None
-
-        # Import scipp only when needed to avoid circular imports
-        import scipp as sc
-
-        if isinstance(view, sc.DataArray):
-            if self._concat_dim in view.dims:
-                # Slice to remove concat dimension
-                result = view[self._concat_dim, 0]
-                # Drop the now-scalar concat coordinate to restore original structure
-                if self._concat_dim in result.coords:
-                    result = result.drop_coords(self._concat_dim)
-                return result
-            return view
-        elif isinstance(view, sc.Variable):
-            if self._concat_dim in view.dims:
-                return view[self._concat_dim, 0]
-            return view
-        else:
-            return view
+        """Extract the latest value from the buffer, unwrapped."""
+        return buffer.get_latest()
 
 
 class WindowExtractor(UpdateExtractor):

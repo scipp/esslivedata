@@ -384,9 +384,7 @@ class TestDataArrayBuffer:
     def test_allocate_with_different_concat_dim(self):
         """Test buffer with non-default concat dimension."""
         buffer_impl = DataArrayBuffer(concat_dim='event')
-        storage = Buffer(
-            max_size=10, buffer_impl=buffer_impl, initial_capacity=5, concat_dim='event'
-        )
+        storage = Buffer(max_size=10, buffer_impl=buffer_impl, initial_capacity=5)
 
         data1 = sc.DataArray(
             data=sc.array(dims=['event', 'x'], values=[[1, 2], [3, 4]], dtype='int64'),
