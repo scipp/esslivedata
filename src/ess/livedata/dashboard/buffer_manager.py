@@ -241,48 +241,6 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
         if state.needs_growth:
             self._resize_buffer(state)
 
-    def get_buffer(self, key: K) -> Buffer[T]:
-        """
-        Get buffer for a key.
-
-        Parameters
-        ----------
-        key:
-            Key identifying the buffer.
-
-        Returns
-        -------
-        :
-            The buffer for this key.
-
-        Notes
-        -----
-        Prefer using dictionary access: `buffer_manager[key]` instead of
-        `buffer_manager.get_buffer(key)`.
-        """
-        return self[key]
-
-    def has_buffer(self, key: K) -> bool:
-        """
-        Check if a buffer exists for a key.
-
-        Parameters
-        ----------
-        key:
-            Key to check.
-
-        Returns
-        -------
-        :
-            True if buffer exists for this key.
-
-        Notes
-        -----
-        Prefer using membership test: `key in buffer_manager` instead of
-        `buffer_manager.has_buffer(key)`.
-        """
-        return key in self
-
     def delete_buffer(self, key: K) -> None:
         """
         Delete a buffer and its associated state.

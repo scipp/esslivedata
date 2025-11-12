@@ -40,7 +40,7 @@ class TestBufferManagerCreation:
         buffer_manager.create_buffer(key, template, [LatestFrame()])
 
         # Buffer should be created (frame count starts at 0)
-        buffer = buffer_manager.get_buffer(key)
+        buffer = buffer_manager[key]
         assert buffer.get_frame_count() == 0
 
     def test_create_buffer_with_time_window_requirement(
@@ -52,7 +52,7 @@ class TestBufferManagerCreation:
         buffer_manager.create_buffer(key, template, [TimeWindow(duration_seconds=5.0)])
 
         # Buffer should be created with conservative initial size
-        buffer = buffer_manager.get_buffer(key)
+        buffer = buffer_manager[key]
         assert buffer.get_frame_count() == 0
 
     def test_create_buffer_with_complete_history_requirement(
@@ -64,7 +64,7 @@ class TestBufferManagerCreation:
         buffer_manager.create_buffer(key, template, [CompleteHistory()])
 
         # Buffer should be created with MAX_FRAMES size
-        buffer = buffer_manager.get_buffer(key)
+        buffer = buffer_manager[key]
         assert buffer.get_frame_count() == 0
 
     def test_create_buffer_with_multiple_requirements(
@@ -80,7 +80,7 @@ class TestBufferManagerCreation:
         )
 
         # CompleteHistory should dominate (MAX_FRAMES)
-        buffer = buffer_manager.get_buffer(key)
+        buffer = buffer_manager[key]
         assert buffer.get_frame_count() == 0
 
 
@@ -96,7 +96,7 @@ class TestBufferManagerUpdateAndResize:
         data = sc.scalar(42, unit='counts')
         buffer_manager.update_buffer(key, data)
 
-        buffer = buffer_manager.get_buffer(key)
+        buffer = buffer_manager[key]
         assert buffer.get_frame_count() == 1
         result = buffer.get_latest()
         assert result.value == 42
@@ -109,7 +109,7 @@ class TestBufferManagerUpdateAndResize:
 
         # Add data
         buffer_manager.update_buffer(key, sc.scalar(1, unit='counts'))
-        buffer = buffer_manager.get_buffer(key)
+        buffer = buffer_manager[key]
         initial_count = buffer.get_frame_count()
         assert initial_count == 1
 
@@ -123,7 +123,7 @@ class TestBufferManagerUpdateAndResize:
             buffer_manager.update_buffer(key, sc.scalar(i, unit='counts'))
 
         # Buffer should have grown beyond initial size
-        buffer = buffer_manager.get_buffer(key)
+        buffer = buffer_manager[key]
         assert buffer.get_frame_count() == 4
 
     def test_buffer_grows_for_time_window_with_time_coord(
@@ -147,7 +147,7 @@ class TestBufferManagerUpdateAndResize:
             buffer_manager.update_buffer(key, data)
 
         # After 5 points at 0.1s spacing, coverage should be 0.4s
-        buffer = buffer_manager.get_buffer(key)
+        buffer = buffer_manager[key]
         coverage = buffer.get_temporal_coverage()
         assert coverage == pytest.approx(0.4, abs=0.01)
 
@@ -160,7 +160,7 @@ class TestBufferManagerUpdateAndResize:
             buffer_manager.update_buffer(key, data)
 
         # Coverage should now be >= 1.0s
-        buffer = buffer_manager.get_buffer(key)
+        buffer = buffer_manager[key]
         coverage = buffer.get_temporal_coverage()
         assert coverage >= 1.0
 
@@ -175,14 +175,14 @@ class TestBufferManagerValidation:
         buffer_manager.create_buffer(key, template, [LatestFrame()])
 
         # Empty buffer should fail validation (internally checked)
-        buffer = buffer_manager.get_buffer(key)
+        buffer = buffer_manager[key]
         assert buffer.get_frame_count() == 0
 
         # Add data
         buffer_manager.update_buffer(key, sc.scalar(1, unit='counts'))
 
         # Now should have data
-        buffer = buffer_manager.get_buffer(key)
+        buffer = buffer_manager[key]
         assert buffer.get_frame_count() == 1
 
     def test_validate_coverage_time_window_without_time_coord(
@@ -220,7 +220,7 @@ class TestBufferManagerValidation:
             buffer_manager.update_buffer(key, data)
 
         # Check coverage is insufficient
-        buffer = buffer_manager.get_buffer(key)
+        buffer = buffer_manager[key]
         coverage = buffer.get_temporal_coverage()
         assert coverage < 2.0
 
@@ -235,7 +235,7 @@ class TestBufferManagerValidation:
             buffer_manager.update_buffer(key, sc.scalar(i, unit='counts'))
 
         # Buffer should grow towards MAX_CAPACITY (CompleteHistory is never satisfied)
-        buffer = buffer_manager.get_buffer(key)
+        buffer = buffer_manager[key]
         assert buffer.get_frame_count() > 1  # Should have grown beyond initial size
 
 
@@ -249,7 +249,7 @@ class TestBufferManagerAddRequirement:
         buffer_manager.create_buffer(key, template, [LatestFrame()])
 
         # Add some data
-        buffer = buffer_manager.get_buffer(key)
+        buffer = buffer_manager[key]
         for i in range(5):
             buffer.append(sc.scalar(i, unit='counts'))
 
