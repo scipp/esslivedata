@@ -7,9 +7,8 @@ from collections.abc import Callable, Hashable, Iterator, Mapping, MutableMappin
 from contextlib import contextmanager
 from typing import Any, Generic, TypeVar
 
-from .buffer import BufferFactory
-from .buffer_manager import BufferManager
 from .extractors import LatestValueExtractor, UpdateExtractor
+from .temporal_buffer_manager import TemporalBufferManager
 
 K = TypeVar('K', bound=Hashable)
 V = TypeVar('V')
@@ -55,24 +54,18 @@ class DataService(MutableMapping[K, V]):
 
     def __init__(
         self,
-        buffer_factory: BufferFactory | None = None,
-        buffer_manager: BufferManager | None = None,
+        buffer_manager: TemporalBufferManager | None = None,
     ) -> None:
         """
         Initialize DataService.
 
         Parameters
         ----------
-        buffer_factory:
-            Factory for creating buffers. If None, uses default factory.
         buffer_manager:
-            Manager for buffer sizing. If None, creates one with buffer_factory.
+            Manager for buffer sizing. If None, creates a new TemporalBufferManager.
         """
-        if buffer_factory is None:
-            buffer_factory = BufferFactory()
         if buffer_manager is None:
-            buffer_manager = BufferManager(buffer_factory)
-        self._buffer_factory = buffer_factory
+            buffer_manager = TemporalBufferManager()
         self._buffer_manager = buffer_manager
         self._default_extractor = LatestValueExtractor()
         self._subscribers: list[Subscriber[K]] = []
@@ -148,7 +141,7 @@ class DataService(MutableMapping[K, V]):
             if key in self._buffer_manager:
                 extractor = extractors[key]
                 buffer = self._buffer_manager[key]
-                buffered_data = buffer.get_all()
+                buffered_data = buffer.get()
                 data = extractor.extract(buffered_data)
                 if data is not None:
                     subscriber_data[key] = data
@@ -242,7 +235,7 @@ class DataService(MutableMapping[K, V]):
         if key not in self._buffer_manager:
             raise KeyError(key)
         buffer = self._buffer_manager[key]
-        buffered_data = buffer.get_all()
+        buffered_data = buffer.get()
         return self._default_extractor.extract(buffered_data)
 
     def __setitem__(self, key: K, value: V) -> None:
@@ -250,7 +243,7 @@ class DataService(MutableMapping[K, V]):
         if key not in self._buffer_manager:
             self._pending_key_additions.add(key)
             extractors = self._get_extractors(key)
-            self._buffer_manager.create_buffer(key, value, extractors)
+            self._buffer_manager.create_buffer(key, extractors)
         self._buffer_manager.update_buffer(key, value)
         self._pending_updates.add(key)
         self._notify_if_not_in_transaction()
