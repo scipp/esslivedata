@@ -247,6 +247,165 @@ class TestTemporalBuffer:
         buffer.set_max_memory(10000)
         assert buffer._max_memory == 10000
 
+    def test_max_memory_limits_capacity(self):
+        """Test that max_memory limits buffer capacity."""
+        buffer = TemporalBuffer()
+        # Set memory limit before adding data
+        buffer.set_max_memory(100)  # 100 bytes
+
+        # Add initial data (float64 = 8 bytes per element, 2 elements = 16 bytes)
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 2, unit='m'),
+                'time': sc.scalar(0.0, unit='s'),
+            },
+        )
+        buffer.add(data)
+
+        # Buffer capacity should be limited by memory: 100 bytes / 16 bytes = 6
+        assert buffer._data_buffer.max_capacity == 6
+
+    def test_timespan_trimming_on_capacity_failure(self):
+        """Test that old data is trimmed when capacity is reached."""
+        buffer = TemporalBuffer()
+        buffer.set_required_timespan(5.0)  # Keep last 5 seconds
+        buffer.set_max_memory(100)  # Small memory limit to trigger trimming
+
+        # Add data at t=0
+        data1 = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 2, unit='m'),
+                'time': sc.scalar(0.0, unit='s'),
+            },
+        )
+        buffer.add(data1)
+        initial_capacity = buffer._data_buffer.max_capacity
+
+        # Fill buffer close to capacity with data at t=1, 2, 3, 4
+        for t in range(1, initial_capacity):
+            data = sc.DataArray(
+                sc.array(dims=['x'], values=[float(t), float(t)], unit='counts'),
+                coords={
+                    'x': sc.arange('x', 2, unit='m'),
+                    'time': sc.scalar(float(t), unit='s'),
+                },
+            )
+            buffer.add(data)
+
+        # Add data at t=10 (outside timespan from t=0-4)
+        # This should trigger trimming of old data
+        data_new = sc.DataArray(
+            sc.array(dims=['x'], values=[10.0, 10.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 2, unit='m'),
+                'time': sc.scalar(10.0, unit='s'),
+            },
+        )
+        buffer.add(data_new)
+
+        result = buffer.get()
+        # Only data from t >= 5.0 should remain (t=10 - 5.0)
+        # So only t=10 should be in buffer (since we only added up to t=capacity-1)
+        assert result.coords['time'].values[0] >= 5.0
+
+    def test_no_trimming_when_capacity_available(self):
+        """Test that trimming doesn't occur when there's available capacity."""
+        buffer = TemporalBuffer()
+        buffer.set_required_timespan(2.0)  # Keep last 2 seconds
+
+        # Add data at t=0, 1, 2, 3, 4, 5
+        for t in range(6):
+            data = sc.DataArray(
+                sc.array(dims=['x'], values=[float(t), float(t)], unit='counts'),
+                coords={
+                    'x': sc.arange('x', 2, unit='m'),
+                    'time': sc.scalar(float(t), unit='s'),
+                },
+            )
+            buffer.add(data)
+
+        result = buffer.get()
+        # With default large capacity (10000), no trimming should occur
+        # All 6 time points should be present despite timespan=2.0
+        assert result.sizes['time'] == 6
+        assert result.coords['time'].values[0] == 0.0
+
+    def test_trim_drops_all_old_data(self):
+        """Test trimming when all buffered data is older than timespan."""
+        buffer = TemporalBuffer()
+        buffer.set_required_timespan(1.0)
+        buffer.set_max_memory(50)  # Very small to trigger trim quickly
+
+        # Add data at t=0
+        data1 = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 2, unit='m'),
+                'time': sc.scalar(0.0, unit='s'),
+            },
+        )
+        buffer.add(data1)
+
+        # Fill to capacity
+        capacity = buffer._data_buffer.max_capacity
+        for t in range(1, capacity):
+            data = sc.DataArray(
+                sc.array(dims=['x'], values=[float(t), float(t)], unit='counts'),
+                coords={
+                    'x': sc.arange('x', 2, unit='m'),
+                    'time': sc.scalar(float(t), unit='s'),
+                },
+            )
+            buffer.add(data)
+
+        # Add data far in future, all previous data should be dropped
+        data_future = sc.DataArray(
+            sc.array(dims=['x'], values=[99.0, 99.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 2, unit='m'),
+                'time': sc.scalar(100.0, unit='s'),
+            },
+        )
+        buffer.add(data_future)
+
+        result = buffer.get()
+        # Only data >= 99.0 should remain (100 - 1.0 timespan)
+        assert result.coords['time'].values[0] >= 99.0
+
+    def test_capacity_exceeded_even_after_trimming_raises(self):
+        """Test that ValueError is raised if data exceeds capacity even after trim."""
+        buffer = TemporalBuffer()
+        buffer.set_required_timespan(1.0)
+        buffer.set_max_memory(20)  # Very small capacity (~ 1 element)
+
+        # Add first data point
+        data1 = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 2, unit='m'),
+                'time': sc.scalar(0.0, unit='s'),
+            },
+        )
+        buffer.add(data1)
+
+        # Try to add thick slice that exceeds capacity
+        large_data = sc.DataArray(
+            sc.array(
+                dims=['time', 'x'],
+                values=[[i, i] for i in range(10)],
+                unit='counts',
+            ),
+            coords={
+                'x': sc.arange('x', 2, unit='m'),
+                'time': sc.array(dims=['time'], values=list(range(10)), unit='s'),
+            },
+        )
+
+        with pytest.raises(ValueError, match="exceeds buffer capacity even after"):
+            buffer.add(large_data)
+
 
 class TestVariableBuffer:
     """Tests for VariableBuffer."""

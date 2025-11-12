@@ -291,7 +291,7 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         Raises
         ------
         ValueError
-            If data does not have a 'time' coordinate.
+            If data does not have a 'time' coordinate or exceeds buffer capacity.
         """
         if 'time' not in data.coords:
             raise ValueError("TemporalBuffer requires data with 'time' coordinate")
@@ -301,9 +301,16 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
             self._initialize_buffers(data)
             return
 
-        # Append to existing buffers
-        self._data_buffer.append(data.data)
-        self._time_buffer.append(data.coords['time'])
+        # Try to append to existing buffers
+        if not self._data_buffer.append(data.data):
+            # Failed - trim old data and retry
+            self._trim_to_timespan(data)
+            if not self._data_buffer.append(data.data):
+                raise ValueError("Data exceeds buffer capacity even after trimming")
+
+        # Time buffer should succeed (buffers kept in sync by trimming)
+        if not self._time_buffer.append(data.coords['time']):
+            raise RuntimeError("Time buffer append failed unexpectedly")
 
     def get(self) -> sc.DataArray | None:
         """Return the complete buffer."""
@@ -343,14 +350,53 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         else:
             self._reference = data.drop_coords('time')
 
-        # Create buffers with large capacity
-        max_capacity = 100
+        # Calculate max_capacity from memory limit
+        if 'time' in data.dims:
+            bytes_per_element = data.data.values.nbytes / data.sizes['time']
+        else:
+            bytes_per_element = data.data.values.nbytes
+
+        if self._max_memory is not None:
+            max_capacity = int(self._max_memory / bytes_per_element)
+        else:
+            max_capacity = 10000  # Default large capacity
+
+        # Create buffers
         self._data_buffer = VariableBuffer(
             data=data.data, max_capacity=max_capacity, concat_dim='time'
         )
         self._time_buffer = VariableBuffer(
             data=data.coords['time'], max_capacity=max_capacity, concat_dim='time'
         )
+
+    def _trim_to_timespan(self, new_data: sc.DataArray) -> None:
+        """Trim buffer to keep only data within required timespan."""
+        if self._required_timespan <= 0:
+            return
+
+        # Get latest time from new data
+        if 'time' in new_data.dims:
+            latest_time = new_data.coords['time'][-1]
+        else:
+            latest_time = new_data.coords['time']
+
+        # Calculate cutoff time
+        cutoff = latest_time - sc.scalar(self._required_timespan, unit='s')
+
+        # Find first index to keep
+        time_coord = self._time_buffer.get()
+        keep_mask = time_coord >= cutoff
+
+        if not keep_mask.values.any():
+            # All data is old, drop everything
+            drop_count = self._data_buffer.size
+        else:
+            # Find first True index
+            drop_count = int(keep_mask.values.argmax())
+
+        # Trim both buffers by same amount to keep them in sync
+        self._data_buffer.drop(drop_count)
+        self._time_buffer.drop(drop_count)
 
     def _metadata_matches(self, data: sc.DataArray) -> bool:
         """Check if incoming data's metadata matches stored reference metadata."""
