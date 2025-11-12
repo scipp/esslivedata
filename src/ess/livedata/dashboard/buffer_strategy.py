@@ -137,25 +137,6 @@ class BufferInterface(Protocol[T]):
         """
         ...
 
-    def extract_latest_frame(self, data: T) -> T:
-        """
-        Extract the latest frame from incoming data, removing concat dimension.
-
-        Handles batched data by taking the last frame along concat_dim.
-        If data doesn't have concat_dim, returns as-is.
-
-        Parameters
-        ----------
-        data:
-            Incoming data that may contain multiple frames.
-
-        Returns
-        -------
-        :
-            Single frame without concat dimension.
-        """
-        ...
-
     def unwrap_window(self, view: T) -> T:
         """
         Unwrap a size-1 buffer view to a scalar value.
@@ -205,15 +186,6 @@ class ScippBuffer(Generic[ScippT]):
     def get_view(self, buffer: ScippT, start: int, end: int) -> ScippT:
         """Get a view of buffer slice."""
         return buffer[self._concat_dim, start:end]
-
-    def extract_latest_frame(self, data: ScippT) -> ScippT:
-        """Extract the latest frame from incoming data, removing concat dimension."""
-        if self._concat_dim not in data.dims:
-            # Data doesn't have concat dim - already a single frame
-            return data
-
-        # Extract last frame along concat dimension
-        return data[self._concat_dim, -1]
 
     def unwrap_window(self, view: ScippT) -> ScippT:
         """Unwrap a size-1 buffer view to a scalar value."""
@@ -481,12 +453,6 @@ class ListBuffer(BufferInterface[list]):
             return len(data)
         return 1
 
-    def extract_latest_frame(self, data: Any) -> Any:
-        """Extract the latest frame from incoming data."""
-        if isinstance(data, list) and len(data) > 0:
-            return data[-1]
-        return data
-
     def unwrap_window(self, view: list) -> Any:
         """Unwrap a size-1 buffer view to a scalar value."""
         if isinstance(view, list) and len(view) > 0:
@@ -502,21 +468,13 @@ class SingleValueStorage(Generic[T]):
     Uses simple value replacement instead of complex buffer management.
     """
 
-    def __init__(self, buffer_impl: BufferInterface[T]) -> None:
-        """
-        Initialize single-value storage.
-
-        Parameters
-        ----------
-        buffer_impl:
-            Buffer implementation for extracting latest frame from incoming data.
-        """
-        self._buffer_impl = buffer_impl
+    def __init__(self) -> None:
+        """Initialize single-value storage."""
         self._value: T | None = None
 
     def append(self, data: T) -> None:
-        """Replace stored value with latest frame from incoming data."""
-        self._value = self._buffer_impl.extract_latest_frame(data)
+        """Replace stored value with incoming data."""
+        self._value = data
 
     def get_all(self) -> T | None:
         """Get the stored value."""

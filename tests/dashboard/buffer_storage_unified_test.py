@@ -221,14 +221,17 @@ class TestBufferSingleValueMode:
 
     def test_single_value_mode_append_replaces(self):
         """Test that max_size=1 replaces value on each append."""
+        from ess.livedata.dashboard.extractors import LatestValueExtractor
+
         buffer_impl = VariableBuffer(concat_dim='time')
         storage = Buffer(max_size=1, buffer_impl=buffer_impl, initial_capacity=5)
+        extractor = LatestValueExtractor()
 
         # First append
         data1 = sc.array(dims=['time'], values=[42], dtype='int64')
         storage.append(data1)
 
-        result = storage.get_all()
+        result = extractor.extract(storage.get_all())
         assert result is not None
         assert result.value == 42
 
@@ -236,33 +239,39 @@ class TestBufferSingleValueMode:
         data2 = sc.array(dims=['time'], values=[99], dtype='int64')
         storage.append(data2)
 
-        result = storage.get_all()
+        result = extractor.extract(storage.get_all())
         assert result is not None
         assert result.value == 99
 
     def test_single_value_mode_extracts_latest_from_batch(self):
-        """Test that max_size=1 extracts latest value from batched data."""
+        """Test that extractor extracts latest value from batched data in storage."""
+        from ess.livedata.dashboard.extractors import LatestValueExtractor
+
         buffer_impl = VariableBuffer(concat_dim='time')
         storage = Buffer(max_size=1, buffer_impl=buffer_impl, initial_capacity=5)
+        extractor = LatestValueExtractor()
 
-        # Append batch - should extract last value
+        # Append batch - extractor extracts last value
         data = sc.array(dims=['time'], values=[1, 2, 3, 4, 5], dtype='int64')
         storage.append(data)
 
-        result = storage.get_all()
+        result = extractor.extract(storage.get_all())
         assert result is not None
         assert result.value == 5
 
     def test_single_value_mode_handles_scalar_data(self):
         """Test that max_size=1 handles 0D scalar data."""
+        from ess.livedata.dashboard.extractors import LatestValueExtractor
+
         buffer_impl = VariableBuffer(concat_dim='time')
         storage = Buffer(max_size=1, buffer_impl=buffer_impl, initial_capacity=5)
+        extractor = LatestValueExtractor()
 
         # Append scalar (no time dimension)
         scalar = sc.scalar(42.0, dtype='float64')
         storage.append(scalar)
 
-        result = storage.get_all()
+        result = extractor.extract(storage.get_all())
         assert result is not None
         assert result.value == 42.0
 
