@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 if TYPE_CHECKING:
     import pydantic
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 T = TypeVar('T')
 
 
-class UpdateExtractor(ABC):
+class UpdateExtractor(ABC, Generic[T]):
     """Extracts a specific view of buffered data."""
 
     @abstractmethod
@@ -51,7 +51,7 @@ class UpdateExtractor(ABC):
         """
 
 
-class LatestValueExtractor(UpdateExtractor):
+class LatestValueExtractor(UpdateExtractor[T]):
     """Extracts the latest single value, unwrapping the concat dimension."""
 
     def __init__(self, concat_dim: str = 'time') -> None:
@@ -87,7 +87,7 @@ class LatestValueExtractor(UpdateExtractor):
         return data[self._concat_dim, -1]
 
 
-class FullHistoryExtractor(UpdateExtractor):
+class FullHistoryExtractor(UpdateExtractor[T]):
     """Extracts the complete buffer history."""
 
     def is_requirement_fulfilled(self, data: T | None) -> bool:
@@ -99,7 +99,7 @@ class FullHistoryExtractor(UpdateExtractor):
         return data
 
 
-class WindowAggregatingExtractor(UpdateExtractor):
+class WindowAggregatingExtractor(UpdateExtractor[T]):
     """Extracts a window from the buffer and aggregates over the time dimension."""
 
     def __init__(
