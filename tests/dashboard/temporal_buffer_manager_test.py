@@ -102,35 +102,70 @@ class TestTemporalBufferManager:
         assert isinstance(manager['test'], SingleValueBuffer)
 
     def test_add_extractor_switches_to_temporal_buffer(self):
-        """Test that adding non-Latest extractor switches to TemporalBuffer."""
+        """Test that switching buffer types preserves existing data."""
         manager = TemporalBufferManager()
         extractors = [LatestValueExtractor()]
-        data = sc.scalar(42, unit='counts')
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 2, unit='m'),
+                'time': sc.scalar(1.0, unit='s'),
+            },
+        )
 
         manager.create_buffer('test', extractors)
         manager.update_buffer('test', data)
 
-        assert isinstance(manager['test'], SingleValueBuffer)
-
-        # Add incompatible extractor - should switch buffer type
+        # Add full history extractor - should trigger buffer type switch
         manager.add_extractor('test', FullHistoryExtractor())
 
-        assert isinstance(manager['test'], TemporalBuffer)
-        # Data should be discarded when switching
-        assert manager.get_buffer_data('test') is None
+        # Data should be preserved when switching
+        result = manager.get_buffer_data('test')
+        assert result is not None
+        # After switching, buffer transforms scalar time coord to time dimension
+        assert 'time' in result.dims
+        assert result.sizes['time'] == 1
+        # Verify the data values are preserved
+        assert sc.allclose(result['time', 0].data, data.data)
 
     def test_add_extractor_switches_to_single_value_buffer(self):
-        """Test switching from TemporalBuffer to SingleValueBuffer."""
+        """Test that switching buffer types preserves latest data."""
         manager = TemporalBufferManager()
         extractors = [WindowAggregatingExtractor(window_duration_seconds=1.0)]
 
         manager.create_buffer('test', extractors)
-        assert isinstance(manager['test'], TemporalBuffer)
 
-        # This test verifies the mechanism, though in practice this scenario
-        # (switching from temporal to single) is less common
-        # We can't easily test this without manually manipulating internal state
-        # since add_extractor only adds extractors, doesn't replace them
+        # Add multiple time slices
+        for i in range(3):
+            data = sc.DataArray(
+                sc.array(dims=['x'], values=[float(i)] * 2, unit='counts'),
+                coords={
+                    'x': sc.arange('x', 2, unit='m'),
+                    'time': sc.scalar(float(i), unit='s'),
+                },
+            )
+            manager.update_buffer('test', data)
+
+        # Verify we have temporal data with 3 time points
+        result = manager.get_buffer_data('test')
+        assert result is not None
+        assert 'time' in result.dims
+        assert result.sizes['time'] == 3
+
+        # Manually clear extractors to simulate reconfiguration
+        state = manager._states['test']
+        state.extractors.clear()
+
+        # Add LatestValueExtractor - this should trigger buffer type switch
+        manager.add_extractor('test', LatestValueExtractor())
+
+        # Verify the latest time slice is preserved after transition
+        result = manager.get_buffer_data('test')
+        assert result is not None
+        # The last slice should have values [2.0, 2.0] and time=2.0
+        expected_data = sc.array(dims=['x'], values=[2.0, 2.0], unit='counts')
+        assert sc.allclose(result.data, expected_data)
+        assert result.coords['time'].value == 2.0
 
     def test_add_extractor_raises_error_for_missing_key(self):
         """Test that adding extractor to non-existent buffer raises KeyError."""

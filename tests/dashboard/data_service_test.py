@@ -904,8 +904,7 @@ class TestExtractorBasedSubscription:
         # Both subscribers should have received all updates
         # sub1: 1 initial trigger + 1 update before sub2 registration + 10 after = 12
         assert len(sub1.received_data) == 12
-        # sub2: 1 initial trigger on registration (empty buffer after switch) + 10
-        # updates = 11
+        # sub2: 1 initial trigger on registration (with copied data) + 10 updates = 11
         assert len(sub2.received_data) == 11
 
         # sub1 should get latest value only (unwrapped)
@@ -914,10 +913,11 @@ class TestExtractorBasedSubscription:
         assert last_from_sub1.value == 11
 
         # sub2 should get all history after it was registered
-        # Note: when sub2 registered, buffer switched from SingleValueBuffer
-        # to TemporalBuffer, discarding the first data point
+        # When sub2 registered, buffer switched from SingleValueBuffer to
+        # TemporalBuffer, copying the first data point, then receiving 10 more
+        # updates = 11 total
         last_from_sub2 = sub2.received_data[-1]["data"]
-        assert last_from_sub2.sizes == {'time': 10}
+        assert last_from_sub2.sizes == {'time': 11}
 
     def test_multiple_keys_with_different_extractors(self):
         """Test subscriber with different extractors per key."""

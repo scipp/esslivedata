@@ -96,7 +96,10 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[T]], Generic[K, T]):
         """
         Register additional extractor for an existing buffer.
 
-        May trigger buffer type switch and data discard if buffer type needs to change.
+        May trigger buffer type switch with data migration:
+        - Single→Temporal: Existing data is copied to the new buffer
+        - Temporal→Single: Last time slice is copied to the new buffer
+        - Other transitions: Data is discarded
 
         Parameters
         ----------
@@ -114,12 +117,44 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[T]], Generic[K, T]):
         # Check if we need to switch buffer type
         new_buffer = self._create_buffer_for_extractors(state.extractors)
         if not isinstance(new_buffer, type(state.buffer)):
-            logger.info(
-                "Switching buffer type from %s to %s for key %s (discarding old data)",
-                type(state.buffer).__name__,
-                type(new_buffer).__name__,
-                key,
-            )
+            # Handle data migration for Single->Temporal transition
+            if isinstance(state.buffer, SingleValueBuffer) and isinstance(
+                new_buffer, TemporalBuffer
+            ):
+                logger.info(
+                    "Switching buffer type from %s to %s for key %s (copying data)",
+                    type(state.buffer).__name__,
+                    type(new_buffer).__name__,
+                    key,
+                )
+                # Copy existing data to new buffer
+                old_data = state.buffer.get()
+                if old_data is not None:
+                    new_buffer.add(old_data)
+            # Handle data migration for Temporal->Single transition
+            elif isinstance(state.buffer, TemporalBuffer) and isinstance(
+                new_buffer, SingleValueBuffer
+            ):
+                logger.info(
+                    "Switching buffer type from %s to %s for key %s"
+                    " (copying last slice)",
+                    type(state.buffer).__name__,
+                    type(new_buffer).__name__,
+                    key,
+                )
+                # Copy last slice to new buffer
+                old_data = state.buffer.get()
+                if old_data is not None and 'time' in old_data.dims:
+                    last_slice = old_data['time', -1]
+                    new_buffer.add(last_slice)
+            else:
+                logger.info(
+                    "Switching buffer type from %s to %s for key %s"
+                    " (discarding old data)",
+                    type(state.buffer).__name__,
+                    type(new_buffer).__name__,
+                    key,
+                )
             state.buffer = new_buffer
 
         # Update buffer requirements
