@@ -5,7 +5,7 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Generic, Protocol, TypeVar
 
 from ..core.message import Message, MessageSink, MessageSource
 
@@ -94,18 +94,18 @@ class DashboardResources:
     roi_sink: MessageSink
 
 
-class NullMessageSource(Generic[Any]):
+class NullMessageSource:
     """Message source that returns no messages (no-op implementation)."""
 
-    def get_messages(self) -> Sequence[Any]:
+    def get_messages(self) -> Sequence[Message]:
         """Return empty list of messages."""
         return []
 
 
-class NullMessageSink(Generic[Any]):
+class NullMessageSink:
     """Message sink that discards all messages (no-op implementation)."""
 
-    def publish_messages(self, messages: list[Message[Any]]) -> None:
+    def publish_messages(self, messages: list[Message]) -> None:
         """Discard messages without doing anything."""
         pass
 
