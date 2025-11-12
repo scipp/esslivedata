@@ -50,6 +50,17 @@ class UpdateExtractor(ABC, Generic[T]):
             True if requirements are satisfied, False otherwise.
         """
 
+    def get_required_timespan(self) -> float | None:
+        """
+        Get the required timespan for this extractor.
+
+        Returns
+        -------
+        :
+            Required timespan in seconds, or None if no specific requirement.
+        """
+        return None
+
 
 class LatestValueExtractor(UpdateExtractor[T]):
     """Extracts the latest single value, unwrapping the concat dimension."""
@@ -90,6 +101,10 @@ class LatestValueExtractor(UpdateExtractor[T]):
 class FullHistoryExtractor(UpdateExtractor[T]):
     """Extracts the complete buffer history."""
 
+    def get_required_timespan(self) -> float | None:
+        """Return infinite timespan to indicate wanting all history."""
+        return float('inf')
+
     def is_requirement_fulfilled(self, data: T | None) -> bool:
         """Full history is never fulfilled - always want more data."""
         return False
@@ -123,6 +138,10 @@ class WindowAggregatingExtractor(UpdateExtractor[T]):
         self._window_duration_seconds = window_duration_seconds
         self._aggregation = aggregation
         self._concat_dim = concat_dim
+
+    def get_required_timespan(self) -> float | None:
+        """Return the required window duration."""
+        return self._window_duration_seconds
 
     def is_requirement_fulfilled(self, data: T | None) -> bool:
         """Requires temporal coverage of specified duration."""
