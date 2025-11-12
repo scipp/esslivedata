@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 import scipp as sc
+from scipp.testing import assert_identical
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.dashboard.data_service import DataService
@@ -77,6 +78,33 @@ def sample_data() -> sc.DataArray:
     )
 
 
+def assert_dict_equal_with_scipp(actual: dict, expected: dict) -> None:
+    """
+    Assert two dictionaries are equal, using scipp.testing for scipp objects.
+
+    Parameters
+    ----------
+    actual:
+        The actual dictionary received.
+    expected:
+        The expected dictionary.
+    """
+    assert (
+        actual.keys() == expected.keys()
+    ), f"Keys differ: {actual.keys()} != {expected.keys()}"
+    for key in expected:
+        actual_value = actual[key]
+        expected_value = expected[key]
+        # Check if this is a scipp object by checking the module
+        if type(expected_value).__module__.startswith('scipp'):
+            # Use scipp.testing.assert_identical for scipp DataArrays and Datasets
+            assert_identical(actual_value, expected_value)
+        else:
+            assert (
+                actual_value == expected_value
+            ), f"Value for key {key} differs: {actual_value} != {expected_value}"
+
+
 class TestStreamManager:
     """Test cases for base StreamManager class."""
 
@@ -134,7 +162,7 @@ class TestStreamManager:
         assert len(pipe.send_calls) == 1
         assert key1 in pipe.send_calls[0]
         assert key2 not in pipe.send_calls[0]
-        assert sc.identical(pipe.send_calls[0][key1], sample_data)
+        assert_identical(pipe.send_calls[0][key1], sample_data)
 
     def test_stream_independence(self, data_service, fake_pipe_factory, sample_data):
         """Test that multiple streams operate independently."""
@@ -198,7 +226,7 @@ class TestStreamManager:
 
         # Verify data received
         assert len(pipe.send_calls) == 1
-        assert pipe.send_calls[0] == {key: sample_data}
+        assert_dict_equal_with_scipp(pipe.send_calls[0], {key: sample_data})
 
     def test_multiple_sources_data_flow(
         self, data_service, fake_pipe_factory, sample_data
@@ -237,9 +265,11 @@ class TestStreamManager:
         # Should receive data for both keys
         assert len(pipe.send_calls) == 2
         # First call has only key1
-        assert pipe.send_calls[0] == {key1: sample_data}
+        assert_dict_equal_with_scipp(pipe.send_calls[0], {key1: sample_data})
         # Second call has both keys
-        assert pipe.send_calls[1] == {key1: sample_data, key2: sample_data2}
+        assert_dict_equal_with_scipp(
+            pipe.send_calls[1], {key1: sample_data, key2: sample_data2}
+        )
 
     def test_incremental_updates(self, data_service, fake_pipe_factory, sample_data):
         """Test that incremental updates flow through correctly."""
@@ -269,8 +299,8 @@ class TestStreamManager:
 
         # Should receive both updates
         assert len(pipe.send_calls) == 2
-        assert pipe.send_calls[0] == {key: sample_data}
-        assert pipe.send_calls[1] == {key: updated_data}
+        assert_dict_equal_with_scipp(pipe.send_calls[0], {key: sample_data})
+        assert_dict_equal_with_scipp(pipe.send_calls[1], {key: updated_data})
 
     def test_empty_source_set(self, data_service, fake_pipe_factory):
         """Test behavior with empty source set."""
@@ -320,8 +350,8 @@ class TestStreamManager:
         # Both pipes should receive the data
         assert len(pipe1.send_calls) == 1
         assert len(pipe2.send_calls) == 1
-        assert pipe1.send_calls[0] == {shared_key: sample_data}
-        assert pipe2.send_calls[0] == {shared_key: sample_data}
+        assert_dict_equal_with_scipp(pipe1.send_calls[0], {shared_key: sample_data})
+        assert_dict_equal_with_scipp(pipe2.send_calls[0], {shared_key: sample_data})
 
     def test_unrelated_key_filtering(
         self, data_service, fake_pipe_factory, sample_data
@@ -360,7 +390,7 @@ class TestStreamManager:
 
         # Should receive data now
         assert len(pipe.send_calls) == 1
-        assert pipe.send_calls[0] == {target_key: sample_data}
+        assert_dict_equal_with_scipp(pipe.send_calls[0], {target_key: sample_data})
 
     def test_complex_multi_stream_scenario(self, data_service, fake_pipe_factory):
         """Test complex scenario with multiple streams and overlapping keys."""
@@ -408,17 +438,21 @@ class TestStreamManager:
 
         # Verify pipe1 (keys a, b)
         assert len(pipe1.send_calls) == 2
-        assert pipe1.send_calls[0] == {key_a: data_a}
-        assert pipe1.send_calls[1] == {key_a: data_a, key_b: data_b}
+        assert_dict_equal_with_scipp(pipe1.send_calls[0], {key_a: data_a})
+        assert_dict_equal_with_scipp(
+            pipe1.send_calls[1], {key_a: data_a, key_b: data_b}
+        )
 
         # Verify pipe2 (keys b, c)
         assert len(pipe2.send_calls) == 2
-        assert pipe2.send_calls[0] == {key_b: data_b}
-        assert pipe2.send_calls[1] == {key_b: data_b, key_c: data_c}
+        assert_dict_equal_with_scipp(pipe2.send_calls[0], {key_b: data_b})
+        assert_dict_equal_with_scipp(
+            pipe2.send_calls[1], {key_b: data_b, key_c: data_c}
+        )
 
         # Verify pipe3 (key a only)
         assert len(pipe3.send_calls) == 1
-        assert pipe3.send_calls[0] == {key_a: data_a}
+        assert_dict_equal_with_scipp(pipe3.send_calls[0], {key_a: data_a})
 
 
 class TestStreamManagerMakeMergingStreamWithoutInitialData:
@@ -474,7 +508,7 @@ class TestStreamManagerMakeMergingStreamWithoutInitialData:
 
         # Should receive data
         assert len(pipe.send_calls) == 1
-        assert pipe.send_calls[0] == {key: sample_data}
+        assert_dict_equal_with_scipp(pipe.send_calls[0], {key: sample_data})
 
     def test_make_merging_stream_with_multiple_keys(
         self, data_service, fake_pipe_factory, sample_data
@@ -533,7 +567,7 @@ class TestStreamManagerMakeMergingStreamWithoutInitialData:
 
         # Should receive data (verifies default assembler works)
         assert len(pipe.send_calls) == 1
-        assert pipe.send_calls[0] == {key: sample_data}
+        assert_dict_equal_with_scipp(pipe.send_calls[0], {key: sample_data})
 
     def test_make_merging_stream_with_empty_list(self, data_service, fake_pipe_factory):
         """Test with empty keys list."""
