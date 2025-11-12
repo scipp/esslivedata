@@ -5,10 +5,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import Generic, TypeVar
 
-if TYPE_CHECKING:
-    import scipp as sc
+import scipp as sc
 
 T = TypeVar('T')
 
@@ -99,7 +98,172 @@ class SingleValueBuffer(BufferProtocol[T]):
         self._max_memory = max_bytes
 
 
-class TemporalBuffer(BufferProtocol['sc.DataArray']):
+class VariableBuffer:
+    """
+    Buffer managing sc.Variable data with dynamic sizing along a concat dimension.
+
+    Handles appending data slices, capacity management with lazy expansion,
+    and dropping old data from the start.
+    """
+
+    def __init__(
+        self,
+        *,
+        data: sc.Variable,
+        max_capacity: int,
+        concat_dim: str = 'time',
+    ) -> None:
+        """
+        Initialize variable buffer with initial data.
+
+        Parameters
+        ----------
+        data:
+            Initial data to store. Defines buffer structure (dims, dtype, unit).
+        max_capacity:
+            Maximum allowed size along concat_dim.
+        concat_dim:
+            Dimension along which to concatenate data.
+        """
+        self._concat_dim = concat_dim
+        self._max_capacity = max_capacity
+
+        # Allocate minimal initial buffer
+        initial_size = min(16, max_capacity)
+        self._buffer = self._allocate_buffer(data, initial_size)
+        self._size = 0
+
+        # Delegate to append
+        if not self.append(data):
+            raise ValueError(f"Initial data exceeds max_capacity {max_capacity}")
+
+    @property
+    def size(self) -> int:
+        """Get number of valid elements."""
+        return self._size
+
+    @property
+    def capacity(self) -> int:
+        """Get currently allocated buffer size."""
+        return self._buffer.sizes[self._concat_dim]
+
+    @property
+    def max_capacity(self) -> int:
+        """Get maximum capacity limit."""
+        return self._max_capacity
+
+    def append(self, data: sc.Variable) -> bool:
+        """
+        Append data to the buffer.
+
+        Parameters
+        ----------
+        data:
+            Data to append. May or may not have concat_dim dimension.
+            If concat_dim is present, appends all slices along that dimension.
+            Otherwise, treats as single slice.
+
+        Returns
+        -------
+        :
+            True if successful, False if would exceed max_capacity.
+        """
+        # Determine how many elements we're adding
+        if self._concat_dim in data.dims:
+            n_incoming = data.sizes[self._concat_dim]
+        else:
+            n_incoming = 1
+
+        # Check max_capacity
+        if self._size + n_incoming > self._max_capacity:
+            return False
+
+        # Expand to fit all incoming data
+        if self._size + n_incoming > self.capacity:
+            self._expand_to_fit(self._size + n_incoming)
+
+        # Write data
+        if self._concat_dim in data.dims:
+            # Thick slice
+            end = self._size + n_incoming
+            self._buffer[self._concat_dim, self._size : end] = data
+        else:
+            # Single slice
+            self._buffer[self._concat_dim, self._size] = data
+
+        self._size += n_incoming
+        return True
+
+    def get(self) -> sc.Variable:
+        """
+        Get buffer contents up to current size.
+
+        Returns
+        -------
+        :
+            Valid buffer data (0:size).
+        """
+        return self._buffer[self._concat_dim, : self._size]
+
+    def drop(self, index: int) -> None:
+        """
+        Drop data from start up to (but not including) index.
+
+        Remaining valid data is moved to the start of the buffer.
+
+        Parameters
+        ----------
+        index:
+            Index from start until which to drop (exclusive).
+        """
+        if index <= 0:
+            return
+
+        if index >= self._size:
+            # Dropping everything
+            self._size = 0
+            return
+
+        # Move remaining data to start
+        n_remaining = self._size - index
+        self._buffer[self._concat_dim, :n_remaining] = self._buffer[
+            self._concat_dim, index : self._size
+        ]
+        self._size = n_remaining
+
+    def _allocate_buffer(self, template: sc.Variable, size: int) -> sc.Variable:
+        """
+        Allocate new buffer based on template variable structure.
+
+        Makes concat_dim the outer (first) dimension for efficient contiguous writes.
+        If template already has concat_dim, preserves its position.
+        """
+        if self._concat_dim in template.dims:
+            # Template has concat_dim - preserve dimension order
+            sizes = template.sizes
+            sizes[self._concat_dim] = size
+        else:
+            # Template doesn't have concat_dim - make it the outer dimension
+            sizes = {self._concat_dim: size}
+            sizes.update(template.sizes)
+
+        return sc.empty(sizes=sizes, dtype=template.dtype, unit=template.unit)
+
+    def _expand_to_fit(self, min_size: int) -> None:
+        """Expand buffer to accommodate at least min_size elements."""
+        current_allocated = self._buffer.sizes[self._concat_dim]
+        while current_allocated < min_size:
+            current_allocated = min(self._max_capacity, current_allocated * 2)
+
+        if current_allocated > self._buffer.sizes[self._concat_dim]:
+            new_buffer = self._allocate_buffer(self._buffer, current_allocated)
+            new_buffer[self._concat_dim, : self._size] = self._buffer[
+                self._concat_dim, : self._size
+            ]
+            self._buffer = new_buffer
+
+
+class TemporalBuffer(BufferProtocol[sc.DataArray]):
     """
     Buffer that maintains temporal data with a time dimension.
 
@@ -127,8 +291,6 @@ class TemporalBuffer(BufferProtocol['sc.DataArray']):
         ValueError
             If data does not have a 'time' coordinate.
         """
-        import scipp as sc
-
         if 'time' not in data.coords:
             raise ValueError("TemporalBuffer requires data with 'time' coordinate")
 
