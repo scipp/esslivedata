@@ -2,11 +2,12 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Transport abstraction for message sources and sinks."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Generic, Protocol, TypeVar
+from typing import Any, Generic, Protocol, TypeVar
 
-from ..core.message import MessageSink, MessageSource
+from ..core.message import Message, MessageSink, MessageSource
 
 TResources = TypeVar('TResources', covariant=True)
 
@@ -93,18 +94,18 @@ class DashboardResources:
     roi_sink: MessageSink
 
 
-class NullMessageSource:
+class NullMessageSource(Generic[Any]):
     """Message source that returns no messages (no-op implementation)."""
 
-    def get_messages(self):
+    def get_messages(self) -> Sequence[Any]:
         """Return empty list of messages."""
         return []
 
 
-class NullMessageSink:
+class NullMessageSink(Generic[Any]):
     """Message sink that discards all messages (no-op implementation)."""
 
-    def publish_messages(self, messages):
+    def publish_messages(self, messages: list[Message[Any]]) -> None:
         """Discard messages without doing anything."""
         pass
 
