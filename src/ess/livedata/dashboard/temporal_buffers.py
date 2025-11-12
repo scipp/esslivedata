@@ -267,19 +267,21 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
     """
     Buffer that maintains temporal data with a time dimension.
 
-    Concatenates incoming data along the time dimension and validates
-    that data has a 'time' coordinate.
+    Uses VariableBuffer for efficient appending without expensive concat operations.
+    Validates that non-time coords and masks remain constant across all added data.
     """
 
     def __init__(self) -> None:
         """Initialize empty temporal buffer."""
-        self._buffer: sc.DataArray | None = None
+        self._data_buffer: VariableBuffer | None = None
+        self._time_buffer: VariableBuffer | None = None
+        self._reference: sc.DataArray | None = None
         self._max_memory: int | None = None
         self._required_timespan: float = 0.0
 
     def add(self, data: sc.DataArray) -> None:
         """
-        Add data to the buffer, concatenating along time dimension.
+        Add data to the buffer, appending along time dimension.
 
         Parameters
         ----------
@@ -294,30 +296,36 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         if 'time' not in data.coords:
             raise ValueError("TemporalBuffer requires data with 'time' coordinate")
 
-        if self._buffer is None:
-            # First data - ensure it has time dimension
-            if 'time' not in data.dims:
-                # Single slice - add time dimension
-                self._buffer = sc.concat([data], dim='time')
-            else:
-                # Already has time dimension
-                self._buffer = data.copy()
-        else:
-            # Concatenate with existing buffer
-            if 'time' not in data.dims:
-                # Single slice - concat will handle adding dimension
-                self._buffer = sc.concat([self._buffer, data], dim='time')
-            else:
-                # Thick slice - concat along existing dimension
-                self._buffer = sc.concat([self._buffer, data], dim='time')
+        # First data or metadata mismatch - initialize/reset buffers
+        if self._data_buffer is None or not self._metadata_matches(data):
+            self._initialize_buffers(data)
+            return
+
+        # Append to existing buffers
+        self._data_buffer.append(data.data)
+        self._time_buffer.append(data.coords['time'])
 
     def get(self) -> sc.DataArray | None:
         """Return the complete buffer."""
-        return self._buffer
+        if self._data_buffer is None:
+            return None
+
+        # Reconstruct DataArray from buffers and reference metadata
+        data_var = self._data_buffer.get()
+        time_coord = self._time_buffer.get()
+
+        coords = {'time': time_coord}
+        coords.update(self._reference.coords)
+
+        masks = dict(self._reference.masks)
+
+        return sc.DataArray(data=data_var, coords=coords, masks=masks)
 
     def clear(self) -> None:
         """Clear all buffered data."""
-        self._buffer = None
+        self._data_buffer = None
+        self._time_buffer = None
+        self._reference = None
 
     def set_required_timespan(self, seconds: float) -> None:
         """Set the required timespan for the buffer."""
@@ -326,3 +334,33 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
     def set_max_memory(self, max_bytes: int) -> None:
         """Set the maximum memory usage for the buffer."""
         self._max_memory = max_bytes
+
+    def _initialize_buffers(self, data: sc.DataArray) -> None:
+        """Initialize buffers with first data, storing reference metadata."""
+        # Store reference as slice at time=0 without time coord
+        if 'time' in data.dims:
+            self._reference = data['time', 0].drop_coords('time')
+        else:
+            self._reference = data.drop_coords('time')
+
+        # Create buffers with large capacity
+        max_capacity = 100
+        self._data_buffer = VariableBuffer(
+            data=data.data, max_capacity=max_capacity, concat_dim='time'
+        )
+        self._time_buffer = VariableBuffer(
+            data=data.coords['time'], max_capacity=max_capacity, concat_dim='time'
+        )
+
+    def _metadata_matches(self, data: sc.DataArray) -> bool:
+        """Check if incoming data's metadata matches stored reference metadata."""
+        # Extract comparable slice from incoming data
+        if 'time' in data.dims:
+            new = data['time', 0]
+        else:
+            new = data
+
+        # Create template with reference data but incoming metadata
+        template = new.assign(self._reference.data).drop_coords('time')
+
+        return sc.identical(self._reference, template)
