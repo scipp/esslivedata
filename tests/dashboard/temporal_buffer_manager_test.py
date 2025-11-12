@@ -26,7 +26,7 @@ class TestTemporalBufferManager:
 
         manager.create_buffer('test', extractors)
 
-        assert isinstance(manager['test'], SingleValueBuffer)
+        assert isinstance(manager._states['test'].buffer, SingleValueBuffer)
 
     def test_create_buffer_with_mixed_extractors_uses_temporal_buffer(self):
         """
@@ -37,7 +37,7 @@ class TestTemporalBufferManager:
 
         manager.create_buffer('test', extractors)
 
-        assert isinstance(manager['test'], TemporalBuffer)
+        assert isinstance(manager._states['test'].buffer, TemporalBuffer)
 
     def test_create_buffer_with_window_extractor_uses_temporal_buffer(self):
         """Test that TemporalBuffer is used with WindowAggregatingExtractor."""
@@ -46,7 +46,7 @@ class TestTemporalBufferManager:
 
         manager.create_buffer('test', extractors)
 
-        assert isinstance(manager['test'], TemporalBuffer)
+        assert isinstance(manager._states['test'].buffer, TemporalBuffer)
 
     def test_create_buffer_with_no_extractors_uses_single_value_buffer(self):
         """
@@ -56,7 +56,7 @@ class TestTemporalBufferManager:
 
         manager.create_buffer('test', [])
 
-        assert isinstance(manager['test'], SingleValueBuffer)
+        assert isinstance(manager._states['test'].buffer, SingleValueBuffer)
 
     def test_create_buffer_raises_error_for_duplicate_key(self):
         """Test that creating a buffer with existing key raises ValueError."""
@@ -77,7 +77,7 @@ class TestTemporalBufferManager:
         manager.create_buffer('test', extractors)
         manager.update_buffer('test', data)
 
-        result = manager.get_buffer_data('test')
+        result = manager['test']
         assert result == data
 
     def test_update_buffer_raises_error_for_missing_key(self):
@@ -94,12 +94,12 @@ class TestTemporalBufferManager:
         extractors = [LatestValueExtractor()]
 
         manager.create_buffer('test', extractors)
-        original_buffer = manager['test']
+        original_buffer = manager._states['test'].buffer
 
         manager.add_extractor('test', LatestValueExtractor())
 
-        assert manager['test'] is original_buffer
-        assert isinstance(manager['test'], SingleValueBuffer)
+        assert manager._states['test'].buffer is original_buffer
+        assert isinstance(manager._states['test'].buffer, SingleValueBuffer)
 
     def test_add_extractor_switches_to_temporal_buffer(self):
         """Test that switching buffer types preserves existing data."""
@@ -120,7 +120,7 @@ class TestTemporalBufferManager:
         manager.add_extractor('test', FullHistoryExtractor())
 
         # Data should be preserved when switching
-        result = manager.get_buffer_data('test')
+        result = manager['test']
         assert result is not None
         # After switching, buffer transforms scalar time coord to time dimension
         assert 'time' in result.dims
@@ -147,7 +147,7 @@ class TestTemporalBufferManager:
             manager.update_buffer('test', data)
 
         # Verify we have temporal data with 3 time points
-        result = manager.get_buffer_data('test')
+        result = manager['test']
         assert result is not None
         assert 'time' in result.dims
         assert result.sizes['time'] == 3
@@ -160,7 +160,7 @@ class TestTemporalBufferManager:
         manager.add_extractor('test', LatestValueExtractor())
 
         # Verify the latest time slice is preserved after transition
-        result = manager.get_buffer_data('test')
+        result = manager['test']
         assert result is not None
         # The last slice should have values [2.0, 2.0] and time=2.0
         expected_data = sc.array(dims=['x'], values=[2.0, 2.0], unit='counts')
@@ -203,13 +203,6 @@ class TestTemporalBufferManager:
         assert 'key2' in manager
         assert list(manager) == ['key1', 'key2']
 
-    def test_get_buffer_data_raises_error_for_missing_key(self):
-        """Test that getting data from non-existent buffer raises KeyError."""
-        manager = TemporalBufferManager()
-
-        with pytest.raises(KeyError, match="No buffer found"):
-            manager.get_buffer_data('test')
-
 
 class TestTemporalBufferManagerTimespanPropagation:
     """Tests for timespan requirement propagation."""
@@ -224,7 +217,7 @@ class TestTemporalBufferManagerTimespanPropagation:
 
         manager.create_buffer('test', extractors)
 
-        buffer = manager['test']
+        buffer = manager._states['test'].buffer
         assert isinstance(buffer, TemporalBuffer)
         assert buffer._required_timespan == window_duration
 
@@ -239,7 +232,7 @@ class TestTemporalBufferManagerTimespanPropagation:
 
         manager.create_buffer('test', extractors)
 
-        buffer = manager['test']
+        buffer = manager._states['test'].buffer
         assert buffer._required_timespan == 5.0
 
     def test_latest_extractor_does_not_set_timespan(self):
@@ -249,7 +242,7 @@ class TestTemporalBufferManagerTimespanPropagation:
 
         manager.create_buffer('test', extractors)
 
-        buffer = manager['test']
+        buffer = manager._states['test'].buffer
         assert isinstance(buffer, SingleValueBuffer)
         assert buffer._required_timespan == 0.0
 
@@ -263,7 +256,7 @@ class TestTemporalBufferManagerTimespanPropagation:
 
         manager.create_buffer('test', extractors)
 
-        buffer = manager['test']
+        buffer = manager._states['test'].buffer
         assert isinstance(buffer, TemporalBuffer)
         assert buffer._required_timespan == 4.0
 
@@ -273,7 +266,7 @@ class TestTemporalBufferManagerTimespanPropagation:
         extractors = [WindowAggregatingExtractor(window_duration_seconds=2.0)]
 
         manager.create_buffer('test', extractors)
-        buffer = manager['test']
+        buffer = manager._states['test'].buffer
         assert buffer._required_timespan == 2.0
 
         # Add extractor with larger timespan
@@ -290,7 +283,7 @@ class TestTemporalBufferManagerTimespanPropagation:
 
         manager.create_buffer('test', extractors)
 
-        buffer = manager['test']
+        buffer = manager._states['test'].buffer
         assert isinstance(buffer, TemporalBuffer)
         assert buffer._required_timespan == float('inf')
 
@@ -304,7 +297,7 @@ class TestTemporalBufferManagerTimespanPropagation:
 
         manager.create_buffer('test', extractors)
 
-        buffer = manager['test']
+        buffer = manager._states['test'].buffer
         assert isinstance(buffer, TemporalBuffer)
         # max(5.0, inf) = inf
         assert buffer._required_timespan == float('inf')
@@ -332,7 +325,7 @@ class TestTemporalBufferManagerWithRealData:
             manager.update_buffer('stream', data)
 
         # Should only have latest value
-        result = manager.get_buffer_data('stream')
+        result = manager['stream']
         assert result is not None
         # Extract using the extractor
         extracted = extractors[0].extract(result)
@@ -358,7 +351,7 @@ class TestTemporalBufferManagerWithRealData:
             manager.update_buffer('stream', data)
 
         # Should have all data concatenated
-        result = manager.get_buffer_data('stream')
+        result = manager['stream']
         assert result is not None
         assert 'time' in result.dims
         assert result.sizes['time'] == 3

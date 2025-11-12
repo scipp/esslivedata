@@ -29,7 +29,7 @@ class _BufferState(Generic[T]):
     extractors: list[UpdateExtractor] = field(default_factory=list)
 
 
-class TemporalBufferManager(Mapping[K, BufferProtocol[T]], Generic[K, T]):
+class TemporalBufferManager(Mapping[K, T | None], Generic[K, T]):
     """
     Manages buffers, switching between SingleValueBuffer and TemporalBuffer.
 
@@ -37,16 +37,16 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[T]], Generic[K, T]):
     - All LatestValueExtractor → SingleValueBuffer (efficient)
     - Otherwise → TemporalBuffer (temporal data with time dimension)
 
-    Implements Mapping interface for read-only dictionary-like access to buffers.
+    Implements Mapping interface for read-only dictionary-like access to buffer data.
     """
 
     def __init__(self) -> None:
         """Initialize TemporalBufferManager."""
         self._states: dict[K, _BufferState[T]] = {}
 
-    def __getitem__(self, key: K) -> BufferProtocol[T]:
-        """Get buffer for a key (Mapping interface)."""
-        return self._states[key].buffer
+    def __getitem__(self, key: K) -> T | None:
+        """Get buffer data for a key (Mapping interface)."""
+        return self._states[key].buffer.get()
 
     def __iter__(self) -> Iterator[K]:
         """Iterate over keys (Mapping interface)."""
@@ -231,22 +231,3 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[T]], Generic[K, T]):
                 max_timespan,
                 len(extractors),
             )
-
-    def get_buffer_data(self, key: K) -> T | None:
-        """
-        Get the current data from a buffer.
-
-        Parameters
-        ----------
-        key:
-            Key identifying the buffer.
-
-        Returns
-        -------
-        :
-            Current buffer data, or None if empty.
-        """
-        if key not in self._states:
-            raise KeyError(f"No buffer found for key {key}")
-
-        return self._states[key].buffer.get()
