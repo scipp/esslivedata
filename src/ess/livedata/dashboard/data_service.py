@@ -147,7 +147,6 @@ class DataService(MutableMapping[K, V]):
 
         for key in subscriber.keys:
             if key in self._buffer_manager:
-                # Use subscriber's extractor for this key (always present)
                 extractor = extractors[key]
                 buffer = self._buffer_manager[key]
                 data = extractor.extract(buffer)
@@ -165,8 +164,7 @@ class DataService(MutableMapping[K, V]):
         Parameters
         ----------
         subscriber:
-            The subscriber to register. Must be a Subscriber with
-            keys, extractors, and trigger() method.
+            The subscriber to register.
         """
         self._subscribers.append(subscriber)
 
@@ -175,7 +173,6 @@ class DataService(MutableMapping[K, V]):
             if key in self._buffer_manager:
                 extractor = subscriber.extractors[key]
                 requirement = extractor.get_temporal_requirement()
-                # Add requirement to existing buffer
                 self._buffer_manager.add_requirement(key, requirement)
 
         # Trigger immediately with existing data using subscriber's extractors
@@ -223,7 +220,6 @@ class DataService(MutableMapping[K, V]):
         # Notify extractor-based subscribers
         for subscriber in self._subscribers:
             if updated_keys & subscriber.keys:
-                # Extract data using per-key extractors
                 subscriber_data = self._build_subscriber_data(subscriber)
                 if subscriber_data:
                     subscriber.trigger(subscriber_data)
@@ -253,11 +249,8 @@ class DataService(MutableMapping[K, V]):
         """Set a value, storing it in a buffer."""
         if key not in self._buffer_manager:
             self._pending_key_additions.add(key)
-            # Collect temporal requirements from all subscribers
             requirements = self._get_temporal_requirements(key)
-            # Create buffer using BufferManager
             self._buffer_manager.create_buffer(key, value, requirements)
-        # Update buffer using BufferManager (handles growth)
         self._buffer_manager.update_buffer(key, value)
         self._pending_updates.add(key)
         self._notify_if_not_in_transaction()
