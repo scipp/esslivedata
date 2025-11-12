@@ -8,7 +8,8 @@ it correctly handles DataArray's complexity (coords, masks).
 
 import scipp as sc
 
-from ess.livedata.dashboard.buffer_strategy import Buffer, DataArrayBuffer
+from ess.livedata.dashboard.buffer import Buffer
+from ess.livedata.dashboard.buffer_strategy import DataArrayBuffer
 
 
 class TestDataArrayBuffer:

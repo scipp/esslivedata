@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
-from .buffer_strategy import Buffer
+from .buffer import Buffer
 from .temporal_requirements import (
     CompleteHistory,
     LatestFrame,

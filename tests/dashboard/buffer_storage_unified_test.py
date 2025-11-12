@@ -8,7 +8,8 @@ the storage logic is correct and agnostic to the underlying buffer type.
 
 import scipp as sc
 
-from ess.livedata.dashboard.buffer_strategy import Buffer, VariableBuffer
+from ess.livedata.dashboard.buffer import Buffer
+from ess.livedata.dashboard.buffer_strategy import VariableBuffer
 
 
 class TestBufferStorageWithVariableBuffer:

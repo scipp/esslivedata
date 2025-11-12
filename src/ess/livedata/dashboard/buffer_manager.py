@@ -9,7 +9,7 @@ from collections.abc import Hashable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
-from .buffer_strategy import Buffer, BufferFactory
+from .buffer import Buffer, BufferFactory
 from .temporal_requirements import (
     CompleteHistory,
     LatestFrame,

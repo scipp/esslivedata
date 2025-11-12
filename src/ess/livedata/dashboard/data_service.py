@@ -7,8 +7,8 @@ from collections.abc import Callable, Hashable, Iterator, Mapping, MutableMappin
 from contextlib import contextmanager
 from typing import Any, Generic, TypeVar
 
+from .buffer import BufferFactory
 from .buffer_manager import BufferManager
-from .buffer_strategy import BufferFactory
 from .extractors import LatestValueExtractor, UpdateExtractor
 from .temporal_requirements import TemporalRequirement
 

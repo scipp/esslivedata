@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import scipp as sc
 
-from ess.livedata.dashboard.buffer_strategy import BufferFactory
+from ess.livedata.dashboard.buffer import BufferFactory
 from ess.livedata.dashboard.extractors import (
     FullHistoryExtractor,
     LatestValueExtractor,
