@@ -885,7 +885,9 @@ class TestExtractorBasedSubscription:
         service.register_subscriber(sub1)
 
         # Add first data point - buffer should be size 1
-        service["data"] = sc.scalar(1, unit='counts')
+        service["data"] = sc.DataArray(
+            sc.scalar(1, unit='counts'), coords={'time': sc.scalar(0.0, unit='s')}
+        )
 
         # Register subscriber with FullHistoryExtractor (size 10000)
         sub2 = TestSubscriber({"data"}, FullHistoryExtractor())
@@ -894,12 +896,16 @@ class TestExtractorBasedSubscription:
         # Buffer should now grow to size 10000
         # Add more data to verify buffering works
         for i in range(2, 12):
-            service["data"] = sc.scalar(i, unit='counts')
+            service["data"] = sc.DataArray(
+                sc.scalar(i, unit='counts'),
+                coords={'time': sc.scalar(float(i - 1), unit='s')},
+            )
 
         # Both subscribers should have received all updates
         # sub1: 1 initial trigger + 1 update before sub2 registration + 10 after = 12
         assert len(sub1.received_data) == 12
-        # sub2: 1 initial trigger on registration + 10 updates = 11
+        # sub2: 1 initial trigger on registration (empty buffer after switch) + 10
+        # updates = 11
         assert len(sub2.received_data) == 11
 
         # sub1 should get latest value only (unwrapped)
@@ -907,9 +913,11 @@ class TestExtractorBasedSubscription:
         assert last_from_sub1.ndim == 0  # Scalar (unwrapped)
         assert last_from_sub1.value == 11
 
-        # sub2 should get all history
+        # sub2 should get all history after it was registered
+        # Note: when sub2 registered, buffer switched from SingleValueBuffer
+        # to TemporalBuffer, discarding the first data point
         last_from_sub2 = sub2.received_data[-1]["data"]
-        assert last_from_sub2.sizes == {'time': 11}
+        assert last_from_sub2.sizes == {'time': 10}
 
     def test_multiple_keys_with_different_extractors(self):
         """Test subscriber with different extractors per key."""
@@ -942,8 +950,14 @@ class TestExtractorBasedSubscription:
 
         # Add data to both keys
         for i in range(5):
-            service["latest"] = sc.scalar(i * 10, unit='counts')
-            service["history"] = sc.scalar(i * 100, unit='counts')
+            service["latest"] = sc.DataArray(
+                sc.scalar(i * 10, unit='counts'),
+                coords={'time': sc.scalar(float(i), unit='s')},
+            )
+            service["history"] = sc.DataArray(
+                sc.scalar(i * 100, unit='counts'),
+                coords={'time': sc.scalar(float(i), unit='s')},
+            )
 
         # Should have received updates (batched in transaction would be less,
         # but here each setitem triggers separately)
