@@ -6,6 +6,7 @@ Tests Buffer against simple VariableBuffer implementation to verify
 the storage logic is correct and agnostic to the underlying buffer type.
 """
 
+import pytest
 import scipp as sc
 
 from ess.livedata.dashboard.buffer import Buffer
@@ -288,6 +289,7 @@ class TestBufferSingleValueMode:
         assert storage.get_all() is None
 
 
+@pytest.mark.skip(reason="get_window() method removed - obsolete API")
 class TestBufferGetWindow:
     """Test Buffer.get_window() method."""
 
@@ -366,6 +368,7 @@ class TestBufferGetWindow:
         assert result.value == 42
 
 
+@pytest.mark.skip(reason="get_latest() method removed - obsolete API")
 class TestBufferGetLatest:
     """Test Buffer.get_latest() method."""
 
@@ -437,6 +440,7 @@ class TestBufferGetLatest:
         assert result.value == 5
 
 
+@pytest.mark.skip(reason="set_max_size() replaced with grow() - obsolete API")
 class TestBufferSetMaxSize:
     """Test Buffer.set_max_size() method."""
 

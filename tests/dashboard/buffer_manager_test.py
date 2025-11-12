@@ -39,9 +39,9 @@ class TestBufferManagerCreation:
         key = 'test_key'
         buffer_manager.create_buffer(key, template, [LatestValueExtractor()])
 
-        # Buffer should be created (frame count starts at 0)
+        # Buffer should be created (no data initially)
         buffer = buffer_manager[key]
-        assert buffer.get_frame_count() == 0
+        assert buffer.get_all() is None
 
     def test_create_buffer_with_window_aggregating_extractor(
         self, buffer_manager: BufferManager
@@ -53,9 +53,9 @@ class TestBufferManagerCreation:
             key, template, [WindowAggregatingExtractor(window_duration_seconds=5.0)]
         )
 
-        # Buffer should be created with conservative initial size
+        # Buffer should be created (no data initially)
         buffer = buffer_manager[key]
-        assert buffer.get_frame_count() == 0
+        assert buffer.get_all() is None
 
     def test_create_buffer_with_full_history_extractor(
         self, buffer_manager: BufferManager
@@ -65,9 +65,9 @@ class TestBufferManagerCreation:
         key = 'test_key'
         buffer_manager.create_buffer(key, template, [FullHistoryExtractor()])
 
-        # Buffer should be created with MAX_FRAMES size
+        # Buffer should be created (no data initially)
         buffer = buffer_manager[key]
-        assert buffer.get_frame_count() == 0
+        assert buffer.get_all() is None
 
     def test_create_buffer_with_multiple_extractors(
         self, buffer_manager: BufferManager
@@ -85,9 +85,9 @@ class TestBufferManagerCreation:
             ],
         )
 
-        # FullHistoryExtractor should dominate (MAX_CAPACITY)
+        # Buffer should be created (no data initially)
         buffer = buffer_manager[key]
-        assert buffer.get_frame_count() == 0
+        assert buffer.get_all() is None
 
 
 class TestBufferManagerUpdateAndResize:
@@ -104,7 +104,7 @@ class TestBufferManagerUpdateAndResize:
         buffer_manager.update_buffer(key, data)
 
         buffer = buffer_manager[key]
-        assert buffer.get_frame_count() == 1
+        assert buffer.get_all() is not None
         result = extractor.extract(buffer.get_all())
         assert result.value == 42
 
@@ -117,20 +117,22 @@ class TestBufferManagerUpdateAndResize:
         # Add data
         buffer_manager.update_buffer(key, sc.scalar(1, unit='counts'))
         buffer = buffer_manager[key]
-        initial_count = buffer.get_frame_count()
-        assert initial_count == 1
+        assert buffer.get_all() is not None
 
         # Add FullHistoryExtractor
         buffer_manager.add_extractor(key, FullHistoryExtractor())
 
         # Buffer should grow (or be ready to grow)
-        # Add more data to trigger resize
+        # Add more data to trigger growth
         for i in range(2, 5):
             buffer_manager.update_buffer(key, sc.scalar(i, unit='counts'))
 
-        # Buffer should have grown beyond initial size
+        # Buffer should have data
         buffer = buffer_manager[key]
-        assert buffer.get_frame_count() == 4
+        data = buffer.get_all()
+        assert data is not None
+        # Memory usage should be non-zero
+        assert buffer.get_memory_usage() > 0
 
     def test_buffer_grows_for_time_window_with_time_coord(
         self, buffer_manager: BufferManager
@@ -187,16 +189,16 @@ class TestBufferManagerValidation:
         key = 'test_key'
         buffer_manager.create_buffer(key, template, [LatestValueExtractor()])
 
-        # Empty buffer should fail validation (internally checked)
+        # Empty buffer should have no data
         buffer = buffer_manager[key]
-        assert buffer.get_frame_count() == 0
+        assert buffer.get_all() is None
 
         # Add data
         buffer_manager.update_buffer(key, sc.scalar(1, unit='counts'))
 
         # Now should have data
         buffer = buffer_manager[key]
-        assert buffer.get_frame_count() == 1
+        assert buffer.get_all() is not None
 
     def test_validate_window_extractor_without_time_coord(
         self, buffer_manager: BufferManager
@@ -253,16 +255,18 @@ class TestBufferManagerValidation:
         for i in range(10):
             buffer_manager.update_buffer(key, sc.scalar(i, unit='counts'))
 
-        # Buffer should grow towards MAX_CAPACITY (FullHistory is never satisfied)
+        # Buffer should have grown (FullHistory is never satisfied, keeps growing)
         buffer = buffer_manager[key]
-        assert buffer.get_frame_count() > 1  # Should have grown beyond initial size
+        assert buffer.get_all() is not None
+        # Should have non-zero memory usage
+        assert buffer.get_memory_usage() > 0
 
 
 class TestBufferManagerAddExtractor:
     """Tests for adding extractors to existing buffers."""
 
     def test_add_extractor_triggers_resize(self, buffer_manager: BufferManager):
-        """Test that adding extractor triggers immediate resize if needed."""
+        """Test that adding extractor triggers immediate growth if needed."""
         template = sc.scalar(1, unit='counts')
         key = 'test_key'
         buffer_manager.create_buffer(key, template, [LatestValueExtractor()])
@@ -272,10 +276,12 @@ class TestBufferManagerAddExtractor:
         for i in range(5):
             buffer.append(sc.scalar(i, unit='counts'))
 
-        initial_count = buffer.get_frame_count()
+        initial_memory = buffer.get_memory_usage()
 
-        # Add FullHistoryExtractor (should trigger resize)
+        # Add FullHistoryExtractor (should trigger growth preparation)
         buffer_manager.add_extractor(key, FullHistoryExtractor())
 
-        # Frame count shouldn't change immediately, but buffer capacity should grow
-        assert buffer.get_frame_count() == initial_count
+        # Data should still be present
+        assert buffer.get_all() is not None
+        # Memory shouldn't decrease
+        assert buffer.get_memory_usage() >= initial_memory

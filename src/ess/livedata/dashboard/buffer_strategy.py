@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any, Generic, Protocol, TypeVar
 
 import scipp as sc
@@ -13,6 +14,41 @@ logger = logging.getLogger(__name__)
 
 # Type variable for buffer types
 T = TypeVar('T')
+
+
+def _estimate_memory_usage(data: Any) -> int:
+    """
+    Estimate memory usage of data in bytes.
+
+    Only counts the nbytes of the underlying values array.
+
+    Parameters
+    ----------
+    data:
+        Data to measure.
+
+    Returns
+    -------
+    :
+        Estimated memory usage in bytes.
+    """
+    if data is None:
+        return 0
+
+    # Try scipp-like objects with underlying values (DataArray/Variable)
+    if hasattr(data, 'values') and hasattr(data.values, 'nbytes'):
+        return data.values.nbytes
+
+    # Try numpy arrays
+    if hasattr(data, 'nbytes'):
+        return data.nbytes
+
+    # Try lists
+    if isinstance(data, list):
+        return sum(_estimate_memory_usage(item) for item in data)
+
+    # Fallback to sys.getsizeof
+    return sys.getsizeof(data)
 
 
 class ScippLike(Protocol):
@@ -484,16 +520,16 @@ class SingleValueStorage(Generic[T]):
         """Clear the stored value."""
         self._value = None
 
-    def get_frame_count(self) -> int:
+    def get_memory_usage(self) -> int:
         """
-        Get the number of frames currently stored.
+        Get current memory usage in bytes.
 
         Returns
         -------
         :
-            1 if value exists, 0 if empty.
+            Memory usage in bytes.
         """
-        return 1 if self._value is not None else 0
+        return _estimate_memory_usage(self._value)
 
 
 class StreamingBuffer(Generic[T]):
@@ -519,6 +555,7 @@ class StreamingBuffer(Generic[T]):
         buffer_impl: BufferInterface[T],
         initial_capacity: int = 100,
         overallocation_factor: float = 2.5,
+        memory_budget_bytes: int | None = None,
     ) -> None:
         """
         Initialize streaming buffer.
@@ -534,6 +571,8 @@ class StreamingBuffer(Generic[T]):
         overallocation_factor:
             Buffer capacity = max_size * overallocation_factor.
             Must be > 1.0.
+        memory_budget_bytes:
+            Maximum memory budget in bytes. If None, no memory limit.
 
         Raises
         ------
@@ -552,6 +591,7 @@ class StreamingBuffer(Generic[T]):
         self._initial_capacity = initial_capacity
         self._overallocation_factor = overallocation_factor
         self._max_capacity = int(max_size * overallocation_factor)
+        self._memory_budget_bytes = memory_budget_bytes
 
         self._buffer = None
         self._end = 0
@@ -569,6 +609,38 @@ class StreamingBuffer(Generic[T]):
         if new_max_size > self._max_size:
             self._max_size = new_max_size
             self._max_capacity = int(new_max_size * self._overallocation_factor)
+
+    def can_grow(self) -> bool:
+        """
+        Check if buffer can grow within memory budget.
+
+        Returns
+        -------
+        :
+            True if buffer can allocate more memory.
+        """
+        if self._memory_budget_bytes is None:
+            return True
+        return self.get_memory_usage() < self._memory_budget_bytes
+
+    def grow(self) -> bool:
+        """
+        Attempt to grow buffer capacity.
+
+        Doubles max_size (and proportional capacity). Returns False if growth
+        would exceed memory budget.
+
+        Returns
+        -------
+        :
+            True if growth succeeded, False otherwise.
+        """
+        if not self.can_grow():
+            return False
+
+        new_max_size = self._max_size * 2
+        self.set_max_size(new_max_size)
+        return True
 
     def _ensure_capacity(self, data: T) -> None:
         """Ensure buffer has capacity for new data."""
@@ -674,13 +746,16 @@ class StreamingBuffer(Generic[T]):
         self._end = 0
         self._capacity = 0
 
-    def get_frame_count(self) -> int:
+    def get_memory_usage(self) -> int:
         """
-        Get the number of frames currently stored.
+        Get current memory usage in bytes.
 
         Returns
         -------
         :
-            Number of frames in buffer.
+            Memory usage in bytes.
         """
-        return self._end
+        if self._buffer is None:
+            return 0
+        data = self._buffer_impl.get_view(self._buffer, 0, self._end)
+        return _estimate_memory_usage(data)

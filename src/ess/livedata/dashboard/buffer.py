@@ -33,7 +33,7 @@ class Buffer(Generic[T]):
     and sliding window).
 
     Handles transparent transition from single-value to streaming mode when
-    max_size is increased via set_max_size().
+    grow() is called.
     """
 
     def __init__(
@@ -42,6 +42,7 @@ class Buffer(Generic[T]):
         buffer_impl: BufferInterface[T],
         initial_capacity: int = 100,
         overallocation_factor: float = 2.5,
+        memory_budget_bytes: int | None = None,
     ) -> None:
         """
         Initialize buffer.
@@ -57,6 +58,8 @@ class Buffer(Generic[T]):
         overallocation_factor:
             Buffer capacity = max_size * overallocation_factor (ignored for max_size=1).
             Must be > 1.0.
+        memory_budget_bytes:
+            Maximum memory budget in bytes. If None, no memory limit.
         """
         if max_size <= 0:
             raise ValueError("max_size must be positive")
@@ -65,6 +68,7 @@ class Buffer(Generic[T]):
         self._buffer_impl = buffer_impl
         self._initial_capacity = initial_capacity
         self._overallocation_factor = overallocation_factor
+        self._memory_budget_bytes = memory_budget_bytes
 
         # Create appropriate storage based on max_size
         self._storage = self._create_storage(max_size, buffer_impl)
@@ -95,32 +99,60 @@ class Buffer(Generic[T]):
                 buffer_impl=buffer_impl,
                 initial_capacity=self._initial_capacity,
                 overallocation_factor=self._overallocation_factor,
+                memory_budget_bytes=self._memory_budget_bytes,
             )
 
-    def set_max_size(self, new_max_size: int) -> None:
+    def can_grow(self) -> bool:
         """
-        Update the maximum buffer size (can only grow, never shrink).
+        Check if buffer can grow within memory budget.
 
-        If transitioning from max_size=1 to max_size>1, switches from
-        SingleValueStorage to StreamingBuffer and preserves existing value.
-
-        Parameters
-        ----------
-        new_max_size:
-            New maximum size. If smaller than current max_size, no change is made.
+        Returns
+        -------
+        :
+            True if buffer can allocate more memory.
         """
-        if new_max_size <= self._max_size:
-            return
-        # Check if we need to transition from single-value to streaming mode
-        if isinstance(self._storage, SingleValueStorage) and new_max_size > 1:
+        # SingleValueStorage can always transition to StreamingBuffer if budget allows
+        if isinstance(self._storage, SingleValueStorage):
+            if self._memory_budget_bytes is None:
+                return True
+            return self._storage.get_memory_usage() < self._memory_budget_bytes
+
+        # StreamingBuffer delegates to its own can_grow
+        return self._storage.can_grow()
+
+    def grow(self) -> bool:
+        """
+        Attempt to grow buffer capacity.
+
+        For SingleValueStorage, transitions to StreamingBuffer.
+        For StreamingBuffer, doubles max_size.
+
+        Returns
+        -------
+        :
+            True if growth succeeded, False otherwise.
+        """
+        if not self.can_grow():
+            return False
+
+        # Transition from SingleValueStorage to StreamingBuffer
+        if isinstance(self._storage, SingleValueStorage):
             old_value = self._storage.get_all()
+            # Start with max_size=2 when transitioning
+            new_max_size = 2
             self._storage = self._create_storage(new_max_size, self._buffer_impl)
             if old_value is not None:
                 self._storage.append(old_value)
-        elif isinstance(self._storage, StreamingBuffer):
-            # Already in streaming mode, just grow
-            self._storage.set_max_size(new_max_size)
-        self._max_size = new_max_size
+            self._max_size = new_max_size
+            return True
+
+        # Already in streaming mode, delegate to storage
+        if isinstance(self._storage, StreamingBuffer):
+            if self._storage.grow():
+                self._max_size = self._storage._max_size
+                return True
+
+        return False
 
     def append(self, data: T) -> None:
         """Append new data to storage."""
@@ -134,16 +166,16 @@ class Buffer(Generic[T]):
         """Clear all stored data."""
         self._storage.clear()
 
-    def get_frame_count(self) -> int:
+    def get_memory_usage(self) -> int:
         """
-        Get the number of frames currently stored.
+        Get current memory usage in bytes.
 
         Returns
         -------
         :
-            Number of frames in buffer.
+            Memory usage in bytes.
         """
-        return self._storage.get_frame_count()
+        return self._storage.get_memory_usage()
 
 
 class BufferFactory:
@@ -158,6 +190,7 @@ class BufferFactory:
         concat_dim: str = "time",
         initial_capacity: int = 100,
         overallocation_factor: float = 2.5,
+        memory_budget_mb: int = 100,
     ) -> None:
         """
         Initialize buffer factory.
@@ -170,10 +203,13 @@ class BufferFactory:
             Initial buffer allocation.
         overallocation_factor:
             Buffer capacity multiplier.
+        memory_budget_mb:
+            Maximum memory budget per buffer in megabytes.
         """
         self._concat_dim = concat_dim
         self._initial_capacity = initial_capacity
         self._overallocation_factor = overallocation_factor
+        self._memory_budget_bytes = memory_budget_mb * 1024 * 1024
 
     def create_buffer(self, template: T, max_size: int) -> Buffer[T]:
         """
@@ -207,4 +243,5 @@ class BufferFactory:
             buffer_impl=buffer_impl,  # type: ignore[arg-type]
             initial_capacity=self._initial_capacity,
             overallocation_factor=self._overallocation_factor,
+            memory_budget_bytes=self._memory_budget_bytes,
         )

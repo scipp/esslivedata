@@ -19,10 +19,6 @@ logger = logging.getLogger(__name__)
 K = TypeVar('K', bound=Hashable)
 T = TypeVar('T')
 
-# Growth parameters
-MAX_CAPACITY = 10000  # Upper limit to prevent runaway growth
-GROWTH_FACTOR = 2.0  # Double buffer size when growing
-
 
 @dataclass
 class _BufferState(Generic[T]):
@@ -114,11 +110,11 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
 
         state = self._states[key]
 
-        # Check cached flag and resize if needed
+        # Check cached flag and grow if needed
         if state.needs_growth:
             state.needs_growth = self._compute_needs_growth(state)
             if state.needs_growth:
-                self._resize_buffer(state)
+                self._grow_buffer(state)
 
         # Append data - buffer is properly sized
         state.buffer.append(data)
@@ -133,7 +129,7 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
         """
         Compute whether buffer needs to grow to satisfy extractor requirements.
 
-        Returns True if any requirement is unfulfilled AND buffer is not at capacity.
+        Returns True if any requirement is unfulfilled AND buffer can grow.
 
         Parameters
         ----------
@@ -145,10 +141,8 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
         :
             True if buffer should grow, False otherwise.
         """
-        frame_count = state.buffer.get_frame_count()
-
-        # Already at max capacity - don't grow further
-        if frame_count >= MAX_CAPACITY:
+        # Check if buffer can grow within memory budget
+        if not state.buffer.can_grow():
             return False
 
         # Get all buffered data
@@ -161,26 +155,21 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
 
         return False
 
-    def _resize_buffer(self, state: _BufferState[T]) -> None:
+    def _grow_buffer(self, state: _BufferState[T]) -> None:
         """
-        Resize buffer by doubling its size (capped at MAX_CAPACITY).
+        Attempt to grow buffer.
 
         Parameters
         ----------
         state:
-            The buffer state to resize.
+            The buffer state to grow.
         """
-        current_size = state.buffer.get_frame_count()
-
-        # Double the size, capped at maximum
-        new_size = min(int(current_size * GROWTH_FACTOR), MAX_CAPACITY)
-
-        logger.debug(
-            "Growing buffer from %d to %d frames",
-            current_size,
-            new_size,
-        )
-        state.buffer.set_max_size(new_size)
+        if not state.buffer.grow():
+            usage = state.buffer.get_memory_usage()
+            logger.warning(
+                "Buffer growth failed - at memory budget limit (usage: %d bytes)",
+                usage,
+            )
 
     def add_extractor(self, key: K, extractor: UpdateExtractor) -> None:
         """
@@ -201,10 +190,10 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
         state = self._states[key]
         state.extractors.append(extractor)
 
-        # Check if resize needed immediately
+        # Check if growth needed immediately
         state.needs_growth = self._compute_needs_growth(state)
         if state.needs_growth:
-            self._resize_buffer(state)
+            self._grow_buffer(state)
 
     def delete_buffer(self, key: K) -> None:
         """
