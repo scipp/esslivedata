@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import json
 import time
+from contextlib import ExitStack
 from pathlib import Path
 
 import panel as pn
@@ -16,15 +17,17 @@ from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_f144
 class LogProducerWidget:
     """Widget for manually publishing log messages to Kafka streams."""
 
-    def __init__(self, instrument: str, logger):
+    def __init__(self, instrument: str, logger, exit_stack: ExitStack):
         self._instrument = instrument
         self._logger = logger
 
-        self._sink = KafkaSink(
-            kafka_config=load_config(namespace=config_names.kafka_upstream),
-            instrument=instrument,
-            serializer=serialize_dataarray_to_f144,
-            logger=logger,
+        self._sink = exit_stack.enter_context(
+            KafkaSink(
+                kafka_config=load_config(namespace=config_names.kafka_upstream),
+                instrument=instrument,
+                serializer=serialize_dataarray_to_f144,
+                logger=logger,
+            )
         )
 
         self._throttled_checkbox = pn.widgets.Checkbox(

@@ -10,27 +10,35 @@ from ess.livedata import Service
 from .dashboard import DashboardBase
 from .widgets.log_producer_widget import LogProducerWidget
 
-pn.extension('holoviews', 'modal', template='material')
+pn.extension('holoviews', 'modal', notifications=True, template='material')
 hv.extension('bokeh')
 
 
 class ReductionApp(DashboardBase):
     """Reduction dashboard application."""
 
-    def __init__(self, *, instrument: str = 'dummy', dev: bool = False, log_level: int):
+    def __init__(
+        self,
+        *,
+        instrument: str = 'dummy',
+        dev: bool = False,
+        log_level: int,
+        transport: str = 'kafka',
+    ):
         super().__init__(
             instrument=instrument,
             dev=dev,
             log_level=log_level,
             dashboard_name='reduction_dashboard',
             port=5009,  # Default port for reduction dashboard
+            transport=transport,
         )
 
         # Create log producer widget only in dev mode
         self._dev_widget = None
         if dev:
             self._dev_widget = LogProducerWidget(
-                instrument=instrument, logger=self._logger
+                instrument=instrument, logger=self._logger, exit_stack=self._exit_stack
             )
 
         self._logger.info("Reduction dashboard initialized")
@@ -53,7 +61,14 @@ class ReductionApp(DashboardBase):
 
 
 def get_arg_parser() -> argparse.ArgumentParser:
-    return Service.setup_arg_parser(description='ESSlivedata Dashboard')
+    parser = Service.setup_arg_parser(description='ESSlivedata Dashboard')
+    parser.add_argument(
+        '--transport',
+        choices=['kafka', 'none'],
+        default='kafka',
+        help='Transport backend for message handling',
+    )
+    return parser
 
 
 def main() -> None:
