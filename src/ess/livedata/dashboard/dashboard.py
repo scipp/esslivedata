@@ -12,6 +12,8 @@ from holoviews import Dimension, streams
 from ess.livedata import ServiceBase
 
 from .dashboard_services import DashboardServices
+from .kafka_transport import DashboardKafkaTransport
+from .transport import NullTransport, Transport
 from .widgets.plot_creation_widget import PlotCreationWidget
 from .widgets.reduction_widget import ReductionWidget
 
@@ -30,6 +32,7 @@ class DashboardBase(ServiceBase, ABC):
         log_level: int = logging.INFO,
         dashboard_name: str,
         port: int = 5007,
+        transport: str = 'kafka',
     ):
         name = f'{instrument}_{dashboard_name}'
         super().__init__(name=name, log_level=log_level)
@@ -49,6 +52,7 @@ class DashboardBase(ServiceBase, ABC):
             exit_stack=self._exit_stack,
             logger=self._logger,
             pipe_factory=streams.Pipe,
+            transport=self._create_transport(transport),
         )
 
         # Create reduction widget (GUI-specific)
@@ -60,6 +64,29 @@ class DashboardBase(ServiceBase, ABC):
 
         # Global unit format
         Dimension.unit_format = ' [{unit}]'
+
+    def _create_transport(self, transport: str) -> Transport:
+        """
+        Create transport instance based on transport type.
+
+        Parameters
+        ----------
+        transport:
+            Transport type ('kafka' or 'none')
+
+        Returns
+        -------
+        :
+            Transport instance
+        """
+        if transport == 'kafka':
+            return DashboardKafkaTransport(
+                instrument=self._instrument, dev=self._dev, logger=self._logger
+            )
+        elif transport == 'none':
+            return NullTransport()
+        else:
+            raise ValueError(f"Unknown transport type: {transport}")
 
     @abstractmethod
     def create_sidebar_content(self) -> pn.viewable.Viewable:
@@ -149,7 +176,7 @@ class DashboardBase(ServiceBase, ABC):
 
     def _start_impl(self) -> None:
         """Start the dashboard service."""
-        self._services.background_source.start()
+        self._services.start()
 
     def run_forever(self) -> None:
         """Run the dashboard server."""
@@ -170,5 +197,5 @@ class DashboardBase(ServiceBase, ABC):
 
     def _stop_impl(self) -> None:
         """Clean shutdown of all components."""
-        self._services.background_source.stop()
+        self._services.stop()
         self._exit_stack.__exit__(None, None, None)
