@@ -3,15 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
-
-from .buffer import Buffer
-from .temporal_requirements import (
-    CompleteHistory,
-    LatestFrame,
-    TemporalRequirement,
-    TimeWindow,
-)
+from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
     import pydantic
@@ -20,19 +12,21 @@ if TYPE_CHECKING:
 
     from .plotting import PlotterSpec
 
+T = TypeVar('T')
+
 
 class UpdateExtractor(ABC):
-    """Extracts a specific view of buffer data."""
+    """Extracts a specific view of buffered data."""
 
     @abstractmethod
-    def extract(self, buffer: Buffer) -> Any:
+    def extract(self, data: T | None) -> Any:
         """
-        Extract data from a buffer.
+        Extract data from buffered data.
 
         Parameters
         ----------
-        buffer:
-            The buffer to extract data from.
+        data:
+            The buffered data to extract from, or None if no data available.
 
         Returns
         -------
@@ -41,39 +35,68 @@ class UpdateExtractor(ABC):
         """
 
     @abstractmethod
-    def get_temporal_requirement(self) -> TemporalRequirement:
+    def is_requirement_fulfilled(self, data: T | None) -> bool:
         """
-        Return the temporal requirement for this extractor.
+        Check if the extractor's requirements are satisfied by the buffered data.
+
+        Parameters
+        ----------
+        data:
+            The buffered data to check.
 
         Returns
         -------
         :
-            Temporal requirement describing needed time coverage.
+            True if requirements are satisfied, False otherwise.
         """
 
 
 class LatestValueExtractor(UpdateExtractor):
     """Extracts the latest single value, unwrapping the concat dimension."""
 
-    def get_temporal_requirement(self) -> TemporalRequirement:
-        """Latest value only needs the most recent frame."""
-        return LatestFrame()
+    def __init__(self, concat_dim: str = 'time') -> None:
+        """
+        Initialize latest value extractor.
 
-    def extract(self, buffer: Buffer) -> Any:
-        """Extract the latest value from the buffer, unwrapped."""
-        return buffer.get_latest()
+        Parameters
+        ----------
+        concat_dim:
+            The dimension along which data is concatenated.
+        """
+        self._concat_dim = concat_dim
+
+    def is_requirement_fulfilled(self, data: T | None) -> bool:
+        """Latest value only needs any data."""
+        return data is not None
+
+    def extract(self, data: T | None) -> Any:
+        """Extract the latest value from the data, unwrapped."""
+        if data is None:
+            return None
+
+        # Handle list buffers
+        if isinstance(data, list) and len(data) > 0:
+            return data[-1]
+
+        # Check if data has the concat dimension
+        if not hasattr(data, 'dims') or self._concat_dim not in data.dims:
+            # Data doesn't have concat dim - already a single frame
+            return data
+
+        # Extract last frame along concat dimension
+        return data[self._concat_dim, -1]
 
 
 class FullHistoryExtractor(UpdateExtractor):
     """Extracts the complete buffer history."""
 
-    def get_temporal_requirement(self) -> TemporalRequirement:
-        """Full history requires all available data."""
-        return CompleteHistory()
+    def is_requirement_fulfilled(self, data: T | None) -> bool:
+        """Full history is never fulfilled - always want more data."""
+        return False
 
-    def extract(self, buffer: Buffer) -> Any:
+    def extract(self, data: T | None) -> Any:
         """Extract all data from the buffer."""
-        return buffer.get_all()
+        return data
 
 
 class WindowAggregatingExtractor(UpdateExtractor):
@@ -101,14 +124,32 @@ class WindowAggregatingExtractor(UpdateExtractor):
         self._aggregation = aggregation
         self._concat_dim = concat_dim
 
-    def get_temporal_requirement(self) -> TemporalRequirement:
+    def is_requirement_fulfilled(self, data: T | None) -> bool:
         """Requires temporal coverage of specified duration."""
-        return TimeWindow(duration_seconds=self._window_duration_seconds)
+        if data is None:
+            return False
 
-    def extract(self, buffer: Buffer) -> Any:
+        # Check for time coordinate
+        if not hasattr(data, 'coords') or self._concat_dim not in data.coords:
+            return False
+
+        # Check if data has concat dimension (indicates multiple frames)
+        if not hasattr(data, 'dims') or self._concat_dim not in data.dims:
+            # Single frame - no temporal coverage
+            return False
+
+        time_coord = data.coords[self._concat_dim]
+        if data.sizes[self._concat_dim] < 2:
+            # Need at least 2 points to measure coverage
+            return False
+
+        # Calculate time span
+        time_span = time_coord[-1] - time_coord[0]
+        coverage_seconds = float(time_span.to(unit='s').value)
+        return coverage_seconds >= self._window_duration_seconds
+
+    def extract(self, data: T | None) -> Any:
         """Extract a window of data and aggregate over the time dimension."""
-        data = buffer.get_window_by_duration(self._window_duration_seconds)
-
         if data is None:
             return None
 
@@ -117,16 +158,31 @@ class WindowAggregatingExtractor(UpdateExtractor):
             # Data doesn't have the expected dimension structure, return as-is
             return data
 
+        # Extract time window
+        if not hasattr(data, 'coords') or self._concat_dim not in data.coords:
+            # No time coordinate - can't do time-based windowing, return all data
+            windowed_data = data
+        else:
+            # Calculate cutoff time using scipp's unit handling
+            import scipp as sc
+
+            time_coord = data.coords[self._concat_dim]
+            latest_time = time_coord[-1]
+            duration = sc.scalar(self._window_duration_seconds, unit='s').to(
+                unit=time_coord.unit
+            )
+            windowed_data = data[self._concat_dim, latest_time - duration :]
+
         # Aggregate over the concat dimension
         if self._aggregation == 'sum':
-            return data.sum(self._concat_dim)
+            return windowed_data.sum(self._concat_dim)
         elif self._aggregation == 'mean':
-            return data.mean(self._concat_dim)
+            return windowed_data.mean(self._concat_dim)
         elif self._aggregation == 'last':
             # Return the last frame (equivalent to latest)
-            return data[self._concat_dim, -1]
+            return windowed_data[self._concat_dim, -1]
         elif self._aggregation == 'max':
-            return data.max(self._concat_dim)
+            return windowed_data.max(self._concat_dim)
         else:
             raise ValueError(f"Unknown aggregation method: {self._aggregation}")
 

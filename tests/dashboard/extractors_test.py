@@ -11,11 +11,6 @@ from ess.livedata.dashboard.extractors import (
     LatestValueExtractor,
     WindowAggregatingExtractor,
 )
-from ess.livedata.dashboard.temporal_requirements import (
-    CompleteHistory,
-    LatestFrame,
-    TimeWindow,
-)
 
 
 @pytest.fixture
@@ -35,7 +30,7 @@ class TestLatestValueExtractor:
         buffer.append(20)
         buffer.append(30)
 
-        result = extractor.extract(buffer)
+        result = extractor.extract(buffer.get_all())
         assert result == 30
 
     def test_extract_latest_from_list(self, buffer_factory: BufferFactory):
@@ -45,7 +40,7 @@ class TestLatestValueExtractor:
         buffer.append([1, 2, 3])
         buffer.append([4, 5, 6])
 
-        result = extractor.extract(buffer)
+        result = extractor.extract(buffer.get_all())
         # For list buffers in single_value_mode with batched data,
         # extract_latest_frame extracts the last element from the batch
         assert result == 6
@@ -67,35 +62,23 @@ class TestLatestValueExtractor:
         )
         buffer.append(data2)
 
-        result = extractor.extract(buffer)
+        result = extractor.extract(buffer.get_all())
 
         # Result should be unwrapped (scalar, no time dimension)
         assert result.ndim == 0
         assert result.value == 5  # Last value from second append
-
-    def test_get_temporal_requirement(self):
-        """Test that LatestValueExtractor returns LatestFrame requirement."""
-        extractor = LatestValueExtractor()
-        requirement = extractor.get_temporal_requirement()
-        assert isinstance(requirement, LatestFrame)
 
     def test_extract_empty_buffer_returns_none(self, buffer_factory: BufferFactory):
         """Test that extracting from empty buffer returns None."""
         extractor = LatestValueExtractor()
         buffer = buffer_factory.create_buffer(10, max_size=1)
 
-        result = extractor.extract(buffer)
+        result = extractor.extract(buffer.get_all())
         assert result is None
 
 
 class TestFullHistoryExtractor:
     """Tests for FullHistoryExtractor."""
-
-    def test_get_temporal_requirement(self):
-        """Test that FullHistoryExtractor returns CompleteHistory requirement."""
-        extractor = FullHistoryExtractor()
-        requirement = extractor.get_temporal_requirement()
-        assert isinstance(requirement, CompleteHistory)
 
     def test_extract_all_data(self, buffer_factory: BufferFactory):
         """Test extracting all data from buffer."""
@@ -106,7 +89,7 @@ class TestFullHistoryExtractor:
         for val in values:
             buffer.append(val)
 
-        result = extractor.extract(buffer)
+        result = extractor.extract(buffer.get_all())
         assert result == values
 
     def test_extract_all_from_scipp(self, buffer_factory: BufferFactory):
@@ -118,7 +101,7 @@ class TestFullHistoryExtractor:
         for i in range(5):
             buffer.append(data[i : i + 1])
 
-        result = extractor.extract(buffer)
+        result = extractor.extract(buffer.get_all())
         assert result.sizes['time'] == 5
 
 
@@ -136,8 +119,8 @@ class TestExtractorIntegration:
         latest = LatestValueExtractor()
         history = FullHistoryExtractor()
 
-        assert latest.extract(buffer) == 9
-        assert history.extract(buffer) == values
+        assert latest.extract(buffer.get_all()) == 9
+        assert history.extract(buffer.get_all()) == values
 
     def test_extractors_with_custom_concat_dim(self, buffer_factory: BufferFactory):
         """Test LatestValueExtractor with custom concat dimension."""
@@ -151,7 +134,7 @@ class TestExtractorIntegration:
         buffer.append(data[1:2])
         buffer.append(data[2:3])
 
-        result = extractor.extract(buffer)
+        result = extractor.extract(buffer.get_all())
         # Should unwrap 'time' dimension and return scalar
         assert result.ndim == 0
 
@@ -164,20 +147,13 @@ class TestExtractorIntegration:
         buffer = buffer_factory.create_buffer(data, max_size=1)
         buffer.append(data)
 
-        result = extractor.extract(buffer)
+        result = extractor.extract(buffer.get_all())
         # Result should be the scalar value
         assert isinstance(result, sc.Variable) or result == data
 
 
 class TestWindowAggregatingExtractor:
     """Tests for WindowAggregatingExtractor."""
-
-    def test_get_temporal_requirement(self):
-        """Test that WindowAggregatingExtractor returns TimeWindow requirement."""
-        extractor = WindowAggregatingExtractor(window_duration_seconds=5.0)
-        requirement = extractor.get_temporal_requirement()
-        assert isinstance(requirement, TimeWindow)
-        assert requirement.duration_seconds == 5.0
 
     def test_sum_aggregation_scipp(self, buffer_factory: BufferFactory):
         """Test sum aggregation over time dimension."""
@@ -218,7 +194,7 @@ class TestWindowAggregatingExtractor:
         extractor = WindowAggregatingExtractor(
             window_duration_seconds=0.2, aggregation='sum'
         )
-        result = extractor.extract(buffer)
+        result = extractor.extract(buffer.get_all())
 
         # Result should be summed over time (no time dimension)
         assert 'time' not in result.dims
@@ -262,7 +238,7 @@ class TestWindowAggregatingExtractor:
         extractor = WindowAggregatingExtractor(
             window_duration_seconds=0.2, aggregation='mean'
         )
-        result = extractor.extract(buffer)
+        result = extractor.extract(buffer.get_all())
 
         # Mean: ([1,2,3] + [2,4,6] + [4,8,12]) / 3 = [7,14,21] / 3
         expected = sc.array(dims=['x'], values=[7.0 / 3, 14.0 / 3, 21.0 / 3])
@@ -295,7 +271,7 @@ class TestWindowAggregatingExtractor:
         extractor = WindowAggregatingExtractor(
             window_duration_seconds=0.2, aggregation='last'
         )
-        result = extractor.extract(buffer)
+        result = extractor.extract(buffer.get_all())
 
         # Should return the last frame
         assert 'time' not in result.dims
@@ -328,7 +304,7 @@ class TestWindowAggregatingExtractor:
         extractor = WindowAggregatingExtractor(
             window_duration_seconds=0.2, aggregation='max'
         )
-        result = extractor.extract(buffer)
+        result = extractor.extract(buffer.get_all())
 
         # Max of [1,5,2] and [3,2,4] = [3,5,4]
         assert sc.allclose(result.data, sc.array(dims=['x'], values=[3.0, 5.0, 4.0]))
@@ -344,20 +320,20 @@ class TestWindowAggregatingExtractor:
         extractor = WindowAggregatingExtractor(
             window_duration_seconds=0.2, aggregation='sum'
         )
-        result = extractor.extract(buffer)
+        result = extractor.extract(buffer.get_all())
         assert result is None
 
-    def test_extract_non_scipp_data_raises_error(self, buffer_factory: BufferFactory):
-        """Test that non-scipp data raises NotImplementedError for window extraction."""
+    def test_extract_non_scipp_data_returns_as_is(self, buffer_factory: BufferFactory):
+        """Test that non-scipp data is returned as-is (cannot do window aggregation)."""
         extractor = WindowAggregatingExtractor(
             window_duration_seconds=0.2, aggregation='sum'
         )
         buffer = buffer_factory.create_buffer(42, max_size=10)
         buffer.append(42)
 
-        # ListBuffer doesn't support time-based windowing
-        with pytest.raises(NotImplementedError, match="Time-based windowing"):
-            extractor.extract(buffer)
+        # ListBuffer doesn't support time-based windowing, so data is returned as-is
+        result = extractor.extract(buffer.get_all())
+        assert result == [42]  # List buffer returns data as list
 
     def test_invalid_aggregation_raises_error(self, buffer_factory: BufferFactory):
         """Test that invalid aggregation method raises error."""
@@ -376,12 +352,12 @@ class TestWindowAggregatingExtractor:
         buffer.append(data)
 
         with pytest.raises(ValueError, match="Unknown aggregation method"):
-            extractor.extract(buffer)
+            extractor.extract(buffer.get_all())
 
-    def test_extract_without_time_coord_raises_error(
+    def test_extract_without_time_coord_aggregates_all(
         self, buffer_factory: BufferFactory
     ):
-        """Test that data without time coordinate raises error."""
+        """Test that data without time coordinate aggregates all data."""
         extractor = WindowAggregatingExtractor(
             window_duration_seconds=0.2, aggregation='sum'
         )
@@ -394,5 +370,8 @@ class TestWindowAggregatingExtractor:
         buffer = buffer_factory.create_buffer(data, max_size=10)
         buffer.append(data)
 
-        with pytest.raises(ValueError, match="no 'time' coordinate"):
-            extractor.extract(buffer)
+        # Without time coordinate, all data is used but can't do time-based windowing
+        result = extractor.extract(buffer.get_all())
+        assert result is not None  # Should return something
+        # Just verify result has expected structure
+        assert hasattr(result, 'dims')

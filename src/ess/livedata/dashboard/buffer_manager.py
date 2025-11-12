@@ -1,21 +1,18 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Buffer manager for temporal requirement-based sizing."""
+"""Buffer manager for extractor requirement-based sizing."""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Hashable, Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 from .buffer import Buffer, BufferFactory
-from .temporal_requirements import (
-    CompleteHistory,
-    LatestFrame,
-    TemporalRequirement,
-    TimeWindow,
-)
+
+if TYPE_CHECKING:
+    from .extractors import UpdateExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +29,7 @@ class _BufferState(Generic[T]):
     """Internal state for a managed buffer."""
 
     buffer: Buffer[T]
-    requirements: list[TemporalRequirement] = field(default_factory=list)
+    extractors: list[UpdateExtractor] = field(default_factory=list)
     needs_growth: bool = field(default=False)
 
 
@@ -73,10 +70,10 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
         return len(self._states)
 
     def create_buffer(
-        self, key: K, template: T, requirements: list[TemporalRequirement]
+        self, key: K, template: T, extractors: list[UpdateExtractor]
     ) -> None:
         """
-        Create a buffer sized to satisfy temporal requirements.
+        Create a buffer sized to satisfy extractor requirements.
 
         Starts with size 1, will resize adaptively based on observations.
 
@@ -86,18 +83,16 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
             Key to identify this buffer.
         template:
             Sample data to determine buffer type.
-        requirements:
-            List of temporal requirements to satisfy.
+        extractors:
+            List of extractors that will use this buffer.
         """
         if key in self._states:
             raise ValueError(f"Buffer with key {key} already exists")
 
         buffer = self._buffer_factory.create_buffer(template, max_size=1)
-        state = _BufferState(buffer=buffer, requirements=list(requirements))
+        state = _BufferState(buffer=buffer, extractors=list(extractors))
         # Compute initial needs_growth based on whether requirements are fulfilled
-        state.needs_growth = any(
-            not self._is_requirement_fulfilled(req, buffer) for req in requirements
-        )
+        state.needs_growth = self._compute_needs_growth(state)
         self._states[key] = state
 
     def update_buffer(self, key: K, data: T) -> None:
@@ -136,7 +131,7 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
 
     def _compute_needs_growth(self, state: _BufferState[T]) -> bool:
         """
-        Compute whether buffer needs to grow to satisfy requirements.
+        Compute whether buffer needs to grow to satisfy extractor requirements.
 
         Returns True if any requirement is unfulfilled AND buffer is not at capacity.
 
@@ -156,45 +151,15 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
         if frame_count >= MAX_CAPACITY:
             return False
 
-        # Check if any requirement is unfulfilled
-        for requirement in state.requirements:
-            if not self._is_requirement_fulfilled(requirement, state.buffer):
+        # Get all buffered data
+        data = state.buffer.get_all()
+
+        # Check if any extractor's requirements are unfulfilled
+        for extractor in state.extractors:
+            if not extractor.is_requirement_fulfilled(data):
                 return True
 
         return False
-
-    def _is_requirement_fulfilled(
-        self, requirement: TemporalRequirement, buffer: Buffer[T]
-    ) -> bool:
-        """
-        Check if a single requirement is satisfied by current buffer state.
-
-        Parameters
-        ----------
-        requirement:
-            The temporal requirement to check.
-        buffer:
-            The buffer to check against.
-
-        Returns
-        -------
-        :
-            True if requirement is satisfied, False otherwise.
-        """
-        if isinstance(requirement, LatestFrame):
-            # Buffer always starts with max_size >= 1, sufficient for LatestFrame
-            return True
-
-        elif isinstance(requirement, TimeWindow):
-            temporal_coverage = buffer.get_temporal_coverage()
-            return temporal_coverage >= requirement.duration_seconds
-
-        elif isinstance(requirement, CompleteHistory):
-            # Complete history is never fulfilled - always want more data
-            # Growth is limited by MAX_CAPACITY check in _compute_needs_growth
-            return False
-
-        return True
 
     def _resize_buffer(self, state: _BufferState[T]) -> None:
         """
@@ -217,24 +182,24 @@ class BufferManager(Mapping[K, Buffer[T]], Generic[K, T]):
         )
         state.buffer.set_max_size(new_size)
 
-    def add_requirement(self, key: K, requirement: TemporalRequirement) -> None:
+    def add_extractor(self, key: K, extractor: UpdateExtractor) -> None:
         """
-        Register additional temporal requirement for an existing buffer.
+        Register additional extractor for an existing buffer.
 
         May trigger immediate resize if needed.
 
         Parameters
         ----------
         key:
-            Key identifying the buffer to add requirement to.
-        requirement:
-            New temporal requirement.
+            Key identifying the buffer to add extractor to.
+        extractor:
+            New extractor that will use this buffer.
         """
         if key not in self._states:
             raise KeyError(f"No buffer found for key {key}")
 
         state = self._states[key]
-        state.requirements.append(requirement)
+        state.extractors.append(extractor)
 
         # Check if resize needed immediately
         state.needs_growth = self._compute_needs_growth(state)

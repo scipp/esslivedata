@@ -10,7 +10,6 @@ from typing import Any, Generic, TypeVar
 from .buffer import BufferFactory
 from .buffer_manager import BufferManager
 from .extractors import LatestValueExtractor, UpdateExtractor
-from .temporal_requirements import TemporalRequirement
 
 K = TypeVar('K', bound=Hashable)
 V = TypeVar('V')
@@ -102,31 +101,31 @@ class DataService(MutableMapping[K, V]):
     def _in_transaction(self) -> bool:
         return self._transaction_depth > 0
 
-    def _get_temporal_requirements(self, key: K) -> list[TemporalRequirement]:
+    def _get_extractors(self, key: K) -> list[UpdateExtractor]:
         """
-        Collect temporal requirements for a key from all subscribers.
+        Collect extractors for a key from all subscribers.
 
-        Examines all subscribers' extractor requirements for this key.
+        Examines all subscribers that need this key.
 
         Parameters
         ----------
         key:
-            The key to collect requirements for.
+            The key to collect extractors for.
 
         Returns
         -------
         :
-            List of temporal requirements from all subscribers for this key.
+            List of extractors from all subscribers for this key.
         """
-        requirements = []
+        extractors = []
 
         for subscriber in self._subscribers:
-            extractors = subscriber.extractors
-            if key in extractors:
-                extractor = extractors[key]
-                requirements.append(extractor.get_temporal_requirement())
+            subscriber_extractors = subscriber.extractors
+            if key in subscriber_extractors:
+                extractor = subscriber_extractors[key]
+                extractors.append(extractor)
 
-        return requirements
+        return extractors
 
     def _build_subscriber_data(self, subscriber: Subscriber[K]) -> dict[K, Any]:
         """
@@ -149,7 +148,8 @@ class DataService(MutableMapping[K, V]):
             if key in self._buffer_manager:
                 extractor = extractors[key]
                 buffer = self._buffer_manager[key]
-                data = extractor.extract(buffer)
+                buffered_data = buffer.get_all()
+                data = extractor.extract(buffered_data)
                 if data is not None:
                     subscriber_data[key] = data
 
@@ -168,12 +168,11 @@ class DataService(MutableMapping[K, V]):
         """
         self._subscribers.append(subscriber)
 
-        # Add requirements for keys this subscriber needs
+        # Add extractors for keys this subscriber needs
         for key in subscriber.keys:
             if key in self._buffer_manager:
                 extractor = subscriber.extractors[key]
-                requirement = extractor.get_temporal_requirement()
-                self._buffer_manager.add_requirement(key, requirement)
+                self._buffer_manager.add_extractor(key, extractor)
 
         # Trigger immediately with existing data using subscriber's extractors
         existing_data = self._build_subscriber_data(subscriber)
@@ -243,14 +242,15 @@ class DataService(MutableMapping[K, V]):
         if key not in self._buffer_manager:
             raise KeyError(key)
         buffer = self._buffer_manager[key]
-        return self._default_extractor.extract(buffer)
+        buffered_data = buffer.get_all()
+        return self._default_extractor.extract(buffered_data)
 
     def __setitem__(self, key: K, value: V) -> None:
         """Set a value, storing it in a buffer."""
         if key not in self._buffer_manager:
             self._pending_key_additions.add(key)
-            requirements = self._get_temporal_requirements(key)
-            self._buffer_manager.create_buffer(key, value, requirements)
+            extractors = self._get_extractors(key)
+            self._buffer_manager.create_buffer(key, value, extractors)
         self._buffer_manager.update_buffer(key, value)
         self._pending_updates.add(key)
         self._notify_if_not_in_transaction()

@@ -175,49 +175,6 @@ class BufferInterface(Protocol[T]):
         """
         ...
 
-    def get_window_by_duration(self, buffer: T, end: int, duration_seconds: float) -> T:
-        """
-        Get a window covering approximately the specified time duration.
-
-        Parameters
-        ----------
-        buffer:
-            Buffer to extract from.
-        end:
-            End index of valid data in buffer (exclusive).
-        duration_seconds:
-            Approximate time duration in seconds.
-
-        Returns
-        -------
-        :
-            Window of data covering approximately the duration.
-        """
-        ...
-
-    def get_temporal_coverage(self, buffer: T, end: int) -> float:
-        """
-        Get the time span currently covered by buffer.
-
-        Parameters
-        ----------
-        buffer:
-            Buffer to measure.
-        end:
-            End index of valid data in buffer (exclusive).
-
-        Returns
-        -------
-        :
-            Time span in seconds. Returns 0.0 for empty buffers or single frames.
-
-        Raises
-        ------
-        ValueError:
-            If buffer has data but no time coordinate.
-        """
-        ...
-
 
 class ScippBuffer(Generic[ScippT]):
     """
@@ -266,99 +223,6 @@ class ScippBuffer(Generic[ScippT]):
 
         # Extract the single element along concat dimension
         return view[self._concat_dim, 0]
-
-    def get_window_by_duration(
-        self, buffer: ScippT, end: int, duration_seconds: float
-    ) -> ScippT:
-        """
-        Get window by time duration using actual time coordinate.
-
-        Extracts all frames where time >= (latest_time - duration_seconds).
-        Requires buffer to have a time coordinate.
-
-        Parameters
-        ----------
-        buffer:
-            Buffer to extract from.
-        end:
-            End index of valid data in buffer (exclusive).
-        duration_seconds:
-            Time duration in seconds.
-
-        Returns
-        -------
-        :
-            Window of data covering the specified duration.
-
-        Raises
-        ------
-        ValueError:
-            If buffer has no time coordinate.
-        """
-        if end == 0:
-            # Empty buffer
-            return self.get_view(buffer, 0, 0)
-
-        # Get active section of buffer
-        active = self.get_view(buffer, 0, end)
-
-        # Check for time coordinate
-        if not hasattr(active, 'coords') or self._concat_dim not in active.coords:
-            raise ValueError(
-                f"Buffer has no '{self._concat_dim}' coordinate. "
-                "Time-based windowing requires time coordinate data."
-            )
-
-        # Calculate cutoff time using scipp's unit handling
-        time_coord = active.coords[self._concat_dim]
-        latest_time = time_coord[-1]
-        duration = sc.scalar(duration_seconds, unit='s').to(unit=time_coord.unit)
-        return active[self._concat_dim, latest_time - duration :]
-
-    def get_temporal_coverage(self, buffer: ScippT, end: int) -> float:
-        """
-        Get time span covered by buffer.
-
-        Calculates the difference between the first and last time coordinates.
-
-        Parameters
-        ----------
-        buffer:
-            Buffer to measure.
-        end:
-            End index of valid data in buffer (exclusive).
-
-        Returns
-        -------
-        :
-            Time span in seconds. Returns 0.0 for empty buffers or single frames.
-
-        Raises
-        ------
-        ValueError:
-            If buffer has data but no time coordinate.
-        """
-        if end == 0:
-            return 0.0
-
-        # Get active section of buffer
-        active = self.get_view(buffer, 0, end)
-
-        # Check for time coordinate
-        if not hasattr(active, 'coords') or self._concat_dim not in active.coords:
-            raise ValueError(
-                f"Buffer has data but no '{self._concat_dim}' coordinate. "
-                "TimeWindow requirements need time coordinate data."
-            )
-
-        time_coord = active.coords[self._concat_dim]
-        if len(time_coord) < 2:
-            # Need at least 2 points to measure coverage
-            return 0.0
-
-        # Calculate time span and convert to seconds
-        time_span = time_coord[-1] - time_coord[0]
-        return float(time_span.to(unit='s').value)
 
 
 class DataArrayBuffer(ScippBuffer[sc.DataArray], BufferInterface[sc.DataArray]):  # type: ignore[type-arg]
@@ -629,38 +493,6 @@ class ListBuffer(BufferInterface[list]):
             return view[0]
         return view
 
-    def get_window_by_duration(
-        self, buffer: list, end: int, duration_seconds: float
-    ) -> list:
-        """
-        Time-based windowing not supported for list buffers.
-
-        Raises
-        ------
-        NotImplementedError:
-            List buffers have no time coordinate information.
-        """
-        raise NotImplementedError(
-            "Time-based windowing is not supported for list buffers. "
-            "Only scipp DataArray/Variable buffers with time coordinates support "
-            "duration-based extraction."
-        )
-
-    def get_temporal_coverage(self, buffer: list, end: int) -> float:
-        """
-        Temporal coverage not available for list buffers.
-
-        Raises
-        ------
-        ValueError:
-            List buffers have no time coordinate information.
-        """
-        raise ValueError(
-            "List buffers have no time coordinate information. "
-            "TimeWindow requirements are only supported for scipp DataArray/Variable "
-            "with time coordinates."
-        )
-
 
 class SingleValueStorage(Generic[T]):
     """
@@ -690,23 +522,6 @@ class SingleValueStorage(Generic[T]):
         """Get the stored value."""
         return self._value
 
-    def get_window(self, size: int | None = None) -> T | None:
-        """Get the stored value (size parameter ignored)."""
-        return self._value
-
-    def get_latest(self) -> T | None:
-        """Get the stored value."""
-        return self._value
-
-    def get_window_by_duration(self, duration_seconds: float) -> T | None:
-        """
-        Get the stored value (duration parameter ignored).
-
-        For single-value storage, duration-based extraction returns the single
-        stored value, same as get_latest() and get_window().
-        """
-        return self._value
-
     def clear(self) -> None:
         """Clear the stored value."""
         self._value = None
@@ -721,43 +536,6 @@ class SingleValueStorage(Generic[T]):
             1 if value exists, 0 if empty.
         """
         return 1 if self._value is not None else 0
-
-    def get_temporal_coverage(self) -> float:
-        """
-        Get temporal coverage.
-
-        Returns
-        -------
-        :
-            0.0 (single value has no temporal span).
-
-        Raises
-        ------
-        ValueError:
-            If value exists but has no time coordinate (for scipp data types).
-        """
-        if self._value is None:
-            return 0.0
-
-        # Check if data has time coordinate (for scipp types)
-        if hasattr(self._value, 'coords'):
-            # DataArray - check for time coordinate
-            concat_dim = getattr(self._buffer_impl, '_concat_dim', 'time')
-            if concat_dim not in self._value.coords:
-                raise ValueError(
-                    f"Buffer has data but no '{concat_dim}' coordinate. "
-                    "TimeWindow requirements need time coordinate data."
-                )
-        elif hasattr(self._value, 'dims'):
-            # Variable - Variables don't have coords, so raise error
-            raise ValueError(
-                "Buffer has Variable data without coordinates. "
-                "TimeWindow requirements need time coordinate data. "
-                "Use DataArray with time coordinate instead."
-            )
-
-        # Has time coordinate or is non-scipp data, return 0.0 (single frame)
-        return 0.0
 
 
 class StreamingBuffer(Generic[T]):
@@ -938,70 +716,6 @@ class StreamingBuffer(Generic[T]):
         self._end = 0
         self._capacity = 0
 
-    def get_window(self, size: int | None = None) -> T | None:
-        """
-        Get a window of buffered data from the end.
-
-        Parameters
-        ----------
-        size:
-            The number of elements to return from the end of the buffer.
-            If None, returns the entire buffer.
-
-        Returns
-        -------
-        :
-            A window of the buffer, or None if empty.
-        """
-        if self._buffer is None:
-            return None
-        if size is None:
-            return self._buffer_impl.get_view(self._buffer, 0, self._end)
-
-        # Get window from the end
-        actual_size = min(size, self._end)
-        start = self._end - actual_size
-        return self._buffer_impl.get_view(self._buffer, start, self._end)
-
-    def get_latest(self) -> T | None:
-        """
-        Get the latest single value, unwrapped.
-
-        Returns the most recent data point without the concat dimension,
-        ready for use without further processing.
-
-        Returns
-        -------
-        :
-            The latest value without concat dimension, or None if empty.
-        """
-        if self._buffer is None or self._end == 0:
-            return None
-
-        # Get last frame as a size-1 window, then unwrap it
-        view = self._buffer_impl.get_view(self._buffer, self._end - 1, self._end)
-        return self._buffer_impl.unwrap_window(view)
-
-    def get_window_by_duration(self, duration_seconds: float) -> T | None:
-        """
-        Get window by time duration.
-
-        Parameters
-        ----------
-        duration_seconds:
-            Approximate time duration in seconds.
-
-        Returns
-        -------
-        :
-            Window of data covering approximately the duration, or None if empty.
-        """
-        if self._buffer is None:
-            return None
-        return self._buffer_impl.get_window_by_duration(
-            self._buffer, self._end, duration_seconds
-        )
-
     def get_frame_count(self) -> int:
         """
         Get the number of frames currently stored.
@@ -1012,21 +726,3 @@ class StreamingBuffer(Generic[T]):
             Number of frames in buffer.
         """
         return self._end
-
-    def get_temporal_coverage(self) -> float:
-        """
-        Get the time span currently covered by buffer.
-
-        Returns
-        -------
-        :
-            Time span in seconds. Returns 0.0 for empty buffers.
-
-        Raises
-        ------
-        ValueError:
-            If buffer has data but no time coordinate.
-        """
-        if self._buffer is None:
-            return 0.0
-        return self._buffer_impl.get_temporal_coverage(self._buffer, self._end)

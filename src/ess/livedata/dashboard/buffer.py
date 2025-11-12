@@ -132,53 +132,6 @@ class Buffer(Generic[T]):
         """Clear all stored data."""
         self._storage.clear()
 
-    def get_window(self, size: int | None = None) -> T | None:
-        """
-        Get a window of buffered data from the end.
-
-        Parameters
-        ----------
-        size:
-            The number of elements to return from the end of the buffer.
-            If None, returns the entire buffer.
-
-        Returns
-        -------
-        :
-            A window of the buffer, or None if empty.
-        """
-        return self._storage.get_window(size)
-
-    def get_latest(self) -> T | None:
-        """
-        Get the latest single value, unwrapped.
-
-        Returns the most recent data point without the concat dimension,
-        ready for use without further processing.
-
-        Returns
-        -------
-        :
-            The latest value without concat dimension, or None if empty.
-        """
-        return self._storage.get_latest()
-
-    def get_window_by_duration(self, duration_seconds: float) -> T | None:
-        """
-        Get window by time duration.
-
-        Parameters
-        ----------
-        duration_seconds:
-            Approximate time duration in seconds.
-
-        Returns
-        -------
-        :
-            Window of data covering approximately the duration, or None if empty.
-        """
-        return self._storage.get_window_by_duration(duration_seconds)
-
     def get_frame_count(self) -> int:
         """
         Get the number of frames currently stored.
@@ -189,22 +142,6 @@ class Buffer(Generic[T]):
             Number of frames in buffer.
         """
         return self._storage.get_frame_count()
-
-    def get_temporal_coverage(self) -> float:
-        """
-        Get the time span currently covered by buffer.
-
-        Returns
-        -------
-        :
-            Time span in seconds. Returns 0.0 for empty buffers.
-
-        Raises
-        ------
-        ValueError:
-            If buffer has data but no time coordinate.
-        """
-        return self._storage.get_temporal_coverage()
 
 
 class BufferFactory:

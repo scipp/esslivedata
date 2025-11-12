@@ -9,10 +9,10 @@ import scipp as sc
 
 from ess.livedata.dashboard.buffer import BufferFactory
 from ess.livedata.dashboard.buffer_manager import BufferManager
-from ess.livedata.dashboard.temporal_requirements import (
-    CompleteHistory,
-    LatestFrame,
-    TimeWindow,
+from ess.livedata.dashboard.extractors import (
+    FullHistoryExtractor,
+    LatestValueExtractor,
+    WindowAggregatingExtractor,
 )
 
 
@@ -31,55 +31,61 @@ def buffer_manager(buffer_factory: BufferFactory) -> BufferManager:
 class TestBufferManagerCreation:
     """Tests for buffer creation."""
 
-    def test_create_buffer_with_latest_frame_requirement(
+    def test_create_buffer_with_latest_value_extractor(
         self, buffer_manager: BufferManager
     ):
-        """Test creating buffer with LatestFrame requirement."""
+        """Test creating buffer with LatestValueExtractor."""
         template = sc.scalar(1, unit='counts')
         key = 'test_key'
-        buffer_manager.create_buffer(key, template, [LatestFrame()])
+        buffer_manager.create_buffer(key, template, [LatestValueExtractor()])
 
         # Buffer should be created (frame count starts at 0)
         buffer = buffer_manager[key]
         assert buffer.get_frame_count() == 0
 
-    def test_create_buffer_with_time_window_requirement(
+    def test_create_buffer_with_window_aggregating_extractor(
         self, buffer_manager: BufferManager
     ):
-        """Test creating buffer with TimeWindow requirement."""
+        """Test creating buffer with WindowAggregatingExtractor."""
         template = sc.scalar(1, unit='counts')
         key = 'test_key'
-        buffer_manager.create_buffer(key, template, [TimeWindow(duration_seconds=5.0)])
+        buffer_manager.create_buffer(
+            key, template, [WindowAggregatingExtractor(window_duration_seconds=5.0)]
+        )
 
         # Buffer should be created with conservative initial size
         buffer = buffer_manager[key]
         assert buffer.get_frame_count() == 0
 
-    def test_create_buffer_with_complete_history_requirement(
+    def test_create_buffer_with_full_history_extractor(
         self, buffer_manager: BufferManager
     ):
-        """Test creating buffer with CompleteHistory requirement."""
+        """Test creating buffer with FullHistoryExtractor."""
         template = sc.scalar(1, unit='counts')
         key = 'test_key'
-        buffer_manager.create_buffer(key, template, [CompleteHistory()])
+        buffer_manager.create_buffer(key, template, [FullHistoryExtractor()])
 
         # Buffer should be created with MAX_FRAMES size
         buffer = buffer_manager[key]
         assert buffer.get_frame_count() == 0
 
-    def test_create_buffer_with_multiple_requirements(
+    def test_create_buffer_with_multiple_extractors(
         self, buffer_manager: BufferManager
     ):
-        """Test creating buffer with multiple requirements takes max."""
+        """Test creating buffer with multiple extractors."""
         template = sc.scalar(1, unit='counts')
         key = 'test_key'
         buffer_manager.create_buffer(
             key,
             template,
-            [LatestFrame(), TimeWindow(duration_seconds=2.0), CompleteHistory()],
+            [
+                LatestValueExtractor(),
+                WindowAggregatingExtractor(window_duration_seconds=2.0),
+                FullHistoryExtractor(),
+            ],
         )
 
-        # CompleteHistory should dominate (MAX_FRAMES)
+        # FullHistoryExtractor should dominate (MAX_CAPACITY)
         buffer = buffer_manager[key]
         assert buffer.get_frame_count() == 0
 
@@ -91,21 +97,22 @@ class TestBufferManagerUpdateAndResize:
         """Test that update_buffer appends data to buffer."""
         template = sc.scalar(1, unit='counts')
         key = 'test_key'
-        buffer_manager.create_buffer(key, template, [LatestFrame()])
+        extractor = LatestValueExtractor()
+        buffer_manager.create_buffer(key, template, [extractor])
 
         data = sc.scalar(42, unit='counts')
         buffer_manager.update_buffer(key, data)
 
         buffer = buffer_manager[key]
         assert buffer.get_frame_count() == 1
-        result = buffer.get_latest()
+        result = extractor.extract(buffer.get_all())
         assert result.value == 42
 
-    def test_buffer_grows_for_complete_history(self, buffer_manager: BufferManager):
-        """Test that buffer grows when CompleteHistory requirement is added."""
+    def test_buffer_grows_for_full_history(self, buffer_manager: BufferManager):
+        """Test that buffer grows when FullHistoryExtractor is added."""
         template = sc.scalar(1, unit='counts')
         key = 'test_key'
-        buffer_manager.create_buffer(key, template, [LatestFrame()])
+        buffer_manager.create_buffer(key, template, [LatestValueExtractor()])
 
         # Add data
         buffer_manager.update_buffer(key, sc.scalar(1, unit='counts'))
@@ -113,11 +120,10 @@ class TestBufferManagerUpdateAndResize:
         initial_count = buffer.get_frame_count()
         assert initial_count == 1
 
-        # Add CompleteHistory requirement
-        buffer_manager.add_requirement(key, CompleteHistory())
+        # Add FullHistoryExtractor
+        buffer_manager.add_extractor(key, FullHistoryExtractor())
 
         # Buffer should grow (or be ready to grow)
-        # After adding requirement, validate_coverage should trigger resize
         # Add more data to trigger resize
         for i in range(2, 5):
             buffer_manager.update_buffer(key, sc.scalar(i, unit='counts'))
@@ -129,14 +135,15 @@ class TestBufferManagerUpdateAndResize:
     def test_buffer_grows_for_time_window_with_time_coord(
         self, buffer_manager: BufferManager
     ):
-        """Test buffer grows to satisfy TimeWindow when data has time coordinates."""
+        """Test buffer grows to satisfy WindowAggregatingExtractor with time."""
         # Create data with time coordinates
         template = sc.DataArray(
             sc.scalar(1.0, unit='counts'),
             coords={'time': sc.scalar(0.0, unit='s')},
         )
         key = 'test_key'
-        buffer_manager.create_buffer(key, template, [TimeWindow(duration_seconds=1.0)])
+        extractor = WindowAggregatingExtractor(window_duration_seconds=1.0)
+        buffer_manager.create_buffer(key, template, [extractor])
 
         # Add data points spaced 0.1 seconds apart
         for i in range(5):
@@ -148,7 +155,10 @@ class TestBufferManagerUpdateAndResize:
 
         # After 5 points at 0.1s spacing, coverage should be 0.4s
         buffer = buffer_manager[key]
-        coverage = buffer.get_temporal_coverage()
+        buffered_data = buffer.get_all()
+        assert buffered_data is not None
+        time_span = buffered_data.coords['time'][-1] - buffered_data.coords['time'][0]
+        coverage = float(time_span.to(unit='s').value)
         assert coverage == pytest.approx(0.4, abs=0.01)
 
         # Add more points to reach 1.0s coverage
@@ -161,18 +171,21 @@ class TestBufferManagerUpdateAndResize:
 
         # Coverage should now be >= 1.0s
         buffer = buffer_manager[key]
-        coverage = buffer.get_temporal_coverage()
+        buffered_data = buffer.get_all()
+        assert buffered_data is not None
+        time_span = buffered_data.coords['time'][-1] - buffered_data.coords['time'][0]
+        coverage = float(time_span.to(unit='s').value)
         assert coverage >= 1.0
 
 
 class TestBufferManagerValidation:
-    """Tests for coverage validation."""
+    """Tests for extractor requirement validation."""
 
-    def test_validate_coverage_latest_frame(self, buffer_manager: BufferManager):
-        """Test validation for LatestFrame requirement."""
+    def test_validate_latest_value_extractor(self, buffer_manager: BufferManager):
+        """Test validation for LatestValueExtractor."""
         template = sc.scalar(1, unit='counts')
         key = 'test_key'
-        buffer_manager.create_buffer(key, template, [LatestFrame()])
+        buffer_manager.create_buffer(key, template, [LatestValueExtractor()])
 
         # Empty buffer should fail validation (internally checked)
         buffer = buffer_manager[key]
@@ -185,22 +198,24 @@ class TestBufferManagerValidation:
         buffer = buffer_manager[key]
         assert buffer.get_frame_count() == 1
 
-    def test_validate_coverage_time_window_without_time_coord(
+    def test_validate_window_extractor_without_time_coord(
         self, buffer_manager: BufferManager
     ):
-        """Test validation for TimeWindow with data that has no time coordinate."""
+        """Test that WindowAggregatingExtractor returns False for data without time."""
         template = sc.scalar(1, unit='counts')
         key = 'test_key'
-        buffer_manager.create_buffer(key, template, [TimeWindow(duration_seconds=1.0)])
+        extractor = WindowAggregatingExtractor(window_duration_seconds=1.0)
+        buffer_manager.create_buffer(key, template, [extractor])
 
-        # Adding data without time coordinate should raise ValueError
-        # when checking if requirements are fulfilled
-        with pytest.raises(
-            ValueError, match="(without coordinates|no.*time.*coordinate)"
-        ):
-            buffer_manager.update_buffer(key, sc.scalar(1, unit='counts'))
+        # Adding data without time coordinate is allowed, but requirements not fulfilled
+        buffer_manager.update_buffer(key, sc.scalar(1, unit='counts'))
 
-    def test_validate_coverage_time_window_with_insufficient_coverage(
+        # Check that requirement is not fulfilled
+        buffer = buffer_manager[key]
+        data = buffer.get_all()
+        assert not extractor.is_requirement_fulfilled(data)
+
+    def test_validate_window_extractor_with_insufficient_coverage(
         self, buffer_manager: BufferManager
     ):
         """Test validation fails when temporal coverage is insufficient."""
@@ -209,7 +224,8 @@ class TestBufferManagerValidation:
             coords={'time': sc.scalar(0.0, unit='s')},
         )
         key = 'test_key'
-        buffer_manager.create_buffer(key, template, [TimeWindow(duration_seconds=2.0)])
+        extractor = WindowAggregatingExtractor(window_duration_seconds=2.0)
+        buffer_manager.create_buffer(key, template, [extractor])
 
         # Add points covering only 0.5 seconds
         for i in range(6):
@@ -221,32 +237,35 @@ class TestBufferManagerValidation:
 
         # Check coverage is insufficient
         buffer = buffer_manager[key]
-        coverage = buffer.get_temporal_coverage()
+        buffered_data = buffer.get_all()
+        assert buffered_data is not None
+        time_span = buffered_data.coords['time'][-1] - buffered_data.coords['time'][0]
+        coverage = float(time_span.to(unit='s').value)
         assert coverage < 2.0
 
-    def test_validate_coverage_complete_history(self, buffer_manager: BufferManager):
-        """Test validation for CompleteHistory requirement."""
+    def test_validate_full_history_extractor(self, buffer_manager: BufferManager):
+        """Test validation for FullHistoryExtractor."""
         template = sc.scalar(1, unit='counts')
         key = 'test_key'
-        buffer_manager.create_buffer(key, template, [CompleteHistory()])
+        buffer_manager.create_buffer(key, template, [FullHistoryExtractor()])
 
         # Add some data
         for i in range(10):
             buffer_manager.update_buffer(key, sc.scalar(i, unit='counts'))
 
-        # Buffer should grow towards MAX_CAPACITY (CompleteHistory is never satisfied)
+        # Buffer should grow towards MAX_CAPACITY (FullHistory is never satisfied)
         buffer = buffer_manager[key]
         assert buffer.get_frame_count() > 1  # Should have grown beyond initial size
 
 
-class TestBufferManagerAddRequirement:
-    """Tests for adding requirements to existing buffers."""
+class TestBufferManagerAddExtractor:
+    """Tests for adding extractors to existing buffers."""
 
-    def test_add_requirement_triggers_resize(self, buffer_manager: BufferManager):
-        """Test that adding requirement triggers immediate resize if needed."""
+    def test_add_extractor_triggers_resize(self, buffer_manager: BufferManager):
+        """Test that adding extractor triggers immediate resize if needed."""
         template = sc.scalar(1, unit='counts')
         key = 'test_key'
-        buffer_manager.create_buffer(key, template, [LatestFrame()])
+        buffer_manager.create_buffer(key, template, [LatestValueExtractor()])
 
         # Add some data
         buffer = buffer_manager[key]
@@ -255,36 +274,8 @@ class TestBufferManagerAddRequirement:
 
         initial_count = buffer.get_frame_count()
 
-        # Add CompleteHistory requirement (should trigger resize)
-        buffer_manager.add_requirement(key, CompleteHistory())
+        # Add FullHistoryExtractor (should trigger resize)
+        buffer_manager.add_extractor(key, FullHistoryExtractor())
 
         # Frame count shouldn't change immediately, but buffer capacity should grow
         assert buffer.get_frame_count() == initial_count
-
-
-class TestTemporalRequirements:
-    """Tests for TemporalRequirement classes."""
-
-    def test_latest_frame_repr(self):
-        """Test LatestFrame string representation."""
-        req = LatestFrame()
-        assert "LatestFrame" in repr(req)
-
-    def test_time_window_repr(self):
-        """Test TimeWindow string representation."""
-        req = TimeWindow(duration_seconds=5.0)
-        assert "TimeWindow" in repr(req)
-        assert "5.0" in repr(req)
-
-    def test_time_window_validation(self):
-        """Test TimeWindow validates duration."""
-        with pytest.raises(ValueError, match="duration_seconds must be positive"):
-            TimeWindow(duration_seconds=-1.0)
-
-        with pytest.raises(ValueError, match="duration_seconds must be positive"):
-            TimeWindow(duration_seconds=0.0)
-
-    def test_complete_history_repr(self):
-        """Test CompleteHistory string representation."""
-        req = CompleteHistory()
-        assert repr(req) == "CompleteHistory()"
