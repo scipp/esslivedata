@@ -120,7 +120,7 @@ class WindowAggregatingExtractor(UpdateExtractor[T]):
     def __init__(
         self,
         window_duration_seconds: float,
-        aggregation: str = 'sum',
+        aggregation: str = 'auto',
         concat_dim: str = 'time',
     ) -> None:
         """
@@ -131,7 +131,8 @@ class WindowAggregatingExtractor(UpdateExtractor[T]):
         window_duration_seconds:
             Time duration to extract from the end of the buffer (seconds).
         aggregation:
-            Aggregation method: 'sum', 'mean', 'last', or 'max'.
+            Aggregation method: 'auto', 'nansum', 'nanmean', 'sum', 'mean', 'last',
+            or 'max'. 'auto' uses 'nansum' if data unit is counts, else 'nanmean'.
         concat_dim:
             Name of the dimension to aggregate over.
         """
@@ -192,18 +193,31 @@ class WindowAggregatingExtractor(UpdateExtractor[T]):
             )
             windowed_data = data[self._concat_dim, latest_time - duration :]
 
+        # Determine aggregation method
+        agg_method = self._aggregation
+        if agg_method == 'auto':
+            # Use nansum if data is dimensionless (counts), else nanmean
+            if hasattr(windowed_data, 'unit') and windowed_data.unit == '1':
+                agg_method = 'nansum'
+            else:
+                agg_method = 'nanmean'
+
         # Aggregate over the concat dimension
-        if self._aggregation == 'sum':
+        if agg_method == 'sum':
             return windowed_data.sum(self._concat_dim)
-        elif self._aggregation == 'mean':
+        elif agg_method == 'nansum':
+            return windowed_data.nansum(self._concat_dim)
+        elif agg_method == 'mean':
             return windowed_data.mean(self._concat_dim)
-        elif self._aggregation == 'last':
+        elif agg_method == 'nanmean':
+            return windowed_data.nanmean(self._concat_dim)
+        elif agg_method == 'last':
             # Return the last frame (equivalent to latest)
             return windowed_data[self._concat_dim, -1]
-        elif self._aggregation == 'max':
+        elif agg_method == 'max':
             return windowed_data.max(self._concat_dim)
         else:
-            raise ValueError(f"Unknown aggregation method: {self._aggregation}")
+            raise ValueError(f"Unknown aggregation method: {agg_method}")
 
 
 def create_extractors_from_params(

@@ -3,6 +3,7 @@
 """Param models for configuring plotters via widgets."""
 
 import enum
+from enum import StrEnum
 
 import pydantic
 
@@ -21,9 +22,12 @@ class WindowMode(str, enum.Enum):
     window = 'window'
 
 
-class WindowAggregation(str, enum.Enum):
+class WindowAggregation(StrEnum):
     """Enumeration of aggregation methods for window mode."""
 
+    auto = 'auto'
+    nansum = 'nansum'
+    nanmean = 'nanmean'
     sum = 'sum'
     mean = 'mean'
     last = 'last'
@@ -143,8 +147,11 @@ class WindowParams(pydantic.BaseModel):
         le=60.0,
     )
     aggregation: WindowAggregation = pydantic.Field(
-        default=WindowAggregation.sum,
-        description="Aggregation method for window mode.",
+        default=WindowAggregation.auto,
+        description=(
+            "Aggregation method for window mode. 'auto' uses 'nansum' for "
+            "counts (unit='counts') and 'nanmean' otherwise."
+        ),
         title="Aggregation",
     )
 
