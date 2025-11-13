@@ -182,7 +182,7 @@ plotter_registry.register_plotter(
 
 plotter_registry.register_plotter(
     name='timeseries',
-    title='Time Series',
+    title='Timeseries',
     description='Plot the temporal evolution of scalar values as line plots.',
     data_requirements=DataRequirements(
         min_dims=0,
