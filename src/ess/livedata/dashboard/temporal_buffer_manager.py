@@ -244,11 +244,8 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]
             List of extractors to gather requirements from.
         """
         # Compute maximum required timespan
-        timespans = [
-            ts for e in extractors if (ts := e.get_required_timespan()) is not None
-        ]
-        if timespans:
-            max_timespan = max(timespans)
+        if extractors:
+            max_timespan = max(e.get_required_timespan() for e in extractors)
             buffer.set_required_timespan(max_timespan)
             logger.debug(
                 "Set buffer required timespan to %.2f seconds (from %d extractors)",

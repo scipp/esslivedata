@@ -371,7 +371,14 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
 
     def _trim_to_timespan(self, new_data: sc.DataArray) -> None:
         """Trim buffer to keep only data within required timespan."""
-        if self._required_timespan <= 0:
+        if self._required_timespan < 0:
+            return
+
+        if self._required_timespan == 0.0:
+            # Keep only the latest value - drop all existing data
+            drop_count = self._data_buffer.size
+            self._data_buffer.drop(drop_count)
+            self._time_buffer.drop(drop_count)
             return
 
         # Get latest time from new data

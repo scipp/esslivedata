@@ -406,6 +406,55 @@ class TestTemporalBuffer:
         with pytest.raises(ValueError, match="exceeds buffer capacity even after"):
             buffer.add(large_data)
 
+    def test_timespan_zero_trims_all_old_data_on_overflow(self):
+        """Test that timespan=0.0 trims all data to make room for new data."""
+        buffer = TemporalBuffer()
+        buffer.set_required_timespan(0.0)  # Keep only latest value
+        buffer.set_max_memory(100)  # Small memory limit to force overflow
+
+        # Add first data point
+        data1 = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 2, unit='m'),
+                'time': sc.scalar(0.0, unit='s'),
+            },
+        )
+        buffer.add(data1)
+        initial_capacity = buffer._data_buffer.max_capacity
+
+        # Fill buffer to capacity
+        for t in range(1, initial_capacity):
+            data = sc.DataArray(
+                sc.array(dims=['x'], values=[float(t), float(t)], unit='counts'),
+                coords={
+                    'x': sc.arange('x', 2, unit='m'),
+                    'time': sc.scalar(float(t), unit='s'),
+                },
+            )
+            buffer.add(data)
+
+        # Buffer is now full, verify it has all data
+        result = buffer.get()
+        assert result.sizes['time'] == initial_capacity
+
+        # Add one more data point - should trigger trimming
+        # With timespan=0.0, should drop ALL old data to make room
+        data_new = sc.DataArray(
+            sc.array(dims=['x'], values=[999.0, 999.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 2, unit='m'),
+                'time': sc.scalar(999.0, unit='s'),
+            },
+        )
+        buffer.add(data_new)  # Should not raise
+
+        # Should only have the latest value
+        result = buffer.get()
+        assert result.sizes['time'] == 1
+        assert result.coords['time'].values[0] == 999.0
+        assert result['time', 0].values[0] == 999.0
+
 
 class TestVariableBuffer:
     """Tests for VariableBuffer."""
