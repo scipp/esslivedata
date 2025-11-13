@@ -46,8 +46,3 @@ class TimeseriesAccumulator(streaming.Accumulator[sc.DataArray]):
     def clear(self) -> None:
         if self._to_nxlog is not None:
             self._to_nxlog.clear()
-
-
-# Note: Monitor interval timeseries workflow is auto-registered in
-# Instrument.__post_init__() and auto-attached in Instrument.load_factories()
-# for all instruments with nexus geometry files.
