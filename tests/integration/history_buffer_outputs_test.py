@@ -71,71 +71,84 @@ def create_subscriber_with_full_history_extractor(
     return subscriber, pipe
 
 
-@pytest.mark.integration
-@pytest.mark.services('monitor')
-def test_monitor_current_output_with_full_history_extractor(
-    integration_env: IntegrationEnv,
+def verify_output_has_time_coord_and_accumulates(
+    backend,
+    workflow_id: WorkflowId,
+    source_names: list[str],
+    config,
+    output_name: str,
 ) -> None:
     """
-    Test that monitor 'current' output has time coord and works with history extractor.
+    Helper to verify that an output has time coord and accumulates properly.
 
-    The monitor workflow produces 'current' and 'cumulative' outputs. The 'current'
-    output should have a 'time' coordinate, making it compatible with history buffers.
-    This test verifies that multiple updates arrive and accumulate in the buffer.
+    This encapsulates the common test logic for verifying:
+    - Output has time coordinate and dimension
+    - Multiple updates arrive
+    - History accumulates (size increases or stays same)
+    - Times are monotonically increasing
+
+    Parameters
+    ----------
+    backend:
+        DashboardBackend instance
+    workflow_id:
+        WorkflowId for the workflow to test
+    source_names:
+        List of source names to start workflow for
+    config:
+        Configuration for the workflow (or None)
+    output_name:
+        Name of the output to verify (e.g., 'current', 'delta')
     """
-    backend = integration_env.backend
-
-    # Start monitor histogram workflow
-    workflow_id = WorkflowId(
-        instrument='dummy',
-        namespace='monitor_data',
-        name='monitor_histogram',
-        version=1,
-    )
-    source_names = ['monitor1']
-
+    # Start workflow
     job_ids = backend.workflow_controller.start_workflow(
         workflow_id=workflow_id,
         source_names=source_names,
-        config=MonitorDataParams(),
+        config=config,
     )
 
-    assert len(job_ids) == 1, f"Expected 1 job, got {len(job_ids)}"
+    assert len(job_ids) == 1
     job_id = job_ids[0]
 
     # Wait for initial data
     wait_for_job_data(backend, job_ids, timeout=10.0)
 
-    # Create subscriber with FullHistoryExtractor for 'current' output
+    # Create subscriber with FullHistoryExtractor
     result_key = ResultKey(
-        workflow_id=workflow_id, job_id=job_id, output_name='current'
+        workflow_id=workflow_id, job_id=job_id, output_name=output_name
     )
     subscriber, pipe = create_subscriber_with_full_history_extractor(keys={result_key})
 
-    # Register subscriber with data service
+    # Register subscriber and trigger update
     backend.data_service.register_subscriber(subscriber)
-
-    # Trigger backend update to ensure subscriber gets notified
     backend.update()
 
-    # Verify pipe was initialized and received data
+    # Verify pipe was initialized with data
     assert pipe.init_data is not None, "Pipe should be initialized with data"
-    assert result_key in pipe.init_data, "Expected 'current' output in pipe data"
+    assert result_key in pipe.init_data, f"Expected '{output_name}' output in pipe data"
 
-    # Verify the data has a 'time' coordinate
+    # Verify the data has a 'time' coordinate and dimension
     first_data = pipe.init_data[result_key]
     assert isinstance(first_data, sc.DataArray), "Expected DataArray"
-    assert 'time' in first_data.coords, "Expected 'time' coordinate in 'current' output"
+    assert (
+        'time' in first_data.coords
+    ), f"Expected 'time' coordinate in '{output_name}' output"
     assert 'time' in first_data.dims, "Expected 'time' dimension for history buffer"
 
-    # Get initial time and size
+    # Get initial size
     initial_size = first_data.sizes['time']
 
-    # Wait for more data to accumulate (multiple updates)
-    time.sleep(2.0)  # Wait for a few more data points
+    # If we have multiple points initially, verify they're monotonic
+    if initial_size > 1:
+        times = first_data.coords['time'].values
+        time_diffs = times[1:] - times[:-1]
+        assert (time_diffs > 0).all(), "Expected monotonically increasing initial times"
+
+    # Wait for more data to accumulate
+    time.sleep(2.0)
     backend.update()
 
-    # Verify we received new data via pipe.sent_data (subsequent updates)
+    # Verify we received updates
     assert len(pipe.sent_data) > 0, "Expected updates after initial data"
 
     # Get latest accumulated data
@@ -145,15 +158,13 @@ def test_monitor_current_output_with_full_history_extractor(
 
     # Verify history is accumulating
     new_size = latest_data.sizes['time']
-    assert new_size >= initial_size, (
-        f"Expected history to accumulate, but size decreased: "
-        f"{initial_size} -> {new_size}"
-    )
+    assert (
+        new_size >= initial_size
+    ), f"Expected history to accumulate: {initial_size} -> {new_size}"
 
     # If we got new data points, verify times are monotonically increasing
     if new_size > initial_size:
         new_times = latest_data.coords['time'].values
-        # Check that times are strictly increasing
         time_diffs = new_times[1:] - new_times[:-1]
         assert (
             time_diffs > 0
@@ -163,79 +174,51 @@ def test_monitor_current_output_with_full_history_extractor(
 
 
 @pytest.mark.integration
+@pytest.mark.services('monitor')
+def test_monitor_current_output_with_full_history_extractor(
+    integration_env: IntegrationEnv,
+) -> None:
+    """
+    Test monitor 'current' output with history extractor.
+
+    Verifies time coordinate, accumulation, and monotonic times.
+    """
+    verify_output_has_time_coord_and_accumulates(
+        backend=integration_env.backend,
+        workflow_id=WorkflowId(
+            instrument='dummy',
+            namespace='monitor_data',
+            name='monitor_histogram',
+            version=1,
+        ),
+        source_names=['monitor1'],
+        config=MonitorDataParams(),
+        output_name='current',
+    )
+
+
+@pytest.mark.integration
 @pytest.mark.services('detector')
 def test_detector_current_output_with_full_history_extractor(
     integration_env: IntegrationEnv,
 ) -> None:
     """
-    Test that detector 'current' output has time coord and works with history extractor.
+    Test detector 'current' output with history extractor.
 
-    The detector view workflow produces 'current' and 'cumulative' outputs. The
-    'current' output should have a 'time' coordinate and accumulate over time.
+    Verifies time coordinate, accumulation, and monotonic times.
     """
-    backend = integration_env.backend
-
-    # Start detector view workflow for panel_0
-    workflow_id = WorkflowId(
-        instrument='dummy',
-        namespace='detector_data',
-        name='panel_0_xy',
-        version=1,
-    )
-    source_names = ['panel_0']
-
-    job_ids = backend.workflow_controller.start_workflow(
-        workflow_id=workflow_id,
-        source_names=source_names,
+    verify_output_has_time_coord_and_accumulates(
+        backend=integration_env.backend,
+        workflow_id=WorkflowId(
+            instrument='dummy',
+            namespace='detector_data',
+            name='panel_0_xy',
+            version=1,
+        ),
+        source_names=['panel_0'],
         config=DetectorViewParams(),
+        output_name='current',
     )
-
-    assert len(job_ids) == 1
-    job_id = job_ids[0]
-
-    # Wait for initial data
-    wait_for_job_data(backend, job_ids, timeout=10.0)
-
-    # Create subscriber with FullHistoryExtractor for 'current' output
-    result_key = ResultKey(
-        workflow_id=workflow_id, job_id=job_id, output_name='current'
-    )
-    subscriber, pipe = create_subscriber_with_full_history_extractor(keys={result_key})
-
-    backend.data_service.register_subscriber(subscriber)
-    backend.update()
-
-    # Verify data was received
-    assert pipe.init_data is not None
-    assert result_key in pipe.init_data
-
-    first_data = pipe.init_data[result_key]
-    assert isinstance(first_data, sc.DataArray)
-    assert 'time' in first_data.coords, "Expected 'time' coordinate in 'current' output"
-    assert 'time' in first_data.dims, "Expected 'time' dimension for history buffer"
-
-    initial_size = first_data.sizes['time']
-
-    # Wait for more data to accumulate
-    time.sleep(2.0)
-    backend.update()
-
-    # Verify we received updates
-    assert len(pipe.sent_data) > 0, "Expected updates after initial data"
-
-    latest_data = pipe.sent_data[-1][result_key]
-    new_size = latest_data.sizes['time']
-
-    # Verify history is accumulating
-    assert (
-        new_size >= initial_size
-    ), f"Expected history to accumulate: {initial_size} -> {new_size}"
-
-    # If we got new data, verify times are monotonically increasing
-    if new_size > initial_size:
-        new_times = latest_data.coords['time'].values
-        time_diffs = new_times[1:] - new_times[:-1]
-        assert (time_diffs > 0).all(), "Expected monotonically increasing times"
 
 
 @pytest.mark.integration
@@ -290,78 +273,20 @@ def test_timeseries_delta_output_with_full_history_extractor(
     integration_env: IntegrationEnv,
 ) -> None:
     """
-    Test that timeseries 'delta' output has time coord and works with history extractor.
+    Test timeseries 'delta' output with history extractor.
 
-    The timeseries workflow produces a 'delta' output which behaves like 'current'
-    from monitor/detector workflows. The main difference is that timeseries may
-    publish multiple time points at once. The 'delta' output should have a 'time'
-    coordinate and work with history extractors.
+    Verifies time coordinate, accumulation, and monotonic times.
+    Timeseries may publish multiple time points at once.
     """
-    backend = integration_env.backend
-
-    # Start timeseries workflow
-    workflow_id = WorkflowId(
-        instrument='dummy',
-        namespace='timeseries',
-        name='timeseries_data',
-        version=1,
-    )
-    source_names = ['motion1']
-
-    job_ids = backend.workflow_controller.start_workflow(
-        workflow_id=workflow_id,
-        source_names=source_names,
+    verify_output_has_time_coord_and_accumulates(
+        backend=integration_env.backend,
+        workflow_id=WorkflowId(
+            instrument='dummy',
+            namespace='timeseries',
+            name='timeseries_data',
+            version=1,
+        ),
+        source_names=['motion1'],
         config=None,
+        output_name='delta',
     )
-
-    assert len(job_ids) == 1
-    job_id = job_ids[0]
-
-    wait_for_job_data(backend, job_ids, timeout=10.0)
-
-    # Create subscriber with FullHistoryExtractor for 'delta' output
-    result_key = ResultKey(workflow_id=workflow_id, job_id=job_id, output_name='delta')
-    subscriber, pipe = create_subscriber_with_full_history_extractor(keys={result_key})
-
-    backend.data_service.register_subscriber(subscriber)
-    backend.update()
-
-    # Verify pipe was initialized
-    assert pipe.init_data is not None
-    assert result_key in pipe.init_data
-
-    # Verify delta has time coordinate and dimension
-    first_data = pipe.init_data[result_key]
-    assert isinstance(first_data, sc.DataArray)
-    assert 'time' in first_data.coords, "Delta output should have time coordinate"
-    assert 'time' in first_data.dims, "Delta output should have time dimension"
-
-    # Timeseries may publish multiple time points at once
-    initial_size = first_data.sizes['time']
-    assert initial_size >= 1, "Expected at least one time point"
-
-    # If we have multiple points, verify times are monotonically increasing
-    if initial_size > 1:
-        times = first_data.coords['time'].values
-        time_diffs = times[1:] - times[:-1]
-        assert (time_diffs > 0).all(), "Expected monotonically increasing times"
-
-    # Wait for more data
-    time.sleep(2.0)
-    backend.update()
-
-    # Verify we received updates
-    if len(pipe.sent_data) > 0:
-        latest_data = pipe.sent_data[-1][result_key]
-        new_size = latest_data.sizes['time']
-
-        # Verify history is accumulating
-        assert (
-            new_size >= initial_size
-        ), f"Expected history to accumulate: {initial_size} -> {new_size}"
-
-        # Verify times are monotonically increasing across the full history
-        if new_size > 1:
-            all_times = latest_data.coords['time'].values
-            time_diffs = all_times[1:] - all_times[:-1]
-            assert (time_diffs > 0).all(), "Expected monotonically increasing times"
