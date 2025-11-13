@@ -78,7 +78,11 @@ class Instrument:
 
         # Only register monitor interval timeseries if nexus file is available
         # (required by the workflow to create GenericTofWorkflow)
-        if self._nexus_file is not None or self._can_load_nexus_file():
+        try:
+            _ = self.nexus_file  # Cache in _nexus_file if successful
+        except ValueError:
+            pass  # nexus file not available for this instrument
+        else:
             self._monitor_ratemeter_handle = register_monitor_ratemeter_spec(
                 instrument=self, source_names=self.monitors
             )
@@ -87,18 +91,6 @@ class Instrument:
         self._timeseries_workflow_handle = register_timeseries_workflow_specs(
             instrument=self, source_names=timeseries_names
         )
-
-    def _can_load_nexus_file(self) -> bool:
-        """Check if a nexus file can be loaded for this instrument."""
-        from ess.livedata.handlers.detector_data_handler import (
-            get_nexus_geometry_filename,
-        )
-
-        try:
-            get_nexus_geometry_filename(self.name)
-            return True
-        except ValueError:
-            return False
 
     @property
     def nexus_file(self) -> str:
