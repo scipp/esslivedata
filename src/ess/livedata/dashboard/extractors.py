@@ -5,6 +5,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
+from .plot_params import WindowAggregation
+
 if TYPE_CHECKING:
     from ess.livedata.config.workflow_spec import ResultKey
 
@@ -99,7 +101,7 @@ class WindowAggregatingExtractor(UpdateExtractor[T]):
     def __init__(
         self,
         window_duration_seconds: float,
-        aggregation: str = 'auto',
+        aggregation: WindowAggregation = WindowAggregation.auto,
         concat_dim: str = 'time',
     ) -> None:
         """
@@ -110,8 +112,8 @@ class WindowAggregatingExtractor(UpdateExtractor[T]):
         window_duration_seconds:
             Time duration to extract from the end of the buffer (seconds).
         aggregation:
-            Aggregation method: 'auto', 'nansum', 'nanmean', 'sum', 'mean', 'last',
-            or 'max'. 'auto' uses 'nansum' if data unit is counts, else 'nanmean'.
+            Aggregation method. WindowAggregation.auto uses 'nansum' if data unit
+            is counts, else 'nanmean'.
         concat_dim:
             Name of the dimension to aggregate over.
         """
@@ -150,26 +152,26 @@ class WindowAggregatingExtractor(UpdateExtractor[T]):
 
         # Determine aggregation method
         agg_method = self._aggregation
-        if agg_method == 'auto':
+        if agg_method == WindowAggregation.auto:
             # Use nansum if data is dimensionless (counts), else nanmean
             if hasattr(windowed_data, 'unit') and windowed_data.unit == '1':
-                agg_method = 'nansum'
+                agg_method = WindowAggregation.nansum
             else:
-                agg_method = 'nanmean'
+                agg_method = WindowAggregation.nanmean
 
         # Aggregate over the concat dimension
-        if agg_method == 'sum':
+        if agg_method == WindowAggregation.sum:
             return windowed_data.sum(self._concat_dim)
-        elif agg_method == 'nansum':
+        elif agg_method == WindowAggregation.nansum:
             return windowed_data.nansum(self._concat_dim)
-        elif agg_method == 'mean':
+        elif agg_method == WindowAggregation.mean:
             return windowed_data.mean(self._concat_dim)
-        elif agg_method == 'nanmean':
+        elif agg_method == WindowAggregation.nanmean:
             return windowed_data.nanmean(self._concat_dim)
-        elif agg_method == 'last':
+        elif agg_method == WindowAggregation.last:
             # Return the last frame (equivalent to latest)
             return windowed_data[self._concat_dim, -1]
-        elif agg_method == 'max':
+        elif agg_method == WindowAggregation.max:
             return windowed_data.max(self._concat_dim)
         else:
             raise ValueError(f"Unknown aggregation method: {agg_method}")
@@ -215,7 +217,7 @@ def create_extractors_from_params(
             return {
                 key: WindowAggregatingExtractor(
                     window_duration_seconds=window.window_duration_seconds,
-                    aggregation=window.aggregation.value,
+                    aggregation=window.aggregation,
                 )
                 for key in keys
             }
