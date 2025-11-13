@@ -59,11 +59,15 @@ class Instrument:
     active_namespace: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
     _monitor_workflow_handle: SpecHandle | None = field(default=None, init=False)
+    _monitor_interval_timeseries_handle: SpecHandle | None = field(
+        default=None, init=False
+    )
     _timeseries_workflow_handle: SpecHandle | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         """Auto-register standard workflow specs based on instrument metadata."""
         from ess.livedata.handlers.monitor_workflow_specs import (
+            register_monitor_interval_timeseries_spec,
             register_monitor_workflow_specs,
         )
         from ess.livedata.handlers.timeseries_workflow_specs import (
@@ -74,10 +78,31 @@ class Instrument:
             instrument=self, source_names=self.monitors
         )
 
+        # Only register monitor interval timeseries if nexus file is available
+        # (required by the workflow to create GenericTofWorkflow)
+        if self._nexus_file is not None or self._can_load_nexus_file():
+            self._monitor_interval_timeseries_handle = (
+                register_monitor_interval_timeseries_spec(
+                    instrument=self, source_names=self.monitors
+                )
+            )
+
         timeseries_names = list(self.f144_attribute_registry.keys())
         self._timeseries_workflow_handle = register_timeseries_workflow_specs(
             instrument=self, source_names=timeseries_names
         )
+
+    def _can_load_nexus_file(self) -> bool:
+        """Check if a nexus file can be loaded for this instrument."""
+        from ess.livedata.handlers.detector_data_handler import (
+            get_nexus_geometry_filename,
+        )
+
+        try:
+            get_nexus_geometry_filename(self.name)
+            return True
+        except ValueError:
+            return False
 
     @property
     def nexus_file(self) -> str:
@@ -240,6 +265,14 @@ class Instrument:
             self._monitor_workflow_handle.attach_factory()(
                 MonitorStreamProcessor.create_workflow
             )
+
+        if self._monitor_interval_timeseries_handle is not None:
+            from ess.livedata.handlers.monitor_data_handler import (
+                create_monitor_interval_timeseries_factory,
+            )
+
+            factory = create_monitor_interval_timeseries_factory(self)
+            self._monitor_interval_timeseries_handle.attach_factory()(factory)
 
         if self._timeseries_workflow_handle is not None:
             from ess.livedata.handlers.timeseries_handler import (

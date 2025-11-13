@@ -3,15 +3,27 @@
 from __future__ import annotations
 
 from collections.abc import Hashable
+from typing import NewType
 
 import numpy as np
 import scipp as sc
 
+from ess.reduce.nexus.types import Filename, NeXusData, NeXusName
+from ess.reduce.time_of_flight import GenericTofWorkflow
+
+from .. import parameter_models
+from ..config.workflows import TimeseriesAccumulator
 from ..core.handler import JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import Accumulator, CollectTOA, Cumulative, MonitorEvents
-from .monitor_workflow_specs import MonitorDataParams
+from .monitor_workflow_specs import MonitorDataParams, MonitorTimeseriesParams
+from .stream_processor_workflow import StreamProcessorWorkflow
 from .workflow_factory import Workflow
+
+# Type aliases for monitor interval timeseries workflow
+CustomMonitor = NewType('CustomMonitor', int)
+CurrentRun = NewType('CurrentRun', int)
+MonitorCountsInInterval = NewType('MonitorCountsInInterval', sc.DataArray)
 
 
 class MonitorStreamProcessor(Workflow):
@@ -82,3 +94,69 @@ class MonitorHandlerFactory(
                 return CollectTOA()
             case _:
                 return None
+
+
+def _get_interval(
+    data: NeXusData[CustomMonitor, CurrentRun],
+    range: parameter_models.TOARange,
+) -> MonitorCountsInInterval:
+    """Extract monitor counts within a time-of-arrival interval."""
+    start, stop = range.range_ns
+    if data.bins is not None:
+        counts = data.bins['event_time_offset', start:stop].sum()
+        counts.coords['time'] = data.coords['event_time_zero'][0]
+    else:
+        counts = data['time', start:stop].sum()
+        counts.coords['time'] = data.coords['frame_time'][0]
+    return MonitorCountsInInterval(counts)
+
+
+def create_monitor_interval_timeseries_factory(instrument):
+    """
+    Create factory function for monitor interval timeseries workflow.
+
+    This is generic workflow logic that can be used by any instrument.
+    Auto-attached by Instrument.load_factories().
+
+    Parameters
+    ----------
+    instrument
+        Instrument instance
+
+    Returns
+    -------
+    :
+        Factory function that can be attached to the spec handle
+    """
+
+    def factory(
+        source_name: str,
+        params: MonitorTimeseriesParams,
+    ) -> StreamProcessorWorkflow:
+        """Factory function for monitor interval timeseries workflow.
+
+        Parameters
+        ----------
+        source_name:
+            Monitor source name
+        params:
+            MonitorTimeseriesParams with toa_range configuration
+
+        Returns
+        -------
+        :
+            StreamProcessorWorkflow instance
+        """
+        wf = GenericTofWorkflow(run_types=[CurrentRun], monitor_types=[CustomMonitor])
+        wf[Filename[CurrentRun]] = instrument.nexus_file
+        wf[NeXusName[CustomMonitor]] = source_name
+        wf[parameter_models.TOARange] = params.toa_range
+        wf.insert(_get_interval)
+        return StreamProcessorWorkflow(
+            base_workflow=wf,
+            dynamic_keys={source_name: NeXusData[CustomMonitor, CurrentRun]},
+            target_keys={'monitor_counts': MonitorCountsInInterval},
+            accumulators={MonitorCountsInInterval: TimeseriesAccumulator},
+        )
+
+    return factory
