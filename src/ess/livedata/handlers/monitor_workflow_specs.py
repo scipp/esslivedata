@@ -53,11 +53,6 @@ def register_monitor_workflow_specs(
     """
     Register monitor workflow specs (lightweight, no heavy dependencies).
 
-    This is the first phase of two-phase registration.
-
-    If the workflow is already registered (e.g., auto-registered in
-    Instrument.__post_init__()), returns the existing handle.
-
     Parameters
     ----------
     instrument
@@ -72,17 +67,6 @@ def register_monitor_workflow_specs(
     """
     if not source_names:
         return None
-
-    from ..config.workflow_spec import WorkflowId
-
-    workflow_id = WorkflowId(
-        instrument=instrument.name,
-        namespace='monitor_data',
-        name='monitor_histogram',
-        version=1,
-    )
-    if workflow_id in instrument.workflow_factory._workflow_specs:
-        return SpecHandle(workflow_id=workflow_id, _factory=instrument.workflow_factory)
 
     return instrument.register_spec(
         namespace='monitor_data',
@@ -102,8 +86,6 @@ def register_monitor_interval_timeseries_spec(
     """
     Register monitor interval timeseries workflow spec (lightweight, no heavy deps).
 
-    This is the first phase of two-phase registration.
-
     Parameters
     ----------
     instrument
@@ -118,17 +100,6 @@ def register_monitor_interval_timeseries_spec(
     """
     if not source_names:
         return None
-
-    from ..config.workflow_spec import WorkflowId
-
-    workflow_id = WorkflowId(
-        instrument=instrument.name,
-        namespace='monitor_data',
-        name='monitor_interval_timeseries',
-        version=1,
-    )
-    if workflow_id in instrument.workflow_factory._workflow_specs:
-        return SpecHandle(workflow_id=workflow_id, _factory=instrument.workflow_factory)
 
     return instrument.register_spec(
         namespace='monitor_data',
