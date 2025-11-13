@@ -53,6 +53,17 @@ class BufferProtocol(ABC, Generic[T]):
         """
 
     @abstractmethod
+    def get_required_timespan(self) -> float:
+        """
+        Get the required timespan for the buffer.
+
+        Returns
+        -------
+        :
+            Required timespan in seconds.
+        """
+
+    @abstractmethod
     def set_max_memory(self, max_bytes: int) -> None:
         """
         Set the maximum memory usage for the buffer.
@@ -92,6 +103,10 @@ class SingleValueBuffer(BufferProtocol[T]):
     def set_required_timespan(self, seconds: float) -> None:
         """Set required timespan (unused for SingleValueBuffer)."""
         self._required_timespan = seconds
+
+    def get_required_timespan(self) -> float:
+        """Get the required timespan."""
+        return self._required_timespan
 
     def set_max_memory(self, max_bytes: int) -> None:
         """Set max memory (unused for SingleValueBuffer)."""
@@ -342,6 +357,10 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
     def set_required_timespan(self, seconds: float) -> None:
         """Set the required timespan for the buffer."""
         self._required_timespan = seconds
+
+    def get_required_timespan(self) -> float:
+        """Get the required timespan for the buffer."""
+        return self._required_timespan
 
     def set_max_memory(self, max_bytes: int) -> None:
         """Set the maximum memory usage for the buffer."""

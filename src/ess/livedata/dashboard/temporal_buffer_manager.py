@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Hashable, Iterator, Mapping
+from collections.abc import Hashable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
@@ -24,7 +24,9 @@ class _BufferState:
     """Internal state for a managed buffer."""
 
     buffer: BufferProtocol[sc.DataArray]
-    extractors: list[UpdateExtractor] = field(default_factory=list)
+    extractors: list[UpdateExtractor] = field(
+        default_factory=list
+    )  # Stored as list internally
 
 
 class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]):
@@ -77,7 +79,7 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]
             return None
         return self._states[key].buffer.get()
 
-    def create_buffer(self, key: K, extractors: list[UpdateExtractor]) -> None:
+    def create_buffer(self, key: K, extractors: Sequence[UpdateExtractor]) -> None:
         """
         Create a buffer with appropriate type based on extractors.
 
@@ -86,7 +88,7 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]
         key:
             Key to identify this buffer.
         extractors:
-            List of extractors that will use this buffer.
+            Sequence of extractors that will use this buffer.
         """
         if key in self._states:
             raise ValueError(f"Buffer with key {key} already exists")
@@ -133,7 +135,7 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]
         state.extractors.append(extractor)
         self._reconfigure_buffer_if_needed(key, state)
 
-    def set_extractors(self, key: K, extractors: list[UpdateExtractor]) -> None:
+    def set_extractors(self, key: K, extractors: Sequence[UpdateExtractor]) -> None:
         """
         Replace all extractors for an existing buffer.
 
@@ -151,7 +153,7 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]
         key:
             Key identifying the buffer to update.
         extractors:
-            New list of extractors that will use this buffer.
+            New sequence of extractors that will use this buffer.
         """
         state = self._states[key]
         state.extractors = list(extractors)
@@ -227,7 +229,7 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]
             del self._states[key]
 
     def _create_buffer_for_extractors(
-        self, extractors: list[UpdateExtractor]
+        self, extractors: Sequence[UpdateExtractor]
     ) -> BufferProtocol[sc.DataArray]:
         """
         Create appropriate buffer type based on extractors.
@@ -238,7 +240,7 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]
         Parameters
         ----------
         extractors:
-            List of extractors that will use the buffer.
+            Sequence of extractors that will use the buffer.
 
         Returns
         -------
@@ -258,7 +260,9 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]
             return TemporalBuffer()
 
     def _update_buffer_requirements(
-        self, buffer: BufferProtocol[sc.DataArray], extractors: list[UpdateExtractor]
+        self,
+        buffer: BufferProtocol[sc.DataArray],
+        extractors: Sequence[UpdateExtractor],
     ) -> None:
         """
         Update buffer requirements based on extractors.
@@ -271,7 +275,7 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]
         buffer:
             The buffer to update.
         extractors:
-            List of extractors to gather requirements from.
+            Sequence of extractors to gather requirements from.
         """
         # Compute maximum required timespan
         if extractors:
