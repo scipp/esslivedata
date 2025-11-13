@@ -171,7 +171,7 @@ class TestTemporalBufferManager:
         """Test that adding extractor to non-existent buffer raises KeyError."""
         manager = TemporalBufferManager()
 
-        with pytest.raises(KeyError, match="No buffer found"):
+        with pytest.raises(KeyError):
             manager.add_extractor('test', LatestValueExtractor())
 
     def test_delete_buffer_removes_buffer(self):

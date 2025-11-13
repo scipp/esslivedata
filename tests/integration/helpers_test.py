@@ -11,6 +11,7 @@ import uuid
 from typing import Any
 
 import pytest
+import scipp as sc
 
 from ess.livedata.config.workflow_spec import JobId, JobNumber, ResultKey, WorkflowId
 from ess.livedata.core.job_manager import JobState, JobStatus
@@ -22,6 +23,18 @@ from tests.integration.helpers import (
     wait_for_job_data,
     wait_for_job_statuses,
 )
+
+
+def make_test_result(value: str) -> sc.DataArray:
+    """Create a scipp DataArray representing a result value.
+
+    The returned DataArray has a time dimension so that LatestValueExtractor
+    will extract the scalar value from it.
+    """
+    return sc.DataArray(
+        sc.array(dims=['time'], values=[value], unit='dimensionless'),
+        coords={'time': sc.array(dims=['time'], values=[0.0], unit='s')},
+    )
 
 
 def make_workflow_id(name: str, version: int = 1) -> WorkflowId:
@@ -121,7 +134,7 @@ class TestWaitForJobData:
                         job_id=job_id,
                         output_name='output1',
                     )
-                ] = 'data'
+                ] = make_test_result('data')
 
         backend.on_update_callbacks.append(simulate_data_arrival)
 
@@ -131,7 +144,7 @@ class TestWaitForJobData:
         # Should return dict mapping JobId to job_data
         assert job_id in result
         assert 'source1' in result[job_id]
-        assert result[job_id]['source1']['output1'] == 'data'
+        assert result[job_id]['source1']['output1'].value == 'data'
 
     def test_succeeds_when_data_arrives_for_all_jobs(
         self, job_service: JobService, data_service: DataService[ResultKey, Any]
@@ -155,7 +168,7 @@ class TestWaitForJobData:
                             job_id=job_id,
                             output_name='output1',
                         )
-                    ] = 'data'
+                    ] = make_test_result('data')
 
         backend.on_update_callbacks.append(simulate_data_arrival)
 
@@ -182,7 +195,7 @@ class TestWaitForJobData:
                 job_id=job_ids[0],
                 output_name='output1',
             )
-        ] = 'data'
+        ] = make_test_result('data')
 
         with pytest.raises(WaitTimeout):
             wait_for_job_data(backend, job_ids, timeout=0.3, poll_interval=0.05)
@@ -204,7 +217,7 @@ class TestWaitForJobData:
                 job_id=job_id_other,
                 output_name='output1',
             )
-        ] = 'data'
+        ] = make_test_result('data')
 
         with pytest.raises(WaitTimeout):
             wait_for_job_data(
