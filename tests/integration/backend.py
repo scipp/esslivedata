@@ -6,6 +6,7 @@ import logging
 from contextlib import ExitStack
 from types import TracebackType
 
+from ess.livedata.dashboard.config_store import ConfigStoreManager
 from ess.livedata.dashboard.dashboard_services import DashboardServices
 from ess.livedata.dashboard.kafka_transport import DashboardKafkaTransport
 
@@ -55,6 +56,11 @@ class DashboardBackend:
         self._exit_stack = ExitStack()
         self._exit_stack.__enter__()
 
+        # Create config manager with in-memory stores for tests (no file I/O)
+        self._config_manager = ConfigStoreManager(
+            instrument=instrument, store_type='memory'
+        )
+
         # Create Kafka transport for integration tests
         transport = DashboardKafkaTransport(
             instrument=instrument, dev=dev, logger=self._logger
@@ -68,6 +74,7 @@ class DashboardBackend:
             logger=self._logger,
             pipe_factory=lambda data: None,  # No-op for tests
             transport=transport,
+            config_manager=self._config_manager,
         )
 
         self._logger.info("DashboardBackend initialized for %s", instrument)
@@ -135,6 +142,23 @@ class DashboardBackend:
     def workflow_controller(self):
         self._check_available()
         return self._services.workflow_controller
+
+    @property
+    def config_manager(self):
+        """
+        Get the config store manager.
+
+        Allows tests to inspect config stores for modifications made by services.
+
+        Examples
+        --------
+        >>> backend = DashboardBackend(instrument='dummy')
+        >>> backend.start()
+        >>> # Test modifies configs...
+        >>> workflow_store = backend.config_manager.get_store('workflow_configs')
+        >>> assert workflow_id in workflow_store
+        """
+        return self._config_manager
 
     def start(self) -> None:
         """Start the background message source."""
