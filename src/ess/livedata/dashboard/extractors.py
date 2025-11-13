@@ -63,13 +63,7 @@ class LatestValueExtractor(UpdateExtractor):
 
     def extract(self, data: sc.DataArray) -> Any:
         """Extract the latest value from the data, unwrapped."""
-        # Check if data has the concat dimension
-        if not hasattr(data, 'dims') or self._concat_dim not in data.dims:
-            # Data doesn't have concat dim - already a single frame
-            return data
-
-        # Extract last frame along concat dimension
-        return data[self._concat_dim, -1]
+        return data[self._concat_dim, -1] if self._concat_dim in data.dims else data
 
 
 class FullHistoryExtractor(UpdateExtractor):
@@ -110,6 +104,7 @@ class WindowAggregatingExtractor(UpdateExtractor):
         self._aggregation = aggregation
         self._concat_dim = concat_dim
         self._aggregator: Callable[[sc.DataArray, str], sc.DataArray] | None = None
+        self._duration: sc.Variable | None = None
 
     def get_required_timespan(self) -> float:
         """Return the required window duration."""
@@ -117,29 +112,32 @@ class WindowAggregatingExtractor(UpdateExtractor):
 
     def extract(self, data: sc.DataArray) -> Any:
         """Extract a window of data and aggregate over the time dimension."""
-        # Calculate cutoff time using scipp's unit handling
+        # Calculate cutoff time
         time_coord = data.coords[self._concat_dim]
-        latest_time = time_coord[-1]
-        duration = sc.scalar(self._window_duration_seconds, unit='s').to(
-            unit=time_coord.unit
-        )
+        if self._duration is None:
+            self._duration = sc.scalar(self._window_duration_seconds, unit='s').to(
+                unit=time_coord.unit
+            )
 
         # Estimate frame period from median interval to handle timing noise.
         # Shift cutoff by half period to place boundary between frame slots,
         # avoiding inclusion of extra frames due to timing jitter.
+        latest_time = time_coord[-1]
         if len(time_coord) > 1:
             intervals = time_coord[1:] - time_coord[:-1]
             median_interval = sc.median(intervals)
-            cutoff_time = latest_time - duration + 0.5 * median_interval
+            cutoff_time = latest_time - self._duration + 0.5 * median_interval
             # Clamp to ensure at least latest frame included
             # (handles narrow windows where duration < median_interval)
             if cutoff_time > latest_time:
                 cutoff_time = latest_time
         else:
             # Single frame: use duration-based cutoff
-            cutoff_time = latest_time - duration
+            cutoff_time = latest_time - self._duration
 
-        # Use label-based slicing with inclusive lower bound
+        # Use label-based slicing with inclusive lower bound. If timestamps were precise
+        # we would actually want exclusive lower bound, but since there is jitter anyway
+        # the cutoff shift above should handle that well enough.
         windowed_data = data[self._concat_dim, cutoff_time:]
 
         # Resolve and cache aggregator function on first call
