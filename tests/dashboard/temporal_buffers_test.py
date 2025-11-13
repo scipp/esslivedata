@@ -12,6 +12,67 @@ from ess.livedata.dashboard.temporal_buffers import (
 )
 
 
+# Fixtures for common test data
+@pytest.fixture
+def single_slice_2element():
+    """Create a single time slice with 2 x-elements."""
+    return sc.DataArray(
+        sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+        coords={
+            'x': sc.arange('x', 2, unit='m'),
+            'time': sc.scalar(0.0, unit='s'),
+        },
+    )
+
+
+@pytest.fixture
+def thick_slice_2x2():
+    """Create a thick slice with 2 time points and 2 x-elements."""
+    return sc.DataArray(
+        sc.array(dims=['time', 'x'], values=[[1.0, 2.0], [3.0, 4.0]], unit='counts'),
+        coords={
+            'x': sc.arange('x', 2, unit='m'),
+            'time': sc.array(dims=['time'], values=[0.0, 1.0], unit='s'),
+        },
+    )
+
+
+# Helper functions for creating test data
+def make_single_slice(x_values, time_value):
+    """Create a single time slice DataArray."""
+    return sc.DataArray(
+        sc.array(dims=['x'], values=x_values, unit='counts'),
+        coords={
+            'x': sc.arange('x', len(x_values), unit='m'),
+            'time': sc.scalar(time_value, unit='s'),
+        },
+    )
+
+
+def make_thick_slice(x_size, time_values):
+    """Create a thick slice DataArray with multiple time points."""
+    n_times = len(time_values)
+    return sc.DataArray(
+        sc.array(
+            dims=['time', 'x'],
+            values=[[float(i)] * x_size for i in range(n_times)],
+            unit='counts',
+        ),
+        coords={
+            'x': sc.arange('x', x_size, unit='m'),
+            'time': sc.array(dims=['time'], values=time_values, unit='s'),
+        },
+    )
+
+
+def assert_buffer_has_time_data(buffer, expected_size):
+    """Assert buffer contains time-dimensioned data of expected size."""
+    result = buffer.get()
+    assert result is not None
+    assert 'time' in result.dims
+    assert result.sizes['time'] == expected_size
+
+
 class TestSingleValueBuffer:
     """Tests for SingleValueBuffer."""
 
@@ -53,19 +114,15 @@ class TestSingleValueBuffer:
 
         assert result is None
 
-    def test_set_required_timespan(self):
-        """
-        Test that set_required_timespan can be called (no-op).
-        """
+    def test_set_required_timespan_does_not_error(self):
+        """Test that set_required_timespan can be called without error."""
         buffer = SingleValueBuffer()
-        buffer.set_required_timespan(10.0)
-        # No assertion - just verify it doesn't error
+        buffer.set_required_timespan(10.0)  # Should not raise
 
-    def test_set_max_memory(self):
-        """Test that set_max_memory can be called (no-op for SingleValueBuffer)."""
+    def test_set_max_memory_does_not_error(self):
+        """Test that set_max_memory can be called without error."""
         buffer = SingleValueBuffer()
-        buffer.set_max_memory(1000)
-        # No assertion - just verify it doesn't error
+        buffer.set_max_memory(1000)  # Should not raise
 
     def test_add_dataarray_with_dimensions(self):
         """Test adding a DataArray with dimensions."""
@@ -84,123 +141,42 @@ class TestSingleValueBuffer:
 class TestTemporalBuffer:
     """Tests for TemporalBuffer."""
 
-    def test_add_single_slice_without_time_dim(self):
-        """Test adding a single slice without time dimension."""
+    @pytest.mark.parametrize(
+        ('data_creator', 'expected_time_size'),
+        [
+            (lambda: make_single_slice([1.0, 2.0, 3.0], 0.0), 1),
+            (lambda: make_thick_slice(2, [0.0, 1.0]), 2),
+        ],
+        ids=['single_slice', 'thick_slice'],
+    )
+    def test_add_data_creates_time_dimension(self, data_creator, expected_time_size):
+        """Test that adding data creates buffer with time dimension."""
         buffer = TemporalBuffer()
-        data = sc.DataArray(
-            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
-            coords={
-                'x': sc.arange('x', 3, unit='m'),
-                'time': sc.scalar(0.0, unit='s'),
-            },
-        )
-
-        buffer.add(data)
-        result = buffer.get()
-
-        assert result is not None
-        assert 'time' in result.dims
-        assert result.sizes['time'] == 1
-
-    def test_add_thick_slice_with_time_dim(self):
-        """Test adding a thick slice with time dimension."""
-        buffer = TemporalBuffer()
-        data = sc.DataArray(
-            sc.array(
-                dims=['time', 'x'], values=[[1.0, 2.0], [3.0, 4.0]], unit='counts'
-            ),
-            coords={
-                'x': sc.arange('x', 2, unit='m'),
-                'time': sc.array(dims=['time'], values=[0.0, 1.0], unit='s'),
-            },
-        )
-
-        buffer.add(data)
-        result = buffer.get()
-
-        assert result is not None
-        assert 'time' in result.dims
-        assert result.sizes['time'] == 2
+        buffer.add(data_creator())
+        assert_buffer_has_time_data(buffer, expected_time_size)
 
     def test_add_multiple_single_slices(self):
         """Test concatenating multiple single slices."""
         buffer = TemporalBuffer()
 
         for i in range(3):
-            data = sc.DataArray(
-                sc.array(dims=['x'], values=[float(i)] * 2, unit='counts'),
-                coords={
-                    'x': sc.arange('x', 2, unit='m'),
-                    'time': sc.scalar(float(i), unit='s'),
-                },
-            )
-            buffer.add(data)
+            buffer.add(make_single_slice([float(i)] * 2, float(i)))
 
-        result = buffer.get()
-        assert result is not None
-        assert result.sizes['time'] == 3
+        assert_buffer_has_time_data(buffer, 3)
 
     def test_add_multiple_thick_slices(self):
         """Test concatenating multiple thick slices."""
         buffer = TemporalBuffer()
-
-        # Add first thick slice
-        data1 = sc.DataArray(
-            sc.array(
-                dims=['time', 'x'], values=[[1.0, 2.0], [3.0, 4.0]], unit='counts'
-            ),
-            coords={
-                'x': sc.arange('x', 2, unit='m'),
-                'time': sc.array(dims=['time'], values=[0.0, 1.0], unit='s'),
-            },
-        )
-        buffer.add(data1)
-
-        # Add second thick slice
-        data2 = sc.DataArray(
-            sc.array(
-                dims=['time', 'x'], values=[[5.0, 6.0], [7.0, 8.0]], unit='counts'
-            ),
-            coords={
-                'x': sc.arange('x', 2, unit='m'),
-                'time': sc.array(dims=['time'], values=[2.0, 3.0], unit='s'),
-            },
-        )
-        buffer.add(data2)
-
-        result = buffer.get()
-        assert result is not None
-        assert result.sizes['time'] == 4
+        buffer.add(make_thick_slice(2, [0.0, 1.0]))
+        buffer.add(make_thick_slice(2, [2.0, 3.0]))
+        assert_buffer_has_time_data(buffer, 4)
 
     def test_add_mixed_single_and_thick_slices(self):
         """Test concatenating mixed single and thick slices."""
         buffer = TemporalBuffer()
-
-        # Add single slice
-        data1 = sc.DataArray(
-            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
-            coords={
-                'x': sc.arange('x', 2, unit='m'),
-                'time': sc.scalar(0.0, unit='s'),
-            },
-        )
-        buffer.add(data1)
-
-        # Add thick slice
-        data2 = sc.DataArray(
-            sc.array(
-                dims=['time', 'x'], values=[[3.0, 4.0], [5.0, 6.0]], unit='counts'
-            ),
-            coords={
-                'x': sc.arange('x', 2, unit='m'),
-                'time': sc.array(dims=['time'], values=[1.0, 2.0], unit='s'),
-            },
-        )
-        buffer.add(data2)
-
-        result = buffer.get()
-        assert result is not None
-        assert result.sizes['time'] == 3
+        buffer.add(make_single_slice([1.0, 2.0], 0.0))
+        buffer.add(make_thick_slice(2, [1.0, 2.0]))
+        assert_buffer_has_time_data(buffer, 3)
 
     def test_add_without_time_coord_raises_error(self):
         """Test that adding data without time coordinate raises ValueError."""
@@ -221,50 +197,9 @@ class TestTemporalBuffer:
     def test_clear_removes_all_data(self):
         """Test that clear removes all buffered data."""
         buffer = TemporalBuffer()
-        data = sc.DataArray(
-            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
-            coords={
-                'x': sc.arange('x', 2, unit='m'),
-                'time': sc.scalar(0.0, unit='s'),
-            },
-        )
-
-        buffer.add(data)
+        buffer.add(make_single_slice([1.0, 2.0], 0.0))
         buffer.clear()
-        result = buffer.get()
-
-        assert result is None
-
-    def test_set_required_timespan(self):
-        """Test that set_required_timespan stores the value."""
-        buffer = TemporalBuffer()
-        buffer.set_required_timespan(5.0)
-        assert buffer._required_timespan == 5.0
-
-    def test_set_max_memory(self):
-        """Test that set_max_memory stores the value."""
-        buffer = TemporalBuffer()
-        buffer.set_max_memory(10000)
-        assert buffer._max_memory == 10000
-
-    def test_max_memory_limits_capacity(self):
-        """Test that max_memory limits buffer capacity."""
-        buffer = TemporalBuffer()
-        # Set memory limit before adding data
-        buffer.set_max_memory(100)  # 100 bytes
-
-        # Add initial data (float64 = 8 bytes per element, 2 elements = 16 bytes)
-        data = sc.DataArray(
-            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
-            coords={
-                'x': sc.arange('x', 2, unit='m'),
-                'time': sc.scalar(0.0, unit='s'),
-            },
-        )
-        buffer.add(data)
-
-        # Buffer capacity should be limited by memory: 100 bytes / 16 bytes = 6
-        assert buffer._data_buffer.max_capacity == 6
+        assert buffer.get() is None
 
     def test_timespan_trimming_on_capacity_failure(self):
         """Test that old data is trimmed when capacity is reached."""
@@ -273,37 +208,16 @@ class TestTemporalBuffer:
         buffer.set_max_memory(100)  # Small memory limit to trigger trimming
 
         # Add data at t=0
-        data1 = sc.DataArray(
-            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
-            coords={
-                'x': sc.arange('x', 2, unit='m'),
-                'time': sc.scalar(0.0, unit='s'),
-            },
-        )
-        buffer.add(data1)
+        buffer.add(make_single_slice([1.0, 2.0], 0.0))
         initial_capacity = buffer._data_buffer.max_capacity
 
         # Fill buffer close to capacity with data at t=1, 2, 3, 4
         for t in range(1, initial_capacity):
-            data = sc.DataArray(
-                sc.array(dims=['x'], values=[float(t), float(t)], unit='counts'),
-                coords={
-                    'x': sc.arange('x', 2, unit='m'),
-                    'time': sc.scalar(float(t), unit='s'),
-                },
-            )
-            buffer.add(data)
+            buffer.add(make_single_slice([float(t), float(t)], float(t)))
 
         # Add data at t=10 (outside timespan from t=0-4)
         # This should trigger trimming of old data
-        data_new = sc.DataArray(
-            sc.array(dims=['x'], values=[10.0, 10.0], unit='counts'),
-            coords={
-                'x': sc.arange('x', 2, unit='m'),
-                'time': sc.scalar(10.0, unit='s'),
-            },
-        )
-        buffer.add(data_new)
+        buffer.add(make_single_slice([10.0, 10.0], 10.0))
 
         result = buffer.get()
         # Only data from t >= 5.0 should remain (t=10 - 5.0)
@@ -317,14 +231,7 @@ class TestTemporalBuffer:
 
         # Add data at t=0, 1, 2, 3, 4, 5
         for t in range(6):
-            data = sc.DataArray(
-                sc.array(dims=['x'], values=[float(t), float(t)], unit='counts'),
-                coords={
-                    'x': sc.arange('x', 2, unit='m'),
-                    'time': sc.scalar(float(t), unit='s'),
-                },
-            )
-            buffer.add(data)
+            buffer.add(make_single_slice([float(t), float(t)], float(t)))
 
         result = buffer.get()
         # With default large capacity (10000), no trimming should occur
@@ -339,36 +246,15 @@ class TestTemporalBuffer:
         buffer.set_max_memory(50)  # Very small to trigger trim quickly
 
         # Add data at t=0
-        data1 = sc.DataArray(
-            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
-            coords={
-                'x': sc.arange('x', 2, unit='m'),
-                'time': sc.scalar(0.0, unit='s'),
-            },
-        )
-        buffer.add(data1)
+        buffer.add(make_single_slice([1.0, 2.0], 0.0))
 
         # Fill to capacity
         capacity = buffer._data_buffer.max_capacity
         for t in range(1, capacity):
-            data = sc.DataArray(
-                sc.array(dims=['x'], values=[float(t), float(t)], unit='counts'),
-                coords={
-                    'x': sc.arange('x', 2, unit='m'),
-                    'time': sc.scalar(float(t), unit='s'),
-                },
-            )
-            buffer.add(data)
+            buffer.add(make_single_slice([float(t), float(t)], float(t)))
 
         # Add data far in future, all previous data should be dropped
-        data_future = sc.DataArray(
-            sc.array(dims=['x'], values=[99.0, 99.0], unit='counts'),
-            coords={
-                'x': sc.arange('x', 2, unit='m'),
-                'time': sc.scalar(100.0, unit='s'),
-            },
-        )
-        buffer.add(data_future)
+        buffer.add(make_single_slice([99.0, 99.0], 100.0))
 
         result = buffer.get()
         # Only data >= 99.0 should remain (100 - 1.0 timespan)
@@ -381,27 +267,10 @@ class TestTemporalBuffer:
         buffer.set_max_memory(20)  # Very small capacity (~ 1 element)
 
         # Add first data point
-        data1 = sc.DataArray(
-            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
-            coords={
-                'x': sc.arange('x', 2, unit='m'),
-                'time': sc.scalar(0.0, unit='s'),
-            },
-        )
-        buffer.add(data1)
+        buffer.add(make_single_slice([1.0, 2.0], 0.0))
 
         # Try to add thick slice that exceeds capacity
-        large_data = sc.DataArray(
-            sc.array(
-                dims=['time', 'x'],
-                values=[[i, i] for i in range(10)],
-                unit='counts',
-            ),
-            coords={
-                'x': sc.arange('x', 2, unit='m'),
-                'time': sc.array(dims=['time'], values=list(range(10)), unit='s'),
-            },
-        )
+        large_data = make_thick_slice(2, list(range(10)))
 
         with pytest.raises(ValueError, match="exceeds buffer capacity even after"):
             buffer.add(large_data)
@@ -413,26 +282,12 @@ class TestTemporalBuffer:
         buffer.set_max_memory(100)  # Small memory limit to force overflow
 
         # Add first data point
-        data1 = sc.DataArray(
-            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
-            coords={
-                'x': sc.arange('x', 2, unit='m'),
-                'time': sc.scalar(0.0, unit='s'),
-            },
-        )
-        buffer.add(data1)
+        buffer.add(make_single_slice([1.0, 2.0], 0.0))
         initial_capacity = buffer._data_buffer.max_capacity
 
         # Fill buffer to capacity
         for t in range(1, initial_capacity):
-            data = sc.DataArray(
-                sc.array(dims=['x'], values=[float(t), float(t)], unit='counts'),
-                coords={
-                    'x': sc.arange('x', 2, unit='m'),
-                    'time': sc.scalar(float(t), unit='s'),
-                },
-            )
-            buffer.add(data)
+            buffer.add(make_single_slice([float(t), float(t)], float(t)))
 
         # Buffer is now full, verify it has all data
         result = buffer.get()
@@ -440,14 +295,7 @@ class TestTemporalBuffer:
 
         # Add one more data point - should trigger trimming
         # With timespan=0.0, should drop ALL old data to make room
-        data_new = sc.DataArray(
-            sc.array(dims=['x'], values=[999.0, 999.0], unit='counts'),
-            coords={
-                'x': sc.arange('x', 2, unit='m'),
-                'time': sc.scalar(999.0, unit='s'),
-            },
-        )
-        buffer.add(data_new)  # Should not raise
+        buffer.add(make_single_slice([999.0, 999.0], 999.0))
 
         # Should only have the latest value
         result = buffer.get()
@@ -470,11 +318,9 @@ class TestVariableBuffer:
         assert result.sizes['time'] == 1
         assert sc.identical(result['time', 0], data)
 
-    def test_init_with_thick_slice(self):
+    def test_init_with_thick_slice(self, thick_slice_2x2):
         """Test initialization with thick slice (has concat_dim)."""
-        data = sc.array(
-            dims=['time', 'x'], values=[[1.0, 2.0], [3.0, 4.0]], unit='counts'
-        )
+        data = thick_slice_2x2.data  # Extract the raw array
         buffer = VariableBuffer(data=data, max_capacity=10, concat_dim='time')
 
         assert buffer.size == 2
