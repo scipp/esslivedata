@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any
+
+import scipp as sc
 
 from .plot_params import WindowAggregation
 
@@ -13,14 +15,12 @@ if TYPE_CHECKING:
     from .plot_params import WindowParams
     from .plotting import PlotterSpec
 
-T = TypeVar('T')
 
-
-class UpdateExtractor(ABC, Generic[T]):
+class UpdateExtractor(ABC):
     """Extracts a specific view of buffered data."""
 
     @abstractmethod
-    def extract(self, data: T | None) -> Any:
+    def extract(self, data: sc.DataArray | None) -> Any:
         """
         Extract data from buffered data.
 
@@ -47,7 +47,7 @@ class UpdateExtractor(ABC, Generic[T]):
         """
 
 
-class LatestValueExtractor(UpdateExtractor[T]):
+class LatestValueExtractor(UpdateExtractor):
     """Extracts the latest single value, unwrapping the concat dimension."""
 
     def __init__(self, concat_dim: str = 'time') -> None:
@@ -65,14 +65,10 @@ class LatestValueExtractor(UpdateExtractor[T]):
         """Latest value has no specific timespan requirement."""
         return None
 
-    def extract(self, data: T | None) -> Any:
+    def extract(self, data: sc.DataArray | None) -> Any:
         """Extract the latest value from the data, unwrapped."""
         if data is None:
             return None
-
-        # Handle list buffers
-        if isinstance(data, list) and len(data) > 0:
-            return data[-1]
 
         # Check if data has the concat dimension
         if not hasattr(data, 'dims') or self._concat_dim not in data.dims:
@@ -83,19 +79,19 @@ class LatestValueExtractor(UpdateExtractor[T]):
         return data[self._concat_dim, -1]
 
 
-class FullHistoryExtractor(UpdateExtractor[T]):
+class FullHistoryExtractor(UpdateExtractor):
     """Extracts the complete buffer history."""
 
     def get_required_timespan(self) -> float | None:
         """Return infinite timespan to indicate wanting all history."""
         return float('inf')
 
-    def extract(self, data: T | None) -> Any:
+    def extract(self, data: sc.DataArray | None) -> Any:
         """Extract all data from the buffer."""
         return data
 
 
-class WindowAggregatingExtractor(UpdateExtractor[T]):
+class WindowAggregatingExtractor(UpdateExtractor):
     """Extracts a window from the buffer and aggregates over the time dimension."""
 
     def __init__(
@@ -125,7 +121,7 @@ class WindowAggregatingExtractor(UpdateExtractor[T]):
         """Return the required window duration."""
         return self._window_duration_seconds
 
-    def extract(self, data: T | None) -> Any:
+    def extract(self, data: sc.DataArray | None) -> Any:
         """Extract a window of data and aggregate over the time dimension."""
         if data is None:
             return None
@@ -141,8 +137,6 @@ class WindowAggregatingExtractor(UpdateExtractor[T]):
             windowed_data = data
         else:
             # Calculate cutoff time using scipp's unit handling
-            import scipp as sc
-
             time_coord = data.coords[self._concat_dim]
             latest_time = time_coord[-1]
             duration = sc.scalar(self._window_duration_seconds, unit='s').to(

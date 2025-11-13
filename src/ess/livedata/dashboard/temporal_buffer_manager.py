@@ -9,6 +9,8 @@ from collections.abc import Hashable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Generic, TypeVar
 
+import scipp as sc
+
 from .extractors import LatestValueExtractor
 from .temporal_buffers import BufferProtocol, SingleValueBuffer, TemporalBuffer
 
@@ -18,18 +20,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 K = TypeVar('K', bound=Hashable)
-T = TypeVar('T')
 
 
 @dataclass
-class _BufferState(Generic[T]):
+class _BufferState:
     """Internal state for a managed buffer."""
 
-    buffer: BufferProtocol[T]
+    buffer: BufferProtocol[sc.DataArray]
     extractors: list[UpdateExtractor] = field(default_factory=list)
 
 
-class TemporalBufferManager(Mapping[K, BufferProtocol[T]], Generic[K, T]):
+class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]):
     """
     Manages buffers, switching between SingleValueBuffer and TemporalBuffer.
 
@@ -43,9 +44,9 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[T]], Generic[K, T]):
 
     def __init__(self) -> None:
         """Initialize TemporalBufferManager."""
-        self._states: dict[K, _BufferState[T]] = {}
+        self._states: dict[K, _BufferState] = {}
 
-    def __getitem__(self, key: K) -> BufferProtocol[T]:
+    def __getitem__(self, key: K) -> BufferProtocol[sc.DataArray]:
         """Return the buffer for a key."""
         return self._states[key].buffer
 
@@ -57,7 +58,7 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[T]], Generic[K, T]):
         """Return number of buffers."""
         return len(self._states)
 
-    def get_buffered_data(self, key: K) -> T | None:
+    def get_buffered_data(self, key: K) -> sc.DataArray | None:
         """
         Get data from buffer if available.
 
@@ -98,7 +99,7 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[T]], Generic[K, T]):
         state = _BufferState(buffer=buffer, extractors=list(extractors))
         self._states[key] = state
 
-    def update_buffer(self, key: K, data: T) -> None:
+    def update_buffer(self, key: K, data: sc.DataArray) -> None:
         """
         Update buffer with new data.
 
@@ -197,7 +198,7 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[T]], Generic[K, T]):
 
     def _create_buffer_for_extractors(
         self, extractors: list[UpdateExtractor]
-    ) -> BufferProtocol[T]:
+    ) -> BufferProtocol[sc.DataArray]:
         """
         Create appropriate buffer type based on extractors.
 
@@ -224,10 +225,10 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[T]], Generic[K, T]):
         if all_latest:
             return SingleValueBuffer()
         else:
-            return TemporalBuffer()  # type: ignore[return-value]
+            return TemporalBuffer()
 
     def _update_buffer_requirements(
-        self, buffer: BufferProtocol[T], extractors: list[UpdateExtractor]
+        self, buffer: BufferProtocol[sc.DataArray], extractors: list[UpdateExtractor]
     ) -> None:
         """
         Update buffer requirements based on extractors.
