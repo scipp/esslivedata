@@ -125,10 +125,11 @@ def integration_env(dashboard_backend: DashboardBackend, request) -> Integration
     @pytest.mark.services('monitor')  # Uses monitor_services fixture
     @pytest.mark.services('detector')  # Uses detector_services fixture
     @pytest.mark.services('reduction')  # Uses reduction_services fixture
+    @pytest.mark.services('timeseries')  # Uses timeseries_services fixture
 
     Design note: Each test uses exactly ONE service group to focus on a single
     service pipeline. Multiple service groups per test are not supported - tests
-    should be scoped to one workflow type (monitor, detector, or reduction).
+    should be scoped to one workflow type.
 
     Parameters
     ----------
@@ -148,7 +149,7 @@ def integration_env(dashboard_backend: DashboardBackend, request) -> Integration
     if not services_marker:
         pytest.fail(
             "integration_env fixture requires "
-            "@pytest.mark.services('monitor'|'detector'|'reduction')"
+            "@pytest.mark.services('monitor'|'detector'|'reduction'|'timeseries')"
         )
 
     # Validate single service group (not multiple)
@@ -156,7 +157,8 @@ def integration_env(dashboard_backend: DashboardBackend, request) -> Integration
         pytest.fail(
             f"@pytest.mark.services() expects exactly one argument, "
             f"got {len(services_marker.args)}. Each test should focus on a "
-            f"single service group: 'monitor', 'detector', or 'reduction'."
+            f"single service group: 'monitor', 'detector', 'reduction', or "
+            f"'timeseries'."
         )
 
     services_type = services_marker.args[0]
@@ -280,6 +282,37 @@ def reduction_services(request) -> Generator[ServiceGroup, None, None]:
             ),
             'data_reduction': (
                 'ess.livedata.services.data_reduction',
+                {
+                    'dev': True,
+                    'readiness_messages': [
+                        'Service started',
+                        'Kafka consumer ready and polling',
+                    ],
+                },
+            ),
+        },
+    )
+
+
+@pytest.fixture
+def timeseries_services(request) -> Generator[ServiceGroup, None, None]:
+    """
+    Pytest fixture providing timeseries-related services.
+
+    Starts fake_logdata and timeseries services for testing.
+    Typically used through the integration_env fixture.
+
+    Yields
+    ------
+    :
+        ServiceGroup containing fake_logdata and timeseries services
+    """
+    yield from _create_service_group(
+        request,
+        {
+            'fake_logdata': ('ess.livedata.services.fake_logdata', {}),
+            'timeseries': (
+                'ess.livedata.services.timeseries',
                 {
                     'dev': True,
                     'readiness_messages': [

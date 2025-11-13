@@ -42,7 +42,10 @@ class FakeLogdataSource(MessageSource[sc.DataArray]):
 
     def __init__(self, *, instrument: str):
         # Create the base ramp patterns
-        self._ramp_patterns = {'detector_rotation': _make_ramp(size=100)}
+        self._ramp_patterns = {
+            'detector_rotation': _make_ramp(size=100),
+            'motion1': _make_ramp(size=100),
+        }
         # Track the current time and cycle count for each log data
         self._current_time = {name: self._time_ns() for name in self._ramp_patterns}
         # Track the last index we produced for each log
