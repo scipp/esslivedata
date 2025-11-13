@@ -76,7 +76,10 @@ class TimeseriesAccumulator(streaming.Accumulator[sc.DataArray]):
     def _get_value(self) -> sc.DataArray:
         if self._to_nxlog is None:
             raise ValueError("No data accumulated")
-        return self._to_nxlog.get()
+        # Return latest value. Will be aggregated into a timeseries in frontend (if a
+        # plot requests it). This accumulator may be fully replaced once it is clear how
+        # we want to handle obtaining the full history (e.g., after frontend restarts).
+        return self._to_nxlog.get()[-1]
 
     def _do_push(self, value: sc.DataArray) -> None:
         if self._to_nxlog is None:
