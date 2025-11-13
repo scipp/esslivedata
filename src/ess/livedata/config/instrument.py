@@ -59,9 +59,7 @@ class Instrument:
     active_namespace: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
     _monitor_workflow_handle: SpecHandle | None = field(default=None, init=False)
-    _monitor_interval_timeseries_handle: SpecHandle | None = field(
-        default=None, init=False
-    )
+    _monitor_ratemeter_handle: SpecHandle | None = field(default=None, init=False)
     _timeseries_workflow_handle: SpecHandle | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
@@ -81,7 +79,7 @@ class Instrument:
         # Only register monitor interval timeseries if nexus file is available
         # (required by the workflow to create GenericTofWorkflow)
         if self._nexus_file is not None or self._can_load_nexus_file():
-            self._monitor_interval_timeseries_handle = register_monitor_ratemeter_spec(
+            self._monitor_ratemeter_handle = register_monitor_ratemeter_spec(
                 instrument=self, source_names=self.monitors
             )
 
@@ -264,13 +262,13 @@ class Instrument:
                 MonitorStreamProcessor.create_workflow
             )
 
-        if self._monitor_interval_timeseries_handle is not None:
+        if self._monitor_ratemeter_handle is not None:
             from ess.livedata.handlers.monitor_data_handler import (
                 create_monitor_ratemeter_factory,
             )
 
             factory = create_monitor_ratemeter_factory(self)
-            self._monitor_interval_timeseries_handle.attach_factory()(factory)
+            self._monitor_ratemeter_handle.attach_factory()(factory)
 
         if self._timeseries_workflow_handle is not None:
             from ess.livedata.handlers.timeseries_handler import (
