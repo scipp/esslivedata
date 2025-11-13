@@ -20,19 +20,19 @@ class UpdateExtractor(ABC):
     """Extracts a specific view of buffered data."""
 
     @abstractmethod
-    def extract(self, data: sc.DataArray | None) -> Any:
+    def extract(self, data: sc.DataArray) -> Any:
         """
         Extract data from buffered data.
 
         Parameters
         ----------
         data:
-            The buffered data to extract from, or None if no data available.
+            The buffered data to extract from.
 
         Returns
         -------
         :
-            The extracted data, or None if no data available.
+            The extracted data.
         """
 
     @abstractmethod
@@ -65,11 +65,8 @@ class LatestValueExtractor(UpdateExtractor):
         """Latest value has no specific timespan requirement."""
         return None
 
-    def extract(self, data: sc.DataArray | None) -> Any:
+    def extract(self, data: sc.DataArray) -> Any:
         """Extract the latest value from the data, unwrapped."""
-        if data is None:
-            return None
-
         # Check if data has the concat dimension
         if not hasattr(data, 'dims') or self._concat_dim not in data.dims:
             # Data doesn't have concat dim - already a single frame
@@ -86,7 +83,7 @@ class FullHistoryExtractor(UpdateExtractor):
         """Return infinite timespan to indicate wanting all history."""
         return float('inf')
 
-    def extract(self, data: sc.DataArray | None) -> Any:
+    def extract(self, data: sc.DataArray) -> Any:
         """Extract all data from the buffer."""
         return data
 
@@ -121,11 +118,8 @@ class WindowAggregatingExtractor(UpdateExtractor):
         """Return the required window duration."""
         return self._window_duration_seconds
 
-    def extract(self, data: sc.DataArray | None) -> Any:
+    def extract(self, data: sc.DataArray) -> Any:
         """Extract a window of data and aggregate over the time dimension."""
-        if data is None:
-            return None
-
         # Check if concat dimension exists in the data
         if not hasattr(data, 'dims') or self._concat_dim not in data.dims:
             # Data doesn't have the expected dimension structure, return as-is
@@ -162,11 +156,6 @@ class WindowAggregatingExtractor(UpdateExtractor):
             return windowed_data.mean(self._concat_dim)
         elif agg_method == WindowAggregation.nanmean:
             return windowed_data.nanmean(self._concat_dim)
-        elif agg_method == WindowAggregation.last:
-            # Return the last frame (equivalent to latest)
-            return windowed_data[self._concat_dim, -1]
-        elif agg_method == WindowAggregation.max:
-            return windowed_data.max(self._concat_dim)
         else:
             raise ValueError(f"Unknown aggregation method: {agg_method}")
 

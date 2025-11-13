@@ -30,8 +30,6 @@ class WindowAggregation(StrEnum):
     nanmean = 'nanmean'
     sum = 'sum'
     mean = 'mean'
-    last = 'last'
-    max = 'max'
 
 
 class PlotScale(str, enum.Enum):

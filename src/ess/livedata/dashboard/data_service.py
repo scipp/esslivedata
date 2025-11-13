@@ -142,8 +142,8 @@ class DataService(MutableMapping[K, V]):
         for key in subscriber.keys:
             extractor = extractors[key]
             buffered_data = self._buffer_manager.get_buffered_data(key)
-            data = extractor.extract(buffered_data)
-            if data is not None:
+            if buffered_data is not None:
+                data = extractor.extract(buffered_data)
                 subscriber_data[key] = data
 
         return subscriber_data
@@ -232,7 +232,9 @@ class DataService(MutableMapping[K, V]):
 
     def __getitem__(self, key: K) -> V:
         """Get the latest value for a key."""
-        buffered_data = self._buffer_manager[key].get()
+        buffered_data = self._buffer_manager.get_buffered_data(key)
+        if buffered_data is None:
+            raise KeyError(key)
         return self._default_extractor.extract(buffered_data)
 
     def __setitem__(self, key: K, value: V) -> None:
