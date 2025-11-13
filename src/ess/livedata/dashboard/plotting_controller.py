@@ -255,7 +255,8 @@ class PlottingController:
         :
             Dictionary mapping result keys to extractor instances.
         """
-        return create_extractors_from_params(keys, params, spec)
+        window = getattr(params, 'window', None)
+        return create_extractors_from_params(keys, window, spec)
 
     def create_plot(
         self,

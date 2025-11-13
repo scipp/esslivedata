@@ -751,7 +751,7 @@ class ROIDetectorPlotFactory:
         # FIXME: Memory leak - subscribers registered via stream_manager are never
         # unregistered. When this plot is closed, the subscriber remains in
         # DataService._subscribers, preventing garbage collection of plot components.
-        extractors = create_extractors_from_params(spectrum_keys, params)
+        extractors = create_extractors_from_params(spectrum_keys, params.window)
         spectrum_pipe = self._stream_manager.make_merging_stream(extractors)
 
         spectrum_plotter = LinePlotter(

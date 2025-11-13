@@ -6,10 +6,9 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 if TYPE_CHECKING:
-    import pydantic
-
     from ess.livedata.config.workflow_spec import ResultKey
 
+    from .plot_params import WindowParams
     from .plotting import PlotterSpec
 
 T = TypeVar('T')
@@ -222,18 +221,19 @@ class WindowAggregatingExtractor(UpdateExtractor[T]):
 
 def create_extractors_from_params(
     keys: list[ResultKey],
-    params: pydantic.BaseModel,
+    window: WindowParams | None,
     spec: PlotterSpec | None = None,
 ) -> dict[ResultKey, UpdateExtractor]:
     """
-    Create extractors based on plotter spec and params window configuration.
+    Create extractors based on plotter spec and window configuration.
 
     Parameters
     ----------
     keys:
         Result keys to create extractors for.
-    params:
-        Parameters potentially containing window configuration.
+    window:
+        Window parameters for extraction mode and aggregation.
+        If None, falls back to LatestValueExtractor.
     spec:
         Optional plotter specification. If provided and contains a required
         extractor, that extractor type is used.
@@ -251,15 +251,15 @@ def create_extractors_from_params(
         extractor_type = spec.data_requirements.required_extractor
         return {key: extractor_type() for key in keys}
 
-    # No fixed requirement - check if params have window config
-    if hasattr(params, 'window'):
-        if params.window.mode == WindowMode.latest:
+    # No fixed requirement - check if window params provided
+    if window is not None:
+        if window.mode == WindowMode.latest:
             return {key: LatestValueExtractor() for key in keys}
         else:  # mode == WindowMode.window
             return {
                 key: WindowAggregatingExtractor(
-                    window_duration_seconds=params.window.window_duration_seconds,
-                    aggregation=params.window.aggregation.value,
+                    window_duration_seconds=window.window_duration_seconds,
+                    aggregation=window.aggregation.value,
                 )
                 for key in keys
             }
