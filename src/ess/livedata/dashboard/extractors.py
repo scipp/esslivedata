@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import scipp as sc
@@ -36,14 +37,15 @@ class UpdateExtractor(ABC):
         """
 
     @abstractmethod
-    def get_required_timespan(self) -> float | None:
+    def get_required_timespan(self) -> float:
         """
         Get the required timespan for this extractor.
 
         Returns
         -------
         :
-            Required timespan in seconds, or None if no specific requirement.
+            Required timespan in seconds. Return 0.0 for extractors that only
+            need the latest value.
         """
 
 
@@ -61,9 +63,9 @@ class LatestValueExtractor(UpdateExtractor):
         """
         self._concat_dim = concat_dim
 
-    def get_required_timespan(self) -> float | None:
-        """Latest value has no specific timespan requirement."""
-        return None
+    def get_required_timespan(self) -> float:
+        """Latest value requires zero history."""
+        return 0.0
 
     def extract(self, data: sc.DataArray) -> Any:
         """Extract the latest value from the data, unwrapped."""
@@ -79,7 +81,7 @@ class LatestValueExtractor(UpdateExtractor):
 class FullHistoryExtractor(UpdateExtractor):
     """Extracts the complete buffer history."""
 
-    def get_required_timespan(self) -> float | None:
+    def get_required_timespan(self) -> float:
         """Return infinite timespan to indicate wanting all history."""
         return float('inf')
 
@@ -113,51 +115,43 @@ class WindowAggregatingExtractor(UpdateExtractor):
         self._window_duration_seconds = window_duration_seconds
         self._aggregation = aggregation
         self._concat_dim = concat_dim
+        self._aggregator: Callable[[sc.DataArray, str], sc.DataArray] | None = None
 
-    def get_required_timespan(self) -> float | None:
+    def get_required_timespan(self) -> float:
         """Return the required window duration."""
         return self._window_duration_seconds
 
     def extract(self, data: sc.DataArray) -> Any:
         """Extract a window of data and aggregate over the time dimension."""
-        # Check if concat dimension exists in the data
-        if not hasattr(data, 'dims') or self._concat_dim not in data.dims:
-            # Data doesn't have the expected dimension structure, return as-is
-            return data
+        # Calculate cutoff time using scipp's unit handling
+        time_coord = data.coords[self._concat_dim]
+        latest_time = time_coord[-1]
+        duration = sc.scalar(self._window_duration_seconds, unit='s').to(
+            unit=time_coord.unit
+        )
+        windowed_data = data[self._concat_dim, latest_time - duration :]
 
-        # Extract time window
-        if not hasattr(data, 'coords') or self._concat_dim not in data.coords:
-            # No time coordinate - can't do time-based windowing, return all data
-            windowed_data = data
-        else:
-            # Calculate cutoff time using scipp's unit handling
-            time_coord = data.coords[self._concat_dim]
-            latest_time = time_coord[-1]
-            duration = sc.scalar(self._window_duration_seconds, unit='s').to(
-                unit=time_coord.unit
-            )
-            windowed_data = data[self._concat_dim, latest_time - duration :]
-
-        # Determine aggregation method
-        agg_method = self._aggregation
-        if agg_method == WindowAggregation.auto:
-            # Use nansum if data is dimensionless (counts), else nanmean
-            if hasattr(windowed_data, 'unit') and windowed_data.unit == '1':
-                agg_method = WindowAggregation.nansum
+        # Resolve and cache aggregator function on first call
+        if self._aggregator is None:
+            if self._aggregation == WindowAggregation.auto:
+                aggregation = (
+                    WindowAggregation.nansum
+                    if windowed_data.unit == 'counts'
+                    else WindowAggregation.nanmean
+                )
             else:
-                agg_method = WindowAggregation.nanmean
+                aggregation = self._aggregation
+            aggregators = {
+                WindowAggregation.sum: sc.sum,
+                WindowAggregation.nansum: sc.nansum,
+                WindowAggregation.mean: sc.mean,
+                WindowAggregation.nanmean: sc.nanmean,
+            }
+            self._aggregator = aggregators.get(aggregation)
+            if self._aggregator is None:
+                raise ValueError(f"Unknown aggregation method: {self._aggregation}")
 
-        # Aggregate over the concat dimension
-        if agg_method == WindowAggregation.sum:
-            return windowed_data.sum(self._concat_dim)
-        elif agg_method == WindowAggregation.nansum:
-            return windowed_data.nansum(self._concat_dim)
-        elif agg_method == WindowAggregation.mean:
-            return windowed_data.mean(self._concat_dim)
-        elif agg_method == WindowAggregation.nanmean:
-            return windowed_data.nanmean(self._concat_dim)
-        else:
-            raise ValueError(f"Unknown aggregation method: {agg_method}")
+        return self._aggregator(windowed_data, self._concat_dim)
 
 
 def create_extractors_from_params(
