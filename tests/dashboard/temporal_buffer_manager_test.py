@@ -128,7 +128,7 @@ class TestTemporalBufferManager:
         # Verify the data values are preserved
         assert sc.allclose(result['time', 0].data, data.data)
 
-    def test_add_extractor_switches_to_single_value_buffer(self):
+    def test_set_extractors_switches_to_single_value_buffer(self):
         """Test that switching buffer types preserves latest data."""
         manager = TemporalBufferManager()
         extractors = [WindowAggregatingExtractor(window_duration_seconds=1.0)]
@@ -152,12 +152,8 @@ class TestTemporalBufferManager:
         assert 'time' in result.dims
         assert result.sizes['time'] == 3
 
-        # Manually clear extractors to simulate reconfiguration
-        state = manager._states['test']
-        state.extractors.clear()
-
-        # Add LatestValueExtractor - this should trigger buffer type switch
-        manager.add_extractor('test', LatestValueExtractor())
+        # Replace extractors - this should trigger buffer type switch
+        manager.set_extractors('test', [LatestValueExtractor()])
 
         # Verify the latest time slice is preserved after transition
         result = manager.get_buffered_data('test')

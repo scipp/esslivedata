@@ -131,7 +131,43 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]
         """
         state = self._states[key]
         state.extractors.append(extractor)
+        self._reconfigure_buffer_if_needed(key, state)
 
+    def set_extractors(self, key: K, extractors: list[UpdateExtractor]) -> None:
+        """
+        Replace all extractors for an existing buffer.
+
+        May trigger buffer type switch with data migration:
+        - Single→Temporal: Existing data is copied to the new buffer
+        - Temporal→Single: Last time slice is copied to the new buffer
+        - Other transitions: Data is discarded
+
+        Useful for reconfiguring buffers when subscribers change, e.g., when
+        a subscriber is removed and we need to downgrade from Temporal to
+        SingleValue buffer.
+
+        Parameters
+        ----------
+        key:
+            Key identifying the buffer to update.
+        extractors:
+            New list of extractors that will use this buffer.
+        """
+        state = self._states[key]
+        state.extractors = list(extractors)
+        self._reconfigure_buffer_if_needed(key, state)
+
+    def _reconfigure_buffer_if_needed(self, key: K, state: _BufferState) -> None:
+        """
+        Check if buffer type needs to change and handle migration.
+
+        Parameters
+        ----------
+        key:
+            Key identifying the buffer.
+        state:
+            Buffer state to reconfigure.
+        """
         # Check if we need to switch buffer type
         new_buffer = self._create_buffer_for_extractors(state.extractors)
         if not isinstance(new_buffer, type(state.buffer)):
