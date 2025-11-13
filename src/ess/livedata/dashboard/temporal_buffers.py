@@ -247,7 +247,12 @@ class VariableBuffer:
             sizes = {self._concat_dim: size}
             sizes.update(template.sizes)
 
-        return sc.empty(sizes=sizes, dtype=template.dtype, unit=template.unit)
+        return sc.empty(
+            sizes=sizes,
+            dtype=template.dtype,
+            unit=template.unit,
+            with_variances=template.variances is not None,
+        )
 
     def _expand_to_fit(self, min_size: int) -> None:
         """Expand buffer to accommodate at least min_size elements."""

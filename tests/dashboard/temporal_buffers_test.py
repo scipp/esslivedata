@@ -694,3 +694,36 @@ class TestVariableBuffer:
         result = buffer.get()
         assert result.sizes == {'time': 3}
         assert list(result.values) == [42.0, 43.0, 44.0]
+
+    def test_append_with_variances_preserves_variances_on_expansion(self):
+        """Test that variances are preserved when buffer expands.
+
+        Regression test for bug where expanding the buffer would lose variances
+        because sc.empty() wasn't called with with_variances flag.
+        """
+        # Create data with variances
+        data = sc.array(
+            dims=['x'], values=[1.0, 2.0], variances=[0.1, 0.2], unit='counts'
+        )
+        buffer = VariableBuffer(data=data, max_capacity=100, concat_dim='time')
+
+        # Verify initial data has variances
+        assert buffer.get().variances is not None
+
+        # Append enough single slices to trigger multiple buffer expansions
+        # Initial capacity is 16, so we need > 16 appends
+        for i in range(20):
+            new_data = sc.array(
+                dims=['x'],
+                values=[float(i + 3), float(i + 4)],
+                variances=[0.3 + i * 0.01, 0.4 + i * 0.01],
+                unit='counts',
+            )
+            assert buffer.append(new_data), f"Failed to append slice {i}"
+
+        # Verify final result still has variances after expansion
+        result = buffer.get()
+        assert result.variances is not None
+        assert result.sizes['time'] == 21
+        # Verify variances were preserved from at least one slice
+        assert result.variances[0, 0] > 0
