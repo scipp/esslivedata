@@ -413,6 +413,97 @@ class TestWindowAggregatingExtractor:
             result.data, sc.array(dims=['x'], values=[5, 6], unit='counts')
         )
 
+    def test_handles_timing_jitter_at_window_start(self):
+        """Test that timing noise near window boundary doesn't include extra frames."""
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=5.0,
+            aggregation=WindowAggregation.nansum,
+            concat_dim='time',
+        )
+
+        # Regular 1 Hz data with timing jitter on first frame
+        # Conceptually frames at t=[0, 1, 2, 3, 4, 5] but first has noise
+        data = sc.DataArray(
+            sc.array(
+                dims=['time', 'x'],
+                values=[[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12]],
+                unit='counts',
+            ),
+            coords={
+                'time': sc.array(
+                    dims=['time'], values=[0.0001, 1.0, 2.0, 3.0, 4.0, 5.0], unit='s'
+                ),
+                'x': sc.arange('x', 2, unit='m'),
+            },
+        )
+
+        result = extractor.extract(data)
+
+        # Window (5-5, 5] = (0, 5] excludes frame at 0.0001 (using exclusive bound)
+        # Should include 5 frames [1, 2, 3, 4, 5], not all 6
+        expected_sum = sc.array(dims=['x'], values=[35, 40], unit='counts')
+        assert sc.allclose(result.data, expected_sum)
+
+    def test_handles_timing_jitter_at_window_end(self):
+        """Test that timing noise on latest frame doesn't affect frame count."""
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=5.0,
+            aggregation=WindowAggregation.nansum,
+            concat_dim='time',
+        )
+
+        # Regular 1 Hz data with timing jitter on last frame
+        data = sc.DataArray(
+            sc.array(
+                dims=['time', 'x'],
+                values=[[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12]],
+                unit='counts',
+            ),
+            coords={
+                'time': sc.array(
+                    dims=['time'], values=[0.0, 1.0, 2.0, 3.0, 4.0, 5.0001], unit='s'
+                ),
+                'x': sc.arange('x', 2, unit='m'),
+            },
+        )
+
+        result = extractor.extract(data)
+
+        # Window (5.0001-5, 5.0001] = (0.0001, 5.0001]
+        # Should include 5 frames [1, 2, 3, 4, 5.0001]
+        expected_sum = sc.array(dims=['x'], values=[35, 40], unit='counts')
+        assert sc.allclose(result.data, expected_sum)
+
+    def test_consistent_frame_count_with_perfect_timing(self):
+        """Test baseline: perfect timing gives expected frame count."""
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=5.0,
+            aggregation=WindowAggregation.nansum,
+            concat_dim='time',
+        )
+
+        # Perfect 1 Hz data at exactly [0, 1, 2, 3, 4, 5]
+        data = sc.DataArray(
+            sc.array(
+                dims=['time', 'x'],
+                values=[[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12]],
+                unit='counts',
+            ),
+            coords={
+                'time': sc.array(
+                    dims=['time'], values=[0.0, 1.0, 2.0, 3.0, 4.0, 5.0], unit='s'
+                ),
+                'x': sc.arange('x', 2, unit='m'),
+            },
+        )
+
+        result = extractor.extract(data)
+
+        # Window (0, 5] excludes frame at exactly 0 (exclusive bound)
+        # Should include 5 frames [1, 2, 3, 4, 5]
+        expected_sum = sc.array(dims=['x'], values=[35, 40], unit='counts')
+        assert sc.allclose(result.data, expected_sum)
+
 
 class TestCreateExtractorsFromParams:
     """Tests for create_extractors_from_params factory function."""

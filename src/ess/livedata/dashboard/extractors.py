@@ -129,7 +129,24 @@ class WindowAggregatingExtractor(UpdateExtractor):
         duration = sc.scalar(self._window_duration_seconds, unit='s').to(
             unit=time_coord.unit
         )
-        windowed_data = data[self._concat_dim, latest_time - duration :]
+
+        # Estimate frame period from median interval to handle timing noise.
+        # Shift cutoff by half period to place boundary between frame slots,
+        # avoiding inclusion of extra frames due to timing jitter.
+        if len(time_coord) > 1:
+            intervals = time_coord[1:] - time_coord[:-1]
+            median_interval = sc.median(intervals)
+            cutoff_time = latest_time - duration + 0.5 * median_interval
+            # Clamp to ensure at least latest frame included
+            # (handles narrow windows where duration < median_interval)
+            if cutoff_time > latest_time:
+                cutoff_time = latest_time
+        else:
+            # Single frame: use duration-based cutoff
+            cutoff_time = latest_time - duration
+
+        # Use label-based slicing with inclusive lower bound
+        windowed_data = data[self._concat_dim, cutoff_time:]
 
         # Resolve and cache aggregator function on first call
         if self._aggregator is None:
