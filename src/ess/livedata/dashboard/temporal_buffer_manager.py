@@ -29,7 +29,7 @@ class _BufferState(Generic[T]):
     extractors: list[UpdateExtractor] = field(default_factory=list)
 
 
-class TemporalBufferManager(Mapping[K, T | None], Generic[K, T]):
+class TemporalBufferManager(Mapping[K, BufferProtocol[T]], Generic[K, T]):
     """
     Manages buffers, switching between SingleValueBuffer and TemporalBuffer.
 
@@ -37,24 +37,47 @@ class TemporalBufferManager(Mapping[K, T | None], Generic[K, T]):
     - All LatestValueExtractor → SingleValueBuffer (efficient)
     - Otherwise → TemporalBuffer (temporal data with time dimension)
 
-    Implements Mapping interface for read-only dictionary-like access to buffer data.
+    Implements Mapping interface for read-only dictionary-like access to buffers.
+    Use get_buffered_data() for convenient access to buffered data.
     """
 
     def __init__(self) -> None:
         """Initialize TemporalBufferManager."""
         self._states: dict[K, _BufferState[T]] = {}
 
-    def __getitem__(self, key: K) -> T | None:
-        """Get buffer data for a key (Mapping interface)."""
-        return self._states[key].buffer.get()
+    def __getitem__(self, key: K) -> BufferProtocol[T]:
+        """Return the buffer for a key."""
+        return self._states[key].buffer
 
     def __iter__(self) -> Iterator[K]:
-        """Iterate over keys (Mapping interface)."""
+        """Iterate over keys."""
         return iter(self._states)
 
     def __len__(self) -> int:
-        """Return number of buffers (Mapping interface)."""
+        """Return number of buffers."""
         return len(self._states)
+
+    def get_buffered_data(self, key: K) -> T | None:
+        """
+        Get data from buffer if available.
+
+        Returns None if buffer doesn't exist or if buffer is empty.
+        Never raises KeyError - treats "buffer not found" and "buffer empty"
+        the same way for convenience.
+
+        Parameters
+        ----------
+        key:
+            Key identifying the buffer.
+
+        Returns
+        -------
+        :
+            Buffered data, or None if unavailable.
+        """
+        if key not in self._states:
+            return None
+        return self._states[key].buffer.get()
 
     def create_buffer(self, key: K, extractors: list[UpdateExtractor]) -> None:
         """

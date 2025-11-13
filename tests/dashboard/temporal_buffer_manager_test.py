@@ -77,7 +77,7 @@ class TestTemporalBufferManager:
         manager.create_buffer('test', extractors)
         manager.update_buffer('test', data)
 
-        result = manager['test']
+        result = manager.get_buffered_data('test')
         assert result == data
 
     def test_update_buffer_raises_error_for_missing_key(self):
@@ -120,7 +120,7 @@ class TestTemporalBufferManager:
         manager.add_extractor('test', FullHistoryExtractor())
 
         # Data should be preserved when switching
-        result = manager['test']
+        result = manager.get_buffered_data('test')
         assert result is not None
         # After switching, buffer transforms scalar time coord to time dimension
         assert 'time' in result.dims
@@ -147,7 +147,7 @@ class TestTemporalBufferManager:
             manager.update_buffer('test', data)
 
         # Verify we have temporal data with 3 time points
-        result = manager['test']
+        result = manager.get_buffered_data('test')
         assert result is not None
         assert 'time' in result.dims
         assert result.sizes['time'] == 3
@@ -160,7 +160,7 @@ class TestTemporalBufferManager:
         manager.add_extractor('test', LatestValueExtractor())
 
         # Verify the latest time slice is preserved after transition
-        result = manager['test']
+        result = manager.get_buffered_data('test')
         assert result is not None
         # The last slice should have values [2.0, 2.0] and time=2.0
         expected_data = sc.array(dims=['x'], values=[2.0, 2.0], unit='counts')
@@ -325,7 +325,7 @@ class TestTemporalBufferManagerWithRealData:
             manager.update_buffer('stream', data)
 
         # Should only have latest value
-        result = manager['stream']
+        result = manager.get_buffered_data('stream')
         assert result is not None
         # Extract using the extractor
         extracted = extractors[0].extract(result)
@@ -351,7 +351,7 @@ class TestTemporalBufferManagerWithRealData:
             manager.update_buffer('stream', data)
 
         # Should have all data concatenated
-        result = manager['stream']
+        result = manager.get_buffered_data('stream')
         assert result is not None
         assert 'time' in result.dims
         assert result.sizes['time'] == 3
