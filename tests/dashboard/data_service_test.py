@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from ess.livedata.dashboard.data_service import DataService, Subscriber
+from ess.livedata.dashboard.data_service import DataService, DataServiceSubscriber
 from ess.livedata.dashboard.data_subscriber import DataSubscriber, Pipe, StreamAssembler
 from ess.livedata.dashboard.extractors import LatestValueExtractor
 
@@ -863,7 +863,7 @@ class TestExtractorBasedSubscription:
             LatestValueExtractor,
         )
 
-        class TestSubscriber(Subscriber[str]):
+        class TestSubscriber(DataServiceSubscriber[str]):
             def __init__(self, keys: set[str], extractor):
                 self._keys_set = keys
                 self._extractor = extractor
@@ -929,7 +929,7 @@ class TestExtractorBasedSubscription:
             LatestValueExtractor,
         )
 
-        class MultiKeySubscriber(Subscriber[str]):
+        class MultiKeySubscriber(DataServiceSubscriber[str]):
             def __init__(self):
                 self.received_data: list[dict] = []
                 super().__init__()

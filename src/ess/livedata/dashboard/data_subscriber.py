@@ -7,7 +7,7 @@ from collections.abc import Callable, Hashable, Mapping
 from typing import Any, Generic, Protocol, TypeVar
 
 from ess.livedata.config.workflow_spec import ResultKey
-from ess.livedata.dashboard.data_service import Subscriber
+from ess.livedata.dashboard.data_service import DataServiceSubscriber
 from ess.livedata.dashboard.extractors import UpdateExtractor
 
 
@@ -88,7 +88,7 @@ class StreamAssembler(ABC, Generic[Key]):
         """
 
 
-class DataSubscriber(Subscriber[Key], Generic[Key, P]):
+class DataSubscriber(DataServiceSubscriber[Key], Generic[Key, P]):
     """Unified subscriber that uses a StreamAssembler to process data."""
 
     def __init__(

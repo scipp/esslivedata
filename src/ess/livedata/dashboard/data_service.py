@@ -14,8 +14,8 @@ K = TypeVar('K', bound=Hashable)
 V = TypeVar('V')
 
 
-class Subscriber(ABC, Generic[K]):
-    """Base class for subscribers with cached keys and extractors."""
+class DataServiceSubscriber(ABC, Generic[K]):
+    """Base class for data service subscribers with cached keys and extractors."""
 
     def __init__(self) -> None:
         """Initialize subscriber and cache keys from extractors."""
@@ -68,7 +68,7 @@ class DataService(MutableMapping[K, V]):
             buffer_manager = TemporalBufferManager()
         self._buffer_manager = buffer_manager
         self._default_extractor = LatestValueExtractor()
-        self._subscribers: list[Subscriber[K]] = []
+        self._subscribers: list[DataServiceSubscriber[K]] = []
         self._update_callbacks: list[Callable[[set[K]], None]] = []
         self._key_change_subscribers: list[Callable[[set[K], set[K]], None]] = []
         self._pending_updates: set[K] = set()
@@ -120,7 +120,9 @@ class DataService(MutableMapping[K, V]):
 
         return extractors
 
-    def _build_subscriber_data(self, subscriber: Subscriber[K]) -> dict[K, Any]:
+    def _build_subscriber_data(
+        self, subscriber: DataServiceSubscriber[K]
+    ) -> dict[K, Any]:
         """
         Extract data for a subscriber based on its extractors.
 
@@ -146,7 +148,7 @@ class DataService(MutableMapping[K, V]):
 
         return subscriber_data
 
-    def register_subscriber(self, subscriber: Subscriber[K]) -> None:
+    def register_subscriber(self, subscriber: DataServiceSubscriber[K]) -> None:
         """
         Register a subscriber for updates with extractor-based data access.
 

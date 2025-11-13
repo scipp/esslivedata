@@ -9,11 +9,11 @@ from typing import Any
 import pytest
 import scipp as sc
 
-from ess.livedata.dashboard.data_service import DataService, Subscriber
+from ess.livedata.dashboard.data_service import DataService, DataServiceSubscriber
 from ess.livedata.dashboard.extractors import LatestValueExtractor
 
 
-class SimpleSubscriber(Subscriber[str]):
+class SimpleSubscriber(DataServiceSubscriber[str]):
     """Simple subscriber that tracks trigger calls."""
 
     def __init__(self, keys: set[str]) -> None:
