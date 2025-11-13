@@ -34,21 +34,6 @@ class UpdateExtractor(ABC, Generic[T]):
         """
 
     @abstractmethod
-    def is_requirement_fulfilled(self, data: T | None) -> bool:
-        """
-        Check if the extractor's requirements are satisfied by the buffered data.
-
-        Parameters
-        ----------
-        data:
-            The buffered data to check.
-
-        Returns
-        -------
-        :
-            True if requirements are satisfied, False otherwise.
-        """
-
     def get_required_timespan(self) -> float | None:
         """
         Get the required timespan for this extractor.
@@ -58,7 +43,6 @@ class UpdateExtractor(ABC, Generic[T]):
         :
             Required timespan in seconds, or None if no specific requirement.
         """
-        return None
 
 
 class LatestValueExtractor(UpdateExtractor[T]):
@@ -75,9 +59,9 @@ class LatestValueExtractor(UpdateExtractor[T]):
         """
         self._concat_dim = concat_dim
 
-    def is_requirement_fulfilled(self, data: T | None) -> bool:
-        """Latest value only needs any data."""
-        return data is not None
+    def get_required_timespan(self) -> float | None:
+        """Latest value has no specific timespan requirement."""
+        return None
 
     def extract(self, data: T | None) -> Any:
         """Extract the latest value from the data, unwrapped."""
@@ -103,10 +87,6 @@ class FullHistoryExtractor(UpdateExtractor[T]):
     def get_required_timespan(self) -> float | None:
         """Return infinite timespan to indicate wanting all history."""
         return float('inf')
-
-    def is_requirement_fulfilled(self, data: T | None) -> bool:
-        """Full history is never fulfilled - always want more data."""
-        return False
 
     def extract(self, data: T | None) -> Any:
         """Extract all data from the buffer."""
@@ -142,30 +122,6 @@ class WindowAggregatingExtractor(UpdateExtractor[T]):
     def get_required_timespan(self) -> float | None:
         """Return the required window duration."""
         return self._window_duration_seconds
-
-    def is_requirement_fulfilled(self, data: T | None) -> bool:
-        """Requires temporal coverage of specified duration."""
-        if data is None:
-            return False
-
-        # Check for time coordinate
-        if not hasattr(data, 'coords') or self._concat_dim not in data.coords:
-            return False
-
-        # Check if data has concat dimension (indicates multiple frames)
-        if not hasattr(data, 'dims') or self._concat_dim not in data.dims:
-            # Single frame - no temporal coverage
-            return False
-
-        time_coord = data.coords[self._concat_dim]
-        if data.sizes[self._concat_dim] < 2:
-            # Need at least 2 points to measure coverage
-            return False
-
-        # Calculate time span
-        time_span = time_coord[-1] - time_coord[0]
-        coverage_seconds = float(time_span.to(unit='s').value)
-        return coverage_seconds >= self._window_duration_seconds
 
     def extract(self, data: T | None) -> Any:
         """Extract a window of data and aggregate over the time dimension."""
