@@ -11,11 +11,7 @@ from typing import Any, Generic, Protocol, TypeVar
 import pydantic
 import scipp as sc
 
-from .extractors import (
-    FullHistoryExtractor,
-    LatestValueExtractor,
-    UpdateExtractor,
-)
+from .extractors import FullHistoryExtractor, UpdateExtractor
 from .plot_params import PlotParamsROIDetector
 from .plots import (
     ImagePlotter,
@@ -161,7 +157,7 @@ plotter_registry.register_plotter(
     name='image',
     title='Image',
     description='Plot the data as a images.',
-    data_requirements=DataRequirements(min_dims=2, max_dims=2, required_extractor=None),
+    data_requirements=DataRequirements(min_dims=2, max_dims=2),
     factory=ImagePlotter.from_params,
 )
 
@@ -170,12 +166,7 @@ plotter_registry.register_plotter(
     name='lines',
     title='Lines',
     description='Plot the data as line plots.',
-    data_requirements=DataRequirements(
-        min_dims=1,
-        max_dims=1,
-        multiple_datasets=True,
-        required_extractor=None,
-    ),
+    data_requirements=DataRequirements(min_dims=1, max_dims=1, multiple_datasets=True),
     factory=LinePlotter.from_params,
 )
 
@@ -202,7 +193,6 @@ plotter_registry.register_plotter(
         min_dims=3,
         max_dims=3,
         multiple_datasets=False,
-        required_extractor=None,
         custom_validators=[_all_coords_evenly_spaced],
     ),
     factory=SlicerPlotter.from_params,
@@ -239,11 +229,6 @@ plotter_registry.register_plotter(
         'Backspace while the mouse is within the plot area.</li>'
         '</ul>'
     ),
-    data_requirements=DataRequirements(
-        min_dims=2,
-        max_dims=2,
-        multiple_datasets=True,
-        required_extractor=LatestValueExtractor,
-    ),
+    data_requirements=DataRequirements(min_dims=2, max_dims=2, multiple_datasets=True),
     factory=_roi_detector_plotter_factory,
 )
