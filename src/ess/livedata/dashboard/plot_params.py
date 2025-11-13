@@ -136,7 +136,8 @@ class WindowParams(pydantic.BaseModel):
 
     mode: WindowMode = pydantic.Field(
         default=WindowMode.latest,
-        description="Extraction mode: 'latest' for single frame, 'window' for window.",
+        description="Extraction mode: 'latest' for single frame (typically accumulated "
+        "for 1 second), 'window' for aggregation over multiple frames.",
         title="Mode",
     )
     window_duration_seconds: float = pydantic.Field(
