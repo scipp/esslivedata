@@ -20,6 +20,7 @@ class MonitorStreamProcessor(Workflow):
         self._event_edges = edges.to(unit='ns').values
         self._cumulative: sc.DataArray | None = None
         self._current: sc.DataArray | None = None
+        self._current_start_time: int | None = None
 
     @staticmethod
     def create_workflow(params: MonitorDataParams) -> Workflow:
@@ -35,6 +36,11 @@ class MonitorStreamProcessor(Workflow):
     ) -> None:
         if len(data) != 1:
             raise ValueError("MonitorStreamProcessor expects exactly one data item.")
+
+        # Track start time of first data since last finalize
+        if self._current_start_time is None:
+            self._current_start_time = start_time
+
         raw = next(iter(data.values()))
         # Note: In theory we should consider rebinning/histogramming only in finalize(),
         # but the current plan is to accumulate before/during preprocessing, i.e.,
@@ -64,17 +70,29 @@ class MonitorStreamProcessor(Workflow):
     def finalize(self) -> dict[Hashable, sc.DataArray]:
         if self._current is None:
             raise ValueError("No data has been added")
+        if self._current_start_time is None:
+            raise RuntimeError(
+                "finalize called without any data accumulated via accumulate"
+            )
+
         current = self._current
         if self._cumulative is None:
             self._cumulative = current
         else:
             self._cumulative += current
         self._current = sc.zeros_like(current)
+
+        # Add time coord to current result
+        time_coord = sc.scalar(self._current_start_time, unit='ns')
+        current = current.assign_coords(time=time_coord)
+        self._current_start_time = None
+
         return {'cumulative': self._cumulative, 'current': current}
 
     def clear(self) -> None:
         self._cumulative = None
         self._current = None
+        self._current_start_time = None
 
 
 class MonitorHandlerFactory(

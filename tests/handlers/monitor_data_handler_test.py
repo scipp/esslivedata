@@ -143,15 +143,13 @@ class TestMonitorStreamProcessor:
 
         assert "cumulative" in result
         assert "current" in result
-        assert_identical(result["cumulative"], result["current"])
+        # Check cumulative data (excluding time coord which current has)
+        assert_identical(result["cumulative"], result["current"].drop_coords("time"))
 
-        # After finalize, we can finalize again without new data, since empty batches
-        # will be committed.
-        empty_result = processor.finalize()
-        assert empty_result["current"].sum().value == 0
-        assert (
-            empty_result["cumulative"].sum().value == result["cumulative"].sum().value
-        )
+        # Verify time coordinate is present
+        assert "time" in result["current"].coords
+        assert result["current"].coords["time"].value == 1000
+        assert result["current"].coords["time"].unit == "ns"
 
     def test_finalize_subsequent_calls(self, processor):
         """Test finalize accumulates over multiple calls."""
@@ -177,6 +175,37 @@ class TestMonitorStreamProcessor:
         """Test finalize raises error when no data has been added."""
         with pytest.raises(ValueError, match="No data has been added"):
             processor.finalize()
+
+    def test_finalize_without_accumulate(self, processor):
+        """Test finalize raises error without accumulate since last finalize."""
+        processor.accumulate(
+            {"det1": np.array([10e6, 25e6])}, start_time=1000, end_time=2000
+        )
+        processor.finalize()
+
+        # After finalize, calling finalize again without accumulate should fail
+        with pytest.raises(
+            RuntimeError,
+            match="finalize called without any data accumulated via accumulate",
+        ):
+            processor.finalize()
+
+    def test_time_coordinate_tracks_first_accumulate(self, processor):
+        """Test time coordinate uses start_time of the first accumulate call."""
+        # First accumulate with start_time=1000
+        processor.accumulate({"det1": np.array([10e6])}, start_time=1000, end_time=2000)
+        # Second accumulate with start_time=3000 (should be ignored)
+        processor.accumulate({"det1": np.array([20e6])}, start_time=3000, end_time=4000)
+
+        result = processor.finalize()
+
+        # Time coordinate should use the first start_time
+        assert result["current"].coords["time"].value == 1000
+
+        # After finalize, the next accumulate should set a new start_time
+        processor.accumulate({"det1": np.array([30e6])}, start_time=5000, end_time=6000)
+        result2 = processor.finalize()
+        assert result2["current"].coords["time"].value == 5000
 
     def test_clear(self, processor):
         """Test clear method resets processor state."""
