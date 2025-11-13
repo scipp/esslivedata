@@ -129,9 +129,6 @@ class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]
         extractor:
             New extractor that will use this buffer.
         """
-        if key not in self._states:
-            raise KeyError(f"No buffer found for key {key}")
-
         state = self._states[key]
         state.extractors.append(extractor)
 
