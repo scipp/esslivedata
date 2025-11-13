@@ -11,6 +11,7 @@ from holoviews import Dimension, streams
 
 from ess.livedata import ServiceBase
 
+from .config_store import ConfigStoreManager
 from .dashboard_services import DashboardServices
 from .kafka_transport import DashboardKafkaTransport
 from .transport import NullTransport, Transport
@@ -45,6 +46,9 @@ class DashboardBase(ServiceBase, ABC):
 
         self._callback = None
 
+        # Config store manager for file-backed persistent UI state (GUI dashboards)
+        config_manager = ConfigStoreManager(instrument=instrument, store_type='file')
+
         # Setup all dashboard services
         self._services = DashboardServices(
             instrument=instrument,
@@ -53,6 +57,7 @@ class DashboardBase(ServiceBase, ABC):
             logger=self._logger,
             pipe_factory=streams.Pipe,
             transport=self._create_transport(transport),
+            config_manager=config_manager,
         )
 
         # Create reduction widget (GUI-specific)

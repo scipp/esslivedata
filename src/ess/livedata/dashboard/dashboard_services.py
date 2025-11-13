@@ -14,7 +14,7 @@ from ess.livedata.config.instruments import get_config
 from ess.livedata.config.workflow_spec import ResultKey
 
 from .command_service import CommandService
-from .config_store import InMemoryConfigStore
+from .config_store import ConfigStoreManager
 from .correlation_histogram import CorrelationHistogramController
 from .data_service import DataService
 from .job_controller import JobController
@@ -55,6 +55,11 @@ class DashboardServices:
         Transport instance for message sources and sinks.
         For Kafka: DashboardKafkaTransport(instrument, dev, logger)
         For testing: NullTransport()
+    config_manager:
+        ConfigStoreManager instance for creating config stores.
+        Controls whether stores are file-backed or in-memory.
+        For GUI: ConfigStoreManager(instrument, store_type='file')
+        For tests: ConfigStoreManager(instrument, store_type='memory')
     """
 
     def __init__(
@@ -66,6 +71,7 @@ class DashboardServices:
         logger: logging.Logger,
         pipe_factory: Callable[[Any], Any],
         transport: Transport,
+        config_manager: ConfigStoreManager,
     ):
         self._instrument = instrument
         self._dev = dev
@@ -73,14 +79,11 @@ class DashboardServices:
         self._logger = logger
         self._pipe_factory = pipe_factory
         self._transport = transport
+        self._config_manager = config_manager
 
         # Config stores for workflow and plotter persistent UI state
-        self.workflow_config_store = InMemoryConfigStore(
-            max_configs=100, cleanup_fraction=0.2
-        )
-        self.plotter_config_store = InMemoryConfigStore(
-            max_configs=100, cleanup_fraction=0.2
-        )
+        self.workflow_config_store = config_manager.get_store('workflow_configs')
+        self.plotter_config_store = config_manager.get_store('plotter_configs')
 
         # Setup all services
         self._setup_data_infrastructure()

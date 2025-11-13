@@ -7,6 +7,7 @@ maxdepth: 2
 ---
 
 services
+deployment
 adding-new-instruments
 ```
 
