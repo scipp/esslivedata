@@ -16,11 +16,11 @@ from ..config.workflows import TimeseriesAccumulator
 from ..core.handler import JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import Accumulator, CollectTOA, Cumulative, MonitorEvents
-from .monitor_workflow_specs import MonitorDataParams, MonitorTimeseriesParams
+from .monitor_workflow_specs import MonitorDataParams, MonitorRatemeterParams
 from .stream_processor_workflow import StreamProcessorWorkflow
 from .workflow_factory import Workflow
 
-# Type aliases for monitor interval timeseries workflow
+# Type aliases for monitor ratemeter workflow
 CustomMonitor = NewType('CustomMonitor', int)
 CurrentRun = NewType('CurrentRun', int)
 MonitorCountsInInterval = NewType('MonitorCountsInInterval', sc.DataArray)
@@ -111,9 +111,9 @@ def _get_interval(
     return MonitorCountsInInterval(counts)
 
 
-def create_monitor_interval_timeseries_factory(instrument):
+def create_monitor_ratemeter_factory(instrument):
     """
-    Create factory function for monitor interval timeseries workflow.
+    Create factory function for monitor ratemeter workflow.
 
     This is generic workflow logic that can be used by any instrument.
     Auto-attached by Instrument.load_factories().
@@ -131,7 +131,7 @@ def create_monitor_interval_timeseries_factory(instrument):
 
     def factory(
         source_name: str,
-        params: MonitorTimeseriesParams,
+        params: MonitorRatemeterParams,
     ) -> StreamProcessorWorkflow:
         """Factory function for monitor interval timeseries workflow.
 

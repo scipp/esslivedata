@@ -67,7 +67,7 @@ class Instrument:
     def __post_init__(self) -> None:
         """Auto-register standard workflow specs based on instrument metadata."""
         from ess.livedata.handlers.monitor_workflow_specs import (
-            register_monitor_interval_timeseries_spec,
+            register_monitor_ratemeter_spec,
             register_monitor_workflow_specs,
         )
         from ess.livedata.handlers.timeseries_workflow_specs import (
@@ -81,10 +81,8 @@ class Instrument:
         # Only register monitor interval timeseries if nexus file is available
         # (required by the workflow to create GenericTofWorkflow)
         if self._nexus_file is not None or self._can_load_nexus_file():
-            self._monitor_interval_timeseries_handle = (
-                register_monitor_interval_timeseries_spec(
-                    instrument=self, source_names=self.monitors
-                )
+            self._monitor_interval_timeseries_handle = register_monitor_ratemeter_spec(
+                instrument=self, source_names=self.monitors
             )
 
         timeseries_names = list(self.f144_attribute_registry.keys())
@@ -268,10 +266,10 @@ class Instrument:
 
         if self._monitor_interval_timeseries_handle is not None:
             from ess.livedata.handlers.monitor_data_handler import (
-                create_monitor_interval_timeseries_factory,
+                create_monitor_ratemeter_factory,
             )
 
-            factory = create_monitor_interval_timeseries_factory(self)
+            factory = create_monitor_ratemeter_factory(self)
             self._monitor_interval_timeseries_handle.attach_factory()(factory)
 
         if self._timeseries_workflow_handle is not None:

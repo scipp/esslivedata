@@ -28,8 +28,8 @@ class MonitorDataParams(pydantic.BaseModel):
     )
 
 
-class MonitorTimeseriesParams(pydantic.BaseModel):
-    """Parameters for monitor interval timeseries workflow."""
+class MonitorRatemeterParams(pydantic.BaseModel):
+    """Parameters for monitor ratemeter workflow."""
 
     toa_range: parameter_models.TOARange = pydantic.Field(
         title="Time of Arrival Range",
@@ -38,12 +38,12 @@ class MonitorTimeseriesParams(pydantic.BaseModel):
     )
 
 
-class MonitorTimeseriesOutputs(WorkflowOutputsBase):
-    """Outputs for monitor interval timeseries workflow."""
+class MonitorRatemeterOutputs(WorkflowOutputsBase):
+    """Outputs for monitor ratemeter workflow."""
 
     monitor_counts: sc.DataArray = pydantic.Field(
         title="Monitor Counts",
-        description="Timeseries of monitor counts within the specified TOA range.",
+        description="Monitor counts within the specified TOA range.",
     )
 
 
@@ -80,11 +80,11 @@ def register_monitor_workflow_specs(
     )
 
 
-def register_monitor_interval_timeseries_spec(
+def register_monitor_ratemeter_spec(
     instrument: Instrument, source_names: list[str]
 ) -> SpecHandle | None:
     """
-    Register monitor interval timeseries workflow spec (lightweight, no heavy deps).
+    Register monitor ratemeter workflow spec.
 
     Parameters
     ----------
@@ -103,12 +103,11 @@ def register_monitor_interval_timeseries_spec(
 
     return instrument.register_spec(
         namespace='monitor_data',
-        name='monitor_interval_timeseries',
+        name='monitor_ratemeter',
         version=1,
-        title='Monitor Interval Timeseries',
-        description='Timeseries of counts in a monitor within a specified '
-        'time-of-arrival range.',
+        title='Monitor Ratemeter',
+        description='Monitor counts within a specified time-of-arrival range.',
         source_names=source_names,
-        params=MonitorTimeseriesParams,
-        outputs=MonitorTimeseriesOutputs,
+        params=MonitorRatemeterParams,
+        outputs=MonitorRatemeterOutputs,
     )
