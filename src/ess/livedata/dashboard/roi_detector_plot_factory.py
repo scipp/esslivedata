@@ -19,8 +19,12 @@ from .data_subscriber import (
     DataSubscriber,
     MergingStreamAssembler,
 )
-from .extractors import LatestValueExtractor, create_extractors_from_params
-from .plot_params import LayoutParams, PlotParamsROIDetector
+from .extractors import LatestValueExtractor
+from .plot_params import (
+    LayoutParams,
+    PlotParamsROIDetector,
+    create_extractors_from_params,
+)
 from .plots import ImagePlotter, LinePlotter, PlotAspect, PlotAspectType
 from .roi_publisher import ROIPublisher
 from .stream_manager import StreamManager

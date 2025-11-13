@@ -18,11 +18,8 @@ from ess.livedata.config.workflow_spec import (
 
 from .config_store import ConfigStore
 from .configuration_adapter import ConfigurationState
-from .extractors import (
-    UpdateExtractor,
-    create_extractors_from_params,
-)
 from .job_service import JobService
+from .plot_params import create_extractors_from_params
 from .plotting import PlotterSpec, plotter_registry
 from .roi_detector_plot_factory import ROIDetectorPlotFactory
 from .roi_publisher import ROIPublisher
@@ -232,32 +229,6 @@ class PlottingController:
         )
         self._config_store[plotter_id] = config_state.model_dump()
 
-    def _create_extractors(
-        self,
-        keys: list[ResultKey],
-        spec: PlotterSpec,
-        params: pydantic.BaseModel,
-    ) -> dict[ResultKey, UpdateExtractor]:
-        """
-        Create extractors based on plotter requirements and parameters.
-
-        Parameters
-        ----------
-        keys:
-            Result keys to create extractors for.
-        spec:
-            Plotter specification containing data requirements.
-        params:
-            Plotter parameters potentially containing window configuration.
-
-        Returns
-        -------
-        :
-            Dictionary mapping result keys to extractor instances.
-        """
-        window = getattr(params, 'window', None)
-        return create_extractors_from_params(keys, window, spec)
-
     def create_plot(
         self,
         job_number: JobNumber,
@@ -325,7 +296,8 @@ class PlottingController:
 
         # Create extractors based on plotter requirements and params
         spec = plotter_registry.get_spec(plot_name)
-        extractors = self._create_extractors(keys, spec, params)
+        window = getattr(params, 'window', None)
+        extractors = create_extractors_from_params(keys, window, spec)
 
         pipe = self._stream_manager.make_merging_stream(extractors)
         plotter = plotter_registry.create_plotter(plot_name, params=params)

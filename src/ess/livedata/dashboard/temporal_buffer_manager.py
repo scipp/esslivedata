@@ -7,15 +7,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Hashable, Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import Generic, TypeVar
 
 import scipp as sc
 
-from .extractors import LatestValueExtractor
+from .extractors import LatestValueExtractor, UpdateExtractor
 from .temporal_buffers import BufferProtocol, SingleValueBuffer, TemporalBuffer
-
-if TYPE_CHECKING:
-    from .extractors import UpdateExtractor
 
 logger = logging.getLogger(__name__)
 

@@ -2,12 +2,21 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Param models for configuring plotters via widgets."""
 
+from __future__ import annotations
+
 import enum
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 import pydantic
 
 from ..config.roi_names import get_roi_mapper
+
+if TYPE_CHECKING:
+    from ess.livedata.config.workflow_spec import ResultKey
+
+    from .extractors import UpdateExtractor
+    from .plotting import PlotterSpec
 
 
 def _get_default_max_roi_count() -> int:
@@ -226,3 +235,55 @@ class PlotParamsROIDetector(PlotParams2d):
         default_factory=ROIOptions,
         description="Options for ROI selection and display.",
     )
+
+
+def create_extractors_from_params(
+    keys: list[ResultKey],
+    window: WindowParams | None,
+    spec: PlotterSpec | None = None,
+) -> dict[ResultKey, UpdateExtractor]:
+    """
+    Create extractors based on plotter spec and window configuration.
+
+    Parameters
+    ----------
+    keys:
+        Result keys to create extractors for.
+    window:
+        Window parameters for extraction mode and aggregation.
+        If None, falls back to LatestValueExtractor.
+    spec:
+        Optional plotter specification. If provided and contains a required
+        extractor, that extractor type is used.
+
+    Returns
+    -------
+    :
+        Dictionary mapping result keys to extractor instances.
+    """
+    # Import here to avoid circular imports at module level
+    from .extractors import (
+        LatestValueExtractor,
+        WindowAggregatingExtractor,
+    )
+
+    if spec is not None and spec.data_requirements.required_extractor is not None:
+        # Plotter requires specific extractor (e.g., TimeSeriesPlotter)
+        extractor_type = spec.data_requirements.required_extractor
+        return {key: extractor_type() for key in keys}
+
+    # No fixed requirement - check if window params provided
+    if window is not None:
+        if window.mode == WindowMode.latest:
+            return {key: LatestValueExtractor() for key in keys}
+        else:  # mode == WindowMode.window
+            return {
+                key: WindowAggregatingExtractor(
+                    window_duration_seconds=window.window_duration_seconds,
+                    aggregation=window.aggregation,
+                )
+                for key in keys
+            }
+
+    # Fallback to latest value extractor
+    return {key: LatestValueExtractor() for key in keys}

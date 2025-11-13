@@ -4,17 +4,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import scipp as sc
 
 from .plot_params import WindowAggregation
-
-if TYPE_CHECKING:
-    from ess.livedata.config.workflow_spec import ResultKey
-
-    from .plot_params import WindowParams
-    from .plotting import PlotterSpec
 
 
 class UpdateExtractor(ABC):
@@ -169,52 +163,3 @@ class WindowAggregatingExtractor(UpdateExtractor):
                 raise ValueError(f"Unknown aggregation method: {self._aggregation}")
 
         return self._aggregator(windowed_data, self._concat_dim)
-
-
-def create_extractors_from_params(
-    keys: list[ResultKey],
-    window: WindowParams | None,
-    spec: PlotterSpec | None = None,
-) -> dict[ResultKey, UpdateExtractor]:
-    """
-    Create extractors based on plotter spec and window configuration.
-
-    Parameters
-    ----------
-    keys:
-        Result keys to create extractors for.
-    window:
-        Window parameters for extraction mode and aggregation.
-        If None, falls back to LatestValueExtractor.
-    spec:
-        Optional plotter specification. If provided and contains a required
-        extractor, that extractor type is used.
-
-    Returns
-    -------
-    :
-        Dictionary mapping result keys to extractor instances.
-    """
-    # Avoid circular import by importing here
-    from .plot_params import WindowMode
-
-    if spec is not None and spec.data_requirements.required_extractor is not None:
-        # Plotter requires specific extractor (e.g., TimeSeriesPlotter)
-        extractor_type = spec.data_requirements.required_extractor
-        return {key: extractor_type() for key in keys}
-
-    # No fixed requirement - check if window params provided
-    if window is not None:
-        if window.mode == WindowMode.latest:
-            return {key: LatestValueExtractor() for key in keys}
-        else:  # mode == WindowMode.window
-            return {
-                key: WindowAggregatingExtractor(
-                    window_duration_seconds=window.window_duration_seconds,
-                    aggregation=window.aggregation,
-                )
-                for key in keys
-            }
-
-    # Fallback to latest value extractor
-    return {key: LatestValueExtractor() for key in keys}
