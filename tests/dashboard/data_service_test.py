@@ -449,21 +449,19 @@ class TestDataServiceUpdatingSubscribers:
         """Test subscriber updating service outside of transaction."""
         service = DataService[str, int]()
 
-        class UpdatingSubscriber(DataSubscriber):
+        class UpdatingSubscriber(DataServiceSubscriber[str]):
             def __init__(self, keys: set[str], service: DataService[str, int]):
-                extractors = {key: LatestValueExtractor() for key in keys}
-
-                def pipe_factory(data):
-                    return FakePipe(data)
-
-                super().__init__(FakeDataAssembler(keys), pipe_factory, extractors)
+                self._keys_set = keys
+                self._extractors = {key: LatestValueExtractor() for key in keys}
                 self._service = service
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
 
             def trigger(self, store: dict[str, int]) -> None:
-                super().trigger(store)
-                # Update derived data based on received data
                 if "input" in store:
-                    # store["input"] is a scipp scalar, multiply to get derived value
                     derived_value = store["input"].value * 2
                     self._service["derived"] = make_test_data(derived_value)
 
@@ -480,18 +478,18 @@ class TestDataServiceUpdatingSubscribers:
         """Test subscriber updating service at end of transaction."""
         service = DataService[str, int]()
 
-        class UpdatingSubscriber(DataSubscriber):
+        class UpdatingSubscriber(DataServiceSubscriber[str]):
             def __init__(self, keys: set[str], service: DataService[str, int]):
-                extractors = {key: LatestValueExtractor() for key in keys}
-
-                def pipe_factory(data):
-                    return FakePipe(data)
-
-                super().__init__(FakeDataAssembler(keys), pipe_factory, extractors)
+                self._keys_set = keys
+                self._extractors = {key: LatestValueExtractor() for key in keys}
                 self._service = service
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
 
             def trigger(self, store: dict[str, int]) -> None:
-                super().trigger(store)
                 if "input" in store:
                     derived_value = store["input"].value * 2
                     self._service["derived"] = make_test_data(derived_value)
@@ -512,24 +510,24 @@ class TestDataServiceUpdatingSubscribers:
         """Test multiple subscribers updating different derived data."""
         service = DataService[str, int]()
 
-        class MultiplierSubscriber(DataSubscriber):
+        class MultiplierSubscriber(DataServiceSubscriber[str]):
             def __init__(
                 self,
                 keys: set[str],
                 service: DataService[str, int],
                 multiplier: int,
             ):
-                extractors = {key: LatestValueExtractor() for key in keys}
-
-                def pipe_factory(data):
-                    return FakePipe(data)
-
-                super().__init__(FakeDataAssembler(keys), pipe_factory, extractors)
+                self._keys_set = keys
+                self._extractors = {key: LatestValueExtractor() for key in keys}
                 self._service = service
                 self._multiplier = multiplier
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
 
             def trigger(self, store: dict[str, int]) -> None:
-                super().trigger(store)
                 if "input" in store:
                     key = f"derived_{self._multiplier}x"
                     derived_value = store["input"].value * self._multiplier
@@ -550,36 +548,38 @@ class TestDataServiceUpdatingSubscribers:
         """Test subscribers that depend on derived data from other subscribers."""
         service = DataService[str, int]()
 
-        class FirstLevelSubscriber(DataSubscriber):
+        class FirstLevelSubscriber(DataServiceSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                extractors = {key: LatestValueExtractor() for key in {"input"}}
-
-                def pipe_factory(data):
-                    return FakePipe(data)
-
-                super().__init__(FakeDataAssembler({"input"}), pipe_factory, extractors)
+                self._keys_set = {"input"}
+                self._extractors = {
+                    key: LatestValueExtractor() for key in self._keys_set
+                }
                 self._service = service
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
 
             def trigger(self, store: dict[str, int]) -> None:
-                super().trigger(store)
                 if "input" in store:
                     derived_value = store["input"].value * 2
                     self._service["level1"] = make_test_data(derived_value)
 
-        class SecondLevelSubscriber(DataSubscriber):
+        class SecondLevelSubscriber(DataServiceSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                extractors = {key: LatestValueExtractor() for key in {"level1"}}
-
-                def pipe_factory(data):
-                    return FakePipe(data)
-
-                super().__init__(
-                    FakeDataAssembler({"level1"}), pipe_factory, extractors
-                )
+                self._keys_set = {"level1"}
+                self._extractors = {
+                    key: LatestValueExtractor() for key in self._keys_set
+                }
                 self._service = service
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
 
             def trigger(self, store: dict[str, int]) -> None:
-                super().trigger(store)
                 if "level1" in store:
                     derived_value = store["level1"].value * 3
                     self._service["level2"] = make_test_data(derived_value)
@@ -599,36 +599,38 @@ class TestDataServiceUpdatingSubscribers:
         """Test cascading updates within a transaction."""
         service = DataService[str, int]()
 
-        class FirstLevelSubscriber(DataSubscriber):
+        class FirstLevelSubscriber(DataServiceSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                extractors = {key: LatestValueExtractor() for key in {"input"}}
-
-                def pipe_factory(data):
-                    return FakePipe(data)
-
-                super().__init__(FakeDataAssembler({"input"}), pipe_factory, extractors)
+                self._keys_set = {"input"}
+                self._extractors = {
+                    key: LatestValueExtractor() for key in self._keys_set
+                }
                 self._service = service
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
 
             def trigger(self, store: dict[str, int]) -> None:
-                super().trigger(store)
                 if "input" in store:
                     derived_value = store["input"].value * 2
                     self._service["level1"] = make_test_data(derived_value)
 
-        class SecondLevelSubscriber(DataSubscriber):
+        class SecondLevelSubscriber(DataServiceSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                extractors = {key: LatestValueExtractor() for key in {"level1"}}
-
-                def pipe_factory(data):
-                    return FakePipe(data)
-
-                super().__init__(
-                    FakeDataAssembler({"level1"}), pipe_factory, extractors
-                )
+                self._keys_set = {"level1"}
+                self._extractors = {
+                    key: LatestValueExtractor() for key in self._keys_set
+                }
                 self._service = service
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
 
             def trigger(self, store: dict[str, int]) -> None:
-                super().trigger(store)
                 if "level1" in store:
                     derived_value = store["level1"].value * 3
                     self._service["level2"] = make_test_data(derived_value)
@@ -655,20 +657,21 @@ class TestDataServiceUpdatingSubscribers:
         """Test subscriber that updates multiple derived keys at once."""
         service = DataService[str, int]()
 
-        class MultiUpdateSubscriber(DataSubscriber):
+        class MultiUpdateSubscriber(DataServiceSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                extractors = {key: LatestValueExtractor() for key in {"input"}}
-
-                def pipe_factory(data):
-                    return FakePipe(data)
-
-                super().__init__(FakeDataAssembler({"input"}), pipe_factory, extractors)
+                self._keys_set = {"input"}
+                self._extractors = {
+                    key: LatestValueExtractor() for key in self._keys_set
+                }
                 self._service = service
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
 
             def trigger(self, store: dict[str, int]) -> None:
-                super().trigger(store)
                 if "input" in store:
-                    # Update multiple derived values
                     input_value = store["input"].value
                     with self._service.transaction():
                         self._service["double"] = make_test_data(input_value * 2)
@@ -690,18 +693,20 @@ class TestDataServiceUpdatingSubscribers:
         service = DataService[str, int]()
         service["existing"] = make_test_data(100)
 
-        class OverwriteSubscriber(DataSubscriber):
+        class OverwriteSubscriber(DataServiceSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                extractors = {key: LatestValueExtractor() for key in {"input"}}
-
-                def pipe_factory(data):
-                    return FakePipe(data)
-
-                super().__init__(FakeDataAssembler({"input"}), pipe_factory, extractors)
+                self._keys_set = {"input"}
+                self._extractors = {
+                    key: LatestValueExtractor() for key in self._keys_set
+                }
                 self._service = service
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
 
             def trigger(self, store: dict[str, int]) -> None:
-                super().trigger(store)
                 if "input" in store:
                     derived_value = store["input"].value * 10
                     self._service["existing"] = make_test_data(derived_value)
@@ -719,22 +724,20 @@ class TestDataServiceUpdatingSubscribers:
         service = DataService[str, int]()
         update_count = {"count": 0}
 
-        class CircularSubscriber(DataSubscriber):
+        class CircularSubscriber(DataServiceSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                extractors = {
-                    key: LatestValueExtractor() for key in {"input", "output"}
+                self._keys_set = {"input", "output"}
+                self._extractors = {
+                    key: LatestValueExtractor() for key in self._keys_set
                 }
-
-                def pipe_factory(data):
-                    return FakePipe(data)
-
-                super().__init__(
-                    FakeDataAssembler({"input", "output"}), pipe_factory, extractors
-                )
                 self._service = service
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
 
             def trigger(self, store: dict[str, int]) -> None:
-                super().trigger(store)
                 update_count["count"] += 1
                 if update_count["count"] < 5:  # Prevent infinite recursion in test
                     if "input" in store and "output" not in store:
@@ -759,20 +762,20 @@ class TestDataServiceUpdatingSubscribers:
         service = DataService[str, int]()
         service["to_delete"] = make_test_data(999)
 
-        class DeletingSubscriber(DataSubscriber):
+        class DeletingSubscriber(DataServiceSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                extractors = {key: LatestValueExtractor() for key in {"trigger"}}
-
-                def pipe_factory(data):
-                    return FakePipe(data)
-
-                super().__init__(
-                    FakeDataAssembler({"trigger"}), pipe_factory, extractors
-                )
+                self._keys_set = {"trigger"}
+                self._extractors = {
+                    key: LatestValueExtractor() for key in self._keys_set
+                }
                 self._service = service
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
 
             def trigger(self, store: dict[str, int]) -> None:
-                super().trigger(store)
                 if "trigger" in store and "to_delete" in self._service:
                     del self._service["to_delete"]
                     self._service["deleted_flag"] = make_test_data(1)
@@ -790,20 +793,21 @@ class TestDataServiceUpdatingSubscribers:
         """Test complex scenario with nested transactions and subscriber updates."""
         service = DataService[str, int]()
 
-        class ComplexSubscriber(DataSubscriber):
+        class ComplexSubscriber(DataServiceSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                extractors = {key: LatestValueExtractor() for key in {"input"}}
-
-                def pipe_factory(data):
-                    return FakePipe(data)
-
-                super().__init__(FakeDataAssembler({"input"}), pipe_factory, extractors)
+                self._keys_set = {"input"}
+                self._extractors = {
+                    key: LatestValueExtractor() for key in self._keys_set
+                }
                 self._service = service
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
 
             def trigger(self, store: dict[str, int]) -> None:
-                super().trigger(store)
                 if "input" in store:
-                    # Subscriber uses its own transaction
                     input_value = store["input"].value
                     with self._service.transaction():
                         self._service["derived1"] = make_test_data(input_value * 2)
@@ -831,24 +835,24 @@ class TestDataServiceUpdatingSubscribers:
         """Test scenario requiring multiple notification rounds."""
         service = DataService[str, int]()
 
-        class ChainSubscriber(DataSubscriber):
+        class ChainSubscriber(DataServiceSubscriber[str]):
             def __init__(
                 self, input_key: str, output_key: str, service: DataService[str, int]
             ):
-                extractors = {key: LatestValueExtractor() for key in {input_key}}
-
-                def pipe_factory(data):
-                    return FakePipe(data)
-
-                super().__init__(
-                    FakeDataAssembler({input_key}), pipe_factory, extractors
-                )
+                self._keys_set = {input_key}
+                self._extractors = {
+                    key: LatestValueExtractor() for key in self._keys_set
+                }
                 self._input_key = input_key
                 self._output_key = output_key
                 self._service = service
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
 
             def trigger(self, store: dict[str, int]) -> None:
-                super().trigger(store)
                 if self._input_key in store:
                     derived_value = store[self._input_key].value + 1
                     self._service[self._output_key] = make_test_data(derived_value)
@@ -873,21 +877,23 @@ class TestDataServiceUpdatingSubscribers:
         """Test mixing immediate updates with transactional updates from subscribers."""
         service = DataService[str, int]()
 
-        class MixedSubscriber(DataSubscriber):
+        class MixedSubscriber(DataServiceSubscriber[str]):
             def __init__(self, service: DataService[str, int]):
-                extractors = {key: LatestValueExtractor() for key in {"input"}}
-
-                def pipe_factory(data):
-                    return FakePipe(data)
-
-                super().__init__(FakeDataAssembler({"input"}), pipe_factory, extractors)
+                self._keys_set = {"input"}
+                self._extractors = {
+                    key: LatestValueExtractor() for key in self._keys_set
+                }
                 self._service = service
+                super().__init__()
+
+            @property
+            def extractors(self):
+                return self._extractors
 
             def trigger(self, store: dict[str, int]) -> None:
-                super().trigger(store)
                 if "input" in store:
-                    # Immediate update
                     input_value = store["input"].value
+                    # Immediate update
                     self._service["immediate"] = make_test_data(input_value * 2)
                     # Transaction update
                     with self._service.transaction():
