@@ -115,9 +115,11 @@ class WindowAggregatingExtractor(UpdateExtractor):
         # Calculate cutoff time
         time_coord = data.coords[self._concat_dim]
         if self._duration is None:
-            self._duration = sc.scalar(self._window_duration_seconds, unit='s').to(
-                unit=time_coord.unit
-            )
+            duration_scalar = sc.scalar(self._window_duration_seconds, unit='s')
+            if time_coord.dtype == sc.DType.datetime64:
+                self._duration = duration_scalar.to(unit=time_coord.unit, dtype='int64')
+            else:
+                self._duration = duration_scalar.to(unit=time_coord.unit)
 
         # Estimate frame period from median interval to handle timing noise.
         # Shift cutoff by half period to place boundary between frame slots,
@@ -126,7 +128,11 @@ class WindowAggregatingExtractor(UpdateExtractor):
         if len(time_coord) > 1:
             intervals = time_coord[1:] - time_coord[:-1]
             median_interval = sc.median(intervals)
-            cutoff_time = latest_time - self._duration + 0.5 * median_interval
+            half_median = 0.5 * median_interval
+            # datetime64 arithmetic requires int64, not float64
+            if time_coord.dtype == sc.DType.datetime64:
+                half_median = half_median.astype('int64')
+            cutoff_time = latest_time - self._duration + half_median
             # Clamp to ensure at least latest frame included
             # (handles narrow windows where duration < median_interval)
             if cutoff_time > latest_time:

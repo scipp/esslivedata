@@ -497,6 +497,71 @@ class TestWindowAggregatingExtractor:
         expected_sum = sc.array(dims=['x'], values=[35, 40], unit='counts')
         assert sc.allclose(result.data, expected_sum)
 
+    def test_extract_with_datetime64_time_coordinate(self):
+        """Test extraction when time coordinate is datetime64 instead of float."""
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=2.0,
+            aggregation=WindowAggregation.nansum,
+            concat_dim='time',
+        )
+
+        # Create data with datetime64 time coordinate
+        import numpy as np
+
+        base_time = np.datetime64('2025-01-15T10:00:00', 'ns')
+        times = base_time + np.array([0, 1, 2, 3], dtype='timedelta64[s]')
+
+        data = sc.DataArray(
+            sc.array(
+                dims=['time', 'x'],
+                values=[[1, 2], [3, 4], [5, 6], [7, 8]],
+                unit='counts',
+            ),
+            coords={
+                'time': sc.array(dims=['time'], values=times, unit='ns'),
+                'x': sc.arange('x', 2, unit='m'),
+            },
+        )
+
+        result = extractor.extract(data)
+
+        # Window cutoff is latest - 2s + 0.5*median_interval = 3s - 2s + 0.5s = 1.5s
+        # Should include times >= 1.5s: times at 2s and 3s
+        # nansum of [5, 6] and [7, 8] = [12, 14]
+        expected_sum = sc.array(dims=['x'], values=[12, 14], unit='counts')
+        assert sc.allclose(result.data, expected_sum)
+
+    def test_extract_with_datetime64_single_frame(self):
+        """Test extraction with datetime64 time coordinate and single frame."""
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=1.0,
+            aggregation=WindowAggregation.nansum,
+            concat_dim='time',
+        )
+
+        # Single frame with datetime64
+        import numpy as np
+
+        data = sc.DataArray(
+            sc.array(dims=['time', 'x'], values=[[5, 6]], unit='counts'),
+            coords={
+                'time': sc.array(
+                    dims=['time'],
+                    values=[np.datetime64('2025-01-15T10:00:00', 'ns')],
+                    unit='ns',
+                ),
+                'x': sc.arange('x', 2, unit='m'),
+            },
+        )
+
+        # This exercises the single-frame path:
+        # cutoff_time = latest_time - self._duration
+        result = extractor.extract(data)
+
+        # Should return the single frame
+        expected = sc.array(dims=['x'], values=[5, 6], unit='counts')
+        assert sc.allclose(result.data, expected)
+
 
 class TestUpdateExtractorInterface:
     """Tests for UpdateExtractor abstract interface."""
