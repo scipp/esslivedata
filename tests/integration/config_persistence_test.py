@@ -7,6 +7,7 @@ from collections.abc import Generator
 import pytest
 
 from ess.livedata.config.workflow_spec import WorkflowId
+from ess.livedata.dashboard.configuration_adapter import ConfigurationState
 from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
 from ess.livedata.parameter_models import Scale, TimeUnit, TOAEdges
 from tests.integration.backend import DashboardBackend
@@ -166,3 +167,56 @@ def test_config_persists_across_adapter_recreations(
     # Both adapters should retrieve identical params from config store
     assert adapter1.initial_parameter_values == adapter2.initial_parameter_values
     assert adapter1.initial_parameter_values['toa_edges']['num_bins'] == 200
+
+
+def test_incompatible_config_falls_back_to_defaults(
+    backend_with_null_transport: DashboardBackend,
+) -> None:
+    """
+    Test that incompatible config doesn't break adapter creation.
+
+    If stored config has params that are incompatible with the current
+    workflow parameter model (e.g., due to schema changes between versions),
+    the adapter should validate against the current model and fall back to
+    defaults rather than propagating invalid data to the UI.
+    """
+    workflow_id = WorkflowId(
+        instrument='dummy',
+        namespace='monitor_data',
+        name='monitor_histogram',
+        version=1,
+    )
+
+    # Manually inject completely incompatible config into the store
+    # (e.g., from an old version of the workflow with different param structure)
+    incompatible_config = ConfigurationState(
+        source_names=['monitor1'],
+        aux_source_names={},
+        params={
+            'old_field_that_no_longer_exists': 42,
+            'another_invalid_field': 'invalid_value',
+            # Completely wrong structure - not matching current MonitorDataParams
+        },
+    )
+
+    # Directly store incompatible config in the config store
+    config_store = backend_with_null_transport.config_manager.get_store(
+        'workflow_configs'
+    )
+    config_store[workflow_id] = incompatible_config.model_dump()
+
+    # Adapter creation should not fail even with incompatible config
+    adapter = backend_with_null_transport.workflow_controller.create_workflow_adapter(
+        workflow_id
+    )
+
+    # Adapter should validate and detect incompatibility, returning empty dict
+    # which will cause the UI to use default parameter values
+    initial_params = adapter.initial_parameter_values
+    assert initial_params == {}, (
+        "Expected empty dict for incompatible params to trigger defaults, "
+        f"got {initial_params}"
+    )
+
+    # Verify source names are still restored (only params validation failed)
+    assert adapter.initial_source_names == ['monitor1']
