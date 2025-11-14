@@ -70,10 +70,7 @@ class DataService(MutableMapping[K, V]):
         self._default_extractor = LatestValueExtractor()
         self._subscribers: list[DataServiceSubscriber[K]] = []
         self._update_callbacks: list[Callable[[set[K]], None]] = []
-        self._key_change_subscribers: list[Callable[[set[K], set[K]], None]] = []
         self._pending_updates: set[K] = set()
-        self._pending_key_additions: set[K] = set()
-        self._pending_key_removals: set[K] = set()
         self._transaction_depth = 0
 
     @contextmanager
@@ -186,20 +183,6 @@ class DataService(MutableMapping[K, V]):
         """
         self._update_callbacks.append(callback)
 
-    def subscribe_to_changed_keys(
-        self, subscriber: Callable[[set[K], set[K]], None]
-    ) -> None:
-        """
-        Register a subscriber for key change updates (additions/removals).
-
-        Parameters
-        ----------
-        subscriber:
-            A callable that accepts two sets: added_keys and removed_keys.
-        """
-        self._key_change_subscribers.append(subscriber)
-        subscriber(set(self._buffer_manager.keys()), set())
-
     def _notify_subscribers(self, updated_keys: set[K]) -> None:
         """
         Notify relevant subscribers about data updates.
@@ -220,16 +203,6 @@ class DataService(MutableMapping[K, V]):
         for callback in self._update_callbacks:
             callback(updated_keys)
 
-    def _notify_key_change_subscribers(self) -> None:
-        """Notify subscribers about key changes (additions/removals)."""
-        if not self._pending_key_additions and not self._pending_key_removals:
-            return
-
-        for subscriber in self._key_change_subscribers:
-            subscriber(
-                self._pending_key_additions.copy(), self._pending_key_removals.copy()
-            )
-
     def __getitem__(self, key: K) -> V:
         """Get the latest value for a key."""
         buffered_data = self._buffer_manager.get_buffered_data(key)
@@ -240,7 +213,6 @@ class DataService(MutableMapping[K, V]):
     def __setitem__(self, key: K, value: V) -> None:
         """Set a value, storing it in a buffer."""
         if key not in self._buffer_manager:
-            self._pending_key_additions.add(key)
             extractors = self._get_extractors(key)
             self._buffer_manager.create_buffer(key, extractors)
         self._buffer_manager.update_buffer(key, value)
@@ -249,7 +221,6 @@ class DataService(MutableMapping[K, V]):
 
     def __delitem__(self, key: K) -> None:
         """Delete a key and its buffer."""
-        self._pending_key_removals.add(key)
         self._buffer_manager.delete_buffer(key)
         self._pending_updates.add(key)
         self._notify_if_not_in_transaction()
@@ -273,6 +244,3 @@ class DataService(MutableMapping[K, V]):
             pending = set(self._pending_updates)
             self._pending_updates.clear()
             self._notify_subscribers(pending)
-        self._notify_key_change_subscribers()
-        self._pending_key_additions.clear()
-        self._pending_key_removals.clear()
