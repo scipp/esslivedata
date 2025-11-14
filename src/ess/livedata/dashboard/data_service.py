@@ -193,8 +193,7 @@ class DataService(MutableMapping[K, V]):
         for subscriber in self._subscribers:
             if updated_keys & subscriber.keys:
                 subscriber_data = self._build_subscriber_data(subscriber)
-                if subscriber_data:
-                    subscriber.trigger(subscriber_data)
+                subscriber.trigger(subscriber_data)
 
         # Notify update callbacks with just key names
         for callback in self._update_callbacks:
