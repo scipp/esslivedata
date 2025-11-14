@@ -134,14 +134,11 @@ class DataService(MutableMapping[K, V]):
             Dictionary mapping keys to extracted data (None values filtered out).
         """
         subscriber_data = {}
-        extractors = subscriber.extractors
 
-        for key in subscriber.keys:
-            extractor = extractors[key]
+        for key, extractor in subscriber.extractors.items():
             buffered_data = self._buffer_manager.get_buffered_data(key)
             if buffered_data is not None:
-                data = extractor.extract(buffered_data)
-                subscriber_data[key] = data
+                subscriber_data[key] = extractor.extract(buffered_data)
 
         return subscriber_data
 
