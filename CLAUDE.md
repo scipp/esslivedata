@@ -12,25 +12,6 @@ ESSlivedata is a live data reduction visualization framework for the European Sp
 
 **IMPORTANT**: In the devcontainer, this project uses micromamba with Python 3.11 in the base environment. The environment is automatically activated - you do not need to activate it manually.
 
-For manual setup outside the devcontainer (if needed):
-
-```sh
-# Create virtual environment with Python 3.11
-python3.11 -m venv venv
-
-# Activate the virtual environment
-source venv/bin/activate
-
-# Install all development dependencies
-pip install -r requirements/dev.txt
-
-# Install package in editable mode
-pip install -e .
-
-# Setup pre-commit hooks (automatically runs on git commit)
-pre-commit install
-```
-
 **Note**: In the devcontainer, all Python commands (`python`, `pytest`, `tox`, etc.) automatically use the micromamba base environment. Pre-commit hooks will run automatically on `git commit` if properly installed.
 
 ### Running Tests
@@ -72,9 +53,6 @@ python -m pylint src/ess/livedata
 python -m pylint --disable=C0114,C0115,C0116 src/ess/livedata
 # Run pylint on specific file
 python -m pylint src/ess/livedata/core/message.py
-
-# Type checking with mypy (minimize errors, but not strictly enforced)
-tox -e mypy
 ```
 
 **Note**: The project primarily relies on `ruff` for linting.
@@ -138,8 +116,6 @@ python -m ess.livedata.services.timeseries --instrument dummy --dev
 python -m ess.livedata.dashboard.reduction --instrument dummy
 ```
 
-Note: Use `--sink png` argument with processing services to save outputs as PNG files instead of publishing to Kafka for testing.
-
 ## Architecture Overview
 
 ### Core Architecture Pattern
@@ -185,7 +161,6 @@ Kafka Topics → MessageSource → Processor → Preprocessor → JobManager →
 **Configuration** (`src/ess/livedata/config/`):
 - `config_loader.py`: Loads YAML/Jinja2 configurations per instrument
 - `instruments/`: Instrument-specific configurations (DREAM, Bifrost, LOKI, etc.)
-- `workflows.py`: Workflow definitions using sciline workflows
 
 **Handlers** (`src/ess/livedata/handlers/`):
 - `detector_data_handler.py`: Preprocessor factory for detector events
@@ -200,7 +175,6 @@ Kafka Topics → MessageSource → Processor → Preprocessor → JobManager →
 - `ConfigService`: Central configuration management with Pydantic models
 - `DataService`: Manages data streams and notifies subscribers
 - `WorkflowController`: Orchestrates workflow configuration and execution
-- `ConfigBackedParam`: Translation layer between Param widgets and Pydantic models
 
 ### Dashboard Architecture
 
@@ -233,18 +207,6 @@ For in-depth understanding of ESSlivedata's architecture, see the following desi
 ## Service Factory Pattern
 
 New services are created using `DataServiceBuilder`:
-
-```python
-builder = DataServiceBuilder(
-    instrument='dummy',
-    name='my_service',
-    preprocessor_factory=MyPreprocessorFactory(),
-    adapter=MyMessageAdapter()  # optional
-)
-service = builder.build_from_config(topics=[...])
-service.start()
-```
-
 All services use `OrchestratingProcessor` for job-based processing. See [src/ess/livedata/service_factory.py](src/ess/livedata/service_factory.py) for details.
 
 ## Configuration System
@@ -296,19 +258,6 @@ def simple_method(self) -> int:
 ```
 
 ## Important Patterns
-
-### Adding a New Service
-
-1. Create preprocessor factory extending `JobBasedPreprocessorFactoryBase[Tin, Tout]`
-2. Implement `make_preprocessor()` to create accumulators for different stream types
-3. Register workflows with the instrument configuration
-4. Use `DataServiceBuilder` to construct service
-5. Add service module in `services/`
-6. Add instrument configuration in `config/defaults/`
-
-### Adding Dashboard Widgets
-
-1. Workflow and plotter configuration uses widgets generated from Pydantic model for validation on the frontend and serialization for Kafka communication
 
 ### Message Processing
 
