@@ -14,12 +14,6 @@ def register_timeseries_workflow_specs(
     """
     Register timeseries workflow specs (lightweight, no heavy dependencies).
 
-    This is the first phase of two-phase registration. Call this from
-    instrument specs.py modules.
-
-    If the workflow is already registered (e.g., auto-registered in
-    Instrument.__post_init__()), returns the existing handle.
-
     Parameters
     ----------
     instrument
@@ -34,19 +28,6 @@ def register_timeseries_workflow_specs(
     """
     if not source_names:
         return None
-
-    from ..config.workflow_spec import WorkflowId
-
-    workflow_id = WorkflowId(
-        instrument=instrument.name,
-        namespace='timeseries',
-        name='timeseries_data',
-        version=1,
-    )
-    if workflow_id in instrument.workflow_factory._workflow_specs:
-        from ..handlers.workflow_factory import SpecHandle
-
-        return SpecHandle(workflow_id=workflow_id, _factory=instrument.workflow_factory)
 
     return instrument.register_spec(
         namespace='timeseries',
