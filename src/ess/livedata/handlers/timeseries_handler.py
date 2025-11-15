@@ -21,25 +21,38 @@ if TYPE_CHECKING:
 class TimeseriesStreamProcessor(Workflow):
     def __init__(self) -> None:
         self._data: sc.DataArray | None = None
+        self._last_returned_index = 0
 
     @staticmethod
     def create_workflow() -> Workflow:
         """Factory method for creating TimeseriesStreamProcessor."""
         return TimeseriesStreamProcessor()
 
-    def accumulate(self, data: dict[Hashable, sc.DataArray]) -> None:
+    def accumulate(
+        self, data: dict[Hashable, sc.DataArray], *, start_time: int, end_time: int
+    ) -> None:
         if len(data) != 1:
             raise ValueError("Timeseries processor expects exactly one data item.")
-        # Just store the data for forwarding
+        # Store the full cumulative data (including history from preprocessor)
         self._data = next(iter(data.values()))
 
     def finalize(self) -> dict[str, sc.DataArray]:
         if self._data is None:
             raise ValueError("No data has been added")
-        return {'cumulative': self._data}
+
+        # Return only new data since last finalize to avoid republishing full history
+        current_size = self._data.sizes['time']
+        if self._last_returned_index >= current_size:
+            raise ValueError("No new data since last finalize")
+
+        result = self._data['time', self._last_returned_index :]
+        self._last_returned_index = current_size
+
+        return {'delta': result}
 
     def clear(self) -> None:
         self._data = None
+        self._last_returned_index = 0
 
 
 class LogdataHandlerFactory(JobBasedPreprocessorFactoryBase[LogData, sc.DataArray]):

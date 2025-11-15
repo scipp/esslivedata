@@ -184,7 +184,11 @@ class Job:
                     remapped_aux_data[field_name] = value
 
             # Pass data to workflow with field names (not stream names)
-            self._processor.accumulate({**data.primary_data, **remapped_aux_data})
+            self._processor.accumulate(
+                {**data.primary_data, **remapped_aux_data},
+                start_time=data.start_time,
+                end_time=data.end_time,
+            )
             if data.is_active():
                 if self._start_time is None:
                     self._start_time = data.start_time

@@ -69,7 +69,7 @@ class TestMonitorStreamProcessor:
         processor = MonitorStreamProcessor(edges)
         # Test public behavior: processor should be able to accumulate data
         toa_data = np.array([10e6])  # Test with minimal data
-        processor.accumulate({"det1": toa_data})
+        processor.accumulate({"det1": toa_data}, start_time=1000, end_time=2000)
         result = processor.finalize()
         assert "cumulative" in result
         assert "current" in result
@@ -82,7 +82,7 @@ class TestMonitorStreamProcessor:
         )  # 10, 25, 45, 75, 95 ms in ns
         data = {"detector1": toa_data}
 
-        processor.accumulate(data)
+        processor.accumulate(data, start_time=1000, end_time=2000)
 
         # Test by finalizing and checking the result
         result = processor.finalize()
@@ -100,7 +100,7 @@ class TestMonitorStreamProcessor:
         hist_data = sc.DataArray(data=counts, coords={"time": tof_coords})
         data = {"detector1": hist_data}
 
-        processor.accumulate(data)
+        processor.accumulate(data, start_time=1000, end_time=2000)
 
         # Test by finalizing and checking the result
         result = processor.finalize()
@@ -112,14 +112,14 @@ class TestMonitorStreamProcessor:
         """Test multiple accumulate calls add data correctly."""
         # First accumulation
         toa_data1 = np.array([10e6, 25e6])  # 10, 25 ms in ns
-        processor.accumulate({"det1": toa_data1})
+        processor.accumulate({"det1": toa_data1}, start_time=1000, end_time=2000)
         first_result = processor.finalize()
         first_sum = first_result["current"].sum().value
 
         # Second accumulation - need new processor since finalize clears current
         processor2 = MonitorStreamProcessor(processor._edges)
         toa_data2 = np.array([35e6, 45e6])  # 35, 45 ms in ns
-        processor2.accumulate({"det1": toa_data2})
+        processor2.accumulate({"det1": toa_data2}, start_time=1000, end_time=2000)
         second_result = processor2.finalize()
         second_sum = second_result["current"].sum().value
 
@@ -132,36 +132,38 @@ class TestMonitorStreamProcessor:
         data = {"det1": np.array([10e6]), "det2": np.array([20e6])}
 
         with pytest.raises(ValueError, match="exactly one data item"):
-            processor.accumulate(data)
+            processor.accumulate(data, start_time=1000, end_time=2000)
 
     def test_finalize_first_time(self, processor):
         """Test finalize on first call."""
         toa_data = np.array([10e6, 25e6, 45e6])
-        processor.accumulate({"det1": toa_data})
+        processor.accumulate({"det1": toa_data}, start_time=1000, end_time=2000)
 
         result = processor.finalize()
 
         assert "cumulative" in result
         assert "current" in result
-        assert_identical(result["cumulative"], result["current"])
+        # Check cumulative data (excluding time coord which current has)
+        assert_identical(result["cumulative"], result["current"].drop_coords("time"))
 
-        # After finalize, we can finalize again without new data, since empty batches
-        # will be committed.
-        empty_result = processor.finalize()
-        assert empty_result["current"].sum().value == 0
-        assert (
-            empty_result["cumulative"].sum().value == result["cumulative"].sum().value
-        )
+        # Verify time coordinate is present
+        assert "time" in result["current"].coords
+        assert result["current"].coords["time"].value == 1000
+        assert result["current"].coords["time"].unit == "ns"
 
     def test_finalize_subsequent_calls(self, processor):
         """Test finalize accumulates over multiple calls."""
         # First round
-        processor.accumulate({"det1": np.array([10e6, 25e6])})
+        processor.accumulate(
+            {"det1": np.array([10e6, 25e6])}, start_time=1000, end_time=2000
+        )
         first_result = processor.finalize()
         first_cumulative_sum = first_result["cumulative"].sum().value
 
         # Second round
-        processor.accumulate({"det1": np.array([35e6, 45e6])})
+        processor.accumulate(
+            {"det1": np.array([35e6, 45e6])}, start_time=1000, end_time=2000
+        )
         second_result = processor.finalize()
         second_cumulative_sum = second_result["cumulative"].sum().value
 
@@ -174,9 +176,42 @@ class TestMonitorStreamProcessor:
         with pytest.raises(ValueError, match="No data has been added"):
             processor.finalize()
 
+    def test_finalize_without_accumulate(self, processor):
+        """Test finalize raises error without accumulate since last finalize."""
+        processor.accumulate(
+            {"det1": np.array([10e6, 25e6])}, start_time=1000, end_time=2000
+        )
+        processor.finalize()
+
+        # After finalize, calling finalize again without accumulate should fail
+        with pytest.raises(
+            RuntimeError,
+            match="finalize called without any data accumulated via accumulate",
+        ):
+            processor.finalize()
+
+    def test_time_coordinate_tracks_first_accumulate(self, processor):
+        """Test time coordinate uses start_time of the first accumulate call."""
+        # First accumulate with start_time=1000
+        processor.accumulate({"det1": np.array([10e6])}, start_time=1000, end_time=2000)
+        # Second accumulate with start_time=3000 (should be ignored)
+        processor.accumulate({"det1": np.array([20e6])}, start_time=3000, end_time=4000)
+
+        result = processor.finalize()
+
+        # Time coordinate should use the first start_time
+        assert result["current"].coords["time"].value == 1000
+
+        # After finalize, the next accumulate should set a new start_time
+        processor.accumulate({"det1": np.array([30e6])}, start_time=5000, end_time=6000)
+        result2 = processor.finalize()
+        assert result2["current"].coords["time"].value == 5000
+
     def test_clear(self, processor):
         """Test clear method resets processor state."""
-        processor.accumulate({"det1": np.array([10e6, 25e6])})
+        processor.accumulate(
+            {"det1": np.array([10e6, 25e6])}, start_time=1000, end_time=2000
+        )
         processor.finalize()
 
         processor.clear()
@@ -192,7 +227,7 @@ class TestMonitorStreamProcessor:
         counts = sc.ones(dims=["time"], shape=[9], unit="counts")
         hist_data = sc.DataArray(data=counts, coords={"time": tof_coords})
 
-        processor.accumulate({"det1": hist_data})
+        processor.accumulate({"det1": hist_data}, start_time=1000, end_time=2000)
         result = processor.finalize()
 
         assert "current" in result

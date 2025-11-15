@@ -156,7 +156,6 @@ class TestROIDetectorPlotFactory:
         detector_with_boxes, roi_spectrum, plot_state = (
             roi_plot_factory.create_roi_detector_plot_components(
                 detector_key=detector_key,
-                detector_data=detector_data,
                 params=params,
             )
         )
@@ -192,7 +191,6 @@ class TestROIDetectorPlotFactory:
         detector_with_boxes, roi_spectrum, plot_state = (
             roi_plot_factory.create_roi_detector_plot_components(
                 detector_key=detector_key,
-                detector_data=detector_data,
                 params=params,
             )
         )
@@ -235,7 +233,6 @@ class TestROIDetectorPlotFactory:
         detector_dmap, roi_dmap, plot_state = (
             roi_plot_factory.create_roi_detector_plot_components(
                 detector_key=detector_key,
-                detector_data=detector_data,
                 params=params,
             )
         )
@@ -276,7 +273,6 @@ def test_roi_detector_plot_publishes_roi_on_box_edit(
     _detector_dmap, _roi_dmap, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
-            detector_data=detector_data,
             params=params,
         )
     )
@@ -326,7 +322,6 @@ def test_roi_detector_plot_only_publishes_changed_rois(
     _detector_dmap, _roi_dmap, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
-            detector_data=detector_data,
             params=params,
         )
     )
@@ -371,7 +366,6 @@ def test_roi_detector_plot_without_publisher_does_not_crash(
     detector_with_boxes, roi_spectrum, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
-            detector_data=detector_data,
             params=params,
         )
     )
@@ -554,6 +548,9 @@ def test_create_roi_plot_with_initial_rois(
         1: RectangleROI(x=Interval(min=7.0, max=9.0), y=Interval(min=4.0, max=6.0)),
     }
 
+    # Populate DataService with detector data
+    data_service[detector_key] = detector_data
+
     # Inject ROI readback data into DataService - this simulates backend publishing ROIs
     roi_readback_key = detector_key.model_copy(update={"output_name": "roi_rectangle"})
     roi_readback_data = ROI.to_concatenated_data_array(initial_rois)
@@ -564,7 +561,6 @@ def test_create_roi_plot_with_initial_rois(
     _detector_with_boxes, _roi_dmap, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
-            detector_data=detector_data,
             params=params,
         )
     )
@@ -581,13 +577,18 @@ def test_create_roi_plot_with_initial_rois(
     assert box_data['y1'][0] == 5.0
 
 
-def test_custom_max_roi_count(roi_plot_factory, detector_data, workflow_id, job_number):
+def test_custom_max_roi_count(
+    roi_plot_factory, data_service, detector_data, workflow_id, job_number
+):
     """Test that max_roi_count parameter is correctly applied to BoxEdit."""
     detector_key = ResultKey(
         workflow_id=workflow_id,
         job_id=JobId(source_name='detector_data', job_number=job_number),
         output_name='current',
     )
+
+    # Populate DataService with detector data
+    data_service[detector_key] = detector_data
 
     # Create params with custom max_roi_count
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
@@ -596,7 +597,6 @@ def test_custom_max_roi_count(roi_plot_factory, detector_data, workflow_id, job_
     _detector_with_boxes, _roi_dmap, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
-            detector_data=detector_data,
             params=params,
         )
     )
@@ -607,7 +607,7 @@ def test_custom_max_roi_count(roi_plot_factory, detector_data, workflow_id, job_
 
 
 def test_stale_readback_filtering(
-    roi_plot_factory, detector_data, workflow_id, job_number
+    roi_plot_factory, data_service, detector_data, workflow_id, job_number
 ):
     """Test that backend is the source of truth for ROI state (state-based sync)."""
     from ess.livedata.dashboard.roi_publisher import FakeROIPublisher
@@ -622,12 +622,14 @@ def test_stale_readback_filtering(
         output_name='current',
     )
 
+    # Populate DataService with detector data
+    data_service[detector_key] = detector_data
+
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
     _detector_with_boxes, _roi_dmap, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
-            detector_data=detector_data,
             params=params,
         )
     )
@@ -688,7 +690,7 @@ def test_stale_readback_filtering(
 
 
 def test_backend_update_from_another_view(
-    roi_plot_factory, detector_data, workflow_id, job_number
+    roi_plot_factory, data_service, detector_data, workflow_id, job_number
 ):
     """Test that backend updates from other clients are applied correctly."""
     from ess.livedata.dashboard.roi_publisher import FakeROIPublisher
@@ -703,12 +705,14 @@ def test_backend_update_from_another_view(
         output_name='current',
     )
 
+    # Populate DataService with detector data
+    data_service[detector_key] = detector_data
+
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
     _detector_with_boxes, _roi_dmap, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
-            detector_data=detector_data,
             params=params,
         )
     )

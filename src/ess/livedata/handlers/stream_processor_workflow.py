@@ -43,7 +43,9 @@ class StreamProcessorWorkflow(Workflow):
             **kwargs,
         )
 
-    def accumulate(self, data: dict[str, Any]) -> None:
+    def accumulate(
+        self, data: dict[str, Any], *, start_time: int, end_time: int
+    ) -> None:
         context = {
             sciline_key: data[key]
             for key, sciline_key in self._context_keys.items()

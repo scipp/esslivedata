@@ -53,7 +53,9 @@ class FakeProcessor(Workflow):
         self.should_fail_accumulate = False
         self.should_fail_finalize = False
 
-    def accumulate(self, data: dict[str, Any]) -> None:
+    def accumulate(
+        self, data: dict[str, Any], *, start_time: int, end_time: int
+    ) -> None:
         if self.should_fail_accumulate:
             raise RuntimeError("Accumulate failure")
         self.accumulate_calls.append(data.copy())
