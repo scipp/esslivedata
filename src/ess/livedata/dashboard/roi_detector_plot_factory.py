@@ -19,7 +19,12 @@ from .data_subscriber import (
     DataSubscriber,
     MergingStreamAssembler,
 )
-from .plot_params import LayoutParams, PlotParamsROIDetector
+from .extractors import LatestValueExtractor
+from .plot_params import (
+    LayoutParams,
+    PlotParamsROIDetector,
+    create_extractors_from_params,
+)
 from .plots import ImagePlotter, LinePlotter, PlotAspect, PlotAspectType
 from .roi_publisher import ROIPublisher
 from .stream_manager import StreamManager
@@ -530,16 +535,18 @@ class ROIDetectorPlotFactory:
             def send(self, data):
                 self.callback(data)
 
-        roi_pipe = ROIReadbackPipe(on_roi_data_update)
+        def roi_pipe_factory(data):
+            """Factory function to create ROIReadbackPipe with callback."""
+            return ROIReadbackPipe(on_roi_data_update)
 
         assembler = MergingStreamAssembler({roi_readback_key})
-        subscriber = DataSubscriber(assembler, roi_pipe)
+        extractors = {roi_readback_key: LatestValueExtractor()}
+        subscriber = DataSubscriber(assembler, roi_pipe_factory, extractors)
         self._stream_manager.data_service.register_subscriber(subscriber)
 
     def create_roi_detector_plot_components(
         self,
         detector_key: ResultKey,
-        detector_data: sc.DataArray,
         params: PlotParamsROIDetector,
     ) -> tuple[hv.DynamicMap, hv.DynamicMap, ROIPlotState]:
         """
@@ -556,12 +563,14 @@ class ROIDetectorPlotFactory:
         Initial ROI configurations are automatically loaded from DataService via
         the ROI readback subscription if available.
 
+        The detector data must be present in DataService at detector_key before
+        calling this method, as it will be accessed via extractors.
+
         Parameters
         ----------
         detector_key:
-            ResultKey identifying the detector output.
-        detector_data:
-            Initial data for the detector plot.
+            ResultKey identifying the detector output. The detector data must
+            already be present in DataService at this key.
         params:
             The plotter parameters (PlotParamsROIDetector).
 
@@ -573,11 +582,11 @@ class ROIDetectorPlotFactory:
         if not isinstance(params, PlotParamsROIDetector):
             raise TypeError("roi_detector requires PlotParamsROIDetector")
 
-        detector_items = {detector_key: detector_data}
         # FIXME: Memory leak - subscribers registered via stream_manager are never
         # unregistered. When this plot is closed, the subscriber remains in
         # DataService._subscribers, preventing garbage collection of plot components.
-        merged_detector_pipe = self._stream_manager.make_merging_stream(detector_items)
+        extractors = {detector_key: LatestValueExtractor()}
+        merged_detector_pipe = self._stream_manager.make_merging_stream(extractors)
 
         detector_plotter = ImagePlotter(
             value_margin_factor=0.1,
@@ -585,7 +594,8 @@ class ROIDetectorPlotFactory:
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
         )
-        detector_plotter.initialize_from_data(detector_items)
+        # Use extracted data from pipe for plotter initialization
+        detector_plotter.initialize_from_data(merged_detector_pipe.data)
 
         detector_dmap = hv.DynamicMap(
             detector_plotter, streams=[merged_detector_pipe], cache_size=1
@@ -643,7 +653,8 @@ class ROIDetectorPlotFactory:
             source=request_dmap, num_objects=max_roi_count, data=initial_box_data
         )
 
-        # Extract coordinate units
+        # Extract coordinate units from the extracted detector data in pipe
+        detector_data = merged_detector_pipe.data[detector_key]
         x_dim, y_dim = detector_data.dims[1], detector_data.dims[0]
         x_unit = self._extract_unit_for_dim(detector_data, x_dim)
         y_unit = self._extract_unit_for_dim(detector_data, y_dim)
@@ -744,9 +755,8 @@ class ROIDetectorPlotFactory:
         # FIXME: Memory leak - subscribers registered via stream_manager are never
         # unregistered. When this plot is closed, the subscriber remains in
         # DataService._subscribers, preventing garbage collection of plot components.
-        spectrum_pipe = self._stream_manager.make_merging_stream_from_keys(
-            spectrum_keys
-        )
+        extractors = create_extractors_from_params(spectrum_keys, params.window)
+        spectrum_pipe = self._stream_manager.make_merging_stream(extractors)
 
         spectrum_plotter = LinePlotter(
             value_margin_factor=0.1,

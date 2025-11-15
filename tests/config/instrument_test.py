@@ -181,8 +181,14 @@ class TestInstrument:
         def simple_processor_factory(source_name: str) -> Workflow:
             # Return a mock processor for testing
             class MockProcessor(Workflow):
-                def __call__(self, *args, **kwargs):
+                def accumulate(self, data, *, start_time: int, end_time: int) -> None:
+                    pass
+
+                def finalize(self):
                     return {"source": source_name}
+
+                def clear(self) -> None:
+                    pass
 
             return MockProcessor()
 
@@ -354,8 +360,14 @@ class TestInstrumentRegisterSpec:
         @handle.attach_factory()
         def factory(*, params: MyParams) -> Workflow:
             class MockProcessor(Workflow):
-                def __call__(self, *args, **kwargs):
+                def accumulate(self, data, *, start_time: int, end_time: int) -> None:
+                    pass
+
+                def finalize(self):
                     return {"value": params.value}
+
+                def clear(self) -> None:
+                    pass
 
             return MockProcessor()
 

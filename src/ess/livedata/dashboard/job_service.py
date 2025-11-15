@@ -37,7 +37,7 @@ class JobService:
         self._removed_jobs: set[JobId] = set()
         self._job_data_update_subscribers: list[Callable[[], None]] = []
         self._job_status_update_subscribers: list[Callable[[], None]] = []
-        self._data_service.register_subscriber(self.data_updated)
+        self._data_service.register_update_callback(self.data_updated)
 
     @property
     def job_data(self) -> dict[JobNumber, dict[SourceName, SourceData]]:
