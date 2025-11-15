@@ -2,16 +2,43 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Param models for configuring plotters via widgets."""
 
+from __future__ import annotations
+
 import enum
+from enum import StrEnum
+from typing import TYPE_CHECKING
 
 import pydantic
 
 from ..config.roi_names import get_roi_mapper
 
+if TYPE_CHECKING:
+    from ess.livedata.config.workflow_spec import ResultKey
+
+    from .extractors import UpdateExtractor
+    from .plotting import PlotterSpec
+
 
 def _get_default_max_roi_count() -> int:
     """Get the default maximum ROI count from the mapper configuration."""
     return get_roi_mapper().total_rois
+
+
+class WindowMode(str, enum.Enum):
+    """Enumeration of extraction modes."""
+
+    latest = 'latest'
+    window = 'window'
+
+
+class WindowAggregation(StrEnum):
+    """Enumeration of aggregation methods for window mode."""
+
+    auto = 'auto'
+    nansum = 'nansum'
+    nanmean = 'nanmean'
+    sum = 'sum'
+    mean = 'mean'
 
 
 class PlotScale(str, enum.Enum):
@@ -111,6 +138,32 @@ class LayoutParams(pydantic.BaseModel):
     )
 
 
+class WindowParams(pydantic.BaseModel):
+    """Parameters for windowing and aggregation."""
+
+    mode: WindowMode = pydantic.Field(
+        default=WindowMode.latest,
+        description="Extraction mode: 'latest' for single frame (typically accumulated "
+        "for 1 second), 'window' for aggregation over multiple frames.",
+        title="Mode",
+    )
+    window_duration_seconds: float = pydantic.Field(
+        default=1.0,
+        description="Time duration to aggregate in window mode (seconds).",
+        title="Window Duration (s)",
+        ge=0.1,
+        le=60.0,
+    )
+    aggregation: WindowAggregation = pydantic.Field(
+        default=WindowAggregation.auto,
+        description=(
+            "Aggregation method for window mode. 'auto' uses 'nansum' for "
+            "counts (unit='counts') and 'nanmean' otherwise."
+        ),
+        title="Aggregation",
+    )
+
+
 class PlotParamsBase(pydantic.BaseModel):
     """Base class for plot parameters."""
 
@@ -127,6 +180,10 @@ class PlotParamsBase(pydantic.BaseModel):
 class PlotParams1d(PlotParamsBase):
     """Common parameters for 1d plots."""
 
+    window: WindowParams = pydantic.Field(
+        default_factory=WindowParams,
+        description="Windowing and aggregation options.",
+    )
     plot_scale: PlotScaleParams = pydantic.Field(
         default_factory=PlotScaleParams,
         description="Scaling options for the plot axes.",
@@ -136,6 +193,10 @@ class PlotParams1d(PlotParamsBase):
 class PlotParams2d(PlotParamsBase):
     """Common parameters for 2d plots."""
 
+    window: WindowParams = pydantic.Field(
+        default_factory=WindowParams,
+        description="Windowing and aggregation options.",
+    )
     plot_scale: PlotScaleParams2d = pydantic.Field(
         default_factory=PlotScaleParams2d,
         description="Scaling options for the plot and color axes.",
@@ -145,6 +206,10 @@ class PlotParams2d(PlotParamsBase):
 class PlotParams3d(PlotParamsBase):
     """Parameters for 3D slicer plots."""
 
+    window: WindowParams = pydantic.Field(
+        default_factory=WindowParams,
+        description="Windowing and aggregation options.",
+    )
     plot_scale: PlotScaleParams2d = pydantic.Field(
         default_factory=PlotScaleParams2d,
         description="Scaling options for the plot axes and color.",
@@ -170,3 +235,55 @@ class PlotParamsROIDetector(PlotParams2d):
         default_factory=ROIOptions,
         description="Options for ROI selection and display.",
     )
+
+
+def create_extractors_from_params(
+    keys: list[ResultKey],
+    window: WindowParams | None,
+    spec: PlotterSpec | None = None,
+) -> dict[ResultKey, UpdateExtractor]:
+    """
+    Create extractors based on plotter spec and window configuration.
+
+    Parameters
+    ----------
+    keys:
+        Result keys to create extractors for.
+    window:
+        Window parameters for extraction mode and aggregation.
+        If None, falls back to LatestValueExtractor.
+    spec:
+        Optional plotter specification. If provided and contains a required
+        extractor, that extractor type is used.
+
+    Returns
+    -------
+    :
+        Dictionary mapping result keys to extractor instances.
+    """
+    # Import here to avoid circular imports at module level
+    from .extractors import (
+        LatestValueExtractor,
+        WindowAggregatingExtractor,
+    )
+
+    if spec is not None and spec.data_requirements.required_extractor is not None:
+        # Plotter requires specific extractor (e.g., TimeSeriesPlotter)
+        extractor_type = spec.data_requirements.required_extractor
+        return {key: extractor_type() for key in keys}
+
+    # No fixed requirement - check if window params provided
+    if window is not None:
+        if window.mode == WindowMode.latest:
+            return {key: LatestValueExtractor() for key in keys}
+        else:  # mode == WindowMode.window
+            return {
+                key: WindowAggregatingExtractor(
+                    window_duration_seconds=window.window_duration_seconds,
+                    aggregation=window.aggregation,
+                )
+                for key in keys
+            }
+
+    # Fallback to latest value extractor
+    return {key: LatestValueExtractor() for key in keys}

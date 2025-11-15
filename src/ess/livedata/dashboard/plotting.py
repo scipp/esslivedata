@@ -11,8 +11,14 @@ from typing import Any, Generic, Protocol, TypeVar
 import pydantic
 import scipp as sc
 
+from .extractors import FullHistoryExtractor, UpdateExtractor
 from .plot_params import PlotParamsROIDetector
-from .plots import ImagePlotter, LinePlotter, Plotter, SlicerPlotter
+from .plots import (
+    ImagePlotter,
+    LinePlotter,
+    Plotter,
+    SlicerPlotter,
+)
 from .scipp_to_holoviews import _all_coords_evenly_spaced
 
 
@@ -22,6 +28,7 @@ class DataRequirements:
 
     min_dims: int
     max_dims: int
+    required_extractor: type[UpdateExtractor] | None = None
     required_coords: list[str] = field(default_factory=list)
     multiple_datasets: bool = True
     custom_validators: list[Callable[[sc.DataArray], bool]] = field(
@@ -165,6 +172,20 @@ plotter_registry.register_plotter(
 
 
 plotter_registry.register_plotter(
+    name='timeseries',
+    title='Timeseries',
+    description='Plot the temporal evolution of scalar values as line plots.',
+    data_requirements=DataRequirements(
+        min_dims=0,
+        max_dims=0,
+        multiple_datasets=True,
+        required_extractor=FullHistoryExtractor,
+    ),
+    factory=LinePlotter.from_params,
+)
+
+
+plotter_registry.register_plotter(
     name='slicer',
     title='3D Slicer',
     description='Interactively slice through 3D data along one dimension.',
@@ -208,10 +229,6 @@ plotter_registry.register_plotter(
         'Backspace while the mouse is within the plot area.</li>'
         '</ul>'
     ),
-    data_requirements=DataRequirements(
-        min_dims=2,
-        max_dims=2,
-        multiple_datasets=True,
-    ),
+    data_requirements=DataRequirements(min_dims=2, max_dims=2, multiple_datasets=True),
     factory=_roi_detector_plotter_factory,
 )

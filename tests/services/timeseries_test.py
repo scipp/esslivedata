@@ -67,7 +67,7 @@ def test_updates_are_published_immediately(
 
     app.publish_log_message(source_name=source_name, time=1, value=1.5)
     service.step()
-    # Each workflow call returns one result, cumulative
+    # Each workflow call returns only new data since last finalize (delta)
     assert len(sink.messages) == 1
     assert sink.messages[-1].value.values.sum() == 1.5
     # No data -> no data published
@@ -78,4 +78,5 @@ def test_updates_are_published_immediately(
     app.publish_log_message(source_name=source_name, time=1.0001, value=0.5)
     service.step()
     assert len(sink.messages) == 2
-    assert sink.messages[-1].value.values.sum() == 2.0
+    # Expect only the new data point (delta), not cumulative
+    assert sink.messages[-1].value.values.sum() == 0.5

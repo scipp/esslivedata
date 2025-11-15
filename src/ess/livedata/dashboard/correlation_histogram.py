@@ -392,11 +392,25 @@ class CorrelationHistogramController:
         items: dict[ResultKey, sc.DataArray],
     ) -> None:
         """Add a correlation histogram processor with DataService subscription."""
+        from .extractors import FullHistoryExtractor
+
         self._processors.append(processor)
 
-        # Create subscriber that merges data and sends to processor
+        # Create subscriber that merges data and sends to processor.
+        # Use FullHistoryExtractor to get complete timeseries history needed for
+        # correlation histogram computation.
+        # TODO We should update the plotter to operate more efficiently by simply
+        # subscribing to the changes. This will likely require a new extractor type as
+        # well as changes in the plotter, so we defer this for now.
         assembler = MergingStreamAssembler(set(items))
-        subscriber = DataSubscriber(assembler, processor)
+        extractors = {key: FullHistoryExtractor() for key in items}
+
+        # Create factory that sends initial data to processor and returns it
+        def processor_pipe_factory(data: dict[ResultKey, sc.DataArray]):
+            processor.send(data)
+            return processor
+
+        subscriber = DataSubscriber(assembler, processor_pipe_factory, extractors)
         self._data_service.register_subscriber(subscriber)
 
     def get_timeseries(self) -> list[ResultKey]:
@@ -412,7 +426,23 @@ class CorrelationHistogramController:
 
 
 def _is_timeseries(da: sc.DataArray) -> bool:
-    return da.dims == ('time',) and 'time' in da.coords
+    """Check if data represents a timeseries.
+
+    When DataService uses LatestValueExtractor (default), it returns the latest value
+    from a timeseries buffer as a 0D scalar with a time coordinate. This function
+    identifies such values as originating from a timeseries.
+
+    Parameters
+    ----------
+    da:
+        DataArray to check.
+
+    Returns
+    -------
+    :
+        True if the data is a 0D scalar with a time coordinate.
+    """
+    return da.ndim == 0 and 'time' in da.coords
 
 
 class CorrelationHistogramProcessor:
