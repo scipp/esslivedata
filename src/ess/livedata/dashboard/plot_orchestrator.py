@@ -6,25 +6,47 @@ PlotOrchestrator - Manages plot grid configurations and plot lifecycle.
 Coordinates plot creation and management across multiple plot grids:
 - Configuration staging and persistence
 - Plot grid lifecycle (create, remove)
-- Plot cell management (add, remove, refresh)
-- Automatic plot creation when matching jobs become available
+- Plot cell management (add, remove)
+- Event-driven plot creation via JobOrchestrator subscriptions
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Protocol
 from uuid import UUID, uuid4
 
 import holoviews as hv
 import pydantic
 
-from ess.livedata.config.workflow_spec import JobNumber, WorkflowId, WorkflowSpec
+from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 from .config_store import ConfigStore
-from .job_service import JobService
 from .plotting_controller import PlottingController
+
+
+class JobOrchestratorProtocol(Protocol):
+    """Protocol for JobOrchestrator interface needed by PlotOrchestrator."""
+
+    def subscribe_to_workflow(
+        self, workflow_id: WorkflowId, callback: Callable[[JobNumber], None]
+    ) -> None:
+        """
+        Subscribe to workflow availability notifications.
+
+        The callback will be called with the job_number whenever the workflow
+        is committed (started or restarted).
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to subscribe to.
+        callback
+            Called with job_number when workflow becomes available.
+        """
+        ...
 
 
 @dataclass
@@ -70,9 +92,8 @@ class PlotOrchestrator:
     def __init__(
         self,
         *,
-        job_service: JobService,
         plotting_controller: PlottingController,
-        workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+        job_orchestrator: JobOrchestratorProtocol,
         config_store: ConfigStore | None = None,
     ) -> None:
         """
@@ -80,25 +101,20 @@ class PlotOrchestrator:
 
         Parameters
         ----------
-        job_service
-            Service for accessing job data and information.
         plotting_controller
             Controller for creating plots.
-        workflow_registry
-            Registry of available workflows and their specifications.
+        job_orchestrator
+            Orchestrator for subscribing to workflow availability.
         config_store
             Optional store for persisting plot grid configurations across sessions.
         """
-        self._job_service = job_service
         self._plotting_controller = plotting_controller
-        self._workflow_registry = workflow_registry
+        self._job_orchestrator = job_orchestrator
         self._config_store = config_store
         self._logger = logging.getLogger(__name__)
 
         self._grids: dict[UUID, PlotGridConfig] = {}
         self._cell_index: dict[UUID, tuple[UUID, int]] = {}
-
-        self._load_from_store()
 
     def add_grid(self, title: str, nrows: int, ncols: int) -> UUID:
         """
@@ -143,7 +159,7 @@ class PlotOrchestrator:
 
     def add_plot(self, grid_id: UUID, cell: PlotCell) -> UUID:
         """
-        Add a plot configuration to a grid and try to create plot if job exists.
+        Add a plot configuration to a grid and subscribe to workflow availability.
 
         Parameters
         ----------
@@ -163,7 +179,11 @@ class PlotOrchestrator:
         # Index the cell for fast lookup
         self._cell_index[cell.id] = (grid_id, len(grid.cells) - 1)
 
-        self._try_create_plot(cell)
+        # Subscribe to workflow availability
+        self._job_orchestrator.subscribe_to_workflow(
+            workflow_id=cell.config.workflow_id,
+            callback=lambda job_number: self._on_job_available(cell.id, job_number),
+        )
 
         self._persist_to_store()
         self._logger.info(
@@ -224,12 +244,11 @@ class PlotOrchestrator:
 
     def update_plot_config(self, cell_id: UUID, new_config: PlotConfig) -> None:
         """
-        Update plot configuration and regenerate plot.
+        Update plot configuration and resubscribe to workflow.
 
-        This clears the existing plot and attempts to create a new one
-        with the updated configuration. If the matching job is available,
-        the plot is created immediately. Otherwise, it remains in a
-        pending state until refresh_plots() is called.
+        This clears the existing plot and resubscribes to the workflow.
+        When the workflow is next committed, the plot will be recreated
+        with the new configuration.
 
         Parameters
         ----------
@@ -249,103 +268,68 @@ class PlotOrchestrator:
         cell.error = None
         cell.job_number = None
 
-        # Try to create plot with new config
-        self._try_create_plot(cell)
+        # Re-subscribe to workflow (in case workflow_id changed)
+        self._job_orchestrator.subscribe_to_workflow(
+            workflow_id=new_config.workflow_id,
+            callback=lambda job_number: self._on_job_available(cell_id, job_number),
+        )
 
         # Persist updated configuration
         self._persist_to_store()
 
         self._logger.info('Updated plot config for cell %s', cell_id)
 
-    def refresh_plots(self) -> None:
+    def _on_job_available(self, cell_id: UUID, job_number: JobNumber) -> None:
         """
-        Refresh all plots.
+        Handle workflow availability notification from JobOrchestrator.
 
-        Try to create plots for any cells that are waiting for data.
-        """
-        for grid in self._grids.values():
-            for cell in grid.cells:
-                if cell.plot is None and cell.error is None:
-                    self._try_create_plot(cell)
-
-    def _try_create_plot(self, cell: PlotCell) -> None:
-        """
-        Try to create plot if matching job exists.
+        Called when a workflow is committed (started or restarted). Creates the
+        plot for the specified cell using the provided job_number.
 
         Parameters
         ----------
-        cell
-            Plot cell to create plot for.
+        cell_id
+            UUID of the plot cell to create plot for.
+        job_number
+            Job number for the workflow.
         """
-        for job_number, workflow_id in self._job_service.job_info.items():
-            if workflow_id == cell.config.workflow_id:
-                cell.job_number = job_number
-                try:
-                    spec = self._plotting_controller.get_spec(cell.config.plot_name)
-                    if spec.params is None:
-                        params = pydantic.BaseModel()
-                    else:
-                        params = spec.params(**cell.config.params)
+        grid_id, cell_index = self._cell_index[cell_id]
+        cell = self._grids[grid_id].cells[cell_index]
 
-                    cell.plot = self._plotting_controller.create_plot(
-                        job_number=job_number,
-                        source_names=cell.config.source_names,
-                        output_name=cell.config.output_name,
-                        plot_name=cell.config.plot_name,
-                        params=params,
-                    )
-                    cell.error = None
-                    self._logger.info(
-                        'Created plot for workflow %s at job %s',
-                        cell.config.workflow_id,
-                        job_number,
-                    )
-                except Exception as e:
-                    cell.error = str(e)
-                    self._logger.exception(
-                        'Failed to create plot for workflow %s', cell.config.workflow_id
-                    )
-                break
+        cell.job_number = job_number
+        try:
+            spec = self._plotting_controller.get_spec(cell.config.plot_name)
+            if spec.params is None:
+                params = pydantic.BaseModel()
+            else:
+                params = spec.params(**cell.config.params)
 
-    def _load_from_store(self) -> None:
-        """Load plot grid configurations from config store."""
-        if self._config_store is None:
-            return
-
-        for workflow_id in self._workflow_registry.keys():
-            plot_grid_key = self._create_plot_grid_key(workflow_id)
-            if self._config_store.get(plot_grid_key):
-                self._logger.debug(
-                    'Loaded plot grid config for %s from store', workflow_id
-                )
+            cell.plot = self._plotting_controller.create_plot(
+                job_number=job_number,
+                source_names=cell.config.source_names,
+                output_name=cell.config.output_name,
+                plot_name=cell.config.plot_name,
+                params=params,
+            )
+            cell.error = None
+            self._logger.info(
+                'Created plot for workflow %s at job %s',
+                cell.config.workflow_id,
+                job_number,
+            )
+        except Exception as e:
+            cell.error = str(e)
+            self._logger.exception(
+                'Failed to create plot for workflow %s', cell.config.workflow_id
+            )
 
     def _persist_to_store(self) -> None:
         """Persist plot grid configurations to config store."""
         if self._config_store is None:
             return
 
-        self._logger.debug('Persisted plot grid configs to store')
-
-    def _create_plot_grid_key(self, workflow_id: WorkflowId) -> WorkflowId:
-        """
-        Create a plot-grid-specific WorkflowId.
-
-        Parameters
-        ----------
-        workflow_id
-            The workflow ID to base the key on.
-
-        Returns
-        -------
-        :
-            A unique workflow ID for the plot grid configuration.
-        """
-        return WorkflowId(
-            instrument=workflow_id.instrument,
-            namespace="plot_grid",
-            name=workflow_id.name,
-            version=workflow_id.version,
-        )
+        # TODO: Implement persistence when needed
+        self._logger.debug('Plot grid configs would be persisted to store')
 
     def get_grid(self, grid_id: UUID) -> PlotGridConfig | None:
         """

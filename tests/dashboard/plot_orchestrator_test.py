@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import uuid
+from collections.abc import Callable
 
 import holoviews as hv
 import pytest
@@ -11,7 +12,6 @@ from ess.livedata.config.workflow_spec import (
     JobNumber,
     ResultKey,
     WorkflowId,
-    WorkflowSpec,
 )
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
@@ -26,6 +26,28 @@ from ess.livedata.dashboard.stream_manager import StreamManager
 hv.extension('bokeh')
 
 
+class FakeJobOrchestrator:
+    """Fake JobOrchestrator for testing PlotOrchestrator."""
+
+    def __init__(self):
+        self._subscribers: dict[WorkflowId, list[Callable[[JobNumber], None]]] = {}
+
+    def subscribe_to_workflow(
+        self, workflow_id: WorkflowId, callback: Callable[[JobNumber], None]
+    ) -> None:
+        """Register a callback for workflow availability."""
+        if workflow_id not in self._subscribers:
+            self._subscribers[workflow_id] = []
+        self._subscribers[workflow_id].append(callback)
+
+    def simulate_workflow_commit(
+        self, workflow_id: WorkflowId, job_number: JobNumber
+    ) -> None:
+        """Test helper to simulate workflow commit and notify subscribers."""
+        for callback in self._subscribers.get(workflow_id, []):
+            callback(job_number)
+
+
 @pytest.fixture
 def workflow_id():
     """Create a test WorkflowId."""
@@ -38,24 +60,9 @@ def workflow_id():
 
 
 @pytest.fixture
-def workflow_spec(workflow_id):
-    """Create a test WorkflowSpec."""
-    return WorkflowSpec(
-        instrument=workflow_id.instrument,
-        namespace=workflow_id.namespace,
-        name=workflow_id.name,
-        version=workflow_id.version,
-        title="Test Workflow",
-        description="A test workflow",
-        source_names=['detector_1', 'detector_2'],
-        params=None,
-    )
-
-
-@pytest.fixture
-def workflow_registry(workflow_id, workflow_spec):
-    """Create a test workflow registry."""
-    return {workflow_id: workflow_spec}
+def fake_job_orchestrator():
+    """Create a fake JobOrchestrator for testing."""
+    return FakeJobOrchestrator()
 
 
 @pytest.fixture
@@ -92,12 +99,11 @@ def plotting_controller(job_service, stream_manager):
 
 
 @pytest.fixture
-def plot_orchestrator(job_service, plotting_controller, workflow_registry):
+def plot_orchestrator(plotting_controller, fake_job_orchestrator):
     """Create a PlotOrchestrator for testing."""
     return PlotOrchestrator(
-        job_service=job_service,
         plotting_controller=plotting_controller,
-        workflow_registry=workflow_registry,
+        job_orchestrator=fake_job_orchestrator,
     )
 
 
@@ -161,13 +167,14 @@ class TestPlotOrchestrator:
     def test_add_plot_with_matching_job(
         self,
         plot_orchestrator,
+        fake_job_orchestrator,
         job_service,
         data_service,
         workflow_id,
         job_number,
         detector_data,
     ):
-        """Test adding a plot configuration when a matching job already exists."""
+        """Test adding a plot and receiving workflow commit notification."""
         job_id = JobId(source_name='detector_1', job_number=job_number)
         result_key = ResultKey(
             workflow_id=workflow_id,
@@ -179,44 +186,6 @@ class TestPlotOrchestrator:
         # via data_updated callback
         data_service[result_key] = detector_data
 
-        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
-
-        plot_config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='intensity',
-            source_names=['detector_1'],
-            plot_name='lines',
-            params={},
-        )
-
-        cell = PlotCell(
-            row=0,
-            col=0,
-            row_span=1,
-            col_span=1,
-            config=plot_config,
-        )
-
-        cell_id = plot_orchestrator.add_plot(grid_id, cell)
-
-        assert cell_id is not None
-        grid = plot_orchestrator.get_grid(grid_id)
-        assert len(grid.cells) == 1
-        assert grid.cells[0].job_number == job_number
-        assert grid.cells[0].plot is not None
-        assert isinstance(grid.cells[0].plot, hv.DynamicMap)
-        assert grid.cells[0].error is None
-
-    def test_refresh_plots(
-        self,
-        plot_orchestrator,
-        job_service,
-        data_service,
-        workflow_id,
-        job_number,
-        detector_data,
-    ):
-        """Test refreshing plots after job becomes available."""
         grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
 
         plot_config = PlotConfig(
@@ -237,22 +206,67 @@ class TestPlotOrchestrator:
 
         plot_orchestrator.add_plot(grid_id, cell)
 
+        # Plot is not created yet - waiting for workflow commit
         grid = plot_orchestrator.get_grid(grid_id)
         assert grid.cells[0].plot is None
 
+        # Simulate workflow commit from JobOrchestrator
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+        # Now plot should be created
+        assert grid.cells[0].job_number == job_number
+        assert grid.cells[0].plot is not None
+        assert isinstance(grid.cells[0].plot, hv.DynamicMap)
+        assert grid.cells[0].error is None
+
+    def test_workflow_commit_triggers_plot_creation(
+        self,
+        plot_orchestrator,
+        fake_job_orchestrator,
+        job_service,
+        data_service,
+        workflow_id,
+        job_number,
+        detector_data,
+    ):
+        """Test that workflow commit triggers plot creation for waiting plots."""
+        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
+
+        plot_config = PlotConfig(
+            workflow_id=workflow_id,
+            output_name='intensity',
+            source_names=['detector_1'],
+            plot_name='lines',
+            params={},
+        )
+
+        cell = PlotCell(
+            row=0,
+            col=0,
+            row_span=1,
+            col_span=1,
+            config=plot_config,
+        )
+
+        plot_orchestrator.add_plot(grid_id, cell)
+
+        # Plot is pending - no workflow committed yet
+        grid = plot_orchestrator.get_grid(grid_id)
+        assert grid.cells[0].plot is None
+
+        # Add data to data service
         job_id = JobId(source_name='detector_1', job_number=job_number)
         result_key = ResultKey(
             workflow_id=workflow_id,
             job_id=job_id,
             output_name='intensity',
         )
-
-        # Adding data to data_service automatically registers the job
-        # via data_updated callback
         data_service[result_key] = detector_data
 
-        plot_orchestrator.refresh_plots()
+        # Simulate workflow commit
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
+        # Plot should now be created
         assert grid.cells[0].job_number == job_number
         assert grid.cells[0].plot is not None
         assert isinstance(grid.cells[0].plot, hv.DynamicMap)
@@ -329,6 +343,7 @@ class TestPlotOrchestrator:
     def test_update_plot_config(
         self,
         plot_orchestrator,
+        fake_job_orchestrator,
         job_service,
         data_service,
         workflow_id,
@@ -366,6 +381,9 @@ class TestPlotOrchestrator:
 
         cell_id = plot_orchestrator.add_plot(grid_id, cell)
 
+        # Trigger workflow commit to create initial plot
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
         # Verify initial plot was created
         grid = plot_orchestrator.get_grid(grid_id)
         assert grid.cells[0].plot is not None
@@ -381,10 +399,10 @@ class TestPlotOrchestrator:
 
         plot_orchestrator.update_plot_config(cell_id, new_config)
 
-        # Verify config was updated
+        # Verify config was updated and plot was cleared (waiting for re-subscription)
         updated_config = plot_orchestrator.get_plot_config(cell_id)
         assert updated_config.output_name == 'spectrum'
         assert updated_config.source_names == ['detector_1']
 
-        # The config change was successful - we don't test whether
-        # the plot was created since that depends on data availability
+        # Plot is cleared after config update
+        assert grid.cells[0].plot is None
