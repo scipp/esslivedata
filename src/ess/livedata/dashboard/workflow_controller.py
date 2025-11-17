@@ -102,6 +102,7 @@ class WorkflowController:
             workflow_config_service=workflow_config_service,
             source_names=source_names,
             workflow_registry=self._workflow_registry,
+            config_store=config_store,
         )
 
         # Initialize all sources with UNKNOWN status
@@ -172,22 +173,22 @@ class WorkflowController:
             self._logger.error('%s, cannot start workflow', msg)
             raise ValueError(msg)
 
-        # Persist config for this workflow to restore widget state across sessions
-        if self._config_store is not None:
+        # Stage configs for all sources (orchestrator handles persistence)
+        for source_name in source_names:
+            self._orchestrator.stage_config(
+                workflow_id, source_name, config, aux_source_names
+            )
+
+        # Handle edge case: empty source_names but we still want to persist config
+        if not source_names and self._config_store is not None:
             config_state = ConfigurationState(
-                source_names=source_names,
+                source_names=[],
                 aux_source_names=(
                     aux_source_names.model_dump() if aux_source_names else {}
                 ),
                 params=config.model_dump(),
             )
             self._config_store[workflow_id] = config_state.model_dump()
-
-        # Stage configs for all sources
-        for source_name in source_names:
-            self._orchestrator.stage_config(
-                workflow_id, source_name, config, aux_source_names
-            )
 
         # Set status to STARTING for immediate UI feedback
         for source_name in source_names:
@@ -268,12 +269,34 @@ class WorkflowController:
         return self._workflow_registry.get(workflow_id)
 
     def get_workflow_config(self, workflow_id: WorkflowId) -> ConfigurationState | None:
-        """Load saved workflow configuration."""
-        if self._config_store is None:
+        """
+        Load saved workflow configuration.
+
+        Returns the staged config from orchestrator, which reflects either:
+        - Config loaded from persistent storage on init, or
+        - Config from most recent commit (active job config)
+        """
+        staged_jobs = self._orchestrator.get_staged_config(workflow_id)
+        if staged_jobs is None or not isinstance(staged_jobs, dict):
             return None
-        if data := self._config_store.get(workflow_id):
-            return ConfigurationState.model_validate(data)
-        return None
+
+        if not staged_jobs:
+            return None
+
+        # Convert JobOrchestrator's staged_jobs back to ConfigurationState
+        # (see ConfigurationState schema note about expansion/contraction)
+        source_names = list(staged_jobs.keys())
+        first_job_config = next(iter(staged_jobs.values()))
+
+        return ConfigurationState(
+            source_names=source_names,
+            params=first_job_config.params.model_dump(),
+            aux_source_names=(
+                first_job_config.aux_source_names.model_dump()
+                if first_job_config.aux_source_names
+                else {}
+            ),
+        )
 
     def subscribe_to_workflow_status_updates(
         self, callback: Callable[[dict[str, WorkflowStatus]], None]

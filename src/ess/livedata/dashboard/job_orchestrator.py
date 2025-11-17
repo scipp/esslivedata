@@ -33,6 +33,8 @@ from ess.livedata.config.workflow_spec import (
 from ess.livedata.core.job_manager import JobAction, JobCommand
 
 from .command_service import CommandService
+from .config_store import ConfigStore
+from .configuration_adapter import ConfigurationState
 from .workflow_config_service import WorkflowConfigService
 
 SourceName = str
@@ -76,6 +78,7 @@ class JobOrchestrator:
         workflow_config_service: WorkflowConfigService,
         source_names: list[SourceName],
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+        config_store: ConfigStore | None = None,
     ) -> None:
         """
         Initialize the job orchestrator.
@@ -90,11 +93,15 @@ class JobOrchestrator:
             List of source names to monitor.
         workflow_registry
             Registry of available workflows and their specifications.
+        config_store
+            Optional store for persisting workflow configurations across sessions.
+            Orchestrator loads configs on init and persists on commit.
         """
         self._command_service = command_service
         self._workflow_config_service = workflow_config_service
         self._source_names = source_names
         self._workflow_registry = workflow_registry
+        self._config_store = config_store
         self._logger = logging.getLogger(__name__)
 
         # Workflow state tracking
@@ -105,6 +112,9 @@ class JobOrchestrator:
         # Status callbacks
         self._status_callbacks: list[Callable[[WorkflowStatus], None]] = []
 
+        # Load persisted configs
+        self._load_configs_from_store()
+
         # Setup subscriptions to workflow status updates
         self._setup_subscriptions()
 
@@ -114,6 +124,52 @@ class JobOrchestrator:
             self._workflow_config_service.subscribe_to_workflow_status(
                 source_name, self.handle_response
             )
+
+    def _load_configs_from_store(self) -> None:
+        """Load persisted workflow configs into staged_jobs."""
+        if self._config_store is None:
+            return
+
+        for workflow_id in self._workflow_registry:
+            config_data = self._config_store.get(workflow_id)
+            if config_data is None:
+                continue
+
+            try:
+                config_state = ConfigurationState.model_validate(config_data)
+                spec = self._workflow_registry[workflow_id]
+
+                # Expand single params to all sources (see schema note)
+                if config_state.params and config_state.source_names:
+                    params_model = spec.parameter_model
+                    if params_model is None:
+                        continue
+
+                    # Validate and instantiate params
+                    params = params_model.model_validate(config_state.params)
+
+                    # Handle aux_source_names
+                    aux_source_names = None
+                    if config_state.aux_source_names and spec.aux_sources_model:
+                        aux_source_names = spec.aux_sources_model.model_validate(
+                            config_state.aux_source_names
+                        )
+
+                    # Stage for all sources in the config
+                    for source_name in config_state.source_names:
+                        self._workflows[workflow_id].staged_jobs[source_name] = (
+                            JobConfig(params=params, aux_source_names=aux_source_names)
+                        )
+
+                    self._logger.info(
+                        'Loaded config for workflow %s from store: %d sources',
+                        workflow_id,
+                        len(config_state.source_names),
+                    )
+            except Exception as e:
+                self._logger.warning(
+                    'Failed to load config for workflow %s: %s', workflow_id, e
+                )
 
     def stage_config(
         self,
@@ -215,14 +271,11 @@ class JobOrchestrator:
             list(state.staged_jobs.keys()),
         )
 
-        # Create new JobSet
-        state.current = JobSet(
-            job_number=job_number,
-            jobs=state.staged_jobs.copy(),
-        )
+        # Create new JobSet from staged configs
+        state.current = JobSet(job_number=job_number, jobs=state.staged_jobs.copy())
 
-        # Clear staging area
-        state.staged_jobs.clear()
+        # Persist staged configs to store (keeping staged_jobs as working copy)
+        self._persist_config_to_store(workflow_id, state.staged_jobs)
 
         return job_number
 
@@ -258,6 +311,94 @@ class JobOrchestrator:
     ) -> None:
         """Subscribe to workflow status updates."""
         self._status_callbacks.append(callback)
+
+    def _persist_config_to_store(
+        self, workflow_id: WorkflowId, staged_jobs: dict[SourceName, JobConfig]
+    ) -> None:
+        """Persist staged job configs to config store."""
+        if self._config_store is None or not staged_jobs:
+            return
+
+        # Contract staged_jobs back to ConfigurationState schema
+        # (single params, list of sources - see ConfigurationState schema note)
+        source_names = list(staged_jobs.keys())
+        # Take params from first source (all should be same in current implementation)
+        first_job_config = next(iter(staged_jobs.values()))
+
+        config_state = ConfigurationState(
+            source_names=source_names,
+            params=first_job_config.params.model_dump(),
+            aux_source_names=(
+                first_job_config.aux_source_names.model_dump()
+                if first_job_config.aux_source_names
+                else {}
+            ),
+        )
+
+        self._config_store[workflow_id] = config_state.model_dump()
+        self._logger.debug(
+            'Persisted config for workflow %s to store: %d sources',
+            workflow_id,
+            len(source_names),
+        )
+
+    def get_staged_config(
+        self, workflow_id: WorkflowId, source_name: SourceName | None = None
+    ) -> JobConfig | dict[SourceName, JobConfig] | None:
+        """
+        Get staged configuration for a workflow.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to query.
+        source_name
+            Optional source name. If provided, returns config for that source only.
+            If None, returns all staged configs as a dict.
+
+        Returns
+        -------
+        :
+            JobConfig for the specified source, dict of all staged configs,
+            or None if workflow/source not found.
+        """
+        state = self._workflows.get(workflow_id)
+        if state is None:
+            return None
+
+        if source_name is not None:
+            return state.staged_jobs.get(source_name)
+
+        return state.staged_jobs.copy()
+
+    def get_active_config(
+        self, workflow_id: WorkflowId, source_name: SourceName | None = None
+    ) -> JobConfig | dict[SourceName, JobConfig] | None:
+        """
+        Get active (running) configuration for a workflow.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to query.
+        source_name
+            Optional source name. If provided, returns config for that source only.
+            If None, returns all active configs as a dict.
+
+        Returns
+        -------
+        :
+            JobConfig for the specified source, dict of all active configs,
+            or None if workflow/source not found or not running.
+        """
+        state = self._workflows.get(workflow_id)
+        if state is None or state.current is None:
+            return None
+
+        if source_name is not None:
+            return state.current.jobs.get(source_name)
+
+        return state.current.jobs.copy()
 
     def get_active_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:
         """Get the active job number for a workflow, if any."""
