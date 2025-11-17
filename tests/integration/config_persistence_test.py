@@ -97,7 +97,7 @@ def test_adapter_filters_removed_sources(
         version=1,
     )
 
-    # Start workflow with multiple sources (monitor3 not in spec)
+    # Start workflow with multiple sources (monitor3 not in monitor_histogram spec for dummy)
     source_names = ['monitor1', 'monitor2', 'monitor3']
     backend_with_null_transport.workflow_controller.start_workflow(
         workflow_id=workflow_id,
