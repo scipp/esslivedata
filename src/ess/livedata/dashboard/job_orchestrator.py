@@ -32,7 +32,6 @@ from ess.livedata.core.job_manager import JobAction, JobCommand
 
 from .command_service import CommandService
 from .config_store import ConfigStore
-from .configuration_adapter import ConfigurationState
 from .workflow_config_service import WorkflowConfigService
 
 SourceName = str
@@ -122,27 +121,17 @@ class JobOrchestrator:
     def _load_configs_from_store(self) -> None:
         """Initialize all workflows with either loaded configs or defaults from spec."""
         for workflow_id, spec in self._workflow_registry.items():
-            # Try to load persisted config as dicts
-            config_state = None
+            # Try to load persisted config directly as dict
+            config_data = None
             if self._config_store is not None:
                 config_data = self._config_store.get(workflow_id)
-                if config_data is not None:
-                    try:
-                        config_state = ConfigurationState.model_validate(config_data)
-                    except Exception as e:
-                        self._logger.warning(
-                            'Failed to load config for workflow %s: %s. '
-                            'Using defaults.',
-                            workflow_id,
-                            e,
-                        )
 
             # Get params/aux_source_names/source_names as dicts
-            if config_state is not None and config_state.params:
+            if config_data and config_data.get('params'):
                 # Use loaded config (already dicts)
-                params = config_state.params
-                aux_source_names = config_state.aux_source_names
-                source_names = config_state.source_names
+                params = config_data['params']
+                aux_source_names = config_data.get('aux_source_names', {})
+                source_names = config_data.get('source_names', [])
                 self._logger.info(
                     'Loaded config for workflow %s from store: %d sources',
                     workflow_id,
@@ -340,19 +329,19 @@ class JobOrchestrator:
         if self._config_store is None or not staged_jobs:
             return
 
-        # Contract staged_jobs back to ConfigurationState schema
+        # Contract staged_jobs to storage format
         # (single params, list of sources - see ConfigurationState schema note)
         source_names = list(staged_jobs.keys())
         # Take params from first source (all should be same in current implementation)
         first_job_config = next(iter(staged_jobs.values()))
 
-        config_state = ConfigurationState(
-            source_names=source_names,
-            params=first_job_config.params,
-            aux_source_names=first_job_config.aux_source_names,
-        )
+        config_dict = {
+            'source_names': source_names,
+            'params': first_job_config.params,
+            'aux_source_names': first_job_config.aux_source_names,
+        }
 
-        self._config_store[workflow_id] = config_state.model_dump()
+        self._config_store[workflow_id] = config_dict
         self._logger.debug(
             'Persisted config for workflow %s to store: %d sources',
             workflow_id,
