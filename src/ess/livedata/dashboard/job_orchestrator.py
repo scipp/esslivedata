@@ -72,6 +72,7 @@ class JobOrchestrator:
 
     def __init__(
         self,
+        *,
         command_service: CommandService,
         workflow_config_service: WorkflowConfigService,
         source_names: list[SourceName],
@@ -232,6 +233,7 @@ class JobOrchestrator:
     def stage_config(
         self,
         workflow_id: WorkflowId,
+        *,
         source_name: SourceName,
         params: pydantic.BaseModel,
         aux_source_names: pydantic.BaseModel | None = None,
@@ -392,7 +394,7 @@ class JobOrchestrator:
         )
 
     def get_staged_config(
-        self, workflow_id: WorkflowId, source_name: SourceName | None = None
+        self, workflow_id: WorkflowId, *, source_name: SourceName | None = None
     ) -> JobConfig | dict[SourceName, JobConfig] | None:
         """
         Get staged configuration for a workflow.
@@ -419,7 +421,7 @@ class JobOrchestrator:
         return state.staged_jobs.copy()
 
     def get_active_config(
-        self, workflow_id: WorkflowId, source_name: SourceName | None = None
+        self, workflow_id: WorkflowId, *, source_name: SourceName | None = None
     ) -> JobConfig | dict[SourceName, JobConfig] | None:
         """
         Get active (running) configuration for a workflow.

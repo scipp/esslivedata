@@ -161,7 +161,10 @@ class WorkflowController:
         self._orchestrator.clear_staged_configs(workflow_id)
         for source_name in source_names:
             self._orchestrator.stage_config(
-                workflow_id, source_name, config, aux_source_names
+                workflow_id,
+                source_name=source_name,
+                params=config,
+                aux_source_names=aux_source_names,
             )
 
         # Commit and start workflow

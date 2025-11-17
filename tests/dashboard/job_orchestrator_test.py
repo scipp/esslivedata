@@ -356,12 +356,12 @@ class TestJobOrchestratorInitialization:
         )
 
         # Should return JobConfig for existing source
-        config = orchestrator.get_staged_config(workflow_id, "det_1")
+        config = orchestrator.get_staged_config(workflow_id, source_name="det_1")
         assert config is not None
         assert config.params.threshold == 100.0
 
         # Should return None for non-existent source
-        config = orchestrator.get_staged_config(workflow_id, "det_999")
+        config = orchestrator.get_staged_config(workflow_id, source_name="det_999")
         assert config is None
 
     def test_workflow_with_required_params_gets_empty_state(
