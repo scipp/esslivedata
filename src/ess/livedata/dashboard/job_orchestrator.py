@@ -254,7 +254,7 @@ class JobOrchestrator:
             params=params, aux_source_names=aux_source_names
         )
 
-    def commit_workflow(self, workflow_id: WorkflowId) -> JobNumber:
+    def commit_workflow(self, workflow_id: WorkflowId) -> list[JobId]:
         """
         Commit staged configs and start workflow.
 
@@ -266,7 +266,7 @@ class JobOrchestrator:
         Returns
         -------
         :
-            The generated job number for this workflow run.
+            List of JobIds created (one per staged source).
 
         Raises
         ------
@@ -335,7 +335,11 @@ class JobOrchestrator:
         # Persist staged configs to store (keeping staged_jobs as working copy)
         self._persist_config_to_store(workflow_id, state.staged_jobs)
 
-        return job_number
+        # Return JobIds for all created jobs
+        return [
+            JobId(source_name=source_name, job_number=job_number)
+            for source_name in state.staged_jobs
+        ]
 
     def handle_response(self, status: object) -> None:
         """

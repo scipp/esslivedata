@@ -165,11 +165,7 @@ class WorkflowController:
             )
 
         # Commit and start workflow
-        job_number = self._orchestrator.commit_workflow(workflow_id)
-        return [
-            JobId(source_name=source_name, job_number=job_number)
-            for source_name in source_names
-        ]
+        return self._orchestrator.commit_workflow(workflow_id)
 
     def create_workflow_adapter(self, workflow_id: WorkflowId):
         """Create a workflow configuration adapter for the given workflow ID."""
