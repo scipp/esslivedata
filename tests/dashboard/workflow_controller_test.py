@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-from collections.abc import Callable
 from typing import Any, NamedTuple
 
 import pydantic
@@ -73,16 +72,9 @@ def get_batch_calls(sink: FakeMessageSink) -> list[int]:
 class FakeWorkflowConfigService(WorkflowConfigService):
     """Fake service for testing WorkflowController."""
 
-    def __init__(self):
-        super().__init__()
-        self._status_callbacks: dict[str, list[Callable[[object], None]]] = {}
-
-    def subscribe_to_workflow_status(
-        self, source_name: str, callback: Callable[[object], None]
-    ) -> None:
-        if source_name not in self._status_callbacks:
-            self._status_callbacks[source_name] = []
-        self._status_callbacks[source_name].append(callback)
+    def subscribe_to_workflow_status(self, source_name: str, callback) -> None:
+        """No-op implementation for testing."""
+        pass
 
 
 @pytest.fixture
