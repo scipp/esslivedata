@@ -157,11 +157,34 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         """
         Initial parameter values.
 
-        Default implementation returns persisted parameter values if available,
-        otherwise returns empty dict.
+        Default implementation returns persisted parameter values if available
+        and compatible with the current model, otherwise returns empty dict to
+        trigger default values.
+
+        If stored params have no field overlap with the current model (indicating
+        complete incompatibility, e.g., from a different workflow version), returns
+        empty dict to fall back to defaults rather than propagating invalid data.
         """
         if not self._config_state:
             return {}
+
+        # Check compatibility with current model
+        model_class = self.model_class()
+        if model_class is None:
+            # No model defined, return params as-is
+            return self._config_state.params
+
+        # Check if stored params have ANY overlap with current model fields
+        # If no field names match, the config is from an incompatible version
+        stored_keys = set(self._config_state.params.keys())
+        model_fields = set(model_class.model_fields.keys())
+
+        if stored_keys and not stored_keys.intersection(model_fields):
+            # Complete incompatibility: no field overlap, fall back to defaults
+            return {}
+
+        # Partial or full compatibility: let Pydantic handle defaults/validation
+        # Note: Pydantic ignores extra fields and uses defaults for missing ones
         return self._config_state.params
 
     @abstractmethod
