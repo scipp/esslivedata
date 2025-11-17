@@ -3,8 +3,50 @@
 """
 DESIGN HULL: JobOrchestrator - Public API only
 
+We need to design and implement a JobOrchestrator. To explain its
+purpose, here is some context:
+
+- We have a series of available workflows.
+- They can be selected and run by a user.
+- A concrete "run" of a workflow is referred to as a *job*.
+- Running jobs produce a dict of output streams (held by and managed
+by DataService).
+- Plots are created by selecting outputs.
+
+Here is where JobOrchestrator comes in. Its purpose is to provide a
+seemless interface that makes working with jobs easier for users,
+since the mainly care about "workflows", not "jobs":
+
+- We want to run only a single job per workflow at a time.
+- If a user configures and starts a workflow, an existing job for that
+ particular workflow should be stopped first.
+- Plots that subscribe to DataService for updates for a particular job
+ output should either be recreated (and replaced in the UI), or the
+subscription should be redirected to the new job's output.
+
+JobOrchestrator might be a component we place between
+DataService/CommandService/WorkflowConfigService on the one side and
+WorkflowController/PlottingController on the other. Precise
+responsibilities are not clear.
+
 Core idea: One active "run" per workflow, where a run is a set of jobs
 (one per source) sharing the same job_number.
+
+Latest idea:
+We need to handle configuration independent of starting, e.g., to support different config for each source name.
+This would also make this "symmetric" between loading config and creating new config.
+Rough flow:
+- Stage config for source1, source2
+- Stage different config for source3 (but for some JobNumber).
+- Commit (start workflow).
+
+WorkflowState should keep track of:
+- Config(s) of active jobs.
+- Staging for next job.
+
+It it still unclear of we need two JobSets (current and previous), or if we fully finish with the previous one before the next is created.
+Does JobSet only hold jobs, or also staged configs?
+
 """
 
 from __future__ import annotations
@@ -35,7 +77,9 @@ class WorkflowState:
 
     current: JobSet
     previous: JobSet | None  # Present during handoff/transition
-    plot_subscriptions: dict[JobId, dict[str | None, set[str]]]  # job -> output -> plot_ids
+    plot_subscriptions: dict[
+        JobId, dict[str | None, set[str]]
+    ]  # job -> output -> plot_ids
 
 
 @dataclass(frozen=True)
