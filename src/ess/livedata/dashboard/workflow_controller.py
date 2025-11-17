@@ -16,8 +16,6 @@ from ess.livedata.config.workflow_spec import (
     ResultKey,
     WorkflowId,
     WorkflowSpec,
-    WorkflowStatus,
-    WorkflowStatusType,
 )
 
 from .command_service import CommandService
@@ -105,29 +103,10 @@ class WorkflowController:
             config_store=config_store,
         )
 
-        # Initialize all sources with UNKNOWN status
-        self._workflow_status: dict[str, WorkflowStatus] = {
-            source_name: WorkflowStatus(source_name=source_name)
-            for source_name in self._source_names
-        }
-
         # Callbacks
         self._workflow_specs_callbacks: list[
             Callable[[dict[WorkflowId, WorkflowSpec]], None]
         ] = []
-        self._workflow_status_callbacks: list[
-            Callable[[dict[str, WorkflowStatus]], None]
-        ] = []
-
-        # Subscribe to orchestrator status updates
-        self._orchestrator.subscribe_to_status_updates(self._update_workflow_status)
-
-    def _update_workflow_status(self, status: WorkflowStatus) -> None:
-        """Handle workflow status updates from orchestrator."""
-        self._logger.info('Received workflow status update: %s', status)
-        self._workflow_status[status.source_name] = status
-        for callback in self._workflow_status_callbacks:
-            self._notify_workflow_status_update(callback)
 
     def start_workflow(
         self,
@@ -184,18 +163,6 @@ class WorkflowController:
             self._orchestrator.stage_config(
                 workflow_id, source_name, config, aux_source_names
             )
-
-        # Set status to STARTING for immediate UI feedback
-        for source_name in source_names:
-            self._workflow_status[source_name] = WorkflowStatus(
-                source_name=source_name,
-                workflow_id=workflow_id,
-                status=WorkflowStatusType.STARTING,
-            )
-
-        # Notify status update
-        for callback in self._workflow_status_callbacks:
-            self._notify_workflow_status_update(callback)
 
         # Commit and start workflow
         job_number = self._orchestrator.commit_workflow(workflow_id)
@@ -289,18 +256,3 @@ class WorkflowController:
                 else {}
             ),
         )
-
-    def subscribe_to_workflow_status_updates(
-        self, callback: Callable[[dict[str, WorkflowStatus]], None]
-    ) -> None:
-        """Subscribe to workflow status updates."""
-        self._workflow_status_callbacks.append(callback)
-        self._notify_workflow_status_update(callback)
-
-    def _notify_workflow_status_update(
-        self, callback: Callable[[dict[str, WorkflowStatus]], None]
-    ):
-        try:
-            callback(self._workflow_status.copy())
-        except Exception as e:
-            self._logger.error('Error in workflow status update callback: %s', e)

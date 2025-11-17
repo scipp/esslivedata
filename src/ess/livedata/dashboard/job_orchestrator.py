@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 import pydantic
@@ -27,7 +27,6 @@ from ess.livedata.config.workflow_spec import (
     WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
-    WorkflowStatus,
 )
 from ess.livedata.core.job_manager import JobAction, JobCommand
 
@@ -105,9 +104,6 @@ class JobOrchestrator:
 
         # Workflow state tracking
         self._workflows: dict[WorkflowId, WorkflowState] = {}
-
-        # Status callbacks
-        self._status_callbacks: list[Callable[[WorkflowStatus], None]] = []
 
         # Load persisted configs
         self._load_configs_from_store()
@@ -341,7 +337,7 @@ class JobOrchestrator:
 
         return job_number
 
-    def handle_response(self, status: WorkflowStatus) -> None:
+    def handle_response(self, status: object) -> None:
         """
         Handle workflow status updates from backend services.
 
@@ -360,19 +356,6 @@ class JobOrchestrator:
         """
         self._logger.info('Received workflow response: %s', status)
         # TODO: State machine logic here
-
-        # Notify subscribers
-        for callback in self._status_callbacks:
-            try:
-                callback(status)
-            except Exception as e:
-                self._logger.error('Error in status callback: %s', e)
-
-    def subscribe_to_status_updates(
-        self, callback: Callable[[WorkflowStatus], None]
-    ) -> None:
-        """Subscribe to workflow status updates."""
-        self._status_callbacks.append(callback)
 
     def _persist_config_to_store(
         self, workflow_id: WorkflowId, staged_jobs: dict[SourceName, JobConfig]
