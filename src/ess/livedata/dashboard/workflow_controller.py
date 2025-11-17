@@ -177,7 +177,9 @@ class WorkflowController:
         if not source_names:
             return []
 
-        # Stage configs for all sources (orchestrator handles persistence)
+        # Clear existing staged configs and stage new ones
+        # This ensures only the requested sources are included in the workflow
+        self._orchestrator.clear_staged_configs(workflow_id)
         for source_name in source_names:
             self._orchestrator.stage_config(
                 workflow_id, source_name, config, aux_source_names
@@ -261,7 +263,12 @@ class WorkflowController:
         - Config loaded from persistent storage on init, or
         - Config from most recent commit (active job config)
         """
-        staged_jobs = self._orchestrator.get_staged_config(workflow_id)
+        try:
+            staged_jobs = self._orchestrator.get_staged_config(workflow_id)
+        except KeyError:
+            # Workflow not in registry
+            return None
+
         if staged_jobs is None or not isinstance(staged_jobs, dict):
             return None
 

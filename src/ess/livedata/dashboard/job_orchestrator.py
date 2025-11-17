@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections import defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
@@ -105,9 +104,7 @@ class JobOrchestrator:
         self._logger = logging.getLogger(__name__)
 
         # Workflow state tracking
-        self._workflows: defaultdict[WorkflowId, WorkflowState] = defaultdict(
-            WorkflowState
-        )
+        self._workflows: dict[WorkflowId, WorkflowState] = {}
 
         # Status callbacks
         self._status_callbacks: list[Callable[[WorkflowStatus], None]] = []
@@ -126,50 +123,101 @@ class JobOrchestrator:
             )
 
     def _load_configs_from_store(self) -> None:
-        """Load persisted workflow configs into staged_jobs."""
-        if self._config_store is None:
-            return
+        """Initialize all workflows with either loaded configs or defaults from spec."""
+        for workflow_id, spec in self._workflow_registry.items():
+            # Try to load persisted config
+            config_state = None
+            if self._config_store is not None:
+                config_data = self._config_store.get(workflow_id)
+                if config_data is not None:
+                    try:
+                        config_state = ConfigurationState.model_validate(config_data)
+                    except Exception as e:
+                        self._logger.warning(
+                            'Failed to load config for workflow %s: %s. '
+                            'Using defaults.',
+                            workflow_id,
+                            e,
+                        )
+                        config_state = None
 
-        for workflow_id in self._workflow_registry:
-            config_data = self._config_store.get(workflow_id)
-            if config_data is None:
-                continue
+            # Determine params, aux_source_names, and source_names
+            if config_state is not None and config_state.params:
+                # Use loaded config
+                if spec.params is None:
+                    self._logger.warning(
+                        'Loaded config for workflow %s has params but '
+                        'spec defines none',
+                        workflow_id,
+                    )
+                    # Workflow has no params - just create empty WorkflowState
+                    self._workflows[workflow_id] = WorkflowState()
+                    continue
 
-            try:
-                config_state = ConfigurationState.model_validate(config_data)
-                spec = self._workflow_registry[workflow_id]
-
-                # Expand single params to all sources (see schema note)
-                if config_state.params and config_state.source_names:
-                    params_model = spec.parameter_model
-                    if params_model is None:
-                        continue
-
-                    # Validate and instantiate params
-                    params = params_model.model_validate(config_state.params)
-
-                    # Handle aux_source_names
+                try:
+                    params = spec.params.model_validate(config_state.params)
                     aux_source_names = None
-                    if config_state.aux_source_names and spec.aux_sources_model:
-                        aux_source_names = spec.aux_sources_model.model_validate(
+                    if config_state.aux_source_names and spec.aux_sources:
+                        aux_source_names = spec.aux_sources.model_validate(
                             config_state.aux_source_names
                         )
-
-                    # Stage for all sources in the config
-                    for source_name in config_state.source_names:
-                        self._workflows[workflow_id].staged_jobs[source_name] = (
-                            JobConfig(params=params, aux_source_names=aux_source_names)
-                        )
-
+                    source_names = config_state.source_names
                     self._logger.info(
                         'Loaded config for workflow %s from store: %d sources',
                         workflow_id,
-                        len(config_state.source_names),
+                        len(source_names),
                     )
-            except Exception as e:
-                self._logger.warning(
-                    'Failed to load config for workflow %s: %s', workflow_id, e
+                except Exception as e:
+                    self._logger.warning(
+                        'Failed to validate config for workflow %s: %s. '
+                        'Using defaults.',
+                        workflow_id,
+                        e,
+                    )
+                    # Fall back to defaults
+                    params = spec.params() if spec.params is not None else None
+                    aux_source_names = (
+                        spec.aux_sources() if spec.aux_sources is not None else None
+                    )
+                    source_names = spec.source_names
+            else:
+                # Use defaults from spec
+                params = spec.params() if spec.params is not None else None
+                aux_source_names = (
+                    spec.aux_sources() if spec.aux_sources is not None else None
                 )
+                source_names = spec.source_names
+
+            # Initialize staged_jobs for all sources (if we have params)
+            if params is not None:
+                state = WorkflowState()
+                for source_name in source_names:
+                    state.staged_jobs[source_name] = JobConfig(
+                        params=params, aux_source_names=aux_source_names
+                    )
+                self._workflows[workflow_id] = state
+
+                if config_state is None:
+                    self._logger.debug(
+                        'Initialized workflow %s with defaults: %d sources',
+                        workflow_id,
+                        len(source_names),
+                    )
+            else:
+                # Workflow has no params - just create empty WorkflowState
+                self._workflows[workflow_id] = WorkflowState()
+                self._logger.debug('Initialized workflow %s (no params)', workflow_id)
+
+    def clear_staged_configs(self, workflow_id: WorkflowId) -> None:
+        """
+        Clear all staged configs for a workflow.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to clear staged configs for.
+        """
+        self._workflows[workflow_id].staged_jobs.clear()
 
     def stage_config(
         self,
@@ -360,11 +408,9 @@ class JobOrchestrator:
         -------
         :
             JobConfig for the specified source, dict of all staged configs,
-            or None if workflow/source not found.
+            or None if source not found.
         """
-        state = self._workflows.get(workflow_id)
-        if state is None:
-            return None
+        state = self._workflows[workflow_id]
 
         if source_name is not None:
             return state.staged_jobs.get(source_name)
@@ -389,10 +435,10 @@ class JobOrchestrator:
         -------
         :
             JobConfig for the specified source, dict of all active configs,
-            or None if workflow/source not found or not running.
+            or None if source not found or not running.
         """
-        state = self._workflows.get(workflow_id)
-        if state is None or state.current is None:
+        state = self._workflows[workflow_id]
+        if state.current is None:
             return None
 
         if source_name is not None:
@@ -402,8 +448,8 @@ class JobOrchestrator:
 
     def get_active_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:
         """Get the active job number for a workflow, if any."""
-        state = self._workflows.get(workflow_id)
-        if state is None or state.current is None:
+        state = self._workflows[workflow_id]
+        if state.current is None:
             return None
         return state.current.job_number
 
@@ -413,7 +459,7 @@ class JobOrchestrator:
 
     def get_active_sources(self, workflow_id: WorkflowId) -> list[SourceName]:
         """Get list of sources with active jobs for a workflow."""
-        state = self._workflows.get(workflow_id)
-        if state is None or state.current is None:
+        state = self._workflows[workflow_id]
+        if state.current is None:
             return []
         return list(state.current.jobs.keys())
