@@ -2,15 +2,21 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for JobOrchestrator initialization and config management."""
 
+from typing import Any
+
 import pydantic
 import pytest
 
-from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
+from ess.livedata.config.models import ConfigKey
+from ess.livedata.config.workflow_spec import WorkflowConfig, WorkflowId, WorkflowSpec
+from ess.livedata.core.job_manager import JobAction, JobCommand
+from ess.livedata.core.message import COMMANDS_STREAM_ID
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.configuration_adapter import ConfigurationState
 from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
 from ess.livedata.dashboard.workflow_config_service import WorkflowConfigService
 from ess.livedata.fakes import FakeMessageSink
+from ess.livedata.handlers.config_handler import ConfigUpdate
 
 
 class WorkflowParams(pydantic.BaseModel):
@@ -113,6 +119,39 @@ class FakeWorkflowConfigService(WorkflowConfigService):
 
     def subscribe_to_workflow_status(self, source_name, callback):
         pass
+
+
+def get_sent_commands(sink: FakeMessageSink) -> list[tuple[ConfigKey, Any]]:
+    """Extract all sent commands from the sink."""
+    result = []
+    for messages in sink.published_messages:
+        result.extend(
+            (msg.value.config_key, msg.value.value)
+            for msg in messages
+            if msg.stream == COMMANDS_STREAM_ID and isinstance(msg.value, ConfigUpdate)
+        )
+    return result
+
+
+def get_sent_workflow_configs(
+    sink: FakeMessageSink,
+) -> list[tuple[str, WorkflowConfig]]:
+    """Extract workflow configs with source names from the sink."""
+    result = []
+    for messages in sink.published_messages:
+        result.extend(
+            (msg.value.config_key.source_name, msg.value.value)
+            for msg in messages
+            if msg.stream == COMMANDS_STREAM_ID
+            and isinstance(msg.value, ConfigUpdate)
+            and isinstance(msg.value.value, WorkflowConfig)
+        )
+    return result
+
+
+def get_batch_calls(sink: FakeMessageSink) -> list[int]:
+    """Extract batch call sizes from the sink."""
+    return [len(messages) for messages in sink.published_messages]
 
 
 class TestJobOrchestratorInitialization:
@@ -589,3 +628,224 @@ class TestJobOrchestratorMutationSafety:
         staged = orchestrator.get_staged_config(workflow_id)
         assert staged["det_1"].params["threshold"] == 999.0
         assert staged["det_1"].params["mode"] == "evil"
+
+
+class TestJobOrchestratorCommit:
+    """Test commit_workflow and related job lifecycle operations."""
+
+    def test_commit_workflow_returns_job_ids_for_staged_sources(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        """Verify commit_workflow returns correct JobIds for all staged sources."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=FakeWorkflowConfigService(),
+            source_names=["det_1", "det_2"],
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Stage configs for 2 sources
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={},
+        )
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_2",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={},
+        )
+
+        # Commit
+        job_ids = orchestrator.commit_workflow(workflow_id)
+
+        # Assert: returns list[JobId] with correct source_names and shared job_number
+        assert len(job_ids) == 2
+        assert {job_id.source_name for job_id in job_ids} == {"det_1", "det_2"}
+        # All jobs should share the same job_number
+        assert job_ids[0].job_number == job_ids[1].job_number
+
+    def test_commit_workflow_raises_if_nothing_staged(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        """Verify commit_workflow raises ValueError if no configs staged."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=FakeWorkflowConfigService(),
+            source_names=["det_1"],
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Clear staged jobs (workflow initialized with defaults from spec)
+        orchestrator.clear_staged_configs(workflow_id)
+
+        # commit_workflow() should raise ValueError
+        with pytest.raises(ValueError, match="No staged configs"):
+            orchestrator.commit_workflow(workflow_id)
+
+    def test_commit_workflow_sends_workflow_configs_to_backend(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        """Verify correct WorkflowConfig messages sent for each source."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        fake_sink = FakeMessageSink()
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=fake_sink),
+            workflow_config_service=FakeWorkflowConfigService(),
+            source_names=["det_1", "det_2"],
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Stage configs
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 75.0, "mode": "accurate"},
+            aux_source_names={},
+        )
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_2",
+            params={"threshold": 75.0, "mode": "accurate"},
+            aux_source_names={},
+        )
+
+        # Commit
+        job_ids = orchestrator.commit_workflow(workflow_id)
+
+        # Assert: FakeMessageSink received correct WorkflowConfig for each source
+        sent_configs = get_sent_workflow_configs(fake_sink)
+        assert len(sent_configs) == 2
+
+        # Check each source received a config
+        source_names = {config[0] for config in sent_configs}
+        assert source_names == {"det_1", "det_2"}
+
+        # Verify config contents
+        for source_name, config in sent_configs:
+            assert isinstance(config, WorkflowConfig)
+            assert config.identifier == workflow_id
+            assert config.params["threshold"] == 75.0
+            assert config.params["mode"] == "accurate"
+            # Job number should match the returned JobIds
+            matching_job = next(
+                job for job in job_ids if job.source_name == source_name
+            )
+            assert config.job_number == matching_job.job_number
+
+    def test_commit_workflow_stops_previous_jobs_on_second_commit(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        """Verify second commit sends stop commands for previous jobs."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        fake_sink = FakeMessageSink()
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=fake_sink),
+            workflow_config_service=FakeWorkflowConfigService(),
+            source_names=["det_1", "det_2"],
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Commit first workflow
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "first"},
+            aux_source_names={},
+        )
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_2",
+            params={"threshold": 50.0, "mode": "first"},
+            aux_source_names={},
+        )
+        first_job_ids = orchestrator.commit_workflow(workflow_id)
+
+        # Clear sink to track second commit
+        fake_sink.published_messages.clear()
+
+        # Commit second workflow
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 100.0, "mode": "second"},
+            aux_source_names={},
+        )
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_2",
+            params={"threshold": 100.0, "mode": "second"},
+            aux_source_names={},
+        )
+        second_job_ids = orchestrator.commit_workflow(workflow_id)
+
+        # Assert: stop commands sent for first workflow's jobs
+        sent_commands = get_sent_commands(fake_sink)
+        stop_commands = [
+            (key, value)
+            for key, value in sent_commands
+            if isinstance(value, JobCommand) and value.action == JobAction.stop
+        ]
+
+        assert len(stop_commands) == 2
+        stopped_job_ids = {cmd[1].job_id for cmd in stop_commands}
+        assert stopped_job_ids == set(first_job_ids)
+
+        # Verify new workflow configs were sent
+        sent_configs = get_sent_workflow_configs(fake_sink)
+        assert len(sent_configs) == 2
+
+        # Verify the new configs have different job_number than old ones
+        new_job_number = sent_configs[0][1].job_number
+        assert new_job_number != first_job_ids[0].job_number
+        assert new_job_number == second_job_ids[0].job_number
+
+    def test_clear_staged_configs_then_commit_raises_error(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        """Verify clear + commit interaction raises appropriate error."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=FakeWorkflowConfigService(),
+            source_names=["det_1", "det_2"],
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Stage some configs
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={},
+        )
+
+        # Clear staged configs
+        orchestrator.clear_staged_configs(workflow_id)
+
+        # Verify configs were cleared
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert len(staged) == 0
+
+        # Commit after clear should raise ValueError
+        with pytest.raises(ValueError, match="No staged configs"):
+            orchestrator.commit_workflow(workflow_id)

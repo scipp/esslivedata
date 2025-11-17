@@ -282,6 +282,9 @@ class JobOrchestrator:
         # Send workflow configs to all staged sources
         # Note: Currently all jobs use same params, but aux_source_names may differ
         for source_name, job_config in state.staged_jobs.items():
+            # We are currently using a single command to mean "configure and start".
+            # See #445 for plans on splitting this, in line with the interface of the
+            # orchestrator interface.
             workflow_config = WorkflowConfig.from_params(
                 workflow_id=workflow_id,
                 params=job_config.params,
