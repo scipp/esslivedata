@@ -272,8 +272,8 @@ class WorkflowConfig(BaseModel):
     def from_params(
         cls,
         workflow_id: WorkflowId,
-        params: dict | BaseModel | None = None,
-        aux_source_names: dict | BaseModel | None = None,
+        params: dict | None = None,
+        aux_source_names: dict | None = None,
         job_number: JobNumber | None = None,
     ) -> WorkflowConfig:
         """
@@ -284,10 +284,9 @@ class WorkflowConfig(BaseModel):
         workflow_id:
             Identifier for the workflow
         params:
-            Workflow parameters as dict or Pydantic model, or None if no params
+            Workflow parameters as dict, or None if no params
         aux_source_names:
-            Auxiliary source selections as dict or Pydantic model, or None if no
-            aux sources
+            Auxiliary source selections as dict, or None if no aux sources
         job_number:
             Optional job number (generated if not provided)
 
@@ -296,22 +295,11 @@ class WorkflowConfig(BaseModel):
         :
             WorkflowConfig instance ready to be sent to backend
         """
-        # Convert BaseModels to dicts if needed
-        if isinstance(params, BaseModel):
-            params_dict = params.model_dump()
-        else:
-            params_dict = params if params is not None else {}
-
-        if isinstance(aux_source_names, BaseModel):
-            aux_dict = aux_source_names.model_dump(mode='json')
-        else:
-            aux_dict = aux_source_names if aux_source_names is not None else {}
-
         return cls(
             identifier=workflow_id,
             job_number=job_number if job_number is not None else uuid.uuid4(),
-            aux_source_names=aux_dict,
-            params=params_dict,
+            aux_source_names=aux_source_names or {},
+            params=params or {},
         )
 
 
