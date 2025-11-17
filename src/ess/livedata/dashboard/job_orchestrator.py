@@ -300,9 +300,8 @@ class JobOrchestrator:
                 workflow_id=workflow_id,
                 params=job_config.params,
                 aux_source_names=job_config.aux_source_names,
+                job_number=job_set.job_number,
             )
-            # Override job_number to ensure all jobs in this run share it
-            workflow_config.job_number = job_set.job_number
             key = keys.WORKFLOW_CONFIG.create_key(source_name=source_name)
             commands.append((key, workflow_config))
 
