@@ -26,6 +26,12 @@ class AuxSources(pydantic.BaseModel):
     monitor: str = "monitor_1"
 
 
+class ParamsWithRequiredFields(pydantic.BaseModel):
+    """Params model with required fields (no defaults) - like correlation histograms."""
+
+    required_value: float  # No default!
+
+
 @pytest.fixture
 def workflow_with_params() -> WorkflowSpec:
     """Workflow spec with params model."""
@@ -84,6 +90,21 @@ def workflow_empty_sources() -> WorkflowSpec:
         description="Test workflow with no sources",
         source_names=[],
         params=WorkflowParams,
+    )
+
+
+@pytest.fixture
+def workflow_params_without_defaults() -> WorkflowSpec:
+    """Workflow spec with params that can't be instantiated (required fields)."""
+    return WorkflowSpec(
+        instrument="test",
+        namespace="testing",
+        name="params_without_defaults",
+        version=1,
+        title="Workflow With Required Params",
+        description="Test workflow like correlation histograms",
+        source_names=["det_1"],
+        params=ParamsWithRequiredFields,
     )
 
 
@@ -342,3 +363,23 @@ class TestJobOrchestratorInitialization:
         # Should return None for non-existent source
         config = orchestrator.get_staged_config(workflow_id, "det_999")
         assert config is None
+
+    def test_workflow_with_required_params_gets_empty_state(
+        self, workflow_params_without_defaults: WorkflowSpec
+    ):
+        """Workflow with params that can't be instantiated gets empty WorkflowState."""
+        workflow_id = workflow_params_without_defaults.get_id()
+        registry = {workflow_id: workflow_params_without_defaults}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=FakeWorkflowConfigService(),
+            source_names=["det_1"],
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Should exist in _workflows but have empty staged_jobs
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert isinstance(staged, dict)
+        assert len(staged) == 0

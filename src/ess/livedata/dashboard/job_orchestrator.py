@@ -182,7 +182,21 @@ class JobOrchestrator:
                     source_names = spec.source_names
             else:
                 # Use defaults from spec
-                params = spec.params() if spec.params is not None else None
+                if spec.params is not None:
+                    try:
+                        params = spec.params()
+                    except pydantic.ValidationError:
+                        # Params model has required fields without defaults
+                        # (e.g., correlation histograms with dynamic defaults)
+                        # These workflows don't use JobOrchestrator
+                        self._workflows[workflow_id] = WorkflowState()
+                        self._logger.debug(
+                            'Initialized workflow %s (params cannot be instantiated)',
+                            workflow_id,
+                        )
+                        continue
+                else:
+                    params = None
                 aux_source_names = (
                     spec.aux_sources() if spec.aux_sources is not None else None
                 )
