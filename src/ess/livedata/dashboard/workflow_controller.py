@@ -11,11 +11,9 @@ from collections.abc import Callable, Mapping
 
 import pydantic
 
-import ess.livedata.config.keys as keys
 from ess.livedata.config.workflow_spec import (
     JobId,
     ResultKey,
-    WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
     WorkflowStatus,
@@ -27,6 +25,7 @@ from .config_store import ConfigStore
 from .configuration_adapter import ConfigurationState
 from .correlation_histogram import CorrelationHistogramController, make_workflow_spec
 from .data_service import DataService
+from .job_orchestrator import JobOrchestrator
 from .workflow_config_service import WorkflowConfigService
 from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
@@ -81,8 +80,6 @@ class WorkflowController:
         correlation_histogram_controller
             Optional controller for correlation histogram workflows.
         """
-        self._command_service = command_service
-        self._workflow_config_service = workflow_config_service
         self._config_store = config_store
         self._logger = logging.getLogger(__name__)
 
@@ -99,6 +96,14 @@ class WorkflowController:
 
         self._data_service = data_service
 
+        # Create job orchestrator for workflow lifecycle management
+        self._orchestrator = JobOrchestrator(
+            command_service=command_service,
+            workflow_config_service=workflow_config_service,
+            source_names=source_names,
+            workflow_registry=self._workflow_registry,
+        )
+
         # Initialize all sources with UNKNOWN status
         self._workflow_status: dict[str, WorkflowStatus] = {
             source_name: WorkflowStatus(source_name=source_name)
@@ -113,19 +118,11 @@ class WorkflowController:
             Callable[[dict[str, WorkflowStatus]], None]
         ] = []
 
-        # Subscribe to updates
-        self._setup_subscriptions()
-
-    def _setup_subscriptions(self) -> None:
-        """Setup subscriptions to service updates."""
-        # Subscribe to workflow status for each source
-        for source_name in self._source_names:
-            self._workflow_config_service.subscribe_to_workflow_status(
-                source_name, self._update_workflow_status
-            )
+        # Subscribe to orchestrator status updates
+        self._orchestrator.subscribe_to_status_updates(self._update_workflow_status)
 
     def _update_workflow_status(self, status: WorkflowStatus) -> None:
-        """Handle workflow status updates from service."""
+        """Handle workflow status updates from orchestrator."""
         self._logger.info('Received workflow status update: %s', status)
         self._workflow_status[status.source_name] = status
         for callback in self._workflow_status_callbacks:
@@ -175,31 +172,22 @@ class WorkflowController:
             self._logger.error('%s, cannot start workflow', msg)
             raise ValueError(msg)
 
-        # Create a SINGLE workflow config which will be used for ALL source names (see
-        # loop below). WorkflowConfig.from_params generates a new job number which
-        # allows for associating multiple jobs with the same workflow run across the
-        # different sources.
-        workflow_config = WorkflowConfig.from_params(
-            workflow_id=workflow_id,
-            params=config,
-            aux_source_names=aux_source_names,
-        )
-
         # Persist config for this workflow to restore widget state across sessions
         if self._config_store is not None:
             config_state = ConfigurationState(
                 source_names=source_names,
-                aux_source_names=workflow_config.aux_source_names,
-                params=workflow_config.params,
+                aux_source_names=(
+                    aux_source_names.model_dump() if aux_source_names else {}
+                ),
+                params=config.model_dump(),
             )
             self._config_store[workflow_id] = config_state.model_dump()
 
-        # Send workflow config to all sources in a batch
-        commands = [
-            (keys.WORKFLOW_CONFIG.create_key(source_name=source_name), workflow_config)
-            for source_name in source_names
-        ]
-        self._command_service.send_batch(commands)
+        # Stage configs for all sources
+        for source_name in source_names:
+            self._orchestrator.stage_config(
+                workflow_id, source_name, config, aux_source_names
+            )
 
         # Set status to STARTING for immediate UI feedback
         for source_name in source_names:
@@ -209,12 +197,22 @@ class WorkflowController:
                 status=WorkflowStatusType.STARTING,
             )
         # Notify once, will update whole list of source names
-        for callback in self._workflow_status_callbacks:
-            self._notify_workflow_status_update(callback)
+        if source_names:
+            for callback in self._workflow_status_callbacks:
+                self._notify_workflow_status_update(callback)
+
+        # Commit and start workflow (handles empty source_names gracefully)
+        if source_names:
+            job_number = self._orchestrator.commit_workflow(workflow_id)
+        else:
+            # No sources to start, use a placeholder job number
+            import uuid
+
+            job_number = uuid.uuid4()
 
         # Return the created job IDs
         return [
-            JobId(source_name=source_name, job_number=workflow_config.job_number)
+            JobId(source_name=source_name, job_number=job_number)
             for source_name in source_names
         ]
 
