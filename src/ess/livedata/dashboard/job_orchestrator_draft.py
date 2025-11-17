@@ -14,7 +14,7 @@ by DataService).
 - Plots are created by selecting outputs.
 
 Here is where JobOrchestrator comes in. Its purpose is to provide a
-seemless interface that makes working with jobs easier for users,
+seamless interface that makes working with jobs easier for users,
 since the mainly care about "workflows", not "jobs":
 
 - We want to run only a single job per workflow at a time.
@@ -33,19 +33,20 @@ Core idea: One active "run" per workflow, where a run is a set of jobs
 (one per source) sharing the same job_number.
 
 Latest idea:
-We need to handle configuration independent of starting, e.g., to support different config for each source name.
-This would also make this "symmetric" between loading config and creating new config.
+We need to handle configuration independent of starting, e.g., to support
+different config for each source. This would also make this "symmetric"
+between loading config and creating new config.
 Rough flow:
 - Stage config for source1, source2
-- Stage different config for source3 (but for some JobNumber).
-- Commit (start workflow).
+- Stage different config for source3 (but for same workflow).
+- Commit (start workflow) - assigns JobNumber and creates new JobSet.
 
-WorkflowState should keep track of:
-- Config(s) of active jobs.
-- Staging for next job.
-
-It it still unclear of we need two JobSets (current and previous), or if we fully finish with the previous one before the next is created.
-Does JobSet only hold jobs, or also staged configs?
+Decisions made:
+- JobSet holds running jobs WITH their configs (source_name -> config mapping).
+- WorkflowState tracks staged_configs separately (no JobNumber assigned yet).
+- Two JobSets (current + previous) are needed for smooth plot transitions,
+  especially for REDIRECT strategy where subscriptions switch while old jobs wind down.
+- JobId can be reconstructed on-demand as JobId(workflow_id, job_number, source_name).
 
 """
 
@@ -62,13 +63,19 @@ from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.job_controller import JobController
 from ess.livedata.dashboard.job_service import JobService
 
+SourceName = str
+
 
 @dataclass
 class JobSet:
-    """A set of jobs sharing the same job_number."""
+    """A set of jobs sharing the same job_number.
+
+    Maps source_name to config for each running job.
+    JobId can be reconstructed as JobId(workflow_id, job_number, source_name).
+    """
 
     job_number: JobNumber
-    jobs: list[JobId]  # One per source_name
+    jobs: dict[SourceName, pydantic.BaseModel]  # source_name -> config
 
 
 @dataclass
@@ -77,6 +84,7 @@ class WorkflowState:
 
     current: JobSet
     previous: JobSet | None  # Present during handoff/transition
+    staged_configs: dict[SourceName, pydantic.BaseModel] | None
     plot_subscriptions: dict[
         JobId, dict[str | None, set[str]]
     ]  # job -> output -> plot_ids
@@ -124,14 +132,16 @@ class JobOrchestrator:
         job_controller: JobController,
         command_service: CommandService,
         plot_handler: PlotTransitionHandler | None = None,
-        default_transition_strategy: PlotTransitionStrategy = PlotTransitionStrategy.RECREATE,
+        default_transition_strategy: PlotTransitionStrategy = (
+            PlotTransitionStrategy.RECREATE
+        ),
     ): ...
 
     # Workflow lifecycle
     def start_workflow(
         self,
         workflow_id: WorkflowId,
-        source_names: list[str],
+        source_names: list[SourceName],
         config: pydantic.BaseModel,
         aux_source_names: pydantic.BaseModel | None = None,
         transition_strategy: PlotTransitionStrategy | None = None,

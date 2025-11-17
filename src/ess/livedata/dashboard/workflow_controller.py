@@ -173,22 +173,15 @@ class WorkflowController:
             self._logger.error('%s, cannot start workflow', msg)
             raise ValueError(msg)
 
+        # If no sources, nothing to start
+        if not source_names:
+            return []
+
         # Stage configs for all sources (orchestrator handles persistence)
         for source_name in source_names:
             self._orchestrator.stage_config(
                 workflow_id, source_name, config, aux_source_names
             )
-
-        # Handle edge case: empty source_names but we still want to persist config
-        if not source_names and self._config_store is not None:
-            config_state = ConfigurationState(
-                source_names=[],
-                aux_source_names=(
-                    aux_source_names.model_dump() if aux_source_names else {}
-                ),
-                params=config.model_dump(),
-            )
-            self._config_store[workflow_id] = config_state.model_dump()
 
         # Set status to STARTING for immediate UI feedback
         for source_name in source_names:
@@ -197,21 +190,13 @@ class WorkflowController:
                 workflow_id=workflow_id,
                 status=WorkflowStatusType.STARTING,
             )
-        # Notify once, will update whole list of source names
-        if source_names:
-            for callback in self._workflow_status_callbacks:
-                self._notify_workflow_status_update(callback)
 
-        # Commit and start workflow (handles empty source_names gracefully)
-        if source_names:
-            job_number = self._orchestrator.commit_workflow(workflow_id)
-        else:
-            # No sources to start, use a placeholder job number
-            import uuid
+        # Notify status update
+        for callback in self._workflow_status_callbacks:
+            self._notify_workflow_status_update(callback)
 
-            job_number = uuid.uuid4()
-
-        # Return the created job IDs
+        # Commit and start workflow
+        job_number = self._orchestrator.commit_workflow(workflow_id)
         return [
             JobId(source_name=source_name, job_number=job_number)
             for source_name in source_names

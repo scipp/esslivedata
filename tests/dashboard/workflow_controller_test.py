@@ -682,21 +682,16 @@ class TestWorkflowController:
         workflow_controller: WorkflowControllerFixture,
         workflow_id: WorkflowId,
     ):
-        """Test that start_workflow works with empty source names list."""
+        """Test that start_workflow returns empty list with empty source names."""
         config = SomeWorkflowParams(threshold=100.0)
 
         # Act
-        workflow_controller.controller.start_workflow(workflow_id, [], config)
+        result = workflow_controller.controller.start_workflow(workflow_id, [], config)
 
         # Assert
+        assert result == []
         sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
         assert len(sent_configs) == 0  # No configs sent to sources
-
-        # Should still save persistent config
-        persistent_config_data = workflow_controller.config_store.get(workflow_id)
-        assert persistent_config_data is not None
-        persistent_config = ConfigurationState.model_validate(persistent_config_data)
-        assert persistent_config.source_names == []
 
     def test_callback_receives_complete_workflow_status_dict(
         self,
