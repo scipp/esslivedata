@@ -2,16 +2,19 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for JobOrchestrator initialization and config management."""
 
+from enum import Enum
 from typing import Any
 
 import pydantic
 import pytest
+import yaml
 
 from ess.livedata.config.models import ConfigKey
 from ess.livedata.config.workflow_spec import WorkflowConfig, WorkflowId, WorkflowSpec
 from ess.livedata.core.job_manager import JobAction, JobCommand
 from ess.livedata.core.message import COMMANDS_STREAM_ID
 from ess.livedata.dashboard.command_service import CommandService
+from ess.livedata.dashboard.config_store import FileBackedConfigStore
 from ess.livedata.dashboard.configuration_adapter import ConfigurationState
 from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
 from ess.livedata.dashboard.workflow_config_service import WorkflowConfigService
@@ -36,6 +39,20 @@ class ParamsWithRequiredFields(pydantic.BaseModel):
     """Params model with required fields (no defaults) - like correlation histograms."""
 
     required_value: float  # No default!
+
+
+class SampleEnum(str, Enum):
+    """Sample enum for verifying enum serialization."""
+
+    OPTION_A = 'option_a'
+    OPTION_B = 'option_b'
+
+
+class ParamsWithEnum(pydantic.BaseModel):
+    """Params model with enum field to test serialization."""
+
+    value: float = 50.0
+    choice: SampleEnum = SampleEnum.OPTION_A
 
 
 @pytest.fixture
@@ -111,6 +128,21 @@ def workflow_params_without_defaults() -> WorkflowSpec:
         description="Test workflow like correlation histograms",
         source_names=["det_1"],
         params=ParamsWithRequiredFields,
+    )
+
+
+@pytest.fixture
+def workflow_with_enum_params() -> WorkflowSpec:
+    """Workflow spec with params containing enum fields."""
+    return WorkflowSpec(
+        instrument="test",
+        namespace="testing",
+        name="with_enum_params",
+        version=1,
+        title="Workflow With Enum Params",
+        description="Test workflow with enum params for serialization testing",
+        source_names=["det_1"],
+        params=ParamsWithEnum,
     )
 
 
@@ -418,6 +450,43 @@ class TestJobOrchestratorInitialization:
         staged = orchestrator.get_staged_config(workflow_id)
         assert isinstance(staged, dict)
         assert len(staged) == 0
+
+    def test_enum_params_serialized_to_yaml(
+        self, workflow_with_enum_params: WorkflowSpec, tmp_path
+    ):
+        """Enum values in params should be serialized as strings, not enum objects."""
+        workflow_id = workflow_with_enum_params.get_id()
+        registry = {workflow_id: workflow_with_enum_params}
+
+        # Create a temporary file for config store
+        config_file = tmp_path / "test_config.yaml"
+
+        config_store = FileBackedConfigStore(file_path=config_file)
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=FakeWorkflowConfigService(),
+            source_names=["det_1"],
+            workflow_registry=registry,
+            config_store=config_store,
+        )
+
+        # Commit workflow to trigger persistence
+        orchestrator.commit_workflow(workflow_id)
+
+        # Read the YAML file directly to verify enum serialization
+        with open(config_file) as f:
+            saved_data = yaml.safe_load(f)
+
+        # Verify the config was saved
+        workflow_key = str(workflow_id)
+        assert workflow_key in saved_data
+
+        # Verify enum was serialized as string value, not enum object
+        saved_params = saved_data[workflow_key]['params']
+        assert 'choice' in saved_params
+        assert saved_params['choice'] == 'option_a'  # String value, not enum
+        assert isinstance(saved_params['choice'], str)
 
 
 class TestJobOrchestratorMutationSafety:

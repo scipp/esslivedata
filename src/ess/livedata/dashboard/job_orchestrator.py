@@ -155,7 +155,7 @@ class JobOrchestrator:
                 params = {}
                 if spec.params is not None:
                     try:
-                        params = spec.params().model_dump()
+                        params = spec.params().model_dump(mode='json')
                     except pydantic.ValidationError:
                         # Params model has required fields without defaults
                         # These workflows don't use JobOrchestrator staging
@@ -168,7 +168,7 @@ class JobOrchestrator:
 
                 aux_source_names = {}
                 if spec.aux_sources is not None:
-                    aux_source_names = spec.aux_sources().model_dump()
+                    aux_source_names = spec.aux_sources().model_dump(mode='json')
 
                 source_names = spec.source_names
                 self._logger.debug(
