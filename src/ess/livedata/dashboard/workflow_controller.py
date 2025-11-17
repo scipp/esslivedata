@@ -159,12 +159,17 @@ class WorkflowController:
         # Clear existing staged configs and stage new ones
         # This ensures only the requested sources are included in the workflow
         self._orchestrator.clear_staged_configs(workflow_id)
+
+        # Convert Pydantic models to dicts for orchestrator
+        params_dict = config.model_dump()
+        aux_dict = aux_source_names.model_dump() if aux_source_names else {}
+
         for source_name in source_names:
             self._orchestrator.stage_config(
                 workflow_id,
                 source_name=source_name,
-                params=config,
-                aux_source_names=aux_source_names,
+                params=params_dict,
+                aux_source_names=aux_dict,
             )
 
         # Commit and start workflow
@@ -235,9 +240,6 @@ class WorkflowController:
             # Workflow not in registry
             return None
 
-        if staged_jobs is None or not isinstance(staged_jobs, dict):
-            return None
-
         if not staged_jobs:
             return None
 
@@ -248,10 +250,6 @@ class WorkflowController:
 
         return ConfigurationState(
             source_names=source_names,
-            params=first_job_config.params.model_dump(),
-            aux_source_names=(
-                first_job_config.aux_source_names.model_dump()
-                if first_job_config.aux_source_names
-                else {}
-            ),
+            params=first_job_config.params,
+            aux_source_names=first_job_config.aux_source_names,
         )

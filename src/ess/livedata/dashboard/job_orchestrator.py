@@ -42,8 +42,8 @@ SourceName = str
 class JobConfig:
     """Configuration for a single job within a JobSet."""
 
-    params: pydantic.BaseModel
-    aux_source_names: pydantic.BaseModel | None
+    params: dict
+    aux_source_names: dict
 
 
 @dataclass
@@ -122,7 +122,7 @@ class JobOrchestrator:
     def _load_configs_from_store(self) -> None:
         """Initialize all workflows with either loaded configs or defaults from spec."""
         for workflow_id, spec in self._workflow_registry.items():
-            # Try to load persisted config
+            # Try to load persisted config as dicts
             config_state = None
             if self._config_store is not None:
                 config_data = self._config_store.get(workflow_id)
@@ -136,86 +136,56 @@ class JobOrchestrator:
                             workflow_id,
                             e,
                         )
-                        config_state = None
 
-            # Determine params, aux_source_names, and source_names
+            # Get params/aux_source_names/source_names as dicts
             if config_state is not None and config_state.params:
-                # Use loaded config
-                if spec.params is None:
-                    self._logger.warning(
-                        'Loaded config for workflow %s has params but '
-                        'spec defines none',
-                        workflow_id,
-                    )
-                    # Workflow has no params - just create empty WorkflowState
-                    self._workflows[workflow_id] = WorkflowState()
-                    continue
-
-                try:
-                    params = spec.params.model_validate(config_state.params)
-                    aux_source_names = None
-                    if config_state.aux_source_names and spec.aux_sources:
-                        aux_source_names = spec.aux_sources.model_validate(
-                            config_state.aux_source_names
-                        )
-                    source_names = config_state.source_names
-                    self._logger.info(
-                        'Loaded config for workflow %s from store: %d sources',
-                        workflow_id,
-                        len(source_names),
-                    )
-                except Exception as e:
-                    self._logger.warning(
-                        'Failed to validate config for workflow %s: %s. '
-                        'Using defaults.',
-                        workflow_id,
-                        e,
-                    )
-                    # Fall back to defaults
-                    params = spec.params() if spec.params is not None else None
-                    aux_source_names = (
-                        spec.aux_sources() if spec.aux_sources is not None else None
-                    )
-                    source_names = spec.source_names
+                # Use loaded config (already dicts)
+                params = config_state.params
+                aux_source_names = config_state.aux_source_names
+                source_names = config_state.source_names
+                self._logger.info(
+                    'Loaded config for workflow %s from store: %d sources',
+                    workflow_id,
+                    len(source_names),
+                )
             else:
-                # Use defaults from spec
+                # Use defaults from spec, converting to dicts
+                params = {}
                 if spec.params is not None:
                     try:
-                        params = spec.params()
+                        params = spec.params().model_dump()
                     except pydantic.ValidationError:
                         # Params model has required fields without defaults
-                        # (e.g., correlation histograms with dynamic defaults)
-                        # These workflows don't use JobOrchestrator
+                        # These workflows don't use JobOrchestrator staging
                         self._workflows[workflow_id] = WorkflowState()
                         self._logger.debug(
                             'Initialized workflow %s (params cannot be instantiated)',
                             workflow_id,
                         )
                         continue
-                else:
-                    params = None
-                aux_source_names = (
-                    spec.aux_sources() if spec.aux_sources is not None else None
-                )
-                source_names = spec.source_names
 
-            # Initialize staged_jobs for all sources (if we have params)
-            if params is not None:
+                aux_source_names = {}
+                if spec.aux_sources is not None:
+                    aux_source_names = spec.aux_sources().model_dump()
+
+                source_names = spec.source_names
+                self._logger.debug(
+                    'Initialized workflow %s with defaults: %d sources',
+                    workflow_id,
+                    len(source_names),
+                )
+
+            # Initialize staged_jobs with dict-based configs
+            if params:
                 state = WorkflowState()
                 for source_name in source_names:
                     state.staged_jobs[source_name] = JobConfig(
-                        params=params, aux_source_names=aux_source_names
+                        params=params,
+                        aux_source_names=aux_source_names,
                     )
                 self._workflows[workflow_id] = state
-
-                if config_state is None:
-                    self._logger.debug(
-                        'Initialized workflow %s with defaults: %d sources',
-                        workflow_id,
-                        len(source_names),
-                    )
             else:
-                # Workflow has no params - just create empty WorkflowState
+                # Workflow has no params - create empty WorkflowState
                 self._workflows[workflow_id] = WorkflowState()
                 self._logger.debug('Initialized workflow %s (no params)', workflow_id)
 
@@ -235,8 +205,8 @@ class JobOrchestrator:
         workflow_id: WorkflowId,
         *,
         source_name: SourceName,
-        params: pydantic.BaseModel,
-        aux_source_names: pydantic.BaseModel | None = None,
+        params: dict,
+        aux_source_names: dict,
     ) -> None:
         """
         Stage configuration for a source.
@@ -248,9 +218,9 @@ class JobOrchestrator:
         source_name
             Source name to configure.
         params
-            Workflow parameters.
+            Workflow parameters as dict.
         aux_source_names
-            Optional auxiliary source names for this specific job.
+            Auxiliary source names as dict.
         """
         self._workflows[workflow_id].staged_jobs[source_name] = JobConfig(
             params=params, aux_source_names=aux_source_names
@@ -378,12 +348,8 @@ class JobOrchestrator:
 
         config_state = ConfigurationState(
             source_names=source_names,
-            params=first_job_config.params.model_dump(),
-            aux_source_names=(
-                first_job_config.aux_source_names.model_dump()
-                if first_job_config.aux_source_names
-                else {}
-            ),
+            params=first_job_config.params,
+            aux_source_names=first_job_config.aux_source_names,
         )
 
         self._config_store[workflow_id] = config_state.model_dump()
@@ -393,9 +359,7 @@ class JobOrchestrator:
             len(source_names),
         )
 
-    def get_staged_config(
-        self, workflow_id: WorkflowId, *, source_name: SourceName | None = None
-    ) -> JobConfig | dict[SourceName, JobConfig] | None:
+    def get_staged_config(self, workflow_id: WorkflowId) -> dict[SourceName, JobConfig]:
         """
         Get staged configuration for a workflow.
 
@@ -403,26 +367,16 @@ class JobOrchestrator:
         ----------
         workflow_id
             The workflow to query.
-        source_name
-            Optional source name. If provided, returns config for that source only.
-            If None, returns all staged configs as a dict.
 
         Returns
         -------
         :
-            JobConfig for the specified source, dict of all staged configs,
-            or None if source not found.
+            Dict mapping source names to their staged configs.
         """
         state = self._workflows[workflow_id]
-
-        if source_name is not None:
-            return state.staged_jobs.get(source_name)
-
         return state.staged_jobs.copy()
 
-    def get_active_config(
-        self, workflow_id: WorkflowId, *, source_name: SourceName | None = None
-    ) -> JobConfig | dict[SourceName, JobConfig] | None:
+    def get_active_config(self, workflow_id: WorkflowId) -> dict[SourceName, JobConfig]:
         """
         Get active (running) configuration for a workflow.
 
@@ -430,23 +384,16 @@ class JobOrchestrator:
         ----------
         workflow_id
             The workflow to query.
-        source_name
-            Optional source name. If provided, returns config for that source only.
-            If None, returns all active configs as a dict.
 
         Returns
         -------
         :
-            JobConfig for the specified source, dict of all active configs,
-            or None if source not found or not running.
+            Dict mapping source names to their active configs.
+            Returns empty dict if no active jobs.
         """
         state = self._workflows[workflow_id]
         if state.current is None:
-            return None
-
-        if source_name is not None:
-            return state.current.jobs.get(source_name)
-
+            return {}
         return state.current.jobs.copy()
 
     def get_active_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:

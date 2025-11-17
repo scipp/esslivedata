@@ -165,9 +165,9 @@ class TestJobOrchestratorInitialization:
 
         # Should have default param values
         for job_config in staged.values():
-            assert job_config.params.threshold == 100.0
-            assert job_config.params.mode == "default"
-            assert job_config.aux_source_names is None
+            assert job_config.params["threshold"] == 100.0
+            assert job_config.params["mode"] == "default"
+            assert job_config.aux_source_names == {}
 
     def test_workflow_no_params_has_empty_staged_jobs(
         self, workflow_no_params: WorkflowSpec
@@ -234,17 +234,17 @@ class TestJobOrchestratorInitialization:
         assert set(staged.keys()) == {"det_1"}  # Only the configured source
 
         # Should have loaded param values
-        assert staged["det_1"].params.threshold == 50.0
-        assert staged["det_1"].params.mode == "custom"
+        assert staged["det_1"].params["threshold"] == 50.0
+        assert staged["det_1"].params["mode"] == "custom"
 
-    def test_falls_back_to_defaults_on_invalid_config(
+    def test_loads_invalid_config_without_validation(
         self, workflow_with_params: WorkflowSpec
     ):
-        """Should use defaults if stored config is invalid."""
+        """Invalid configs are loaded as-is (validation happens later in UI)."""
         workflow_id = workflow_with_params.get_id()
         registry = {workflow_id: workflow_with_params}
 
-        # Setup config store with invalid config
+        # Setup config store with invalid param types
         config_store = {
             workflow_id: {
                 "source_names": ["det_1"],
@@ -263,12 +263,10 @@ class TestJobOrchestratorInitialization:
 
         staged = orchestrator.get_staged_config(workflow_id)
         assert isinstance(staged, dict)
-        # Should fall back to all sources from spec
-        assert set(staged.keys()) == {"det_1", "det_2"}
-
-        # Should have default param values
-        assert staged["det_1"].params.threshold == 100.0
-        assert staged["det_1"].params.mode == "default"
+        # Should use loaded config as-is (including invalid params)
+        assert set(staged.keys()) == {"det_1"}
+        # Invalid param value is loaded as-is
+        assert staged["det_1"].params["threshold"] == "not_a_float"
 
     def test_loads_aux_sources_from_config(
         self, workflow_with_params_and_aux: WorkflowSpec
@@ -294,9 +292,9 @@ class TestJobOrchestratorInitialization:
         )
 
         staged = orchestrator.get_staged_config(workflow_id)
-        assert staged["det_1"].params.threshold == 75.0
-        assert staged["det_1"].aux_source_names is not None
-        assert staged["det_1"].aux_source_names.monitor == "monitor_2"
+        assert staged["det_1"].params["threshold"] == 75.0
+        assert staged["det_1"].aux_source_names
+        assert staged["det_1"].aux_source_names["monitor"] == "monitor_2"
 
     def test_get_staged_config_never_raises_for_valid_workflow_id(
         self, workflow_with_params: WorkflowSpec
@@ -340,10 +338,8 @@ class TestJobOrchestratorInitialization:
         with pytest.raises(KeyError):
             orchestrator.get_staged_config(unknown_id)
 
-    def test_get_staged_config_for_specific_source(
-        self, workflow_with_params: WorkflowSpec
-    ):
-        """get_staged_config with source_name should return single JobConfig or None."""
+    def test_get_staged_config_returns_dict(self, workflow_with_params: WorkflowSpec):
+        """get_staged_config returns dict mapping source names to configs."""
         workflow_id = workflow_with_params.get_id()
         registry = {workflow_id: workflow_with_params}
 
@@ -355,14 +351,14 @@ class TestJobOrchestratorInitialization:
             config_store=None,
         )
 
-        # Should return JobConfig for existing source
-        config = orchestrator.get_staged_config(workflow_id, source_name="det_1")
-        assert config is not None
-        assert config.params.threshold == 100.0
+        # Should return dict with all sources
+        configs = orchestrator.get_staged_config(workflow_id)
+        assert isinstance(configs, dict)
+        assert set(configs.keys()) == {"det_1", "det_2"}
 
-        # Should return None for non-existent source
-        config = orchestrator.get_staged_config(workflow_id, source_name="det_999")
-        assert config is None
+        # Config params should be dicts
+        assert configs["det_1"].params["threshold"] == 100.0
+        assert configs["det_2"].params["threshold"] == 100.0
 
     def test_workflow_with_required_params_gets_empty_state(
         self, workflow_params_without_defaults: WorkflowSpec
