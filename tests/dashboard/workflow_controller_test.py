@@ -754,3 +754,60 @@ class TestWorkflowController:
         # Verify all commands were sent
         sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
         assert len(sent_configs) == len(source_names)
+
+    def test_start_workflow_stops_old_jobs(
+        self,
+        workflow_controller: WorkflowControllerFixture,
+        workflow_id: WorkflowId,
+        source_names: list[str],
+    ):
+        """Test that starting a workflow stops any existing jobs."""
+        from ess.livedata.core.job_manager import JobAction, JobCommand
+
+        config = SomeWorkflowParams(threshold=150.0, mode="accurate")
+
+        # Start first workflow
+        workflow_controller.controller.start_workflow(workflow_id, source_names, config)
+        sent_configs_1 = get_sent_workflow_configs(
+            workflow_controller.fake_message_sink
+        )
+        assert len(sent_configs_1) == len(source_names)
+
+        # Clear sink to track second workflow
+        workflow_controller.fake_message_sink.published_messages.clear()
+
+        # Start same workflow again with different config
+        config_2 = SomeWorkflowParams(threshold=300.0, mode="fast")
+        workflow_controller.controller.start_workflow(
+            workflow_id, source_names, config_2
+        )
+
+        # Check that stop and start commands were sent together in same batch
+        sent_commands = get_sent_commands(workflow_controller.fake_message_sink)
+
+        # Should have stop commands for old jobs + start commands for new jobs
+        stop_commands = [
+            (key, value)
+            for key, value in sent_commands
+            if isinstance(value, JobCommand) and value.action == JobAction.stop
+        ]
+        start_commands = get_sent_workflow_configs(
+            workflow_controller.fake_message_sink
+        )
+
+        assert len(stop_commands) == len(source_names)
+        assert len(start_commands) == len(source_names)
+
+        # Verify the stop commands target the right sources
+        stopped_job_sources = {
+            cmd[1].job_id.source_name
+            for cmd in stop_commands
+            if isinstance(cmd[1], JobCommand) and cmd[1].job_id is not None
+        }
+        assert stopped_job_sources == set(source_names)
+
+        # Verify stop and start are in same batch
+        batch_calls = get_batch_calls(workflow_controller.fake_message_sink)
+        assert len(batch_calls) == 1
+        # Total batch size = stop commands + start commands
+        assert batch_calls[0] == len(source_names) * 2

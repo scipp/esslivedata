@@ -21,13 +21,16 @@ from dataclasses import dataclass, field
 import pydantic
 
 import ess.livedata.config.keys as keys
+from ess.livedata.config.models import ConfigKey
 from ess.livedata.config.workflow_spec import (
+    JobId,
     JobNumber,
     WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
     WorkflowStatus,
 )
+from ess.livedata.core.job_manager import JobAction, JobCommand
 
 from .command_service import CommandService
 from .workflow_config_service import WorkflowConfigService
@@ -164,19 +167,34 @@ class JobOrchestrator:
         # Generate job number for this workflow run
         job_number = uuid.uuid4()
 
-        # TODO: Stop old jobs if any
+        # Prepare all commands (stop old jobs + start new workflow) in single batch
+        commands = []
+
+        # Stop old jobs if any
         if state.current is not None:
             self._logger.info(
-                'Workflow %s already has active jobs, should stop: %s',
+                'Workflow %s already has active jobs, stopping: %s',
                 workflow_id,
                 state.current.job_number,
+            )
+            # Create stop commands for all old jobs
+            old_job_number = state.current.job_number
+            for source_name in state.current.jobs:
+                job_id = JobId(source_name=source_name, job_number=old_job_number)
+                commands.append(
+                    (
+                        ConfigKey(key=JobCommand.key, source_name=str(job_id)),
+                        JobCommand(job_id=job_id, action=JobAction.stop),
+                    )
+                )
+            self._logger.debug(
+                'Will stop %d old jobs in batch', len(state.current.jobs)
             )
             # Move current to previous for potential cleanup later
             state.previous = state.current
 
         # Send workflow configs to all staged sources
         # Note: Currently all jobs use same params, but aux_source_names may differ
-        commands = []
         for source_name, job_config in state.staged_jobs.items():
             workflow_config = WorkflowConfig.from_params(
                 workflow_id=workflow_id,
