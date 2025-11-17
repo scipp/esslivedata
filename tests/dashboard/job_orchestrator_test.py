@@ -379,3 +379,213 @@ class TestJobOrchestratorInitialization:
         staged = orchestrator.get_staged_config(workflow_id)
         assert isinstance(staged, dict)
         assert len(staged) == 0
+
+
+class TestJobOrchestratorMutationSafety:
+    """Test that JobOrchestrator protects against unintended mutations."""
+
+    def test_stage_config_makes_defensive_copy_of_params(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        """Modifying params dict after staging should not affect staged config."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=FakeWorkflowConfigService(),
+            source_names=["det_1"],
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Stage config with mutable params dict
+        params = {"threshold": 50.0, "mode": "custom"}
+        aux_source_names = {}
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params=params,
+            aux_source_names=aux_source_names,
+        )
+
+        # Modify the original params dict
+        params["threshold"] = 999.0
+        params["mode"] = "evil"
+
+        # Staged config should NOT be affected
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert staged["det_1"].params["threshold"] == 50.0
+        assert staged["det_1"].params["mode"] == "custom"
+
+    def test_stage_config_makes_defensive_copy_of_aux_source_names(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        """Modifying aux_source_names after staging should not affect staged config."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=FakeWorkflowConfigService(),
+            source_names=["det_1"],
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Stage config with mutable aux_source_names dict
+        params = {"threshold": 50.0}
+        aux_source_names = {"monitor": "monitor_1"}
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params=params,
+            aux_source_names=aux_source_names,
+        )
+
+        # Modify the original aux_source_names dict
+        aux_source_names["monitor"] = "monitor_evil"
+        aux_source_names["extra"] = "unexpected"
+
+        # Staged config should NOT be affected
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert staged["det_1"].aux_source_names == {"monitor": "monitor_1"}
+
+    def test_get_staged_config_returns_independent_copy(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        """Modifying returned config should not affect internal state."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=FakeWorkflowConfigService(),
+            source_names=["det_1"],
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={"monitor": "monitor_1"},
+        )
+
+        # Get staged config and modify it
+        staged = orchestrator.get_staged_config(workflow_id)
+        staged["det_1"].params["threshold"] = 999.0
+        staged["det_1"].aux_source_names["monitor"] = "monitor_evil"
+
+        # Get again - should be unchanged
+        staged_again = orchestrator.get_staged_config(workflow_id)
+        assert staged_again["det_1"].params["threshold"] == 50.0
+        assert staged_again["det_1"].aux_source_names["monitor"] == "monitor_1"
+
+    def test_get_active_config_returns_independent_copy(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        """Modifying returned active config should not affect internal state."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=FakeWorkflowConfigService(),
+            source_names=["det_1"],
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={},
+        )
+        orchestrator.commit_workflow(workflow_id)
+
+        # Get active config and modify it
+        active = orchestrator.get_active_config(workflow_id)
+        active["det_1"].params["threshold"] = 999.0
+
+        # Get again - should be unchanged
+        active_again = orchestrator.get_active_config(workflow_id)
+        assert active_again["det_1"].params["threshold"] == 50.0
+
+    def test_load_from_store_creates_independent_job_configs(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        """Each JobConfig should have independent params/aux_source_names dicts."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        # Config store with multiple sources
+        config_store = {
+            workflow_id: ConfigurationState(
+                source_names=["det_1", "det_2"],
+                params={"threshold": 50.0, "mode": "custom"},
+                aux_source_names={"monitor": "monitor_1"},
+            ).model_dump()
+        }
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=FakeWorkflowConfigService(),
+            source_names=["det_1", "det_2"],
+            workflow_registry=registry,
+            config_store=config_store,
+        )
+
+        # Modify params for one source
+        staged = orchestrator.get_staged_config(workflow_id)
+        staged["det_1"].params["threshold"] = 999.0
+        staged["det_1"].aux_source_names["monitor"] = "monitor_evil"
+
+        # Get again and check det_2 is not affected
+        staged_again = orchestrator.get_staged_config(workflow_id)
+        assert staged_again["det_2"].params["threshold"] == 50.0
+        assert staged_again["det_2"].aux_source_names["monitor"] == "monitor_1"
+
+    def test_committed_config_not_affected_by_new_staging(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        """After commit, modifying staged config should not affect active config."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=FakeWorkflowConfigService(),
+            source_names=["det_1"],
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Stage and commit initial config
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={},
+        )
+        orchestrator.commit_workflow(workflow_id)
+
+        # Stage new config with different params
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 999.0, "mode": "evil"},
+            aux_source_names={},
+        )
+
+        # Active config should still have original values
+        active = orchestrator.get_active_config(workflow_id)
+        assert active["det_1"].params["threshold"] == 50.0
+        assert active["det_1"].params["mode"] == "custom"
+
+        # Staged config should have new values
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert staged["det_1"].params["threshold"] == 999.0
+        assert staged["det_1"].params["mode"] == "evil"

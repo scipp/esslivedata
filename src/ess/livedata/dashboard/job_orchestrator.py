@@ -194,8 +194,8 @@ class JobOrchestrator:
                 state = WorkflowState()
                 for source_name in source_names:
                     state.staged_jobs[source_name] = JobConfig(
-                        params=params,
-                        aux_source_names=aux_source_names,
+                        params=params.copy(),
+                        aux_source_names=aux_source_names.copy(),
                     )
                 self._workflows[workflow_id] = state
             else:
@@ -237,7 +237,7 @@ class JobOrchestrator:
             Auxiliary source names as dict.
         """
         self._workflows[workflow_id].staged_jobs[source_name] = JobConfig(
-            params=params, aux_source_names=aux_source_names
+            params=params.copy(), aux_source_names=aux_source_names.copy()
         )
 
     def commit_workflow(self, workflow_id: WorkflowId) -> list[JobId]:
@@ -384,7 +384,13 @@ class JobOrchestrator:
             Dict mapping source names to their staged configs.
         """
         state = self._workflows[workflow_id]
-        return state.staged_jobs.copy()
+        return {
+            source_name: JobConfig(
+                params=job_config.params.copy(),
+                aux_source_names=job_config.aux_source_names.copy(),
+            )
+            for source_name, job_config in state.staged_jobs.items()
+        }
 
     def get_active_config(self, workflow_id: WorkflowId) -> dict[SourceName, JobConfig]:
         """
@@ -404,4 +410,10 @@ class JobOrchestrator:
         state = self._workflows[workflow_id]
         if state.current is None:
             return {}
-        return state.current.jobs.copy()
+        return {
+            source_name: JobConfig(
+                params=job_config.params.copy(),
+                aux_source_names=job_config.aux_source_names.copy(),
+            )
+            for source_name, job_config in state.current.jobs.items()
+        }
