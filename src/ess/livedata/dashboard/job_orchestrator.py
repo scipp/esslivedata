@@ -384,21 +384,3 @@ class JobOrchestrator:
         if state.current is None:
             return {}
         return state.current.jobs.copy()
-
-    def get_active_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:
-        """Get the active job number for a workflow, if any."""
-        state = self._workflows[workflow_id]
-        if state.current is None:
-            return None
-        return state.current.job_number
-
-    def is_workflow_running(self, workflow_id: WorkflowId) -> bool:
-        """Check if a workflow has active jobs."""
-        return self.get_active_job_number(workflow_id) is not None
-
-    def get_active_sources(self, workflow_id: WorkflowId) -> list[SourceName]:
-        """Get list of sources with active jobs for a workflow."""
-        state = self._workflows[workflow_id]
-        if state.current is None:
-            return []
-        return list(state.current.jobs.keys())
