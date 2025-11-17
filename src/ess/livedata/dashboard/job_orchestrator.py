@@ -53,8 +53,33 @@ class JobSet:
     JobId can be reconstructed as JobId(source_name, job_number).
     """
 
-    job_number: JobNumber
-    jobs: dict[SourceName, JobConfig]
+    job_number: JobNumber = field(default_factory=uuid.uuid4)
+    jobs: dict[SourceName, JobConfig] = field(default_factory=dict)
+
+    def add_job(self, source_name: SourceName, config: JobConfig) -> None:
+        """Add a job to this set.
+
+        Parameters
+        ----------
+        source_name
+            Name of the source for this job.
+        config
+            Configuration for this job.
+        """
+        self.jobs[source_name] = config
+
+    def job_ids(self) -> list[JobId]:
+        """Create JobIds for all jobs in this set.
+
+        Returns
+        -------
+        :
+            List of JobIds, one per job in this set.
+        """
+        return [
+            JobId(source_name=source_name, job_number=self.job_number)
+            for source_name in self.jobs
+        ]
 
 
 @dataclass
@@ -239,8 +264,10 @@ class JobOrchestrator:
             msg = f'No staged configs for workflow {workflow_id}'
             raise ValueError(msg)
 
-        # Generate job number for this workflow run
-        job_number = uuid.uuid4()
+        # Create new JobSet with auto-generated job number
+        job_set = JobSet()
+        for source_name, job_config in state.staged_jobs.items():
+            job_set.add_job(source_name, job_config)
 
         # Prepare all commands (stop old jobs + start new workflow) in single batch
         commands = []
@@ -253,15 +280,13 @@ class JobOrchestrator:
                 state.current.job_number,
             )
             # Create stop commands for all old jobs
-            old_job_number = state.current.job_number
-            for source_name in state.current.jobs:
-                job_id = JobId(source_name=source_name, job_number=old_job_number)
-                commands.append(
-                    (
-                        ConfigKey(key=JobCommand.key, source_name=str(job_id)),
-                        JobCommand(job_id=job_id, action=JobAction.stop),
-                    )
+            commands.extend(
+                (
+                    ConfigKey(key=JobCommand.key, source_name=str(job_id)),
+                    JobCommand(job_id=job_id, action=JobAction.stop),
                 )
+                for job_id in state.current.job_ids()
+            )
             self._logger.debug(
                 'Will stop %d old jobs in batch', len(state.current.jobs)
             )
@@ -277,7 +302,7 @@ class JobOrchestrator:
                 aux_source_names=job_config.aux_source_names,
             )
             # Override job_number to ensure all jobs in this run share it
-            workflow_config.job_number = job_number
+            workflow_config.job_number = job_set.job_number
             key = keys.WORKFLOW_CONFIG.create_key(source_name=source_name)
             commands.append((key, workflow_config))
 
@@ -286,21 +311,18 @@ class JobOrchestrator:
         self._logger.info(
             'Started workflow %s with job_number %s on sources %s',
             workflow_id,
-            job_number,
+            job_set.job_number,
             list(state.staged_jobs.keys()),
         )
 
-        # Create new JobSet from staged configs
-        state.current = JobSet(job_number=job_number, jobs=state.staged_jobs.copy())
+        # Set as current JobSet
+        state.current = job_set
 
         # Persist staged configs to store (keeping staged_jobs as working copy)
         self._persist_config_to_store(workflow_id, state.staged_jobs)
 
         # Return JobIds for all created jobs
-        return [
-            JobId(source_name=source_name, job_number=job_number)
-            for source_name in state.staged_jobs
-        ]
+        return job_set.job_ids()
 
     def handle_response(self, status: object) -> None:
         """
