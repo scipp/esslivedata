@@ -122,6 +122,7 @@ def test_adapter_filters_removed_sources(
     assert 'monitor1' in initial_sources
     assert 'monitor2' in initial_sources
     # monitor3 should be filtered out as it's not in the workflow spec
+    assert 'monitor3' not in initial_sources
 
 
 def test_config_persists_across_adapter_recreations(
@@ -166,6 +167,7 @@ def test_config_persists_across_adapter_recreations(
 
     # Both adapters should retrieve identical params from config store
     assert adapter1.initial_parameter_values == adapter2.initial_parameter_values
+    assert adapter1.initial_parameter_values is not adapter2.initial_parameter_values
     assert adapter1.initial_parameter_values['toa_edges']['num_bins'] == 200
 
 
