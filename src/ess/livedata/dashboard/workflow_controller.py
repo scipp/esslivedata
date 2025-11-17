@@ -7,7 +7,7 @@ Workflow controller implementation backed by a config service.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 
 import pydantic
 
@@ -102,11 +102,6 @@ class WorkflowController:
             workflow_registry=self._workflow_registry,
             config_store=config_store,
         )
-
-        # Callbacks
-        self._workflow_specs_callbacks: list[
-            Callable[[dict[WorkflowId, WorkflowSpec]], None]
-        ] = []
 
     def start_workflow(
         self,
