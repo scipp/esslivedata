@@ -222,13 +222,7 @@ class WorkflowController:
         return self._workflow_registry.get(workflow_id)
 
     def get_workflow_config(self, workflow_id: WorkflowId) -> ConfigurationState | None:
-        """
-        Load saved workflow configuration.
-
-        Returns the staged config from orchestrator, which reflects either:
-        - Config loaded from persistent storage on init, or
-        - Config from most recent commit (active job config)
-        """
+        """Load saved workflow configuration."""
         try:
             staged_jobs = self._orchestrator.get_staged_config(workflow_id)
         except KeyError:
