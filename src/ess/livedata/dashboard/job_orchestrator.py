@@ -56,18 +56,6 @@ class JobSet:
     job_number: JobNumber = field(default_factory=uuid.uuid4)
     jobs: dict[SourceName, JobConfig] = field(default_factory=dict)
 
-    def add_job(self, source_name: SourceName, config: JobConfig) -> None:
-        """Add a job to this set.
-
-        Parameters
-        ----------
-        source_name
-            Name of the source for this job.
-        config
-            Configuration for this job.
-        """
-        self.jobs[source_name] = config
-
     def job_ids(self) -> list[JobId]:
         """Create JobIds for all jobs in this set.
 
@@ -265,9 +253,7 @@ class JobOrchestrator:
             raise ValueError(msg)
 
         # Create new JobSet with auto-generated job number
-        job_set = JobSet()
-        for source_name, job_config in state.staged_jobs.items():
-            job_set.add_job(source_name, job_config)
+        job_set = JobSet(jobs=state.staged_jobs.copy())
 
         # Prepare all commands (stop old jobs + start new workflow) in single batch
         commands = []
