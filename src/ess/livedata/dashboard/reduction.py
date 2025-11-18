@@ -10,7 +10,9 @@ from ess.livedata import Service
 from .dashboard import DashboardBase
 from .plot_orchestrator import PlotOrchestrator, StubJobOrchestrator
 from .widgets.log_producer_widget import LogProducerWidget
+from .widgets.plot_creation_widget import PlotCreationWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
+from .widgets.reduction_widget import ReductionWidget
 
 pn.extension('holoviews', 'modal', notifications=True, template='material')
 hv.extension('bokeh')
@@ -36,47 +38,42 @@ class ReductionApp(DashboardBase):
             transport=transport,
         )
 
-        # Create log producer widget only in dev mode
-        self._dev_widget = None
-        if dev:
-            self._dev_widget = LogProducerWidget(
-                instrument=instrument, logger=self._logger, exit_stack=self._exit_stack
-            )
-
-        # Create PlotOrchestrator and PlotGridTabs for testing
+        # Create shared orchestrators (must be shared across all sessions)
         stub_job_orchestrator = StubJobOrchestrator()
         self._plot_orchestrator = PlotOrchestrator(
             plotting_controller=self._services.plotting_controller,
             job_orchestrator=stub_job_orchestrator,
             config_store=self._services.plotter_config_store,
         )
-        self._plot_grid_tabs = PlotGridTabs(plot_orchestrator=self._plot_orchestrator)
 
         self._logger.info("Reduction dashboard initialized")
 
     def create_sidebar_content(self) -> pn.viewable.Viewable:
         """Create the sidebar content with workflow controls."""
-        if self._dev_widget is not None:
-            dev_content = [self._dev_widget.panel, pn.layout.Divider()]
-        else:
-            dev_content = []
+        # Create reduction widget (per-session)
+        reduction_widget = ReductionWidget(
+            controller=self._services.workflow_controller
+        )
+
+        # Create log producer widget only in dev mode (per-session)
+        dev_content = []
+        if self._dev:
+            dev_widget = LogProducerWidget(
+                instrument=self._instrument,
+                logger=self._logger,
+                exit_stack=self._exit_stack,
+            )
+            dev_content = [dev_widget.panel, pn.layout.Divider()]
+
         return pn.Column(
             *dev_content,
             pn.pane.Markdown("## Data Reduction"),
-            self._reduction_widget.widget,
+            reduction_widget.widget,
         )
 
     def create_main_content(self) -> pn.viewable.Viewable:
-        """Create the main content area."""
-        return self._plot_grid_tabs.panel
-
-    def create_layout(self) -> pn.template.MaterialTemplate:
-        """Create the dashboard layout with PlotGridTabs in a sub-tab."""
-        from .widgets.plot_creation_widget import PlotCreationWidget
-
-        sidebar_content = self.create_sidebar_content()
-
-        # Create the original plot creation widget
+        """Create the main content area with tabs for old and new interfaces."""
+        # Create the original plot creation widget (per-session)
         plot_creation_widget = PlotCreationWidget(
             job_service=self._services.job_service,
             job_controller=self._services.job_controller,
@@ -84,24 +81,20 @@ class ReductionApp(DashboardBase):
             workflow_controller=self._services.workflow_controller,
         ).widget
 
+        # Create UI widget connected to shared orchestrator
+        plot_grid_tabs = PlotGridTabs(plot_orchestrator=self._plot_orchestrator)
+
         # Create tabs with both old and new interfaces
         main_tabs = pn.Tabs(
             ('Legacy interface', plot_creation_widget),
             (
                 'Future interface (incomplete and not functional)',
-                self._plot_grid_tabs.panel,
+                plot_grid_tabs.panel,
             ),
             sizing_mode='stretch_both',
         )
 
-        template = pn.template.MaterialTemplate(
-            title=self.get_dashboard_title(),
-            sidebar=sidebar_content,
-            main=main_tabs,
-            header_background=self.get_header_background(),
-        )
-        self.start_periodic_updates()
-        return template
+        return main_tabs
 
 
 def get_arg_parser() -> argparse.ArgumentParser:

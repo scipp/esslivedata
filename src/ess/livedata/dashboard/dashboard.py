@@ -15,8 +15,6 @@ from .config_store import ConfigStoreManager
 from .dashboard_services import DashboardServices
 from .kafka_transport import DashboardKafkaTransport
 from .transport import NullTransport, Transport
-from .widgets.plot_creation_widget import PlotCreationWidget
-from .widgets.reduction_widget import ReductionWidget
 
 # Global throttling for sliders, etc.
 pn.config.throttled = True
@@ -60,11 +58,6 @@ class DashboardBase(ServiceBase, ABC):
             config_manager=config_manager,
         )
 
-        # Create reduction widget (GUI-specific)
-        self._reduction_widget = ReductionWidget(
-            controller=self._services.workflow_controller
-        )
-
         self._logger.info("%s initialized", self.__class__.__name__)
 
         # Global unit format
@@ -101,8 +94,6 @@ class DashboardBase(ServiceBase, ABC):
     @abstractmethod
     def create_main_content(self) -> pn.viewable.Viewable:
         """Override this method to create the main dashboard content."""
-        # Currently unused, should this allow for defining a custom layout where plots
-        # should be placed?
 
     def _step(self):
         """Step function for periodic updates."""
@@ -152,12 +143,7 @@ class DashboardBase(ServiceBase, ABC):
     def create_layout(self) -> pn.template.MaterialTemplate:
         """Create the basic dashboard layout."""
         sidebar_content = self.create_sidebar_content()
-        main_content = PlotCreationWidget(
-            job_service=self._services.job_service,
-            job_controller=self._services.job_controller,
-            plotting_controller=self._services.plotting_controller,
-            workflow_controller=self._services.workflow_controller,
-        ).widget
+        main_content = self.create_main_content()
 
         template = pn.template.MaterialTemplate(
             title=self.get_dashboard_title(),
