@@ -359,6 +359,36 @@ class PlotGridTabs:
             workflow_spec.title if workflow_spec else str(config.workflow_id)
         )
 
+        # Get output title from spec if available
+        output_title = config.output_name
+        if workflow_spec and workflow_spec.outputs:
+            output_fields = workflow_spec.outputs.model_fields
+            if config.output_name in output_fields:
+                field_info = output_fields[config.output_name]
+                output_title = field_info.title or config.output_name
+
+        # Build common info section
+        info_lines = [
+            f"**Workflow:** {workflow_title}",
+            f"**Output:** {output_title}",
+            f"**Sources:** {', '.join(config.source_names)}",
+        ]
+
+        # Add status-specific line and determine styling
+        if error is not None:
+            title = "### Plot Creation Error"
+            info_lines.append(f"**Error:** {error}")
+            text_color = '#dc3545'
+            bg_color = '#ffe6e6'
+            border = '2px solid #dc3545'
+        else:
+            title = "### Waiting for data..."
+            text_color = '#6c757d'
+            bg_color = '#f8f9fa'
+            border = '2px dashed #dee2e6'
+
+        content = f"{title}\n\n" + "\n\n".join(info_lines)
+
         # Create close button
         def on_close() -> None:
             # Look up cell_id from orchestrator state
@@ -370,39 +400,6 @@ class PlotGridTabs:
                     return
 
         close_button = _create_close_button(on_close)
-
-        # Determine content and styling based on state
-        if error is not None:
-            # Error state
-            title = "### Plot Creation Error"
-            content = (
-                f"{title}\n\n"
-                f"**Workflow:** {workflow_title}\n\n"
-                f"**Output:** {config.output_name}\n\n"
-                f"**Error:** {error}"
-            )
-            text_color = '#dc3545'
-            bg_color = '#ffe6e6'
-            border = '2px solid #dc3545'
-        else:
-            # Waiting state
-            output_title = config.output_name
-            if workflow_spec and workflow_spec.outputs:
-                output_fields = workflow_spec.outputs.model_fields
-                if config.output_name in output_fields:
-                    field_info = output_fields[config.output_name]
-                    output_title = field_info.title or config.output_name
-
-            title = "### Waiting for data..."
-            content = (
-                f"{title}\n\n"
-                f"**Workflow:** {workflow_title}\n\n"
-                f"**Output:** {output_title}\n\n"
-                f"**Sources:** {', '.join(config.source_names)}"
-            )
-            text_color = '#6c757d'
-            bg_color = '#f8f9fa'
-            border = '2px dashed #dee2e6'
 
         status_widget = pn.Column(
             close_button,
