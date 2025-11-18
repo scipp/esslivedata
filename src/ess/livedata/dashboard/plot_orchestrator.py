@@ -12,6 +12,7 @@ Coordinates plot creation and management across multiple plot grids:
 
 from __future__ import annotations
 
+import copy
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -67,6 +68,33 @@ class JobOrchestratorProtocol(Protocol):
             The subscription ID returned from subscribe_to_workflow.
         """
         ...
+
+
+class StubJobOrchestrator:
+    """
+    Minimal stub implementation of JobOrchestratorProtocol.
+
+    This provides the required interface but does not trigger any callbacks.
+    Useful for UI testing or as a placeholder when the real JobOrchestrator
+    is not available. For testing that requires callback simulation, use
+    the FakeJobOrchestrator from test code instead.
+    """
+
+    def __init__(self) -> None:
+        self._subscriptions: dict[SubscriptionId, tuple[WorkflowId, Callable]] = {}
+
+    def subscribe_to_workflow(
+        self, workflow_id: WorkflowId, callback: Callable[[JobNumber], None]
+    ) -> SubscriptionId:
+        """Subscribe to workflow availability notifications."""
+        subscription_id = SubscriptionId(uuid4())
+        self._subscriptions[subscription_id] = (workflow_id, callback)
+        return subscription_id
+
+    def unsubscribe(self, subscription_id: SubscriptionId) -> None:
+        """Unsubscribe from workflow availability notifications."""
+        if subscription_id in self._subscriptions:
+            del self._subscriptions[subscription_id]
 
 
 @dataclass
@@ -399,9 +427,10 @@ class PlotOrchestrator:
         Returns
         -------
         :
-            Dictionary mapping grid IDs to configurations.
+            Deep copy of dictionary mapping grid IDs to configurations.
+            Safe to modify without affecting internal state.
         """
-        return self._grids.copy()
+        return copy.deepcopy(self._grids)
 
     def subscribe_to_lifecycle(
         self,

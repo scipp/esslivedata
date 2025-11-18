@@ -1,48 +1,19 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import argparse
-from collections.abc import Callable
-from uuid import uuid4
 
 import holoviews as hv
 import panel as pn
 
 from ess.livedata import Service
-from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 from .dashboard import DashboardBase
-from .plot_orchestrator import PlotOrchestrator, SubscriptionId
+from .plot_orchestrator import PlotOrchestrator, StubJobOrchestrator
 from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
 
 pn.extension('holoviews', 'modal', notifications=True, template='material')
 hv.extension('bokeh')
-
-
-class StubJobOrchestrator:
-    """
-    Temporary stub for JobOrchestrator to enable testing PlotGridTabs.
-
-    This provides the minimal interface needed by PlotOrchestrator but doesn't
-    actually trigger any callbacks. A real implementation would notify when
-    workflows are committed/restarted.
-    """
-
-    def __init__(self):
-        self._subscriptions: dict[SubscriptionId, tuple[WorkflowId, Callable]] = {}
-
-    def subscribe_to_workflow(
-        self, workflow_id: WorkflowId, callback: Callable[[JobNumber], None]
-    ) -> SubscriptionId:
-        """Subscribe to workflow availability notifications."""
-        subscription_id = SubscriptionId(uuid4())
-        self._subscriptions[subscription_id] = (workflow_id, callback)
-        return subscription_id
-
-    def unsubscribe(self, subscription_id: SubscriptionId) -> None:
-        """Unsubscribe from workflow availability notifications."""
-        if subscription_id in self._subscriptions:
-            del self._subscriptions[subscription_id]
 
 
 class ReductionApp(DashboardBase):

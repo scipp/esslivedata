@@ -1,37 +1,20 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-import uuid
-
 import holoviews as hv
 import panel as pn
 import pytest
 
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
-from ess.livedata.dashboard.plot_orchestrator import PlotOrchestrator, SubscriptionId
+from ess.livedata.dashboard.plot_orchestrator import (
+    PlotOrchestrator,
+    StubJobOrchestrator,
+)
 from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.stream_manager import StreamManager
 from ess.livedata.dashboard.widgets.plot_grid_tabs import PlotGridTabs
 
 hv.extension('bokeh')
-
-
-class FakeJobOrchestrator:
-    """Fake JobOrchestrator for testing PlotOrchestrator."""
-
-    def __init__(self):
-        self._subscriptions: dict = {}
-
-    def subscribe_to_workflow(self, workflow_id, callback) -> SubscriptionId:
-        """Register a callback for workflow availability."""
-        subscription_id = SubscriptionId(uuid.uuid4())
-        self._subscriptions[subscription_id] = (workflow_id, callback)
-        return subscription_id
-
-    def unsubscribe(self, subscription_id: SubscriptionId) -> None:
-        """Unsubscribe from workflow availability notifications."""
-        if subscription_id in self._subscriptions:
-            del self._subscriptions[subscription_id]
 
 
 @pytest.fixture
@@ -63,8 +46,8 @@ def plotting_controller(job_service, stream_manager):
 
 @pytest.fixture
 def fake_job_orchestrator():
-    """Create a fake JobOrchestrator for testing."""
-    return FakeJobOrchestrator()
+    """Create a stub JobOrchestrator for testing."""
+    return StubJobOrchestrator()
 
 
 @pytest.fixture
