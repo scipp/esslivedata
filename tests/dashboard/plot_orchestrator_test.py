@@ -70,6 +70,7 @@ class FakePlottingController:
         self._should_raise = False
         self._exception_to_raise = None
         self._plot_object = Mock(name='FakePlot')
+        self._calls: list[dict] = []
 
     def create_plot(
         self,
@@ -80,6 +81,15 @@ class FakePlottingController:
         params: dict,
     ):
         """Create a fake plot or raise an exception if configured to do so."""
+        self._calls.append(
+            {
+                'job_number': job_number,
+                'source_names': source_names,
+                'output_name': output_name,
+                'plot_name': plot_name,
+                'params': params,
+            }
+        )
         if self._should_raise:
             raise self._exception_to_raise
         return self._plot_object
@@ -93,6 +103,15 @@ class FakePlottingController:
         """Reset the controller to normal behavior."""
         self._should_raise = False
         self._exception_to_raise = None
+        self._calls.clear()
+
+    def call_count(self) -> int:
+        """Return the number of create_plot calls."""
+        return len(self._calls)
+
+    def get_calls(self) -> list[dict]:
+        """Return all recorded create_plot calls."""
+        return self._calls.copy()
 
 
 @pytest.fixture
@@ -168,9 +187,6 @@ def plot_orchestrator(fake_job_orchestrator, fake_plotting_controller):
     )
 
 
-# Category 1: Grid Management (Basic CRUD)
-
-
 class TestGridManagement:
     """Tests for basic grid creation and removal."""
 
@@ -210,9 +226,6 @@ class TestGridManagement:
         """Get non-existent grid returns None."""
         fake_grid_id = GridId(uuid.uuid4())
         assert plot_orchestrator.get_grid(fake_grid_id) is None
-
-
-# Category 2: Cell Management (Without Plot Creation)
 
 
 class TestCellManagement:
@@ -369,9 +382,6 @@ class TestCellManagement:
         assert fake_job_orchestrator.subscription_count == count_after_add
 
 
-# Category 3: Workflow Integration & Plot Creation Timing
-
-
 class TestWorkflowIntegrationAndPlotCreationTiming:
     """Tests for workflow integration and plot creation timing."""
 
@@ -391,9 +401,13 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         # Simulate workflow commit
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
-        # Plot should have been created - we can't directly observe it,
-        # but we can verify through lifecycle callback (tested later)
-        # Here we just verify no exceptions were raised
+        # Verify plot was created
+        assert fake_plotting_controller.call_count() == 1
+        calls = fake_plotting_controller.get_calls()
+        assert calls[0]['job_number'] == job_number
+        assert calls[0]['source_names'] == plot_cell.config.source_names
+        assert calls[0]['output_name'] == plot_cell.config.output_name
+        assert calls[0]['plot_name'] == plot_cell.config.plot_name
 
     def test_workflow_commit_before_cell_added_creates_plot_when_cell_added(
         self,
@@ -402,20 +416,19 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         workflow_id,
         job_number,
         fake_job_orchestrator,
+        fake_plotting_controller,
     ):
-        """Workflow commit BEFORE cell added should create plot when cell added."""
-        # This test verifies that if workflow is already available,
-        # adding a cell will eventually get the plot when workflow commits again.
-        # Since we subscribe on add, the next commit should trigger plot creation.
+        """Adding cell subscribes to workflow, then workflow commit creates plot."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
 
         # Add cell (subscribes to workflow)
         _ = plot_orchestrator.add_plot(grid_id, plot_cell)
 
-        # Now commit workflow - should trigger plot creation
+        # Commit workflow - should trigger plot creation
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
-        # Plot should have been created (verified via lifecycle callback in other tests)
+        # Verify plot was created
+        assert fake_plotting_controller.call_count() == 1
 
     def test_multiple_cells_subscribed_to_same_workflow_all_receive_plots(
         self,
@@ -423,6 +436,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         workflow_id,
         job_number,
         fake_job_orchestrator,
+        fake_plotting_controller,
     ):
         """Multiple cells subscribed to same workflow should all receive plots."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
@@ -464,7 +478,10 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         # Commit workflow - both should receive notification
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
-        # Both plots should be created (verified via lifecycle callbacks in other tests)
+        # Both plots should be created
+        assert fake_plotting_controller.call_count() == 2
+        calls = fake_plotting_controller.get_calls()
+        assert {c['plot_name'] for c in calls} == {'plot1', 'plot2'}
 
     def test_cell_removed_before_workflow_commit_no_plot_created(
         self,
@@ -482,10 +499,11 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         # Remove cell before workflow commits
         plot_orchestrator.remove_plot(cell_id)
 
-        # Now commit workflow - should not crash (defensive check)
+        # Commit workflow - should not create plot
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
-        # No exception should be raised (defensive check at lines 346-350)
+        # Verify no plot was created
+        assert fake_plotting_controller.call_count() == 0
 
     def test_update_config_resubscribes_and_new_workflow_commit_creates_plot(
         self,
@@ -495,6 +513,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         workflow_id_2,
         job_number,
         fake_job_orchestrator,
+        fake_plotting_controller,
     ):
         """
         Update config resubscribes to new workflow and creates plot.
@@ -516,14 +535,13 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
 
         # Commit old workflow - should not create plot
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        assert fake_plotting_controller.call_count() == 0
 
         # Commit new workflow - should create plot
         fake_job_orchestrator.simulate_workflow_commit(workflow_id_2, job_number)
-
-        # No exceptions should be raised
-
-
-# Category 4: Lifecycle Event Notifications
+        assert fake_plotting_controller.call_count() == 1
+        calls = fake_plotting_controller.get_calls()
+        assert calls[0]['plot_name'] == 'new_plot'
 
 
 class TestLifecycleEventNotifications:
@@ -723,9 +741,6 @@ class TestLifecycleEventNotifications:
         callback.assert_called_once()
 
 
-# Category 5: Error Handling
-
-
 class TestErrorHandling:
     """Tests for error handling."""
 
@@ -806,9 +821,6 @@ class TestErrorHandling:
         # Should still be able to add more grids
         grid_id = plot_orchestrator.add_grid(title='Grid 2', nrows=3, ncols=3)
         assert plot_orchestrator.get_grid(grid_id) is not None
-
-
-# Category 6: Cleanup & Resource Management
 
 
 class TestCleanupAndResourceManagement:
@@ -897,9 +909,6 @@ class TestCleanupAndResourceManagement:
         grid = plot_orchestrator.get_grid(grid_id)
         assert grid is not None
         assert len(grid.cells) == 0
-
-
-# Category 7: Edge Cases & Complex Scenarios
 
 
 class TestEdgeCasesAndComplexScenarios:
@@ -991,5 +1000,3 @@ class TestEdgeCasesAndComplexScenarios:
         # Workflow commits
         job_number = uuid.uuid4()
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
-
-        # No exception should be raised (defensive check at lines 346-350)
