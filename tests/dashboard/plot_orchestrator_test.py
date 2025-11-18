@@ -2,7 +2,6 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import uuid
 from collections.abc import Callable
-from unittest.mock import Mock
 
 import pytest
 
@@ -15,6 +14,75 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotOrchestrator,
     SubscriptionId,
 )
+
+
+class FakePlot:
+    """Dummy plot object for testing."""
+
+    pass
+
+
+class CallbackCapture:
+    """Captures callback invocations for testing."""
+
+    def __init__(self, side_effect: BaseException | None = None):
+        """Initialize callback capture.
+
+        Parameters
+        ----------
+        side_effect:
+            Optional exception to raise when called.
+        """
+        self._calls: list[tuple] = []
+        self._side_effect = side_effect
+
+    def __call__(self, *args, **kwargs) -> None:
+        """Record call and optionally raise exception."""
+        self._calls.append((args, kwargs))
+        if self._side_effect is not None:
+            raise self._side_effect
+
+    @property
+    def call_count(self) -> int:
+        """Return the number of calls."""
+        return len(self._calls)
+
+    @property
+    def call_args(self) -> tuple:
+        """Return the arguments of the last call.
+
+        Returns a tuple of (args, kwargs) tuples for Mock-like compatibility.
+        """
+        if not self._calls:
+            raise AssertionError("No calls recorded")
+        args, kwargs = self._calls[-1]
+        # Return in Mock-compatible format: call_args[0] gets positional args
+        return (args, kwargs)
+
+    def assert_called_once(self) -> None:
+        """Assert that callback was called exactly once."""
+        assert self.call_count == 1, f"Expected 1 call, got {self.call_count}"
+
+    def assert_called_once_with(self, *args, **kwargs) -> None:
+        """Assert that callback was called once with specific arguments."""
+        self.assert_called_once()
+        last_args, last_kwargs = self._calls[-1]
+        assert last_args == args, f"Expected args {args}, got {last_args}"
+        assert last_kwargs == kwargs, f"Expected kwargs {kwargs}, got {last_kwargs}"
+
+    def assert_called_with(self, *args, **kwargs) -> None:
+        """Assert that callback was called with specific arguments."""
+        if not any(
+            call_args == args and call_kwargs == kwargs
+            for call_args, call_kwargs in self._calls
+        ):
+            raise AssertionError(
+                f"Not called with args {args}, kwargs {kwargs}. Calls: {self._calls}"
+            )
+
+    def assert_not_called(self) -> None:
+        """Assert that callback was not called."""
+        assert self.call_count == 0, f"Expected 0 calls, got {self.call_count}"
 
 
 class FakeJobOrchestrator:
@@ -69,7 +137,7 @@ class FakePlottingController:
     def __init__(self):
         self._should_raise = False
         self._exception_to_raise = None
-        self._plot_object = Mock(name='FakePlot')
+        self._plot_object = FakePlot()
         self._calls: list[dict] = []
 
     def create_plot(
@@ -551,7 +619,7 @@ class TestLifecycleEventNotifications:
         self, plot_orchestrator
     ):
         """on_grid_created called with correct grid_id and config."""
-        callback = Mock()
+        callback = CallbackCapture()
         plot_orchestrator.subscribe_to_lifecycle(on_grid_created=callback)
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=4)
@@ -566,7 +634,7 @@ class TestLifecycleEventNotifications:
 
     def test_on_grid_removed_called_when_grid_removed(self, plot_orchestrator):
         """on_grid_removed called when grid removed."""
-        callback = Mock()
+        callback = CallbackCapture()
         plot_orchestrator.subscribe_to_lifecycle(on_grid_removed=callback)
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
@@ -578,7 +646,7 @@ class TestLifecycleEventNotifications:
         self, plot_orchestrator, plot_cell
     ):
         """on_cell_updated called when cell added (no plot yet)."""
-        callback = Mock()
+        callback = CallbackCapture()
         plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
@@ -603,7 +671,7 @@ class TestLifecycleEventNotifications:
         fake_plotting_controller,
     ):
         """on_cell_updated called when plot created (with plot object)."""
-        callback = Mock()
+        callback = CallbackCapture()
         plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
@@ -633,7 +701,7 @@ class TestLifecycleEventNotifications:
         fake_plotting_controller,
     ):
         """on_cell_updated called when plot fails (with error message)."""
-        callback = Mock()
+        callback = CallbackCapture()
         plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
@@ -657,7 +725,7 @@ class TestLifecycleEventNotifications:
         self, plot_orchestrator, plot_cell, workflow_id
     ):
         """on_cell_updated called when config updated (no plot yet)."""
-        callback = Mock()
+        callback = CallbackCapture()
         plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
@@ -682,7 +750,7 @@ class TestLifecycleEventNotifications:
         self, plot_orchestrator, plot_cell
     ):
         """on_cell_removed called when cell removed."""
-        callback = Mock()
+        callback = CallbackCapture()
         plot_orchestrator.subscribe_to_lifecycle(on_cell_removed=callback)
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
@@ -696,8 +764,8 @@ class TestLifecycleEventNotifications:
 
     def test_multiple_subscribers_all_receive_notifications(self, plot_orchestrator):
         """Multiple subscribers all receive notifications."""
-        callback_1 = Mock()
-        callback_2 = Mock()
+        callback_1 = CallbackCapture()
+        callback_2 = CallbackCapture()
         plot_orchestrator.subscribe_to_lifecycle(on_grid_created=callback_1)
         plot_orchestrator.subscribe_to_lifecycle(on_grid_created=callback_2)
 
@@ -708,7 +776,7 @@ class TestLifecycleEventNotifications:
 
     def test_unsubscribe_prevents_further_notifications(self, plot_orchestrator):
         """Unsubscribe prevents further notifications."""
-        callback = Mock()
+        callback = CallbackCapture()
         subscription_id = plot_orchestrator.subscribe_to_lifecycle(
             on_grid_created=callback
         )
@@ -730,7 +798,7 @@ class TestLifecycleEventNotifications:
         # Add grid before subscribing
         plot_orchestrator.add_grid(title='Existing Grid', nrows=3, ncols=3)
 
-        callback = Mock()
+        callback = CallbackCapture()
         plot_orchestrator.subscribe_to_lifecycle(on_grid_created=callback)
 
         # Should not have been called for existing grid
@@ -754,7 +822,7 @@ class TestErrorHandling:
         fake_plotting_controller,
     ):
         """PlottingController exception calls on_cell_updated with error."""
-        callback = Mock()
+        callback = CallbackCapture()
         plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
@@ -797,8 +865,8 @@ class TestErrorHandling:
         self, plot_orchestrator
     ):
         """Lifecycle callback raises exception but other callbacks still invoked."""
-        failing_callback = Mock(side_effect=RuntimeError('Callback failed'))
-        working_callback = Mock()
+        failing_callback = CallbackCapture(side_effect=RuntimeError('Callback failed'))
+        working_callback = CallbackCapture()
 
         plot_orchestrator.subscribe_to_lifecycle(on_grid_created=failing_callback)
         plot_orchestrator.subscribe_to_lifecycle(on_grid_created=working_callback)
@@ -813,7 +881,7 @@ class TestErrorHandling:
         self, plot_orchestrator
     ):
         """Lifecycle callback raises exception but orchestrator remains usable."""
-        failing_callback = Mock(side_effect=RuntimeError('Callback failed'))
+        failing_callback = CallbackCapture(side_effect=RuntimeError('Callback failed'))
         plot_orchestrator.subscribe_to_lifecycle(on_grid_created=failing_callback)
 
         plot_orchestrator.add_grid(title='Grid 1', nrows=3, ncols=3)
