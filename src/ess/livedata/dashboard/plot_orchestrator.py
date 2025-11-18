@@ -15,13 +15,18 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import NewType, Protocol
+from typing import TYPE_CHECKING, Any, NewType, Protocol
 from uuid import UUID, uuid4
+
+import pydantic
 
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 from .config_store import ConfigStore
 from .plotting_controller import PlottingController
+
+if TYPE_CHECKING:
+    import holoviews as hv
 
 SubscriptionId = NewType('SubscriptionId', UUID)
 GridId = NewType('GridId', UUID)
@@ -88,6 +93,23 @@ class PlotCell:
     config: PlotConfig
 
 
+# Lifecycle event callbacks (defined after PlotCell to avoid forward references)
+GridCreatedCallback = Callable[[GridId], None]
+GridRemovedCallback = Callable[[GridId], None]
+CellUpdatedCallback = Callable[[GridId, PlotCell, Any, str | None], None]
+CellRemovedCallback = Callable[[GridId, PlotCell], None]
+
+
+@dataclass
+class LifecycleSubscription:
+    """Subscription to plot grid lifecycle events."""
+
+    on_grid_created: GridCreatedCallback | None = None
+    on_grid_removed: GridRemovedCallback | None = None
+    on_cell_updated: CellUpdatedCallback | None = None
+    on_cell_removed: CellRemovedCallback | None = None
+
+
 @dataclass
 class PlotGridConfig:
     """A plot grid tab configuration."""
@@ -128,6 +150,7 @@ class PlotOrchestrator:
         self._grids: dict[GridId, PlotGridConfig] = {}
         self._cell_to_grid: dict[CellId, GridId] = {}
         self._cell_to_subscription: dict[CellId, SubscriptionId] = {}
+        self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
 
     def add_grid(self, title: str, nrows: int, ncols: int) -> GridId:
         """
@@ -154,6 +177,7 @@ class PlotOrchestrator:
         self._logger.info(
             'Added plot grid %s (%s) with size %dx%d', grid_id, title, nrows, ncols
         )
+        self._notify_grid_created(grid_id)
         return grid_id
 
     def remove_grid(self, grid_id: GridId) -> None:
@@ -178,6 +202,7 @@ class PlotOrchestrator:
             del self._grids[grid_id]
             self._persist_to_store()
             self._logger.info('Removed plot grid %s (%s)', grid_id, title)
+            self._notify_grid_removed(grid_id)
 
     def add_plot(self, grid_id: GridId, cell: PlotCell) -> CellId:
         """
@@ -218,6 +243,7 @@ class PlotOrchestrator:
             cell.col,
             cell.config.workflow_id,
         )
+        self._notify_cell_updated(grid_id, cell)
         return cell_id
 
     def remove_plot(self, cell_id: CellId) -> None:
@@ -249,6 +275,7 @@ class PlotOrchestrator:
             cell.row,
             cell.col,
         )
+        self._notify_cell_removed(grid_id, cell)
 
     def get_plot_config(self, cell_id: CellId) -> PlotConfig:
         """
@@ -302,14 +329,14 @@ class PlotOrchestrator:
         self._persist_to_store()
 
         self._logger.info('Updated plot config for cell %s', cell_id)
+        self._notify_cell_updated(grid_id, cell)
 
     def _on_job_available(self, cell_id: CellId, job_number: JobNumber) -> None:
         """
         Handle workflow availability notification from JobOrchestrator.
 
-        Called when a workflow is committed (started or restarted). Passes
-        the cell configuration to PlottingController to create the plot
-        and notify subscribers.
+        Called when a workflow is committed (started or restarted). Creates
+        the plot using PlottingController and notifies lifecycle subscribers.
 
         Parameters
         ----------
@@ -328,15 +355,27 @@ class PlotOrchestrator:
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
-        # Pass config to controller - it will create plot and notify subscribers
-        self._plotting_controller.create_and_notify_cell_plot(
-            cell_id=cell_id,
-            job_number=job_number,
-            source_names=cell.config.source_names,
-            output_name=cell.config.output_name,
-            plot_name=cell.config.plot_name,
-            params=cell.config.params,
-        )
+        # Create plot and notify subscribers
+        try:
+            spec = self._plotting_controller.get_spec(cell.config.plot_name)
+            if spec.params is None:
+                params_model = pydantic.BaseModel()
+            else:
+                params_model = spec.params(**cell.config.params)
+
+            plot = self._plotting_controller.create_plot(
+                job_number=job_number,
+                source_names=cell.config.source_names,
+                output_name=cell.config.output_name,
+                plot_name=cell.config.plot_name,
+                params=params_model,
+            )
+            self._notify_cell_updated(grid_id, cell, plot=plot)
+            self._logger.info('Created plot for cell %s at job %s', cell_id, job_number)
+        except Exception as e:
+            error_msg = str(e)
+            self._notify_cell_updated(grid_id, cell, error=error_msg)
+            self._logger.exception('Failed to create plot for cell %s', cell_id)
 
     def _persist_to_store(self) -> None:
         """Persist plot grid configurations to config store."""
@@ -372,6 +411,113 @@ class PlotOrchestrator:
             Dictionary mapping grid IDs to configurations.
         """
         return self._grids.copy()
+
+    def subscribe_to_lifecycle(
+        self,
+        *,
+        on_grid_created: GridCreatedCallback | None = None,
+        on_grid_removed: GridRemovedCallback | None = None,
+        on_cell_updated: CellUpdatedCallback | None = None,
+        on_cell_removed: CellRemovedCallback | None = None,
+    ) -> SubscriptionId:
+        """
+        Subscribe to plot grid lifecycle events.
+
+        Subscribers will be notified when grids or cells are created, updated,
+        or removed. At least one callback must be provided.
+
+        Parameters
+        ----------
+        on_grid_created
+            Called when a new grid is created.
+        on_grid_removed
+            Called when a grid is removed.
+        on_cell_updated
+            Called when a cell is added or updated.
+        on_cell_removed
+            Called when a cell is removed.
+
+        Returns
+        -------
+        :
+            Subscription ID that can be used to unsubscribe.
+        """
+        subscription_id = SubscriptionId(uuid4())
+        self._lifecycle_subscribers[subscription_id] = LifecycleSubscription(
+            on_grid_created=on_grid_created,
+            on_grid_removed=on_grid_removed,
+            on_cell_updated=on_cell_updated,
+            on_cell_removed=on_cell_removed,
+        )
+        return subscription_id
+
+    def unsubscribe_from_lifecycle(self, subscription_id: SubscriptionId) -> None:
+        """
+        Unsubscribe from plot grid lifecycle events.
+
+        Parameters
+        ----------
+        subscription_id
+            The subscription ID returned from subscribe_to_lifecycle.
+        """
+        if subscription_id in self._lifecycle_subscribers:
+            del self._lifecycle_subscribers[subscription_id]
+
+    def _notify_grid_created(self, grid_id: GridId) -> None:
+        """Notify subscribers that a grid was created."""
+        for subscription in self._lifecycle_subscribers.values():
+            if subscription.on_grid_created:
+                try:
+                    subscription.on_grid_created(grid_id)
+                except Exception:
+                    self._logger.exception(
+                        'Error in grid created callback for grid %s', grid_id
+                    )
+
+    def _notify_grid_removed(self, grid_id: GridId) -> None:
+        """Notify subscribers that a grid was removed."""
+        for subscription in self._lifecycle_subscribers.values():
+            if subscription.on_grid_removed:
+                try:
+                    subscription.on_grid_removed(grid_id)
+                except Exception:
+                    self._logger.exception(
+                        'Error in grid removed callback for grid %s', grid_id
+                    )
+
+    def _notify_cell_updated(
+        self,
+        grid_id: GridId,
+        cell: PlotCell,
+        plot: hv.DynamicMap | hv.Layout | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Notify subscribers that a cell was added or updated."""
+        for subscription in self._lifecycle_subscribers.values():
+            if subscription.on_cell_updated:
+                try:
+                    subscription.on_cell_updated(grid_id, cell, plot, error)
+                except Exception:
+                    self._logger.exception(
+                        'Error in cell updated callback for grid %s at (%d,%d)',
+                        grid_id,
+                        cell.row,
+                        cell.col,
+                    )
+
+    def _notify_cell_removed(self, grid_id: GridId, cell: PlotCell) -> None:
+        """Notify subscribers that a cell was removed."""
+        for subscription in self._lifecycle_subscribers.values():
+            if subscription.on_cell_removed:
+                try:
+                    subscription.on_cell_removed(grid_id, cell)
+                except Exception:
+                    self._logger.exception(
+                        'Error in cell removed callback for grid %s at (%d,%d)',
+                        grid_id,
+                        cell.row,
+                        cell.col,
+                    )
 
     def shutdown(self) -> None:
         """

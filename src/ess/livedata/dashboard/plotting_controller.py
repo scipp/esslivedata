@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Hashable
+from collections.abc import Hashable
 from typing import TypeVar
-from uuid import UUID
 
 import holoviews as hv
 import pydantic
@@ -28,9 +27,6 @@ from .stream_manager import StreamManager
 
 K = TypeVar('K', bound=Hashable)
 V = TypeVar('V')
-
-# Callback type for cell plot updates: receives either (plot, None) or (None, error)
-CellPlotCallback = Callable[[UUID, hv.DynamicMap | hv.Layout | None, str | None], None]
 
 
 class PlottingController:
@@ -72,7 +68,6 @@ class PlottingController:
         self._roi_detector_plot_factory = ROIDetectorPlotFactory(
             stream_manager=stream_manager, roi_publisher=roi_publisher, logger=logger
         )
-        self._cell_subscribers: dict[UUID, list[CellPlotCallback]] = {}
 
     def get_available_plotters(
         self, job_number: JobNumber, output_name: str | None
@@ -314,115 +309,3 @@ class PlottingController:
         dmap = hv.DynamicMap(plotter, streams=[pipe], kdims=plotter.kdims, cache_size=1)
 
         return dmap.opts(shared_axes=False)
-
-    def subscribe_to_cell(self, cell_id: UUID, callback: CellPlotCallback) -> None:
-        """
-        Subscribe to plot updates for a specific cell.
-
-        The callback will be called with (cell_id, plot, None) on success
-        or (cell_id, None, error) on failure.
-
-        Parameters
-        ----------
-        cell_id
-            UUID of the cell to subscribe to.
-        callback
-            Function to call when plot is created or errors occur.
-        """
-        if cell_id not in self._cell_subscribers:
-            self._cell_subscribers[cell_id] = []
-        self._cell_subscribers[cell_id].append(callback)
-
-    def unsubscribe_from_cell(self, cell_id: UUID, callback: CellPlotCallback) -> None:
-        """
-        Unsubscribe from plot updates for a specific cell.
-
-        Parameters
-        ----------
-        cell_id
-            UUID of the cell to unsubscribe from.
-        callback
-            The callback function to remove.
-        """
-        if cell_id in self._cell_subscribers:
-            self._cell_subscribers[cell_id].remove(callback)
-            if not self._cell_subscribers[cell_id]:
-                del self._cell_subscribers[cell_id]
-
-    def _notify_cell_subscribers(
-        self,
-        cell_id: UUID,
-        plot: hv.DynamicMap | hv.Layout | None,
-        error: str | None,
-    ) -> None:
-        """
-        Notify all subscribers of a cell plot update.
-
-        Parameters
-        ----------
-        cell_id
-            UUID of the cell.
-        plot
-            The created plot, or None if there was an error.
-        error
-            Error message, or None if plot was created successfully.
-        """
-        if cell_id in self._cell_subscribers:
-            for callback in self._cell_subscribers[cell_id]:
-                try:
-                    callback(cell_id, plot, error)
-                except Exception:
-                    self._logger.exception(
-                        'Error in cell plot subscriber callback for cell %s', cell_id
-                    )
-
-    def create_and_notify_cell_plot(
-        self,
-        cell_id: UUID,
-        job_number: JobNumber,
-        source_names: list[str],
-        output_name: str | None,
-        plot_name: str,
-        params: dict,
-    ) -> None:
-        """
-        Create a plot for a cell and notify all subscribers.
-
-        This wraps create_plot and handles notifying subscribers with either
-        the created plot or an error message.
-
-        Parameters
-        ----------
-        cell_id
-            UUID of the cell this plot is for.
-        job_number
-            The job number to create the plot for.
-        source_names
-            List of data source names to include in the plot.
-        output_name
-            The name of the output to plot.
-        plot_name
-            The name of the plotter to use.
-        params
-            Dictionary of plotter parameters.
-        """
-        try:
-            spec = self.get_spec(plot_name)
-            if spec.params is None:
-                params_model = pydantic.BaseModel()
-            else:
-                params_model = spec.params(**params)
-
-            plot = self.create_plot(
-                job_number=job_number,
-                source_names=source_names,
-                output_name=output_name,
-                plot_name=plot_name,
-                params=params_model,
-            )
-            self._notify_cell_subscribers(cell_id, plot, None)
-            self._logger.info('Created plot for cell %s at job %s', cell_id, job_number)
-        except Exception as e:
-            error_msg = str(e)
-            self._notify_cell_subscribers(cell_id, None, error_msg)
-            self._logger.exception('Failed to create plot for cell %s', cell_id)
