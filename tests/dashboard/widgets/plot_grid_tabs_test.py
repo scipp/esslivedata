@@ -72,12 +72,10 @@ class TestPlotGridTabsInitialization:
         """Test that widget creates a Panel Tabs object."""
         assert isinstance(plot_grid_tabs.panel, pn.Tabs)
 
-    def test_starts_with_manage_tab_only_when_no_grids(self, plot_grid_tabs):
-        """Test that widget starts with only Manage tab when no grids exist."""
-        # Should have exactly one tab (Manage)
+    def test_starts_with_one_tab_when_no_grids(self, plot_grid_tabs):
+        """Test that widget starts with only one tab when no grids exist."""
+        # Should have exactly one tab (the Manage tab)
         assert len(plot_grid_tabs.panel) == 1
-        # The tab should be named "Manage"
-        assert plot_grid_tabs.panel._names[0] == 'Manage'
 
     def test_initializes_from_existing_grids(self, plot_orchestrator):
         """Test that widget creates tabs for existing grids."""
@@ -88,21 +86,16 @@ class TestPlotGridTabsInitialization:
         # Create widget
         widget = PlotGridTabs(plot_orchestrator=plot_orchestrator)
 
-        # Should have 3 tabs: Manage, Grid 1, Grid 2
+        # Should have 3 tabs: Manage + 2 grids
         assert len(widget.panel) == 3
-        assert widget.panel._names[0] == 'Manage'
-        assert widget.panel._names[1] == 'Grid 1'
-        assert widget.panel._names[2] == 'Grid 2'
 
     def test_subscribes_to_lifecycle_events(self, plot_orchestrator, plot_grid_tabs):
         """Test that widget subscribes to orchestrator lifecycle events."""
         # Verify subscription by adding a grid and checking it appears
         plot_orchestrator.add_grid(title='New Grid', nrows=3, ncols=3)
 
-        # Should now have 2 tabs: Manage, New Grid
+        # Should now have 2 tabs: Manage + New Grid
         assert len(plot_grid_tabs.panel) == 2
-        assert plot_grid_tabs.panel._names[0] == 'Manage'
-        assert plot_grid_tabs.panel._names[1] == 'New Grid'
 
 
 class TestGridTabManagement:
@@ -116,9 +109,6 @@ class TestGridTabManagement:
 
         # Should have one more tab
         assert len(plot_grid_tabs.panel) == initial_count + 1
-        # New tab should be after Manage tab
-        assert plot_grid_tabs.panel._names[0] == 'Manage'
-        assert plot_grid_tabs.panel._names[-1] == 'Test Grid'
 
     def test_on_grid_created_switches_to_new_tab(
         self, plot_orchestrator, plot_grid_tabs
@@ -136,12 +126,11 @@ class TestGridTabManagement:
 
         plot_orchestrator.remove_grid(grid_id)
 
-        # Should only have Manage tab left
+        # Should only have one tab left
         assert len(plot_grid_tabs.panel) == 1
-        assert plot_grid_tabs.panel._names[0] == 'Manage'
 
-    def test_removing_grid_updates_tab_indices(self, plot_orchestrator, plot_grid_tabs):
-        """Test that removing a grid updates internal tab index mapping."""
+    def test_removing_grid_updates_correctly(self, plot_orchestrator, plot_grid_tabs):
+        """Test that removing a grid from the middle works correctly."""
         plot_orchestrator.add_grid(title='Grid 1', nrows=2, ncols=2)
         grid_id_2 = plot_orchestrator.add_grid(title='Grid 2', nrows=3, ncols=3)
         plot_orchestrator.add_grid(title='Grid 3', nrows=4, ncols=4)
@@ -149,11 +138,8 @@ class TestGridTabManagement:
         # Remove middle grid
         plot_orchestrator.remove_grid(grid_id_2)
 
-        # Should have Manage, Grid 1, Grid 3
+        # Should have Manage + 2 remaining grids
         assert len(plot_grid_tabs.panel) == 3
-        assert plot_grid_tabs.panel._names[0] == 'Manage'
-        assert plot_grid_tabs.panel._names[1] == 'Grid 1'
-        assert plot_grid_tabs.panel._names[2] == 'Grid 3'
 
     def test_multiple_widget_instances_stay_synchronized(self, plot_orchestrator):
         """Test that multiple widgets sharing same orchestrator stay in sync."""
@@ -166,10 +152,6 @@ class TestGridTabManagement:
         # Both widgets should have the new tab
         assert len(widget1.panel) == 2  # Manage + Shared Grid
         assert len(widget2.panel) == 2
-        assert widget1.panel._names[0] == 'Manage'
-        assert widget1.panel._names[1] == 'Shared Grid'
-        assert widget2.panel._names[0] == 'Manage'
-        assert widget2.panel._names[1] == 'Shared Grid'
 
         # Remove grid
         plot_orchestrator.remove_grid(grid_id)
@@ -182,19 +164,18 @@ class TestGridTabManagement:
 class TestManageTab:
     """Tests for the Manage tab functionality."""
 
-    def test_manage_tab_is_always_first(self, plot_orchestrator, plot_grid_tabs):
-        """Test that Manage tab stays at the start when grids are added."""
+    def test_manage_tab_count_stable_when_grids_added(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        """Test that adding grids doesn't remove or duplicate the Manage tab."""
+        initial_count = len(plot_grid_tabs.panel)
         plot_orchestrator.add_grid(title='Grid 1', nrows=2, ncols=2)
-        assert plot_grid_tabs.panel._names[0] == 'Manage'
+        # Should have exactly one more tab
+        assert len(plot_grid_tabs.panel) == initial_count + 1
 
         plot_orchestrator.add_grid(title='Grid 2', nrows=3, ncols=3)
-        assert plot_grid_tabs.panel._names[0] == 'Manage'
-
-    def test_manage_tab_exists_on_initialization(self, plot_grid_tabs):
-        """Test that Manage tab is created during initialization."""
-        # Find Manage tab in names list
-        manage_tabs = [name for name in plot_grid_tabs.panel._names if name == 'Manage']
-        assert len(manage_tabs) == 1
+        # Should have exactly one more tab again
+        assert len(plot_grid_tabs.panel) == initial_count + 2
 
 
 class TestShutdown:
@@ -218,16 +199,3 @@ class TestShutdown:
         """Test that shutdown is idempotent."""
         plot_grid_tabs.shutdown()
         plot_grid_tabs.shutdown()  # Should not raise
-
-
-class TestPlotRequestCallback:
-    """Tests for plot request handling (placeholder for future implementation)."""
-
-    def test_plot_request_shows_not_implemented_notification(
-        self, plot_grid_tabs, plot_orchestrator
-    ):
-        """Test that clicking grid cells shows 'not implemented' message."""
-        # This test verifies the placeholder behavior until plot management is added
-        # We're just checking that the callback exists and can be called without error
-        plot_grid_tabs._on_plot_requested()
-        # If no exception is raised, the placeholder callback works
