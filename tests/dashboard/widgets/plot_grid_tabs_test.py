@@ -4,6 +4,7 @@ import holoviews as hv
 import panel as pn
 import pytest
 
+from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.plot_orchestrator import (
@@ -60,9 +61,39 @@ def plot_orchestrator(plotting_controller, fake_job_orchestrator):
 
 
 @pytest.fixture
-def plot_grid_tabs(plot_orchestrator):
+def workflow_registry():
+    """Create a minimal workflow registry for testing."""
+    # Create a simple test workflow spec
+    from pydantic import BaseModel, Field
+
+    class TestOutputs(BaseModel):
+        test_output: str = Field(title="Test Output")
+
+    workflow_id = WorkflowId(
+        instrument='test', namespace='data_reduction', name='test_workflow', version=1
+    )
+
+    workflow_spec = WorkflowSpec(
+        instrument='test',
+        namespace='data_reduction',
+        name='test_workflow',
+        version=1,
+        title='Test Workflow',
+        description='A test workflow',
+        source_names=['source1', 'source2'],
+        outputs=TestOutputs,
+        params=None,
+    )
+
+    return {workflow_id: workflow_spec}
+
+
+@pytest.fixture
+def plot_grid_tabs(plot_orchestrator, workflow_registry):
     """Create a PlotGridTabs widget for testing."""
-    return PlotGridTabs(plot_orchestrator=plot_orchestrator)
+    return PlotGridTabs(
+        plot_orchestrator=plot_orchestrator, workflow_registry=workflow_registry
+    )
 
 
 class TestPlotGridTabsInitialization:
@@ -77,14 +108,18 @@ class TestPlotGridTabsInitialization:
         # Should have exactly one tab (the Manage tab)
         assert len(plot_grid_tabs.panel) == 1
 
-    def test_initializes_from_existing_grids(self, plot_orchestrator):
+    def test_initializes_from_existing_grids(
+        self, plot_orchestrator, workflow_registry
+    ):
         """Test that widget creates tabs for existing grids."""
         # Add grids before creating widget
         plot_orchestrator.add_grid(title='Grid 1', nrows=2, ncols=2)
         plot_orchestrator.add_grid(title='Grid 2', nrows=3, ncols=3)
 
         # Create widget
-        widget = PlotGridTabs(plot_orchestrator=plot_orchestrator)
+        widget = PlotGridTabs(
+            plot_orchestrator=plot_orchestrator, workflow_registry=workflow_registry
+        )
 
         # Should have 3 tabs: Manage + 2 grids
         assert len(widget.panel) == 3
@@ -141,10 +176,16 @@ class TestGridTabManagement:
         # Should have Manage + 2 remaining grids
         assert len(plot_grid_tabs.panel) == 3
 
-    def test_multiple_widget_instances_stay_synchronized(self, plot_orchestrator):
+    def test_multiple_widget_instances_stay_synchronized(
+        self, plot_orchestrator, workflow_registry
+    ):
         """Test that multiple widgets sharing same orchestrator stay in sync."""
-        widget1 = PlotGridTabs(plot_orchestrator=plot_orchestrator)
-        widget2 = PlotGridTabs(plot_orchestrator=plot_orchestrator)
+        widget1 = PlotGridTabs(
+            plot_orchestrator=plot_orchestrator, workflow_registry=workflow_registry
+        )
+        widget2 = PlotGridTabs(
+            plot_orchestrator=plot_orchestrator, workflow_registry=workflow_registry
+        )
 
         # Add grid via orchestrator
         grid_id = plot_orchestrator.add_grid(title='Shared Grid', nrows=3, ncols=3)

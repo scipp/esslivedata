@@ -452,6 +452,92 @@ class PlotGrid:
         """
         self._pending_selection = None
 
+    def insert_widget_at(
+        self, row: int, col: int, row_span: int, col_span: int, widget: Any
+    ) -> None:
+        """
+        Insert a widget at an explicit position (for orchestrator-driven updates).
+
+        This method is used for multi-user synchronized plot management via the
+        orchestrator pattern. Unlike insert_plot_deferred(), it doesn't rely on
+        pending selection state and can be called from lifecycle callbacks.
+
+        Parameters
+        ----------
+        row:
+            Starting row position (0-indexed).
+        col:
+            Starting column position (0-indexed).
+        row_span:
+            Number of rows the widget should span.
+        col_span:
+            Number of columns the widget should span.
+        widget:
+            Panel widget or viewable to insert.
+        """
+        # Validate position is within grid bounds
+        if row < 0 or row >= self._nrows or col < 0 or col >= self._ncols:
+            self._show_error(f'Invalid position: ({row}, {col})')
+            return
+
+        if row + row_span > self._nrows or col + col_span > self._ncols:
+            self._show_error(
+                f'Widget extends beyond grid: ({row}, {col}) + '
+                f'span ({row_span}, {col_span})'
+            )
+            return
+
+        # Remove any existing widget at this exact position
+        key = (row, col, row_span, col_span)
+        if key in self._occupied_cells:
+            del self._occupied_cells[key]
+
+        with pn.io.hold():
+            # Delete existing cells in the region to avoid overlap warnings
+            for r in range(row, row + row_span):
+                for c in range(col, col + col_span):
+                    try:
+                        del self._grid[r, c]
+                    except (KeyError, IndexError):
+                        pass
+
+            # Insert into grid
+            self._grid[row : row + row_span, col : col + col_span] = widget
+
+        # Track occupation
+        self._occupied_cells[key] = widget
+
+    def remove_widget_at(
+        self, row: int, col: int, row_span: int, col_span: int
+    ) -> None:
+        """
+        Remove a widget at an explicit position (for orchestrator-driven updates).
+
+        This method is used for multi-user synchronized plot management via the
+        orchestrator pattern.
+
+        Parameters
+        ----------
+        row:
+            Starting row position (0-indexed).
+        col:
+            Starting column position (0-indexed).
+        row_span:
+            Number of rows the widget spans.
+        col_span:
+            Number of columns the widget spans.
+        """
+        # Remove from tracking
+        key = (row, col, row_span, col_span)
+        if key in self._occupied_cells:
+            del self._occupied_cells[key]
+
+        # Restore empty cells
+        with pn.io.hold():
+            for r in range(row, row + row_span):
+                for c in range(col, col + col_span):
+                    self._grid[r, c] = self._create_empty_cell(r, c)
+
     @property
     def panel(self) -> pn.viewable.Viewable:
         """Get the Panel viewable object for this widget."""

@@ -82,7 +82,10 @@ class ReductionApp(DashboardBase):
         ).widget
 
         # Create UI widget connected to shared orchestrator
-        plot_grid_tabs = PlotGridTabs(plot_orchestrator=self._plot_orchestrator)
+        plot_grid_tabs = PlotGridTabs(
+            plot_orchestrator=self._plot_orchestrator,
+            workflow_registry=self._services.workflow_controller._workflow_registry,
+        )
 
         # Create tabs with both old and new interfaces
         main_tabs = pn.Tabs(

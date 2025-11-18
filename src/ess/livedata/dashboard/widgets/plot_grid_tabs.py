@@ -9,11 +9,27 @@ synchronized with PlotOrchestrator via lifecycle subscriptions.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
+import holoviews as hv
 import panel as pn
 
-from ..plot_orchestrator import GridId, PlotGridConfig, PlotOrchestrator, SubscriptionId
+from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
+from ess.livedata.dashboard.plot_params import PlotParams1d
+
+from ..plot_orchestrator import (
+    CellId,
+    GridId,
+    PlotCell,
+    PlotConfig,
+    PlotGridConfig,
+    PlotOrchestrator,
+    SubscriptionId,
+)
 from .plot_grid import PlotGrid
 from .plot_grid_manager import PlotGridManager
+from .simple_plot_config_modal import PlotConfigResult, SimplePlotConfigModal
 
 
 class PlotGridTabs:
@@ -28,23 +44,42 @@ class PlotGridTabs:
     ----------
     plot_orchestrator
         The orchestrator managing plot grid configurations.
+    workflow_registry
+        Registry of available workflows and their specifications.
     """
 
-    def __init__(self, plot_orchestrator: PlotOrchestrator) -> None:
+    def __init__(
+        self,
+        plot_orchestrator: PlotOrchestrator,
+        workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+    ) -> None:
         self._orchestrator = plot_orchestrator
+        self._workflow_registry = dict(workflow_registry)
 
         # Track grid widgets and tab indices
         self._grid_widgets: dict[GridId, PlotGrid] = {}
         self._grid_to_tab_index: dict[GridId, int] = {}
 
+        # Track cells added to each grid for lifecycle management
+        self._grid_cells: dict[GridId, dict[CellId, tuple[int, int, int, int]]] = {}
+
         # Main tabs widget
         self._tabs = pn.Tabs(sizing_mode='stretch_both')
+
+        # Modal container for plot configuration
+        # Using pn.Row with height=0 ensures the modal is part of the component tree
+        # but doesn't compete for vertical space. The modal renders as an overlay.
+        self._modal_container = pn.Row(height=0, sizing_mode='stretch_width')
+        self._current_modal: SimplePlotConfigModal | None = None
+        self._modal_grid_id: GridId | None = None
 
         # Subscribe to lifecycle events
         self._subscription_id: SubscriptionId | None = (
             self._orchestrator.subscribe_to_lifecycle(
                 on_grid_created=self._on_grid_created,
                 on_grid_removed=self._on_grid_removed,
+                on_cell_updated=self._on_cell_updated,
+                on_cell_removed=self._on_cell_removed,
             )
         )
 
@@ -58,20 +93,41 @@ class PlotGridTabs:
 
     def _add_grid_tab(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Add a new grid tab after the Manage tab."""
-        # Create PlotGrid widget
+
+        # Create grid-specific callback using closure to capture grid_id
+        def grid_callback() -> None:
+            self._on_plot_requested(grid_id)
+
+        # Create PlotGrid widget with grid-specific callback
         plot_grid = PlotGrid(
             nrows=grid_config.nrows,
             ncols=grid_config.ncols,
-            plot_request_callback=self._on_plot_requested,
+            plot_request_callback=grid_callback,
         )
 
         # Store widget reference
         self._grid_widgets[grid_id] = plot_grid
 
+        # Initialize cell tracking for this grid
+        self._grid_cells[grid_id] = {}
+
+        # Wrap PlotGrid with modal container for consistent layout
+        grid_with_modal = pn.Column(
+            plot_grid.panel,
+            self._modal_container,
+            sizing_mode='stretch_both',
+        )
+
         # Append at the end (Manage tab is always first at index 0)
         tab_index = len(self._tabs)
-        self._tabs.append((grid_config.title, plot_grid.panel))
+        self._tabs.append((grid_config.title, grid_with_modal))
         self._grid_to_tab_index[grid_id] = tab_index
+
+        # Populate with existing cells (important for late subscribers / new sessions)
+        for cell in grid_config.cells.values():
+            # Create placeholder widget for each existing cell
+            # (actual plots will be created when workflows commit)
+            self._on_cell_updated(grid_id, cell, plot=None, error=None)
 
     def _remove_grid_tab(self, grid_id: GridId) -> None:
         """Remove a grid tab and update indices."""
@@ -86,6 +142,8 @@ class PlotGridTabs:
         # Clean up tracking
         del self._grid_widgets[grid_id]
         del self._grid_to_tab_index[grid_id]
+        if grid_id in self._grid_cells:
+            del self._grid_cells[grid_id]
 
         # Update indices for all grids that came after the removed one
         for gid, idx in list(self._grid_to_tab_index.items()):
@@ -104,12 +162,272 @@ class PlotGridTabs:
         """Handle grid removal from orchestrator."""
         self._remove_grid_tab(grid_id)
 
-    def _on_plot_requested(self) -> None:
-        """Handle plot request from PlotGrid (not yet implemented)."""
-        if pn.state.notifications is not None:
-            pn.state.notifications.info(
-                'Plot management not yet implemented', duration=3000
-            )
+    def _on_plot_requested(self, grid_id: GridId) -> None:
+        """
+        Handle plot request from PlotGrid.
+
+        Shows the SimplePlotConfigModal to configure the plot, then adds it
+        to the orchestrator on success.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid where the plot was requested.
+        """
+        # Store which grid this modal is for
+        self._modal_grid_id = grid_id
+
+        # Create and show modal
+        self._current_modal = SimplePlotConfigModal(
+            workflow_registry=self._workflow_registry,
+            success_callback=self._on_plot_configured,
+            cancel_callback=self._on_modal_cancelled,
+        )
+
+        # Add modal to container so it renders
+        self._modal_container.clear()
+        self._modal_container.append(self._current_modal.modal)
+        self._current_modal.show()
+
+    def _on_plot_configured(self, result: PlotConfigResult) -> None:
+        """
+        Handle successful plot configuration from modal.
+
+        Creates PlotConfig with hardcoded plot_name and params, gets the
+        pending selection from PlotGrid, creates PlotCell, and adds to
+        orchestrator.
+
+        Parameters
+        ----------
+        result
+            Configuration result from the modal.
+        """
+        if self._modal_grid_id is None:
+            return
+
+        grid_id = self._modal_grid_id
+        plot_grid = self._grid_widgets.get(grid_id)
+
+        if plot_grid is None:
+            return
+
+        # Get pending selection from PlotGrid
+        pending = plot_grid._pending_selection
+        if pending is None:
+            return
+
+        row, col, row_span, col_span = pending
+
+        # Create PlotConfig with hardcoded 1D line plotter
+        plot_config = PlotConfig(
+            workflow_id=result.workflow_id,
+            output_name=result.output_name,
+            source_names=result.source_names,
+            plot_name='lines',
+            params=PlotParams1d().model_dump(),
+        )
+
+        # Create PlotCell
+        plot_cell = PlotCell(
+            row=row,
+            col=col,
+            row_span=row_span,
+            col_span=col_span,
+            config=plot_config,
+        )
+
+        # Clear modal references before adding plot
+        self._current_modal = None
+        self._modal_grid_id = None
+
+        # Clear pending selection in PlotGrid
+        plot_grid.cancel_pending_selection()
+
+        # Add to orchestrator (will trigger lifecycle callbacks for all sessions)
+        self._orchestrator.add_plot(grid_id, plot_cell)
+
+    def _on_modal_cancelled(self) -> None:
+        """Handle modal cancellation."""
+        if self._modal_grid_id is not None:
+            plot_grid = self._grid_widgets.get(self._modal_grid_id)
+            if plot_grid is not None:
+                # Cancel pending selection in PlotGrid
+                plot_grid.cancel_pending_selection()
+
+        # Clear modal references
+        self._current_modal = None
+        self._modal_grid_id = None
+
+    def _on_cell_updated(
+        self, grid_id: GridId, cell: PlotCell, plot: Any, error: str | None
+    ) -> None:
+        """
+        Handle cell update from orchestrator.
+
+        Creates appropriate widget (placeholder, plot, or error) and inserts
+        it into the grid at the specified position.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid containing the cell.
+        cell
+            Plot cell configuration.
+        plot
+            The plot widget (HoloViews DynamicMap), or None if not yet available.
+        error
+            Error message if plot creation failed, or None.
+        """
+        plot_grid = self._grid_widgets.get(grid_id)
+        if plot_grid is None:
+            return
+
+        # Create appropriate widget based on what's available
+        if error is not None:
+            # Show error message
+            widget = self._create_error_widget(cell, error)
+        elif plot is not None:
+            # Show actual plot
+            widget = self._create_plot_widget(plot)
+        else:
+            # Show placeholder
+            widget = self._create_placeholder_widget(cell)
+
+        # Insert widget at explicit position
+        plot_grid.insert_widget_at(
+            cell.row, cell.col, cell.row_span, cell.col_span, widget
+        )
+
+    def _on_cell_removed(self, grid_id: GridId, cell: PlotCell) -> None:
+        """
+        Handle cell removal from orchestrator.
+
+        Removes the widget from the grid at the specified position.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid containing the cell.
+        cell
+            Plot cell that was removed.
+        """
+        plot_grid = self._grid_widgets.get(grid_id)
+        if plot_grid is None:
+            return
+
+        # Remove widget at explicit position
+        plot_grid.remove_widget_at(cell.row, cell.col, cell.row_span, cell.col_span)
+
+    def _create_placeholder_widget(self, cell: PlotCell) -> pn.Column:
+        """
+        Create a placeholder widget for a cell without data.
+
+        Parameters
+        ----------
+        cell
+            Plot cell configuration.
+
+        Returns
+        -------
+        :
+            Panel widget showing configuration information.
+        """
+        config = cell.config
+
+        # Get workflow spec for display information
+        workflow_spec = self._workflow_registry.get(config.workflow_id)
+        workflow_title = (
+            workflow_spec.title if workflow_spec else str(config.workflow_id)
+        )
+
+        # Get output title if available
+        output_title = config.output_name
+        if workflow_spec and workflow_spec.outputs:
+            output_fields = workflow_spec.outputs.model_fields
+            if config.output_name in output_fields:
+                field_info = output_fields[config.output_name]
+                output_title = field_info.title or config.output_name
+
+        placeholder = pn.Column(
+            pn.pane.Markdown(
+                f"### Waiting for data...\n\n"
+                f"**Workflow:** {workflow_title}\n\n"
+                f"**Output:** {output_title}\n\n"
+                f"**Sources:** {', '.join(config.source_names)}",
+                styles={
+                    'text-align': 'center',
+                    'color': '#6c757d',
+                    'padding': '20px',
+                },
+            ),
+            sizing_mode='stretch_both',
+            styles={
+                'background-color': '#f8f9fa',
+                'border': '2px dashed #dee2e6',
+            },
+        )
+        return placeholder
+
+    def _create_plot_widget(self, plot: hv.DynamicMap | hv.Layout) -> pn.Column:
+        """
+        Create a widget containing the actual plot.
+
+        Parameters
+        ----------
+        plot
+            HoloViews plot object.
+
+        Returns
+        -------
+        :
+            Panel widget containing the plot.
+        """
+        plot_pane = pn.pane.HoloViews(plot, sizing_mode='stretch_both')
+        return pn.Column(plot_pane, sizing_mode='stretch_both')
+
+    def _create_error_widget(self, cell: PlotCell, error: str) -> pn.Column:
+        """
+        Create a widget showing an error message.
+
+        Parameters
+        ----------
+        cell
+            Plot cell configuration.
+        error
+            Error message to display.
+
+        Returns
+        -------
+        :
+            Panel widget showing the error.
+        """
+        config = cell.config
+
+        # Get workflow title
+        workflow_spec = self._workflow_registry.get(config.workflow_id)
+        workflow_title = (
+            workflow_spec.title if workflow_spec else str(config.workflow_id)
+        )
+
+        error_widget = pn.Column(
+            pn.pane.Markdown(
+                f"### Plot Creation Error\n\n"
+                f"**Workflow:** {workflow_title}\n\n"
+                f"**Output:** {config.output_name}\n\n"
+                f"**Error:** {error}",
+                styles={
+                    'text-align': 'center',
+                    'color': '#dc3545',
+                    'padding': '20px',
+                },
+            ),
+            sizing_mode='stretch_both',
+            styles={
+                'background-color': '#ffe6e6',
+                'border': '2px solid #dc3545',
+            },
+        )
+        return error_widget
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events and shutdown manager."""
