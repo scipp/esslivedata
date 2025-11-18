@@ -16,7 +16,6 @@ import holoviews as hv
 import panel as pn
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
-from ess.livedata.dashboard.plot_params import PlotParams1d
 
 from ..plot_orchestrator import (
     CellId,
@@ -46,15 +45,19 @@ class PlotGridTabs:
         The orchestrator managing plot grid configurations.
     workflow_registry
         Registry of available workflows and their specifications.
+    plotting_controller
+        Controller for determining available plotters from workflow specs.
     """
 
     def __init__(
         self,
         plot_orchestrator: PlotOrchestrator,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+        plotting_controller,
     ) -> None:
         self._orchestrator = plot_orchestrator
         self._workflow_registry = dict(workflow_registry)
+        self._plotting_controller = plotting_controller
 
         # Track grid widgets and tab indices
         self._grid_widgets: dict[GridId, PlotGrid] = {}
@@ -180,6 +183,7 @@ class PlotGridTabs:
         # Create and show modal
         self._current_modal = SimplePlotConfigModal(
             workflow_registry=self._workflow_registry,
+            plotting_controller=self._plotting_controller,
             success_callback=self._on_plot_configured,
             cancel_callback=self._on_modal_cancelled,
         )
@@ -218,13 +222,22 @@ class PlotGridTabs:
 
         row, col, row_span, col_span = pending
 
-        # Create PlotConfig with hardcoded 1D line plotter
+        # Create PlotConfig using selected plotter and configured parameters
+        # Convert params to dict if it's a Pydantic model
+        import pydantic
+
+        params_dict = (
+            result.params.model_dump()
+            if isinstance(result.params, pydantic.BaseModel)
+            else result.params
+        )
+
         plot_config = PlotConfig(
             workflow_id=result.workflow_id,
             output_name=result.output_name,
             source_names=result.source_names,
-            plot_name='lines',
-            params=PlotParams1d().model_dump(),
+            plot_name=result.plot_name,
+            params=params_dict,
         )
 
         # Create PlotCell

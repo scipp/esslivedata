@@ -204,6 +204,49 @@ class WorkflowSpec(BaseModel):
             version=self.version,
         )
 
+    def get_output_metadata(
+        self, output_name: str
+    ) -> tuple[tuple[str, ...], list[str]] | None:
+        """
+        Extract metadata (dims, coords) from output field definition.
+
+        Parameters
+        ----------
+        output_name:
+            Name of the output field to get metadata for.
+
+        Returns
+        -------
+        :
+            Tuple of (dims, coords) if metadata exists, None otherwise.
+            dims is a tuple of dimension names, coords is a list of coordinate names.
+        """
+        if self.outputs is None:
+            return None
+
+        field_info = self.outputs.model_fields.get(output_name)
+        if field_info is None:
+            return None
+
+        # Extract metadata from json_schema_extra
+        extra = field_info.json_schema_extra
+        if not isinstance(extra, dict):
+            return None
+
+        dims = extra.get('dims')
+        coords = extra.get('coords')
+
+        if dims is None or coords is None:
+            return None
+
+        # Ensure dims is a tuple and coords is a list
+        if not isinstance(dims, tuple):
+            dims = tuple(dims) if hasattr(dims, '__iter__') else (dims,)
+        if not isinstance(coords, list):
+            coords = list(coords) if hasattr(coords, '__iter__') else [coords]
+
+        return (dims, coords)
+
 
 @dataclass
 class JobSchedule:

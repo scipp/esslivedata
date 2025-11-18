@@ -87,6 +87,7 @@ class ReductionApp(DashboardBase):
             # Temporary hack, will likely get this from JobOrchestrator, or make
             # registry more accessible.
             workflow_registry=self._services.workflow_controller._workflow_registry,
+            plotting_controller=self._services.plotting_controller,
         )
 
         # Create tabs with both old and new interfaces

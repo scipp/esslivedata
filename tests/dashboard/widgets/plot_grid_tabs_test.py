@@ -89,10 +89,12 @@ def workflow_registry():
 
 
 @pytest.fixture
-def plot_grid_tabs(plot_orchestrator, workflow_registry):
+def plot_grid_tabs(plot_orchestrator, workflow_registry, plotting_controller):
     """Create a PlotGridTabs widget for testing."""
     return PlotGridTabs(
-        plot_orchestrator=plot_orchestrator, workflow_registry=workflow_registry
+        plot_orchestrator=plot_orchestrator,
+        workflow_registry=workflow_registry,
+        plotting_controller=plotting_controller,
     )
 
 
@@ -109,7 +111,7 @@ class TestPlotGridTabsInitialization:
         assert len(plot_grid_tabs.panel) == 1
 
     def test_initializes_from_existing_grids(
-        self, plot_orchestrator, workflow_registry
+        self, plot_orchestrator, workflow_registry, plotting_controller
     ):
         """Test that widget creates tabs for existing grids."""
         # Add grids before creating widget
@@ -118,7 +120,9 @@ class TestPlotGridTabsInitialization:
 
         # Create widget
         widget = PlotGridTabs(
-            plot_orchestrator=plot_orchestrator, workflow_registry=workflow_registry
+            plot_orchestrator=plot_orchestrator,
+            workflow_registry=workflow_registry,
+            plotting_controller=plotting_controller,
         )
 
         # Should have 3 tabs: Manage + 2 grids
@@ -177,14 +181,18 @@ class TestGridTabManagement:
         assert len(plot_grid_tabs.panel) == 3
 
     def test_multiple_widget_instances_stay_synchronized(
-        self, plot_orchestrator, workflow_registry
+        self, plot_orchestrator, workflow_registry, plotting_controller
     ):
         """Test that multiple widgets sharing same orchestrator stay in sync."""
         widget1 = PlotGridTabs(
-            plot_orchestrator=plot_orchestrator, workflow_registry=workflow_registry
+            plot_orchestrator=plot_orchestrator,
+            workflow_registry=workflow_registry,
+            plotting_controller=plotting_controller,
         )
         widget2 = PlotGridTabs(
-            plot_orchestrator=plot_orchestrator, workflow_registry=workflow_registry
+            plot_orchestrator=plot_orchestrator,
+            workflow_registry=workflow_registry,
+            plotting_controller=plotting_controller,
         )
 
         # Add grid via orchestrator

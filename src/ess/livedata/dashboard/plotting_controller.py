@@ -91,6 +91,54 @@ class PlottingController:
         data = {k: v[output_name] for k, v in job_data.items()}
         return plotter_registry.get_compatible_plotters(data)
 
+    def get_available_plotters_from_spec(
+        self, workflow_spec: WorkflowId | object, output_name: str
+    ) -> dict[str, PlotterSpec]:
+        """
+        Get available plotters based on workflow spec metadata (before data exists).
+
+        Uses lenient matching based on output metadata (dims, coords) from the
+        workflow specification. May include false positives (e.g., slicer for
+        non-evenly-spaced data) since custom validators cannot be evaluated
+        without actual data.
+
+        Parameters
+        ----------
+        workflow_spec:
+            WorkflowSpec object containing output metadata. Can also accept
+            WorkflowId for backward compatibility (will log warning).
+        output_name:
+            The name of the output to get plotters for.
+
+        Returns
+        -------
+        :
+            Dictionary mapping plotter names to their specifications.
+            Empty dict if metadata is not available for the output.
+        """
+        from ess.livedata.config.workflow_spec import WorkflowSpec
+
+        if not isinstance(workflow_spec, WorkflowSpec):
+            self._logger.warning(
+                "get_available_plotters_from_spec expects WorkflowSpec, "
+                "got %s. Cannot determine plotters.",
+                type(workflow_spec),
+            )
+            return {}
+
+        metadata = workflow_spec.get_output_metadata(output_name)
+        if metadata is None:
+            self._logger.warning(
+                "No metadata found for output '%s' in workflow %s. "
+                "Cannot determine compatible plotters.",
+                output_name,
+                workflow_spec.get_id(),
+            )
+            return {}
+
+        dims, coords = metadata
+        return plotter_registry.get_compatible_plotters_from_metadata(dims, coords)
+
     def get_spec(self, plot_name: str) -> PlotterSpec:
         """
         Get the parameter model for a given plotter name.

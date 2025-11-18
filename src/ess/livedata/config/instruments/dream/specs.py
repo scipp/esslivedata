@@ -177,10 +177,18 @@ class PowderReductionOutputs(WorkflowOutputsBase):
     focussed_data_dspacing: sc.DataArray = pydantic.Field(
         title='I(d)',
         description='Focussed intensity as a function of d-spacing.',
+        json_schema_extra={
+            'dims': ('dspacing',),
+            'coords': ['dspacing'],
+        },
     )
     focussed_data_dspacing_two_theta: sc.DataArray = pydantic.Field(
         title='I(d, 2θ)',
         description='Focussed intensity as a function of d-spacing and two-theta.',
+        json_schema_extra={
+            'dims': ('dspacing', 'two_theta'),
+            'coords': ['dspacing', 'two_theta'],
+        },
     )
 
 
@@ -192,6 +200,10 @@ class PowderReductionWithVanadiumOutputs(PowderReductionOutputs):
         description=(
             'Normalized intensity as a function of d-spacing (vanadium-corrected).'
         ),
+        json_schema_extra={
+            'dims': ('dspacing',),
+            'coords': ['dspacing'],
+        },
     )
     i_of_dspacing_two_theta: sc.DataArray = pydantic.Field(
         title='Normalized I(d, 2θ)',
@@ -199,6 +211,10 @@ class PowderReductionWithVanadiumOutputs(PowderReductionOutputs):
             'Normalized intensity as a function of d-spacing and two-theta '
             '(vanadium-corrected).'
         ),
+        json_schema_extra={
+            'dims': ('dspacing', 'two_theta'),
+            'coords': ['dspacing', 'two_theta'],
+        },
     )
 
 
