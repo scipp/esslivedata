@@ -65,95 +65,8 @@ class PlotConfigResult:
     params: pydantic.BaseModel | dict[str, Any]
 
 
-class WorkflowSelectionStep(WizardStep[None, WorkflowSelection]):
-    """Step 1: Select workflow from available workflows."""
-
-    def __init__(self, workflow_registry: Mapping[WorkflowId, WorkflowSpec]) -> None:
-        """
-        Initialize workflow selection step.
-
-        Parameters
-        ----------
-        workflow_registry
-            Registry of available workflows and their specifications.
-        """
-        super().__init__()
-        self._workflow_registry = dict(workflow_registry)
-        self._selected_workflow_id: WorkflowId | None = None
-
-        # Create workflow selector
-        self._workflow_selector = self._create_workflow_selector()
-
-    @property
-    def name(self) -> str:
-        """Display name for this step."""
-        return "Select Workflow"
-
-    @property
-    def description(self) -> str | None:
-        """Description text for this step."""
-        return "Choose the workflow you want to visualize."
-
-    def _create_workflow_selector(self) -> pn.widgets.Select:
-        """Create workflow selection dropdown."""
-        # Sort workflows by title for better UX
-        sorted_workflows = sorted(
-            self._workflow_registry.items(), key=lambda item: item[1].title
-        )
-
-        # Create options mapping title -> workflow_id
-        options = {spec.title: wid for wid, spec in sorted_workflows}
-
-        selector = pn.widgets.Select(
-            name='Workflow',
-            options=options,
-            sizing_mode='stretch_width',
-        )
-
-        # Watch for selection changes
-        selector.param.watch(self._on_selection_change, 'value')
-
-        # Initialize with first selection if available
-        if options:
-            selector.value = next(iter(options.values()))
-            self._selected_workflow_id = selector.value
-            self._notify_ready_changed(True)
-
-        return selector
-
-    def _on_selection_change(self, event) -> None:
-        """Handle workflow selection change."""
-        if event.new is not None:
-            self._selected_workflow_id = event.new
-            self._notify_ready_changed(True)
-        else:
-            self._selected_workflow_id = None
-            self._notify_ready_changed(False)
-
-    def is_valid(self) -> bool:
-        """Whether a valid workflow has been selected."""
-        return self._selected_workflow_id is not None
-
-    def commit(self) -> WorkflowSelection | None:
-        """Commit the selected workflow."""
-        if self._selected_workflow_id is None:
-            return None
-        return WorkflowSelection(workflow_id=self._selected_workflow_id)
-
-    def render_content(self) -> pn.Column:
-        """Render workflow selector."""
-        return pn.Column(
-            self._workflow_selector,
-            sizing_mode='stretch_width',
-        )
-
-    def on_enter(self, input_data: None) -> None:
-        """Called when step becomes active."""
-        pass
-
-
-class OutputSelectionStep(WizardStep[WorkflowSelection, OutputSelection]):
-    """Step 2: Select output name from workflow outputs."""
+class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
+    """Step 1: Select workflow and output (combined for better UX)."""
 
     def __init__(
         self,
@@ -161,7 +74,7 @@ class OutputSelectionStep(WizardStep[WorkflowSelection, OutputSelection]):
         logger: logging.Logger,
     ) -> None:
         """
-        Initialize output selection step.
+        Initialize workflow and output selection step.
 
         Parameters
         ----------
@@ -173,72 +86,90 @@ class OutputSelectionStep(WizardStep[WorkflowSelection, OutputSelection]):
         super().__init__()
         self._workflow_registry = dict(workflow_registry)
         self._logger = logger
-        self._workflow_selection: WorkflowSelection | None = None
+        self._selected_workflow_id: WorkflowId | None = None
         self._selected_output: str | None = None
-        self._output_selector: pn.widgets.Select | None = None
+
+        # Create workflow selector radio buttons
+        self._workflow_buttons = self._create_workflow_buttons()
+        self._output_buttons: pn.widgets.RadioButtonGroup | None = None
         self._content_container = pn.Column(sizing_mode='stretch_width')
+        self._output_container = pn.Column(sizing_mode='stretch_width')
+
+        # Initial layout
+        self._update_content()
 
     @property
     def name(self) -> str:
         """Display name for this step."""
-        return "Select Output"
+        return "Select Workflow & Output"
 
     @property
     def description(self) -> str | None:
         """Description text for this step."""
-        return "Choose which workflow output to visualize."
+        return "Choose the workflow and output to visualize."
 
-    def is_valid(self) -> bool:
-        """Step is valid when an output has been selected."""
-        return self._selected_output is not None
-
-    def commit(self) -> OutputSelection | None:
-        """Commit the workflow and output selection."""
-        if self._workflow_selection is None or self._selected_output is None:
-            return None
-        return OutputSelection(
-            workflow_id=self._workflow_selection.workflow_id,
-            output_name=self._selected_output,
+    def _create_workflow_buttons(self) -> pn.widgets.RadioButtonGroup:
+        """Create workflow selection radio buttons."""
+        # Sort workflows by title for better UX
+        sorted_workflows = sorted(
+            self._workflow_registry.items(), key=lambda item: item[1].title
         )
 
-    def render_content(self) -> pn.Column:
-        """Render output selector."""
-        return self._content_container
+        # Create options mapping title -> workflow_id
+        options = {spec.title: wid for wid, spec in sorted_workflows}
 
-    def on_enter(self, input_data: WorkflowSelection) -> None:
-        """Update available outputs when step becomes active."""
-        self._workflow_selection = input_data
-        self._update_output_selection()
+        buttons = pn.widgets.RadioButtonGroup(
+            name='Workflow',
+            options=options,
+            orientation='vertical',
+            sizing_mode='stretch_width',
+        )
 
-    def _update_output_selection(self) -> None:
-        """Update output selection based on workflow selection."""
-        self._content_container.clear()
+        # Watch for selection changes
+        buttons.param.watch(self._on_workflow_change, 'value')
 
-        if self._workflow_selection is None:
-            self._content_container.append(pn.pane.Markdown("*No workflow selected*"))
-            self._output_selector = None
-            self._notify_ready_changed(False)
+        # Initialize with first selection if available
+        if options:
+            buttons.value = next(iter(options.values()))
+            self._selected_workflow_id = buttons.value
+            self._selected_output = None  # Reset output when workflow changes
+
+        return buttons
+
+    def _on_workflow_change(self, event) -> None:
+        """Handle workflow selection change."""
+        if event.new is not None:
+            self._selected_workflow_id = event.new
+            self._selected_output = None  # Reset output selection
+            self._update_output_buttons()
+            self._update_content()
+            self._validate()
+        else:
+            self._selected_workflow_id = None
+            self._selected_output = None
+            self._validate()
+
+    def _update_output_buttons(self) -> None:
+        """Update output radio buttons based on selected workflow."""
+        self._output_container.clear()
+        self._output_buttons = None
+
+        if self._selected_workflow_id is None:
             return
 
-        workflow_spec = self._workflow_registry.get(
-            self._workflow_selection.workflow_id
-        )
+        workflow_spec = self._workflow_registry.get(self._selected_workflow_id)
         if workflow_spec is None or workflow_spec.outputs is None:
-            self._content_container.append(
+            self._output_container.append(
                 pn.pane.Markdown("*No outputs available for this workflow*")
             )
-            self._output_selector = None
-            self._notify_ready_changed(False)
             return
 
         # Extract output names from the Pydantic model
         output_fields = workflow_spec.outputs.model_fields
         if not output_fields:
-            self._content_container.append(
+            self._output_container.append(
                 pn.pane.Markdown("*No outputs defined for this workflow*")
             )
-            self._output_selector = None
-            self._notify_ready_changed(False)
             return
 
         # Create options mapping from output title to output name
@@ -247,35 +178,74 @@ class OutputSelectionStep(WizardStep[WorkflowSelection, OutputSelection]):
             title = field_info.title if field_info.title else field_name
             options[title] = field_name
 
-        self._output_selector = pn.widgets.Select(
+        self._output_buttons = pn.widgets.RadioButtonGroup(
             name='Output',
             options=options,
+            orientation='vertical',
             sizing_mode='stretch_width',
         )
 
         # Watch for selection changes
-        self._output_selector.param.watch(self._on_output_change, 'value')
+        self._output_buttons.param.watch(self._on_output_change, 'value')
 
         # Initialize with first selection
         if options:
-            self._output_selector.value = next(iter(options.values()))
-            self._selected_output = self._output_selector.value
-            self._notify_ready_changed(True)
+            self._output_buttons.value = next(iter(options.values()))
+            self._selected_output = self._output_buttons.value
 
-        self._content_container.append(self._output_selector)
+        self._output_container.append(self._output_buttons)
+        self._validate()
 
     def _on_output_change(self, event) -> None:
         """Handle output selection change."""
         if event.new is not None:
             self._selected_output = event.new
-            self._notify_ready_changed(True)
+            self._validate()
         else:
             self._selected_output = None
-            self._notify_ready_changed(False)
+            self._validate()
+
+    def _update_content(self) -> None:
+        """Update the content container layout."""
+        self._content_container.clear()
+        self._content_container.append(pn.pane.Markdown("**Workflow**"))
+        self._content_container.append(self._workflow_buttons)
+        self._content_container.append(pn.pane.Markdown("**Output**"))
+        self._content_container.append(self._output_container)
+
+    def _validate(self) -> None:
+        """Update validity based on selections."""
+        is_valid = (
+            self._selected_workflow_id is not None and self._selected_output is not None
+        )
+        self._notify_ready_changed(is_valid)
+
+    def is_valid(self) -> bool:
+        """Whether both workflow and output have been selected."""
+        return (
+            self._selected_workflow_id is not None and self._selected_output is not None
+        )
+
+    def commit(self) -> OutputSelection | None:
+        """Commit the workflow and output selection."""
+        if self._selected_workflow_id is None or self._selected_output is None:
+            return None
+        return OutputSelection(
+            workflow_id=self._selected_workflow_id,
+            output_name=self._selected_output,
+        )
+
+    def render_content(self) -> pn.Column:
+        """Render combined workflow and output selector."""
+        return self._content_container
+
+    def on_enter(self, input_data: None) -> None:
+        """Called when step becomes active."""
+        pass
 
 
 class PlotterSelectionStep(WizardStep[OutputSelection, PlotterSelection]):
-    """Step 3: Select plotter type based on output metadata."""
+    """Step 2: Select plotter type based on output metadata."""
 
     def __init__(
         self,
@@ -440,7 +410,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection, PlotterSelection]):
 
 
 class SpecBasedConfigurationStep(WizardStep[PlotterSelection, PlotConfigResult]):
-    """Step 4: Configure plot (source selection and plotter parameters)."""
+    """Step 3: Configure plot (source selection and plotter parameters)."""
 
     def __init__(
         self,
@@ -584,13 +554,12 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection, PlotConfigResult])
 
 class SimplePlotConfigModal:
     """
-    Four-step wizard modal for configuring plots without existing data.
+    Three-step wizard modal for configuring plots without existing data.
 
     This modal guides the user through:
-    1. Workflow selection from available workflow specs
-    2. Output name selection from workflow outputs
-    3. Plotter type selection based on output metadata
-    4. Source name multi-selection from workflow sources
+    1. Workflow and output selection (combined for convenient UX)
+    2. Plotter type selection based on output metadata
+    3. Configure plotter (source selection and parameters)
 
     The configuration is created using workflow output metadata (dims, coords),
     enabling plotter selection before data is available. This makes it suitable
@@ -620,16 +589,15 @@ class SimplePlotConfigModal:
         self._logger = logging.getLogger(__name__)
 
         # Create steps
-        step1 = WorkflowSelectionStep(workflow_registry=workflow_registry)
-        step2 = OutputSelectionStep(
+        step1 = WorkflowAndOutputSelectionStep(
             workflow_registry=workflow_registry, logger=self._logger
         )
-        step3 = PlotterSelectionStep(
+        step2 = PlotterSelectionStep(
             workflow_registry=workflow_registry,
             plotting_controller=plotting_controller,
             logger=self._logger,
         )
-        step4 = SpecBasedConfigurationStep(
+        step3 = SpecBasedConfigurationStep(
             workflow_registry=workflow_registry,
             plotting_controller=plotting_controller,
             logger=self._logger,
@@ -637,7 +605,7 @@ class SimplePlotConfigModal:
 
         # Create wizard
         self._wizard = Wizard(
-            steps=[step1, step2, step3, step4],
+            steps=[step1, step2, step3],
             on_complete=self._on_wizard_complete,
             on_cancel=self._on_wizard_cancel,
             action_button_label="Add Plot",
