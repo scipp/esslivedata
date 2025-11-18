@@ -131,6 +131,8 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             name='Workflow',
             options=options,
             orientation='vertical',
+            button_type='primary',
+            button_style='outline',
             sizing_mode='stretch_width',
         )
 
@@ -185,6 +187,8 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             name='Output',
             options=options,
             orientation='vertical',
+            button_type='primary',
+            button_style='outline',
             sizing_mode='stretch_width',
         )
 
@@ -209,12 +213,25 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             self._validate()
 
     def _update_content(self) -> None:
-        """Update the content container layout."""
+        """Update the content container layout with side-by-side selectors."""
         self._content_container.clear()
-        self._content_container.append(pn.pane.Markdown("**Workflow**"))
-        self._content_container.append(self._workflow_buttons)
-        self._content_container.append(pn.pane.Markdown("**Output**"))
-        self._content_container.append(self._output_container)
+
+        # Create side-by-side layout for workflow and output
+        workflow_col = pn.Column(
+            pn.pane.Markdown("**Workflow**"),
+            self._workflow_buttons,
+            sizing_mode='stretch_both',
+        )
+
+        output_col = pn.Column(
+            pn.pane.Markdown("**Output**"),
+            self._output_container,
+            sizing_mode='stretch_both',
+        )
+
+        side_by_side = pn.Row(workflow_col, output_col, sizing_mode='stretch_width')
+
+        self._content_container.append(side_by_side)
 
     def _validate(self) -> None:
         """Update validity based on selections."""
