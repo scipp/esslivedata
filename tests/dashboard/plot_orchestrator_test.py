@@ -639,8 +639,8 @@ class TestPlotOrchestrator:
         # Track lifecycle events
         events = []
 
-        def on_grid_created(grid_id):
-            events.append(('grid_created', grid_id))
+        def on_grid_created(grid_id, grid_config):
+            events.append(('grid_created', grid_id, grid_config))
 
         def on_grid_removed(grid_id):
             events.append(('grid_removed', grid_id))
@@ -662,7 +662,11 @@ class TestPlotOrchestrator:
         # Add a grid - should trigger grid_created
         grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
         assert len(events) == 1
-        assert events[0] == ('grid_created', grid_id)
+        assert events[0][0] == 'grid_created'
+        assert events[0][1] == grid_id
+        assert events[0][2].title == "Test Grid"
+        assert events[0][2].nrows == 3
+        assert events[0][2].ncols == 3
 
         # Add a plot - should trigger cell_updated (no plot yet)
         cell = PlotCell(

@@ -91,8 +91,17 @@ class PlotCell:
     config: PlotConfig
 
 
-# Lifecycle event callbacks (defined after PlotCell to avoid forward references)
-GridCreatedCallback = Callable[[GridId], None]
+@dataclass
+class PlotGridConfig:
+    """A plot grid tab configuration."""
+
+    title: str = ""
+    nrows: int = 3
+    ncols: int = 3
+    cells: dict[CellId, PlotCell] = field(default_factory=dict)
+
+
+GridCreatedCallback = Callable[[GridId, PlotGridConfig], None]
 GridRemovedCallback = Callable[[GridId], None]
 CellUpdatedCallback = Callable[[GridId, PlotCell, Any, str | None], None]
 CellRemovedCallback = Callable[[GridId, PlotCell], None]
@@ -106,16 +115,6 @@ class LifecycleSubscription:
     on_grid_removed: GridRemovedCallback | None = None
     on_cell_updated: CellUpdatedCallback | None = None
     on_cell_removed: CellRemovedCallback | None = None
-
-
-@dataclass
-class PlotGridConfig:
-    """A plot grid tab configuration."""
-
-    title: str = ""
-    nrows: int = 3
-    ncols: int = 3
-    cells: dict[CellId, PlotCell] = field(default_factory=dict)
 
 
 class PlotOrchestrator:
@@ -418,10 +417,15 @@ class PlotOrchestrator:
         Subscribers will be notified when grids or cells are created, updated,
         or removed. At least one callback must be provided.
 
+        Callbacks are fired in the order grids are created. Late subscribers
+        (subscribing after grids already exist) should call `get_all_grids()`
+        to get existing grids in their creation order before relying on callbacks
+        for new grids.
+
         Parameters
         ----------
         on_grid_created
-            Called when a new grid is created.
+            Called when a new grid is created with (grid_id, grid_config).
         on_grid_removed
             Called when a grid is removed.
         on_cell_updated
@@ -457,10 +461,11 @@ class PlotOrchestrator:
 
     def _notify_grid_created(self, grid_id: GridId) -> None:
         """Notify subscribers that a grid was created."""
+        grid = self._grids[grid_id]
         for subscription in self._lifecycle_subscribers.values():
             if subscription.on_grid_created:
                 try:
-                    subscription.on_grid_created(grid_id)
+                    subscription.on_grid_created(grid_id, grid)
                 except Exception:
                     self._logger.exception(
                         'Error in grid created callback for grid %s', grid_id
