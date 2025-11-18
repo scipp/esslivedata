@@ -18,8 +18,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NewType, Protocol
 from uuid import UUID, uuid4
 
-import pydantic
-
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 from .config_store import ConfigStore
@@ -357,18 +355,12 @@ class PlotOrchestrator:
 
         # Create plot and notify subscribers
         try:
-            spec = self._plotting_controller.get_spec(cell.config.plot_name)
-            if spec.params is None:
-                params_model = pydantic.BaseModel()
-            else:
-                params_model = spec.params(**cell.config.params)
-
             plot = self._plotting_controller.create_plot(
                 job_number=job_number,
                 source_names=cell.config.source_names,
                 output_name=cell.config.output_name,
                 plot_name=cell.config.plot_name,
-                params=params_model,
+                params=cell.config.params,
             )
             self._notify_cell_updated(grid_id, cell, plot=plot)
             self._logger.info('Created plot for cell %s at job %s', cell_id, job_number)
