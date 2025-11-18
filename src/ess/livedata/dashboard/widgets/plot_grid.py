@@ -107,6 +107,53 @@ def _format_region_label(row_span: int, col_span: int) -> str:
     return f'Click for {row_span}x{col_span} plot'
 
 
+def _create_close_button(on_close_callback: Callable[[], None]) -> pn.widgets.Button:
+    """
+    Create a styled close button for plot cells.
+
+    Parameters
+    ----------
+    on_close_callback:
+        Callback function to invoke when the button is clicked.
+
+    Returns
+    -------
+    :
+        Panel Button widget styled as a close button.
+    """
+    close_button = pn.widgets.Button(
+        name='\u00d7',  # "X" multiplication sign
+        width=_CellStyles.CLOSE_BUTTON_SIZE,
+        height=_CellStyles.CLOSE_BUTTON_SIZE,
+        button_type='light',
+        sizing_mode='fixed',
+        margin=(_CellStyles.CELL_MARGIN, _CellStyles.CELL_MARGIN),
+        styles={
+            'position': 'absolute',
+            'top': _CellStyles.CLOSE_BUTTON_TOP_OFFSET,
+            'right': _CellStyles.CLOSE_BUTTON_RIGHT_OFFSET,
+            'z-index': _CellStyles.CLOSE_BUTTON_Z_INDEX,
+        },
+        stylesheets=[
+            f"""
+            button {{
+                background-color: transparent !important;
+                border: none !important;
+                color: {_CellStyles.DANGER_RED} !important;
+                font-weight: bold !important;
+                font-size: {_CellStyles.FONT_SIZE_CLOSE_BUTTON} !important;
+                padding: 0 !important;
+            }}
+            button:hover {{
+                background-color: rgba(220, 53, 69, 0.1) !important;
+            }}
+            """
+        ],
+    )
+    close_button.on_click(lambda _: on_close_callback())
+    return close_button
+
+
 class PlotGrid:
     """
     A grid widget for displaying multiple plots in a customizable layout.
@@ -286,8 +333,8 @@ class PlotGrid:
                         # Delete the old cell first to avoid overlap warnings
                         try:
                             del self._grid[row, col]
-                        except (KeyError, IndexError):
-                            # Cell might not exist yet (during initialization)
+                        except (KeyError, IndexError, TypeError):
+                            # Cell might not exist yet or grid state issue
                             pass
                         self._grid[row, col] = self._get_cell_for_state(row, col)
 
@@ -344,41 +391,11 @@ class PlotGrid:
         plot_pane_wrapper = pn.pane.HoloViews(plot, sizing_mode='stretch_both')
         plot_pane = plot_pane_wrapper.layout
 
-        # Create close button with stylesheets for proper styling override
-        close_button = pn.widgets.Button(
-            name='\u00d7',  # "X" multiplication sign
-            width=_CellStyles.CLOSE_BUTTON_SIZE,
-            height=_CellStyles.CLOSE_BUTTON_SIZE,
-            button_type='light',
-            sizing_mode='fixed',
-            margin=(_CellStyles.CELL_MARGIN, _CellStyles.CELL_MARGIN),
-            styles={
-                'position': 'absolute',
-                'top': _CellStyles.CLOSE_BUTTON_TOP_OFFSET,
-                'right': _CellStyles.CLOSE_BUTTON_RIGHT_OFFSET,
-                'z-index': _CellStyles.CLOSE_BUTTON_Z_INDEX,
-            },
-            stylesheets=[
-                f"""
-                button {{
-                    background-color: transparent !important;
-                    border: none !important;
-                    color: {_CellStyles.DANGER_RED} !important;
-                    font-weight: bold !important;
-                    font-size: {_CellStyles.FONT_SIZE_CLOSE_BUTTON} !important;
-                    padding: 0 !important;
-                }}
-                button:hover {{
-                    background-color: rgba(220, 53, 69, 0.1) !important;
-                }}
-                """
-            ],
-        )
-
-        def on_close(event: Any) -> None:
+        # Create close button
+        def on_close() -> None:
             self._remove_plot(row, col, row_span, col_span)
 
-        close_button.on_click(on_close)
+        close_button = _create_close_button(on_close)
 
         container = pn.Column(
             close_button,
@@ -394,7 +411,8 @@ class PlotGrid:
                 for c in range(col, col + col_span):
                     try:
                         del self._grid[r, c]
-                    except (KeyError, IndexError):
+                    except (KeyError, IndexError, TypeError):
+                        # Cell might not exist (spanned widgets) or grid state issue
                         pass
 
             # Insert into grid
@@ -498,7 +516,8 @@ class PlotGrid:
                 for c in range(col, col + col_span):
                     try:
                         del self._grid[r, c]
-                    except (KeyError, IndexError):
+                    except (KeyError, IndexError, TypeError):
+                        # Cell might not exist (spanned widgets) or grid state issue
                         pass
 
             # Insert into grid
@@ -534,6 +553,16 @@ class PlotGrid:
 
         # Restore empty cells
         with pn.io.hold():
+            # Delete existing cells first to avoid overlap warnings
+            for r in range(row, row + row_span):
+                for c in range(col, col + col_span):
+                    try:
+                        del self._grid[r, c]
+                    except (KeyError, IndexError, TypeError):
+                        # Cell might not exist (spanned widgets) or grid state issue
+                        pass
+
+            # Create new empty cells
             for r in range(row, row + row_span):
                 for c in range(col, col + col_span):
                     self._grid[r, c] = self._create_empty_cell(r, c)

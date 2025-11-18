@@ -26,7 +26,7 @@ from ..plot_orchestrator import (
     PlotOrchestrator,
     SubscriptionId,
 )
-from .plot_grid import PlotGrid
+from .plot_grid import PlotGrid, _create_close_button
 from .plot_grid_manager import PlotGridManager
 from .simple_plot_config_modal import PlotConfigResult, SimplePlotConfigModal
 
@@ -298,13 +298,13 @@ class PlotGridTabs:
         # Create appropriate widget based on what's available
         if error is not None:
             # Show error message
-            widget = self._create_error_widget(cell, error)
+            widget = self._create_error_widget(grid_id, cell, error)
         elif plot is not None:
             # Show actual plot
             widget = self._create_plot_widget(plot)
         else:
             # Show placeholder
-            widget = self._create_placeholder_widget(cell)
+            widget = self._create_placeholder_widget(grid_id, cell)
 
         # Insert widget at explicit position
         plot_grid.insert_widget_at(
@@ -331,12 +331,14 @@ class PlotGridTabs:
         # Remove widget at explicit position
         plot_grid.remove_widget_at(cell.row, cell.col, cell.row_span, cell.col_span)
 
-    def _create_placeholder_widget(self, cell: PlotCell) -> pn.Column:
+    def _create_placeholder_widget(self, grid_id: GridId, cell: PlotCell) -> pn.Column:
         """
         Create a placeholder widget for a cell without data.
 
         Parameters
         ----------
+        grid_id
+            ID of the grid containing this cell.
         cell
             Plot cell configuration.
 
@@ -361,7 +363,20 @@ class PlotGridTabs:
                 field_info = output_fields[config.output_name]
                 output_title = field_info.title or config.output_name
 
+        # Create close button
+        def on_close() -> None:
+            # Look up cell_id from orchestrator state
+            for cell_id, stored_cell in self._orchestrator._grids[
+                grid_id
+            ].cells.items():
+                if stored_cell is cell:
+                    self._orchestrator.remove_plot(cell_id)
+                    return
+
+        close_button = _create_close_button(on_close)
+
         placeholder = pn.Column(
+            close_button,
             pn.pane.Markdown(
                 f"### Waiting for data...\n\n"
                 f"**Workflow:** {workflow_title}\n\n"
@@ -377,6 +392,7 @@ class PlotGridTabs:
             styles={
                 'background-color': '#f8f9fa',
                 'border': '2px dashed #dee2e6',
+                'position': 'relative',
             },
         )
         return placeholder
@@ -398,12 +414,16 @@ class PlotGridTabs:
         plot_pane = pn.pane.HoloViews(plot, sizing_mode='stretch_both')
         return pn.Column(plot_pane, sizing_mode='stretch_both')
 
-    def _create_error_widget(self, cell: PlotCell, error: str) -> pn.Column:
+    def _create_error_widget(
+        self, grid_id: GridId, cell: PlotCell, error: str
+    ) -> pn.Column:
         """
         Create a widget showing an error message.
 
         Parameters
         ----------
+        grid_id
+            ID of the grid containing this cell.
         cell
             Plot cell configuration.
         error
@@ -422,7 +442,20 @@ class PlotGridTabs:
             workflow_spec.title if workflow_spec else str(config.workflow_id)
         )
 
+        # Create close button
+        def on_close() -> None:
+            # Look up cell_id from orchestrator state
+            for cell_id, stored_cell in self._orchestrator._grids[
+                grid_id
+            ].cells.items():
+                if stored_cell is cell:
+                    self._orchestrator.remove_plot(cell_id)
+                    return
+
+        close_button = _create_close_button(on_close)
+
         error_widget = pn.Column(
+            close_button,
             pn.pane.Markdown(
                 f"### Plot Creation Error\n\n"
                 f"**Workflow:** {workflow_title}\n\n"
@@ -438,6 +471,7 @@ class PlotGridTabs:
             styles={
                 'background-color': '#ffe6e6',
                 'border': '2px solid #dc3545',
+                'position': 'relative',
             },
         )
         return error_widget

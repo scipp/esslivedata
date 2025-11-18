@@ -380,7 +380,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection, PlotterSelection]):
             options=options,
             value=initial_value,
             button_type="primary",
-            button_style="solid",
+            button_style="outline",
             sizing_mode='stretch_width',
         )
         self._radio_group.param.watch(self._on_plotter_selection_change, 'value')
