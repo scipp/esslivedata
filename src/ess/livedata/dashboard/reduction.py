@@ -84,6 +84,8 @@ class ReductionApp(DashboardBase):
         # Create UI widget connected to shared orchestrator
         plot_grid_tabs = PlotGridTabs(
             plot_orchestrator=self._plot_orchestrator,
+            # Temporary hack, will likely get this from JobOrchestrator, or make
+            # registry more accessible.
             workflow_registry=self._services.workflow_controller._workflow_registry,
         )
 
