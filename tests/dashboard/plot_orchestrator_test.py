@@ -19,6 +19,7 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotCell,
     PlotConfig,
     PlotOrchestrator,
+    SubscriptionId,
 )
 from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.stream_manager import StreamManager
@@ -30,22 +31,28 @@ class FakeJobOrchestrator:
     """Fake JobOrchestrator for testing PlotOrchestrator."""
 
     def __init__(self):
-        self._subscribers: dict[WorkflowId, list[Callable[[JobNumber], None]]] = {}
+        self._subscriptions: dict[SubscriptionId, tuple[WorkflowId, Callable]] = {}
 
     def subscribe_to_workflow(
         self, workflow_id: WorkflowId, callback: Callable[[JobNumber], None]
-    ) -> None:
+    ) -> SubscriptionId:
         """Register a callback for workflow availability."""
-        if workflow_id not in self._subscribers:
-            self._subscribers[workflow_id] = []
-        self._subscribers[workflow_id].append(callback)
+        subscription_id = SubscriptionId(uuid.uuid4())
+        self._subscriptions[subscription_id] = (workflow_id, callback)
+        return subscription_id
+
+    def unsubscribe(self, subscription_id: SubscriptionId) -> None:
+        """Unsubscribe from workflow availability notifications."""
+        if subscription_id in self._subscriptions:
+            del self._subscriptions[subscription_id]
 
     def simulate_workflow_commit(
         self, workflow_id: WorkflowId, job_number: JobNumber
     ) -> None:
         """Test helper to simulate workflow commit and notify subscribers."""
-        for callback in self._subscribers.get(workflow_id, []):
-            callback(job_number)
+        for _sub_id, (wf_id, callback) in list(self._subscriptions.items()):
+            if wf_id == workflow_id:
+                callback(job_number)
 
 
 @pytest.fixture
@@ -406,3 +413,99 @@ class TestPlotOrchestrator:
 
         # Plot is cleared after config update
         assert grid.cells[0].plot is None
+
+    def test_remove_plot_unsubscribes_from_workflow(
+        self, plot_orchestrator, fake_job_orchestrator, workflow_id, job_number
+    ):
+        """Test that removing a plot unsubscribes from workflow notifications."""
+        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
+
+        plot_config = PlotConfig(
+            workflow_id=workflow_id,
+            output_name='intensity',
+            source_names=['detector_1'],
+            plot_name='lines',
+            params={},
+        )
+
+        cell = PlotCell(
+            row=0,
+            col=0,
+            row_span=1,
+            col_span=1,
+            config=plot_config,
+        )
+
+        cell_id = plot_orchestrator.add_plot(grid_id, cell)
+
+        # Verify subscription was created
+        assert len(fake_job_orchestrator._subscriptions) == 1
+
+        # Remove the plot
+        plot_orchestrator.remove_plot(cell_id)
+
+        # Verify subscription was removed
+        assert len(fake_job_orchestrator._subscriptions) == 0
+
+        # Verify workflow commit doesn't trigger callback for removed plot
+        # This should not raise any errors
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+    def test_update_plot_config_resubscribes(
+        self, plot_orchestrator, fake_job_orchestrator, workflow_id
+    ):
+        """Test updating plot config unsubscribes old and creates new subscription."""
+        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
+
+        plot_config = PlotConfig(
+            workflow_id=workflow_id,
+            output_name='intensity',
+            source_names=['detector_1'],
+            plot_name='lines',
+            params={},
+        )
+
+        cell = PlotCell(
+            row=0,
+            col=0,
+            row_span=1,
+            col_span=1,
+            config=plot_config,
+        )
+
+        cell_id = plot_orchestrator.add_plot(grid_id, cell)
+
+        # Get initial subscription ID
+        grid = plot_orchestrator.get_grid(grid_id)
+        initial_sub_id = grid.cells[0].subscription_id
+        assert initial_sub_id is not None
+
+        # Verify one subscription exists
+        assert len(fake_job_orchestrator._subscriptions) == 1
+
+        # Update configuration
+        new_config = PlotConfig(
+            workflow_id=workflow_id,
+            output_name='spectrum',
+            source_names=['detector_1'],
+            plot_name='lines',
+            params={},
+        )
+
+        plot_orchestrator.update_plot_config(cell_id, new_config)
+
+        # Get new subscription ID
+        new_sub_id = grid.cells[0].subscription_id
+        assert new_sub_id is not None
+
+        # Verify subscription ID changed
+        assert new_sub_id != initial_sub_id
+
+        # Verify still only one subscription (old was removed, new was added)
+        assert len(fake_job_orchestrator._subscriptions) == 1
+
+        # Verify the old subscription was removed
+        assert initial_sub_id not in fake_job_orchestrator._subscriptions
+
+        # Verify the new subscription exists
+        assert new_sub_id in fake_job_orchestrator._subscriptions

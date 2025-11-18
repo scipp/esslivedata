@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import NewType, Protocol
 from uuid import UUID, uuid4
 
 import holoviews as hv
@@ -26,13 +26,15 @@ from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 from .config_store import ConfigStore
 from .plotting_controller import PlottingController
 
+SubscriptionId = NewType('SubscriptionId', UUID)
+
 
 class JobOrchestratorProtocol(Protocol):
     """Protocol for JobOrchestrator interface needed by PlotOrchestrator."""
 
     def subscribe_to_workflow(
         self, workflow_id: WorkflowId, callback: Callable[[JobNumber], None]
-    ) -> None:
+    ) -> SubscriptionId:
         """
         Subscribe to workflow availability notifications.
 
@@ -45,6 +47,22 @@ class JobOrchestratorProtocol(Protocol):
             The workflow to subscribe to.
         callback
             Called with job_number when workflow becomes available.
+
+        Returns
+        -------
+        :
+            Subscription ID that can be used to unsubscribe.
+        """
+        ...
+
+    def unsubscribe(self, subscription_id: SubscriptionId) -> None:
+        """
+        Unsubscribe from workflow availability notifications.
+
+        Parameters
+        ----------
+        subscription_id
+            The subscription ID returned from subscribe_to_workflow.
         """
         ...
 
@@ -73,6 +91,7 @@ class PlotCell:
     job_number: JobNumber | None = None
     plot: hv.DynamicMap | hv.Layout | None = None
     error: str | None = None
+    subscription_id: SubscriptionId | None = None
 
 
 @dataclass
@@ -179,8 +198,8 @@ class PlotOrchestrator:
         # Index the cell for fast lookup
         self._cell_index[cell.id] = (grid_id, len(grid.cells) - 1)
 
-        # Subscribe to workflow availability
-        self._job_orchestrator.subscribe_to_workflow(
+        # Subscribe to workflow availability and store subscription ID
+        cell.subscription_id = self._job_orchestrator.subscribe_to_workflow(
             workflow_id=cell.config.workflow_id,
             callback=lambda job_number: self._on_job_available(cell.id, job_number),
         )
@@ -208,6 +227,10 @@ class PlotOrchestrator:
         grid_id, cell_index = self._cell_index[cell_id]
         grid = self._grids[grid_id]
         cell = grid.cells.pop(cell_index)
+
+        # Unsubscribe from workflow notifications
+        if cell.subscription_id is not None:
+            self._job_orchestrator.unsubscribe(cell.subscription_id)
 
         # Remove from index
         del self._cell_index[cell_id]
@@ -260,6 +283,10 @@ class PlotOrchestrator:
         grid_id, cell_index = self._cell_index[cell_id]
         cell = self._grids[grid_id].cells[cell_index]
 
+        # Unsubscribe from old workflow notifications
+        if cell.subscription_id is not None:
+            self._job_orchestrator.unsubscribe(cell.subscription_id)
+
         # Update configuration
         cell.config = new_config
 
@@ -269,7 +296,7 @@ class PlotOrchestrator:
         cell.job_number = None
 
         # Re-subscribe to workflow (in case workflow_id changed)
-        self._job_orchestrator.subscribe_to_workflow(
+        cell.subscription_id = self._job_orchestrator.subscribe_to_workflow(
             workflow_id=new_config.workflow_id,
             callback=lambda job_number: self._on_job_available(cell_id, job_number),
         )
@@ -293,6 +320,13 @@ class PlotOrchestrator:
         job_number
             Job number for the workflow.
         """
+        # Defensive check: cell may have been removed before callback fires
+        if cell_id not in self._cell_index:
+            self._logger.debug(
+                'Ignoring workflow availability for removed cell %s', cell_id
+            )
+            return
+
         grid_id, cell_index = self._cell_index[cell_id]
         cell = self._grids[grid_id].cells[cell_index]
 
