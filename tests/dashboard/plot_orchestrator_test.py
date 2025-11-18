@@ -509,3 +509,104 @@ class TestPlotOrchestrator:
 
         # Verify the new subscription exists
         assert new_sub_id in fake_job_orchestrator._subscriptions
+
+    def test_remove_grid_unsubscribes_all_plots(
+        self, plot_orchestrator, fake_job_orchestrator, workflow_id, job_number
+    ):
+        """Test that removing a grid unsubscribes all plots in that grid."""
+        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
+
+        # Add multiple plots to the grid
+        plot_configs = [
+            PlotConfig(
+                workflow_id=workflow_id,
+                output_name=f'output_{i}',
+                source_names=['detector_1'],
+                plot_name='lines',
+                params={},
+            )
+            for i in range(3)
+        ]
+
+        cell_ids = []
+        for i, config in enumerate(plot_configs):
+            cell = PlotCell(
+                row=i,
+                col=0,
+                row_span=1,
+                col_span=1,
+                config=config,
+            )
+            cell_id = plot_orchestrator.add_plot(grid_id, cell)
+            cell_ids.append(cell_id)
+
+        # Verify 3 subscriptions were created
+        assert len(fake_job_orchestrator._subscriptions) == 3
+
+        # Remove the entire grid
+        plot_orchestrator.remove_grid(grid_id)
+
+        # Verify all subscriptions were removed
+        assert len(fake_job_orchestrator._subscriptions) == 0
+
+        # Verify grid is gone
+        assert plot_orchestrator.get_grid(grid_id) is None
+
+        # Verify workflow commits don't trigger callbacks for removed plots
+        # This should not raise any errors
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+    def test_shutdown_unsubscribes_all_plots_in_all_grids(
+        self, plot_orchestrator, fake_job_orchestrator, workflow_id, job_number
+    ):
+        """Test that shutdown unsubscribes all plots across all grids."""
+        # Create two grids with multiple plots each
+        grid_id_1 = plot_orchestrator.add_grid(title="Grid 1", nrows=2, ncols=2)
+        grid_id_2 = plot_orchestrator.add_grid(title="Grid 2", nrows=2, ncols=2)
+
+        # Add 2 plots to grid 1
+        for i in range(2):
+            cell = PlotCell(
+                row=i,
+                col=0,
+                row_span=1,
+                col_span=1,
+                config=PlotConfig(
+                    workflow_id=workflow_id,
+                    output_name=f'output_1_{i}',
+                    source_names=['detector_1'],
+                    plot_name='lines',
+                    params={},
+                ),
+            )
+            plot_orchestrator.add_plot(grid_id_1, cell)
+
+        # Add 3 plots to grid 2
+        for i in range(3):
+            cell = PlotCell(
+                row=i,
+                col=0,
+                row_span=1,
+                col_span=1,
+                config=PlotConfig(
+                    workflow_id=workflow_id,
+                    output_name=f'output_2_{i}',
+                    source_names=['detector_1'],
+                    plot_name='lines',
+                    params={},
+                ),
+            )
+            plot_orchestrator.add_plot(grid_id_2, cell)
+
+        # Verify 5 total subscriptions (2 + 3)
+        assert len(fake_job_orchestrator._subscriptions) == 5
+
+        # Shutdown the orchestrator
+        plot_orchestrator.shutdown()
+
+        # Verify all subscriptions were removed
+        assert len(fake_job_orchestrator._subscriptions) == 0
+
+        # Verify workflow commits don't trigger callbacks
+        # This should not raise any errors
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)

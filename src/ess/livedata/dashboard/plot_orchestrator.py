@@ -163,7 +163,7 @@ class PlotOrchestrator:
 
     def remove_grid(self, grid_id: UUID) -> None:
         """
-        Remove a plot grid.
+        Remove a plot grid and unsubscribe all plots.
 
         Parameters
         ----------
@@ -171,7 +171,16 @@ class PlotOrchestrator:
             UUID of the grid to remove.
         """
         if grid_id in self._grids:
-            title = self._grids[grid_id].title
+            grid = self._grids[grid_id]
+            title = grid.title
+
+            # Unsubscribe all cells and clean up cell index
+            for cell in grid.cells:
+                if cell.subscription_id is not None:
+                    self._job_orchestrator.unsubscribe(cell.subscription_id)
+                if cell.id in self._cell_index:
+                    del self._cell_index[cell.id]
+
             del self._grids[grid_id]
             self._persist_to_store()
             self._logger.info('Removed plot grid %s (%s)', grid_id, title)
@@ -391,3 +400,18 @@ class PlotOrchestrator:
             Dictionary mapping grid UUIDs to configurations.
         """
         return self._grids.copy()
+
+    def shutdown(self) -> None:
+        """
+        Shutdown the orchestrator and unsubscribe from all workflows.
+
+        This removes all grids and unsubscribes from all workflow notifications.
+        Call this method when the orchestrator is no longer needed to prevent
+        memory leaks.
+        """
+        # Remove all grids (which unsubscribes all plots)
+        grid_ids = list(self._grids.keys())
+        for grid_id in grid_ids:
+            self.remove_grid(grid_id)
+
+        self._logger.info('PlotOrchestrator shutdown complete')
