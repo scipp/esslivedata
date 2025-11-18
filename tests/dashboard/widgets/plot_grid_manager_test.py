@@ -191,7 +191,7 @@ class TestRemoveGrid:
 
         # Find and click the remove button
         grid_row = grid_manager._grid_list[0]
-        remove_button = grid_row[2]  # Third item (after info and spacer)
+        remove_button = grid_row[3]  # Fourth item (after info, move-up, move-down)
         assert isinstance(remove_button, pn.widgets.Button)
         remove_button.param.trigger('clicks')
 
@@ -208,7 +208,7 @@ class TestRemoveGrid:
 
         # Remove second grid
         grid_row = grid_manager._grid_list[1]
-        remove_button = grid_row[2]
+        remove_button = grid_row[3]
         remove_button.param.trigger('clicks')
 
         # Should have 2 grids left

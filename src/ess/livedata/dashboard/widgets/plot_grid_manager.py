@@ -34,10 +34,8 @@ class PlotGridManager:
         self._title_input = pn.widgets.TextInput(
             name='Grid Title', value='New Grid', placeholder='Enter grid title'
         )
-        self._nrows_input = pn.widgets.IntInput(name='Rows', value=3, start=1, end=10)
-        self._ncols_input = pn.widgets.IntInput(
-            name='Columns', value=3, start=1, end=10
-        )
+        self._nrows_input = pn.widgets.IntInput(name='Rows', value=3, start=2, end=6)
+        self._ncols_input = pn.widgets.IntInput(name='Columns', value=3, start=2, end=6)
 
         # Add grid button
         self._add_button = pn.widgets.Button(name='Add Grid', button_type='primary')
@@ -93,6 +91,21 @@ class PlotGridManager:
         """Update the grid list display."""
         self._grid_list.clear()
         for grid_id, grid_config in self._orchestrator.get_all_grids().items():
+            # Action buttons
+            move_up_button = pn.widgets.Button(
+                name='↑',
+                button_type='default',
+                width=40,
+                disabled=True,
+                description='Reordering support coming soon',
+            )
+            move_down_button = pn.widgets.Button(
+                name='↓',
+                button_type='default',
+                width=40,
+                disabled=True,
+                description='Reordering support coming soon',
+            )
             remove_button = pn.widgets.Button(
                 name='Remove',
                 button_type='danger',
@@ -110,9 +123,11 @@ class PlotGridManager:
 
             grid_row = pn.Row(
                 pn.pane.Str(
-                    f'{grid_config.title} ({grid_config.nrows}x{grid_config.ncols})'
+                    f'{grid_config.title} ({grid_config.nrows}x{grid_config.ncols})',
+                    styles={'flex-grow': '1'},
                 ),
-                pn.Spacer(),
+                move_up_button,
+                move_down_button,
                 remove_button,
                 sizing_mode='stretch_width',
             )

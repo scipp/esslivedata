@@ -20,9 +20,9 @@ class PlotGridTabs:
     """
     Tabbed widget for managing multiple plot grids.
 
-    Displays one tab per plot grid plus a "Manage" tab for adding/removing grids.
-    Synchronizes with PlotOrchestrator via lifecycle subscriptions to support
-    multiple linked instances.
+    Displays a "Manage" tab (always first) for adding/removing grids,
+    followed by one tab per plot grid. Synchronizes with PlotOrchestrator
+    via lifecycle subscriptions to support multiple linked instances.
 
     Parameters
     ----------
@@ -48,16 +48,16 @@ class PlotGridTabs:
             )
         )
 
+        # Add Manage tab (always first)
+        self._grid_manager = PlotGridManager(orchestrator=plot_orchestrator)
+        self._tabs.append(('Manage', self._grid_manager.panel))
+
         # Initialize from existing grids
         for grid_id, grid_config in self._orchestrator.get_all_grids().items():
             self._add_grid_tab(grid_id, grid_config)
 
-        # Add Manage tab (always last)
-        self._grid_manager = PlotGridManager(orchestrator=plot_orchestrator)
-        self._tabs.append(('Manage', self._grid_manager.panel))
-
     def _add_grid_tab(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
-        """Add a new grid tab before the Manage tab."""
+        """Add a new grid tab after the Manage tab."""
         # Create PlotGrid widget
         plot_grid = PlotGrid(
             nrows=grid_config.nrows,
@@ -68,14 +68,10 @@ class PlotGridTabs:
         # Store widget reference
         self._grid_widgets[grid_id] = plot_grid
 
-        # Insert before Manage tab (which is always last, if it exists)
-        # Find the insertion index: before Manage if it exists, otherwise at the end
-        insertion_index = len(self._tabs)
-        if len(self._tabs) > 0 and self._tabs._names[-1] == 'Manage':
-            insertion_index = len(self._tabs) - 1
-
-        self._tabs.insert(insertion_index, (grid_config.title, plot_grid.panel))
-        self._grid_to_tab_index[grid_id] = insertion_index
+        # Append at the end (Manage tab is always first at index 0)
+        tab_index = len(self._tabs)
+        self._tabs.append((grid_config.title, plot_grid.panel))
+        self._grid_to_tab_index[grid_id] = tab_index
 
     def _remove_grid_tab(self, grid_id: GridId) -> None:
         """Remove a grid tab and update indices."""

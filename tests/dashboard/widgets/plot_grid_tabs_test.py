@@ -105,20 +105,21 @@ class TestPlotGridTabsInitialization:
         # Create widget
         widget = PlotGridTabs(plot_orchestrator=plot_orchestrator)
 
-        # Should have 3 tabs: Grid 1, Grid 2, Manage
+        # Should have 3 tabs: Manage, Grid 1, Grid 2
         assert len(widget.panel) == 3
-        assert widget.panel._names[0] == 'Grid 1'
-        assert widget.panel._names[1] == 'Grid 2'
-        assert widget.panel._names[2] == 'Manage'
+        assert widget.panel._names[0] == 'Manage'
+        assert widget.panel._names[1] == 'Grid 1'
+        assert widget.panel._names[2] == 'Grid 2'
 
     def test_subscribes_to_lifecycle_events(self, plot_orchestrator, plot_grid_tabs):
         """Test that widget subscribes to orchestrator lifecycle events."""
         # Verify subscription by adding a grid and checking it appears
         plot_orchestrator.add_grid(title='New Grid', nrows=3, ncols=3)
 
-        # Should now have 2 tabs: New Grid, Manage
+        # Should now have 2 tabs: Manage, New Grid
         assert len(plot_grid_tabs.panel) == 2
-        assert plot_grid_tabs.panel._names[0] == 'New Grid'
+        assert plot_grid_tabs.panel._names[0] == 'Manage'
+        assert plot_grid_tabs.panel._names[1] == 'New Grid'
 
 
 class TestGridTabManagement:
@@ -132,9 +133,9 @@ class TestGridTabManagement:
 
         # Should have one more tab
         assert len(plot_grid_tabs.panel) == initial_count + 1
-        # New tab should be before Manage tab
-        assert plot_grid_tabs.panel._names[-2] == 'Test Grid'
-        assert plot_grid_tabs.panel._names[-1] == 'Manage'
+        # New tab should be after Manage tab
+        assert plot_grid_tabs.panel._names[0] == 'Manage'
+        assert plot_grid_tabs.panel._names[-1] == 'Test Grid'
 
     def test_on_grid_created_switches_to_new_tab(
         self, plot_orchestrator, plot_grid_tabs
@@ -142,8 +143,8 @@ class TestGridTabManagement:
         """Test that creating a grid auto-switches to that tab."""
         plot_orchestrator.add_grid(title='Auto Switch', nrows=3, ncols=3)
 
-        # Active tab should be the newly created grid (index 0, since it's the first)
-        assert plot_grid_tabs.panel.active == 0
+        # Active tab should be the newly created grid (index 1, since Manage is at 0)
+        assert plot_grid_tabs.panel.active == 1
 
     def test_on_grid_removed_removes_tab(self, plot_orchestrator, plot_grid_tabs):
         """Test that removing a grid removes its tab."""
@@ -165,11 +166,11 @@ class TestGridTabManagement:
         # Remove middle grid
         plot_orchestrator.remove_grid(grid_id_2)
 
-        # Should have Grid 1, Grid 3, Manage
+        # Should have Manage, Grid 1, Grid 3
         assert len(plot_grid_tabs.panel) == 3
-        assert plot_grid_tabs.panel._names[0] == 'Grid 1'
-        assert plot_grid_tabs.panel._names[1] == 'Grid 3'
-        assert plot_grid_tabs.panel._names[2] == 'Manage'
+        assert plot_grid_tabs.panel._names[0] == 'Manage'
+        assert plot_grid_tabs.panel._names[1] == 'Grid 1'
+        assert plot_grid_tabs.panel._names[2] == 'Grid 3'
 
     def test_multiple_widget_instances_stay_synchronized(self, plot_orchestrator):
         """Test that multiple widgets sharing same orchestrator stay in sync."""
@@ -180,10 +181,12 @@ class TestGridTabManagement:
         grid_id = plot_orchestrator.add_grid(title='Shared Grid', nrows=3, ncols=3)
 
         # Both widgets should have the new tab
-        assert len(widget1.panel) == 2  # Shared Grid + Manage
+        assert len(widget1.panel) == 2  # Manage + Shared Grid
         assert len(widget2.panel) == 2
-        assert widget1.panel._names[0] == 'Shared Grid'
-        assert widget2.panel._names[0] == 'Shared Grid'
+        assert widget1.panel._names[0] == 'Manage'
+        assert widget1.panel._names[1] == 'Shared Grid'
+        assert widget2.panel._names[0] == 'Manage'
+        assert widget2.panel._names[1] == 'Shared Grid'
 
         # Remove grid
         plot_orchestrator.remove_grid(grid_id)
@@ -196,13 +199,13 @@ class TestGridTabManagement:
 class TestManageTab:
     """Tests for the Manage tab functionality."""
 
-    def test_manage_tab_is_always_last(self, plot_orchestrator, plot_grid_tabs):
-        """Test that Manage tab stays at the end when grids are added."""
+    def test_manage_tab_is_always_first(self, plot_orchestrator, plot_grid_tabs):
+        """Test that Manage tab stays at the start when grids are added."""
         plot_orchestrator.add_grid(title='Grid 1', nrows=2, ncols=2)
-        assert plot_grid_tabs.panel._names[-1] == 'Manage'
+        assert plot_grid_tabs.panel._names[0] == 'Manage'
 
         plot_orchestrator.add_grid(title='Grid 2', nrows=3, ncols=3)
-        assert plot_grid_tabs.panel._names[-1] == 'Manage'
+        assert plot_grid_tabs.panel._names[0] == 'Manage'
 
     def test_manage_tab_exists_on_initialization(self, plot_grid_tabs):
         """Test that Manage tab is created during initialization."""
