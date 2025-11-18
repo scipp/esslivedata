@@ -24,6 +24,8 @@ from .config_store import ConfigStore
 from .plotting_controller import PlottingController
 
 SubscriptionId = NewType('SubscriptionId', UUID)
+GridId = NewType('GridId', UUID)
+CellId = NewType('CellId', UUID)
 
 
 class JobOrchestratorProtocol(Protocol):
@@ -84,18 +86,16 @@ class PlotCell:
     row_span: int
     col_span: int
     config: PlotConfig
-    id: UUID = field(default_factory=uuid4)
 
 
 @dataclass
 class PlotGridConfig:
     """A plot grid tab configuration."""
 
-    id: UUID = field(default_factory=uuid4)
     title: str = ""
     nrows: int = 3
     ncols: int = 3
-    cells: dict[UUID, PlotCell] = field(default_factory=dict)
+    cells: dict[CellId, PlotCell] = field(default_factory=dict)
 
 
 class PlotOrchestrator:
@@ -125,11 +125,11 @@ class PlotOrchestrator:
         self._config_store = config_store
         self._logger = logging.getLogger(__name__)
 
-        self._grids: dict[UUID, PlotGridConfig] = {}
-        self._cell_to_grid: dict[UUID, UUID] = {}
-        self._cell_to_subscription: dict[UUID, SubscriptionId] = {}
+        self._grids: dict[GridId, PlotGridConfig] = {}
+        self._cell_to_grid: dict[CellId, GridId] = {}
+        self._cell_to_subscription: dict[CellId, SubscriptionId] = {}
 
-    def add_grid(self, title: str, nrows: int, ncols: int) -> UUID:
+    def add_grid(self, title: str, nrows: int, ncols: int) -> GridId:
         """
         Add a new plot grid.
 
@@ -145,24 +145,25 @@ class PlotOrchestrator:
         Returns
         -------
         :
-            UUID of the created grid.
+            ID of the created grid.
         """
+        grid_id = GridId(uuid4())
         grid = PlotGridConfig(title=title, nrows=nrows, ncols=ncols)
-        self._grids[grid.id] = grid
+        self._grids[grid_id] = grid
         self._persist_to_store()
         self._logger.info(
-            'Added plot grid %s (%s) with size %dx%d', grid.id, title, nrows, ncols
+            'Added plot grid %s (%s) with size %dx%d', grid_id, title, nrows, ncols
         )
-        return grid.id
+        return grid_id
 
-    def remove_grid(self, grid_id: UUID) -> None:
+    def remove_grid(self, grid_id: GridId) -> None:
         """
         Remove a plot grid and unsubscribe all plots.
 
         Parameters
         ----------
         grid_id
-            UUID of the grid to remove.
+            ID of the grid to remove.
         """
         if grid_id in self._grids:
             grid = self._grids[grid_id]
@@ -170,75 +171,71 @@ class PlotOrchestrator:
 
             # Unsubscribe all cells and clean up mappings
             for cell_id in grid.cells.keys():
-                if cell_id in self._cell_to_subscription:
-                    self._job_orchestrator.unsubscribe(
-                        self._cell_to_subscription[cell_id]
-                    )
-                    del self._cell_to_subscription[cell_id]
-                if cell_id in self._cell_to_grid:
-                    del self._cell_to_grid[cell_id]
+                self._job_orchestrator.unsubscribe(self._cell_to_subscription[cell_id])
+                del self._cell_to_subscription[cell_id]
+                del self._cell_to_grid[cell_id]
 
             del self._grids[grid_id]
             self._persist_to_store()
             self._logger.info('Removed plot grid %s (%s)', grid_id, title)
 
-    def add_plot(self, grid_id: UUID, cell: PlotCell) -> UUID:
+    def add_plot(self, grid_id: GridId, cell: PlotCell) -> CellId:
         """
         Add a plot configuration to a grid and subscribe to workflow availability.
 
         Parameters
         ----------
         grid_id
-            UUID of the grid to add the plot to.
+            ID of the grid to add the plot to.
         cell
             Plot cell configuration.
 
         Returns
         -------
         :
-            UUID of the added plot cell.
+            ID of the added plot cell.
         """
+        cell_id = CellId(uuid4())
         grid = self._grids[grid_id]
-        grid.cells[cell.id] = cell
+        grid.cells[cell_id] = cell
 
         # Map cell to its grid for fast lookup
-        self._cell_to_grid[cell.id] = grid_id
+        self._cell_to_grid[cell_id] = grid_id
 
         # Subscribe to workflow availability and store subscription ID
         subscription_id = self._job_orchestrator.subscribe_to_workflow(
             workflow_id=cell.config.workflow_id,
-            callback=lambda job_number: self._on_job_available(cell.id, job_number),
+            callback=lambda job_number: self._on_job_available(cell_id, job_number),
         )
-        self._cell_to_subscription[cell.id] = subscription_id
+        self._cell_to_subscription[cell_id] = subscription_id
 
         self._persist_to_store()
         self._logger.info(
             'Added plot %s to grid %s at (%d,%d) for workflow %s',
-            cell.id,
+            cell_id,
             grid_id,
             cell.row,
             cell.col,
             cell.config.workflow_id,
         )
-        return cell.id
+        return cell_id
 
-    def remove_plot(self, cell_id: UUID) -> None:
+    def remove_plot(self, cell_id: CellId) -> None:
         """
         Remove a plot by its unique ID.
 
         Parameters
         ----------
         cell_id
-            UUID of the cell to remove.
+            ID of the cell to remove.
         """
         grid_id = self._cell_to_grid[cell_id]
         grid = self._grids[grid_id]
         cell = grid.cells[cell_id]
 
         # Unsubscribe from workflow notifications
-        if cell_id in self._cell_to_subscription:
-            self._job_orchestrator.unsubscribe(self._cell_to_subscription[cell_id])
-            del self._cell_to_subscription[cell_id]
+        self._job_orchestrator.unsubscribe(self._cell_to_subscription[cell_id])
+        del self._cell_to_subscription[cell_id]
 
         # Remove from grid and mapping
         del grid.cells[cell_id]
@@ -253,14 +250,14 @@ class PlotOrchestrator:
             cell.col,
         )
 
-    def get_plot_config(self, cell_id: UUID) -> PlotConfig:
+    def get_plot_config(self, cell_id: CellId) -> PlotConfig:
         """
         Get configuration for a plot.
 
         Parameters
         ----------
         cell_id
-            UUID of the plot cell.
+            ID of the plot cell.
 
         Returns
         -------
@@ -270,7 +267,7 @@ class PlotOrchestrator:
         grid_id = self._cell_to_grid[cell_id]
         return self._grids[grid_id].cells[cell_id].config
 
-    def update_plot_config(self, cell_id: UUID, new_config: PlotConfig) -> None:
+    def update_plot_config(self, cell_id: CellId, new_config: PlotConfig) -> None:
         """
         Update plot configuration and resubscribe to workflow.
 
@@ -281,7 +278,7 @@ class PlotOrchestrator:
         Parameters
         ----------
         cell_id
-            UUID of the plot cell to update.
+            ID of the plot cell to update.
         new_config
             New plot configuration.
         """
@@ -289,8 +286,7 @@ class PlotOrchestrator:
         cell = self._grids[grid_id].cells[cell_id]
 
         # Unsubscribe from old workflow notifications
-        if cell_id in self._cell_to_subscription:
-            self._job_orchestrator.unsubscribe(self._cell_to_subscription[cell_id])
+        self._job_orchestrator.unsubscribe(self._cell_to_subscription[cell_id])
 
         # Update configuration
         cell.config = new_config
@@ -307,7 +303,7 @@ class PlotOrchestrator:
 
         self._logger.info('Updated plot config for cell %s', cell_id)
 
-    def _on_job_available(self, cell_id: UUID, job_number: JobNumber) -> None:
+    def _on_job_available(self, cell_id: CellId, job_number: JobNumber) -> None:
         """
         Handle workflow availability notification from JobOrchestrator.
 
@@ -318,7 +314,7 @@ class PlotOrchestrator:
         Parameters
         ----------
         cell_id
-            UUID of the plot cell to create plot for.
+            ID of the plot cell to create plot for.
         job_number
             Job number for the workflow.
         """
@@ -350,14 +346,14 @@ class PlotOrchestrator:
         # TODO: Implement persistence when needed
         self._logger.debug('Plot grid configs would be persisted to store')
 
-    def get_grid(self, grid_id: UUID) -> PlotGridConfig | None:
+    def get_grid(self, grid_id: GridId) -> PlotGridConfig | None:
         """
         Get a plot grid configuration.
 
         Parameters
         ----------
         grid_id
-            UUID of the grid to retrieve.
+            ID of the grid to retrieve.
 
         Returns
         -------
@@ -366,14 +362,14 @@ class PlotOrchestrator:
         """
         return self._grids.get(grid_id)
 
-    def get_all_grids(self) -> dict[UUID, PlotGridConfig]:
+    def get_all_grids(self) -> dict[GridId, PlotGridConfig]:
         """
         Get all plot grid configurations.
 
         Returns
         -------
         :
-            Dictionary mapping grid UUIDs to configurations.
+            Dictionary mapping grid IDs to configurations.
         """
         return self._grids.copy()
 
