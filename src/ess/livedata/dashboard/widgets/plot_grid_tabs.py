@@ -296,15 +296,12 @@ class PlotGridTabs:
             return
 
         # Create appropriate widget based on what's available
-        if error is not None:
-            # Show error message
-            widget = self._create_error_widget(grid_id, cell, error)
-        elif plot is not None:
+        if plot is not None:
             # Show actual plot
-            widget = self._create_plot_widget(plot)
+            widget = self._create_plot_widget(grid_id, cell, plot)
         else:
-            # Show placeholder
-            widget = self._create_placeholder_widget(grid_id, cell)
+            # Show status widget (either waiting for data or error)
+            widget = self._create_status_widget(grid_id, cell, error=error)
 
         # Insert widget at explicit position
         plot_grid.insert_widget_at(
@@ -331,9 +328,14 @@ class PlotGridTabs:
         # Remove widget at explicit position
         plot_grid.remove_widget_at(cell.row, cell.col, cell.row_span, cell.col_span)
 
-    def _create_placeholder_widget(self, grid_id: GridId, cell: PlotCell) -> pn.Column:
+    def _create_status_widget(
+        self, grid_id: GridId, cell: PlotCell, error: str | None = None
+    ) -> pn.Column:
         """
-        Create a placeholder widget for a cell without data.
+        Create a status widget for a cell without a plot.
+
+        Shows either a placeholder (waiting for data) or an error message,
+        depending on whether an error occurred during plot creation.
 
         Parameters
         ----------
@@ -341,11 +343,13 @@ class PlotGridTabs:
             ID of the grid containing this cell.
         cell
             Plot cell configuration.
+        error
+            Error message if plot creation failed, or None for placeholder.
 
         Returns
         -------
         :
-            Panel widget showing configuration information.
+            Panel widget showing status information.
         """
         config = cell.config
 
@@ -355,14 +359,6 @@ class PlotGridTabs:
             workflow_spec.title if workflow_spec else str(config.workflow_id)
         )
 
-        # Get output title if available
-        output_title = config.output_name
-        if workflow_spec and workflow_spec.outputs:
-            output_fields = workflow_spec.outputs.model_fields
-            if config.output_name in output_fields:
-                field_info = output_fields[config.output_name]
-                output_title = field_info.title or config.output_name
-
         # Create close button
         def on_close() -> None:
             # Look up cell_id from orchestrator state
@@ -375,34 +371,70 @@ class PlotGridTabs:
 
         close_button = _create_close_button(on_close)
 
-        placeholder = pn.Column(
-            close_button,
-            pn.pane.Markdown(
-                f"### Waiting for data...\n\n"
+        # Determine content and styling based on state
+        if error is not None:
+            # Error state
+            title = "### Plot Creation Error"
+            content = (
+                f"{title}\n\n"
+                f"**Workflow:** {workflow_title}\n\n"
+                f"**Output:** {config.output_name}\n\n"
+                f"**Error:** {error}"
+            )
+            text_color = '#dc3545'
+            bg_color = '#ffe6e6'
+            border = '2px solid #dc3545'
+        else:
+            # Waiting state
+            output_title = config.output_name
+            if workflow_spec and workflow_spec.outputs:
+                output_fields = workflow_spec.outputs.model_fields
+                if config.output_name in output_fields:
+                    field_info = output_fields[config.output_name]
+                    output_title = field_info.title or config.output_name
+
+            title = "### Waiting for data..."
+            content = (
+                f"{title}\n\n"
                 f"**Workflow:** {workflow_title}\n\n"
                 f"**Output:** {output_title}\n\n"
-                f"**Sources:** {', '.join(config.source_names)}",
+                f"**Sources:** {', '.join(config.source_names)}"
+            )
+            text_color = '#6c757d'
+            bg_color = '#f8f9fa'
+            border = '2px dashed #dee2e6'
+
+        status_widget = pn.Column(
+            close_button,
+            pn.pane.Markdown(
+                content,
                 styles={
                     'text-align': 'center',
-                    'color': '#6c757d',
+                    'color': text_color,
                     'padding': '20px',
                 },
             ),
             sizing_mode='stretch_both',
             styles={
-                'background-color': '#f8f9fa',
-                'border': '2px dashed #dee2e6',
+                'background-color': bg_color,
+                'border': border,
                 'position': 'relative',
             },
         )
-        return placeholder
+        return status_widget
 
-    def _create_plot_widget(self, plot: hv.DynamicMap | hv.Layout) -> pn.Column:
+    def _create_plot_widget(
+        self, grid_id: GridId, cell: PlotCell, plot: hv.DynamicMap | hv.Layout
+    ) -> pn.Column:
         """
         Create a widget containing the actual plot.
 
         Parameters
         ----------
+        grid_id
+            ID of the grid containing this cell.
+        cell
+            Plot cell configuration.
         plot
             HoloViews plot object.
 
@@ -411,36 +443,6 @@ class PlotGridTabs:
         :
             Panel widget containing the plot.
         """
-        plot_pane = pn.pane.HoloViews(plot, sizing_mode='stretch_both')
-        return pn.Column(plot_pane, sizing_mode='stretch_both')
-
-    def _create_error_widget(
-        self, grid_id: GridId, cell: PlotCell, error: str
-    ) -> pn.Column:
-        """
-        Create a widget showing an error message.
-
-        Parameters
-        ----------
-        grid_id
-            ID of the grid containing this cell.
-        cell
-            Plot cell configuration.
-        error
-            Error message to display.
-
-        Returns
-        -------
-        :
-            Panel widget showing the error.
-        """
-        config = cell.config
-
-        # Get workflow title
-        workflow_spec = self._workflow_registry.get(config.workflow_id)
-        workflow_title = (
-            workflow_spec.title if workflow_spec else str(config.workflow_id)
-        )
 
         # Create close button
         def on_close() -> None:
@@ -454,27 +456,13 @@ class PlotGridTabs:
 
         close_button = _create_close_button(on_close)
 
-        error_widget = pn.Column(
+        plot_pane = pn.pane.HoloViews(plot, sizing_mode='stretch_both')
+        return pn.Column(
             close_button,
-            pn.pane.Markdown(
-                f"### Plot Creation Error\n\n"
-                f"**Workflow:** {workflow_title}\n\n"
-                f"**Output:** {config.output_name}\n\n"
-                f"**Error:** {error}",
-                styles={
-                    'text-align': 'center',
-                    'color': '#dc3545',
-                    'padding': '20px',
-                },
-            ),
+            plot_pane,
             sizing_mode='stretch_both',
-            styles={
-                'background-color': '#ffe6e6',
-                'border': '2px solid #dc3545',
-                'position': 'relative',
-            },
+            styles={'position': 'relative'},
         )
-        return error_widget
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events and shutdown manager."""
