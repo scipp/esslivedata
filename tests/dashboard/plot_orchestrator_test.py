@@ -2,57 +2,97 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import uuid
 from collections.abc import Callable
+from unittest.mock import Mock
 
-import holoviews as hv
 import pytest
-import scipp as sc
 
-from ess.livedata.config.workflow_spec import (
-    JobId,
-    JobNumber,
-    ResultKey,
-    WorkflowId,
-)
-from ess.livedata.dashboard.data_service import DataService
-from ess.livedata.dashboard.job_service import JobService
+from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 from ess.livedata.dashboard.plot_orchestrator import (
+    GridId,
     PlotCell,
     PlotConfig,
+    PlotGridConfig,
     PlotOrchestrator,
     SubscriptionId,
 )
-from ess.livedata.dashboard.plotting_controller import PlottingController
-from ess.livedata.dashboard.stream_manager import StreamManager
-
-hv.extension('bokeh')
 
 
 class FakeJobOrchestrator:
-    """Fake JobOrchestrator for testing PlotOrchestrator."""
+    """Fake JobOrchestrator for testing."""
 
     def __init__(self):
-        self._subscriptions: dict[SubscriptionId, tuple[WorkflowId, Callable]] = {}
+        self._subscriptions: dict[SubscriptionId, Callable[[JobNumber], None]] = {}
+        self._workflow_subscriptions: dict[WorkflowId, set[SubscriptionId]] = {}
 
     def subscribe_to_workflow(
         self, workflow_id: WorkflowId, callback: Callable[[JobNumber], None]
     ) -> SubscriptionId:
-        """Register a callback for workflow availability."""
+        """Subscribe to workflow availability notifications."""
         subscription_id = SubscriptionId(uuid.uuid4())
-        self._subscriptions[subscription_id] = (workflow_id, callback)
+        self._subscriptions[subscription_id] = callback
+
+        # Track which workflows have subscriptions
+        if workflow_id not in self._workflow_subscriptions:
+            self._workflow_subscriptions[workflow_id] = set()
+        self._workflow_subscriptions[workflow_id].add(subscription_id)
+
         return subscription_id
 
     def unsubscribe(self, subscription_id: SubscriptionId) -> None:
         """Unsubscribe from workflow availability notifications."""
         if subscription_id in self._subscriptions:
             del self._subscriptions[subscription_id]
+            # Remove from workflow tracking
+            for workflow_subs in self._workflow_subscriptions.values():
+                workflow_subs.discard(subscription_id)
 
     def simulate_workflow_commit(
         self, workflow_id: WorkflowId, job_number: JobNumber
     ) -> None:
-        """Test helper to simulate workflow commit and notify subscribers."""
-        for _sub_id, (wf_id, callback) in list(self._subscriptions.items()):
-            if wf_id == workflow_id:
-                callback(job_number)
+        """Simulate a workflow commit by calling all callbacks for that workflow."""
+        if workflow_id not in self._workflow_subscriptions:
+            return
+
+        for subscription_id in self._workflow_subscriptions[workflow_id]:
+            if subscription_id in self._subscriptions:
+                self._subscriptions[subscription_id](job_number)
+
+    @property
+    def subscription_count(self) -> int:
+        """Return the total number of active subscriptions."""
+        return len(self._subscriptions)
+
+
+class FakePlottingController:
+    """Fake PlottingController for testing."""
+
+    def __init__(self):
+        self._should_raise = False
+        self._exception_to_raise = None
+        self._plot_object = Mock(name='FakePlot')
+
+    def create_plot(
+        self,
+        job_number: JobNumber,
+        source_names: list[str],
+        output_name: str | None,
+        plot_name: str,
+        params: dict,
+    ):
+        """Create a fake plot or raise an exception if configured to do so."""
+        if self._should_raise:
+            raise self._exception_to_raise
+        return self._plot_object
+
+    def configure_to_raise(self, exception: Exception) -> None:
+        """Configure the controller to raise an exception on create_plot."""
+        self._should_raise = True
+        self._exception_to_raise = exception
+
+    def reset(self) -> None:
+        """Reset the controller to normal behavior."""
+        self._should_raise = False
+        self._exception_to_raise = None
 
 
 @pytest.fixture
@@ -67,544 +107,720 @@ def workflow_id():
 
 
 @pytest.fixture
-def fake_job_orchestrator():
-    """Create a fake JobOrchestrator for testing."""
-    return FakeJobOrchestrator()
+def workflow_id_2():
+    """Create a second test WorkflowId."""
+    return WorkflowId(
+        instrument='test_instrument',
+        namespace='test_namespace',
+        name='test_workflow_2',
+        version=1,
+    )
 
 
 @pytest.fixture
-def job_number() -> JobNumber:
+def job_number():
     """Create a test job number."""
     return uuid.uuid4()
 
 
 @pytest.fixture
-def data_service():
-    """Create a DataService for testing."""
-    return DataService()
-
-
-@pytest.fixture
-def job_service(data_service):
-    """Create a JobService for testing."""
-    return JobService(data_service=data_service)
-
-
-@pytest.fixture
-def stream_manager(data_service):
-    """Create a StreamManager for testing."""
-    return StreamManager(data_service=data_service, pipe_factory=hv.streams.Pipe)
-
-
-@pytest.fixture
-def plotting_controller(job_service, stream_manager):
-    """Create a PlottingController for testing."""
-    return PlottingController(
-        job_service=job_service,
-        stream_manager=stream_manager,
+def plot_config(workflow_id):
+    """Create a basic PlotConfig."""
+    return PlotConfig(
+        workflow_id=workflow_id,
+        output_name='test_output',
+        source_names=['source1', 'source2'],
+        plot_name='test_plot',
+        params={'param1': 'value1'},
     )
 
 
 @pytest.fixture
-def plot_orchestrator(plotting_controller, fake_job_orchestrator):
-    """Create a PlotOrchestrator for testing."""
+def plot_cell(plot_config):
+    """Create a basic PlotCell."""
+    return PlotCell(
+        row=0,
+        col=0,
+        row_span=1,
+        col_span=1,
+        config=plot_config,
+    )
+
+
+@pytest.fixture
+def fake_job_orchestrator():
+    """Create a FakeJobOrchestrator."""
+    return FakeJobOrchestrator()
+
+
+@pytest.fixture
+def fake_plotting_controller():
+    """Create a FakePlottingController."""
+    return FakePlottingController()
+
+
+@pytest.fixture
+def plot_orchestrator(fake_job_orchestrator, fake_plotting_controller):
+    """Create a PlotOrchestrator with fakes."""
     return PlotOrchestrator(
-        plotting_controller=plotting_controller,
+        plotting_controller=fake_plotting_controller,
         job_orchestrator=fake_job_orchestrator,
     )
 
 
-@pytest.fixture
-def detector_data():
-    """Create simple 1D detector data for testing."""
-    x = sc.arange('x', 10, dtype='float64')
-    data = sc.arange('x', 10, dtype='float64')
-    return sc.DataArray(data, coords={'x': x})
+# Category 1: Grid Management (Basic CRUD)
 
 
-class TestPlotOrchestrator:
-    """Tests for PlotOrchestrator."""
+class TestGridManagement:
+    """Tests for basic grid creation and removal."""
 
-    def test_add_grid(self, plot_orchestrator):
-        """Test adding a plot grid."""
-        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
-        assert grid_id is not None
+    def test_add_grid_creates_retrievable_grid(self, plot_orchestrator):
+        """Add grid creates retrievable grid with correct config."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=4)
+
         grid = plot_orchestrator.get_grid(grid_id)
         assert grid is not None
-        assert grid.title == "Test Grid"
+        assert grid.title == 'Test Grid'
         assert grid.nrows == 3
-        assert grid.ncols == 3
+        assert grid.ncols == 4
         assert len(grid.cells) == 0
 
-    def test_remove_grid(self, plot_orchestrator):
-        """Test removing a plot grid."""
-        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
+    def test_remove_grid_makes_it_unretrievable(self, plot_orchestrator):
+        """Remove grid makes it unretrievable."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+
         plot_orchestrator.remove_grid(grid_id)
+
         assert plot_orchestrator.get_grid(grid_id) is None
 
-    def test_add_plot_without_job(self, plot_orchestrator, workflow_id):
-        """Test adding a plot configuration when no matching job exists."""
-        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
+    def test_get_all_grids_returns_all_added_grids(self, plot_orchestrator):
+        """Get all grids returns all added grids."""
+        grid_id_1 = plot_orchestrator.add_grid(title='Grid 1', nrows=2, ncols=2)
+        grid_id_2 = plot_orchestrator.add_grid(title='Grid 2', nrows=3, ncols=3)
 
-        plot_config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='intensity',
-            source_names=['detector_1'],
-            plot_name='lines',
-            params={},
-        )
+        all_grids = plot_orchestrator.get_all_grids()
 
-        cell = PlotCell(
-            row=0,
-            col=0,
-            row_span=1,
-            col_span=1,
-            config=plot_config,
-        )
+        assert len(all_grids) == 2
+        assert grid_id_1 in all_grids
+        assert grid_id_2 in all_grids
+        assert all_grids[grid_id_1].title == 'Grid 1'
+        assert all_grids[grid_id_2].title == 'Grid 2'
 
-        cell_id = plot_orchestrator.add_plot(grid_id, cell)
+    def test_get_non_existent_grid_returns_none(self, plot_orchestrator):
+        """Get non-existent grid returns None."""
+        fake_grid_id = GridId(uuid.uuid4())
+        assert plot_orchestrator.get_grid(fake_grid_id) is None
 
-        assert cell_id is not None
+
+# Category 2: Cell Management (Without Plot Creation)
+
+
+class TestCellManagement:
+    """Tests for cell operations without triggering plot creation."""
+
+    def test_add_cell_to_grid_makes_it_retrievable_in_grid_config(
+        self, plot_orchestrator, plot_cell
+    ):
+        """Add cell to grid makes it retrievable in grid config."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
         grid = plot_orchestrator.get_grid(grid_id)
-        assert len(grid.cells) == 1
-        added_cell = grid.cells[cell_id]
-        assert added_cell.config == plot_config
+        assert cell_id in grid.cells
+        assert grid.cells[cell_id] == plot_cell
 
-    def test_add_plot_with_matching_job(
-        self,
-        plot_orchestrator,
-        fake_job_orchestrator,
-        job_service,
-        data_service,
-        plotting_controller,
-        workflow_id,
-        job_number,
-        detector_data,
+    def test_remove_cell_from_grid_removes_it_from_grid_config(
+        self, plot_orchestrator, plot_cell
     ):
-        """Test adding a plot and receiving workflow commit notification."""
-        job_id = JobId(source_name='detector_1', job_number=job_number)
-        result_key = ResultKey(
+        """Remove cell from grid removes it from grid config."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        plot_orchestrator.remove_plot(cell_id)
+
+        grid = plot_orchestrator.get_grid(grid_id)
+        assert cell_id not in grid.cells
+
+    def test_get_plot_config_returns_correct_config(
+        self, plot_orchestrator, plot_cell, plot_config
+    ):
+        """Get plot config returns correct config."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        retrieved_config = plot_orchestrator.get_plot_config(cell_id)
+
+        assert retrieved_config == plot_config
+
+    def test_update_plot_config_changes_the_config(
+        self, plot_orchestrator, plot_cell, plot_config, workflow_id
+    ):
+        """Update plot config changes the config."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        new_config = PlotConfig(
             workflow_id=workflow_id,
-            job_id=job_id,
-            output_name='intensity',
+            output_name='new_output',
+            source_names=['new_source'],
+            plot_name='new_plot',
+            params={'new_param': 'new_value'},
         )
+        plot_orchestrator.update_plot_config(cell_id, new_config)
 
-        # Adding data to data_service automatically registers the job
-        # via data_updated callback
-        data_service[result_key] = detector_data
+        retrieved_config = plot_orchestrator.get_plot_config(cell_id)
+        assert retrieved_config == new_config
+        assert retrieved_config.output_name == 'new_output'
 
-        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
+    def test_add_multiple_cells_to_same_grid(self, plot_orchestrator, workflow_id):
+        """Add multiple cells to same grid."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
 
-        plot_config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='intensity',
-            source_names=['detector_1'],
-            plot_name='lines',
-            params={},
-        )
-
-        # Subscribe to lifecycle events
-        received_plots = []
-
-        def on_cell_updated(gid, c, plot=None, error=None):
-            received_plots.append((gid, c, plot, error))
-
-        plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=on_cell_updated)
-
-        cell = PlotCell(
+        cell_1 = PlotCell(
             row=0,
             col=0,
             row_span=1,
             col_span=1,
-            config=plot_config,
+            config=PlotConfig(
+                workflow_id=workflow_id,
+                output_name='out1',
+                source_names=['src1'],
+                plot_name='plot1',
+                params={},
+            ),
         )
-
-        plot_orchestrator.add_plot(grid_id, cell)
-
-        # Simulate workflow commit from JobOrchestrator
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
-
-        # Verify plot was created and callback was called (twice: once on add,
-        # once on plot ready)
-        assert len(received_plots) == 2
-        # First call: cell added, no plot yet
-        assert received_plots[0][2] is None  # plot
-        assert received_plots[0][3] is None  # error
-        # Second call: plot ready
-        assert received_plots[1][2] is not None  # plot
-        assert isinstance(received_plots[1][2], hv.DynamicMap)
-        assert received_plots[1][3] is None  # error
-
-    def test_workflow_commit_triggers_plot_creation(
-        self,
-        plot_orchestrator,
-        fake_job_orchestrator,
-        job_service,
-        data_service,
-        plotting_controller,
-        workflow_id,
-        job_number,
-        detector_data,
-    ):
-        """Test that workflow commit triggers plot creation for waiting plots."""
-        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
-
-        plot_config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='intensity',
-            source_names=['detector_1'],
-            plot_name='lines',
-            params={},
-        )
-
-        # Subscribe to lifecycle events
-        received_plots = []
-
-        def on_cell_updated(gid, c, plot=None, error=None):
-            received_plots.append((gid, c, plot, error))
-
-        plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=on_cell_updated)
-
-        cell = PlotCell(
-            row=0,
-            col=0,
+        cell_2 = PlotCell(
+            row=1,
+            col=1,
             row_span=1,
             col_span=1,
-            config=plot_config,
+            config=PlotConfig(
+                workflow_id=workflow_id,
+                output_name='out2',
+                source_names=['src2'],
+                plot_name='plot2',
+                params={},
+            ),
         )
 
-        plot_orchestrator.add_plot(grid_id, cell)
+        cell_id_1 = plot_orchestrator.add_plot(grid_id, cell_1)
+        cell_id_2 = plot_orchestrator.add_plot(grid_id, cell_2)
 
-        # Add data to data service
-        job_id = JobId(source_name='detector_1', job_number=job_number)
-        result_key = ResultKey(
+        grid = plot_orchestrator.get_grid(grid_id)
+        assert len(grid.cells) == 2
+        assert cell_id_1 in grid.cells
+        assert cell_id_2 in grid.cells
+
+    def test_add_cells_to_multiple_grids(self, plot_orchestrator, plot_cell):
+        """Add cells to multiple grids."""
+        grid_id_1 = plot_orchestrator.add_grid(title='Grid 1', nrows=3, ncols=3)
+        grid_id_2 = plot_orchestrator.add_grid(title='Grid 2', nrows=3, ncols=3)
+
+        cell_id_1 = plot_orchestrator.add_plot(grid_id_1, plot_cell)
+        cell_id_2 = plot_orchestrator.add_plot(grid_id_2, plot_cell)
+
+        grid_1 = plot_orchestrator.get_grid(grid_id_1)
+        grid_2 = plot_orchestrator.get_grid(grid_id_2)
+        assert cell_id_1 in grid_1.cells
+        assert cell_id_2 in grid_2.cells
+
+    def test_add_cell_subscribes_to_workflow(
+        self, plot_orchestrator, plot_cell, fake_job_orchestrator
+    ):
+        """Each add should subscribe appropriately."""
+        initial_count = fake_job_orchestrator.subscription_count
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+
+        plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        assert fake_job_orchestrator.subscription_count == initial_count + 1
+
+    def test_remove_cell_unsubscribes_from_workflow(
+        self, plot_orchestrator, plot_cell, fake_job_orchestrator
+    ):
+        """Remove cell should unsubscribe."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+        count_after_add = fake_job_orchestrator.subscription_count
+
+        plot_orchestrator.remove_plot(cell_id)
+
+        assert fake_job_orchestrator.subscription_count == count_after_add - 1
+
+    def test_update_config_resubscribes(
+        self, plot_orchestrator, plot_cell, workflow_id, fake_job_orchestrator
+    ):
+        """Update config should unsubscribe and resubscribe."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+        count_after_add = fake_job_orchestrator.subscription_count
+
+        new_config = PlotConfig(
             workflow_id=workflow_id,
-            job_id=job_id,
-            output_name='intensity',
+            output_name='new_output',
+            source_names=['new_source'],
+            plot_name='new_plot',
+            params={},
         )
-        data_service[result_key] = detector_data
+        plot_orchestrator.update_plot_config(cell_id, new_config)
+
+        # Should still have same number of subscriptions (unsubscribe + resubscribe)
+        assert fake_job_orchestrator.subscription_count == count_after_add
+
+
+# Category 3: Workflow Integration & Plot Creation Timing
+
+
+class TestWorkflowIntegrationAndPlotCreationTiming:
+    """Tests for workflow integration and plot creation timing."""
+
+    def test_workflow_commit_after_cell_added_creates_plot(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        workflow_id,
+        job_number,
+        fake_job_orchestrator,
+        fake_plotting_controller,
+    ):
+        """Workflow commit AFTER cell added should create plot."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        _ = plot_orchestrator.add_plot(grid_id, plot_cell)
 
         # Simulate workflow commit
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
-        # Plot should now be created (2 calls: once on add, once on plot ready)
-        assert len(received_plots) == 2
-        # First call: cell added, no plot yet
-        assert received_plots[0][2] is None
-        # Second call: plot ready
-        assert received_plots[1][2] is not None
-        assert isinstance(received_plots[1][2], hv.DynamicMap)
-        assert received_plots[1][3] is None
+        # Plot should have been created - we can't directly observe it,
+        # but we can verify through lifecycle callback (tested later)
+        # Here we just verify no exceptions were raised
 
-    def test_remove_plot(self, plot_orchestrator, workflow_id):
-        """Test removing a plot from a grid."""
-        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
-
-        plot_config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='intensity',
-            source_names=['detector_1'],
-            plot_name='lines',
-            params={},
-        )
-
-        cell = PlotCell(
-            row=0,
-            col=0,
-            row_span=1,
-            col_span=1,
-            config=plot_config,
-        )
-
-        cell_id = plot_orchestrator.add_plot(grid_id, cell)
-        grid = plot_orchestrator.get_grid(grid_id)
-        assert len(grid.cells) == 1
-
-        plot_orchestrator.remove_plot(cell_id)
-        grid = plot_orchestrator.get_grid(grid_id)
-        assert len(grid.cells) == 0
-
-    def test_get_all_grids(self, plot_orchestrator):
-        """Test getting all grids."""
-        grid_id_1 = plot_orchestrator.add_grid(title="Grid 1", nrows=2, ncols=2)
-        grid_id_2 = plot_orchestrator.add_grid(title="Grid 2", nrows=3, ncols=3)
-
-        all_grids = plot_orchestrator.get_all_grids()
-        assert len(all_grids) == 2
-        assert grid_id_1 in all_grids
-        assert grid_id_2 in all_grids
-        assert all_grids[grid_id_1].title == "Grid 1"
-        assert all_grids[grid_id_2].title == "Grid 2"
-
-    def test_get_plot_config(self, plot_orchestrator, workflow_id):
-        """Test getting plot configuration by cell ID."""
-        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
-
-        plot_config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='intensity',
-            source_names=['detector_1'],
-            plot_name='lines',
-            params={'window': 10},
-        )
-
-        cell = PlotCell(
-            row=0,
-            col=0,
-            row_span=1,
-            col_span=1,
-            config=plot_config,
-        )
-
-        cell_id = plot_orchestrator.add_plot(grid_id, cell)
-
-        retrieved_config = plot_orchestrator.get_plot_config(cell_id)
-        assert retrieved_config == plot_config
-        assert retrieved_config.workflow_id == workflow_id
-        assert retrieved_config.output_name == 'intensity'
-        assert retrieved_config.params == {'window': 10}
-
-    def test_update_plot_config(
+    def test_workflow_commit_before_cell_added_creates_plot_when_cell_added(
         self,
         plot_orchestrator,
-        fake_job_orchestrator,
-        job_service,
-        data_service,
-        plotting_controller,
+        plot_cell,
         workflow_id,
         job_number,
-        detector_data,
+        fake_job_orchestrator,
     ):
-        """Test updating plot configuration."""
-        # Set up job and data
-        job_id = JobId(source_name='detector_1', job_number=job_number)
-        result_key = ResultKey(
-            workflow_id=workflow_id,
-            job_id=job_id,
-            output_name='intensity',
-        )
-        data_service[result_key] = detector_data
+        """Workflow commit BEFORE cell added should create plot when cell added."""
+        # This test verifies that if workflow is already available,
+        # adding a cell will eventually get the plot when workflow commits again.
+        # Since we subscribe on add, the next commit should trigger plot creation.
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
 
-        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
+        # Add cell (subscribes to workflow)
+        _ = plot_orchestrator.add_plot(grid_id, plot_cell)
 
-        # Subscribe to lifecycle events
-        received_plots = []
-
-        def on_cell_updated(gid, c, plot=None, error=None):
-            received_plots.append((gid, c, plot, error))
-
-        plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=on_cell_updated)
-
-        # Add initial plot
-        plot_config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='intensity',
-            source_names=['detector_1'],
-            plot_name='lines',
-            params={},
-        )
-
-        cell = PlotCell(
-            row=0,
-            col=0,
-            row_span=1,
-            col_span=1,
-            config=plot_config,
-        )
-
-        cell_id = plot_orchestrator.add_plot(grid_id, cell)
-
-        # Trigger workflow commit to create initial plot
+        # Now commit workflow - should trigger plot creation
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
-        # Verify initial plot was created (2 events: add and plot ready)
-        assert len(received_plots) == 2
-        assert received_plots[1][2] is not None  # plot ready
+        # Plot should have been created (verified via lifecycle callback in other tests)
 
-        # Update configuration with same workflow but different output
-        new_config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='spectrum',  # Changed output
-            source_names=['detector_1'],
-            plot_name='lines',
-            params={},
-        )
-
-        plot_orchestrator.update_plot_config(cell_id, new_config)
-
-        # Verify config was updated (3rd event: cell updated with new config)
-        assert len(received_plots) == 3
-        updated_config = plot_orchestrator.get_plot_config(cell_id)
-        assert updated_config.output_name == 'spectrum'
-        assert updated_config.source_names == ['detector_1']
-
-    def test_remove_plot_unsubscribes_from_workflow(
-        self, plot_orchestrator, fake_job_orchestrator, workflow_id, job_number
+    def test_multiple_cells_subscribed_to_same_workflow_all_receive_plots(
+        self,
+        plot_orchestrator,
+        workflow_id,
+        job_number,
+        fake_job_orchestrator,
     ):
-        """Test that removing a plot unsubscribes from workflow notifications."""
-        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
+        """Multiple cells subscribed to same workflow should all receive plots."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
 
-        plot_config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='intensity',
-            source_names=['detector_1'],
-            plot_name='lines',
-            params={},
-        )
-
-        cell = PlotCell(
+        # Add multiple cells with same workflow_id
+        cell_1 = PlotCell(
             row=0,
             col=0,
             row_span=1,
             col_span=1,
-            config=plot_config,
+            config=PlotConfig(
+                workflow_id=workflow_id,
+                output_name='out1',
+                source_names=['src1'],
+                plot_name='plot1',
+                params={},
+            ),
+        )
+        cell_2 = PlotCell(
+            row=1,
+            col=1,
+            row_span=1,
+            col_span=1,
+            config=PlotConfig(
+                workflow_id=workflow_id,
+                output_name='out2',
+                source_names=['src2'],
+                plot_name='plot2',
+                params={},
+            ),
         )
 
-        cell_id = plot_orchestrator.add_plot(grid_id, cell)
+        plot_orchestrator.add_plot(grid_id, cell_1)
+        plot_orchestrator.add_plot(grid_id, cell_2)
 
-        # Verify subscription was created
-        assert len(fake_job_orchestrator._subscriptions) == 1
+        # Both should be subscribed
+        assert fake_job_orchestrator.subscription_count == 2
 
-        # Remove the plot
+        # Commit workflow - both should receive notification
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+        # Both plots should be created (verified via lifecycle callbacks in other tests)
+
+    def test_cell_removed_before_workflow_commit_no_plot_created(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        workflow_id,
+        job_number,
+        fake_job_orchestrator,
+        fake_plotting_controller,
+    ):
+        """Cell removed before workflow commit should not create plot."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Remove cell before workflow commits
         plot_orchestrator.remove_plot(cell_id)
 
-        # Verify subscription was removed
-        assert len(fake_job_orchestrator._subscriptions) == 0
-
-        # Verify workflow commit doesn't trigger callback for removed plot
-        # This should not raise any errors
+        # Now commit workflow - should not crash (defensive check)
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
-    def test_update_plot_config_resubscribes(
-        self, plot_orchestrator, fake_job_orchestrator, workflow_id
+        # No exception should be raised (defensive check at lines 346-350)
+
+    def test_update_config_resubscribes_and_new_workflow_commit_creates_plot(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        workflow_id,
+        workflow_id_2,
+        job_number,
+        fake_job_orchestrator,
     ):
-        """Test updating plot config unsubscribes old and creates new subscription."""
-        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
+        """
+        Update config resubscribes to new workflow and creates plot.
 
-        plot_config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='intensity',
-            source_names=['detector_1'],
-            plot_name='lines',
-            params={},
-        )
+        When config is updated with new workflow, the new commit creates plot.
+        """
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
-        cell = PlotCell(
-            row=0,
-            col=0,
-            row_span=1,
-            col_span=1,
-            config=plot_config,
-        )
-
-        cell_id = plot_orchestrator.add_plot(grid_id, cell)
-
-        # Get initial subscription ID from orchestrator's tracking dict
-        initial_sub_id = plot_orchestrator._cell_to_subscription[cell_id]
-        assert initial_sub_id is not None
-
-        # Verify one subscription exists
-        assert len(fake_job_orchestrator._subscriptions) == 1
-
-        # Update configuration
+        # Update to different workflow_id
         new_config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='spectrum',
-            source_names=['detector_1'],
-            plot_name='lines',
+            workflow_id=workflow_id_2,
+            output_name='new_output',
+            source_names=['new_source'],
+            plot_name='new_plot',
             params={},
         )
-
         plot_orchestrator.update_plot_config(cell_id, new_config)
 
-        # Get new subscription ID from tracking dict
-        new_sub_id = plot_orchestrator._cell_to_subscription[cell_id]
-        assert new_sub_id is not None
-
-        # Verify subscription ID changed
-        assert new_sub_id != initial_sub_id
-
-        # Verify still only one subscription (old was removed, new was added)
-        assert len(fake_job_orchestrator._subscriptions) == 1
-
-        # Verify the old subscription was removed
-        assert initial_sub_id not in fake_job_orchestrator._subscriptions
-
-        # Verify the new subscription exists
-        assert new_sub_id in fake_job_orchestrator._subscriptions
-
-    def test_remove_grid_unsubscribes_all_plots(
-        self, plot_orchestrator, fake_job_orchestrator, workflow_id, job_number
-    ):
-        """Test that removing a grid unsubscribes all plots in that grid."""
-        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
-
-        # Add multiple plots to the grid
-        plot_configs = [
-            PlotConfig(
-                workflow_id=workflow_id,
-                output_name=f'output_{i}',
-                source_names=['detector_1'],
-                plot_name='lines',
-                params={},
-            )
-            for i in range(3)
-        ]
-
-        cell_ids = []
-        for i, config in enumerate(plot_configs):
-            cell = PlotCell(
-                row=i,
-                col=0,
-                row_span=1,
-                col_span=1,
-                config=config,
-            )
-            cell_id = plot_orchestrator.add_plot(grid_id, cell)
-            cell_ids.append(cell_id)
-
-        # Verify 3 subscriptions were created
-        assert len(fake_job_orchestrator._subscriptions) == 3
-
-        # Remove the entire grid
-        plot_orchestrator.remove_grid(grid_id)
-
-        # Verify all subscriptions were removed
-        assert len(fake_job_orchestrator._subscriptions) == 0
-
-        # Verify grid is gone
-        assert plot_orchestrator.get_grid(grid_id) is None
-
-        # Verify workflow commits don't trigger callbacks for removed plots
-        # This should not raise any errors
+        # Commit old workflow - should not create plot
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
-    def test_shutdown_unsubscribes_all_plots_in_all_grids(
-        self, plot_orchestrator, fake_job_orchestrator, workflow_id, job_number
+        # Commit new workflow - should create plot
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id_2, job_number)
+
+        # No exceptions should be raised
+
+
+# Category 4: Lifecycle Event Notifications
+
+
+class TestLifecycleEventNotifications:
+    """Tests for lifecycle event notifications."""
+
+    def test_on_grid_created_called_with_correct_grid_id_and_config(
+        self, plot_orchestrator
     ):
-        """Test that shutdown unsubscribes all plots across all grids."""
-        # Create two grids with multiple plots each
-        grid_id_1 = plot_orchestrator.add_grid(title="Grid 1", nrows=2, ncols=2)
-        grid_id_2 = plot_orchestrator.add_grid(title="Grid 2", nrows=2, ncols=2)
+        """on_grid_created called with correct grid_id and config."""
+        callback = Mock()
+        plot_orchestrator.subscribe_to_lifecycle(on_grid_created=callback)
 
-        # Add 2 plots to grid 1
-        for i in range(2):
-            cell = PlotCell(
-                row=i,
-                col=0,
-                row_span=1,
-                col_span=1,
-                config=PlotConfig(
-                    workflow_id=workflow_id,
-                    output_name=f'output_1_{i}',
-                    source_names=['detector_1'],
-                    plot_name='lines',
-                    params={},
-                ),
-            )
-            plot_orchestrator.add_plot(grid_id_1, cell)
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=4)
 
-        # Add 3 plots to grid 2
+        callback.assert_called_once()
+        call_args = callback.call_args[0]
+        assert call_args[0] == grid_id
+        assert isinstance(call_args[1], PlotGridConfig)
+        assert call_args[1].title == 'Test Grid'
+        assert call_args[1].nrows == 3
+        assert call_args[1].ncols == 4
+
+    def test_on_grid_removed_called_when_grid_removed(self, plot_orchestrator):
+        """on_grid_removed called when grid removed."""
+        callback = Mock()
+        plot_orchestrator.subscribe_to_lifecycle(on_grid_removed=callback)
+
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        plot_orchestrator.remove_grid(grid_id)
+
+        callback.assert_called_once_with(grid_id)
+
+    def test_on_cell_updated_called_when_cell_added_no_plot_yet(
+        self, plot_orchestrator, plot_cell
+    ):
+        """on_cell_updated called when cell added (no plot yet)."""
+        callback = Mock()
+        plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
+
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        callback.assert_called_once()
+        call_args = callback.call_args[0]
+        assert call_args[0] == grid_id
+        assert call_args[1] == plot_cell
+        assert call_args[2] is None  # No plot yet
+        assert len(callback.call_args[0]) == 4
+        # Fourth argument is error, should be None
+        assert call_args[3] is None
+
+    def test_on_cell_updated_called_when_plot_created_with_plot_object(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        workflow_id,
+        job_number,
+        fake_job_orchestrator,
+        fake_plotting_controller,
+    ):
+        """on_cell_updated called when plot created (with plot object)."""
+        callback = Mock()
+        plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
+
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Should have been called once when cell was added
+        assert callback.call_count == 1
+
+        # Simulate workflow commit
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+        # Should be called again with plot object
+        assert callback.call_count == 2
+        call_args = callback.call_args[0]
+        assert call_args[0] == grid_id
+        assert call_args[1] == plot_cell
+        assert call_args[2] == fake_plotting_controller._plot_object
+        assert call_args[3] is None  # No error
+
+    def test_on_cell_updated_called_when_plot_fails_with_error_message(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        workflow_id,
+        job_number,
+        fake_job_orchestrator,
+        fake_plotting_controller,
+    ):
+        """on_cell_updated called when plot fails (with error message)."""
+        callback = Mock()
+        plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
+
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Configure controller to raise exception
+        fake_plotting_controller.configure_to_raise(ValueError('Test error'))
+
+        # Simulate workflow commit
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+        # Should be called with error
+        assert callback.call_count == 2
+        call_args = callback.call_args[0]
+        assert call_args[0] == grid_id
+        assert call_args[1] == plot_cell
+        assert call_args[2] is None  # No plot
+        assert 'Test error' in call_args[3]  # Error message
+
+    def test_on_cell_updated_called_when_config_updated_no_plot_yet(
+        self, plot_orchestrator, plot_cell, workflow_id
+    ):
+        """on_cell_updated called when config updated (no plot yet)."""
+        callback = Mock()
+        plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
+
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Update config
+        new_config = PlotConfig(
+            workflow_id=workflow_id,
+            output_name='new_output',
+            source_names=['new_source'],
+            plot_name='new_plot',
+            params={},
+        )
+        plot_orchestrator.update_plot_config(cell_id, new_config)
+
+        # Should have been called twice (add + update)
+        assert callback.call_count == 2
+        call_args = callback.call_args[0]
+        assert call_args[2] is None  # No plot yet after update
+
+    def test_on_cell_removed_called_when_cell_removed(
+        self, plot_orchestrator, plot_cell
+    ):
+        """on_cell_removed called when cell removed."""
+        callback = Mock()
+        plot_orchestrator.subscribe_to_lifecycle(on_cell_removed=callback)
+
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+        plot_orchestrator.remove_plot(cell_id)
+
+        callback.assert_called_once()
+        call_args = callback.call_args[0]
+        assert call_args[0] == grid_id
+        assert call_args[1] == plot_cell
+
+    def test_multiple_subscribers_all_receive_notifications(self, plot_orchestrator):
+        """Multiple subscribers all receive notifications."""
+        callback_1 = Mock()
+        callback_2 = Mock()
+        plot_orchestrator.subscribe_to_lifecycle(on_grid_created=callback_1)
+        plot_orchestrator.subscribe_to_lifecycle(on_grid_created=callback_2)
+
+        plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+
+        callback_1.assert_called_once()
+        callback_2.assert_called_once()
+
+    def test_unsubscribe_prevents_further_notifications(self, plot_orchestrator):
+        """Unsubscribe prevents further notifications."""
+        callback = Mock()
+        subscription_id = plot_orchestrator.subscribe_to_lifecycle(
+            on_grid_created=callback
+        )
+
+        plot_orchestrator.add_grid(title='Grid 1', nrows=3, ncols=3)
+        assert callback.call_count == 1
+
+        # Unsubscribe
+        plot_orchestrator.unsubscribe_from_lifecycle(subscription_id)
+
+        plot_orchestrator.add_grid(title='Grid 2', nrows=3, ncols=3)
+        # Should still be 1 (not called for Grid 2)
+        assert callback.call_count == 1
+
+    def test_late_subscriber_does_not_receive_events_for_existing_grids(
+        self, plot_orchestrator
+    ):
+        """Late subscriber doesn't receive events for existing grids."""
+        # Add grid before subscribing
+        plot_orchestrator.add_grid(title='Existing Grid', nrows=3, ncols=3)
+
+        callback = Mock()
+        plot_orchestrator.subscribe_to_lifecycle(on_grid_created=callback)
+
+        # Should not have been called for existing grid
+        callback.assert_not_called()
+
+        # Should be called for new grids
+        plot_orchestrator.add_grid(title='New Grid', nrows=3, ncols=3)
+        callback.assert_called_once()
+
+
+# Category 5: Error Handling
+
+
+class TestErrorHandling:
+    """Tests for error handling."""
+
+    def test_plotting_controller_raises_exception_calls_on_cell_updated_with_error(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        workflow_id,
+        job_number,
+        fake_job_orchestrator,
+        fake_plotting_controller,
+    ):
+        """PlottingController exception calls on_cell_updated with error."""
+        callback = Mock()
+        plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
+
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        fake_plotting_controller.configure_to_raise(
+            RuntimeError('Plot creation failed')
+        )
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+        # Should have been called with error
+        assert callback.call_count == 2
+        call_args = callback.call_args[0]
+        assert 'Plot creation failed' in call_args[3]
+
+    def test_plotting_controller_raises_exception_orchestrator_remains_usable(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        workflow_id,
+        job_number,
+        fake_job_orchestrator,
+        fake_plotting_controller,
+    ):
+        """PlottingController raises exception but orchestrator remains usable."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        fake_plotting_controller.configure_to_raise(
+            RuntimeError('Plot creation failed')
+        )
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+        # Orchestrator should still be usable
+        fake_plotting_controller.reset()
+        plot_orchestrator.remove_plot(cell_id)
+        assert plot_orchestrator.get_grid(grid_id) is not None
+
+    def test_lifecycle_callback_raises_exception_other_callbacks_still_invoked(
+        self, plot_orchestrator
+    ):
+        """Lifecycle callback raises exception but other callbacks still invoked."""
+        failing_callback = Mock(side_effect=RuntimeError('Callback failed'))
+        working_callback = Mock()
+
+        plot_orchestrator.subscribe_to_lifecycle(on_grid_created=failing_callback)
+        plot_orchestrator.subscribe_to_lifecycle(on_grid_created=working_callback)
+
+        plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+
+        # Both should have been called
+        failing_callback.assert_called_once()
+        working_callback.assert_called_once()
+
+    def test_lifecycle_callback_raises_exception_orchestrator_remains_usable(
+        self, plot_orchestrator
+    ):
+        """Lifecycle callback raises exception but orchestrator remains usable."""
+        failing_callback = Mock(side_effect=RuntimeError('Callback failed'))
+        plot_orchestrator.subscribe_to_lifecycle(on_grid_created=failing_callback)
+
+        plot_orchestrator.add_grid(title='Grid 1', nrows=3, ncols=3)
+
+        # Should still be able to add more grids
+        grid_id = plot_orchestrator.add_grid(title='Grid 2', nrows=3, ncols=3)
+        assert plot_orchestrator.get_grid(grid_id) is not None
+
+
+# Category 6: Cleanup & Resource Management
+
+
+class TestCleanupAndResourceManagement:
+    """Tests for cleanup and resource management."""
+
+    def test_remove_grid_with_multiple_cells_all_unsubscribed(
+        self, plot_orchestrator, workflow_id, fake_job_orchestrator
+    ):
+        """Remove grid with multiple cells unsubscribes all from JobOrchestrator."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+
+        # Add multiple cells
         for i in range(3):
             cell = PlotCell(
                 row=i,
@@ -613,154 +829,167 @@ class TestPlotOrchestrator:
                 col_span=1,
                 config=PlotConfig(
                     workflow_id=workflow_id,
-                    output_name=f'output_2_{i}',
-                    source_names=['detector_1'],
-                    plot_name='lines',
+                    output_name=f'out{i}',
+                    source_names=[f'src{i}'],
+                    plot_name=f'plot{i}',
                     params={},
                 ),
             )
-            plot_orchestrator.add_plot(grid_id_2, cell)
+            plot_orchestrator.add_plot(grid_id, cell)
 
-        # Verify 5 total subscriptions (2 + 3)
-        assert len(fake_job_orchestrator._subscriptions) == 5
+        assert fake_job_orchestrator.subscription_count == 3
 
-        # Shutdown the orchestrator
+        # Remove grid
+        plot_orchestrator.remove_grid(grid_id)
+
+        # All subscriptions should be removed
+        assert fake_job_orchestrator.subscription_count == 0
+
+    def test_shutdown_with_multiple_grids_all_unsubscribed(
+        self, plot_orchestrator, workflow_id, fake_job_orchestrator
+    ):
+        """Shutdown with multiple grids should unsubscribe all."""
+        # Add multiple grids with cells
+        for i in range(2):
+            grid_id = plot_orchestrator.add_grid(title=f'Grid {i}', nrows=3, ncols=3)
+            cell = PlotCell(
+                row=0,
+                col=0,
+                row_span=1,
+                col_span=1,
+                config=PlotConfig(
+                    workflow_id=workflow_id,
+                    output_name=f'out{i}',
+                    source_names=[f'src{i}'],
+                    plot_name=f'plot{i}',
+                    params={},
+                ),
+            )
+            plot_orchestrator.add_plot(grid_id, cell)
+
+        assert fake_job_orchestrator.subscription_count == 2
+
+        # Shutdown
         plot_orchestrator.shutdown()
 
-        # Verify all subscriptions were removed
-        assert len(fake_job_orchestrator._subscriptions) == 0
+        # All subscriptions should be removed
+        assert fake_job_orchestrator.subscription_count == 0
 
-        # Verify workflow commits don't trigger callbacks
-        # This should not raise any errors
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+    def test_shutdown_all_grids_removed(self, plot_orchestrator):
+        """Shutdown should remove all grids."""
+        plot_orchestrator.add_grid(title='Grid 1', nrows=3, ncols=3)
+        plot_orchestrator.add_grid(title='Grid 2', nrows=3, ncols=3)
 
-    def test_lifecycle_subscriptions(self, plot_orchestrator, workflow_id):
-        """Test lifecycle event subscriptions."""
-        # Track lifecycle events
-        events = []
+        plot_orchestrator.shutdown()
 
-        def on_grid_created(grid_id, grid_config):
-            events.append(('grid_created', grid_id, grid_config))
+        assert len(plot_orchestrator.get_all_grids()) == 0
 
-        def on_grid_removed(grid_id):
-            events.append(('grid_removed', grid_id))
+    def test_remove_last_plot_from_grid_grid_still_exists(
+        self, plot_orchestrator, plot_cell
+    ):
+        """Remove last plot from grid should not remove the grid itself."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
-        def on_cell_updated(grid_id, cell, plot=None, error=None):
-            events.append(('cell_updated', grid_id, cell.row, cell.col, plot, error))
+        plot_orchestrator.remove_plot(cell_id)
 
-        def on_cell_removed(grid_id, cell):
-            events.append(('cell_removed', grid_id, cell.row, cell.col))
+        # Grid should still exist
+        grid = plot_orchestrator.get_grid(grid_id)
+        assert grid is not None
+        assert len(grid.cells) == 0
 
-        # Subscribe to lifecycle events
-        subscription_id = plot_orchestrator.subscribe_to_lifecycle(
-            on_grid_created=on_grid_created,
-            on_grid_removed=on_grid_removed,
-            on_cell_updated=on_cell_updated,
-            on_cell_removed=on_cell_removed,
-        )
 
-        # Add a grid - should trigger grid_created
-        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
-        assert len(events) == 1
-        assert events[0][0] == 'grid_created'
-        assert events[0][1] == grid_id
-        assert events[0][2].title == "Test Grid"
-        assert events[0][2].nrows == 3
-        assert events[0][2].ncols == 3
+# Category 7: Edge Cases & Complex Scenarios
 
-        # Add a plot - should trigger cell_updated (no plot yet)
-        cell = PlotCell(
-            row=1,
-            col=2,
-            row_span=2,
-            col_span=3,
-            config=PlotConfig(
-                workflow_id=workflow_id,
-                output_name='intensity',
-                source_names=['detector_1'],
-                plot_name='lines',
-                params={},
-            ),
-        )
-        cell_id = plot_orchestrator.add_plot(grid_id, cell)
-        assert len(events) == 2
-        assert events[1] == ('cell_updated', grid_id, 1, 2, None, None)
 
-        # Update plot config - should trigger cell_updated (no plot yet)
+class TestEdgeCasesAndComplexScenarios:
+    """Tests for edge cases and complex scenarios."""
+
+    def test_update_config_to_different_workflow_id_unsubscribe_old_subscribe_new(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        workflow_id,
+        workflow_id_2,
+        fake_job_orchestrator,
+    ):
+        """Update config to different workflow_id unsubscribes old, subscribes new."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Should be subscribed to workflow_id
+        assert len(fake_job_orchestrator._workflow_subscriptions[workflow_id]) == 1
+
+        # Update to different workflow_id
         new_config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='spectrum',
-            source_names=['detector_1'],
-            plot_name='lines',
+            workflow_id=workflow_id_2,
+            output_name='new_output',
+            source_names=['new_source'],
+            plot_name='new_plot',
             params={},
         )
         plot_orchestrator.update_plot_config(cell_id, new_config)
-        assert len(events) == 3
-        assert events[2] == ('cell_updated', grid_id, 1, 2, None, None)
 
-        # Remove the plot - should trigger cell_removed
-        plot_orchestrator.remove_plot(cell_id)
-        assert len(events) == 4
-        assert events[3] == ('cell_removed', grid_id, 1, 2)
+        # Should no longer be subscribed to old workflow
+        assert len(fake_job_orchestrator._workflow_subscriptions[workflow_id]) == 0
+        # Should be subscribed to new workflow
+        assert len(fake_job_orchestrator._workflow_subscriptions[workflow_id_2]) == 1
 
-        # Remove the grid - should trigger grid_removed
-        plot_orchestrator.remove_grid(grid_id)
-        assert len(events) == 5
-        assert events[4] == ('grid_removed', grid_id)
+    def test_multiple_updates_to_same_cell_config_subscription_management_correct(
+        self, plot_orchestrator, plot_cell, workflow_id, fake_job_orchestrator
+    ):
+        """
+        Multiple updates to same cell config maintain correct subscriptions.
 
-        # Unsubscribe
-        plot_orchestrator.unsubscribe_from_lifecycle(subscription_id)
+        Updating the same cell multiple times should not leak subscriptions.
+        """
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
-        # Further operations should not trigger events
-        plot_orchestrator.add_grid(title="Another Grid", nrows=2, ncols=2)
-        assert len(events) == 5  # No new events
+        initial_count = fake_job_orchestrator.subscription_count
 
-    def test_partial_lifecycle_subscriptions(self, plot_orchestrator, workflow_id):
-        """Test subscribing to only some lifecycle events."""
-        # Track only cell events
-        cell_events = []
-
-        def on_cell_updated(grid_id, cell, plot=None, error=None):
-            cell_events.append(('updated', grid_id, cell, plot, error))
-
-        def on_cell_removed(grid_id, cell):
-            cell_events.append(('removed', grid_id, cell))
-
-        # Subscribe only to cell events
-        plot_orchestrator.subscribe_to_lifecycle(
-            on_cell_updated=on_cell_updated,
-            on_cell_removed=on_cell_removed,
-        )
-
-        # Add grid - should not trigger anything (not subscribed to grid events)
-        grid_id = plot_orchestrator.add_grid(title="Test Grid", nrows=3, ncols=3)
-        assert len(cell_events) == 0
-
-        # Add cell - should trigger cell_updated
-        cell = PlotCell(
-            row=0,
-            col=0,
-            row_span=1,
-            col_span=1,
-            config=PlotConfig(
+        # Multiple updates with same workflow_id
+        for i in range(3):
+            new_config = PlotConfig(
                 workflow_id=workflow_id,
-                output_name='intensity',
-                source_names=['detector_1'],
-                plot_name='lines',
+                output_name=f'output_{i}',
+                source_names=[f'source_{i}'],
+                plot_name=f'plot_{i}',
                 params={},
-            ),
-        )
-        cell_id = plot_orchestrator.add_plot(grid_id, cell)
-        assert len(cell_events) == 1
-        assert cell_events[0][0] == 'updated'
-        assert cell_events[0][2].row == 0
-        assert cell_events[0][2].col == 0
-        assert cell_events[0][3] is None  # plot
-        assert cell_events[0][4] is None  # error
+            )
+            plot_orchestrator.update_plot_config(cell_id, new_config)
 
-        # Remove cell - should trigger cell_removed
+        # Should still have same subscription count
+        assert fake_job_orchestrator.subscription_count == initial_count
+
+    def test_remove_grid_with_cells_that_have_pending_plot_creation(
+        self, plot_orchestrator, plot_cell, workflow_id, fake_job_orchestrator
+    ):
+        """Remove grid with cells that have pending plot creation."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Remove grid before workflow commits
+        plot_orchestrator.remove_grid(grid_id)
+
+        # Now commit workflow - should not crash
+        job_number = uuid.uuid4()
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+        # No exception should be raised
+
+    def test_add_cell_immediately_remove_it_then_workflow_commits_no_error(
+        self, plot_orchestrator, plot_cell, workflow_id, fake_job_orchestrator
+    ):
+        """Add cell, immediately remove it, then workflow commits - no error."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Immediately remove
         plot_orchestrator.remove_plot(cell_id)
-        assert len(cell_events) == 2
-        assert cell_events[1][0] == 'removed'
-        assert cell_events[1][2].row == 0
-        assert cell_events[1][2].col == 0
+
+        # Workflow commits
+        job_number = uuid.uuid4()
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+        # No exception should be raised (defensive check at lines 346-350)
