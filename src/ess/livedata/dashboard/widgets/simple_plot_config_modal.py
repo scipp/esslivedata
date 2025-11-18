@@ -89,14 +89,23 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         self._selected_workflow_id: WorkflowId | None = None
         self._selected_output: str | None = None
 
-        # Create workflow selector radio buttons
-        self._workflow_buttons = self._create_workflow_buttons()
-        self._output_buttons: pn.widgets.RadioButtonGroup | None = None
+        # Initialize containers first before creating buttons (to avoid callback issues)
         self._content_container = pn.Column(sizing_mode='stretch_width')
         self._output_container = pn.Column(sizing_mode='stretch_width')
+        self._output_buttons: pn.widgets.RadioButtonGroup | None = None
+
+        # Create workflow selector radio buttons (without triggering callbacks yet)
+        self._workflow_buttons = self._create_workflow_buttons()
 
         # Initial layout
         self._update_content()
+
+        # Now set the initial value (after all containers are set up)
+        # This will trigger _on_workflow_change callback which updates output buttons
+        if self._workflow_buttons.options:
+            self._workflow_buttons.value = next(
+                iter(self._workflow_buttons.options.values())
+            )
 
     @property
     def name(self) -> str:
@@ -127,12 +136,6 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
 
         # Watch for selection changes
         buttons.param.watch(self._on_workflow_change, 'value')
-
-        # Initialize with first selection if available
-        if options:
-            buttons.value = next(iter(options.values()))
-            self._selected_workflow_id = buttons.value
-            self._selected_output = None  # Reset output when workflow changes
 
         return buttons
 
