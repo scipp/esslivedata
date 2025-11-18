@@ -18,9 +18,6 @@ from dataclasses import dataclass, field
 from typing import NewType, Protocol
 from uuid import UUID, uuid4
 
-import holoviews as hv
-import pydantic
-
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 from .config_store import ConfigStore
@@ -80,7 +77,7 @@ class PlotConfig:
 
 @dataclass
 class PlotCell:
-    """A configured plot cell (may or may not have actual plot yet)."""
+    """Configuration for a plot cell (position and what to plot)."""
 
     row: int
     col: int
@@ -88,10 +85,6 @@ class PlotCell:
     col_span: int
     config: PlotConfig
     id: UUID = field(default_factory=uuid4)
-    job_number: JobNumber | None = None
-    plot: hv.DynamicMap | hv.Layout | None = None
-    error: str | None = None
-    subscription_id: SubscriptionId | None = None
 
 
 @dataclass
@@ -102,7 +95,7 @@ class PlotGridConfig:
     title: str = ""
     nrows: int = 3
     ncols: int = 3
-    cells: list[PlotCell] = field(default_factory=list)
+    cells: dict[UUID, PlotCell] = field(default_factory=dict)
 
 
 class PlotOrchestrator:
@@ -133,7 +126,8 @@ class PlotOrchestrator:
         self._logger = logging.getLogger(__name__)
 
         self._grids: dict[UUID, PlotGridConfig] = {}
-        self._cell_index: dict[UUID, tuple[UUID, int]] = {}
+        self._cell_to_grid: dict[UUID, UUID] = {}
+        self._cell_to_subscription: dict[UUID, SubscriptionId] = {}
 
     def add_grid(self, title: str, nrows: int, ncols: int) -> UUID:
         """
@@ -174,12 +168,15 @@ class PlotOrchestrator:
             grid = self._grids[grid_id]
             title = grid.title
 
-            # Unsubscribe all cells and clean up cell index
-            for cell in grid.cells:
-                if cell.subscription_id is not None:
-                    self._job_orchestrator.unsubscribe(cell.subscription_id)
-                if cell.id in self._cell_index:
-                    del self._cell_index[cell.id]
+            # Unsubscribe all cells and clean up mappings
+            for cell_id in grid.cells.keys():
+                if cell_id in self._cell_to_subscription:
+                    self._job_orchestrator.unsubscribe(
+                        self._cell_to_subscription[cell_id]
+                    )
+                    del self._cell_to_subscription[cell_id]
+                if cell_id in self._cell_to_grid:
+                    del self._cell_to_grid[cell_id]
 
             del self._grids[grid_id]
             self._persist_to_store()
@@ -202,16 +199,17 @@ class PlotOrchestrator:
             UUID of the added plot cell.
         """
         grid = self._grids[grid_id]
-        grid.cells.append(cell)
+        grid.cells[cell.id] = cell
 
-        # Index the cell for fast lookup
-        self._cell_index[cell.id] = (grid_id, len(grid.cells) - 1)
+        # Map cell to its grid for fast lookup
+        self._cell_to_grid[cell.id] = grid_id
 
         # Subscribe to workflow availability and store subscription ID
-        cell.subscription_id = self._job_orchestrator.subscribe_to_workflow(
+        subscription_id = self._job_orchestrator.subscribe_to_workflow(
             workflow_id=cell.config.workflow_id,
             callback=lambda job_number: self._on_job_available(cell.id, job_number),
         )
+        self._cell_to_subscription[cell.id] = subscription_id
 
         self._persist_to_store()
         self._logger.info(
@@ -233,20 +231,18 @@ class PlotOrchestrator:
         cell_id
             UUID of the cell to remove.
         """
-        grid_id, cell_index = self._cell_index[cell_id]
+        grid_id = self._cell_to_grid[cell_id]
         grid = self._grids[grid_id]
-        cell = grid.cells.pop(cell_index)
+        cell = grid.cells[cell_id]
 
         # Unsubscribe from workflow notifications
-        if cell.subscription_id is not None:
-            self._job_orchestrator.unsubscribe(cell.subscription_id)
+        if cell_id in self._cell_to_subscription:
+            self._job_orchestrator.unsubscribe(self._cell_to_subscription[cell_id])
+            del self._cell_to_subscription[cell_id]
 
-        # Remove from index
-        del self._cell_index[cell_id]
-
-        # Rebuild index for cells after the removed one
-        for i in range(cell_index, len(grid.cells)):
-            self._cell_index[grid.cells[i].id] = (grid_id, i)
+        # Remove from grid and mapping
+        del grid.cells[cell_id]
+        del self._cell_to_grid[cell_id]
 
         self._persist_to_store()
         self._logger.info(
@@ -271,14 +267,14 @@ class PlotOrchestrator:
         :
             The plot configuration.
         """
-        grid_id, cell_index = self._cell_index[cell_id]
-        return self._grids[grid_id].cells[cell_index].config
+        grid_id = self._cell_to_grid[cell_id]
+        return self._grids[grid_id].cells[cell_id].config
 
     def update_plot_config(self, cell_id: UUID, new_config: PlotConfig) -> None:
         """
         Update plot configuration and resubscribe to workflow.
 
-        This clears the existing plot and resubscribes to the workflow.
+        This resubscribes to the workflow.
         When the workflow is next committed, the plot will be recreated
         with the new configuration.
 
@@ -289,26 +285,22 @@ class PlotOrchestrator:
         new_config
             New plot configuration.
         """
-        grid_id, cell_index = self._cell_index[cell_id]
-        cell = self._grids[grid_id].cells[cell_index]
+        grid_id = self._cell_to_grid[cell_id]
+        cell = self._grids[grid_id].cells[cell_id]
 
         # Unsubscribe from old workflow notifications
-        if cell.subscription_id is not None:
-            self._job_orchestrator.unsubscribe(cell.subscription_id)
+        if cell_id in self._cell_to_subscription:
+            self._job_orchestrator.unsubscribe(self._cell_to_subscription[cell_id])
 
         # Update configuration
         cell.config = new_config
 
-        # Clear runtime state (plot needs to be regenerated)
-        cell.plot = None
-        cell.error = None
-        cell.job_number = None
-
         # Re-subscribe to workflow (in case workflow_id changed)
-        cell.subscription_id = self._job_orchestrator.subscribe_to_workflow(
+        subscription_id = self._job_orchestrator.subscribe_to_workflow(
             workflow_id=new_config.workflow_id,
             callback=lambda job_number: self._on_job_available(cell_id, job_number),
         )
+        self._cell_to_subscription[cell_id] = subscription_id
 
         # Persist updated configuration
         self._persist_to_store()
@@ -319,8 +311,9 @@ class PlotOrchestrator:
         """
         Handle workflow availability notification from JobOrchestrator.
 
-        Called when a workflow is committed (started or restarted). Creates the
-        plot for the specified cell using the provided job_number.
+        Called when a workflow is committed (started or restarted). Passes
+        the cell configuration to PlottingController to create the plot
+        and notify subscribers.
 
         Parameters
         ----------
@@ -330,41 +323,24 @@ class PlotOrchestrator:
             Job number for the workflow.
         """
         # Defensive check: cell may have been removed before callback fires
-        if cell_id not in self._cell_index:
+        if cell_id not in self._cell_to_grid:
             self._logger.debug(
                 'Ignoring workflow availability for removed cell %s', cell_id
             )
             return
 
-        grid_id, cell_index = self._cell_index[cell_id]
-        cell = self._grids[grid_id].cells[cell_index]
+        grid_id = self._cell_to_grid[cell_id]
+        cell = self._grids[grid_id].cells[cell_id]
 
-        cell.job_number = job_number
-        try:
-            spec = self._plotting_controller.get_spec(cell.config.plot_name)
-            if spec.params is None:
-                params = pydantic.BaseModel()
-            else:
-                params = spec.params(**cell.config.params)
-
-            cell.plot = self._plotting_controller.create_plot(
-                job_number=job_number,
-                source_names=cell.config.source_names,
-                output_name=cell.config.output_name,
-                plot_name=cell.config.plot_name,
-                params=params,
-            )
-            cell.error = None
-            self._logger.info(
-                'Created plot for workflow %s at job %s',
-                cell.config.workflow_id,
-                job_number,
-            )
-        except Exception as e:
-            cell.error = str(e)
-            self._logger.exception(
-                'Failed to create plot for workflow %s', cell.config.workflow_id
-            )
+        # Pass config to controller - it will create plot and notify subscribers
+        self._plotting_controller.create_and_notify_cell_plot(
+            cell_id=cell_id,
+            job_number=job_number,
+            source_names=cell.config.source_names,
+            output_name=cell.config.output_name,
+            plot_name=cell.config.plot_name,
+            params=cell.config.params,
+        )
 
     def _persist_to_store(self) -> None:
         """Persist plot grid configurations to config store."""

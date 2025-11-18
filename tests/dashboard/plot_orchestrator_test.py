@@ -167,9 +167,8 @@ class TestPlotOrchestrator:
         assert cell_id is not None
         grid = plot_orchestrator.get_grid(grid_id)
         assert len(grid.cells) == 1
-        assert grid.cells[0].plot is None
-        assert grid.cells[0].job_number is None
-        assert grid.cells[0].error is None
+        added_cell = grid.cells[cell_id]
+        assert added_cell.config == plot_config
 
     def test_add_plot_with_matching_job(
         self,
@@ -177,6 +176,7 @@ class TestPlotOrchestrator:
         fake_job_orchestrator,
         job_service,
         data_service,
+        plotting_controller,
         workflow_id,
         job_number,
         detector_data,
@@ -211,20 +211,26 @@ class TestPlotOrchestrator:
             config=plot_config,
         )
 
-        plot_orchestrator.add_plot(grid_id, cell)
+        cell_id = plot_orchestrator.add_plot(grid_id, cell)
 
-        # Plot is not created yet - waiting for workflow commit
-        grid = plot_orchestrator.get_grid(grid_id)
-        assert grid.cells[0].plot is None
+        # Subscribe to cell plot updates
+        received_plots = []
+
+        def on_plot_update(cid, plot, error):
+            received_plots.append((cid, plot, error))
+
+        plotting_controller.subscribe_to_cell(cell_id, on_plot_update)
 
         # Simulate workflow commit from JobOrchestrator
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
-        # Now plot should be created
-        assert grid.cells[0].job_number == job_number
-        assert grid.cells[0].plot is not None
-        assert isinstance(grid.cells[0].plot, hv.DynamicMap)
-        assert grid.cells[0].error is None
+        # Verify plot was created and callback was called
+        assert len(received_plots) == 1
+        received_cell_id, received_plot, received_error = received_plots[0]
+        assert received_cell_id == cell_id
+        assert received_plot is not None
+        assert isinstance(received_plot, hv.DynamicMap)
+        assert received_error is None
 
     def test_workflow_commit_triggers_plot_creation(
         self,
@@ -232,6 +238,7 @@ class TestPlotOrchestrator:
         fake_job_orchestrator,
         job_service,
         data_service,
+        plotting_controller,
         workflow_id,
         job_number,
         detector_data,
@@ -255,11 +262,15 @@ class TestPlotOrchestrator:
             config=plot_config,
         )
 
-        plot_orchestrator.add_plot(grid_id, cell)
+        cell_id = plot_orchestrator.add_plot(grid_id, cell)
 
-        # Plot is pending - no workflow committed yet
-        grid = plot_orchestrator.get_grid(grid_id)
-        assert grid.cells[0].plot is None
+        # Subscribe to cell plot updates
+        received_plots = []
+
+        def on_plot_update(cid, plot, error):
+            received_plots.append((cid, plot, error))
+
+        plotting_controller.subscribe_to_cell(cell_id, on_plot_update)
 
         # Add data to data service
         job_id = JobId(source_name='detector_1', job_number=job_number)
@@ -274,10 +285,12 @@ class TestPlotOrchestrator:
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
         # Plot should now be created
-        assert grid.cells[0].job_number == job_number
-        assert grid.cells[0].plot is not None
-        assert isinstance(grid.cells[0].plot, hv.DynamicMap)
-        assert grid.cells[0].error is None
+        assert len(received_plots) == 1
+        received_cell_id, received_plot, received_error = received_plots[0]
+        assert received_cell_id == cell_id
+        assert received_plot is not None
+        assert isinstance(received_plot, hv.DynamicMap)
+        assert received_error is None
 
     def test_remove_plot(self, plot_orchestrator, workflow_id):
         """Test removing a plot from a grid."""
@@ -353,6 +366,7 @@ class TestPlotOrchestrator:
         fake_job_orchestrator,
         job_service,
         data_service,
+        plotting_controller,
         workflow_id,
         job_number,
         detector_data,
@@ -388,12 +402,20 @@ class TestPlotOrchestrator:
 
         cell_id = plot_orchestrator.add_plot(grid_id, cell)
 
+        # Subscribe to cell plot updates
+        received_plots = []
+
+        def on_plot_update(cid, plot, error):
+            received_plots.append((cid, plot, error))
+
+        plotting_controller.subscribe_to_cell(cell_id, on_plot_update)
+
         # Trigger workflow commit to create initial plot
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
         # Verify initial plot was created
-        grid = plot_orchestrator.get_grid(grid_id)
-        assert grid.cells[0].plot is not None
+        assert len(received_plots) == 1
+        assert received_plots[0][1] is not None
 
         # Update configuration with same workflow but different output
         new_config = PlotConfig(
@@ -406,13 +428,10 @@ class TestPlotOrchestrator:
 
         plot_orchestrator.update_plot_config(cell_id, new_config)
 
-        # Verify config was updated and plot was cleared (waiting for re-subscription)
+        # Verify config was updated
         updated_config = plot_orchestrator.get_plot_config(cell_id)
         assert updated_config.output_name == 'spectrum'
         assert updated_config.source_names == ['detector_1']
-
-        # Plot is cleared after config update
-        assert grid.cells[0].plot is None
 
     def test_remove_plot_unsubscribes_from_workflow(
         self, plot_orchestrator, fake_job_orchestrator, workflow_id, job_number
@@ -475,9 +494,8 @@ class TestPlotOrchestrator:
 
         cell_id = plot_orchestrator.add_plot(grid_id, cell)
 
-        # Get initial subscription ID
-        grid = plot_orchestrator.get_grid(grid_id)
-        initial_sub_id = grid.cells[0].subscription_id
+        # Get initial subscription ID from orchestrator's tracking dict
+        initial_sub_id = plot_orchestrator._cell_to_subscription[cell_id]
         assert initial_sub_id is not None
 
         # Verify one subscription exists
@@ -494,8 +512,8 @@ class TestPlotOrchestrator:
 
         plot_orchestrator.update_plot_config(cell_id, new_config)
 
-        # Get new subscription ID
-        new_sub_id = grid.cells[0].subscription_id
+        # Get new subscription ID from tracking dict
+        new_sub_id = plot_orchestrator._cell_to_subscription[cell_id]
         assert new_sub_id is not None
 
         # Verify subscription ID changed
