@@ -23,6 +23,7 @@ import pydantic
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 from ess.livedata.dashboard.plot_configuration_adapter import PlotConfigurationAdapter
+from ess.livedata.dashboard.plotting import PlotterSpec
 
 from .configuration_widget import ConfigurationPanel
 from .wizard import Wizard, WizardStep
@@ -369,7 +370,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection, PlotterSelection]):
             self._radio_group = None
             self._notify_ready_changed(False)
 
-    def _create_radio_buttons(self, available_plots: dict[str, object]) -> None:
+    def _create_radio_buttons(self, available_plots: dict[str, PlotterSpec]) -> None:
         """Create radio button group for plotter selection."""
         # Build mapping from display title to plot name
         self._plot_name_map = self._make_unique_title_mapping(available_plots)
@@ -384,6 +385,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection, PlotterSelection]):
             name="Plotter Type",
             options=options,
             value=initial_value,
+            orientation='vertical',
             button_type="primary",
             button_style="outline",
             sizing_mode='stretch_width',
@@ -397,23 +399,16 @@ class PlotterSelectionStep(WizardStep[OutputSelection, PlotterSelection]):
             self._notify_ready_changed(True)
 
     def _make_unique_title_mapping(
-        self, available_plots: dict[str, object]
+        self, available_plots: dict[str, PlotterSpec]
     ) -> dict[str, str]:
         """Create mapping from unique display titles to internal plot names."""
-        from ess.livedata.dashboard.plotting import PlotterSpec
-
         title_counts: dict[str, int] = {}
         result: dict[str, str] = {}
 
         # Sort alphabetically by title for better UX
-        sorted_plots = sorted(
-            available_plots.items(),
-            key=lambda x: x[1].title if isinstance(x[1], PlotterSpec) else str(x[1]),
-        )
+        sorted_plots = sorted(available_plots.items(), key=lambda x: x[1].title)
 
         for name, spec in sorted_plots:
-            if not isinstance(spec, PlotterSpec):
-                continue
             title = spec.title
             count = title_counts.get(title, 0)
             title_counts[title] = count + 1
