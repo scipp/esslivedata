@@ -99,7 +99,7 @@ class PlottingController:
         Get available plotters based on workflow spec template (before data exists).
 
         Uses the output template DataArray from the workflow specification to
-        determine compatible plotters. The template is an empty DataArray with
+        determine compatible plotters. The template is an "empty" DataArray with
         the expected structure (dims, coords, units) that allows full validation
         including custom validators.
 
@@ -122,14 +122,7 @@ class PlottingController:
         """
         template = workflow_spec.get_output_template(output_name)
         if template is None:
-            self._logger.info(
-                "No template found for output '%s' in workflow %s. "
-                "Falling back to all plotters.",
-                output_name,
-                workflow_spec.get_id(),
-            )
             return plotter_registry.get_specs(), False
-
         return plotter_registry.get_compatible_plotters({output_name: template}), True
 
     def get_spec(self, plot_name: str) -> PlotterSpec:
