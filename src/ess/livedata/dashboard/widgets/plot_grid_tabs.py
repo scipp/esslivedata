@@ -14,7 +14,6 @@ from typing import Any
 
 import holoviews as hv
 import panel as pn
-import pydantic
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
@@ -27,7 +26,7 @@ from ..plot_orchestrator import (
     PlotOrchestrator,
     SubscriptionId,
 )
-from .plot_config_modal import PlotConfigModal, PlotConfigResult
+from .plot_config_modal import PlotConfigModal
 from .plot_grid import PlotGrid, _create_close_button, _create_gear_button
 from .plot_grid_manager import PlotGridManager
 
@@ -195,18 +194,17 @@ class PlotGridTabs:
         self._modal_container.append(self._current_modal.modal)
         self._current_modal.show()
 
-    def _on_plot_configured(self, result: PlotConfigResult) -> None:
+    def _on_plot_configured(self, plot_config: PlotConfig) -> None:
         """
         Handle successful plot configuration from modal.
 
-        Creates PlotConfig with hardcoded plot_name and params, gets the
-        pending selection from PlotGrid, creates PlotCell, and adds to
+        Gets the pending selection from PlotGrid, creates PlotCell, and adds to
         orchestrator.
 
         Parameters
         ----------
-        result
-            Configuration result from the modal.
+        plot_config
+            Configuration from the modal.
         """
         if self._modal_grid_id is None:
             return
@@ -223,22 +221,6 @@ class PlotGridTabs:
             return
 
         row, col, row_span, col_span = pending
-
-        # Create PlotConfig using selected plotter and configured parameters
-        # Convert params to dict if it's a Pydantic model
-        params_dict = (
-            result.params.model_dump()
-            if isinstance(result.params, pydantic.BaseModel)
-            else result.params
-        )
-
-        plot_config = PlotConfig(
-            workflow_id=result.workflow_id,
-            output_name=result.output_name,
-            source_names=result.source_names,
-            plot_name=result.plot_name,
-            params=params_dict,
-        )
 
         # Create PlotCell
         plot_cell = PlotCell(
@@ -290,15 +272,6 @@ class PlotGridTabs:
         # Get current configuration from orchestrator
         current_config = self._orchestrator.get_plot_config(cell_id)
 
-        # Convert PlotConfig to PlotConfigResult
-        initial_config = PlotConfigResult(
-            workflow_id=current_config.workflow_id,
-            output_name=current_config.output_name,
-            plot_name=current_config.plot_name,
-            source_names=current_config.source_names,
-            params=current_config.params,
-        )
-
         # Store which cell and grid we're editing
         self._editing_cell_id = cell_id
         self._modal_grid_id = grid_id
@@ -309,7 +282,7 @@ class PlotGridTabs:
             plotting_controller=self._plotting_controller,
             success_callback=self._on_plot_reconfigured,
             cancel_callback=self._on_modal_cancelled,
-            initial_config=initial_config,
+            initial_config=current_config,
         )
 
         # Add modal to container so it renders
@@ -317,7 +290,7 @@ class PlotGridTabs:
         self._modal_container.append(self._current_modal.modal)
         self._current_modal.show()
 
-    def _on_plot_reconfigured(self, result: PlotConfigResult) -> None:
+    def _on_plot_reconfigured(self, plot_config: PlotConfig) -> None:
         """
         Handle successful plot reconfiguration from modal.
 
@@ -326,26 +299,11 @@ class PlotGridTabs:
 
         Parameters
         ----------
-        result
-            New configuration result from the modal.
+        plot_config
+            New configuration from the modal.
         """
         if self._editing_cell_id is None:
             return
-
-        # Convert result to PlotConfig
-        params_dict = (
-            result.params.model_dump()
-            if isinstance(result.params, pydantic.BaseModel)
-            else result.params
-        )
-
-        plot_config = PlotConfig(
-            workflow_id=result.workflow_id,
-            output_name=result.output_name,
-            source_names=result.source_names,
-            plot_name=result.plot_name,
-            params=params_dict,
-        )
 
         # Update configuration in orchestrator
         self._orchestrator.update_plot_config(self._editing_cell_id, plot_config)

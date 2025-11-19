@@ -23,6 +23,7 @@ import pydantic
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 from ess.livedata.dashboard.plot_configuration_adapter import PlotConfigurationAdapter
+from ess.livedata.dashboard.plot_orchestrator import PlotConfig
 from ess.livedata.dashboard.plotting import PlotterSpec
 
 from .configuration_widget import ConfigurationPanel
@@ -51,17 +52,6 @@ class PlotterSelection:
     workflow_id: WorkflowId
     output_name: str
     plot_name: str
-
-
-@dataclass
-class PlotConfigResult:
-    """Final result from the modal."""
-
-    workflow_id: WorkflowId
-    output_name: str
-    plot_name: str
-    source_names: list[str]
-    params: pydantic.BaseModel | dict[str, Any]
 
 
 class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
@@ -429,7 +419,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection, PlotterSelection]):
             self._notify_ready_changed(False)
 
 
-class SpecBasedConfigurationStep(WizardStep[PlotterSelection, PlotConfigResult]):
+class SpecBasedConfigurationStep(WizardStep[PlotterSelection, PlotConfig]):
     """Step 3: Configure plot (source selection and plotter parameters)."""
 
     def __init__(
@@ -437,7 +427,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection, PlotConfigResult])
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         plotting_controller,
         logger: logging.Logger,
-        initial_config: PlotConfigResult | None = None,
+        initial_config: PlotConfig | None = None,
     ) -> None:
         """
         Initialize spec-based configuration step.
@@ -466,7 +456,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection, PlotConfigResult])
         self._last_output: str | None = None
         self._last_plot_name: str | None = None
         # Store result from callback
-        self._last_config_result: PlotConfigResult | None = None
+        self._last_config_result: PlotConfig | None = None
 
     @property
     def name(self) -> str:
@@ -485,7 +475,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection, PlotConfigResult])
         is_valid, _ = self._config_panel.validate()
         return is_valid
 
-    def commit(self) -> PlotConfigResult | None:
+    def commit(self) -> PlotConfig | None:
         """Commit the plot configuration."""
         if self._config_panel is None or self._plotter_selection is None:
             return None
@@ -578,7 +568,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection, PlotConfigResult])
         """Callback from adapter - store result for commit() to return."""
         if self._plotter_selection is None:
             return
-        self._last_config_result = PlotConfigResult(
+        self._last_config_result = PlotConfig(
             workflow_id=self._plotter_selection.workflow_id,
             output_name=self._plotter_selection.output_name,
             plot_name=self._plotter_selection.plot_name,
@@ -616,7 +606,7 @@ class PlotConfigModal:
     plotting_controller
         Controller for determining available plotters from specs.
     success_callback
-        Called with PlotConfigResult when user completes configuration.
+        Called with PlotConfig when user completes configuration.
     cancel_callback
         Called when modal is closed or cancelled.
     initial_config
@@ -628,9 +618,9 @@ class PlotConfigModal:
         self,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         plotting_controller,
-        success_callback: Callable[[PlotConfigResult], None],
+        success_callback: Callable[[PlotConfig], None],
         cancel_callback: Callable[[], None],
-        initial_config: PlotConfigResult | None = None,
+        initial_config: PlotConfig | None = None,
     ) -> None:
         self._success_callback = success_callback
         self._cancel_callback = cancel_callback
@@ -675,7 +665,7 @@ class PlotConfigModal:
         # Watch for modal close events
         self._modal.param.watch(self._on_modal_closed, 'open')
 
-    def _on_wizard_complete(self, result: PlotConfigResult) -> None:
+    def _on_wizard_complete(self, result: PlotConfig) -> None:
         """Handle wizard completion - close modal and call success callback."""
         self._modal.open = False
         self._success_callback(result)
@@ -704,9 +694,9 @@ class PlotConfigModal:
             self._wizard.reset()
         self._modal.open = True
 
-    def _config_to_step_results(self, config: PlotConfigResult) -> list[Any]:
+    def _config_to_step_results(self, config: PlotConfig) -> list[Any]:
         """
-        Convert PlotConfigResult to step results for wizard initialization.
+        Convert PlotConfig to step results for wizard initialization.
 
         Parameters
         ----------

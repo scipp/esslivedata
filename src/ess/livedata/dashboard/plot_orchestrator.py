@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NewType, Protocol
 from uuid import UUID, uuid4
 
+import pydantic
+
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 from .config_store import ConfigStore
@@ -105,7 +107,7 @@ class PlotConfig:
     output_name: str | None
     source_names: list[str]
     plot_name: str
-    params: dict
+    params: pydantic.BaseModel | dict[str, Any]
 
 
 @dataclass
