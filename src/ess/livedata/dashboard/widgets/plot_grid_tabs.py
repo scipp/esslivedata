@@ -9,7 +9,7 @@ synchronized with PlotOrchestrator via lifecycle subscriptions.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import holoviews as hv
@@ -182,29 +182,8 @@ class PlotGridTabs:
                 config=plot_config,
             )
             self._orchestrator.add_plot(grid_id, plot_cell)
-            self._cleanup_modal()
 
-        def on_cancel() -> None:
-            """Handle modal cancellation."""
-            self._cleanup_modal()
-
-        # Create and show modal
-        self._current_modal = PlotConfigModal(
-            workflow_registry=self._workflow_registry,
-            plotting_controller=self._plotting_controller,
-            success_callback=on_success,
-            cancel_callback=on_cancel,
-        )
-
-        # Add modal to container so it renders
-        self._modal_container.clear()
-        self._modal_container.append(self._current_modal.modal)
-        self._current_modal.show()
-
-    def _cleanup_modal(self) -> None:
-        """Clean up modal state after completion or cancellation."""
-        self._current_modal = None
-        self._modal_container.clear()
+        self._show_config_modal(on_success=on_success)
 
     def _on_reconfigure_plot(self, cell_id: CellId) -> None:
         """
@@ -218,31 +197,54 @@ class PlotGridTabs:
         cell_id
             ID of the cell to reconfigure.
         """
-        # Get current configuration from orchestrator
-        current_config = self._orchestrator.get_plot_config(cell_id)
 
         def on_success(plot_config: PlotConfig) -> None:
             """Handle successful plot reconfiguration."""
             self._orchestrator.update_plot_config(cell_id, plot_config)
+
+        current_config = self._orchestrator.get_plot_config(cell_id)
+        self._show_config_modal(on_success=on_success, initial_config=current_config)
+
+    def _show_config_modal(
+        self,
+        *,
+        on_success: Callable[[PlotConfig], None],
+        initial_config: PlotConfig | None = None,
+    ) -> None:
+        """
+        Show the plot configuration modal.
+
+        Parameters
+        ----------
+        on_success
+            Callback to invoke when configuration is successfully completed.
+        initial_config
+            Optional initial configuration for editing an existing plot.
+        """
+
+        def wrapped_on_success(plot_config: PlotConfig) -> None:
+            """Wrap success callback to include cleanup."""
+            on_success(plot_config)
             self._cleanup_modal()
 
-        def on_cancel() -> None:
-            """Handle modal cancellation."""
-            self._cleanup_modal()
-
-        # Create and show modal in edit mode
+        # Create and show modal
         self._current_modal = PlotConfigModal(
             workflow_registry=self._workflow_registry,
             plotting_controller=self._plotting_controller,
-            success_callback=on_success,
-            cancel_callback=on_cancel,
-            initial_config=current_config,
+            success_callback=wrapped_on_success,
+            cancel_callback=self._cleanup_modal,
+            initial_config=initial_config,
         )
 
         # Add modal to container so it renders
         self._modal_container.clear()
         self._modal_container.append(self._current_modal.modal)
         self._current_modal.show()
+
+    def _cleanup_modal(self) -> None:
+        """Clean up modal state after completion or cancellation."""
+        self._current_modal = None
+        self._modal_container.clear()
 
     def _on_cell_updated(
         self,
@@ -301,8 +303,8 @@ class PlotGridTabs:
         ----------
         grid_id
             ID of the grid containing the cell.
-        cell_id
-            ID of the cell being removed.
+        _cell_id
+            ID of the cell being removed (unused, kept for signature compatibility).
         cell
             Plot cell that was removed.
         """
