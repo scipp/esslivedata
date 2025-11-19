@@ -232,16 +232,16 @@ class PlotGrid:
     ncols:
         Number of columns in the grid.
     plot_request_callback:
-        Callback invoked when a region is selected. This callback will be
-        called asynchronously and should not return a value. The plot should
-        be inserted later via `insert_plot_deferred()`.
+        Callback invoked when a region is selected with the region coordinates
+        (row, col, row_span, col_span). This callback will be called
+        asynchronously and should not return a value.
     """
 
     def __init__(
         self,
         nrows: int,
         ncols: int,
-        plot_request_callback: Callable[[], None],
+        plot_request_callback: Callable[[int, int, int, int], None],
     ) -> None:
         self._nrows = nrows
         self._ncols = ncols
@@ -251,7 +251,6 @@ class PlotGrid:
         self._occupied_cells: dict[tuple[int, int, int, int], pn.Column] = {}
         self._first_click: tuple[int, int] | None = None
         self._highlighted_cell: pn.pane.HTML | None = None
-        self._pending_selection: tuple[int, int, int, int] | None = None
 
         # Create the grid
         self._grid = pn.GridSpec(
@@ -361,14 +360,11 @@ class PlotGrid:
                 row_start, row_end, col_start, col_end
             )
 
-            # Store selection for plot insertion
-            self._pending_selection = (row_start, col_start, row_span, col_span)
-
             # Clear selection highlight
             self._clear_selection()
 
-            # Request plot from callback (async, no return value)
-            self._plot_request_callback()
+            # Request plot from callback, passing region coordinates
+            self._plot_request_callback(row_start, col_start, row_span, col_span)
 
     def _is_cell_occupied(self, row: int, col: int) -> bool:
         """Check if a specific cell is occupied by a plot."""
@@ -477,15 +473,6 @@ class PlotGrid:
         """Display a temporary error notification."""
         if pn.state.notifications is not None:
             pn.state.notifications.error(message, duration=3000)
-
-    def cancel_pending_selection(self) -> None:
-        """
-        Abort the current plot creation workflow and reset state.
-
-        This method should be called when the plot request callback is cancelled
-        or fails. It clears the pending selection.
-        """
-        self._pending_selection = None
 
     def insert_widget_at(
         self, row: int, col: int, row_span: int, col_span: int, widget: Any

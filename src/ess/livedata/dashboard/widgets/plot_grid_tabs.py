@@ -75,6 +75,7 @@ class PlotGridTabs:
         self._modal_container = pn.Row(height=0, sizing_mode='stretch_width')
         self._current_modal: PlotConfigModal | None = None
         self._modal_grid_id: GridId | None = None
+        self._pending_region: tuple[int, int, int, int] | None = None
         self._editing_cell_id: CellId | None = None  # Track cell being reconfigured
 
         # Subscribe to lifecycle events
@@ -99,8 +100,8 @@ class PlotGridTabs:
         """Add a new grid tab after the Manage tab."""
 
         # Create grid-specific callback using closure to capture grid_id
-        def grid_callback() -> None:
-            self._on_plot_requested(grid_id)
+        def grid_callback(row: int, col: int, row_span: int, col_span: int) -> None:
+            self._on_plot_requested(grid_id, row, col, row_span, col_span)
 
         # Create PlotGrid widget with grid-specific callback
         plot_grid = PlotGrid(
@@ -166,7 +167,9 @@ class PlotGridTabs:
         """Handle grid removal from orchestrator."""
         self._remove_grid_tab(grid_id)
 
-    def _on_plot_requested(self, grid_id: GridId) -> None:
+    def _on_plot_requested(
+        self, grid_id: GridId, row: int, col: int, row_span: int, col_span: int
+    ) -> None:
         """
         Handle plot request from PlotGrid.
 
@@ -177,9 +180,18 @@ class PlotGridTabs:
         ----------
         grid_id
             ID of the grid where the plot was requested.
+        row
+            Starting row of the selected region.
+        col
+            Starting column of the selected region.
+        row_span
+            Number of rows in the selected region.
+        col_span
+            Number of columns in the selected region.
         """
-        # Store which grid this modal is for
+        # Store which grid and region this modal is for
         self._modal_grid_id = grid_id
+        self._pending_region = (row, col, row_span, col_span)
 
         # Create and show modal
         self._current_modal = PlotConfigModal(
@@ -198,29 +210,18 @@ class PlotGridTabs:
         """
         Handle successful plot configuration from modal.
 
-        Gets the pending selection from PlotGrid, creates PlotCell, and adds to
-        orchestrator.
+        Gets the pending region, creates PlotCell, and adds to orchestrator.
 
         Parameters
         ----------
         plot_config
             Configuration from the modal.
         """
-        if self._modal_grid_id is None:
+        if self._modal_grid_id is None or self._pending_region is None:
             return
 
         grid_id = self._modal_grid_id
-        plot_grid = self._grid_widgets.get(grid_id)
-
-        if plot_grid is None:
-            return
-
-        # Get pending selection from PlotGrid
-        pending = plot_grid._pending_selection
-        if pending is None:
-            return
-
-        row, col, row_span, col_span = pending
+        row, col, row_span, col_span = self._pending_region
 
         # Create PlotCell
         plot_cell = PlotCell(
@@ -234,25 +235,17 @@ class PlotGridTabs:
         # Clear modal references before adding plot
         self._current_modal = None
         self._modal_grid_id = None
-
-        # Clear pending selection in PlotGrid
-        plot_grid.cancel_pending_selection()
+        self._pending_region = None
 
         # Add to orchestrator (will trigger lifecycle callbacks for all sessions)
         self._orchestrator.add_plot(grid_id, plot_cell)
 
     def _on_modal_cancelled(self) -> None:
         """Handle modal cancellation."""
-        if self._modal_grid_id is not None:
-            plot_grid = self._grid_widgets.get(self._modal_grid_id)
-            if plot_grid is not None:
-                # Cancel pending selection in PlotGrid (only when adding, not editing)
-                if self._editing_cell_id is None:
-                    plot_grid.cancel_pending_selection()
-
-        # Clear modal references
+        # Clear modal references and pending state
         self._current_modal = None
         self._modal_grid_id = None
+        self._pending_region = None
         self._editing_cell_id = None
 
     def _on_reconfigure_plot(self, cell_id: CellId, grid_id: GridId) -> None:
@@ -357,7 +350,7 @@ class PlotGridTabs:
         # Create appropriate widget based on what's available
         if plot is not None:
             # Show actual plot
-            widget = self._create_plot_widget(grid_id, cell_id, cell, plot)
+            widget = self._create_plot_widget(grid_id, cell_id, plot)
         else:
             # Show status widget (either waiting for data or error)
             widget = self._create_status_widget(grid_id, cell_id, cell, error=error)
@@ -494,7 +487,6 @@ class PlotGridTabs:
         self,
         grid_id: GridId,
         cell_id: CellId,
-        cell: PlotCell,
         plot: hv.DynamicMap | hv.Layout,
     ) -> pn.Column:
         """
@@ -506,8 +498,6 @@ class PlotGridTabs:
             ID of the grid containing this cell.
         cell_id
             ID of the cell.
-        cell
-            Plot cell configuration.
         plot
             HoloViews plot object.
 

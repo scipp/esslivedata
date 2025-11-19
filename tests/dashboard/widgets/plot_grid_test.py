@@ -32,6 +32,12 @@ class FakeCallback:
     def assert_not_called(self) -> None:
         assert self.call_count == 0, f"Expected 0 calls, got {self.call_count}"
 
+    def get_last_call_args(self) -> tuple:
+        """Get the positional arguments from the last call."""
+        if not self.calls:
+            raise ValueError("No calls recorded")
+        return self.calls[-1][0]
+
 
 @pytest.fixture
 def mock_plot() -> hv.DynamicMap:
@@ -126,25 +132,30 @@ def count_occupied_cells(grid: PlotGrid) -> int:
     return count
 
 
-def insert_plot_at_pending_selection(grid: PlotGrid, plot: hv.DynamicMap) -> None:
+def insert_plot_at_pending_selection(
+    grid: PlotGrid, callback: FakeCallback, plot: hv.DynamicMap
+) -> None:
     """
-    Insert a plot at the pending selection position.
+    Insert a plot at the region from the callback.
 
-    This mimics the workflow used by PlotGridTabs: reading the pending
-    selection and calling insert_widget_at with a plot widget.
+    This mimics the workflow used by PlotGridTabs: reading the region
+    from the callback and calling insert_widget_at with a plot widget.
 
     Parameters
     ----------
     grid:
         The PlotGrid instance.
+    callback:
+        The FakeCallback that captured the region arguments.
     plot:
         The HoloViews DynamicMap to insert.
     """
-    pending = grid._pending_selection
-    if pending is None:
+    # Get region from last callback invocation
+    try:
+        row, col, row_span, col_span = callback.get_last_call_args()
+    except ValueError:
+        # No callback was made, nothing to insert
         return
-
-    row, col, row_span, col_span = pending
 
     # Create plot widget similar to PlotGridTabs._create_plot_widget
     # Use .layout to preserve widgets for DynamicMaps with kdims
@@ -165,9 +176,6 @@ def insert_plot_at_pending_selection(grid: PlotGrid, plot: hv.DynamicMap) -> Non
         sizing_mode='stretch_both',
         styles={'position': 'relative'},
     )
-
-    # Clear pending selection before inserting (matches PlotGridTabs behavior)
-    grid.cancel_pending_selection()
 
     # Insert widget at the position
     grid.insert_widget_at(row, col, row_span, col_span, widget)
@@ -209,7 +217,7 @@ class TestCellSelection:
         mock_callback.assert_called_once()
 
         # Complete the deferred insertion
-        insert_plot_at_pending_selection(grid, mock_plot)
+        insert_plot_at_pending_selection(grid, mock_callback, mock_plot)
 
         # Cell should now contain a plot
         assert is_cell_occupied(grid, 1, 1)
@@ -226,7 +234,7 @@ class TestCellSelection:
         mock_callback.assert_called_once()
 
         # Complete the deferred insertion
-        insert_plot_at_pending_selection(grid, mock_plot)
+        insert_plot_at_pending_selection(grid, mock_callback, mock_plot)
 
         # All cells in the 2x3 region should be occupied
         assert is_cell_occupied(grid, 0, 0)
@@ -249,7 +257,7 @@ class TestCellSelection:
         simulate_click(grid, 2, 2)
         simulate_click(grid, 1, 1)
 
-        insert_plot_at_pending_selection(grid, mock_plot)
+        insert_plot_at_pending_selection(grid, mock_callback, mock_plot)
 
         # Should still create a 2x2 region
         assert is_cell_occupied(grid, 1, 1)
@@ -287,12 +295,12 @@ class TestPlotInsertion:
         # Insert first plot
         simulate_click(grid, 0, 0)
         simulate_click(grid, 0, 0)
-        insert_plot_at_pending_selection(grid, mock_plot)
+        insert_plot_at_pending_selection(grid, mock_callback, mock_plot)
 
         # Insert second plot
         simulate_click(grid, 2, 2)
         simulate_click(grid, 2, 2)
-        insert_plot_at_pending_selection(grid, mock_plot)
+        insert_plot_at_pending_selection(grid, mock_callback, mock_plot)
 
         # Both cells should be occupied
         assert is_cell_occupied(grid, 0, 0)
@@ -305,7 +313,7 @@ class TestPlotInsertion:
 
         simulate_click(grid, 1, 1)
         simulate_click(grid, 1, 1)
-        insert_plot_at_pending_selection(grid, mock_plot)
+        insert_plot_at_pending_selection(grid, mock_callback, mock_plot)
 
         # Should be able to find a close button
         close_button = find_close_button(grid, 1, 1)
@@ -321,7 +329,7 @@ class TestPlotRemoval:
         # Insert plot
         simulate_click(grid, 0, 0)
         simulate_click(grid, 1, 1)
-        insert_plot_at_pending_selection(grid, mock_plot)
+        insert_plot_at_pending_selection(grid, mock_callback, mock_plot)
 
         # Verify plot is there
         assert is_cell_occupied(grid, 0, 0)
@@ -345,7 +353,7 @@ class TestPlotRemoval:
         # Insert and remove plot
         simulate_click(grid, 1, 1)
         simulate_click(grid, 1, 1)
-        insert_plot_at_pending_selection(grid, mock_plot)
+        insert_plot_at_pending_selection(grid, mock_callback, mock_plot)
 
         close_button = find_close_button(grid, 1, 1)
         assert close_button is not None
@@ -359,7 +367,7 @@ class TestPlotRemoval:
 
         assert mock_callback.call_count == 1
 
-        insert_plot_at_pending_selection(grid, mock_plot)
+        insert_plot_at_pending_selection(grid, mock_callback, mock_plot)
         assert is_cell_occupied(grid, 1, 1)
 
 
@@ -372,7 +380,7 @@ class TestOverlapPrevention:
         # Insert plot at (1, 1) to (2, 2)
         simulate_click(grid, 1, 1)
         simulate_click(grid, 2, 2)
-        insert_plot_at_pending_selection(grid, mock_plot)
+        insert_plot_at_pending_selection(grid, mock_callback, mock_plot)
 
         # Start new selection at (0, 0)
         simulate_click(grid, 0, 0)
@@ -390,7 +398,7 @@ class TestOverlapPrevention:
         # Insert plot at (1, 1) to (2, 2)
         simulate_click(grid, 1, 1)
         simulate_click(grid, 2, 2)
-        insert_plot_at_pending_selection(grid, mock_plot)
+        insert_plot_at_pending_selection(grid, mock_callback, mock_plot)
 
         mock_callback.reset()
 
@@ -399,39 +407,19 @@ class TestOverlapPrevention:
         simulate_click(grid, 0, 0)
         mock_callback.assert_called_once()
 
-        insert_plot_at_pending_selection(grid, mock_plot)
+        insert_plot_at_pending_selection(grid, mock_callback, mock_plot)
         assert is_cell_occupied(grid, 0, 0)
 
 
-class TestSelectionCancellation:
-    def test_cancel_pending_selection_clears_state(
-        self, mock_callback: FakeCallback
-    ) -> None:
-        grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
-
-        # Start a selection
-        simulate_click(grid, 0, 0)
-        simulate_click(grid, 1, 1)
-
-        # Cancel it
-        grid.cancel_pending_selection()
-
-        # Should be able to start a new selection
-        mock_callback.reset()
-        simulate_click(grid, 2, 2)
-        simulate_click(grid, 2, 2)
-        mock_callback.assert_called_once()
-
-
 class TestErrorHandling:
-    def test_insert_without_pending_selection_shows_error(
+    def test_insert_without_callback_shows_no_error(
         self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
         grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
 
-        # Try to insert without making a selection
+        # Try to insert without making a selection (callback wasn't invoked)
         # This should handle gracefully (no crash)
-        insert_plot_at_pending_selection(grid, mock_plot)
+        insert_plot_at_pending_selection(grid, mock_callback, mock_plot)
 
         # No cells should be occupied
         assert not is_cell_occupied(grid, 0, 0)
