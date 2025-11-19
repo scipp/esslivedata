@@ -70,9 +70,6 @@ class PlotGridTabs:
         # but doesn't compete for vertical space. The modal renders as an overlay.
         self._modal_container = pn.Row(height=0, sizing_mode='stretch_width')
         self._current_modal: PlotConfigModal | None = None
-        self._modal_grid_id: GridId | None = None
-        self._pending_region: tuple[int, int, int, int] | None = None
-        self._editing_cell_id: CellId | None = None  # Track cell being reconfigured
 
         # Subscribe to lifecycle events
         self._subscription_id: SubscriptionId | None = (
@@ -174,16 +171,29 @@ class PlotGridTabs:
         col_span
             Number of columns in the selected region.
         """
-        # Store which grid and region this modal is for
-        self._modal_grid_id = grid_id
-        self._pending_region = (row, col, row_span, col_span)
+
+        def on_success(plot_config: PlotConfig) -> None:
+            """Handle successful plot configuration."""
+            plot_cell = PlotCell(
+                row=row,
+                col=col,
+                row_span=row_span,
+                col_span=col_span,
+                config=plot_config,
+            )
+            self._orchestrator.add_plot(grid_id, plot_cell)
+            self._cleanup_modal()
+
+        def on_cancel() -> None:
+            """Handle modal cancellation."""
+            self._cleanup_modal()
 
         # Create and show modal
         self._current_modal = PlotConfigModal(
             workflow_registry=self._workflow_registry,
             plotting_controller=self._plotting_controller,
-            success_callback=self._on_plot_configured,
-            cancel_callback=self._on_modal_cancelled,
+            success_callback=on_success,
+            cancel_callback=on_cancel,
         )
 
         # Add modal to container so it renders
@@ -191,49 +201,12 @@ class PlotGridTabs:
         self._modal_container.append(self._current_modal.modal)
         self._current_modal.show()
 
-    def _on_plot_configured(self, plot_config: PlotConfig) -> None:
-        """
-        Handle successful plot configuration from modal.
-
-        Gets the pending region, creates PlotCell, and adds to orchestrator.
-
-        Parameters
-        ----------
-        plot_config
-            Configuration from the modal.
-        """
-        if self._modal_grid_id is None or self._pending_region is None:
-            return
-
-        grid_id = self._modal_grid_id
-        row, col, row_span, col_span = self._pending_region
-
-        # Create PlotCell
-        plot_cell = PlotCell(
-            row=row,
-            col=col,
-            row_span=row_span,
-            col_span=col_span,
-            config=plot_config,
-        )
-
-        # Clear modal references before adding plot
+    def _cleanup_modal(self) -> None:
+        """Clean up modal state after completion or cancellation."""
         self._current_modal = None
-        self._modal_grid_id = None
-        self._pending_region = None
+        self._modal_container.clear()
 
-        # Add to orchestrator (will trigger lifecycle callbacks for all sessions)
-        self._orchestrator.add_plot(grid_id, plot_cell)
-
-    def _on_modal_cancelled(self) -> None:
-        """Handle modal cancellation."""
-        # Clear modal references and pending state
-        self._current_modal = None
-        self._modal_grid_id = None
-        self._pending_region = None
-        self._editing_cell_id = None
-
-    def _on_reconfigure_plot(self, cell_id: CellId, grid_id: GridId) -> None:
+    def _on_reconfigure_plot(self, cell_id: CellId) -> None:
         """
         Handle plot reconfiguration request from gear button.
 
@@ -244,22 +217,25 @@ class PlotGridTabs:
         ----------
         cell_id
             ID of the cell to reconfigure.
-        grid_id
-            ID of the grid containing the cell.
         """
         # Get current configuration from orchestrator
         current_config = self._orchestrator.get_plot_config(cell_id)
 
-        # Store which cell and grid we're editing
-        self._editing_cell_id = cell_id
-        self._modal_grid_id = grid_id
+        def on_success(plot_config: PlotConfig) -> None:
+            """Handle successful plot reconfiguration."""
+            self._orchestrator.update_plot_config(cell_id, plot_config)
+            self._cleanup_modal()
+
+        def on_cancel() -> None:
+            """Handle modal cancellation."""
+            self._cleanup_modal()
 
         # Create and show modal in edit mode
         self._current_modal = PlotConfigModal(
             workflow_registry=self._workflow_registry,
             plotting_controller=self._plotting_controller,
-            success_callback=self._on_plot_reconfigured,
-            cancel_callback=self._on_modal_cancelled,
+            success_callback=on_success,
+            cancel_callback=on_cancel,
             initial_config=current_config,
         )
 
@@ -267,29 +243,6 @@ class PlotGridTabs:
         self._modal_container.clear()
         self._modal_container.append(self._current_modal.modal)
         self._current_modal.show()
-
-    def _on_plot_reconfigured(self, plot_config: PlotConfig) -> None:
-        """
-        Handle successful plot reconfiguration from modal.
-
-        Updates the plot configuration in the orchestrator, which will trigger
-        plot recreation when the workflow is next committed.
-
-        Parameters
-        ----------
-        plot_config
-            New configuration from the modal.
-        """
-        if self._editing_cell_id is None:
-            return
-
-        # Update configuration in orchestrator
-        self._orchestrator.update_plot_config(self._editing_cell_id, plot_config)
-
-        # Clear modal references
-        self._current_modal = None
-        self._modal_grid_id = None
-        self._editing_cell_id = None
 
     def _on_cell_updated(
         self,
@@ -326,10 +279,10 @@ class PlotGridTabs:
         # Create appropriate widget based on what's available
         if plot is not None:
             # Show actual plot
-            widget = self._create_plot_widget(grid_id, cell_id, plot)
+            widget = self._create_plot_widget(cell_id, plot)
         else:
             # Show status widget (either waiting for data or error)
-            widget = self._create_status_widget(grid_id, cell_id, cell, error=error)
+            widget = self._create_status_widget(cell_id, cell, error=error)
 
         # Insert widget at explicit position
         plot_grid.insert_widget_at(
@@ -361,7 +314,7 @@ class PlotGridTabs:
         plot_grid.remove_widget_at(cell.row, cell.col, cell.row_span, cell.col_span)
 
     def _create_status_widget(
-        self, grid_id: GridId, cell_id: CellId, cell: PlotCell, error: str | None = None
+        self, cell_id: CellId, cell: PlotCell, error: str | None = None
     ) -> pn.Column:
         """
         Create a status widget for a cell without a plot.
@@ -371,8 +324,6 @@ class PlotGridTabs:
 
         Parameters
         ----------
-        grid_id
-            ID of the grid containing this cell.
         cell_id
             ID of the cell.
         cell
@@ -431,7 +382,7 @@ class PlotGridTabs:
 
         # Create gear button for reconfiguration
         def on_gear() -> None:
-            self._on_reconfigure_plot(cell_id, grid_id)
+            self._on_reconfigure_plot(cell_id)
 
         gear_button = _create_gear_button(on_gear)
 
@@ -457,7 +408,6 @@ class PlotGridTabs:
 
     def _create_plot_widget(
         self,
-        grid_id: GridId,
         cell_id: CellId,
         plot: hv.DynamicMap | hv.Layout,
     ) -> pn.Column:
@@ -466,8 +416,6 @@ class PlotGridTabs:
 
         Parameters
         ----------
-        grid_id
-            ID of the grid containing this cell.
         cell_id
             ID of the cell.
         plot
@@ -487,7 +435,7 @@ class PlotGridTabs:
 
         # Create gear button for reconfiguration
         def on_gear() -> None:
-            self._on_reconfigure_plot(cell_id, grid_id)
+            self._on_reconfigure_plot(cell_id)
 
         gear_button = _create_gear_button(on_gear)
 
