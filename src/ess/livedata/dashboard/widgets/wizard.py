@@ -238,6 +238,38 @@ class Wizard:
         self._step_results = []
         self._update_content()
 
+    def reset_to_step(
+        self, step_index: int, previous_results: list[Any] | None = None
+    ) -> None:
+        """
+        Reset wizard to specific step with pre-populated results.
+
+        This is useful for editing existing configurations where you want
+        to skip to the last step but allow navigating back through
+        previously-configured values.
+
+        Parameters
+        ----------
+        step_index
+            The step index (0-based) to start at.
+        previous_results
+            Results from previous steps. Should have length equal to step_index.
+            If None, empty results will be used (steps may need to handle this).
+        """
+        if step_index < 0 or step_index >= len(self._steps):
+            raise ValueError(f"Invalid step index: {step_index}")
+
+        if previous_results is not None and len(previous_results) != step_index:
+            raise ValueError(
+                f"previous_results length ({len(previous_results)}) "
+                f"must equal step_index ({step_index})"
+            )
+
+        self._current_step_index = step_index
+        self._finished = False
+        self._step_results = list(previous_results) if previous_results else []
+        self._update_content()
+
     def render(self) -> pn.Column:
         """Render the wizard content."""
         return self._content

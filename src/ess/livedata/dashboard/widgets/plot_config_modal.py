@@ -437,6 +437,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection, PlotConfigResult])
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         plotting_controller,
         logger: logging.Logger,
+        initial_config: PlotConfigResult | None = None,
     ) -> None:
         """
         Initialize spec-based configuration step.
@@ -449,11 +450,14 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection, PlotConfigResult])
             Controller for getting plotter specs.
         logger
             Logger instance for error reporting.
+        initial_config
+            Optional initial configuration for edit mode.
         """
         super().__init__()
         self._workflow_registry = dict(workflow_registry)
         self._plotting_controller = plotting_controller
         self._logger = logger
+        self._initial_config = initial_config
         self._config_panel: ConfigurationPanel | None = None
         self._panel_container = pn.Column(sizing_mode='stretch_width')
         self._plotter_selection: PlotterSelection | None = None
@@ -541,11 +545,26 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection, PlotConfigResult])
             self._show_error(f'Error getting plot spec: {e}')
             return
 
+        # Create config_state from initial_config if in edit mode
+        config_state = None
+        if self._initial_config is not None:
+            # Import ConfigurationState here to avoid circular imports
+            from ess.livedata.dashboard.configuration_adapter import ConfigurationState
+
+            config_state = ConfigurationState(
+                source_names=self._initial_config.source_names,
+                params=(
+                    self._initial_config.params.model_dump()
+                    if isinstance(self._initial_config.params, pydantic.BaseModel)
+                    else self._initial_config.params
+                ),
+            )
+
         config_adapter = PlotConfigurationAdapter(
             plot_spec=plot_spec,
             source_names=workflow_spec.source_names,
             success_callback=self._on_config_collected,
-            config_state=None,
+            config_state=config_state,
         )
 
         self._config_panel = ConfigurationPanel(config=config_adapter)
@@ -586,6 +605,10 @@ class PlotConfigModal:
     enabling plotter selection before data is available. This makes it suitable
     for template-based plot grid configuration.
 
+    When initial_config is provided (edit mode), the wizard starts at the last
+    step (configuration) with pre-populated values, but users can navigate back
+    to change workflow, output, or plotter type.
+
     Parameters
     ----------
     workflow_registry
@@ -596,6 +619,9 @@ class PlotConfigModal:
         Called with PlotConfigResult when user completes configuration.
     cancel_callback
         Called when modal is closed or cancelled.
+    initial_config
+        Optional existing configuration for edit mode. When provided, the wizard
+        starts at the configuration step with pre-filled values.
     """
 
     def __init__(
@@ -604,10 +630,12 @@ class PlotConfigModal:
         plotting_controller,
         success_callback: Callable[[PlotConfigResult], None],
         cancel_callback: Callable[[], None],
+        initial_config: PlotConfigResult | None = None,
     ) -> None:
         self._success_callback = success_callback
         self._cancel_callback = cancel_callback
         self._logger = logging.getLogger(__name__)
+        self._initial_config = initial_config
 
         # Create steps
         step1 = WorkflowAndOutputSelectionStep(
@@ -622,20 +650,23 @@ class PlotConfigModal:
             workflow_registry=workflow_registry,
             plotting_controller=plotting_controller,
             logger=self._logger,
+            initial_config=initial_config,
         )
 
         # Create wizard
+        action_label = "Update Plot" if initial_config else "Add Plot"
         self._wizard = Wizard(
             steps=[step1, step2, step3],
             on_complete=self._on_wizard_complete,
             on_cancel=self._on_wizard_cancel,
-            action_button_label="Add Plot",
+            action_button_label=action_label,
         )
 
         # Create modal wrapping the wizard
+        modal_title = "Reconfigure Plot" if initial_config else "Configure Plot"
         self._modal = pn.Modal(
             self._wizard.render(),
-            name="Configure Plot",
+            name=modal_title,
             margin=20,
             width=700,
             height=600,
@@ -663,9 +694,44 @@ class PlotConfigModal:
 
     def show(self) -> None:
         """Show the modal dialog."""
-        # Reset wizard and show modal
-        self._wizard.reset()
+        if self._initial_config is not None:
+            # Edit mode: convert config to step results and start at last step
+            step_results = self._config_to_step_results(self._initial_config)
+            # Start at step 2 (0-indexed), which is the last step (configuration)
+            self._wizard.reset_to_step(2, step_results)
+        else:
+            # Add mode: reset to first step
+            self._wizard.reset()
         self._modal.open = True
+
+    def _config_to_step_results(self, config: PlotConfigResult) -> list[Any]:
+        """
+        Convert PlotConfigResult to step results for wizard initialization.
+
+        Parameters
+        ----------
+        config
+            The configuration to convert.
+
+        Returns
+        -------
+        :
+            List of step results [OutputSelection, PlotterSelection]
+        """
+        # Step 1 result: OutputSelection
+        output_selection = OutputSelection(
+            workflow_id=config.workflow_id,
+            output_name=config.output_name,
+        )
+
+        # Step 2 result: PlotterSelection
+        plotter_selection = PlotterSelection(
+            workflow_id=config.workflow_id,
+            output_name=config.output_name,
+            plot_name=config.plot_name,
+        )
+
+        return [output_selection, plotter_selection]
 
     @property
     def modal(self) -> pn.Modal:

@@ -136,8 +136,8 @@ class PlotGridConfig:
 
 GridCreatedCallback = Callable[[GridId, PlotGridConfig], None]
 GridRemovedCallback = Callable[[GridId], None]
-CellUpdatedCallback = Callable[[GridId, PlotCell, Any, str | None], None]
-CellRemovedCallback = Callable[[GridId, PlotCell], None]
+CellUpdatedCallback = Callable[[GridId, CellId, PlotCell, Any, str | None], None]
+CellRemovedCallback = Callable[[GridId, CellId, PlotCell], None]
 
 
 @dataclass
@@ -273,7 +273,7 @@ class PlotOrchestrator:
             cell.col,
             cell.config.workflow_id,
         )
-        self._notify_cell_updated(grid_id, cell)
+        self._notify_cell_updated(grid_id, cell_id, cell)
         return cell_id
 
     def remove_plot(self, cell_id: CellId) -> None:
@@ -305,7 +305,7 @@ class PlotOrchestrator:
             cell.row,
             cell.col,
         )
-        self._notify_cell_removed(grid_id, cell)
+        self._notify_cell_removed(grid_id, cell_id, cell)
 
     def get_plot_config(self, cell_id: CellId) -> PlotConfig:
         """
@@ -359,7 +359,7 @@ class PlotOrchestrator:
         self._persist_to_store()
 
         self._logger.info('Updated plot config for cell %s', cell_id)
-        self._notify_cell_updated(grid_id, cell)
+        self._notify_cell_updated(grid_id, cell_id, cell)
 
     def _on_job_available(self, cell_id: CellId, job_number: JobNumber) -> None:
         """
@@ -394,11 +394,11 @@ class PlotOrchestrator:
                 plot_name=cell.config.plot_name,
                 params=cell.config.params,
             )
-            self._notify_cell_updated(grid_id, cell, plot=plot)
+            self._notify_cell_updated(grid_id, cell_id, cell, plot=plot)
             self._logger.info('Created plot for cell %s at job %s', cell_id, job_number)
         except Exception as e:
             error_msg = str(e)
-            self._notify_cell_updated(grid_id, cell, error=error_msg)
+            self._notify_cell_updated(grid_id, cell_id, cell, error=error_msg)
             self._logger.exception('Failed to create plot for cell %s', cell_id)
 
     def _persist_to_store(self) -> None:
@@ -521,6 +521,7 @@ class PlotOrchestrator:
     def _notify_cell_updated(
         self,
         grid_id: GridId,
+        cell_id: CellId,
         cell: PlotCell,
         plot: hv.DynamicMap | hv.Layout | None = None,
         error: str | None = None,
@@ -529,25 +530,29 @@ class PlotOrchestrator:
         for subscription in self._lifecycle_subscribers.values():
             if subscription.on_cell_updated:
                 try:
-                    subscription.on_cell_updated(grid_id, cell, plot, error)
+                    subscription.on_cell_updated(grid_id, cell_id, cell, plot, error)
                 except Exception:
                     self._logger.exception(
-                        'Error in cell updated callback for grid %s at (%d,%d)',
+                        'Error in cell updated callback for grid %s cell %s at (%d,%d)',
                         grid_id,
+                        cell_id,
                         cell.row,
                         cell.col,
                     )
 
-    def _notify_cell_removed(self, grid_id: GridId, cell: PlotCell) -> None:
+    def _notify_cell_removed(
+        self, grid_id: GridId, cell_id: CellId, cell: PlotCell
+    ) -> None:
         """Notify subscribers that a cell was removed."""
         for subscription in self._lifecycle_subscribers.values():
             if subscription.on_cell_removed:
                 try:
-                    subscription.on_cell_removed(grid_id, cell)
+                    subscription.on_cell_removed(grid_id, cell_id, cell)
                 except Exception:
                     self._logger.exception(
-                        'Error in cell removed callback for grid %s at (%d,%d)',
+                        'Error in cell removed callback for grid %s cell %s at (%d,%d)',
                         grid_id,
+                        cell_id,
                         cell.row,
                         cell.col,
                     )

@@ -723,16 +723,17 @@ class TestLifecycleEventNotifications:
         plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        plot_orchestrator.add_plot(grid_id, plot_cell)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
         callback.assert_called_once()
         call_args = callback.call_args[0]
         assert call_args[0] == grid_id
-        assert call_args[1] == plot_cell
-        assert call_args[2] is None  # No plot yet
-        assert len(callback.call_args[0]) == 4
-        # Fourth argument is error, should be None
-        assert call_args[3] is None
+        assert call_args[1] == cell_id
+        assert call_args[2] == plot_cell
+        assert call_args[3] is None  # No plot yet
+        assert len(callback.call_args[0]) == 5
+        # Fifth argument is error, should be None
+        assert call_args[4] is None
 
     def test_on_cell_updated_called_when_plot_created_with_plot_object(
         self,
@@ -748,7 +749,7 @@ class TestLifecycleEventNotifications:
         plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        plot_orchestrator.add_plot(grid_id, plot_cell)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
         # Should have been called once when cell was added
         assert callback.call_count == 1
@@ -760,9 +761,10 @@ class TestLifecycleEventNotifications:
         assert callback.call_count == 2
         call_args = callback.call_args[0]
         assert call_args[0] == grid_id
-        assert call_args[1] == plot_cell
-        assert call_args[2] == fake_plotting_controller._plot_object
-        assert call_args[3] is None  # No error
+        assert call_args[1] == cell_id
+        assert call_args[2] == plot_cell
+        assert call_args[3] == fake_plotting_controller._plot_object
+        assert call_args[4] is None  # No error
 
     def test_on_cell_updated_called_when_plot_fails_with_error_message(
         self,
@@ -778,7 +780,7 @@ class TestLifecycleEventNotifications:
         plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        plot_orchestrator.add_plot(grid_id, plot_cell)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
         # Configure controller to raise exception
         fake_plotting_controller.configure_to_raise(ValueError('Test error'))
@@ -790,9 +792,10 @@ class TestLifecycleEventNotifications:
         assert callback.call_count == 2
         call_args = callback.call_args[0]
         assert call_args[0] == grid_id
-        assert call_args[1] == plot_cell
-        assert call_args[2] is None  # No plot
-        assert 'Test error' in call_args[3]  # Error message
+        assert call_args[1] == cell_id
+        assert call_args[2] == plot_cell
+        assert call_args[3] is None  # No plot
+        assert 'Test error' in call_args[4]  # Error message
 
     def test_on_cell_updated_called_when_config_updated_no_plot_yet(
         self, plot_orchestrator, plot_cell, workflow_id
@@ -817,7 +820,7 @@ class TestLifecycleEventNotifications:
         # Should have been called twice (add + update)
         assert callback.call_count == 2
         call_args = callback.call_args[0]
-        assert call_args[2] is None  # No plot yet after update
+        assert call_args[3] is None  # No plot yet after update
 
     def test_on_cell_removed_called_when_cell_removed(
         self, plot_orchestrator, plot_cell
@@ -833,7 +836,8 @@ class TestLifecycleEventNotifications:
         callback.assert_called_once()
         call_args = callback.call_args[0]
         assert call_args[0] == grid_id
-        assert call_args[1] == plot_cell
+        assert call_args[1] == cell_id
+        assert call_args[2] == plot_cell
 
     def test_multiple_subscribers_all_receive_notifications(self, plot_orchestrator):
         """Multiple subscribers all receive notifications."""
@@ -909,7 +913,7 @@ class TestErrorHandling:
         # Should have been called with error
         assert callback.call_count == 2
         call_args = callback.call_args[0]
-        assert 'Plot creation failed' in call_args[3]
+        assert 'Plot creation failed' in call_args[4]
 
     def test_plotting_controller_raises_exception_orchestrator_remains_usable(
         self,

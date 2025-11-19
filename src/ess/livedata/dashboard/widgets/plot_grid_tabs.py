@@ -14,6 +14,7 @@ from typing import Any
 
 import holoviews as hv
 import panel as pn
+import pydantic
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
@@ -27,7 +28,7 @@ from ..plot_orchestrator import (
     SubscriptionId,
 )
 from .plot_config_modal import PlotConfigModal, PlotConfigResult
-from .plot_grid import PlotGrid, _create_close_button
+from .plot_grid import PlotGrid, _create_close_button, _create_gear_button
 from .plot_grid_manager import PlotGridManager
 
 
@@ -75,6 +76,7 @@ class PlotGridTabs:
         self._modal_container = pn.Row(height=0, sizing_mode='stretch_width')
         self._current_modal: PlotConfigModal | None = None
         self._modal_grid_id: GridId | None = None
+        self._editing_cell_id: CellId | None = None  # Track cell being reconfigured
 
         # Subscribe to lifecycle events
         self._subscription_id: SubscriptionId | None = (
@@ -224,8 +226,6 @@ class PlotGridTabs:
 
         # Create PlotConfig using selected plotter and configured parameters
         # Convert params to dict if it's a Pydantic model
-        import pydantic
-
         params_dict = (
             result.params.model_dump()
             if isinstance(result.params, pydantic.BaseModel)
@@ -264,15 +264,104 @@ class PlotGridTabs:
         if self._modal_grid_id is not None:
             plot_grid = self._grid_widgets.get(self._modal_grid_id)
             if plot_grid is not None:
-                # Cancel pending selection in PlotGrid
-                plot_grid.cancel_pending_selection()
+                # Cancel pending selection in PlotGrid (only when adding, not editing)
+                if self._editing_cell_id is None:
+                    plot_grid.cancel_pending_selection()
 
         # Clear modal references
         self._current_modal = None
         self._modal_grid_id = None
+        self._editing_cell_id = None
+
+    def _on_reconfigure_plot(self, cell_id: CellId, grid_id: GridId) -> None:
+        """
+        Handle plot reconfiguration request from gear button.
+
+        Shows the PlotConfigModal with existing configuration, then updates
+        the plot in the orchestrator on success.
+
+        Parameters
+        ----------
+        cell_id
+            ID of the cell to reconfigure.
+        grid_id
+            ID of the grid containing the cell.
+        """
+        # Get current configuration from orchestrator
+        current_config = self._orchestrator.get_plot_config(cell_id)
+
+        # Convert PlotConfig to PlotConfigResult
+        initial_config = PlotConfigResult(
+            workflow_id=current_config.workflow_id,
+            output_name=current_config.output_name,
+            plot_name=current_config.plot_name,
+            source_names=current_config.source_names,
+            params=current_config.params,
+        )
+
+        # Store which cell and grid we're editing
+        self._editing_cell_id = cell_id
+        self._modal_grid_id = grid_id
+
+        # Create and show modal in edit mode
+        self._current_modal = PlotConfigModal(
+            workflow_registry=self._workflow_registry,
+            plotting_controller=self._plotting_controller,
+            success_callback=self._on_plot_reconfigured,
+            cancel_callback=self._on_modal_cancelled,
+            initial_config=initial_config,
+        )
+
+        # Add modal to container so it renders
+        self._modal_container.clear()
+        self._modal_container.append(self._current_modal.modal)
+        self._current_modal.show()
+
+    def _on_plot_reconfigured(self, result: PlotConfigResult) -> None:
+        """
+        Handle successful plot reconfiguration from modal.
+
+        Updates the plot configuration in the orchestrator, which will trigger
+        plot recreation when the workflow is next committed.
+
+        Parameters
+        ----------
+        result
+            New configuration result from the modal.
+        """
+        if self._editing_cell_id is None:
+            return
+
+        # Convert result to PlotConfig
+        params_dict = (
+            result.params.model_dump()
+            if isinstance(result.params, pydantic.BaseModel)
+            else result.params
+        )
+
+        plot_config = PlotConfig(
+            workflow_id=result.workflow_id,
+            output_name=result.output_name,
+            source_names=result.source_names,
+            plot_name=result.plot_name,
+            params=params_dict,
+        )
+
+        # Update configuration in orchestrator
+        self._orchestrator.update_plot_config(self._editing_cell_id, plot_config)
+
+        # Clear modal references
+        self._current_modal = None
+        self._modal_grid_id = None
+        self._editing_cell_id = None
 
     def _on_cell_updated(
-        self, grid_id: GridId, cell: PlotCell, plot: Any, error: str | None
+        self,
+        grid_id: GridId,
+        cell_id: CellId,
+        cell: PlotCell,
+        plot: Any,
+        error: str | None,
     ) -> None:
         """
         Handle cell update from orchestrator.
@@ -284,6 +373,8 @@ class PlotGridTabs:
         ----------
         grid_id
             ID of the grid containing the cell.
+        cell_id
+            ID of the cell being updated.
         cell
             Plot cell configuration.
         plot
@@ -295,20 +386,32 @@ class PlotGridTabs:
         if plot_grid is None:
             return
 
+        # Track cell_id for this grid position
+        if grid_id not in self._grid_cells:
+            self._grid_cells[grid_id] = {}
+        self._grid_cells[grid_id][cell_id] = (
+            cell.row,
+            cell.col,
+            cell.row_span,
+            cell.col_span,
+        )
+
         # Create appropriate widget based on what's available
         if plot is not None:
             # Show actual plot
-            widget = self._create_plot_widget(grid_id, cell, plot)
+            widget = self._create_plot_widget(grid_id, cell_id, cell, plot)
         else:
             # Show status widget (either waiting for data or error)
-            widget = self._create_status_widget(grid_id, cell, error=error)
+            widget = self._create_status_widget(grid_id, cell_id, cell, error=error)
 
         # Insert widget at explicit position
         plot_grid.insert_widget_at(
             cell.row, cell.col, cell.row_span, cell.col_span, widget
         )
 
-    def _on_cell_removed(self, grid_id: GridId, cell: PlotCell) -> None:
+    def _on_cell_removed(
+        self, grid_id: GridId, cell_id: CellId, cell: PlotCell
+    ) -> None:
         """
         Handle cell removal from orchestrator.
 
@@ -318,6 +421,8 @@ class PlotGridTabs:
         ----------
         grid_id
             ID of the grid containing the cell.
+        cell_id
+            ID of the cell being removed.
         cell
             Plot cell that was removed.
         """
@@ -325,11 +430,15 @@ class PlotGridTabs:
         if plot_grid is None:
             return
 
+        # Remove from cell tracking
+        if grid_id in self._grid_cells and cell_id in self._grid_cells[grid_id]:
+            del self._grid_cells[grid_id][cell_id]
+
         # Remove widget at explicit position
         plot_grid.remove_widget_at(cell.row, cell.col, cell.row_span, cell.col_span)
 
     def _create_status_widget(
-        self, grid_id: GridId, cell: PlotCell, error: str | None = None
+        self, grid_id: GridId, cell_id: CellId, cell: PlotCell, error: str | None = None
     ) -> pn.Column:
         """
         Create a status widget for a cell without a plot.
@@ -341,6 +450,8 @@ class PlotGridTabs:
         ----------
         grid_id
             ID of the grid containing this cell.
+        cell_id
+            ID of the cell.
         cell
             Plot cell configuration.
         error
@@ -391,17 +502,18 @@ class PlotGridTabs:
 
         # Create close button
         def on_close() -> None:
-            # Look up cell_id from orchestrator state
-            for cell_id, stored_cell in self._orchestrator._grids[
-                grid_id
-            ].cells.items():
-                if stored_cell is cell:
-                    self._orchestrator.remove_plot(cell_id)
-                    return
+            self._orchestrator.remove_plot(cell_id)
 
         close_button = _create_close_button(on_close)
 
+        # Create gear button for reconfiguration
+        def on_gear() -> None:
+            self._on_reconfigure_plot(cell_id, grid_id)
+
+        gear_button = _create_gear_button(on_gear)
+
         status_widget = pn.Column(
+            gear_button,
             close_button,
             pn.pane.Markdown(
                 content,
@@ -421,7 +533,11 @@ class PlotGridTabs:
         return status_widget
 
     def _create_plot_widget(
-        self, grid_id: GridId, cell: PlotCell, plot: hv.DynamicMap | hv.Layout
+        self,
+        grid_id: GridId,
+        cell_id: CellId,
+        cell: PlotCell,
+        plot: hv.DynamicMap | hv.Layout,
     ) -> pn.Column:
         """
         Create a widget containing the actual plot.
@@ -430,6 +546,8 @@ class PlotGridTabs:
         ----------
         grid_id
             ID of the grid containing this cell.
+        cell_id
+            ID of the cell.
         cell
             Plot cell configuration.
         plot
@@ -443,15 +561,15 @@ class PlotGridTabs:
 
         # Create close button
         def on_close() -> None:
-            # Look up cell_id from orchestrator state
-            for cell_id, stored_cell in self._orchestrator._grids[
-                grid_id
-            ].cells.items():
-                if stored_cell is cell:
-                    self._orchestrator.remove_plot(cell_id)
-                    return
+            self._orchestrator.remove_plot(cell_id)
 
         close_button = _create_close_button(on_close)
+
+        # Create gear button for reconfiguration
+        def on_gear() -> None:
+            self._on_reconfigure_plot(cell_id, grid_id)
+
+        gear_button = _create_gear_button(on_gear)
 
         # Use .layout to preserve widgets for DynamicMaps with kdims.
         # When pn.pane.HoloViews wraps a DynamicMap with kdims, it generates
@@ -463,6 +581,7 @@ class PlotGridTabs:
         plot_pane = plot_pane_wrapper.layout
 
         return pn.Column(
+            gear_button,
             close_button,
             plot_pane,
             sizing_mode='stretch_both',

@@ -153,6 +153,54 @@ def _create_close_button(on_close_callback: Callable[[], None]) -> pn.widgets.Bu
     return close_button
 
 
+def _create_gear_button(on_gear_callback: Callable[[], None]) -> pn.widgets.Button:
+    """
+    Create a styled gear button for plot cells (configuration/settings).
+
+    Parameters
+    ----------
+    on_gear_callback:
+        Callback function to invoke when the button is clicked.
+
+    Returns
+    -------
+    :
+        Panel Button widget styled as a gear button.
+    """
+    gear_button = pn.widgets.Button(
+        name='\u2699',  # Gear symbol
+        width=_CellStyles.CLOSE_BUTTON_SIZE,
+        height=_CellStyles.CLOSE_BUTTON_SIZE,
+        button_type='light',
+        sizing_mode='fixed',
+        margin=(_CellStyles.CELL_MARGIN, _CellStyles.CELL_MARGIN),
+        styles={
+            'position': 'absolute',
+            'top': _CellStyles.CLOSE_BUTTON_TOP_OFFSET,
+            # Position to the left of the close button (which is at right offset)
+            'right': f'{_CellStyles.CLOSE_BUTTON_SIZE + 10}px',
+            'z-index': _CellStyles.CLOSE_BUTTON_Z_INDEX,
+        },
+        stylesheets=[
+            f"""
+            button {{
+                background-color: transparent !important;
+                border: none !important;
+                color: {_CellStyles.PRIMARY_BLUE} !important;
+                font-weight: bold !important;
+                font-size: {_CellStyles.FONT_SIZE_CLOSE_BUTTON} !important;
+                padding: 0 !important;
+            }}
+            button:hover {{
+                background-color: rgba(0, 123, 255, 0.1) !important;
+            }}
+            """
+        ],
+    )
+    gear_button.on_click(lambda _: on_gear_callback())
+    return gear_button
+
+
 class PlotGrid:
     """
     A grid widget for displaying multiple plots in a customizable layout.
