@@ -149,7 +149,7 @@ class PlotGridConfig:
 
 GridCreatedCallback = Callable[[GridId, PlotGridConfig], None]
 GridRemovedCallback = Callable[[GridId], None]
-CellRemovedCallback = Callable[[GridId, CellId, PlotCell], None]
+CellRemovedCallback = Callable[[GridId, CellGeometry], None]
 
 
 class CellUpdatedCallback(Protocol):
@@ -595,7 +595,7 @@ class PlotOrchestrator:
         for subscription in self._lifecycle_subscribers.values():
             if subscription.on_cell_removed:
                 try:
-                    subscription.on_cell_removed(grid_id, cell_id, cell)
+                    subscription.on_cell_removed(grid_id, cell.geometry)
                 except Exception:
                     self._logger.exception(
                         'Error in cell removed callback for grid %s cell %s at (%d,%d)',

@@ -274,9 +274,7 @@ class PlotGridTabs:
         # Insert widget at explicit position
         plot_grid.insert_widget_at(cell.geometry, widget)
 
-    def _on_cell_removed(
-        self, grid_id: GridId, _cell_id: CellId, cell: PlotCell
-    ) -> None:
+    def _on_cell_removed(self, grid_id: GridId, geometry: CellGeometry) -> None:
         """
         Handle cell removal from orchestrator.
 
@@ -286,17 +284,15 @@ class PlotGridTabs:
         ----------
         grid_id
             ID of the grid containing the cell.
-        _cell_id
-            ID of the cell being removed (unused, kept for signature compatibility).
-        cell
-            Plot cell that was removed.
+        geometry
+            Cell geometry of the removed cell.
         """
         plot_grid = self._grid_widgets.get(grid_id)
         if plot_grid is None:
             return
 
         # Remove widget at explicit position
-        plot_grid.remove_widget_at(cell.geometry)
+        plot_grid.remove_widget_at(geometry)
 
     def _create_status_widget(
         self, cell_id: CellId, cell: PlotCell, error: str | None = None

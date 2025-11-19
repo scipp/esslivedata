@@ -826,8 +826,7 @@ class TestLifecycleEventNotifications:
         callback.assert_called_once()
         call_args = callback.call_args[0]
         assert call_args[0] == grid_id
-        assert call_args[1] == cell_id
-        assert call_args[2] == plot_cell
+        assert call_args[1] == plot_cell.geometry
 
     def test_multiple_subscribers_all_receive_notifications(self, plot_orchestrator):
         """Multiple subscribers all receive notifications."""
