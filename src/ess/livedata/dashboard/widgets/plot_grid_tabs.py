@@ -453,7 +453,15 @@ class PlotGridTabs:
 
         close_button = _create_close_button(on_close)
 
-        plot_pane = pn.pane.HoloViews(plot, sizing_mode='stretch_both')
+        # Use .layout to preserve widgets for DynamicMaps with kdims.
+        # When pn.pane.HoloViews wraps a DynamicMap with kdims, it generates
+        # widgets. However, these widgets don't render when the pane is placed
+        # in a Panel layout (Tabs, Column, etc.). The .layout property contains
+        # both the plot and widgets, which renders correctly in layouts.
+        # See: https://github.com/holoviz/panel/issues/5628
+        plot_pane_wrapper = pn.pane.HoloViews(plot, sizing_mode='stretch_both')
+        plot_pane = plot_pane_wrapper.layout
+
         return pn.Column(
             close_button,
             plot_pane,
