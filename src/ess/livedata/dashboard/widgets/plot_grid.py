@@ -380,6 +380,36 @@ class PlotGrid:
         self._highlighted_cell = None
         self._refresh_all_cells()
 
+    def _delete_cells_in_region(
+        self, row: int, col: int, row_span: int, col_span: int
+    ) -> None:
+        """Delete all cells in the specified region from the grid."""
+        for r in range(row, row + row_span):
+            for c in range(col, col + col_span):
+                try:
+                    del self._grid[r, c]
+                except (KeyError, IndexError, TypeError):
+                    # Cell might not exist (spanned widgets) or grid state issue
+                    pass
+
+    def _insert_widget_into_grid(
+        self, row: int, col: int, row_span: int, col_span: int, widget: Any
+    ) -> None:
+        """Insert a widget into the grid at the specified region."""
+        with pn.io.hold():
+            self._delete_cells_in_region(row, col, row_span, col_span)
+            self._grid[row : row + row_span, col : col + col_span] = widget
+
+    def _restore_empty_cells_in_region(
+        self, row: int, col: int, row_span: int, col_span: int
+    ) -> None:
+        """Restore empty cells in the specified region."""
+        with pn.io.hold():
+            self._delete_cells_in_region(row, col, row_span, col_span)
+            for r in range(row, row + row_span):
+                for c in range(col, col + col_span):
+                    self._grid[r, c] = self._create_empty_cell(r, c)
+
     def _insert_plot(self, plot: hv.DynamicMap) -> None:
         """Insert a plot into the grid at the pending selection."""
         if self._pending_selection is None:
@@ -405,18 +435,7 @@ class PlotGrid:
             styles={'position': 'relative'},
         )
 
-        with pn.io.hold():
-            # Delete existing cells in the region to avoid overlap warnings
-            for r in range(row, row + row_span):
-                for c in range(col, col + col_span):
-                    try:
-                        del self._grid[r, c]
-                    except (KeyError, IndexError, TypeError):
-                        # Cell might not exist (spanned widgets) or grid state issue
-                        pass
-
-            # Insert into grid
-            self._grid[row : row + row_span, col : col + col_span] = container
+        self._insert_widget_into_grid(row, col, row_span, col_span, container)
 
         # Track occupation
         self._occupied_cells[(row, col, row_span, col_span)] = container
@@ -432,10 +451,7 @@ class PlotGrid:
             del self._occupied_cells[key]
 
         # Restore empty cells
-        with pn.io.hold():
-            for r in range(row, row + row_span):
-                for c in range(col, col + col_span):
-                    self._grid[r, c] = self._create_empty_cell(r, c)
+        self._restore_empty_cells_in_region(row, col, row_span, col_span)
 
     def _show_error(self, message: str) -> None:
         """Display a temporary error notification."""
@@ -510,18 +526,7 @@ class PlotGrid:
         if key in self._occupied_cells:
             del self._occupied_cells[key]
 
-        with pn.io.hold():
-            # Delete existing cells in the region to avoid overlap warnings
-            for r in range(row, row + row_span):
-                for c in range(col, col + col_span):
-                    try:
-                        del self._grid[r, c]
-                    except (KeyError, IndexError, TypeError):
-                        # Cell might not exist (spanned widgets) or grid state issue
-                        pass
-
-            # Insert into grid
-            self._grid[row : row + row_span, col : col + col_span] = widget
+        self._insert_widget_into_grid(row, col, row_span, col_span, widget)
 
         # Track occupation
         self._occupied_cells[key] = widget
@@ -552,20 +557,7 @@ class PlotGrid:
             del self._occupied_cells[key]
 
         # Restore empty cells
-        with pn.io.hold():
-            # Delete existing cells first to avoid overlap warnings
-            for r in range(row, row + row_span):
-                for c in range(col, col + col_span):
-                    try:
-                        del self._grid[r, c]
-                    except (KeyError, IndexError, TypeError):
-                        # Cell might not exist (spanned widgets) or grid state issue
-                        pass
-
-            # Create new empty cells
-            for r in range(row, row + row_span):
-                for c in range(col, col + col_span):
-                    self._grid[r, c] = self._create_empty_cell(r, c)
+        self._restore_empty_cells_in_region(row, col, row_span, col_span)
 
     @property
     def panel(self) -> pn.viewable.Viewable:
