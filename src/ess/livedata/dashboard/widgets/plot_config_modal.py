@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-Simplified plot configuration modal for PlotOrchestrator-based workflow.
+Plot configuration modal for PlotOrchestrator-based workflow.
 
-This modal provides a 4-step wizard for configuring plots without requiring
+This modal provides a wizard for configuring plots without requiring
 existing data:
 1. Select workflow from available workflow specs
 2. Select output name from workflow outputs
@@ -573,7 +573,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection, PlotConfigResult])
             pn.state.notifications.error(message, duration=3000)
 
 
-class SimplePlotConfigModal:
+class PlotConfigModal:
     """
     Three-step wizard modal for configuring plots without existing data.
 

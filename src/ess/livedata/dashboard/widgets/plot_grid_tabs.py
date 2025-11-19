@@ -26,9 +26,9 @@ from ..plot_orchestrator import (
     PlotOrchestrator,
     SubscriptionId,
 )
+from .plot_config_modal import PlotConfigModal, PlotConfigResult
 from .plot_grid import PlotGrid, _create_close_button
 from .plot_grid_manager import PlotGridManager
-from .simple_plot_config_modal import PlotConfigResult, SimplePlotConfigModal
 
 
 class PlotGridTabs:
@@ -73,7 +73,7 @@ class PlotGridTabs:
         # Using pn.Row with height=0 ensures the modal is part of the component tree
         # but doesn't compete for vertical space. The modal renders as an overlay.
         self._modal_container = pn.Row(height=0, sizing_mode='stretch_width')
-        self._current_modal: SimplePlotConfigModal | None = None
+        self._current_modal: PlotConfigModal | None = None
         self._modal_grid_id: GridId | None = None
 
         # Subscribe to lifecycle events
@@ -169,7 +169,7 @@ class PlotGridTabs:
         """
         Handle plot request from PlotGrid.
 
-        Shows the SimplePlotConfigModal to configure the plot, then adds it
+        Shows the PlotConfigModal to configure the plot, then adds it
         to the orchestrator on success.
 
         Parameters
@@ -181,7 +181,7 @@ class PlotGridTabs:
         self._modal_grid_id = grid_id
 
         # Create and show modal
-        self._current_modal = SimplePlotConfigModal(
+        self._current_modal = PlotConfigModal(
             workflow_registry=self._workflow_registry,
             plotting_controller=self._plotting_controller,
             success_callback=self._on_plot_configured,
