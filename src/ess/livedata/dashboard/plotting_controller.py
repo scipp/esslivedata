@@ -93,7 +93,7 @@ class PlottingController:
 
     def get_available_plotters_from_spec(
         self, workflow_spec: WorkflowId | object, output_name: str
-    ) -> dict[str, PlotterSpec]:
+    ) -> tuple[dict[str, PlotterSpec], bool]:
         """
         Get available plotters based on workflow spec metadata (before data exists).
 
@@ -101,6 +101,9 @@ class PlottingController:
         workflow specification. May include false positives (e.g., slicer for
         non-evenly-spaced data) since custom validators cannot be evaluated
         without actual data.
+
+        When metadata is not available, falls back to returning all registered
+        plotters. The boolean flag indicates whether metadata was available.
 
         Parameters
         ----------
@@ -113,31 +116,34 @@ class PlottingController:
         Returns
         -------
         :
-            Dictionary mapping plotter names to their specifications.
-            Empty dict if metadata is not available for the output.
+            Tuple of (plotters_dict, has_metadata). If has_metadata is False,
+            all registered plotters are returned as a fallback, and the caller
+            should warn the user that some plotters may not work with the data.
         """
         from ess.livedata.config.workflow_spec import WorkflowSpec
 
         if not isinstance(workflow_spec, WorkflowSpec):
             self._logger.warning(
                 "get_available_plotters_from_spec expects WorkflowSpec, "
-                "got %s. Cannot determine plotters.",
+                "got %s. Falling back to all plotters.",
                 type(workflow_spec),
             )
-            return {}
+            return plotter_registry.get_specs(), False
 
         metadata = workflow_spec.get_output_metadata(output_name)
         if metadata is None:
-            self._logger.warning(
+            self._logger.info(
                 "No metadata found for output '%s' in workflow %s. "
-                "Cannot determine compatible plotters.",
+                "Falling back to all plotters.",
                 output_name,
                 workflow_spec.get_id(),
             )
-            return {}
+            return plotter_registry.get_specs(), False
 
         dims, coords = metadata
-        return plotter_registry.get_compatible_plotters_from_metadata(dims, coords)
+        return plotter_registry.get_compatible_plotters_from_metadata(
+            dims, coords
+        ), True
 
     def get_spec(self, plot_name: str) -> PlotterSpec:
         """

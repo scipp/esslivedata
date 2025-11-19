@@ -218,10 +218,11 @@ class TestPlottingControllerSpecBasedSelection:
             params=None,
         )
 
-        plotters = plotting_controller.get_available_plotters_from_spec(
+        plotters, has_metadata = plotting_controller.get_available_plotters_from_spec(
             workflow_spec=spec, output_name='i_of_q'
         )
 
+        assert has_metadata is True
         assert 'lines' in plotters
         assert 'image' not in plotters
 
@@ -247,16 +248,17 @@ class TestPlottingControllerSpecBasedSelection:
             params=None,
         )
 
-        plotters = plotting_controller.get_available_plotters_from_spec(
+        plotters, has_metadata = plotting_controller.get_available_plotters_from_spec(
             workflow_spec=spec, output_name='detector_data'
         )
 
+        assert has_metadata is True
         assert 'image' in plotters
         assert 'roi_detector' in plotters
         assert 'lines' not in plotters
 
-    def test_returns_empty_dict_for_missing_metadata(self, plotting_controller):
-        """Test that empty dict is returned when output has no metadata."""
+    def test_returns_all_plotters_for_missing_metadata(self, plotting_controller):
+        """Test that all plotters are returned when output has no metadata."""
 
         class TestOutputs(WorkflowOutputsBase):
             i_of_q: sc.DataArray = pydantic.Field(title='I(Q)')
@@ -271,14 +273,19 @@ class TestPlottingControllerSpecBasedSelection:
             params=None,
         )
 
-        plotters = plotting_controller.get_available_plotters_from_spec(
+        plotters, has_metadata = plotting_controller.get_available_plotters_from_spec(
             workflow_spec=spec, output_name='i_of_q'
         )
 
-        assert plotters == {}
+        # Should return all plotters as fallback
+        assert has_metadata is False
+        assert len(plotters) > 0  # Should have multiple plotters from registry
+        # Check that common plotters are present
+        assert 'lines' in plotters
+        assert 'image' in plotters
 
-    def test_returns_empty_dict_for_nonexistent_output(self, plotting_controller):
-        """Test that empty dict is returned for non-existent output."""
+    def test_returns_all_plotters_for_nonexistent_output(self, plotting_controller):
+        """Test that all plotters are returned for non-existent output."""
 
         class TestOutputs(WorkflowOutputsBase):
             i_of_q: sc.DataArray = pydantic.Field(
@@ -299,8 +306,12 @@ class TestPlottingControllerSpecBasedSelection:
             params=None,
         )
 
-        plotters = plotting_controller.get_available_plotters_from_spec(
+        plotters, has_metadata = plotting_controller.get_available_plotters_from_spec(
             workflow_spec=spec, output_name='nonexistent'
         )
 
-        assert plotters == {}
+        # Should return all plotters as fallback
+        assert has_metadata is False
+        assert len(plotters) > 0
+        assert 'lines' in plotters
+        assert 'image' in plotters

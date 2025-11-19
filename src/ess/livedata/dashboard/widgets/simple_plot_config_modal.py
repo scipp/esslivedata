@@ -346,21 +346,28 @@ class PlotterSelectionStep(WizardStep[OutputSelection, PlotterSelection]):
             self._notify_ready_changed(False)
             return
 
-        # Get available plotters from spec
-        available_plots = self._plotting_controller.get_available_plotters_from_spec(
-            workflow_spec=workflow_spec,
-            output_name=self._output_selection.output_name,
+        # Get available plotters from spec (returns tuple: plotters, has_metadata)
+        available_plots, has_metadata = (
+            self._plotting_controller.get_available_plotters_from_spec(
+                workflow_spec=workflow_spec,
+                output_name=self._output_selection.output_name,
+            )
         )
 
         if available_plots:
+            # Show warning if we're in fallback mode (no metadata available)
+            if not has_metadata:
+                self._content_container.append(
+                    pn.pane.Markdown(
+                        "**⚠️ Could not determine output properties. "
+                        "Some of these plotters may not work with the actual data.**",
+                        styles={'color': '#ff6b35', 'margin-bottom': '10px'},
+                    )
+                )
             self._create_radio_buttons(available_plots)
         else:
-            self._content_container.append(
-                pn.pane.Markdown(
-                    "*No plotters available for this output. "
-                    "The workflow may need to add output metadata.*"
-                )
-            )
+            # This should rarely happen since fallback returns all plotters
+            self._content_container.append(pn.pane.Markdown("*No plotters available.*"))
             self._radio_group = None
             self._notify_ready_changed(False)
 
