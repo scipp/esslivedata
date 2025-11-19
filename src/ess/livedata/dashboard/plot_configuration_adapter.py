@@ -1,68 +1,88 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""Configuration adapter for plot configuration."""
+
 from __future__ import annotations
 
 from typing import Any
 
 import pydantic
 
-from ess.livedata.config.workflow_spec import JobNumber
-from ess.livedata.dashboard.configuration_adapter import ConfigurationAdapter
+from ess.livedata.dashboard.configuration_adapter import (
+    ConfigurationAdapter,
+    ConfigurationState,
+)
 from ess.livedata.dashboard.plotting import PlotterSpec
-from ess.livedata.dashboard.plotting_controller import PlottingController
 
 
 class PlotConfigurationAdapter(ConfigurationAdapter):
-    """Adapter for plot configuration modal."""
+    """
+    Adapter for plot configuration modal.
+
+    This adapter works with both workflow specs and job data, collecting
+    the configuration and passing it to a success callback. The callback
+    determines whether to create a plot immediately or save the configuration
+    for later use.
+    """
 
     def __init__(
         self,
-        job_number: JobNumber,
-        output_name: str | None,
         plot_spec: PlotterSpec,
-        available_sources: list[str],
-        plotting_controller: PlottingController,
+        source_names: list[str],
         success_callback,
+        config_state: ConfigurationState | None = None,
     ):
-        config_state = plotting_controller.get_persistent_plotter_config(
-            job_number=job_number,
-            output_name=output_name,
-            plot_name=plot_spec.name,
-        )
+        """
+        Initialize plot configuration adapter.
+
+        Parameters
+        ----------
+        plot_spec:
+            Plotter specification containing parameters model.
+        source_names:
+            Available source names for selection.
+        success_callback:
+            Called with (selected_sources, params) when configuration is complete.
+        config_state:
+            Optional persistent configuration state to restore.
+        """
         super().__init__(config_state=config_state)
-        self._job_number = job_number
-        self._output_name = output_name
         self._plot_spec = plot_spec
-        self._available_sources = available_sources
-        self._plotting_controller = plotting_controller
+        self._source_names = source_names
         self._success_callback = success_callback
 
     @property
     def title(self) -> str:
+        """Title for the configuration panel."""
         return f"Configure {self._plot_spec.title}"
 
     @property
     def description(self) -> str:
+        """Description for the configuration panel."""
         return self._plot_spec.description
 
     def model_class(self) -> type[pydantic.BaseModel] | None:
+        """Get the pydantic model class for plotter parameters."""
         return self._plot_spec.params
 
     @property
     def source_names(self) -> list[str]:
-        return self._available_sources
+        """Get available source names."""
+        return self._source_names
 
     def start_action(
         self,
         selected_sources: list[str],
         parameter_values: Any,
     ) -> None:
-        """Create the plot and call the success callback with the result."""
-        plot = self._plotting_controller.create_plot(
-            job_number=self._job_number,
-            source_names=selected_sources,
-            output_name=self._output_name,
-            plot_name=self._plot_spec.name,
-            params=parameter_values,
-        )
-        self._success_callback(plot, selected_sources)
+        """
+        Collect configuration and call success callback.
+
+        Parameters
+        ----------
+        selected_sources:
+            List of selected source names.
+        parameter_values:
+            Validated plotter parameters (Pydantic model or dict).
+        """
+        self._success_callback(selected_sources, parameter_values)

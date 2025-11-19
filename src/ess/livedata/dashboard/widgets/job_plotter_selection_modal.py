@@ -441,25 +441,39 @@ class ConfigurationStep(WizardStep[PlotterSelection, PlotResult]):
             self._show_error(f'Error getting plot spec: {e}')
             return
 
-        config_adapter = PlotConfigurationAdapter(
+        config_state = self._plotting_controller.get_persistent_plotter_config(
             job_number=self._plotter_selection.job,
             output_name=self._plotter_selection.output,
+            plot_name=plot_spec.name,
+        )
+
+        # Capture state at modal creation time to avoid reading stale instance state
+        plotter_selection = self._plotter_selection
+
+        def on_plot_created(selected_sources: list[str], params) -> None:
+            """Create plot with captured state."""
+            plot = self._plotting_controller.create_plot(
+                job_number=plotter_selection.job,
+                source_names=selected_sources,
+                output_name=plotter_selection.output,
+                plot_name=plotter_selection.plot_name,
+                params=params,
+            )
+            self._last_plot_result = PlotResult(
+                plot=plot, selected_sources=selected_sources
+            )
+
+        config_adapter = PlotConfigurationAdapter(
             plot_spec=plot_spec,
-            available_sources=available_sources,
-            plotting_controller=self._plotting_controller,
-            success_callback=self._on_plot_created,
+            source_names=available_sources,
+            success_callback=on_plot_created,
+            config_state=config_state,
         )
 
         self._config_panel = ConfigurationPanel(config=config_adapter)
 
         self._panel_container.clear()
         self._panel_container.append(self._config_panel.panel)
-
-    def _on_plot_created(self, plot, selected_sources: list[str]) -> None:
-        """Callback from adapter - store result for execute() to return."""
-        self._last_plot_result = PlotResult(
-            plot=plot, selected_sources=selected_sources
-        )
 
     def _show_error(self, message: str) -> None:
         """Display an error notification."""

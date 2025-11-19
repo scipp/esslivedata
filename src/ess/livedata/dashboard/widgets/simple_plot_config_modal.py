@@ -22,9 +22,7 @@ import panel as pn
 import pydantic
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
-from ess.livedata.dashboard.spec_based_plot_configuration_adapter import (
-    SpecBasedPlotConfigurationAdapter,
-)
+from ess.livedata.dashboard.plot_configuration_adapter import PlotConfigurationAdapter
 
 from .configuration_widget import ConfigurationPanel
 from .wizard import Wizard, WizardStep
@@ -548,10 +546,11 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection, PlotConfigResult])
             self._show_error(f'Error getting plot spec: {e}')
             return
 
-        config_adapter = SpecBasedPlotConfigurationAdapter(
-            workflow_spec=workflow_spec,
+        config_adapter = PlotConfigurationAdapter(
             plot_spec=plot_spec,
+            source_names=workflow_spec.source_names,
             success_callback=self._on_config_collected,
+            config_state=None,
         )
 
         self._config_panel = ConfigurationPanel(config=config_adapter)
