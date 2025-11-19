@@ -99,7 +99,7 @@ class StubJobOrchestrator:
 
 @dataclass
 class PlotConfig:
-    """Configuration for a single plot in a grid cell."""
+    """Configuration for a single plot."""
 
     workflow_id: WorkflowId
     output_name: str | None
@@ -110,7 +110,12 @@ class PlotConfig:
 
 @dataclass
 class PlotCell:
-    """Configuration for a plot cell (position and what to plot)."""
+    """
+    Configuration for a plot cell (position, size, and what to plot).
+
+    The plots are placed in the given row and col of a :py:class:`PlotGrid`, spanning
+    the given number of rows and columns.
+    """
 
     row: int
     col: int
@@ -416,9 +421,11 @@ class PlotOrchestrator:
         Returns
         -------
         :
-            Plot grid configuration if found, None otherwise.
+            Deep copy of plot grid configuration if found, None otherwise.
+            Safe to modify without affecting internal state.
         """
-        return self._grids.get(grid_id)
+        grid = self._grids.get(grid_id)
+        return copy.deepcopy(grid) if grid is not None else None
 
     def get_all_grids(self) -> dict[GridId, PlotGridConfig]:
         """

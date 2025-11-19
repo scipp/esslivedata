@@ -295,6 +295,79 @@ class TestGridManagement:
         fake_grid_id = GridId(uuid.uuid4())
         assert plot_orchestrator.get_grid(fake_grid_id) is None
 
+    def test_get_grid_returns_copy_that_can_be_modified_safely(
+        self, plot_orchestrator, plot_cell
+    ):
+        """Modifying returned grid from get_grid does not affect internal state."""
+        grid_id = plot_orchestrator.add_grid(title='Original Title', nrows=3, ncols=3)
+        plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Get grid and modify it
+        grid = plot_orchestrator.get_grid(grid_id)
+        grid.title = 'Modified Title'
+        grid.nrows = 99
+        grid.ncols = 99
+
+        # Verify internal state unchanged
+        internal_grid = plot_orchestrator.get_grid(grid_id)
+        assert internal_grid.title == 'Original Title'
+        assert internal_grid.nrows == 3
+        assert internal_grid.ncols == 3
+
+    def test_get_grid_returns_copy_with_cells_that_can_be_modified_safely(
+        self, plot_orchestrator, plot_cell, plot_config
+    ):
+        """Modifying cells in returned grid from get_grid does not affect internal
+        state."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Get grid and modify a cell
+        grid = plot_orchestrator.get_grid(grid_id)
+        grid.cells[cell_id].config.params['new_param'] = 'new_value'
+        grid.cells[cell_id].row = 99
+
+        # Verify internal state unchanged
+        internal_grid = plot_orchestrator.get_grid(grid_id)
+        assert 'new_param' not in internal_grid.cells[cell_id].config.params
+        assert internal_grid.cells[cell_id].row == 0
+
+    def test_get_all_grids_returns_copy_that_can_be_modified_safely(
+        self, plot_orchestrator
+    ):
+        """Modifying returned dict from get_all_grids does not affect internal state."""
+        grid_id_1 = plot_orchestrator.add_grid(title='Grid 1', nrows=2, ncols=2)
+        grid_id_2 = plot_orchestrator.add_grid(title='Grid 2', nrows=3, ncols=3)
+
+        # Get all grids and modify the dict and a grid
+        all_grids = plot_orchestrator.get_all_grids()
+        all_grids[grid_id_1].title = 'Modified Grid 1'
+        del all_grids[grid_id_2]
+
+        # Verify internal state unchanged
+        internal_grids = plot_orchestrator.get_all_grids()
+        assert len(internal_grids) == 2
+        assert internal_grids[grid_id_1].title == 'Grid 1'
+        assert grid_id_2 in internal_grids
+
+    def test_get_all_grids_returns_copy_with_cells_that_can_be_modified_safely(
+        self, plot_orchestrator, plot_cell
+    ):
+        """Modifying cells in grids from get_all_grids does not affect internal
+        state."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Get all grids and modify a cell
+        all_grids = plot_orchestrator.get_all_grids()
+        all_grids[grid_id].cells[cell_id].config.params['new_param'] = 'new_value'
+        all_grids[grid_id].cells[cell_id].row = 99
+
+        # Verify internal state unchanged
+        internal_grid = plot_orchestrator.get_grid(grid_id)
+        assert 'new_param' not in internal_grid.cells[cell_id].config.params
+        assert internal_grid.cells[cell_id].row == 0
+
 
 class TestCellManagement:
     """Tests for cell operations without triggering plot creation."""
