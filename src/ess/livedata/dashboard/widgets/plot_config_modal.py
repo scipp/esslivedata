@@ -31,13 +31,6 @@ from .wizard import Wizard, WizardStep
 
 
 @dataclass
-class WorkflowSelection:
-    """Output from workflow selection step."""
-
-    workflow_id: WorkflowId
-
-
-@dataclass
 class OutputSelection:
     """Output from output selection step."""
 
