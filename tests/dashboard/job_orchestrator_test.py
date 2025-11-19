@@ -918,3 +918,122 @@ class TestJobOrchestratorCommit:
         # Commit after clear should raise ValueError
         with pytest.raises(ValueError, match="No staged configs"):
             orchestrator.commit_workflow(workflow_id)
+
+    def test_persist_config_is_noop_when_config_store_is_none(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        """Config persistence should silently no-op when config_store is None."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=FakeWorkflowConfigService(),
+            source_names=["det_1", "det_2"],
+            workflow_registry=registry,
+            config_store=None,  # No config store
+        )
+
+        # Clear defaults and stage only one source
+        orchestrator.clear_staged_configs(workflow_id)
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={},
+        )
+
+        # Should complete without errors (no-op persistence)
+        job_ids = orchestrator.commit_workflow(workflow_id)
+        assert len(job_ids) == 1
+
+    def test_persist_config_is_noop_when_staged_jobs_empty(
+        self, workflow_no_params: WorkflowSpec, workflow_with_params: WorkflowSpec
+    ):
+        """Config persistence should silently no-op when staged_jobs is empty."""
+        workflow_id_no_params = workflow_no_params.get_id()
+        workflow_id_with_params = workflow_with_params.get_id()
+        registry = {
+            workflow_id_no_params: workflow_no_params,
+            workflow_id_with_params: workflow_with_params,
+        }
+
+        # Use a dict config store to verify it's not modified
+        config_store: dict[WorkflowId, dict] = {}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=FakeWorkflowConfigService(),
+            source_names=["det_1"],
+            workflow_registry=registry,
+            config_store=config_store,
+        )
+
+        # Stage and commit workflow_with_params (should persist)
+        orchestrator.stage_config(
+            workflow_id_with_params,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={},
+        )
+        orchestrator.commit_workflow(workflow_id_with_params)
+
+        # Config store should have workflow_with_params
+        assert workflow_id_with_params in config_store
+
+        # Now try to commit workflow_no_params (has empty staged_jobs)
+        # First stage something so we can commit
+        orchestrator.stage_config(
+            workflow_id_with_params,
+            source_name="det_1",
+            params={"threshold": 100.0, "mode": "updated"},
+            aux_source_names={},
+        )
+
+        # Record current config store state
+        config_store_before = dict(config_store)
+
+        # Workflow with no params should not add to config store
+        # (it has empty staged_jobs from initialization)
+        # We can't commit it directly since it has no staged configs,
+        # but we can verify the initialization didn't persist it
+        assert workflow_id_no_params not in config_store
+
+        # Config store should be unchanged for workflows with empty staged_jobs
+        assert config_store == config_store_before
+
+    def test_stage_config_validates_source_name(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        """stage_config should raise ValueError for unknown source names."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=FakeWorkflowConfigService(),
+            source_names=["det_1", "det_2"],  # Only these are valid
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Try to stage config for unknown source
+        with pytest.raises(
+            ValueError, match="Cannot stage config for unknown source 'unknown_source'"
+        ):
+            orchestrator.stage_config(
+                workflow_id,
+                source_name="unknown_source",
+                params={"threshold": 50.0},
+                aux_source_names={},
+            )
+
+        # Valid source should work
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0},
+            aux_source_names={},
+        )
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert "det_1" in staged

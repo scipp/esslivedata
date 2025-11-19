@@ -223,7 +223,19 @@ class JobOrchestrator:
             Workflow parameters as dict.
         aux_source_names
             Auxiliary source names as dict.
+
+        Raises
+        ------
+        ValueError
+            If source_name is not in the list of monitored sources.
         """
+        if source_name not in self._source_names:
+            msg = (
+                f'Cannot stage config for unknown source {source_name!r}. '
+                f'Available sources: {self._source_names}'
+            )
+            raise ValueError(msg)
+
         self._workflows[workflow_id].staged_jobs[source_name] = JobConfig(
             params=params.copy(), aux_source_names=aux_source_names.copy()
         )
@@ -276,7 +288,9 @@ class JobOrchestrator:
             self._logger.debug(
                 'Will stop %d old jobs in batch', len(state.current.jobs)
             )
-            # Move current to previous for potential cleanup later
+            # Move current to previous for cleanup once stop commands succeed.
+            # Related to #445: Future improvements may wait for stop command
+            # success responses before removing old job data.
             state.previous = state.current
 
         # Send workflow configs to all staged sources
@@ -335,7 +349,11 @@ class JobOrchestrator:
     def _persist_config_to_store(
         self, workflow_id: WorkflowId, staged_jobs: dict[SourceName, JobConfig]
     ) -> None:
-        """Persist staged job configs to config store."""
+        """Persist staged job configs to config store.
+
+        Returns silently if config_store is None (persistence is optional)
+        or if staged_jobs is empty (nothing to persist).
+        """
         if self._config_store is None or not staged_jobs:
             return
 
