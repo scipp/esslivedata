@@ -126,6 +126,53 @@ def count_occupied_cells(grid: PlotGrid) -> int:
     return count
 
 
+def insert_plot_at_pending_selection(grid: PlotGrid, plot: hv.DynamicMap) -> None:
+    """
+    Insert a plot at the pending selection position.
+
+    This mimics the workflow used by PlotGridTabs: reading the pending
+    selection and calling insert_widget_at with a plot widget.
+
+    Parameters
+    ----------
+    grid:
+        The PlotGrid instance.
+    plot:
+        The HoloViews DynamicMap to insert.
+    """
+    pending = grid._pending_selection
+    if pending is None:
+        return
+
+    row, col, row_span, col_span = pending
+
+    # Create plot widget similar to PlotGridTabs._create_plot_widget
+    # Use .layout to preserve widgets for DynamicMaps with kdims
+    plot_pane_wrapper = pn.pane.HoloViews(plot, sizing_mode='stretch_both')
+    plot_pane = plot_pane_wrapper.layout
+
+    # Create close button using the helper from plot_grid module
+    from ess.livedata.dashboard.widgets.plot_grid import _create_close_button
+
+    def on_close() -> None:
+        grid.remove_widget_at(row, col, row_span, col_span)
+
+    close_button = _create_close_button(on_close)
+
+    widget = pn.Column(
+        close_button,
+        plot_pane,
+        sizing_mode='stretch_both',
+        styles={'position': 'relative'},
+    )
+
+    # Clear pending selection before inserting (matches PlotGridTabs behavior)
+    grid.cancel_pending_selection()
+
+    # Insert widget at the position
+    grid.insert_widget_at(row, col, row_span, col_span, widget)
+
+
 class TestPlotGridInitialization:
     def test_grid_has_panel_property(self, mock_callback: FakeCallback) -> None:
         grid = PlotGrid(nrows=2, ncols=2, plot_request_callback=mock_callback)
@@ -162,7 +209,7 @@ class TestCellSelection:
         mock_callback.assert_called_once()
 
         # Complete the deferred insertion
-        grid.insert_plot_deferred(mock_plot)
+        insert_plot_at_pending_selection(grid, mock_plot)
 
         # Cell should now contain a plot
         assert is_cell_occupied(grid, 1, 1)
@@ -179,7 +226,7 @@ class TestCellSelection:
         mock_callback.assert_called_once()
 
         # Complete the deferred insertion
-        grid.insert_plot_deferred(mock_plot)
+        insert_plot_at_pending_selection(grid, mock_plot)
 
         # All cells in the 2x3 region should be occupied
         assert is_cell_occupied(grid, 0, 0)
@@ -202,7 +249,7 @@ class TestCellSelection:
         simulate_click(grid, 2, 2)
         simulate_click(grid, 1, 1)
 
-        grid.insert_plot_deferred(mock_plot)
+        insert_plot_at_pending_selection(grid, mock_plot)
 
         # Should still create a 2x2 region
         assert is_cell_occupied(grid, 1, 1)
@@ -240,12 +287,12 @@ class TestPlotInsertion:
         # Insert first plot
         simulate_click(grid, 0, 0)
         simulate_click(grid, 0, 0)
-        grid.insert_plot_deferred(mock_plot)
+        insert_plot_at_pending_selection(grid, mock_plot)
 
         # Insert second plot
         simulate_click(grid, 2, 2)
         simulate_click(grid, 2, 2)
-        grid.insert_plot_deferred(mock_plot)
+        insert_plot_at_pending_selection(grid, mock_plot)
 
         # Both cells should be occupied
         assert is_cell_occupied(grid, 0, 0)
@@ -258,7 +305,7 @@ class TestPlotInsertion:
 
         simulate_click(grid, 1, 1)
         simulate_click(grid, 1, 1)
-        grid.insert_plot_deferred(mock_plot)
+        insert_plot_at_pending_selection(grid, mock_plot)
 
         # Should be able to find a close button
         close_button = find_close_button(grid, 1, 1)
@@ -274,7 +321,7 @@ class TestPlotRemoval:
         # Insert plot
         simulate_click(grid, 0, 0)
         simulate_click(grid, 1, 1)
-        grid.insert_plot_deferred(mock_plot)
+        insert_plot_at_pending_selection(grid, mock_plot)
 
         # Verify plot is there
         assert is_cell_occupied(grid, 0, 0)
@@ -298,7 +345,7 @@ class TestPlotRemoval:
         # Insert and remove plot
         simulate_click(grid, 1, 1)
         simulate_click(grid, 1, 1)
-        grid.insert_plot_deferred(mock_plot)
+        insert_plot_at_pending_selection(grid, mock_plot)
 
         close_button = find_close_button(grid, 1, 1)
         assert close_button is not None
@@ -312,7 +359,7 @@ class TestPlotRemoval:
 
         assert mock_callback.call_count == 1
 
-        grid.insert_plot_deferred(mock_plot)
+        insert_plot_at_pending_selection(grid, mock_plot)
         assert is_cell_occupied(grid, 1, 1)
 
 
@@ -325,7 +372,7 @@ class TestOverlapPrevention:
         # Insert plot at (1, 1) to (2, 2)
         simulate_click(grid, 1, 1)
         simulate_click(grid, 2, 2)
-        grid.insert_plot_deferred(mock_plot)
+        insert_plot_at_pending_selection(grid, mock_plot)
 
         # Start new selection at (0, 0)
         simulate_click(grid, 0, 0)
@@ -343,7 +390,7 @@ class TestOverlapPrevention:
         # Insert plot at (1, 1) to (2, 2)
         simulate_click(grid, 1, 1)
         simulate_click(grid, 2, 2)
-        grid.insert_plot_deferred(mock_plot)
+        insert_plot_at_pending_selection(grid, mock_plot)
 
         mock_callback.reset()
 
@@ -352,7 +399,7 @@ class TestOverlapPrevention:
         simulate_click(grid, 0, 0)
         mock_callback.assert_called_once()
 
-        grid.insert_plot_deferred(mock_plot)
+        insert_plot_at_pending_selection(grid, mock_plot)
         assert is_cell_occupied(grid, 0, 0)
 
 
@@ -384,7 +431,7 @@ class TestErrorHandling:
 
         # Try to insert without making a selection
         # This should handle gracefully (no crash)
-        grid.insert_plot_deferred(mock_plot)
+        insert_plot_at_pending_selection(grid, mock_plot)
 
         # No cells should be occupied
         assert not is_cell_occupied(grid, 0, 0)
@@ -401,5 +448,6 @@ class TestErrorHandling:
             simulate_click(grid, 0, 0)
 
         # Grid should still be in a usable state
-        # We never called insert_plot_deferred, so cell should still be empty
+        # We never called insert_plot_at_pending_selection, so cell
+        # should still be empty
         assert not is_cell_occupied(grid, 0, 0)

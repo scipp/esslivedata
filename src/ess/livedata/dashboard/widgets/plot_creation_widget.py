@@ -15,7 +15,6 @@ from ess.livedata.dashboard.workflow_controller import WorkflowController
 from ..plot_configuration_adapter import PlotConfigurationAdapter
 from .configuration_widget import ConfigurationModal
 from .job_status_widget import JobStatusListWidget
-from .plot_grid_tab import PlotGridTab
 
 
 class PlotCreationWidget:
@@ -55,12 +54,6 @@ class PlotCreationWidget:
         self._job_status_widget = JobStatusListWidget(
             job_service=job_service, job_controller=job_controller
         )
-        # PlotCreationWidget is legacy; PlotGridTab placement here is temporary
-        self._plot_grid_tab = PlotGridTab(
-            job_service=job_service,
-            job_controller=job_controller,
-            plotting_controller=plotting_controller,
-        )
         self._job_output_table = self._create_job_output_table()
         self._plot_selector = self._create_plot_selector()
         self._create_button = self._create_plot_button()
@@ -82,7 +75,6 @@ class PlotCreationWidget:
         self._main_tabs = pn.Tabs(
             ("Jobs", self._job_status_widget.panel()),
             ("Create Plot", self._creation_tab),
-            ("Plot Grid", self._plot_grid_tab.widget),
             ("Plots", self._plot_tabs),
             sizing_mode='stretch_width',
             closable=False,

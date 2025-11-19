@@ -6,7 +6,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-import holoviews as hv
 import panel as pn
 
 
@@ -410,72 +409,10 @@ class PlotGrid:
                 for c in range(col, col + col_span):
                     self._grid[r, c] = self._create_empty_cell(r, c)
 
-    def _insert_plot(self, plot: hv.DynamicMap) -> None:
-        """Insert a plot into the grid at the pending selection."""
-        if self._pending_selection is None:
-            return
-
-        row, col, row_span, col_span = self._pending_selection
-
-        # Create plot pane using the .layout pattern for DynamicMaps
-        plot_pane_wrapper = pn.pane.HoloViews(plot, sizing_mode='stretch_both')
-        plot_pane = plot_pane_wrapper.layout
-
-        # Create close button
-        def on_close() -> None:
-            self._remove_plot(row, col, row_span, col_span)
-
-        close_button = _create_close_button(on_close)
-
-        container = pn.Column(
-            close_button,
-            plot_pane,
-            sizing_mode='stretch_both',
-            margin=2,
-            styles={'position': 'relative'},
-        )
-
-        self._insert_widget_into_grid(row, col, row_span, col_span, container)
-
-        # Track occupation
-        self._occupied_cells[(row, col, row_span, col_span)] = container
-
-        # Clear pending selection
-        self._pending_selection = None
-
-    def _remove_plot(self, row: int, col: int, row_span: int, col_span: int) -> None:
-        """Remove a plot from the grid and restore empty cells."""
-        # Remove from tracking
-        key = (row, col, row_span, col_span)
-        if key in self._occupied_cells:
-            del self._occupied_cells[key]
-
-        # Restore empty cells
-        self._restore_empty_cells_in_region(row, col, row_span, col_span)
-
     def _show_error(self, message: str) -> None:
         """Display a temporary error notification."""
         if pn.state.notifications is not None:
             pn.state.notifications.error(message, duration=3000)
-
-    def insert_plot_deferred(self, plot: hv.DynamicMap) -> None:
-        """
-        Complete plot insertion after async workflow.
-
-        This method should be called after the plot request callback completes
-        successfully. It inserts the plot at the pending selection location
-        and clears the in-flight state.
-
-        Parameters
-        ----------
-        plot:
-            The HoloViews DynamicMap to insert into the grid.
-        """
-        if self._pending_selection is None:
-            self._show_error('No pending selection to insert plot into')
-            return
-
-        self._insert_plot(plot)
 
     def cancel_pending_selection(self) -> None:
         """
