@@ -59,9 +59,8 @@ class PlotGridTabs:
         self._workflow_registry = dict(workflow_registry)
         self._plotting_controller = plotting_controller
 
-        # Track grid widgets and tab indices
+        # Track grid widgets (insertion order determines tab position)
         self._grid_widgets: dict[GridId, PlotGrid] = {}
-        self._grid_to_tab_index: dict[GridId, int] = {}
 
         # Main tabs widget
         self._tabs = pn.Tabs(sizing_mode='stretch_both')
@@ -118,9 +117,7 @@ class PlotGridTabs:
         )
 
         # Append at the end (Manage tab is always first at index 0)
-        tab_index = len(self._tabs)
         self._tabs.append((grid_config.title, grid_with_modal))
-        self._grid_to_tab_index[grid_id] = tab_index
 
         # Populate with existing cells (important for late subscribers / new sessions)
         for cell in grid_config.cells.values():
@@ -129,31 +126,27 @@ class PlotGridTabs:
             self._on_cell_updated(grid_id, cell, plot=None, error=None)
 
     def _remove_grid_tab(self, grid_id: GridId) -> None:
-        """Remove a grid tab and update indices."""
-        if grid_id not in self._grid_to_tab_index:
+        """Remove a grid tab."""
+        if grid_id not in self._grid_widgets:
             return
 
-        tab_index = self._grid_to_tab_index[grid_id]
+        # Calculate tab index from position in _grid_widgets (Manage tab is at 0)
+        tab_index = list(self._grid_widgets.keys()).index(grid_id) + 1
 
         # Remove the tab using pop()
         self._tabs.pop(tab_index)
 
         # Clean up tracking
         del self._grid_widgets[grid_id]
-        del self._grid_to_tab_index[grid_id]
-
-        # Update indices for all grids that came after the removed one
-        for gid, idx in list(self._grid_to_tab_index.items()):
-            if idx > tab_index:
-                self._grid_to_tab_index[gid] = idx - 1
 
     def _on_grid_created(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Handle grid creation from orchestrator."""
         self._add_grid_tab(grid_id, grid_config)
 
-        # Auto-switch to the new tab
-        if grid_id in self._grid_to_tab_index:
-            self._tabs.active = self._grid_to_tab_index[grid_id]
+        # Auto-switch to the new tab (calculate index from position in _grid_widgets)
+        if grid_id in self._grid_widgets:
+            tab_index = list(self._grid_widgets.keys()).index(grid_id) + 1
+            self._tabs.active = tab_index
 
     def _on_grid_removed(self, grid_id: GridId) -> None:
         """Handle grid removal from orchestrator."""
