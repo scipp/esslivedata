@@ -146,6 +146,53 @@ def _create_tool_button_stylesheet(button_color: str, hover_color: str) -> list[
     ]
 
 
+def _create_tool_button(
+    symbol: str,
+    right_offset: str,
+    button_color: str,
+    hover_color: str,
+    on_click_callback: Callable[[], None],
+) -> pn.widgets.Button:
+    """
+    Create a styled tool button for plot cells.
+
+    Parameters
+    ----------
+    symbol:
+        Unicode symbol to display on the button.
+    right_offset:
+        CSS right offset for button positioning.
+    button_color:
+        Color for the button icon.
+    hover_color:
+        RGBA color for the hover background.
+    on_click_callback:
+        Callback function to invoke when the button is clicked.
+
+    Returns
+    -------
+    :
+        Panel Button widget styled as a tool button.
+    """
+    button = pn.widgets.Button(
+        name=symbol,
+        width=_CellStyles.TOOL_BUTTON_SIZE,
+        height=_CellStyles.TOOL_BUTTON_SIZE,
+        button_type='light',
+        sizing_mode='fixed',
+        margin=(_CellStyles.CELL_MARGIN, _CellStyles.CELL_MARGIN),
+        styles={
+            'position': 'absolute',
+            'top': _CellStyles.TOOL_BUTTON_TOP_OFFSET,
+            'right': right_offset,
+            'z-index': _CellStyles.TOOL_BUTTON_Z_INDEX,
+        },
+        stylesheets=_create_tool_button_stylesheet(button_color, hover_color),
+    )
+    button.on_click(lambda _: on_click_callback())
+    return button
+
+
 def _create_close_button(on_close_callback: Callable[[], None]) -> pn.widgets.Button:
     """
     Create a styled close button for plot cells.
@@ -160,25 +207,13 @@ def _create_close_button(on_close_callback: Callable[[], None]) -> pn.widgets.Bu
     :
         Panel Button widget styled as a close button.
     """
-    close_button = pn.widgets.Button(
-        name='\u00d7',  # "X" multiplication sign
-        width=_CellStyles.TOOL_BUTTON_SIZE,
-        height=_CellStyles.TOOL_BUTTON_SIZE,
-        button_type='light',
-        sizing_mode='fixed',
-        margin=(_CellStyles.CELL_MARGIN, _CellStyles.CELL_MARGIN),
-        styles={
-            'position': 'absolute',
-            'top': _CellStyles.TOOL_BUTTON_TOP_OFFSET,
-            'right': _CellStyles.CLOSE_BUTTON_RIGHT_OFFSET,
-            'z-index': _CellStyles.TOOL_BUTTON_Z_INDEX,
-        },
-        stylesheets=_create_tool_button_stylesheet(
-            _CellStyles.DANGER_RED, 'rgba(220, 53, 69, 0.1)'
-        ),
+    return _create_tool_button(
+        symbol='\u00d7',  # "X" multiplication sign
+        right_offset=_CellStyles.CLOSE_BUTTON_RIGHT_OFFSET,
+        button_color=_CellStyles.DANGER_RED,
+        hover_color='rgba(220, 53, 69, 0.1)',
+        on_click_callback=on_close_callback,
     )
-    close_button.on_click(lambda _: on_close_callback())
-    return close_button
 
 
 def _create_gear_button(on_gear_callback: Callable[[], None]) -> pn.widgets.Button:
@@ -195,26 +230,14 @@ def _create_gear_button(on_gear_callback: Callable[[], None]) -> pn.widgets.Butt
     :
         Panel Button widget styled as a gear button.
     """
-    gear_button = pn.widgets.Button(
-        name='\u2699',  # Gear symbol
-        width=_CellStyles.TOOL_BUTTON_SIZE,
-        height=_CellStyles.TOOL_BUTTON_SIZE,
-        button_type='light',
-        sizing_mode='fixed',
-        margin=(_CellStyles.CELL_MARGIN, _CellStyles.CELL_MARGIN),
-        styles={
-            'position': 'absolute',
-            'top': _CellStyles.TOOL_BUTTON_TOP_OFFSET,
-            # Position to the left of the close button (which is at right offset)
-            'right': f'{_CellStyles.TOOL_BUTTON_SIZE + 10}px',
-            'z-index': _CellStyles.TOOL_BUTTON_Z_INDEX,
-        },
-        stylesheets=_create_tool_button_stylesheet(
-            _CellStyles.PRIMARY_BLUE, 'rgba(0, 123, 255, 0.1)'
-        ),
+    return _create_tool_button(
+        symbol='\u2699',  # Gear symbol
+        # Position to the left of the close button
+        right_offset=f'{_CellStyles.TOOL_BUTTON_SIZE + 10}px',
+        button_color=_CellStyles.PRIMARY_BLUE,
+        hover_color='rgba(0, 123, 255, 0.1)',
+        on_click_callback=on_gear_callback,
     )
-    gear_button.on_click(lambda _: on_gear_callback())
-    return gear_button
 
 
 class PlotGrid:
