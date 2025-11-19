@@ -5,7 +5,10 @@ NMX instrument spec registration.
 """
 
 from ess.livedata.config import Instrument, instrument_registry
-from ess.livedata.handlers.detector_view_specs import DetectorViewParams
+from ess.livedata.handlers.detector_view_specs import (
+    DetectorViewOutputs,
+    DetectorViewParams,
+)
 
 # Detector panel names
 detector_names = ['detector_panel_0', 'detector_panel_1', 'detector_panel_2']
@@ -29,4 +32,5 @@ panel_xy_view_handle = instrument.register_spec(
     description='Detector counts per pixel.',
     source_names=detector_names,
     params=DetectorViewParams,
+    outputs=DetectorViewOutputs,
 )

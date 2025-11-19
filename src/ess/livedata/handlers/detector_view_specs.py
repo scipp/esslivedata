@@ -16,11 +16,12 @@ from __future__ import annotations
 from typing import Literal
 
 import pydantic
+import scipp as sc
 
 from .. import parameter_models
 from ..config import models
 from ..config.instrument import Instrument
-from ..config.workflow_spec import AuxSourcesBase, JobId
+from ..config.workflow_spec import AuxSourcesBase, JobId, WorkflowOutputsBase
 from ..handlers.workflow_factory import SpecHandle
 
 
@@ -48,6 +49,19 @@ class DetectorViewParams(pydantic.BaseModel):
             num_bins=100,
             unit=parameter_models.TimeUnit.MS,
         ),
+    )
+
+
+class DetectorViewOutputs(WorkflowOutputsBase):
+    """Outputs for detector view workflows."""
+
+    cumulative: sc.DataArray = pydantic.Field(
+        title='Cumulative Counts',
+        description='Time-integrated detector counts accumulated over all time.',
+    )
+    current: sc.DataArray = pydantic.Field(
+        title='Current Counts',
+        description='Detector counts for the current time window since last update.',
     )
 
 
@@ -145,4 +159,5 @@ def register_detector_view_spec(
         source_names=source_names,
         aux_sources=DetectorROIAuxSources,
         params=DetectorViewParams,
+        outputs=DetectorViewOutputs,
     )

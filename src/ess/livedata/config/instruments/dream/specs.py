@@ -14,6 +14,7 @@ from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import (
+    DetectorViewOutputs,
     DetectorViewParams,
     register_detector_view_spec,
 )
@@ -73,6 +74,7 @@ mantle_front_layer_handle = instrument.register_spec(
     description='All voxels of the front layer of the mantle detector.',
     source_names=['mantle_detector'],
     params=DetectorViewParams,
+    outputs=DetectorViewOutputs,
 )
 
 mantle_wire_view_handle = instrument.register_spec(
@@ -83,6 +85,7 @@ mantle_wire_view_handle = instrument.register_spec(
     description='Sum over strips to show counts per wire in the mantle detector.',
     source_names=['mantle_detector'],
     params=DetectorViewParams,
+    outputs=DetectorViewOutputs,
 )
 
 

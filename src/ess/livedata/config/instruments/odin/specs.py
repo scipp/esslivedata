@@ -5,7 +5,10 @@ ODIN instrument spec registration.
 """
 
 from ess.livedata.config import Instrument, instrument_registry
-from ess.livedata.handlers.detector_view_specs import DetectorViewParams
+from ess.livedata.handlers.detector_view_specs import (
+    DetectorViewOutputs,
+    DetectorViewParams,
+)
 
 instrument = Instrument(
     name='odin',
@@ -25,4 +28,5 @@ panel_0_view_handle = instrument.register_spec(
     description='2D view of the Timepix3 detector counts',
     source_names=['timepix3'],
     params=DetectorViewParams,
+    outputs=DetectorViewOutputs,
 )
