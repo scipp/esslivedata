@@ -63,9 +63,6 @@ class PlotGridTabs:
         self._grid_widgets: dict[GridId, PlotGrid] = {}
         self._grid_to_tab_index: dict[GridId, int] = {}
 
-        # Track cells added to each grid for lifecycle management
-        self._grid_cells: dict[GridId, dict[CellId, tuple[int, int, int, int]]] = {}
-
         # Main tabs widget
         self._tabs = pn.Tabs(sizing_mode='stretch_both')
 
@@ -113,9 +110,6 @@ class PlotGridTabs:
         # Store widget reference
         self._grid_widgets[grid_id] = plot_grid
 
-        # Initialize cell tracking for this grid
-        self._grid_cells[grid_id] = {}
-
         # Wrap PlotGrid with modal container for consistent layout
         grid_with_modal = pn.Column(
             plot_grid.panel,
@@ -147,8 +141,6 @@ class PlotGridTabs:
         # Clean up tracking
         del self._grid_widgets[grid_id]
         del self._grid_to_tab_index[grid_id]
-        if grid_id in self._grid_cells:
-            del self._grid_cells[grid_id]
 
         # Update indices for all grids that came after the removed one
         for gid, idx in list(self._grid_to_tab_index.items()):
@@ -337,16 +329,6 @@ class PlotGridTabs:
         if plot_grid is None:
             return
 
-        # Track cell_id for this grid position
-        if grid_id not in self._grid_cells:
-            self._grid_cells[grid_id] = {}
-        self._grid_cells[grid_id][cell_id] = (
-            cell.row,
-            cell.col,
-            cell.row_span,
-            cell.col_span,
-        )
-
         # Create appropriate widget based on what's available
         if plot is not None:
             # Show actual plot
@@ -380,10 +362,6 @@ class PlotGridTabs:
         plot_grid = self._grid_widgets.get(grid_id)
         if plot_grid is None:
             return
-
-        # Remove from cell tracking
-        if grid_id in self._grid_cells and cell_id in self._grid_cells[grid_id]:
-            del self._grid_cells[grid_id][cell_id]
 
         # Remove widget at explicit position
         plot_grid.remove_widget_at(cell.row, cell.col, cell.row_span, cell.col_span)
