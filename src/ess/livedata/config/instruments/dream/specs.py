@@ -178,20 +178,23 @@ class PowderReductionOutputs(WorkflowOutputsBase):
     """Outputs for DREAM powder reduction workflow."""
 
     focussed_data_dspacing: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['dspacing'], shape=[0], unit='counts'),
+            coords={'dspacing': sc.arange('dspacing', 0, unit='angstrom')},
+        ),
         title='I(d)',
         description='Focussed intensity as a function of d-spacing.',
-        json_schema_extra={
-            'dims': ('dspacing',),
-            'coords': ['dspacing'],
-        },
     )
     focussed_data_dspacing_two_theta: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['dspacing', 'two_theta'], shape=[0, 0], unit='counts'),
+            coords={
+                'dspacing': sc.arange('dspacing', 0, unit='angstrom'),
+                'two_theta': sc.arange('two_theta', 0, unit='rad'),
+            },
+        ),
         title='I(d, 2θ)',
         description='Focussed intensity as a function of d-spacing and two-theta.',
-        json_schema_extra={
-            'dims': ('dspacing', 'two_theta'),
-            'coords': ['dspacing', 'two_theta'],
-        },
     )
 
 
@@ -199,25 +202,28 @@ class PowderReductionWithVanadiumOutputs(PowderReductionOutputs):
     """Outputs for DREAM powder reduction workflow with vanadium normalization."""
 
     i_of_dspacing: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['dspacing'], shape=[0], unit='counts'),
+            coords={'dspacing': sc.arange('dspacing', 0, unit='angstrom')},
+        ),
         title='Normalized I(d)',
         description=(
             'Normalized intensity as a function of d-spacing (vanadium-corrected).'
         ),
-        json_schema_extra={
-            'dims': ('dspacing',),
-            'coords': ['dspacing'],
-        },
     )
     i_of_dspacing_two_theta: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['dspacing', 'two_theta'], shape=[0, 0], unit='counts'),
+            coords={
+                'dspacing': sc.arange('dspacing', 0, unit='angstrom'),
+                'two_theta': sc.arange('two_theta', 0, unit='rad'),
+            },
+        ),
         title='Normalized I(d, 2θ)',
         description=(
             'Normalized intensity as a function of d-spacing and two-theta '
             '(vanadium-corrected).'
         ),
-        json_schema_extra={
-            'dims': ('dspacing', 'two_theta'),
-            'coords': ['dspacing', 'two_theta'],
-        },
     )
 
 

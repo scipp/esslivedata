@@ -17,20 +17,20 @@ from ess.livedata.dashboard.stream_manager import StreamManager
 hv.extension('bokeh')
 
 
-class TestOutputMetadataExtraction:
-    """Tests for WorkflowSpec.get_output_metadata()."""
+class TestOutputTemplateExtraction:
+    """Tests for WorkflowSpec.get_output_template()."""
 
-    def test_extracts_metadata_from_field(self):
-        """Test that metadata is correctly extracted from output field."""
+    def test_extracts_template_from_field(self):
+        """Test that template is correctly extracted from output field."""
 
         class TestOutputs(WorkflowOutputsBase):
             i_of_q: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['Q'], shape=[0], unit='counts'),
+                    coords={'Q': sc.arange('Q', 0, unit='1/angstrom')},
+                ),
                 title='I(Q)',
                 description='Test output',
-                json_schema_extra={
-                    'dims': ('Q',),
-                    'coords': ['Q'],
-                },
             )
 
         spec = WorkflowSpec(
@@ -43,61 +43,22 @@ class TestOutputMetadataExtraction:
             params=None,
         )
 
-        metadata = spec.get_output_metadata('i_of_q')
+        template = spec.get_output_template('i_of_q')
 
-        assert metadata is not None
-        dims, coords = metadata
-        assert dims == ('Q',)
-        assert coords == ['Q']
+        assert template is not None
+        assert template.dims == ('Q',)
+        assert list(template.coords.keys()) == ['Q']
 
     def test_returns_none_for_missing_output(self):
         """Test that None is returned for non-existent output."""
 
         class TestOutputs(WorkflowOutputsBase):
-            i_of_q: sc.DataArray = pydantic.Field(title='I(Q)')
-
-        spec = WorkflowSpec(
-            instrument='test',
-            name='test_workflow',
-            version=1,
-            title='Test Workflow',
-            description='Test',
-            outputs=TestOutputs,
-            params=None,
-        )
-
-        metadata = spec.get_output_metadata('nonexistent')
-        assert metadata is None
-
-    def test_returns_none_for_field_without_metadata(self):
-        """Test that None is returned when field has no metadata."""
-
-        class TestOutputs(WorkflowOutputsBase):
-            i_of_q: sc.DataArray = pydantic.Field(title='I(Q)')
-
-        spec = WorkflowSpec(
-            instrument='test',
-            name='test_workflow',
-            version=1,
-            title='Test Workflow',
-            description='Test',
-            outputs=TestOutputs,
-            params=None,
-        )
-
-        metadata = spec.get_output_metadata('i_of_q')
-        assert metadata is None
-
-    def test_handles_2d_output_metadata(self):
-        """Test extraction of 2D output metadata."""
-
-        class TestOutputs(WorkflowOutputsBase):
-            i_of_dspacing_two_theta: sc.DataArray = pydantic.Field(
-                title='I(d, 2θ)',
-                json_schema_extra={
-                    'dims': ('dspacing', 'two_theta'),
-                    'coords': ['dspacing', 'two_theta'],
-                },
+            i_of_q: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['Q'], shape=[0]),
+                    coords={'Q': sc.arange('Q', 0)},
+                ),
+                title='I(Q)',
             )
 
         spec = WorkflowSpec(
@@ -110,12 +71,60 @@ class TestOutputMetadataExtraction:
             params=None,
         )
 
-        metadata = spec.get_output_metadata('i_of_dspacing_two_theta')
+        template = spec.get_output_template('nonexistent')
+        assert template is None
 
-        assert metadata is not None
-        dims, coords = metadata
-        assert dims == ('dspacing', 'two_theta')
-        assert coords == ['dspacing', 'two_theta']
+    def test_returns_none_for_field_without_template(self):
+        """Test that None is returned when field has no default_factory."""
+
+        class TestOutputs(WorkflowOutputsBase):
+            i_of_q: sc.DataArray = pydantic.Field(title='I(Q)')
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='test_workflow',
+            version=1,
+            title='Test Workflow',
+            description='Test',
+            outputs=TestOutputs,
+            params=None,
+        )
+
+        template = spec.get_output_template('i_of_q')
+        assert template is None
+
+    def test_handles_2d_output_template(self):
+        """Test extraction of 2D output template."""
+
+        class TestOutputs(WorkflowOutputsBase):
+            i_of_dspacing_two_theta: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(
+                        dims=['dspacing', 'two_theta'], shape=[0, 0], unit='counts'
+                    ),
+                    coords={
+                        'dspacing': sc.arange('dspacing', 0, unit='angstrom'),
+                        'two_theta': sc.arange('two_theta', 0, unit='rad'),
+                    },
+                ),
+                title='I(d, 2θ)',
+            )
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='test_workflow',
+            version=1,
+            title='Test Workflow',
+            description='Test',
+            outputs=TestOutputs,
+            params=None,
+        )
+
+        template = spec.get_output_template('i_of_dspacing_two_theta')
+
+        assert template is not None
+        assert template.dims == ('dspacing', 'two_theta')
+        assert set(template.coords.keys()) == {'dspacing', 'two_theta'}
 
 
 class TestPlotterRegistryMetadataMatching:
@@ -201,11 +210,11 @@ class TestPlottingControllerSpecBasedSelection:
 
         class TestOutputs(WorkflowOutputsBase):
             i_of_q: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['Q'], shape=[0], unit='counts'),
+                    coords={'Q': sc.arange('Q', 0, unit='1/angstrom')},
+                ),
                 title='I(Q)',
-                json_schema_extra={
-                    'dims': ('Q',),
-                    'coords': ['Q'],
-                },
             )
 
         spec = WorkflowSpec(
@@ -218,11 +227,11 @@ class TestPlottingControllerSpecBasedSelection:
             params=None,
         )
 
-        plotters, has_metadata = plotting_controller.get_available_plotters_from_spec(
+        plotters, has_template = plotting_controller.get_available_plotters_from_spec(
             workflow_spec=spec, output_name='i_of_q'
         )
 
-        assert has_metadata is True
+        assert has_template is True
         assert 'lines' in plotters
         assert 'image' not in plotters
 
@@ -231,11 +240,14 @@ class TestPlottingControllerSpecBasedSelection:
 
         class TestOutputs(WorkflowOutputsBase):
             detector_data: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['x', 'y'], shape=[0, 0], unit='counts'),
+                    coords={
+                        'x': sc.arange('x', 0, unit='m'),
+                        'y': sc.arange('y', 0, unit='m'),
+                    },
+                ),
                 title='Detector Data',
-                json_schema_extra={
-                    'dims': ('x', 'y'),
-                    'coords': ['x', 'y'],
-                },
             )
 
         spec = WorkflowSpec(
@@ -248,17 +260,17 @@ class TestPlottingControllerSpecBasedSelection:
             params=None,
         )
 
-        plotters, has_metadata = plotting_controller.get_available_plotters_from_spec(
+        plotters, has_template = plotting_controller.get_available_plotters_from_spec(
             workflow_spec=spec, output_name='detector_data'
         )
 
-        assert has_metadata is True
+        assert has_template is True
         assert 'image' in plotters
         assert 'roi_detector' in plotters
         assert 'lines' not in plotters
 
-    def test_returns_all_plotters_for_missing_metadata(self, plotting_controller):
-        """Test that all plotters are returned when output has no metadata."""
+    def test_returns_all_plotters_for_missing_template(self, plotting_controller):
+        """Test that all plotters are returned when output has no template."""
 
         class TestOutputs(WorkflowOutputsBase):
             i_of_q: sc.DataArray = pydantic.Field(title='I(Q)')
@@ -273,12 +285,12 @@ class TestPlottingControllerSpecBasedSelection:
             params=None,
         )
 
-        plotters, has_metadata = plotting_controller.get_available_plotters_from_spec(
+        plotters, has_template = plotting_controller.get_available_plotters_from_spec(
             workflow_spec=spec, output_name='i_of_q'
         )
 
         # Should return all plotters as fallback
-        assert has_metadata is False
+        assert has_template is False
         assert len(plotters) > 0  # Should have multiple plotters from registry
         # Check that common plotters are present
         assert 'lines' in plotters
@@ -289,11 +301,11 @@ class TestPlottingControllerSpecBasedSelection:
 
         class TestOutputs(WorkflowOutputsBase):
             i_of_q: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['Q'], shape=[0], unit='counts'),
+                    coords={'Q': sc.arange('Q', 0, unit='1/angstrom')},
+                ),
                 title='I(Q)',
-                json_schema_extra={
-                    'dims': ('Q',),
-                    'coords': ['Q'],
-                },
             )
 
         spec = WorkflowSpec(
@@ -306,12 +318,12 @@ class TestPlottingControllerSpecBasedSelection:
             params=None,
         )
 
-        plotters, has_metadata = plotting_controller.get_available_plotters_from_spec(
+        plotters, has_template = plotting_controller.get_available_plotters_from_spec(
             workflow_spec=spec, output_name='nonexistent'
         )
 
         # Should return all plotters as fallback
-        assert has_metadata is False
+        assert has_template is False
         assert len(plotters) > 0
         assert 'lines' in plotters
         assert 'image' in plotters

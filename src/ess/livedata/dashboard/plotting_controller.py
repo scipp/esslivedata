@@ -95,20 +95,20 @@ class PlottingController:
         self, workflow_spec: WorkflowId | object, output_name: str
     ) -> tuple[dict[str, PlotterSpec], bool]:
         """
-        Get available plotters based on workflow spec metadata (before data exists).
+        Get available plotters based on workflow spec template (before data exists).
 
-        Uses lenient matching based on output metadata (dims, coords) from the
-        workflow specification. May include false positives (e.g., slicer for
-        non-evenly-spaced data) since custom validators cannot be evaluated
-        without actual data.
+        Uses lenient matching based on the output template DataArray structure
+        (dims, coords) from the workflow specification. May include false positives
+        (e.g., slicer for non-evenly-spaced data) since custom validators cannot
+        be evaluated without actual data.
 
-        When metadata is not available, falls back to returning all registered
-        plotters. The boolean flag indicates whether metadata was available.
+        When a template is not available, falls back to returning all registered
+        plotters. The boolean flag indicates whether a template was available.
 
         Parameters
         ----------
         workflow_spec:
-            WorkflowSpec object containing output metadata. Can also accept
+            WorkflowSpec object containing output templates. Can also accept
             WorkflowId for backward compatibility (will log warning).
         output_name:
             The name of the output to get plotters for.
@@ -116,7 +116,7 @@ class PlottingController:
         Returns
         -------
         :
-            Tuple of (plotters_dict, has_metadata). If has_metadata is False,
+            Tuple of (plotters_dict, has_template). If has_template is False,
             all registered plotters are returned as a fallback, and the caller
             should warn the user that some plotters may not work with the data.
         """
@@ -130,17 +130,18 @@ class PlottingController:
             )
             return plotter_registry.get_specs(), False
 
-        metadata = workflow_spec.get_output_metadata(output_name)
-        if metadata is None:
+        template = workflow_spec.get_output_template(output_name)
+        if template is None:
             self._logger.info(
-                "No metadata found for output '%s' in workflow %s. "
+                "No template found for output '%s' in workflow %s. "
                 "Falling back to all plotters.",
                 output_name,
                 workflow_spec.get_id(),
             )
             return plotter_registry.get_specs(), False
 
-        dims, coords = metadata
+        dims = template.dims
+        coords = list(template.coords.keys())
         return plotter_registry.get_compatible_plotters_from_metadata(
             dims, coords
         ), True

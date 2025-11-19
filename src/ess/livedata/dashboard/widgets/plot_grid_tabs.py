@@ -436,22 +436,22 @@ class PlotGridTabs:
                 field_info = output_fields[config.output_name]
                 output_title = field_info.title or config.output_name
 
-        # Build common info section
+        # Build title from workflow and output (most prominent)
+        title = f"### {workflow_title} - {output_title}"
+
+        # Build info section: sources first, then status
         info_lines = [
-            f"**Workflow:** {workflow_title}",
-            f"**Output:** {output_title}",
             f"**Sources:** {', '.join(config.source_names)}",
         ]
 
         # Add status-specific line and determine styling
         if error is not None:
-            title = "### Plot Creation Error"
             info_lines.append(f"**Error:** {error}")
             text_color = '#dc3545'
             bg_color = '#ffe6e6'
             border = '2px solid #dc3545'
         else:
-            title = "### Waiting for data..."
+            info_lines.append("**Status:** Waiting for data...")
             text_color = '#6c757d'
             bg_color = '#f8f9fa'
             border = '2px dashed #dee2e6'
@@ -476,7 +476,7 @@ class PlotGridTabs:
             pn.pane.Markdown(
                 content,
                 styles={
-                    'text-align': 'center',
+                    'text-align': 'left',
                     'color': text_color,
                     'padding': '20px',
                 },
