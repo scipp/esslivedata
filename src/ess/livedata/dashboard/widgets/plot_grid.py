@@ -28,14 +28,14 @@ class _CellStyles:
     CELL_BORDER_WIDTH_NORMAL = 1
     CELL_BORDER_WIDTH_HIGHLIGHTED = 3
     CELL_MARGIN = 2
-    CLOSE_BUTTON_SIZE = 40
-    CLOSE_BUTTON_TOP_OFFSET = '5px'
+    TOOL_BUTTON_SIZE = 28
+    TOOL_BUTTON_TOP_OFFSET = '5px'
     CLOSE_BUTTON_RIGHT_OFFSET = '5px'
-    CLOSE_BUTTON_Z_INDEX = '1000'
+    TOOL_BUTTON_Z_INDEX = '1000'
 
     # Typography
     FONT_SIZE_LARGE = '24px'
-    FONT_SIZE_CLOSE_BUTTON = '20px'
+    TOOL_BUTTON_FONT_SIZE = '20px'
 
 
 def _normalize_region(r1: int, c1: int, r2: int, c2: int) -> tuple[int, int, int, int]:
@@ -106,6 +106,46 @@ def _format_region_label(row_span: int, col_span: int) -> str:
     return f'Click for {row_span}x{col_span} plot'
 
 
+def _create_tool_button_stylesheet(button_color: str, hover_color: str) -> list[str]:
+    """
+    Create a stylesheet for tool buttons (close, gear, etc.).
+
+    Parameters
+    ----------
+    button_color:
+        Color for the button icon.
+    hover_color:
+        RGBA color for the hover background.
+
+    Returns
+    -------
+    :
+        List containing the stylesheet string.
+    """
+    return [
+        f"""
+        button {{
+            background-color: transparent !important;
+            border: none !important;
+            color: {button_color} !important;
+            font-weight: bold !important;
+            font-size: {_CellStyles.TOOL_BUTTON_FONT_SIZE} !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            line-height: 1 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            height: 100% !important;
+            width: 100% !important;
+        }}
+        button:hover {{
+            background-color: {hover_color} !important;
+        }}
+        """
+    ]
+
+
 def _create_close_button(on_close_callback: Callable[[], None]) -> pn.widgets.Button:
     """
     Create a styled close button for plot cells.
@@ -122,32 +162,20 @@ def _create_close_button(on_close_callback: Callable[[], None]) -> pn.widgets.Bu
     """
     close_button = pn.widgets.Button(
         name='\u00d7',  # "X" multiplication sign
-        width=_CellStyles.CLOSE_BUTTON_SIZE,
-        height=_CellStyles.CLOSE_BUTTON_SIZE,
+        width=_CellStyles.TOOL_BUTTON_SIZE,
+        height=_CellStyles.TOOL_BUTTON_SIZE,
         button_type='light',
         sizing_mode='fixed',
         margin=(_CellStyles.CELL_MARGIN, _CellStyles.CELL_MARGIN),
         styles={
             'position': 'absolute',
-            'top': _CellStyles.CLOSE_BUTTON_TOP_OFFSET,
+            'top': _CellStyles.TOOL_BUTTON_TOP_OFFSET,
             'right': _CellStyles.CLOSE_BUTTON_RIGHT_OFFSET,
-            'z-index': _CellStyles.CLOSE_BUTTON_Z_INDEX,
+            'z-index': _CellStyles.TOOL_BUTTON_Z_INDEX,
         },
-        stylesheets=[
-            f"""
-            button {{
-                background-color: transparent !important;
-                border: none !important;
-                color: {_CellStyles.DANGER_RED} !important;
-                font-weight: bold !important;
-                font-size: {_CellStyles.FONT_SIZE_CLOSE_BUTTON} !important;
-                padding: 0 !important;
-            }}
-            button:hover {{
-                background-color: rgba(220, 53, 69, 0.1) !important;
-            }}
-            """
-        ],
+        stylesheets=_create_tool_button_stylesheet(
+            _CellStyles.DANGER_RED, 'rgba(220, 53, 69, 0.1)'
+        ),
     )
     close_button.on_click(lambda _: on_close_callback())
     return close_button
@@ -169,33 +197,21 @@ def _create_gear_button(on_gear_callback: Callable[[], None]) -> pn.widgets.Butt
     """
     gear_button = pn.widgets.Button(
         name='\u2699',  # Gear symbol
-        width=_CellStyles.CLOSE_BUTTON_SIZE,
-        height=_CellStyles.CLOSE_BUTTON_SIZE,
+        width=_CellStyles.TOOL_BUTTON_SIZE,
+        height=_CellStyles.TOOL_BUTTON_SIZE,
         button_type='light',
         sizing_mode='fixed',
         margin=(_CellStyles.CELL_MARGIN, _CellStyles.CELL_MARGIN),
         styles={
             'position': 'absolute',
-            'top': _CellStyles.CLOSE_BUTTON_TOP_OFFSET,
+            'top': _CellStyles.TOOL_BUTTON_TOP_OFFSET,
             # Position to the left of the close button (which is at right offset)
-            'right': f'{_CellStyles.CLOSE_BUTTON_SIZE + 10}px',
-            'z-index': _CellStyles.CLOSE_BUTTON_Z_INDEX,
+            'right': f'{_CellStyles.TOOL_BUTTON_SIZE + 10}px',
+            'z-index': _CellStyles.TOOL_BUTTON_Z_INDEX,
         },
-        stylesheets=[
-            f"""
-            button {{
-                background-color: transparent !important;
-                border: none !important;
-                color: {_CellStyles.PRIMARY_BLUE} !important;
-                font-weight: bold !important;
-                font-size: {_CellStyles.FONT_SIZE_CLOSE_BUTTON} !important;
-                padding: 0 !important;
-            }}
-            button:hover {{
-                background-color: rgba(0, 123, 255, 0.1) !important;
-            }}
-            """
-        ],
+        stylesheets=_create_tool_button_stylesheet(
+            _CellStyles.PRIMARY_BLUE, 'rgba(0, 123, 255, 0.1)'
+        ),
     )
     gear_button.on_click(lambda _: on_gear_callback())
     return gear_button
