@@ -61,6 +61,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         self,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         logger: logging.Logger,
+        initial_config: PlotConfig | None = None,
     ) -> None:
         """
         Initialize workflow and output selection step.
@@ -71,10 +72,13 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             Registry of available workflows and their specifications.
         logger
             Logger instance for error reporting.
+        initial_config
+            Optional initial configuration for edit mode.
         """
         super().__init__()
         self._workflow_registry = dict(workflow_registry)
         self._logger = logger
+        self._initial_config = initial_config
         self._selected_namespace: str | None = None
         self._selected_workflow_id: WorkflowId | None = None
         self._selected_output: str | None = None
@@ -92,14 +96,32 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         # Initial layout
         self._update_content()
 
-        # Now set the initial value (after all containers are set up)
-        # This will trigger _on_namespace_change callback which updates workflow buttons
-        if self._namespace_buttons.options:
-            namespace_value = next(iter(self._namespace_buttons.options.values()))
-            self._selected_namespace = namespace_value
-            self._namespace_buttons.value = namespace_value
-            # Explicitly initialize workflow and output buttons
-            self._update_workflow_buttons()
+        # Set initial values based on initial_config or defaults
+        if initial_config is not None:
+            # Edit mode: pre-select workflow and output from config
+            self._selected_namespace = initial_config.workflow_id.namespace
+            self._selected_workflow_id = initial_config.workflow_id
+            self._selected_output = initial_config.output_name
+            # Set namespace button value (triggers callback which updates workflows)
+            namespace_label = self._format_namespace_label(
+                initial_config.workflow_id.namespace
+            )
+            if namespace_label in self._namespace_buttons.options:
+                self._namespace_buttons.value = initial_config.workflow_id.namespace
+                self._update_workflow_buttons()
+                # Pre-select workflow and output after buttons are created
+                if self._workflow_buttons is not None:
+                    self._workflow_buttons.value = initial_config.workflow_id
+                if self._output_buttons is not None:
+                    self._output_buttons.value = initial_config.output_name
+        else:
+            # New mode: select first available option
+            if self._namespace_buttons.options:
+                namespace_value = next(iter(self._namespace_buttons.options.values()))
+                self._selected_namespace = namespace_value
+                self._namespace_buttons.value = namespace_value
+                # Explicitly initialize workflow and output buttons
+                self._update_workflow_buttons()
 
     @property
     def name(self) -> str:
@@ -352,7 +374,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         pass
 
 
-class PlotterSelectionStep(WizardStep[OutputSelection, PlotterSelection]):
+class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection]):
     """Step 2: Select plotter type based on output metadata."""
 
     def __init__(
@@ -360,6 +382,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection, PlotterSelection]):
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         plotting_controller,
         logger: logging.Logger,
+        initial_config: PlotConfig | None = None,
     ) -> None:
         """
         Initialize plotter selection step.
@@ -372,11 +395,14 @@ class PlotterSelectionStep(WizardStep[OutputSelection, PlotterSelection]):
             Controller for determining available plotters from specs.
         logger
             Logger instance for error reporting.
+        initial_config
+            Optional initial configuration for edit mode.
         """
         super().__init__()
         self._workflow_registry = dict(workflow_registry)
         self._plotting_controller = plotting_controller
         self._logger = logger
+        self._initial_config = initial_config
         self._output_selection: OutputSelection | None = None
         self._selected_plot_name: str | None = None
         self._radio_group: pn.widgets.RadioButtonGroup | None = None
@@ -410,9 +436,16 @@ class PlotterSelectionStep(WizardStep[OutputSelection, PlotterSelection]):
         """Render plotter selection radio buttons."""
         return self._content_container
 
-    def on_enter(self, input_data: OutputSelection) -> None:
+    def on_enter(self, input_data: OutputSelection | None) -> None:
         """Update available plotters when step becomes active."""
-        self._output_selection = input_data
+        if input_data is not None:
+            self._output_selection = input_data
+        elif self._initial_config is not None:
+            # Fall back to initial config when jumping to this step
+            self._output_selection = OutputSelection(
+                workflow_id=self._initial_config.workflow_id,
+                output_name=self._initial_config.output_name,
+            )
         self._update_plotter_selection()
 
     def _update_plotter_selection(self) -> None:
@@ -465,10 +498,18 @@ class PlotterSelectionStep(WizardStep[OutputSelection, PlotterSelection]):
         self._plot_name_map = self._make_unique_title_mapping(available_plots)
         options = self._plot_name_map
 
-        # Select first option by default
-        initial_value = (
-            next(iter(self._plot_name_map.values())) if self._plot_name_map else None
-        )
+        # Determine initial value: use initial_config if available, else first option
+        if (
+            self._initial_config is not None
+            and self._initial_config.plot_name in self._plot_name_map.values()
+        ):
+            initial_value = self._initial_config.plot_name
+        else:
+            initial_value = (
+                next(iter(self._plot_name_map.values()))
+                if self._plot_name_map
+                else None
+            )
 
         self._radio_group = pn.widgets.RadioButtonGroup(
             name="Plotter Type",
@@ -518,7 +559,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection, PlotterSelection]):
             self._notify_ready_changed(False)
 
 
-class SpecBasedConfigurationStep(WizardStep[PlotterSelection, PlotConfig]):
+class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]):
     """Step 3: Configure plot (source selection and plotter parameters)."""
 
     def __init__(
@@ -594,22 +635,33 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection, PlotConfig]):
         """Render configuration panel."""
         return self._panel_container
 
-    def on_enter(self, input_data: PlotterSelection) -> None:
+    def on_enter(self, input_data: PlotterSelection | None) -> None:
         """Create or recreate configuration panel when selection changes."""
-        self._plotter_selection = input_data
+        if input_data is not None:
+            self._plotter_selection = input_data
+        elif self._initial_config is not None:
+            # Fall back to initial config when jumping to this step
+            self._plotter_selection = PlotterSelection(
+                workflow_id=self._initial_config.workflow_id,
+                output_name=self._initial_config.output_name,
+                plot_name=self._initial_config.plot_name,
+            )
+
+        if self._plotter_selection is None:
+            return
 
         # Check if the configuration has changed
         if (
-            input_data.workflow_id != self._last_workflow_id
-            or input_data.output_name != self._last_output
-            or input_data.plot_name != self._last_plot_name
+            self._plotter_selection.workflow_id != self._last_workflow_id
+            or self._plotter_selection.output_name != self._last_output
+            or self._plotter_selection.plot_name != self._last_plot_name
         ):
             # Recreate panel with new configuration
             self._create_config_panel()
             # Track new values
-            self._last_workflow_id = input_data.workflow_id
-            self._last_output = input_data.output_name
-            self._last_plot_name = input_data.plot_name
+            self._last_workflow_id = self._plotter_selection.workflow_id
+            self._last_output = self._plotter_selection.output_name
+            self._last_plot_name = self._plotter_selection.plot_name
 
     def _create_config_panel(self) -> None:
         """Create the configuration panel for the selected plotter."""
@@ -728,12 +780,15 @@ class PlotConfigModal:
 
         # Create steps
         step1 = WorkflowAndOutputSelectionStep(
-            workflow_registry=workflow_registry, logger=self._logger
+            workflow_registry=workflow_registry,
+            logger=self._logger,
+            initial_config=initial_config,
         )
         step2 = PlotterSelectionStep(
             workflow_registry=workflow_registry,
             plotting_controller=plotting_controller,
             logger=self._logger,
+            initial_config=initial_config,
         )
         step3 = SpecBasedConfigurationStep(
             workflow_registry=workflow_registry,
@@ -784,43 +839,12 @@ class PlotConfigModal:
     def show(self) -> None:
         """Show the modal dialog."""
         if self._initial_config is not None:
-            # Edit mode: convert config to step results and start at last step
-            step_results = self._config_to_step_results(self._initial_config)
-            # Start at step 2 (0-indexed), which is the last step (configuration)
-            self._wizard.reset_to_step(2, step_results)
+            # Edit mode: start at last step (steps use initial_config internally)
+            self._wizard.reset_to_step(2)
         else:
             # Add mode: reset to first step
             self._wizard.reset()
         self._modal.open = True
-
-    def _config_to_step_results(self, config: PlotConfig) -> list[Any]:
-        """
-        Convert PlotConfig to step results for wizard initialization.
-
-        Parameters
-        ----------
-        config
-            The configuration to convert.
-
-        Returns
-        -------
-        :
-            List of step results [OutputSelection, PlotterSelection]
-        """
-        # Step 1 result: OutputSelection
-        output_selection = OutputSelection(
-            workflow_id=config.workflow_id,
-            output_name=config.output_name,
-        )
-
-        # Step 2 result: PlotterSelection
-        plotter_selection = PlotterSelection(
-            workflow_id=config.workflow_id,
-            output_name=config.output_name,
-            plot_name=config.plot_name,
-        )
-
-        return [output_selection, plotter_selection]
 
     @property
     def modal(self) -> pn.Modal:

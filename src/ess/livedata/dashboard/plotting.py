@@ -137,51 +137,6 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
             if entry.spec.data_requirements.validate_data(data)
         }
 
-    def get_compatible_plotters_from_metadata(
-        self, dims: tuple[str, ...], coords: list[str]
-    ) -> dict[str, PlotterSpec]:
-        """
-        Get plotters compatible with output metadata (lenient matching).
-
-        This method uses a lenient approach that only checks dimension count
-        and required coordinates, skipping custom validators that require
-        actual data. This enables plotter selection before data is available.
-
-        Parameters
-        ----------
-        dims:
-            Tuple of dimension names for the output.
-        coords:
-            List of coordinate names for the output.
-
-        Returns
-        -------
-        :
-            Dictionary mapping plotter names to their specifications.
-            May include false positives (e.g., slicer for non-evenly-spaced data).
-        """
-        ndim = len(dims)
-        coord_set = set(coords)
-
-        compatible = {}
-        for name, entry in self.items():
-            reqs = entry.spec.data_requirements
-
-            # Check dimension count
-            if ndim < reqs.min_dims or ndim > reqs.max_dims:
-                continue
-
-            # Check required coordinates
-            if not all(coord in coord_set for coord in reqs.required_coords):
-                continue
-
-            # Skip custom validators - we accept false positives here
-            # (e.g., slicer will be shown even if coords aren't evenly spaced)
-
-            compatible[name] = entry.spec
-
-        return compatible
-
     def get_specs(self) -> dict[str, PlotterSpec]:
         """Get all plotter specifications for UI display."""
         return {name: entry.spec for name, entry in self.items()}

@@ -10,7 +10,6 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import WorkflowOutputsBase, WorkflowSpec
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
-from ess.livedata.dashboard.plotting import plotter_registry
 from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.stream_manager import StreamManager
 
@@ -125,58 +124,6 @@ class TestOutputTemplateExtraction:
         assert template is not None
         assert template.dims == ('dspacing', 'two_theta')
         assert set(template.coords.keys()) == {'dspacing', 'two_theta'}
-
-
-class TestPlotterRegistryMetadataMatching:
-    """Tests for PlotterRegistry.get_compatible_plotters_from_metadata()."""
-
-    def test_matches_1d_data_to_lines_plotter(self):
-        """Test that 1D metadata matches the lines plotter."""
-        compatible = plotter_registry.get_compatible_plotters_from_metadata(
-            dims=('Q',), coords=['Q']
-        )
-
-        assert 'lines' in compatible
-        assert compatible['lines'].title == 'Lines'
-
-    def test_matches_2d_data_to_image_plotter(self):
-        """Test that 2D metadata matches the image plotter."""
-        compatible = plotter_registry.get_compatible_plotters_from_metadata(
-            dims=('x', 'y'), coords=['x', 'y']
-        )
-
-        assert 'image' in compatible
-        assert compatible['image'].title == 'Image'
-
-    def test_matches_3d_data_to_slicer_plotter(self):
-        """Test that 3D metadata matches the slicer plotter (lenient)."""
-        # Note: This is a false positive case - slicer requires evenly spaced coords
-        # but we can't check that from metadata alone
-        compatible = plotter_registry.get_compatible_plotters_from_metadata(
-            dims=('x', 'y', 'z'), coords=['x', 'y', 'z']
-        )
-
-        assert 'slicer' in compatible
-        assert compatible['slicer'].title == '3D Slicer'
-
-    def test_matches_0d_data_to_timeseries_plotter(self):
-        """Test that 0D metadata matches the timeseries plotter."""
-        compatible = plotter_registry.get_compatible_plotters_from_metadata(
-            dims=(), coords=[]
-        )
-
-        assert 'timeseries' in compatible
-        assert compatible['timeseries'].title == 'Timeseries'
-
-    def test_excludes_incompatible_plotters_by_dims(self):
-        """Test that plotters are excluded based on dimension count."""
-        compatible = plotter_registry.get_compatible_plotters_from_metadata(
-            dims=('Q',), coords=['Q']
-        )
-
-        # 1D data should not match image (requires 2D) or slicer (requires 3D)
-        assert 'image' not in compatible
-        assert 'slicer' not in compatible
 
 
 class TestPlottingControllerSpecBasedSelection:

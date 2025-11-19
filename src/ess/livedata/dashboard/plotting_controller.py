@@ -97,10 +97,10 @@ class PlottingController:
         """
         Get available plotters based on workflow spec template (before data exists).
 
-        Uses lenient matching based on the output template DataArray structure
-        (dims, coords) from the workflow specification. May include false positives
-        (e.g., slicer for non-evenly-spaced data) since custom validators cannot
-        be evaluated without actual data.
+        Uses the output template DataArray from the workflow specification to
+        determine compatible plotters. The template is an empty DataArray with
+        the expected structure (dims, coords, units) that allows full validation
+        including custom validators.
 
         When a template is not available, falls back to returning all registered
         plotters. The boolean flag indicates whether a template was available.
@@ -140,11 +140,7 @@ class PlottingController:
             )
             return plotter_registry.get_specs(), False
 
-        dims = template.dims
-        coords = list(template.coords.keys())
-        return plotter_registry.get_compatible_plotters_from_metadata(
-            dims, coords
-        ), True
+        return plotter_registry.get_compatible_plotters({output_name: template}), True
 
     def get_spec(self, plot_name: str) -> PlotterSpec:
         """
