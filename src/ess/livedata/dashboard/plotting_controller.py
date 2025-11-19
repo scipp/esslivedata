@@ -235,7 +235,7 @@ class PlottingController:
         source_names: list[str],
         output_name: str | None,
         plot_name: str,
-        params: pydantic.BaseModel,
+        params: dict | pydantic.BaseModel,
     ) -> hv.DynamicMap | hv.Layout:
         """
         Create a plot from job data with the specified parameters.
@@ -254,7 +254,8 @@ class PlottingController:
         plot_name:
             The name of the plotter to use.
         params:
-            The plotter parameters.
+            The plotter parameters as a dict or validated Pydantic model.
+            If a dict, it will be validated against the plotter's spec.
 
         Returns
         -------
@@ -264,6 +265,11 @@ class PlottingController:
             includes interactive dimensions that generate widgets when rendered.
             For roi_detector, returns a Layout with separate DynamicMaps.
         """
+        # Validate params if dict, pass through if already a model
+        if isinstance(params, dict):
+            spec = plotter_registry.get_spec(plot_name)
+            params = spec.params(**params) if spec.params else pydantic.BaseModel()
+
         self._save_plotting_config(
             workflow_id=self._job_service.job_info[job_number],
             source_names=source_names,
