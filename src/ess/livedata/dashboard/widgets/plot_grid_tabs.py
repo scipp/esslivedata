@@ -120,10 +120,10 @@ class PlotGridTabs:
         self._tabs.append((grid_config.title, grid_with_modal))
 
         # Populate with existing cells (important for late subscribers / new sessions)
-        for cell in grid_config.cells.values():
+        for cell_id, cell in grid_config.cells.items():
             # Create placeholder widget for each existing cell
             # (actual plots will be created when workflows commit)
-            self._on_cell_updated(grid_id, cell, plot=None, error=None)
+            self._on_cell_updated(grid_id=grid_id, cell_id=cell_id, cell=cell)
 
     def _remove_grid_tab(self, grid_id: GridId) -> None:
         """Remove a grid tab."""
@@ -293,11 +293,12 @@ class PlotGridTabs:
 
     def _on_cell_updated(
         self,
+        *,
         grid_id: GridId,
         cell_id: CellId,
         cell: PlotCell,
-        plot: Any,
-        error: str | None,
+        plot: Any = None,
+        error: str | None = None,
     ) -> None:
         """
         Handle cell update from orchestrator.
@@ -336,7 +337,7 @@ class PlotGridTabs:
         )
 
     def _on_cell_removed(
-        self, grid_id: GridId, cell_id: CellId, cell: PlotCell
+        self, grid_id: GridId, _cell_id: CellId, cell: PlotCell
     ) -> None:
         """
         Handle cell removal from orchestrator.

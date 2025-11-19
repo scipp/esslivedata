@@ -726,14 +726,20 @@ class TestLifecycleEventNotifications:
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
         callback.assert_called_once()
-        call_args = callback.call_args[0]
-        assert call_args[0] == grid_id
-        assert call_args[1] == cell_id
-        assert call_args[2] == plot_cell
-        assert call_args[3] is None  # No plot yet
-        assert len(callback.call_args[0]) == 5
-        # Fifth argument is error, should be None
-        assert call_args[4] is None
+        call_kwargs = callback.call_args[1]
+        assert call_kwargs['grid_id'] == grid_id
+        assert call_kwargs['cell_id'] == cell_id
+        assert call_kwargs['cell'] == plot_cell
+        assert call_kwargs['plot'] is None  # No plot yet
+        assert set(call_kwargs.keys()) == {
+            'grid_id',
+            'cell_id',
+            'cell',
+            'plot',
+            'error',
+        }
+        # error should be None
+        assert call_kwargs['error'] is None
 
     def test_on_cell_updated_called_when_plot_created_with_plot_object(
         self,
@@ -759,12 +765,12 @@ class TestLifecycleEventNotifications:
 
         # Should be called again with plot object
         assert callback.call_count == 2
-        call_args = callback.call_args[0]
-        assert call_args[0] == grid_id
-        assert call_args[1] == cell_id
-        assert call_args[2] == plot_cell
-        assert call_args[3] == fake_plotting_controller._plot_object
-        assert call_args[4] is None  # No error
+        call_kwargs = callback.call_args[1]
+        assert call_kwargs['grid_id'] == grid_id
+        assert call_kwargs['cell_id'] == cell_id
+        assert call_kwargs['cell'] == plot_cell
+        assert call_kwargs['plot'] == fake_plotting_controller._plot_object
+        assert call_kwargs['error'] is None  # No error
 
     def test_on_cell_updated_called_when_plot_fails_with_error_message(
         self,
@@ -790,12 +796,12 @@ class TestLifecycleEventNotifications:
 
         # Should be called with error
         assert callback.call_count == 2
-        call_args = callback.call_args[0]
-        assert call_args[0] == grid_id
-        assert call_args[1] == cell_id
-        assert call_args[2] == plot_cell
-        assert call_args[3] is None  # No plot
-        assert 'Test error' in call_args[4]  # Error message
+        call_kwargs = callback.call_args[1]
+        assert call_kwargs['grid_id'] == grid_id
+        assert call_kwargs['cell_id'] == cell_id
+        assert call_kwargs['cell'] == plot_cell
+        assert call_kwargs['plot'] is None  # No plot
+        assert 'Test error' in call_kwargs['error']  # Error message
 
     def test_on_cell_updated_called_when_config_updated_no_plot_yet(
         self, plot_orchestrator, plot_cell, workflow_id
@@ -819,8 +825,8 @@ class TestLifecycleEventNotifications:
 
         # Should have been called twice (add + update)
         assert callback.call_count == 2
-        call_args = callback.call_args[0]
-        assert call_args[3] is None  # No plot yet after update
+        call_kwargs = callback.call_args[1]
+        assert call_kwargs['plot'] is None  # No plot yet after update
 
     def test_on_cell_removed_called_when_cell_removed(
         self, plot_orchestrator, plot_cell
@@ -912,8 +918,8 @@ class TestErrorHandling:
 
         # Should have been called with error
         assert callback.call_count == 2
-        call_args = callback.call_args[0]
-        assert 'Plot creation failed' in call_args[4]
+        call_kwargs = callback.call_args[1]
+        assert 'Plot creation failed' in call_kwargs['error']
 
     def test_plotting_controller_raises_exception_orchestrator_remains_usable(
         self,

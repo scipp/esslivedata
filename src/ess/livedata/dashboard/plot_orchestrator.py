@@ -138,8 +138,37 @@ class PlotGridConfig:
 
 GridCreatedCallback = Callable[[GridId, PlotGridConfig], None]
 GridRemovedCallback = Callable[[GridId], None]
-CellUpdatedCallback = Callable[[GridId, CellId, PlotCell, Any, str | None], None]
 CellRemovedCallback = Callable[[GridId, CellId, PlotCell], None]
+
+
+class CellUpdatedCallback(Protocol):
+    """Callback for cell updates with all keyword-only parameters."""
+
+    def __call__(
+        self,
+        *,
+        grid_id: GridId,
+        cell_id: CellId,
+        cell: PlotCell,
+        plot: Any = None,
+        error: str | None = None,
+    ) -> None:
+        """
+        Handle cell update.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid containing the cell.
+        cell_id
+            ID of the cell being updated.
+        cell
+            Plot cell configuration.
+        plot
+            The plot widget, or None if not yet available.
+        error
+            Error message if plot creation failed, or None.
+        """
 
 
 @dataclass
@@ -532,7 +561,13 @@ class PlotOrchestrator:
         for subscription in self._lifecycle_subscribers.values():
             if subscription.on_cell_updated:
                 try:
-                    subscription.on_cell_updated(grid_id, cell_id, cell, plot, error)
+                    subscription.on_cell_updated(
+                        grid_id=grid_id,
+                        cell_id=cell_id,
+                        cell=cell,
+                        plot=plot,
+                        error=error,
+                    )
                 except Exception:
                     self._logger.exception(
                         'Error in cell updated callback for grid %s cell %s at (%d,%d)',
