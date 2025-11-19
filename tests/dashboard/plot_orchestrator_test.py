@@ -7,6 +7,7 @@ import pytest
 
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 from ess.livedata.dashboard.plot_orchestrator import (
+    CellGeometry,
     GridId,
     PlotCell,
     PlotConfig,
@@ -225,13 +226,8 @@ def plot_config(workflow_id):
 @pytest.fixture
 def plot_cell(plot_config):
     """Create a basic PlotCell."""
-    return PlotCell(
-        row=0,
-        col=0,
-        row_span=1,
-        col_span=1,
-        config=plot_config,
-    )
+    geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+    return PlotCell(geometry=geometry, config=plot_config)
 
 
 @pytest.fixture
@@ -325,12 +321,12 @@ class TestGridManagement:
         # Get grid and modify a cell
         grid = plot_orchestrator.get_grid(grid_id)
         grid.cells[cell_id].config.params['new_param'] = 'new_value'
-        grid.cells[cell_id].row = 99
 
         # Verify internal state unchanged
         internal_grid = plot_orchestrator.get_grid(grid_id)
         assert 'new_param' not in internal_grid.cells[cell_id].config.params
-        assert internal_grid.cells[cell_id].row == 0
+        # Geometry is frozen and cannot be modified
+        assert internal_grid.cells[cell_id].geometry.row == 0
 
     def test_get_all_grids_returns_copy_that_can_be_modified_safely(
         self, plot_orchestrator
@@ -361,12 +357,12 @@ class TestGridManagement:
         # Get all grids and modify a cell
         all_grids = plot_orchestrator.get_all_grids()
         all_grids[grid_id].cells[cell_id].config.params['new_param'] = 'new_value'
-        all_grids[grid_id].cells[cell_id].row = 99
 
         # Verify internal state unchanged
         internal_grid = plot_orchestrator.get_grid(grid_id)
         assert 'new_param' not in internal_grid.cells[cell_id].config.params
-        assert internal_grid.cells[cell_id].row == 0
+        # Geometry is frozen and cannot be modified
+        assert internal_grid.cells[cell_id].geometry.row == 0
 
 
 class TestCellManagement:
@@ -432,10 +428,7 @@ class TestCellManagement:
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
 
         cell_1 = PlotCell(
-            row=0,
-            col=0,
-            row_span=1,
-            col_span=1,
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
             config=PlotConfig(
                 workflow_id=workflow_id,
                 output_name='out1',
@@ -445,10 +438,7 @@ class TestCellManagement:
             ),
         )
         cell_2 = PlotCell(
-            row=1,
-            col=1,
-            row_span=1,
-            col_span=1,
+            geometry=CellGeometry(row=1, col=1, row_span=1, col_span=1),
             config=PlotConfig(
                 workflow_id=workflow_id,
                 output_name='out2',
@@ -584,10 +574,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
 
         # Add multiple cells with same workflow_id
         cell_1 = PlotCell(
-            row=0,
-            col=0,
-            row_span=1,
-            col_span=1,
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
             config=PlotConfig(
                 workflow_id=workflow_id,
                 output_name='out1',
@@ -597,10 +584,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
             ),
         )
         cell_2 = PlotCell(
-            row=1,
-            col=1,
-            row_span=1,
-            col_span=1,
+            geometry=CellGeometry(row=1, col=1, row_span=1, col_span=1),
             config=PlotConfig(
                 workflow_id=workflow_id,
                 output_name='out2',
@@ -986,10 +970,7 @@ class TestCleanupAndResourceManagement:
         # Add multiple cells
         for i in range(3):
             cell = PlotCell(
-                row=i,
-                col=0,
-                row_span=1,
-                col_span=1,
+                geometry=CellGeometry(row=i, col=0, row_span=1, col_span=1),
                 config=PlotConfig(
                     workflow_id=workflow_id,
                     output_name=f'out{i}',
@@ -1016,10 +997,7 @@ class TestCleanupAndResourceManagement:
         for i in range(2):
             grid_id = plot_orchestrator.add_grid(title=f'Grid {i}', nrows=3, ncols=3)
             cell = PlotCell(
-                row=0,
-                col=0,
-                row_span=1,
-                col_span=1,
+                geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
                 config=PlotConfig(
                     workflow_id=workflow_id,
                     output_name=f'out{i}',

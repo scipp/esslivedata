@@ -18,6 +18,7 @@ import panel as pn
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
 from ..plot_orchestrator import (
+    CellGeometry,
     CellId,
     GridId,
     PlotCell,
@@ -93,8 +94,8 @@ class PlotGridTabs:
         """Add a new grid tab after the Manage tab."""
 
         # Create grid-specific callback using closure to capture grid_id
-        def grid_callback(row: int, col: int, row_span: int, col_span: int) -> None:
-            self._on_plot_requested(grid_id, row, col, row_span, col_span)
+        def grid_callback(geometry: CellGeometry) -> None:
+            self._on_plot_requested(grid_id, geometry)
 
         # Create PlotGrid widget with grid-specific callback
         plot_grid = PlotGrid(
@@ -108,9 +109,7 @@ class PlotGridTabs:
 
         # Wrap PlotGrid with modal container for consistent layout
         grid_with_modal = pn.Column(
-            plot_grid.panel,
-            self._modal_container,
-            sizing_mode='stretch_both',
+            plot_grid.panel, self._modal_container, sizing_mode='stretch_both'
         )
 
         # Append at the end (Manage tab is always first at index 0)
@@ -149,9 +148,7 @@ class PlotGridTabs:
         """Handle grid removal from orchestrator."""
         self._remove_grid_tab(grid_id)
 
-    def _on_plot_requested(
-        self, grid_id: GridId, row: int, col: int, row_span: int, col_span: int
-    ) -> None:
+    def _on_plot_requested(self, grid_id: GridId, geometry: CellGeometry) -> None:
         """
         Handle plot request from PlotGrid.
 
@@ -162,25 +159,13 @@ class PlotGridTabs:
         ----------
         grid_id
             ID of the grid where the plot was requested.
-        row
-            Starting row of the selected region.
-        col
-            Starting column of the selected region.
-        row_span
-            Number of rows in the selected region.
-        col_span
-            Number of columns in the selected region.
+        geometry
+            Cell geometry of the selected region.
         """
 
         def on_success(plot_config: PlotConfig) -> None:
             """Handle successful plot configuration."""
-            plot_cell = PlotCell(
-                row=row,
-                col=col,
-                row_span=row_span,
-                col_span=col_span,
-                config=plot_config,
-            )
+            plot_cell = PlotCell(geometry=geometry, config=plot_config)
             self._orchestrator.add_plot(grid_id, plot_cell)
 
         self._show_config_modal(on_success=on_success)
@@ -287,9 +272,7 @@ class PlotGridTabs:
             widget = self._create_status_widget(cell_id, cell, error=error)
 
         # Insert widget at explicit position
-        plot_grid.insert_widget_at(
-            cell.row, cell.col, cell.row_span, cell.col_span, widget
-        )
+        plot_grid.insert_widget_at(cell.geometry, widget)
 
     def _on_cell_removed(
         self, grid_id: GridId, _cell_id: CellId, cell: PlotCell
@@ -313,7 +296,7 @@ class PlotGridTabs:
             return
 
         # Remove widget at explicit position
-        plot_grid.remove_widget_at(cell.row, cell.col, cell.row_span, cell.col_span)
+        plot_grid.remove_widget_at(cell.geometry)
 
     def _create_status_widget(
         self, cell_id: CellId, cell: PlotCell, error: str | None = None

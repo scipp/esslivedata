@@ -99,6 +99,20 @@ class StubJobOrchestrator:
             del self._subscriptions[subscription_id]
 
 
+@dataclass(frozen=True)
+class CellGeometry:
+    """
+    Grid cell geometry (position and size).
+
+    Defines the location and span of a cell in a plot grid.
+    """
+
+    row: int
+    col: int
+    row_span: int
+    col_span: int
+
+
 @dataclass
 class PlotConfig:
     """Configuration for a single plot."""
@@ -119,10 +133,7 @@ class PlotCell:
     the given number of rows and columns.
     """
 
-    row: int
-    col: int
-    row_span: int
-    col_span: int
+    geometry: CellGeometry
     config: PlotConfig
 
 
@@ -300,8 +311,8 @@ class PlotOrchestrator:
             'Added plot %s to grid %s at (%d,%d) for workflow %s',
             cell_id,
             grid_id,
-            cell.row,
-            cell.col,
+            cell.geometry.row,
+            cell.geometry.col,
             cell.config.workflow_id,
         )
         self._notify_cell_updated(grid_id, cell_id, cell)
@@ -333,8 +344,8 @@ class PlotOrchestrator:
             'Removed plot %s from grid %s at (%d,%d)',
             cell_id,
             grid_id,
-            cell.row,
-            cell.col,
+            cell.geometry.row,
+            cell.geometry.col,
         )
         self._notify_cell_removed(grid_id, cell_id, cell)
 
@@ -573,8 +584,8 @@ class PlotOrchestrator:
                         'Error in cell updated callback for grid %s cell %s at (%d,%d)',
                         grid_id,
                         cell_id,
-                        cell.row,
-                        cell.col,
+                        cell.geometry.row,
+                        cell.geometry.col,
                     )
 
     def _notify_cell_removed(
@@ -590,8 +601,8 @@ class PlotOrchestrator:
                         'Error in cell removed callback for grid %s cell %s at (%d,%d)',
                         grid_id,
                         cell_id,
-                        cell.row,
-                        cell.col,
+                        cell.geometry.row,
+                        cell.geometry.col,
                     )
 
     def shutdown(self) -> None:

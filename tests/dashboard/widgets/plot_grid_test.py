@@ -152,7 +152,7 @@ def insert_plot_from_callback(
     """
     # Get region from last callback invocation
     try:
-        row, col, row_span, col_span = callback.get_last_call_args()
+        (geometry,) = callback.get_last_call_args()
     except ValueError:
         # No callback was made, nothing to insert
         return
@@ -166,7 +166,7 @@ def insert_plot_from_callback(
     from ess.livedata.dashboard.widgets.plot_grid import _create_close_button
 
     def on_close() -> None:
-        grid.remove_widget_at(row, col, row_span, col_span)
+        grid.remove_widget_at(geometry)
 
     close_button = _create_close_button(on_close)
 
@@ -178,7 +178,7 @@ def insert_plot_from_callback(
     )
 
     # Insert widget at the position
-    grid.insert_widget_at(row, col, row_span, col_span, widget)
+    grid.insert_widget_at(geometry, widget)
 
 
 class TestPlotGridInitialization:

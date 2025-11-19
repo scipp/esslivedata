@@ -8,6 +8,8 @@ from typing import Any
 
 import panel as pn
 
+from ..plot_orchestrator import CellGeometry
+
 
 @dataclass(frozen=True)
 class _CellStyles:
@@ -255,23 +257,22 @@ class PlotGrid:
     ncols:
         Number of columns in the grid.
     plot_request_callback:
-        Callback invoked when a region is selected with the region coordinates
-        (row, col, row_span, col_span). This callback will be called
-        asynchronously and should not return a value.
+        Callback invoked when a region is selected with the cell geometry.
+        This callback will be called asynchronously and should not return a value.
     """
 
     def __init__(
         self,
         nrows: int,
         ncols: int,
-        plot_request_callback: Callable[[int, int, int, int], None],
+        plot_request_callback: Callable[[CellGeometry], None],
     ) -> None:
         self._nrows = nrows
         self._ncols = ncols
         self._plot_request_callback = plot_request_callback
 
         # State tracking
-        self._occupied_cells: dict[tuple[int, int, int, int], pn.Column] = {}
+        self._occupied_cells: dict[CellGeometry, pn.Column] = {}
         self._first_click: tuple[int, int] | None = None
         self._highlighted_cell: pn.pane.HTML | None = None
 
@@ -386,13 +387,19 @@ class PlotGrid:
             # Clear selection highlight
             self._clear_selection()
 
-            # Request plot from callback, passing region coordinates
-            self._plot_request_callback(row_start, col_start, row_span, col_span)
+            # Request plot from callback, passing cell geometry
+            geometry = CellGeometry(
+                row=row_start, col=col_start, row_span=row_span, col_span=col_span
+            )
+            self._plot_request_callback(geometry)
 
     def _is_cell_occupied(self, row: int, col: int) -> bool:
         """Check if a specific cell is occupied by a plot."""
-        for r, c, r_span, c_span in self._occupied_cells:
-            if r <= row < r + r_span and c <= col < c + c_span:
+        for geometry in self._occupied_cells:
+            if (
+                geometry.row <= row < geometry.row + geometry.row_span
+                and geometry.col <= col < geometry.col + geometry.col_span
+            ):
                 return True
         return False
 
@@ -497,9 +504,7 @@ class PlotGrid:
         if pn.state.notifications is not None:
             pn.state.notifications.error(message, duration=3000)
 
-    def insert_widget_at(
-        self, row: int, col: int, row_span: int, col_span: int, widget: Any
-    ) -> None:
+    def insert_widget_at(self, geometry: CellGeometry, widget: Any) -> None:
         """
         Insert a widget at an explicit position (for orchestrator-driven updates).
 
@@ -508,42 +513,43 @@ class PlotGrid:
 
         Parameters
         ----------
-        row:
-            Starting row position (0-indexed).
-        col:
-            Starting column position (0-indexed).
-        row_span:
-            Number of rows the widget should span.
-        col_span:
-            Number of columns the widget should span.
+        geometry:
+            Cell geometry specifying position and span.
         widget:
             Panel widget or viewable to insert.
         """
         # Validate position is within grid bounds
-        if row < 0 or row >= self._nrows or col < 0 or col >= self._ncols:
-            self._show_error(f'Invalid position: ({row}, {col})')
+        if (
+            geometry.row < 0
+            or geometry.row >= self._nrows
+            or geometry.col < 0
+            or geometry.col >= self._ncols
+        ):
+            self._show_error(f'Invalid position: ({geometry.row}, {geometry.col})')
             return
 
-        if row + row_span > self._nrows or col + col_span > self._ncols:
+        if (
+            geometry.row + geometry.row_span > self._nrows
+            or geometry.col + geometry.col_span > self._ncols
+        ):
             self._show_error(
-                f'Widget extends beyond grid: ({row}, {col}) + '
-                f'span ({row_span}, {col_span})'
+                f'Widget extends beyond grid: ({geometry.row}, {geometry.col}) + '
+                f'span ({geometry.row_span}, {geometry.col_span})'
             )
             return
 
         # Remove any existing widget at this exact position
-        key = (row, col, row_span, col_span)
-        if key in self._occupied_cells:
-            del self._occupied_cells[key]
+        if geometry in self._occupied_cells:
+            del self._occupied_cells[geometry]
 
-        self._insert_widget_into_grid(row, col, row_span, col_span, widget)
+        self._insert_widget_into_grid(
+            geometry.row, geometry.col, geometry.row_span, geometry.col_span, widget
+        )
 
         # Track occupation
-        self._occupied_cells[key] = widget
+        self._occupied_cells[geometry] = widget
 
-    def remove_widget_at(
-        self, row: int, col: int, row_span: int, col_span: int
-    ) -> None:
+    def remove_widget_at(self, geometry: CellGeometry) -> None:
         """
         Remove a widget at an explicit position (for orchestrator-driven updates).
 
@@ -552,22 +558,17 @@ class PlotGrid:
 
         Parameters
         ----------
-        row:
-            Starting row position (0-indexed).
-        col:
-            Starting column position (0-indexed).
-        row_span:
-            Number of rows the widget spans.
-        col_span:
-            Number of columns the widget spans.
+        geometry:
+            Cell geometry specifying position and span.
         """
         # Remove from tracking
-        key = (row, col, row_span, col_span)
-        if key in self._occupied_cells:
-            del self._occupied_cells[key]
+        if geometry in self._occupied_cells:
+            del self._occupied_cells[geometry]
 
         # Restore empty cells
-        self._restore_empty_cells_in_region(row, col, row_span, col_span)
+        self._restore_empty_cells_in_region(
+            geometry.row, geometry.col, geometry.row_span, geometry.col_span
+        )
 
     @property
     def panel(self) -> pn.viewable.Viewable:
