@@ -481,8 +481,7 @@ class PlotGrid:
         Insert a widget at an explicit position (for orchestrator-driven updates).
 
         This method is used for multi-user synchronized plot management via the
-        orchestrator pattern. Unlike insert_plot_deferred(), it doesn't rely on
-        pending selection state and can be called from lifecycle callbacks.
+        orchestrator pattern and can be called from lifecycle callbacks.
 
         Parameters
         ----------
