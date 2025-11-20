@@ -68,10 +68,23 @@ class PlotGridTabs:
         self._tabs = pn.Tabs(sizing_mode='stretch_both')
 
         # Modal container for plot configuration
-        # Using pn.Row with height=0 ensures the modal is part of the component tree
-        # but doesn't compete for vertical space. The modal renders as an overlay.
+        # IMPORTANT: Use height=0 to ensure the modal is in the component tree
+        # (required for rendering) but doesn't compete for vertical space.
+        # The modal itself renders as an overlay when shown.
+        # This container must be at the TOP LEVEL (wrapping Tabs), not inside
+        # individual grid tabs. Panel components can only have one parent, so
+        # adding the same container to multiple tabs would break rendering.
         self._modal_container = pn.Row(height=0, sizing_mode='stretch_width')
         self._current_modal: PlotConfigModal | None = None
+
+        # Create main widget - tabs with zero-height modal container
+        # IMPORTANT: Create the widget once in __init__ (not in the panel property)
+        # to give modal_container a stable parent. If we created a new Column on
+        # each .panel access, the modal_container would be reparented repeatedly,
+        # breaking its connection to the component tree.
+        self._widget = pn.Column(
+            self._tabs, self._modal_container, sizing_mode='stretch_both'
+        )
 
         # Subscribe to lifecycle events
         self._subscription_id: SubscriptionId | None = (
@@ -108,13 +121,11 @@ class PlotGridTabs:
         # Store widget reference
         self._grid_widgets[grid_id] = plot_grid
 
-        # Wrap PlotGrid with modal container for consistent layout
-        grid_with_modal = pn.Column(
-            plot_grid.panel, self._modal_container, sizing_mode='stretch_both'
-        )
-
-        # Append at the end (Manage tab is always first at index 0)
-        self._tabs.append((grid_config.title, grid_with_modal))
+        # Append grid directly to tabs (Manage tab is always first at index 0)
+        # NOTE: Do NOT wrap each grid with modal_container here. The modal
+        # container is shared across all tabs and lives at the top level
+        # (wrapping the entire Tabs widget).
+        self._tabs.append((grid_config.title, plot_grid.panel))
 
         # Populate with existing cells (important for late subscribers / new sessions)
         for cell_id, cell in grid_config.cells.items():
@@ -446,6 +457,6 @@ class PlotGridTabs:
         self._grid_manager.shutdown()
 
     @property
-    def panel(self) -> pn.Tabs:
+    def panel(self) -> pn.Column:
         """Get the Panel viewable object for this widget."""
-        return self._tabs
+        return self._widget
