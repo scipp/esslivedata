@@ -162,13 +162,13 @@ def insert_plot_from_callback(
     plot_pane_wrapper = pn.pane.HoloViews(plot, sizing_mode='stretch_both')
     plot_pane = plot_pane_wrapper.layout
 
-    # Create close button using the helper from plot_grid module
-    from ess.livedata.dashboard.widgets.plot_grid import _create_close_button
+    # Create close button using the helper from plot_widgets module
+    from ess.livedata.dashboard.widgets.plot_widgets import create_close_button
 
     def on_close() -> None:
         grid.remove_widget_at(geometry)
 
-    close_button = _create_close_button(on_close)
+    close_button = create_close_button(on_close)
 
     widget = pn.Column(
         close_button,
