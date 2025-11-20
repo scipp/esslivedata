@@ -151,16 +151,7 @@ class WorkflowController:
             )
 
         # Commit and start workflow
-        job_ids = self._orchestrator.commit_workflow(workflow_id)
-
-        self._logger.info(
-            'WorkflowController.start_workflow COMPLETED: '
-            'workflow_id=%s, returned %d job_ids',
-            workflow_id,
-            len(job_ids),
-        )
-
-        return job_ids
+        return self._orchestrator.commit_workflow(workflow_id)
 
     def create_workflow_adapter(self, workflow_id: WorkflowId):
         """Create a workflow configuration adapter for the given workflow ID."""
