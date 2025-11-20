@@ -139,8 +139,8 @@ class WorkflowController:
         self._orchestrator.clear_staged_configs(workflow_id)
 
         # Convert Pydantic models to dicts for orchestrator
-        params_dict = config.model_dump()
-        aux_dict = aux_source_names.model_dump() if aux_source_names else {}
+        params_dict = config.model_dump(mode='json')
+        aux_dict = aux_source_names.model_dump(mode='json') if aux_source_names else {}
 
         for source_name in source_names:
             self._orchestrator.stage_config(

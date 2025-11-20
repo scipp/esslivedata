@@ -258,10 +258,15 @@ class PlottingController:
 
         plotter_id = self._create_plotter_id(workflow_id, output_name, plot_name)
 
-        config_state = ConfigurationState(
-            source_names=source_names, aux_source_names={}, params=params.model_dump()
+        params_dict = (
+            params.model_dump(mode='json')
+            if isinstance(params, pydantic.BaseModel)
+            else params
         )
-        self._config_store[plotter_id] = config_state.model_dump()
+        config_state = ConfigurationState(
+            source_names=source_names, aux_source_names={}, params=params_dict
+        )
+        self._config_store[plotter_id] = config_state.model_dump(mode='json')
 
     def create_plot(
         self,
