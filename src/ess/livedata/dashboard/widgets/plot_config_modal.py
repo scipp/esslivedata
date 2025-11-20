@@ -602,15 +602,21 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         return None
 
     def is_valid(self) -> bool:
-        """Step is valid when configuration is valid."""
-        if self._config_panel is None:
-            return False
-        is_valid, _ = self._config_panel.validate()
-        return is_valid
+        """
+        Step is always considered valid to keep button enabled.
+
+        Actual validation happens in commit() to show errors when user clicks.
+        """
+        return True
 
     def commit(self) -> PlotConfig | None:
         """Commit the plot configuration."""
         if self._config_panel is None or self._plotter_selection is None:
+            return None
+
+        # Validate configuration first (shows errors if invalid)
+        is_valid, _ = self._config_panel.validate()
+        if not is_valid:
             return None
 
         # Clear previous result
