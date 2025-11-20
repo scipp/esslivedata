@@ -34,6 +34,7 @@ from ess.livedata.core.job_manager import JobAction, JobCommand
 
 from .command_service import CommandService
 from .config_store import ConfigStore
+from .workflow_config_service import WorkflowConfigService
 
 SourceName = str
 SubscriptionId = NewType('SubscriptionId', UUID)
@@ -88,6 +89,7 @@ class JobOrchestrator:
         self,
         *,
         command_service: CommandService,
+        workflow_config_service: WorkflowConfigService,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         config_store: ConfigStore | None = None,
     ) -> None:
@@ -98,6 +100,8 @@ class JobOrchestrator:
         ----------
         command_service
             Service for sending workflow commands to backend services.
+        workflow_config_service
+            Service for receiving workflow status updates from backend services.
         workflow_registry
             Registry of available workflows and their specifications.
         config_store
@@ -110,6 +114,7 @@ class JobOrchestrator:
         which is called by the main Orchestrator when STATUS_STREAM messages arrive.
         """
         self._command_service = command_service
+        self._workflow_config_service = workflow_config_service
         self._workflow_registry = workflow_registry
         self._config_store = config_store
         self._logger = logging.getLogger(__name__)
