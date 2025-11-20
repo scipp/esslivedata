@@ -202,7 +202,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1", "det_2"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -223,7 +222,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1", "det_2"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -247,7 +245,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1", "det_2"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -265,7 +262,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1", "det_2"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -290,7 +286,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1", "det_2"],
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -321,7 +316,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1", "det_2"],
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -350,7 +344,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1"],
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -369,7 +362,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -387,7 +379,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -407,7 +398,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1", "det_2"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -430,7 +420,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -454,7 +443,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1"],
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -489,7 +477,6 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -522,7 +509,6 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -554,7 +540,6 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -585,7 +570,6 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -624,7 +608,6 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1", "det_2"],
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -648,7 +631,6 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -693,7 +675,6 @@ class TestJobOrchestratorCommit:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1", "det_2"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -730,7 +711,6 @@ class TestJobOrchestratorCommit:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -752,7 +732,6 @@ class TestJobOrchestratorCommit:
         fake_sink = FakeMessageSink()
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=fake_sink),
-            source_names=["det_1", "det_2"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -804,7 +783,6 @@ class TestJobOrchestratorCommit:
         fake_sink = FakeMessageSink()
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=fake_sink),
-            source_names=["det_1", "det_2"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -872,7 +850,6 @@ class TestJobOrchestratorCommit:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1", "det_2"],
             workflow_registry=registry,
             config_store=None,
         )
@@ -905,7 +882,6 @@ class TestJobOrchestratorCommit:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1", "det_2"],
             workflow_registry=registry,
             config_store=None,  # No config store
         )
@@ -939,7 +915,6 @@ class TestJobOrchestratorCommit:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1"],
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -976,38 +951,3 @@ class TestJobOrchestratorCommit:
 
         # Config store should be unchanged for workflows with empty staged_jobs
         assert config_store == config_store_before
-
-    def test_stage_config_validates_source_name(
-        self, workflow_with_params: WorkflowSpec
-    ):
-        """stage_config should raise ValueError for unknown source names."""
-        workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            source_names=["det_1", "det_2"],  # Only these are valid
-            workflow_registry=registry,
-            config_store=None,
-        )
-
-        # Try to stage config for unknown source
-        with pytest.raises(
-            ValueError, match="Cannot stage config for unknown source 'unknown_source'"
-        ):
-            orchestrator.stage_config(
-                workflow_id,
-                source_name="unknown_source",
-                params={"threshold": 50.0},
-                aux_source_names={},
-            )
-
-        # Valid source should work
-        orchestrator.stage_config(
-            workflow_id,
-            source_name="det_1",
-            params={"threshold": 50.0},
-            aux_source_names={},
-        )
-        staged = orchestrator.get_staged_config(workflow_id)
-        assert "det_1" in staged
