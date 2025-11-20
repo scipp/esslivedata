@@ -92,6 +92,7 @@ class FakeJobOrchestrator:
     def __init__(self):
         self._subscriptions: dict[SubscriptionId, Callable[[JobNumber], None]] = {}
         self._workflow_subscriptions: dict[WorkflowId, set[SubscriptionId]] = {}
+        self._current_jobs: dict[WorkflowId, JobNumber] = {}
 
     def subscribe_to_workflow(
         self, workflow_id: WorkflowId, callback: Callable[[JobNumber], None]
@@ -104,6 +105,11 @@ class FakeJobOrchestrator:
         if workflow_id not in self._workflow_subscriptions:
             self._workflow_subscriptions[workflow_id] = set()
         self._workflow_subscriptions[workflow_id].add(subscription_id)
+
+        # If workflow is already running, notify immediately (like real JobOrchestrator)
+        if workflow_id in self._current_jobs:
+            current_job_number = self._current_jobs[workflow_id]
+            callback(current_job_number)
 
         return subscription_id
 
@@ -119,6 +125,9 @@ class FakeJobOrchestrator:
         self, workflow_id: WorkflowId, job_number: JobNumber
     ) -> None:
         """Simulate a workflow commit by calling all callbacks for that workflow."""
+        # Track this as the current job
+        self._current_jobs[workflow_id] = job_number
+
         if workflow_id not in self._workflow_subscriptions:
             return
 
@@ -1128,3 +1137,183 @@ class TestEdgeCasesAndComplexScenarios:
         # Workflow commits
         job_number = uuid.uuid4()
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+
+class TestLateSubscriberPlotRetrieval:
+    """Test that late subscribers can retrieve existing plots via get_cell_state."""
+
+    def test_get_cell_state_returns_none_for_cell_without_plot(
+        self, plot_orchestrator, plot_cell, fake_job_orchestrator
+    ):
+        """get_cell_state should return (None, None) for cell without plot."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Cell exists but workflow hasn't committed yet
+        plot, error = plot_orchestrator.get_cell_state(cell_id)
+        assert plot is None
+        assert error is None
+
+    def test_get_cell_state_returns_plot_after_workflow_commits(
+        self, plot_orchestrator, plot_cell, workflow_id, fake_job_orchestrator
+    ):
+        """get_cell_state should return plot after workflow commits."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Commit workflow
+        job_number = uuid.uuid4()
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+        # Now get_cell_state should return the plot
+        plot, error = plot_orchestrator.get_cell_state(cell_id)
+        assert plot is not None
+        assert isinstance(plot, FakePlot)
+        assert error is None
+
+    def test_get_cell_state_returns_error_when_plot_creation_fails(
+        self, workflow_id, fake_job_orchestrator
+    ):
+        """get_cell_state should return error when plot creation fails."""
+
+        # Create plotting controller that raises exception
+        class FailingPlottingController:
+            def create_plot(self, **kwargs):
+                raise ValueError("Plot creation failed")
+
+        plot_orchestrator = PlotOrchestrator(
+            plotting_controller=FailingPlottingController(),
+            job_orchestrator=fake_job_orchestrator,
+            config_store=None,
+        )
+
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        plot_cell = PlotCell(
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
+            config=PlotConfig(
+                workflow_id=workflow_id,
+                output_name='test_output',
+                source_names=['source1'],
+                plot_name='test_plot',
+                params={},
+            ),
+        )
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Commit workflow (will fail to create plot)
+        job_number = uuid.uuid4()
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+        # get_cell_state should return error
+        plot, error = plot_orchestrator.get_cell_state(cell_id)
+        assert plot is None
+        assert error == "Plot creation failed"
+
+    def test_late_subscriber_can_retrieve_existing_plots_from_all_cells(
+        self, workflow_id, fake_job_orchestrator, fake_plotting_controller
+    ):
+        """
+        Simulate late subscriber scenario: plots exist, new UI component
+        initializes and retrieves them via get_cell_state.
+        """
+        plot_orchestrator = PlotOrchestrator(
+            plotting_controller=fake_plotting_controller,
+            job_orchestrator=fake_job_orchestrator,
+            config_store=None,
+        )
+
+        # Create grid with multiple cells
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+
+        cell_ids = []
+        for i in range(3):
+            plot_cell = PlotCell(
+                geometry=CellGeometry(row=i, col=0, row_span=1, col_span=1),
+                config=PlotConfig(
+                    workflow_id=workflow_id,
+                    output_name=f'output_{i}',
+                    source_names=[f'source_{i}'],
+                    plot_name=f'plot_{i}',
+                    params={},
+                ),
+            )
+            cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+            cell_ids.append(cell_id)
+
+        # Commit workflow - plots are created
+        job_number = uuid.uuid4()
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+        # Simulate late subscriber (new session, page reload, etc.)
+        # Late subscriber retrieves grid config
+        grids = plot_orchestrator.get_all_grids()
+        assert grid_id in grids
+
+        grid_config = grids[grid_id]
+        assert len(grid_config.cells) == 3
+
+        # Late subscriber retrieves plots for all cells via get_cell_state
+        for cell_id in cell_ids:
+            plot, error = plot_orchestrator.get_cell_state(cell_id)
+            assert plot is not None, f"Plot should exist for cell {cell_id}"
+            assert isinstance(plot, FakePlot)
+            assert error is None
+
+    def test_get_cell_state_updated_when_cell_config_updated_with_running_workflow(
+        self, plot_orchestrator, plot_cell, workflow_id, fake_job_orchestrator
+    ):
+        """
+        When config is updated and workflow is running, plot is immediately recreated.
+        """
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Commit workflow - plot created
+        job_number1 = uuid.uuid4()
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number1)
+
+        # Verify plot exists
+        plot1, error = plot_orchestrator.get_cell_state(cell_id)
+        assert plot1 is not None
+        assert error is None
+
+        # Update config while workflow is still running
+        new_config = PlotConfig(
+            workflow_id=workflow_id,
+            output_name='new_output',
+            source_names=['new_source'],
+            plot_name='new_plot',
+            params={},
+        )
+        plot_orchestrator.update_plot_config(cell_id, new_config)
+
+        # Since workflow is still running, plot should be immediately recreated
+        # (subscribe_to_workflow calls callback immediately if workflow running)
+        plot2, error = plot_orchestrator.get_cell_state(cell_id)
+        assert plot2 is not None
+        assert error is None
+        # Note: We can't reliably test for a different instance since
+        # FakePlottingController may return the same object
+
+    def test_get_cell_state_cleared_when_cell_removed(
+        self, plot_orchestrator, plot_cell, workflow_id, fake_job_orchestrator
+    ):
+        """get_cell_state should be cleaned up when cell is removed."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Commit workflow - plot created
+        job_number = uuid.uuid4()
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+        # Verify plot exists
+        plot, error = plot_orchestrator.get_cell_state(cell_id)
+        assert plot is not None
+
+        # Remove cell
+        plot_orchestrator.remove_plot(cell_id)
+
+        # get_cell_state should now return None (cell doesn't exist)
+        plot, error = plot_orchestrator.get_cell_state(cell_id)
+        assert plot is None
+        assert error is None
