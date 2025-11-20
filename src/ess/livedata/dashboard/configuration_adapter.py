@@ -17,6 +17,23 @@ class ConfigurationState(BaseModel):
     This model captures the user's configuration choices (sources, params,
     aux sources) that should be restored when reopening the dashboard.
     Used by both workflow and plotter configurations.
+
+    Schema Limitation
+    -----------------
+    This schema currently assumes all sources share the same `params` configuration,
+    with only `aux_source_names` varying per source. In reality, JobOrchestrator's
+    internal state (`staged_jobs`) allows different params per source via
+    `dict[SourceName, JobConfig]`.
+
+    For now, we expand on load: the single `params` dict is applied to all sources
+    in `source_names`, and `aux_source_names` is expanded per-source as needed.
+    This works because the current UI (WorkflowController.start_workflow) stages
+    the same params for all sources in a single operation.
+
+    Future work: If we support per-source params in the UI (e.g., "stage source1
+    with configA, stage source2 with configB"), this schema should be extended to:
+    `jobs: dict[str, JobConfigState]` where `JobConfigState` contains both params
+    and aux_source_names per source.
     """
 
     source_names: list[str] = Field(

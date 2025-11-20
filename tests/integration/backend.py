@@ -50,6 +50,7 @@ class DashboardBackend:
         dev: bool = True,
         log_level: int | str = logging.INFO,
         transport: Literal['kafka', 'none'] = 'kafka',
+        config_dir: str | None = None,
     ):
         self._instrument = instrument
         self._dev = dev
@@ -63,9 +64,15 @@ class DashboardBackend:
         self._exit_stack.__enter__()
 
         # Create config manager with in-memory stores for tests (no file I/O)
-        self._config_manager = ConfigStoreManager(
-            instrument=instrument, store_type='memory'
-        )
+        # unless config_dir is specified (for testing persistence)
+        if config_dir is None:
+            self._config_manager = ConfigStoreManager(
+                instrument=instrument, store_type='memory'
+            )
+        else:
+            self._config_manager = ConfigStoreManager(
+                instrument=instrument, store_type='file', config_dir=config_dir
+            )
 
         # Create transport based on configuration
         transport_impl: Transport
