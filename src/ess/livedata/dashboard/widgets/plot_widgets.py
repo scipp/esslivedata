@@ -5,13 +5,31 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import panel as pn
 
-from .plot_grid import _CellStyles
+
+@dataclass(frozen=True)
+class ButtonStyles:
+    """Styling constants for plot cell buttons."""
+
+    # Colors
+    PRIMARY_BLUE = '#007bff'
+    DANGER_RED = '#dc3545'
+
+    # Dimensions
+    CELL_MARGIN = 2
+    TOOL_BUTTON_SIZE = 28
+    TOOL_BUTTON_TOP_OFFSET = '5px'
+    CLOSE_BUTTON_RIGHT_OFFSET = '5px'
+    TOOL_BUTTON_Z_INDEX = '1000'
+
+    # Typography
+    TOOL_BUTTON_FONT_SIZE = '20px'
 
 
-def _create_tool_button_stylesheet(button_color: str, hover_color: str) -> list[str]:
+def create_tool_button_stylesheet(button_color: str, hover_color: str) -> list[str]:
     """
     Create a stylesheet for tool buttons (close, gear, etc.).
 
@@ -34,7 +52,7 @@ def _create_tool_button_stylesheet(button_color: str, hover_color: str) -> list[
             border: none !important;
             color: {button_color} !important;
             font-weight: bold !important;
-            font-size: {_CellStyles.TOOL_BUTTON_FONT_SIZE} !important;
+            font-size: {ButtonStyles.TOOL_BUTTON_FONT_SIZE} !important;
             padding: 0 !important;
             margin: 0 !important;
             line-height: 1 !important;
@@ -51,7 +69,7 @@ def _create_tool_button_stylesheet(button_color: str, hover_color: str) -> list[
     ]
 
 
-def _create_tool_button(
+def create_tool_button(
     symbol: str,
     right_offset: str,
     button_color: str,
@@ -81,24 +99,24 @@ def _create_tool_button(
     """
     button = pn.widgets.Button(
         name=symbol,
-        width=_CellStyles.TOOL_BUTTON_SIZE,
-        height=_CellStyles.TOOL_BUTTON_SIZE,
+        width=ButtonStyles.TOOL_BUTTON_SIZE,
+        height=ButtonStyles.TOOL_BUTTON_SIZE,
         button_type='light',
         sizing_mode='fixed',
-        margin=(_CellStyles.CELL_MARGIN, _CellStyles.CELL_MARGIN),
+        margin=(ButtonStyles.CELL_MARGIN, ButtonStyles.CELL_MARGIN),
         styles={
             'position': 'absolute',
-            'top': _CellStyles.TOOL_BUTTON_TOP_OFFSET,
+            'top': ButtonStyles.TOOL_BUTTON_TOP_OFFSET,
             'right': right_offset,
-            'z-index': _CellStyles.TOOL_BUTTON_Z_INDEX,
+            'z-index': ButtonStyles.TOOL_BUTTON_Z_INDEX,
         },
-        stylesheets=_create_tool_button_stylesheet(button_color, hover_color),
+        stylesheets=create_tool_button_stylesheet(button_color, hover_color),
     )
     button.on_click(lambda _: on_click_callback())
     return button
 
 
-def _create_close_button(on_close_callback: Callable[[], None]) -> pn.widgets.Button:
+def create_close_button(on_close_callback: Callable[[], None]) -> pn.widgets.Button:
     """
     Create a styled close button for plot cells.
 
@@ -112,16 +130,16 @@ def _create_close_button(on_close_callback: Callable[[], None]) -> pn.widgets.Bu
     :
         Panel Button widget styled as a close button.
     """
-    return _create_tool_button(
+    return create_tool_button(
         symbol='\u00d7',  # "X" multiplication sign
-        right_offset=_CellStyles.CLOSE_BUTTON_RIGHT_OFFSET,
-        button_color=_CellStyles.DANGER_RED,
+        right_offset=ButtonStyles.CLOSE_BUTTON_RIGHT_OFFSET,
+        button_color=ButtonStyles.DANGER_RED,
         hover_color='rgba(220, 53, 69, 0.1)',
         on_click_callback=on_close_callback,
     )
 
 
-def _create_gear_button(on_gear_callback: Callable[[], None]) -> pn.widgets.Button:
+def create_gear_button(on_gear_callback: Callable[[], None]) -> pn.widgets.Button:
     """
     Create a styled gear button for plot cells (configuration/settings).
 
@@ -135,11 +153,11 @@ def _create_gear_button(on_gear_callback: Callable[[], None]) -> pn.widgets.Butt
     :
         Panel Button widget styled as a gear button.
     """
-    return _create_tool_button(
+    return create_tool_button(
         symbol='\u2699',  # Gear symbol
         # Position to the left of the close button
-        right_offset=f'{_CellStyles.TOOL_BUTTON_SIZE + 10}px',
-        button_color=_CellStyles.PRIMARY_BLUE,
+        right_offset=f'{ButtonStyles.TOOL_BUTTON_SIZE + 10}px',
+        button_color=ButtonStyles.PRIMARY_BLUE,
         hover_color='rgba(0, 123, 255, 0.1)',
         on_click_callback=on_gear_callback,
     )

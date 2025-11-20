@@ -12,7 +12,7 @@ from ..plot_orchestrator import CellGeometry
 
 
 @dataclass(frozen=True)
-class _CellStyles:
+class GridCellStyles:
     """Styling constants for PlotGrid cells."""
 
     # Colors
@@ -23,21 +23,15 @@ class _CellStyles:
     VERY_LIGHT_GRAY = '#f8f9fa'
     MEDIUM_GRAY = '#6c757d'
     MUTED_GRAY = '#adb5bd'
-    DANGER_RED = '#dc3545'
 
     # Dimensions
     CELL_MIN_HEIGHT_PX = 100
     CELL_BORDER_WIDTH_NORMAL = 1
     CELL_BORDER_WIDTH_HIGHLIGHTED = 3
     CELL_MARGIN = 2
-    TOOL_BUTTON_SIZE = 28
-    TOOL_BUTTON_TOP_OFFSET = '5px'
-    CLOSE_BUTTON_RIGHT_OFFSET = '5px'
-    TOOL_BUTTON_Z_INDEX = '1000'
 
     # Typography
     FONT_SIZE_LARGE = '24px'
-    TOOL_BUTTON_FONT_SIZE = '20px'
 
 
 def _normalize_region(r1: int, c1: int, r2: int, c2: int) -> tuple[int, int, int, int]:
@@ -168,24 +162,24 @@ class PlotGrid:
     ) -> pn.Column:
         """Create an empty cell with placeholder text and click handler."""
         border_color = (
-            _CellStyles.PRIMARY_BLUE if highlighted else _CellStyles.LIGHT_GRAY
+            GridCellStyles.PRIMARY_BLUE if highlighted else GridCellStyles.LIGHT_GRAY
         )
         border_width = (
-            _CellStyles.CELL_BORDER_WIDTH_HIGHLIGHTED
+            GridCellStyles.CELL_BORDER_WIDTH_HIGHLIGHTED
             if highlighted
-            else _CellStyles.CELL_BORDER_WIDTH_NORMAL
+            else GridCellStyles.CELL_BORDER_WIDTH_NORMAL
         )
         border_style = 'dashed' if highlighted else 'solid'
 
         if disabled:
-            background_color = _CellStyles.LIGHT_RED
-            text_color = _CellStyles.MUTED_GRAY
+            background_color = GridCellStyles.LIGHT_RED
+            text_color = GridCellStyles.MUTED_GRAY
         elif highlighted:
-            background_color = _CellStyles.LIGHT_BLUE
-            text_color = _CellStyles.MEDIUM_GRAY
+            background_color = GridCellStyles.LIGHT_BLUE
+            text_color = GridCellStyles.MEDIUM_GRAY
         else:
-            background_color = _CellStyles.VERY_LIGHT_GRAY
-            text_color = _CellStyles.MEDIUM_GRAY
+            background_color = GridCellStyles.VERY_LIGHT_GRAY
+            text_color = GridCellStyles.MEDIUM_GRAY
 
         # Determine button label
         if label is None:
@@ -197,7 +191,7 @@ class PlotGrid:
             stylesheets = [
                 f"""
                 button {{
-                    font-size: {_CellStyles.FONT_SIZE_LARGE};
+                    font-size: {GridCellStyles.FONT_SIZE_LARGE};
                     font-weight: bold;
                 }}
                 """
@@ -215,10 +209,10 @@ class PlotGrid:
                 'background-color': background_color,
                 'border': f'{border_width}px {border_style} {border_color}',
                 'color': text_color,
-                'min-height': f'{_CellStyles.CELL_MIN_HEIGHT_PX}px',
+                'min-height': f'{GridCellStyles.CELL_MIN_HEIGHT_PX}px',
             },
             stylesheets=stylesheets,
-            margin=_CellStyles.CELL_MARGIN,
+            margin=GridCellStyles.CELL_MARGIN,
         )
 
         # Attach click handler (even if disabled, for consistency)

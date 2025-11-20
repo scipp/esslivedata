@@ -30,7 +30,7 @@ from ..plot_orchestrator import (
 from .plot_config_modal import PlotConfigModal
 from .plot_grid import PlotGrid
 from .plot_grid_manager import PlotGridManager
-from .plot_widgets import _create_close_button, _create_gear_button
+from .plot_widgets import create_close_button, create_gear_button
 
 
 class PlotGridTabs:
@@ -360,13 +360,13 @@ class PlotGridTabs:
         def on_close() -> None:
             self._orchestrator.remove_plot(cell_id)
 
-        close_button = _create_close_button(on_close)
+        close_button = create_close_button(on_close)
 
         # Create gear button for reconfiguration
         def on_gear() -> None:
             self._on_reconfigure_plot(cell_id)
 
-        gear_button = _create_gear_button(on_gear)
+        gear_button = create_gear_button(on_gear)
 
         status_widget = pn.Column(
             gear_button,
@@ -413,13 +413,13 @@ class PlotGridTabs:
         def on_close() -> None:
             self._orchestrator.remove_plot(cell_id)
 
-        close_button = _create_close_button(on_close)
+        close_button = create_close_button(on_close)
 
         # Create gear button for reconfiguration
         def on_gear() -> None:
             self._on_reconfigure_plot(cell_id)
 
-        gear_button = _create_gear_button(on_gear)
+        gear_button = create_gear_button(on_gear)
 
         # Use .layout to preserve widgets for DynamicMaps with kdims.
         # When pn.pane.HoloViews wraps a DynamicMap with kdims, it generates
