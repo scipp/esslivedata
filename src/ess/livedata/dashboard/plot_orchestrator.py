@@ -446,10 +446,17 @@ class PlotOrchestrator:
         self._cell_state.pop(cell_id, None)
 
         # Re-subscribe to workflow (in case workflow_id changed)
-        # If workflow is already running, this will trigger plot creation immediately
+        # Note: If workflow is already running, JobOrchestrator will call
+        # the callback immediately during subscription
+        callback_was_called = [False]  # Use list to allow modification in lambda
+
+        def on_workflow_available(job_number: JobNumber) -> None:
+            callback_was_called[0] = True
+            self._on_job_available(cell_id, job_number)
+
         subscription_id = self._job_orchestrator.subscribe_to_workflow(
             workflow_id=new_config.workflow_id,
-            callback=lambda job_number: self._on_job_available(cell_id, job_number),
+            callback=on_workflow_available,
         )
         self._cell_to_subscription[cell_id] = subscription_id
 
@@ -457,8 +464,11 @@ class PlotOrchestrator:
         self._persist_to_store()
 
         self._logger.info('Updated plot config for cell %s', cell_id)
-        # Notify with no plot (will show status widget until workflow commits)
-        self._notify_cell_updated(grid_id, cell_id, cell)
+
+        # If callback wasn't called immediately (workflow not running yet),
+        # notify that cell was updated without a plot
+        if not callback_was_called[0]:
+            self._notify_cell_updated(grid_id, cell_id, cell)
 
     def _on_job_available(self, cell_id: CellId, job_number: JobNumber) -> None:
         """
