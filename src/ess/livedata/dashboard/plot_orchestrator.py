@@ -455,12 +455,6 @@ class PlotOrchestrator:
         job_number
             Job number for the workflow.
         """
-        self._logger.info(
-            'CALLBACK TRIGGERED: _on_job_available for cell_id=%s, job_number=%s',
-            cell_id,
-            job_number,
-        )
-
         # Defensive check: cell may have been removed before callback fires
         if cell_id not in self._cell_to_grid:
             self._logger.warning(
@@ -471,7 +465,7 @@ class PlotOrchestrator:
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
-        self._logger.info(
+        self._logger.debug(
             'Creating plot for cell_id=%s, grid_id=%s, workflow=%s, '
             'job_number=%s, plot_name=%s, source_names=%s',
             cell_id,
@@ -491,7 +485,7 @@ class PlotOrchestrator:
                 plot_name=cell.config.plot_name,
                 params=cell.config.params,
             )
-            self._logger.info(
+            self._logger.debug(
                 'Successfully created plot for cell_id=%s, type=%s',
                 cell_id,
                 type(plot).__name__,
@@ -501,10 +495,7 @@ class PlotOrchestrator:
             self._notify_cell_updated(grid_id, cell_id, cell, plot=plot)
         except Exception:
             error_msg = traceback.format_exc()
-            self._logger.error(
-                'Failed to create plot for cell_id=%s: %s', cell_id, error_msg
-            )
-            self._logger.exception('Full traceback for plot creation failure:')
+            self._logger.exception('Failed to create plot for cell_id=%s', cell_id)
             # Store the error so late subscribers can see it
             self._cell_state[cell_id] = CellState(error=error_msg)
             self._notify_cell_updated(grid_id, cell_id, cell, error=error_msg)
@@ -638,7 +629,7 @@ class PlotOrchestrator:
         subscriber_count = len(
             [s for s in self._lifecycle_subscribers.values() if s.on_cell_updated]
         )
-        self._logger.info(
+        self._logger.debug(
             'Notifying %d subscriber(s) of cell update: '
             'cell_id=%s, grid_id=%s, has_plot=%s, error=%s',
             subscriber_count,
