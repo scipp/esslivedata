@@ -153,7 +153,7 @@ def workflow_controller(
 
     job_orchestrator = JobOrchestrator(
         command_service=command_service,
-        source_names=source_names,
+        workflow_config_service=fake_workflow_config_service,
         workflow_registry=workflow_registry,
         config_store=fake_config_store,
     )
@@ -298,7 +298,7 @@ class TestWorkflowController:
 
         job_orchestrator = JobOrchestrator(
             command_service=command_service,
-            source_names=source_names,
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=config_store,
         )

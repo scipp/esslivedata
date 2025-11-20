@@ -153,6 +153,12 @@ class FakeWorkflowConfigService(WorkflowConfigService):
         pass
 
 
+@pytest.fixture
+def fake_workflow_config_service() -> FakeWorkflowConfigService:
+    """Create a fake workflow config service for tests."""
+    return FakeWorkflowConfigService()
+
+
 def get_sent_commands(sink: FakeMessageSink) -> list[tuple[ConfigKey, Any]]:
     """Extract all sent commands from the sink."""
     result = []
@@ -190,7 +196,10 @@ class TestJobOrchestratorInitialization:
     """Test JobOrchestrator initialization behavior."""
 
     def test_all_workflows_initialized_without_config_store(
-        self, workflow_with_params: WorkflowSpec, workflow_no_params: WorkflowSpec
+        self,
+        workflow_with_params: WorkflowSpec,
+        workflow_no_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """All workflows in registry should be initialized even without config store."""
         workflow_id_1 = workflow_with_params.get_id()
@@ -202,6 +211,7 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -214,7 +224,9 @@ class TestJobOrchestratorInitialization:
         assert isinstance(staged_2, dict)
 
     def test_workflow_with_params_gets_default_config(
-        self, workflow_with_params: WorkflowSpec
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Workflow with params model should get default params for all sources."""
         workflow_id = workflow_with_params.get_id()
@@ -222,6 +234,7 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -237,7 +250,9 @@ class TestJobOrchestratorInitialization:
             assert job_config.aux_source_names == {}
 
     def test_workflow_no_params_has_empty_staged_jobs(
-        self, workflow_no_params: WorkflowSpec
+        self,
+        workflow_no_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Workflow without params should exist but have empty staged_jobs."""
         workflow_id = workflow_no_params.get_id()
@@ -245,6 +260,7 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -254,7 +270,9 @@ class TestJobOrchestratorInitialization:
         assert len(staged) == 0
 
     def test_workflow_empty_sources_has_empty_staged_jobs(
-        self, workflow_empty_sources: WorkflowSpec
+        self,
+        workflow_empty_sources: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Workflow with empty source_names should have empty staged_jobs."""
         workflow_id = workflow_empty_sources.get_id()
@@ -262,6 +280,7 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -270,7 +289,11 @@ class TestJobOrchestratorInitialization:
         assert isinstance(staged, dict)
         assert len(staged) == 0
 
-    def test_loads_config_from_store(self, workflow_with_params: WorkflowSpec):
+    def test_loads_config_from_store(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
         """Should load and use config from store when available."""
         workflow_id = workflow_with_params.get_id()
         registry = {workflow_id: workflow_with_params}
@@ -286,6 +309,7 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -299,7 +323,9 @@ class TestJobOrchestratorInitialization:
         assert staged["det_1"].params["mode"] == "custom"
 
     def test_loads_invalid_config_without_validation(
-        self, workflow_with_params: WorkflowSpec
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Invalid configs are loaded as-is (validation happens later in UI)."""
         workflow_id = workflow_with_params.get_id()
@@ -316,6 +342,7 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -328,7 +355,9 @@ class TestJobOrchestratorInitialization:
         assert staged["det_1"].params["threshold"] == "not_a_float"
 
     def test_loads_aux_sources_from_config(
-        self, workflow_with_params_and_aux: WorkflowSpec
+        self,
+        workflow_with_params_and_aux: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Should load aux_source_names from config store."""
         workflow_id = workflow_with_params_and_aux.get_id()
@@ -344,6 +373,7 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -354,7 +384,9 @@ class TestJobOrchestratorInitialization:
         assert staged["det_1"].aux_source_names["monitor"] == "monitor_2"
 
     def test_get_staged_config_never_raises_for_valid_workflow_id(
-        self, workflow_with_params: WorkflowSpec
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """get_staged_config should never raise KeyError for valid workflow_id."""
         workflow_id = workflow_with_params.get_id()
@@ -362,6 +394,7 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -371,7 +404,9 @@ class TestJobOrchestratorInitialization:
         assert isinstance(result, dict)
 
     def test_get_staged_config_raises_for_unknown_workflow_id(
-        self, workflow_with_params: WorkflowSpec
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """get_staged_config should raise KeyError for unknown workflow_id."""
         workflow_id = workflow_with_params.get_id()
@@ -379,6 +414,7 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -391,13 +427,18 @@ class TestJobOrchestratorInitialization:
         with pytest.raises(KeyError):
             orchestrator.get_staged_config(unknown_id)
 
-    def test_get_staged_config_returns_dict(self, workflow_with_params: WorkflowSpec):
+    def test_get_staged_config_returns_dict(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
         """get_staged_config returns dict mapping source names to configs."""
         workflow_id = workflow_with_params.get_id()
         registry = {workflow_id: workflow_with_params}
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -412,7 +453,9 @@ class TestJobOrchestratorInitialization:
         assert configs["det_2"].params["threshold"] == 100.0
 
     def test_workflow_with_required_params_gets_empty_state(
-        self, workflow_params_without_defaults: WorkflowSpec
+        self,
+        workflow_params_without_defaults: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Workflow with params that can't be instantiated gets empty WorkflowState."""
         workflow_id = workflow_params_without_defaults.get_id()
@@ -420,6 +463,7 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -430,7 +474,10 @@ class TestJobOrchestratorInitialization:
         assert len(staged) == 0
 
     def test_enum_params_serialized_to_yaml(
-        self, workflow_with_enum_params: WorkflowSpec, tmp_path
+        self,
+        workflow_with_enum_params: WorkflowSpec,
+        tmp_path,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Enum values in params should be serialized as strings, not enum objects."""
         workflow_id = workflow_with_enum_params.get_id()
@@ -443,6 +490,7 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -469,7 +517,9 @@ class TestJobOrchestratorMutationSafety:
     """Test that JobOrchestrator protects against unintended mutations."""
 
     def test_stage_config_makes_defensive_copy_of_params(
-        self, workflow_with_params: WorkflowSpec
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Modifying params dict after staging should not affect staged config."""
         workflow_id = workflow_with_params.get_id()
@@ -477,6 +527,7 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -501,7 +552,9 @@ class TestJobOrchestratorMutationSafety:
         assert staged["det_1"].params["mode"] == "custom"
 
     def test_stage_config_makes_defensive_copy_of_aux_source_names(
-        self, workflow_with_params: WorkflowSpec
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Modifying aux_source_names after staging should not affect staged config."""
         workflow_id = workflow_with_params.get_id()
@@ -509,6 +562,7 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -532,7 +586,9 @@ class TestJobOrchestratorMutationSafety:
         assert staged["det_1"].aux_source_names == {"monitor": "monitor_1"}
 
     def test_get_staged_config_returns_independent_copy(
-        self, workflow_with_params: WorkflowSpec
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Modifying returned config should not affect internal state."""
         workflow_id = workflow_with_params.get_id()
@@ -540,6 +596,7 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -562,7 +619,9 @@ class TestJobOrchestratorMutationSafety:
         assert staged_again["det_1"].aux_source_names["monitor"] == "monitor_1"
 
     def test_get_active_config_returns_independent_copy(
-        self, workflow_with_params: WorkflowSpec
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Modifying returned active config should not affect internal state."""
         workflow_id = workflow_with_params.get_id()
@@ -570,6 +629,7 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -591,7 +651,9 @@ class TestJobOrchestratorMutationSafety:
         assert active_again["det_1"].params["threshold"] == 50.0
 
     def test_load_from_store_creates_independent_job_configs(
-        self, workflow_with_params: WorkflowSpec
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Each JobConfig should have independent params/aux_source_names dicts."""
         workflow_id = workflow_with_params.get_id()
@@ -608,6 +670,7 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -623,7 +686,9 @@ class TestJobOrchestratorMutationSafety:
         assert staged_again["det_2"].aux_source_names["monitor"] == "monitor_1"
 
     def test_committed_config_not_affected_by_new_staging(
-        self, workflow_with_params: WorkflowSpec
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """After commit, modifying staged config should not affect active config."""
         workflow_id = workflow_with_params.get_id()
@@ -631,6 +696,7 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -667,7 +733,9 @@ class TestJobOrchestratorCommit:
     """Test commit_workflow and related job lifecycle operations."""
 
     def test_commit_workflow_returns_job_ids_for_staged_sources(
-        self, workflow_with_params: WorkflowSpec
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Verify commit_workflow returns correct JobIds for all staged sources."""
         workflow_id = workflow_with_params.get_id()
@@ -675,6 +743,7 @@ class TestJobOrchestratorCommit:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -703,7 +772,9 @@ class TestJobOrchestratorCommit:
         assert job_ids[0].job_number == job_ids[1].job_number
 
     def test_commit_workflow_raises_if_nothing_staged(
-        self, workflow_with_params: WorkflowSpec
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Verify commit_workflow raises ValueError if no configs staged."""
         workflow_id = workflow_with_params.get_id()
@@ -711,6 +782,7 @@ class TestJobOrchestratorCommit:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -723,7 +795,9 @@ class TestJobOrchestratorCommit:
             orchestrator.commit_workflow(workflow_id)
 
     def test_commit_workflow_sends_workflow_configs_to_backend(
-        self, workflow_with_params: WorkflowSpec
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Verify correct WorkflowConfig messages sent for each source."""
         workflow_id = workflow_with_params.get_id()
@@ -732,6 +806,7 @@ class TestJobOrchestratorCommit:
         fake_sink = FakeMessageSink()
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=fake_sink),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -774,7 +849,9 @@ class TestJobOrchestratorCommit:
             assert config.job_number == matching_job.job_number
 
     def test_commit_workflow_stops_previous_jobs_on_second_commit(
-        self, workflow_with_params: WorkflowSpec
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Verify second commit sends stop commands for previous jobs."""
         workflow_id = workflow_with_params.get_id()
@@ -783,6 +860,7 @@ class TestJobOrchestratorCommit:
         fake_sink = FakeMessageSink()
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=fake_sink),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -842,7 +920,9 @@ class TestJobOrchestratorCommit:
         assert new_job_number == second_job_ids[0].job_number
 
     def test_clear_staged_configs_then_commit_raises_error(
-        self, workflow_with_params: WorkflowSpec
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Verify clear + commit interaction raises appropriate error."""
         workflow_id = workflow_with_params.get_id()
@@ -850,6 +930,7 @@ class TestJobOrchestratorCommit:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -874,7 +955,9 @@ class TestJobOrchestratorCommit:
             orchestrator.commit_workflow(workflow_id)
 
     def test_persist_config_is_noop_when_config_store_is_none(
-        self, workflow_with_params: WorkflowSpec
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Config persistence should silently no-op when config_store is None."""
         workflow_id = workflow_with_params.get_id()
@@ -882,6 +965,7 @@ class TestJobOrchestratorCommit:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,  # No config store
         )
@@ -900,7 +984,10 @@ class TestJobOrchestratorCommit:
         assert len(job_ids) == 1
 
     def test_persist_config_is_noop_when_staged_jobs_empty(
-        self, workflow_no_params: WorkflowSpec, workflow_with_params: WorkflowSpec
+        self,
+        workflow_no_params: WorkflowSpec,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Config persistence should silently no-op when staged_jobs is empty."""
         workflow_id_no_params = workflow_no_params.get_id()
@@ -915,6 +1002,7 @@ class TestJobOrchestratorCommit:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=config_store,
         )
