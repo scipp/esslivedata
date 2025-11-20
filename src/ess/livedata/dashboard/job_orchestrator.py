@@ -34,7 +34,6 @@ from ess.livedata.core.job_manager import JobAction, JobCommand
 
 from .command_service import CommandService
 from .config_store import ConfigStore
-from .data_service import DataService
 
 SourceName = str
 SubscriptionId = NewType('SubscriptionId', UUID)
@@ -89,7 +88,6 @@ class JobOrchestrator:
         self,
         *,
         command_service: CommandService,
-        data_service: DataService,
         source_names: list[SourceName],
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         config_store: ConfigStore | None = None,
@@ -101,9 +99,6 @@ class JobOrchestrator:
         ----------
         command_service
             Service for sending workflow commands to backend services.
-        data_service
-            Service for accessing workflow result data. Used to detect when
-            workflow data becomes available.
         source_names
             List of source names (for validation when staging configs).
         workflow_registry
@@ -118,7 +113,6 @@ class JobOrchestrator:
         which is called by the main Orchestrator when STATUS_STREAM messages arrive.
         """
         self._command_service = command_service
-        self._data_service = data_service
         self._source_names = source_names
         self._workflow_registry = workflow_registry
         self._config_store = config_store
@@ -130,13 +124,6 @@ class JobOrchestrator:
         # Workflow subscription tracking
         self._subscriptions: dict[SubscriptionId, Callable[[JobNumber], None]] = {}
         self._workflow_subscriptions: dict[WorkflowId, set[SubscriptionId]] = {}
-
-        # Track which job_numbers we've notified for each workflow
-        # to avoid duplicate notifications
-        self._notified_jobs: dict[WorkflowId, set[JobNumber]] = {}
-
-        # Subscribe to data updates to detect when workflow data becomes available
-        self._data_service.register_update_callback(self._on_data_updated)
 
         # Load persisted configs
         self._load_configs_from_store()
@@ -330,89 +317,27 @@ class JobOrchestrator:
         # Set as current JobSet
         state.current = job_set
 
-        # Note: We do NOT notify subscribers here. They will be notified
-        # when actual workflow data arrives via _on_data_updated.
-        self._logger.info(
-            'Workflow %s committed with job_number=%s. Subscribers will be '
-            'notified when data arrives.',
-            workflow_id,
-            job_set.job_number,
-        )
-
         # Persist staged configs to store (keeping staged_jobs as working copy)
         self._persist_config_to_store(workflow_id, state.staged_jobs)
 
+        # Notify subscribers immediately that job is active
+        self._logger.info(
+            'Workflow %s committed with job_number=%s, notifying subscribers',
+            workflow_id,
+            job_set.job_number,
+        )
+        self._notify_workflow_available(workflow_id, job_set.job_number)
+
         # Return JobIds for all created jobs
         return job_set.job_ids()
-
-    def _on_data_updated(self, updated_keys: set) -> None:
-        """
-        Handle data updates from DataService.
-
-        Called when new workflow result data arrives. Notifies subscribers
-        when workflow data becomes available for the first time.
-
-        Parameters
-        ----------
-        updated_keys
-            Set of ResultKey objects for data that was updated.
-        """
-        from ess.livedata.config.workflow_spec import ResultKey
-
-        # Group updates by (workflow_id, job_number) to notify only once per workflow
-        workflows_to_notify: dict[WorkflowId, JobNumber] = {}
-
-        for key in updated_keys:
-            # Type guard - ensure we got a ResultKey
-            if not isinstance(key, ResultKey):
-                continue
-
-            workflow_id = key.workflow_id
-            job_number = key.job_id.job_number
-
-            # Only track workflows we know about
-            if workflow_id not in self._workflows:
-                continue
-
-            # Skip if we've already notified for this job_number
-            if workflow_id not in self._notified_jobs:
-                self._notified_jobs[workflow_id] = set()
-
-            if job_number in self._notified_jobs[workflow_id]:
-                continue
-
-            # Check if this job_number matches current state or is a new job
-            state = self._workflows[workflow_id]
-            if state.current is not None and state.current.job_number != job_number:
-                # Data arrived for a different job number - could be a restart
-                self._logger.info(
-                    'Data arrived for new job_number %s (previous: %s) '
-                    'for workflow %s',
-                    job_number,
-                    state.current.job_number,
-                    workflow_id,
-                )
-
-            # Mark for notification (collect all updates before notifying)
-            workflows_to_notify[workflow_id] = job_number
-
-        # Notify subscribers for all workflows that got new data
-        for workflow_id, job_number in workflows_to_notify.items():
-            self._logger.info(
-                'First data arrived for workflow %s job_number %s, '
-                'notifying subscribers',
-                workflow_id,
-                job_number,
-            )
-            self._notified_jobs[workflow_id].add(job_number)
-            self._notify_workflow_available(workflow_id, job_number)
 
     def status_updated(self, job_status: object) -> None:
         """
         Process job status updates from the STATUS_STREAM.
 
         This method is called by the main Orchestrator when STATUS_STREAM messages
-        arrive. Updates internal state to track running jobs.
+        arrive. When we discover an active job we didn't know about (e.g., dashboard
+        reconnecting to a running backend), we notify subscribers.
 
         Parameters
         ----------
@@ -421,10 +346,6 @@ class JobOrchestrator:
 
         Notes
         -----
-        This method tracks job state but does NOT notify subscribers. Subscribers
-        are notified when actual data arrives (via _on_data_updated), not when
-        the job status changes.
-
         Future: Full state machine for job lifecycle tracking:
         - Aggregate per-source status to JobSet state
         - Confirm job starts/stops
@@ -454,7 +375,7 @@ class JobOrchestrator:
         state = self._workflows[workflow_id]
 
         # If we receive an active/scheduled status and don't have a current job,
-        # or have a different job number, update our state
+        # or have a different job number, update our state and notify subscribers
         if job_status.state in (JobState.active, JobState.scheduled):
             # Check if this is a new job we didn't know about
             if state.current is None or state.current.job_number != job_number:
@@ -473,8 +394,8 @@ class JobOrchestrator:
                 job_set = JobSet(job_number=job_number, jobs={})
                 state.current = job_set
 
-                # Note: We do NOT notify subscribers here. They will be notified
-                # when actual data arrives via _on_data_updated.
+                # Notify subscribers that job is active
+                self._notify_workflow_available(workflow_id, job_number)
 
     def _persist_config_to_store(
         self, workflow_id: WorkflowId, staged_jobs: dict[SourceName, JobConfig]
@@ -607,20 +528,19 @@ class JobOrchestrator:
         self, workflow_id: WorkflowId, callback: Callable[[JobNumber], None]
     ) -> SubscriptionId:
         """
-        Subscribe to workflow data availability notifications.
+        Subscribe to workflow job availability notifications.
 
-        The callback will be called with the job_number when workflow data
-        becomes available (i.e., first result data arrives from the workflow).
-
-        If workflow data already exists when you subscribe, the callback
-        will be called immediately with the current job_number.
+        The callback will be called with the job_number when:
+        1. A workflow is committed (immediately after commit)
+        2. A running job is discovered via status_updated()
+        3. Immediately if subscribing and workflow already has an active job
 
         Parameters
         ----------
         workflow_id
             The workflow to subscribe to.
         callback
-            Called with job_number when workflow data becomes available.
+            Called with job_number when a job becomes active.
 
         Returns
         -------
@@ -635,69 +555,27 @@ class JobOrchestrator:
             self._workflow_subscriptions[workflow_id] = set()
         self._workflow_subscriptions[workflow_id].add(subscription_id)
 
-        # If workflow data already exists, notify immediately
+        # If workflow already has an active job, notify immediately
         if workflow_id in self._workflows:
             state = self._workflows[workflow_id]
             if state.current is not None:
                 current_job_number = state.current.job_number
-                # Check if we have data for this job_number
-                has_data = self._has_workflow_data(workflow_id, current_job_number)
-                if has_data:
-                    self._logger.debug(
-                        'Workflow %s already has data for job_number=%s, '
-                        'notifying new subscriber %s immediately',
-                        workflow_id,
-                        current_job_number,
-                        subscription_id,
-                    )
-                    try:
-                        callback(current_job_number)
-                    except Exception:
-                        self._logger.exception(
-                            'Error in immediate workflow availability callback '
-                            'for subscription %s',
-                            subscription_id,
-                        )
-                else:
-                    self._logger.debug(
-                        'Workflow %s is running (job_number=%s) but no data yet, '
-                        'will notify subscriber %s when data arrives',
-                        workflow_id,
-                        current_job_number,
+                self._logger.debug(
+                    'Workflow %s already has active job (job_number=%s), '
+                    'notifying new subscriber %s immediately',
+                    workflow_id,
+                    current_job_number,
+                    subscription_id,
+                )
+                try:
+                    callback(current_job_number)
+                except Exception:
+                    self._logger.exception(
+                        'Error in immediate callback for subscription %s',
                         subscription_id,
                     )
 
         return subscription_id
-
-    def _has_workflow_data(
-        self, workflow_id: WorkflowId, job_number: JobNumber
-    ) -> bool:
-        """
-        Check if DataService has any data for a workflow's job_number.
-
-        Parameters
-        ----------
-        workflow_id
-            The workflow to check.
-        job_number
-            The job number to check.
-
-        Returns
-        -------
-        :
-            True if DataService has at least one result for this workflow/job.
-        """
-        from ess.livedata.config.workflow_spec import ResultKey
-
-        # Check if any key in DataService matches this workflow_id and job_number
-        for key in self._data_service:
-            if isinstance(key, ResultKey):
-                if (
-                    key.workflow_id == workflow_id
-                    and key.job_id.job_number == job_number
-                ):
-                    return True
-        return False
 
     def unsubscribe(self, subscription_id: SubscriptionId) -> None:
         """

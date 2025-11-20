@@ -42,6 +42,8 @@ class ReductionApp(DashboardBase):
         self._plot_orchestrator = PlotOrchestrator(
             plotting_controller=self._services.plotting_controller,
             job_orchestrator=self._services.job_orchestrator,
+            data_service=self._services.data_service,
+            job_service=self._services.job_service,
             config_store=self._services.plotter_config_store,
         )
 

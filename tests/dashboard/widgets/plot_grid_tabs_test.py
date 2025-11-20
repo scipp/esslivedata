@@ -50,11 +50,31 @@ def fake_job_orchestrator():
 
 
 @pytest.fixture
-def plot_orchestrator(plotting_controller, fake_job_orchestrator):
+def fake_data_service():
+    """Create a fake DataService."""
+    from ess.livedata.dashboard.data_service import DataService
+
+    return DataService()
+
+
+@pytest.fixture
+def fake_job_service(fake_data_service):
+    """Create a fake JobService."""
+    from ess.livedata.dashboard.job_service import JobService
+
+    return JobService(data_service=fake_data_service)
+
+
+@pytest.fixture
+def plot_orchestrator(
+    plotting_controller, fake_job_orchestrator, fake_data_service, fake_job_service
+):
     """Create a PlotOrchestrator for testing."""
     return PlotOrchestrator(
         plotting_controller=plotting_controller,
         job_orchestrator=fake_job_orchestrator,
+        data_service=fake_data_service,
+        job_service=fake_job_service,
     )
 
 

@@ -180,6 +180,20 @@ class DataService(MutableMapping[K, V]):
         """
         self._update_callbacks.append(callback)
 
+    def unregister_update_callback(self, callback: Callable[[set[K]], None]) -> None:
+        """
+        Unregister a previously registered update callback.
+
+        Parameters
+        ----------
+        callback:
+            The callback to remove. Must be the same object that was registered.
+        """
+        try:
+            self._update_callbacks.remove(callback)
+        except ValueError:
+            pass  # Callback wasn't registered, ignore
+
     def _notify_subscribers(self, updated_keys: set[K]) -> None:
         """
         Notify relevant subscribers about data updates.
