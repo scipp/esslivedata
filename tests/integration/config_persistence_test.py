@@ -80,9 +80,7 @@ def test_workflow_params_stored_and_retrieved_via_config_store(
     assert adapter.initial_parameter_values == custom_params.model_dump()
 
 
-def test_adapter_filters_removed_sources(
-    backend_with_null_transport: DashboardBackend,
-) -> None:
+def test_adapter_filters_removed_sources(tmp_path) -> None:
     """
     Test that adapter filters out sources that are no longer available.
 
@@ -97,33 +95,41 @@ def test_adapter_filters_removed_sources(
         version=1,
     )
 
-    # Start workflow with multiple sources (monitor3 not in monitor_histogram spec
-    # for dummy)
-    source_names = ['monitor1', 'monitor2', 'monitor3']
-    backend_with_null_transport.workflow_controller.start_workflow(
-        workflow_id=workflow_id,
+    # Set up legacy config BEFORE creating the backend, so it gets loaded during init.
+    # This simulates a scenario where 'motion1' was previously configured for this
+    # workflow, but is not in the monitor_histogram workflow spec (only monitor1/2).
+    from ess.livedata.dashboard.config_store import ConfigStoreManager
+
+    config_manager = ConfigStoreManager(instrument='dummy', config_dir=tmp_path)
+    config_store = config_manager.get_store('workflow_configs')
+
+    source_names = ['monitor1', 'monitor2', 'motion1']
+    legacy_config = ConfigurationState(
         source_names=source_names,
-        config=MonitorDataParams(),
+        aux_source_names={},
+        params=MonitorDataParams().model_dump(),
     )
+    config_store[workflow_id] = legacy_config.model_dump()
 
-    # Verify config is stored with all sources
-    stored_config = backend_with_null_transport.workflow_controller.get_workflow_config(
-        workflow_id
-    )
-    assert stored_config is not None
-    assert set(stored_config.source_names) == {'monitor1', 'monitor2', 'monitor3'}
+    # Now create backend with the same config dir - orchestrator loads legacy config
+    with DashboardBackend(
+        instrument='dummy', dev=True, transport='none', config_dir=tmp_path
+    ) as backend:
+        # Verify config was loaded into orchestrator's staged_jobs
+        staged = backend.workflow_controller._orchestrator.get_staged_config(
+            workflow_id
+        )
+        # Only monitor1 and monitor2 should be staged (motion1 filtered by spec)
+        assert set(staged.keys()) == {'monitor1', 'monitor2'}
 
-    # Create adapter - it should filter to only sources available in spec
-    adapter = backend_with_null_transport.workflow_controller.create_workflow_adapter(
-        workflow_id
-    )
+        # Create adapter - it should only show sources from spec
+        adapter = backend.workflow_controller.create_workflow_adapter(workflow_id)
 
-    # Adapter should only return sources that are both persisted AND in the spec
-    initial_sources = adapter.initial_source_names
-    assert 'monitor1' in initial_sources
-    assert 'monitor2' in initial_sources
-    # monitor3 should be filtered out as it's not in the workflow spec
-    assert 'monitor3' not in initial_sources
+        initial_sources = adapter.initial_source_names
+        assert 'monitor1' in initial_sources
+        assert 'monitor2' in initial_sources
+        # motion1 should be filtered out as it's not in the workflow spec
+        assert 'motion1' not in initial_sources
 
 
 def test_config_persists_across_adapter_recreations(
@@ -172,9 +178,7 @@ def test_config_persists_across_adapter_recreations(
     assert adapter1.initial_parameter_values['toa_edges']['num_bins'] == 200
 
 
-def test_incompatible_config_falls_back_to_defaults(
-    backend_with_null_transport: DashboardBackend,
-) -> None:
+def test_incompatible_config_falls_back_to_defaults(tmp_path) -> None:
     """
     Test that incompatible config doesn't break adapter creation.
 
@@ -190,8 +194,13 @@ def test_incompatible_config_falls_back_to_defaults(
         version=1,
     )
 
-    # Manually inject completely incompatible config into the store
-    # (e.g., from an old version of the workflow with different param structure)
+    # Set up incompatible config BEFORE creating the backend
+    # This simulates an old version of the workflow with different param structure
+    from ess.livedata.dashboard.config_store import ConfigStoreManager
+
+    config_manager = ConfigStoreManager(instrument='dummy', config_dir=tmp_path)
+    config_store = config_manager.get_store('workflow_configs')
+
     incompatible_config = ConfigurationState(
         source_names=['monitor1'],
         aux_source_names={},
@@ -201,25 +210,22 @@ def test_incompatible_config_falls_back_to_defaults(
             # Completely wrong structure - not matching current MonitorDataParams
         },
     )
-
-    # Directly store incompatible config in the config store
-    config_store = backend_with_null_transport.config_manager.get_store(
-        'workflow_configs'
-    )
     config_store[workflow_id] = incompatible_config.model_dump()
 
-    # Adapter creation should not fail even with incompatible config
-    adapter = backend_with_null_transport.workflow_controller.create_workflow_adapter(
-        workflow_id
-    )
+    # Now create backend with the same config dir
+    with DashboardBackend(
+        instrument='dummy', dev=True, transport='none', config_dir=tmp_path
+    ) as backend:
+        # Adapter creation should not fail even with incompatible config
+        adapter = backend.workflow_controller.create_workflow_adapter(workflow_id)
 
-    # Adapter should validate and detect incompatibility, returning empty dict
-    # which will cause the UI to use default parameter values
-    initial_params = adapter.initial_parameter_values
-    assert initial_params == {}, (
-        "Expected empty dict for incompatible params to trigger defaults, "
-        f"got {initial_params}"
-    )
+        # Adapter should validate and detect incompatibility, returning empty dict
+        # which will cause the UI to use default parameter values
+        initial_params = adapter.initial_parameter_values
+        assert initial_params == {}, (
+            "Expected empty dict for incompatible params to trigger defaults, "
+            f"got {initial_params}"
+        )
 
-    # Verify source names are still restored (only params validation failed)
-    assert adapter.initial_source_names == ['monitor1']
+        # Verify source names are still restored (only params validation failed)
+        assert adapter.initial_source_names == ['monitor1']
