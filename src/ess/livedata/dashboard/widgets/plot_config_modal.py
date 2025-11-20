@@ -688,7 +688,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             config_state = ConfigurationState(
                 source_names=self._initial_config.source_names,
                 params=(
-                    self._initial_config.params.model_dump()
+                    self._initial_config.params.model_dump(mode='json')
                     if isinstance(self._initial_config.params, pydantic.BaseModel)
                     else self._initial_config.params
                 ),

@@ -16,8 +16,7 @@ import logging
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, NewType
+from typing import NewType
 from uuid import UUID
 
 import pydantic
@@ -39,34 +38,6 @@ from .data_service import DataService
 
 SourceName = str
 SubscriptionId = NewType('SubscriptionId', UUID)
-
-
-def _serialize_for_yaml(obj: Any) -> Any:
-    """
-    Convert a dict/list/value to YAML-serializable format.
-
-    Recursively processes dicts and lists, converting enum values to their
-    string representations. This ensures configs with enums can be persisted
-    to YAML files.
-
-    Parameters
-    ----------
-    obj
-        The object to serialize (dict, list, or primitive value).
-
-    Returns
-    -------
-    :
-        YAML-serializable version of the object.
-    """
-    if isinstance(obj, Enum):
-        return obj.value
-    elif isinstance(obj, dict):
-        return {key: _serialize_for_yaml(value) for key, value in obj.items()}
-    elif isinstance(obj, list):
-        return [_serialize_for_yaml(item) for item in obj]
-    else:
-        return obj
 
 
 @dataclass
@@ -522,11 +493,12 @@ class JobOrchestrator:
         # Take params from first source (all should be same in current implementation)
         first_job_config = next(iter(staged_jobs.values()))
 
-        # Serialize params and aux_source_names for YAML (convert enums to values)
+        # Params and aux_source_names are already JSON-serializable (Enums converted
+        # to strings via model_dump(mode='json') in workflow_controller.start_workflow)
         config_dict = {
             'source_names': source_names,
-            'params': _serialize_for_yaml(first_job_config.params),
-            'aux_source_names': _serialize_for_yaml(first_job_config.aux_source_names),
+            'params': first_job_config.params,
+            'aux_source_names': first_job_config.aux_source_names,
         }
 
         self._config_store[workflow_id] = config_dict

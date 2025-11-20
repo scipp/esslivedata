@@ -513,7 +513,7 @@ class TestJobOrchestratorInitialization:
     def test_enum_params_passed_to_stage_config_serialized_to_yaml(
         self, data_service, workflow_with_enum_params: WorkflowSpec, tmp_path
     ):
-        """Enum objects passed to stage_config should be serialized as strings."""
+        """Pydantic models with Enums should be serialized to strings via model_dump."""
         workflow_id = workflow_with_enum_params.get_id()
         registry = {workflow_id: workflow_with_enum_params}
 
@@ -528,11 +528,16 @@ class TestJobOrchestratorInitialization:
             config_store=config_store,
         )
 
-        # Stage config with enum object in params dict (like from Pydantic model)
+        # Create Pydantic model with Enum and convert using model_dump(mode='json')
+        # like workflow_controller.start_workflow() does
+        config = ParamsWithEnum(value=75.0, choice=SampleEnum.OPTION_B)
+        params_dict = config.model_dump(mode='json')
+
+        # Stage config with JSON-serializable dict
         orchestrator.stage_config(
             workflow_id,
             source_name="det_1",
-            params={"value": 75.0, "choice": SampleEnum.OPTION_B},  # Enum object!
+            params=params_dict,
             aux_source_names={},
         )
 
