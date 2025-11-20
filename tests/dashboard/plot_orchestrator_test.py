@@ -1204,10 +1204,10 @@ class TestLateSubscriberPlotRetrieval:
         job_number = uuid.uuid4()
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
-        # get_cell_state should return error
+        # get_cell_state should return error (full traceback)
         plot, error = plot_orchestrator.get_cell_state(cell_id)
         assert plot is None
-        assert error == "Plot creation failed"
+        assert "Plot creation failed" in error
 
     def test_late_subscriber_can_retrieve_existing_plots_from_all_cells(
         self, workflow_id, fake_job_orchestrator, fake_plotting_controller

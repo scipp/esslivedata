@@ -115,6 +115,19 @@ class CellGeometry:
 
 
 @dataclass
+class CellState:
+    """
+    State of a rendered plot cell.
+
+    Either plot or error is set (mutually exclusive).
+    Both None indicates cell is waiting for workflow data.
+    """
+
+    plot: hv.DynamicMap | hv.Layout | None = None
+    error: str | None = None
+
+
+@dataclass
 class PlotConfig:
     """Configuration for a single plot."""
 
@@ -223,8 +236,7 @@ class PlotOrchestrator:
         self._grids: dict[GridId, PlotGridConfig] = {}
         self._cell_to_grid: dict[CellId, GridId] = {}
         self._cell_to_subscription: dict[CellId, SubscriptionId] = {}
-        self._cell_to_plot: dict[CellId, hv.DynamicMap | hv.Layout | None] = {}
-        self._cell_to_error: dict[CellId, str | None] = {}
+        self._cell_state: dict[CellId, CellState] = {}
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
 
     def add_grid(self, title: str, nrows: int, ncols: int) -> GridId:
@@ -353,9 +365,8 @@ class PlotOrchestrator:
         self._job_orchestrator.unsubscribe(self._cell_to_subscription[cell_id])
         del self._cell_to_subscription[cell_id]
 
-        # Remove stored plot/error state
-        self._cell_to_plot.pop(cell_id, None)
-        self._cell_to_error.pop(cell_id, None)
+        # Remove stored state
+        self._cell_state.pop(cell_id, None)
 
         # Remove from grid and mapping
         del grid.cells[cell_id]
@@ -409,9 +420,8 @@ class PlotOrchestrator:
             available (None otherwise), and error is the error message if
             plot creation failed (None otherwise).
         """
-        plot = self._cell_to_plot.get(cell_id, None)
-        error = self._cell_to_error.get(cell_id, None)
-        return plot, error
+        state = self._cell_state.get(cell_id, CellState())
+        return state.plot, state.error
 
     def update_plot_config(self, cell_id: CellId, new_config: PlotConfig) -> None:
         """
@@ -437,9 +447,8 @@ class PlotOrchestrator:
         # Update configuration
         cell.config = new_config
 
-        # Clear stored plot/error since config changed (new plot will be created)
-        self._cell_to_plot[cell_id] = None
-        self._cell_to_error[cell_id] = None
+        # Clear stored state since config changed (new plot will be created)
+        self._cell_state.pop(cell_id, None)
 
         # Re-subscribe to workflow (in case workflow_id changed)
         # If workflow is already running, this will trigger plot creation immediately
@@ -512,8 +521,7 @@ class PlotOrchestrator:
                 type(plot).__name__,
             )
             # Store the plot so late subscribers can access it
-            self._cell_to_plot[cell_id] = plot
-            self._cell_to_error[cell_id] = None
+            self._cell_state[cell_id] = CellState(plot=plot)
             self._notify_cell_updated(grid_id, cell_id, cell, plot=plot)
         except Exception:
             error_msg = traceback.format_exc()
@@ -522,8 +530,7 @@ class PlotOrchestrator:
             )
             self._logger.exception('Full traceback for plot creation failure:')
             # Store the error so late subscribers can see it
-            self._cell_to_plot[cell_id] = None
-            self._cell_to_error[cell_id] = error_msg
+            self._cell_state[cell_id] = CellState(error=error_msg)
             self._notify_cell_updated(grid_id, cell_id, cell, error=error_msg)
 
     def _persist_to_store(self) -> None:
