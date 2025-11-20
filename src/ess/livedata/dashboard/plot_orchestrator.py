@@ -42,17 +42,20 @@ class JobOrchestratorProtocol(Protocol):
         self, workflow_id: WorkflowId, callback: Callable[[JobNumber], None]
     ) -> SubscriptionId:
         """
-        Subscribe to workflow availability notifications.
+        Subscribe to workflow data availability notifications.
 
-        The callback will be called with the job_number whenever the workflow
-        is committed (started or restarted).
+        The callback will be called with the job_number when workflow data
+        becomes available (i.e., first result data arrives from the workflow).
+
+        If workflow data already exists when you subscribe, the callback
+        will be called immediately with the current job_number.
 
         Parameters
         ----------
         workflow_id
             The workflow to subscribe to.
         callback
-            Called with job_number when workflow becomes available.
+            Called with job_number when workflow data becomes available.
 
         Returns
         -------
@@ -71,33 +74,6 @@ class JobOrchestratorProtocol(Protocol):
             The subscription ID returned from subscribe_to_workflow.
         """
         ...
-
-
-class StubJobOrchestrator:
-    """
-    Minimal stub implementation of JobOrchestratorProtocol.
-
-    This provides the required interface but does not trigger any callbacks.
-    Useful for UI testing or as a placeholder when the real JobOrchestrator
-    is not available. For testing that requires callback simulation, use
-    the FakeJobOrchestrator from test code instead.
-    """
-
-    def __init__(self) -> None:
-        self._subscriptions: dict[SubscriptionId, tuple[WorkflowId, Callable]] = {}
-
-    def subscribe_to_workflow(
-        self, workflow_id: WorkflowId, callback: Callable[[JobNumber], None]
-    ) -> SubscriptionId:
-        """Subscribe to workflow availability notifications."""
-        subscription_id = SubscriptionId(uuid4())
-        self._subscriptions[subscription_id] = (workflow_id, callback)
-        return subscription_id
-
-    def unsubscribe(self, subscription_id: SubscriptionId) -> None:
-        """Unsubscribe from workflow availability notifications."""
-        if subscription_id in self._subscriptions:
-            del self._subscriptions[subscription_id]
 
 
 @dataclass(frozen=True)
