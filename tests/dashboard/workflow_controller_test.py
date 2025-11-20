@@ -148,10 +148,18 @@ def workflow_controller(
     workflow_registry: dict[WorkflowId, WorkflowSpec],
 ) -> WorkflowControllerFixture:
     """Workflow controller instance for testing."""
-    controller = WorkflowController(
+    # Create JobOrchestrator with shared services
+    from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
+
+    job_orchestrator = JobOrchestrator(
         command_service=command_service,
-        workflow_config_service=fake_workflow_config_service,
         source_names=source_names,
+        workflow_registry=workflow_registry,
+        config_store=fake_config_store,
+    )
+
+    controller = WorkflowController(
+        job_orchestrator=job_orchestrator,
         workflow_registry=workflow_registry,
         config_store=fake_config_store,
     )
@@ -236,7 +244,7 @@ class TestWorkflowController:
         config = SomeWorkflowParams(threshold=100.0)
 
         # Act & Assert
-        with pytest.raises(ValueError, match="Workflow spec for .* not found"):
+        with pytest.raises(ValueError, match=r"Workflow spec for .* not found"):
             workflow_controller.controller.start_workflow(
                 nonexistent_workflow_id, source_names, config
             )
@@ -254,7 +262,6 @@ class TestWorkflowController:
         source_names: list[str],
     ):
         """Test that multiple workflow configurations can be stored persistently."""
-        workflow_config_service = fake_workflow_config_service
         config_store = fake_config_store
 
         config_1 = SomeWorkflowParams(threshold=100.0, mode="fast")
@@ -285,10 +292,19 @@ class TestWorkflowController:
         workflow_id_2 = workflow_spec_2.get_id()
 
         registry = {workflow_id_1: workflow_spec_1, workflow_id_2: workflow_spec_2}
-        controller = WorkflowController(
+
+        # Create JobOrchestrator
+        from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
+
+        job_orchestrator = JobOrchestrator(
             command_service=command_service,
-            workflow_config_service=workflow_config_service,
             source_names=source_names,
+            workflow_registry=registry,
+            config_store=config_store,
+        )
+
+        controller = WorkflowController(
+            job_orchestrator=job_orchestrator,
             workflow_registry=registry,
             config_store=config_store,
         )

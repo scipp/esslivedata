@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NewType, Protocol
@@ -222,6 +223,8 @@ class PlotOrchestrator:
         self._grids: dict[GridId, PlotGridConfig] = {}
         self._cell_to_grid: dict[CellId, GridId] = {}
         self._cell_to_subscription: dict[CellId, SubscriptionId] = {}
+        self._cell_to_plot: dict[CellId, hv.DynamicMap | hv.Layout | None] = {}
+        self._cell_to_error: dict[CellId, str | None] = {}
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
 
     def add_grid(self, title: str, nrows: int, ncols: int) -> GridId:
@@ -300,22 +303,37 @@ class PlotOrchestrator:
         self._cell_to_grid[cell_id] = grid_id
 
         # Subscribe to workflow availability and store subscription ID
+        # Note: If workflow is already running, JobOrchestrator will call
+        # the callback immediately during subscription
+        callback_was_called = [False]  # Use list to allow modification in lambda
+
+        def on_workflow_available(job_number: JobNumber) -> None:
+            callback_was_called[0] = True
+            self._on_job_available(cell_id, job_number)
+
         subscription_id = self._job_orchestrator.subscribe_to_workflow(
             workflow_id=cell.config.workflow_id,
-            callback=lambda job_number: self._on_job_available(cell_id, job_number),
+            callback=on_workflow_available,
         )
         self._cell_to_subscription[cell_id] = subscription_id
 
         self._persist_to_store()
         self._logger.info(
-            'Added plot %s to grid %s at (%d,%d) for workflow %s',
+            'Added plot cell_id=%s to grid_id=%s at (%d,%d) for '
+            'workflow=%s, subscription_id=%s',
             cell_id,
             grid_id,
             cell.geometry.row,
             cell.geometry.col,
             cell.config.workflow_id,
+            subscription_id,
         )
-        self._notify_cell_updated(grid_id, cell_id, cell)
+
+        # If callback wasn't called immediately (workflow not running yet),
+        # notify that cell was added without a plot
+        if not callback_was_called[0]:
+            self._notify_cell_updated(grid_id, cell_id, cell)
+
         return cell_id
 
     def remove_plot(self, cell_id: CellId) -> None:
@@ -334,6 +352,10 @@ class PlotOrchestrator:
         # Unsubscribe from workflow notifications
         self._job_orchestrator.unsubscribe(self._cell_to_subscription[cell_id])
         del self._cell_to_subscription[cell_id]
+
+        # Remove stored plot/error state
+        self._cell_to_plot.pop(cell_id, None)
+        self._cell_to_error.pop(cell_id, None)
 
         # Remove from grid and mapping
         del grid.cells[cell_id]
@@ -366,6 +388,31 @@ class PlotOrchestrator:
         grid_id = self._cell_to_grid[cell_id]
         return self._grids[grid_id].cells[cell_id].config
 
+    def get_cell_state(
+        self, cell_id: CellId
+    ) -> tuple[hv.DynamicMap | hv.Layout | None, str | None]:
+        """
+        Get the current plot and error state for a cell.
+
+        This is used by UI components to retrieve the current state when
+        initializing from existing cells (e.g., after page reload).
+
+        Parameters
+        ----------
+        cell_id
+            ID of the plot cell.
+
+        Returns
+        -------
+        :
+            Tuple of (plot, error) where plot is the HoloViews object if
+            available (None otherwise), and error is the error message if
+            plot creation failed (None otherwise).
+        """
+        plot = self._cell_to_plot.get(cell_id, None)
+        error = self._cell_to_error.get(cell_id, None)
+        return plot, error
+
     def update_plot_config(self, cell_id: CellId, new_config: PlotConfig) -> None:
         """
         Update plot configuration and resubscribe to workflow.
@@ -390,7 +437,12 @@ class PlotOrchestrator:
         # Update configuration
         cell.config = new_config
 
+        # Clear stored plot/error since config changed (new plot will be created)
+        self._cell_to_plot[cell_id] = None
+        self._cell_to_error[cell_id] = None
+
         # Re-subscribe to workflow (in case workflow_id changed)
+        # If workflow is already running, this will trigger plot creation immediately
         subscription_id = self._job_orchestrator.subscribe_to_workflow(
             workflow_id=new_config.workflow_id,
             callback=lambda job_number: self._on_job_available(cell_id, job_number),
@@ -401,6 +453,7 @@ class PlotOrchestrator:
         self._persist_to_store()
 
         self._logger.info('Updated plot config for cell %s', cell_id)
+        # Notify with no plot (will show status widget until workflow commits)
         self._notify_cell_updated(grid_id, cell_id, cell)
 
     def _on_job_available(self, cell_id: CellId, job_number: JobNumber) -> None:
@@ -417,15 +470,32 @@ class PlotOrchestrator:
         job_number
             Job number for the workflow.
         """
+        self._logger.info(
+            'CALLBACK TRIGGERED: _on_job_available for cell_id=%s, job_number=%s',
+            cell_id,
+            job_number,
+        )
+
         # Defensive check: cell may have been removed before callback fires
         if cell_id not in self._cell_to_grid:
-            self._logger.debug(
-                'Ignoring workflow availability for removed cell %s', cell_id
+            self._logger.warning(
+                'Ignoring workflow availability for removed cell_id=%s', cell_id
             )
             return
 
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
+
+        self._logger.info(
+            'Creating plot for cell_id=%s, grid_id=%s, workflow=%s, '
+            'job_number=%s, plot_name=%s, source_names=%s',
+            cell_id,
+            grid_id,
+            cell.config.workflow_id,
+            job_number,
+            cell.config.plot_name,
+            cell.config.source_names,
+        )
 
         # Create plot and notify subscribers
         try:
@@ -436,12 +506,25 @@ class PlotOrchestrator:
                 plot_name=cell.config.plot_name,
                 params=cell.config.params,
             )
+            self._logger.info(
+                'Successfully created plot for cell_id=%s, type=%s',
+                cell_id,
+                type(plot).__name__,
+            )
+            # Store the plot so late subscribers can access it
+            self._cell_to_plot[cell_id] = plot
+            self._cell_to_error[cell_id] = None
             self._notify_cell_updated(grid_id, cell_id, cell, plot=plot)
-            self._logger.info('Created plot for cell %s at job %s', cell_id, job_number)
-        except Exception as e:
-            error_msg = str(e)
+        except Exception:
+            error_msg = traceback.format_exc()
+            self._logger.error(
+                'Failed to create plot for cell_id=%s: %s', cell_id, error_msg
+            )
+            self._logger.exception('Full traceback for plot creation failure:')
+            # Store the error so late subscribers can see it
+            self._cell_to_plot[cell_id] = None
+            self._cell_to_error[cell_id] = error_msg
             self._notify_cell_updated(grid_id, cell_id, cell, error=error_msg)
-            self._logger.exception('Failed to create plot for cell %s', cell_id)
 
     def _persist_to_store(self) -> None:
         """Persist plot grid configurations to config store."""
@@ -569,9 +652,29 @@ class PlotOrchestrator:
         error: str | None = None,
     ) -> None:
         """Notify subscribers that a cell was added or updated."""
+        subscriber_count = len(
+            [s for s in self._lifecycle_subscribers.values() if s.on_cell_updated]
+        )
+        self._logger.info(
+            'Notifying %d subscriber(s) of cell update: '
+            'cell_id=%s, grid_id=%s, has_plot=%s, error=%s',
+            subscriber_count,
+            cell_id,
+            grid_id,
+            plot is not None,
+            error,
+        )
+
         for subscription in self._lifecycle_subscribers.values():
             if subscription.on_cell_updated:
                 try:
+                    self._logger.debug(
+                        'Calling on_cell_updated callback for cell_id=%s with '
+                        'plot=%s, error=%s',
+                        cell_id,
+                        type(plot).__name__ if plot is not None else None,
+                        error,
+                    )
                     subscription.on_cell_updated(
                         grid_id=grid_id,
                         cell_id=cell_id,
