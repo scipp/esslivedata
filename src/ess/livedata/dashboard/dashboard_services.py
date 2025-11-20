@@ -152,7 +152,6 @@ class DashboardServices:
         self.correlation_controller = CorrelationHistogramController(self.data_service)
         self.job_orchestrator = JobOrchestrator(
             command_service=self.command_service,
-            source_names=sorted(self.processor_factory.source_names),
             workflow_registry=self.processor_factory,
             config_store=self.workflow_config_store,
         )

@@ -88,7 +88,6 @@ class JobOrchestrator:
         self,
         *,
         command_service: CommandService,
-        source_names: list[SourceName],
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         config_store: ConfigStore | None = None,
     ) -> None:
@@ -99,8 +98,6 @@ class JobOrchestrator:
         ----------
         command_service
             Service for sending workflow commands to backend services.
-        source_names
-            List of source names (for validation when staging configs).
         workflow_registry
             Registry of available workflows and their specifications.
         config_store
@@ -113,7 +110,6 @@ class JobOrchestrator:
         which is called by the main Orchestrator when STATUS_STREAM messages arrive.
         """
         self._command_service = command_service
-        self._source_names = source_names
         self._workflow_registry = workflow_registry
         self._config_store = config_store
         self._logger = logging.getLogger(__name__)
@@ -220,19 +216,7 @@ class JobOrchestrator:
             Workflow parameters as dict.
         aux_source_names
             Auxiliary source names as dict.
-
-        Raises
-        ------
-        ValueError
-            If source_name is not in the list of monitored sources.
         """
-        if source_name not in self._source_names:
-            msg = (
-                f'Cannot stage config for unknown source {source_name!r}. '
-                f'Available sources: {self._source_names}'
-            )
-            raise ValueError(msg)
-
         self._workflows[workflow_id].staged_jobs[source_name] = JobConfig(
             params=params.copy(), aux_source_names=aux_source_names.copy()
         )
