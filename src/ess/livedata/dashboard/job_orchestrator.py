@@ -663,14 +663,6 @@ class JobOrchestrator:
             self._workflow_subscriptions[workflow_id] = set()
         self._workflow_subscriptions[workflow_id].add(subscription_id)
 
-        self._logger.info(
-            'SUBSCRIPTION ADDED: subscription_id=%s for workflow=%s '
-            '(total subscriptions for this workflow: %d)',
-            subscription_id,
-            workflow_id,
-            len(self._workflow_subscriptions[workflow_id]),
-        )
-
         # If workflow data already exists, notify immediately
         if workflow_id in self._workflows:
             state = self._workflows[workflow_id]
@@ -679,7 +671,7 @@ class JobOrchestrator:
                 # Check if we have data for this job_number
                 has_data = self._has_workflow_data(workflow_id, current_job_number)
                 if has_data:
-                    self._logger.info(
+                    self._logger.debug(
                         'Workflow %s already has data for job_number=%s, '
                         'notifying new subscriber %s immediately',
                         workflow_id,
@@ -695,7 +687,7 @@ class JobOrchestrator:
                             subscription_id,
                         )
                 else:
-                    self._logger.info(
+                    self._logger.debug(
                         'Workflow %s is running (job_number=%s) but no data yet, '
                         'will notify subscriber %s when data arrives',
                         workflow_id,
@@ -755,28 +747,3 @@ class JobOrchestrator:
                 'Attempted to unsubscribe from non-existent subscription %s',
                 subscription_id,
             )
-
-    def log_debug_state(self) -> None:
-        """Log current state of workflows and subscriptions for debugging."""
-        self._logger.info('=== JobOrchestrator Debug State ===')
-        self._logger.info('Total workflows: %d', len(self._workflows))
-        self._logger.info('Total subscriptions: %d', len(self._subscriptions))
-        self._logger.info(
-            'Workflows with subscriptions: %d', len(self._workflow_subscriptions)
-        )
-
-        for workflow_id, state in self._workflows.items():
-            current_job = (
-                state.current.job_number if state.current else 'No current job'
-            )
-            staged_count = len(state.staged_jobs)
-            sub_count = len(self._workflow_subscriptions.get(workflow_id, set()))
-            self._logger.info(
-                '  Workflow %s: current_job=%s, staged_jobs=%d, subscriptions=%d',
-                workflow_id,
-                current_job,
-                staged_count,
-                sub_count,
-            )
-
-        self._logger.info('=== End Debug State ===')

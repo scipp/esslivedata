@@ -124,9 +124,6 @@ class WorkflowController:
             aux_source_names,
         )
 
-        # Log orchestrator state before starting
-        self._orchestrator.log_debug_state()
-
         spec = self.get_workflow_spec(workflow_id)
         if spec is None:
             msg = f'Workflow spec for {workflow_id} not found'
@@ -162,9 +159,6 @@ class WorkflowController:
             workflow_id,
             len(job_ids),
         )
-
-        # Log orchestrator state after starting
-        self._orchestrator.log_debug_state()
 
         return job_ids
 
