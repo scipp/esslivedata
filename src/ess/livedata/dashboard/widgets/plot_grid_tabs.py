@@ -28,8 +28,9 @@ from ..plot_orchestrator import (
     SubscriptionId,
 )
 from .plot_config_modal import PlotConfigModal
-from .plot_grid import PlotGrid, _create_close_button, _create_gear_button
+from .plot_grid import PlotGrid
 from .plot_grid_manager import PlotGridManager
+from .plot_widgets import _create_close_button, _create_gear_button
 
 
 class PlotGridTabs:
