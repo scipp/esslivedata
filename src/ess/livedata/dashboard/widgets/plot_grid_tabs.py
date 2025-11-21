@@ -286,8 +286,23 @@ class PlotGridTabs:
             # Show status widget (either waiting for data or error)
             widget = self._create_status_widget(cell_id, cell, error=error)
 
-        # Insert widget at explicit position
-        plot_grid.insert_widget_at(cell.geometry, widget)
+        # Defer insertion for plots to allow Panel to update layout sizing.
+        # When a workflow is already running with data, subscribing triggers
+        # plot creation synchronously (in subscribe_to_workflow's immediate
+        # callback path). This can cause the HoloViews pane to initialize with
+        # collapsed/default size before the grid container is properly sized,
+        # resulting in "glitched" rendering. Deferring to the next event loop
+        # iteration allows Panel to process layout updates first.
+        if plot is not None:
+            # Schedule insertion on next event loop iteration
+            pn.state.add_periodic_callback(
+                lambda: plot_grid.insert_widget_at(cell.geometry, widget),
+                period=1,  # milliseconds
+                count=1,  # run once
+            )
+        else:
+            # Status widgets can be inserted immediately
+            plot_grid.insert_widget_at(cell.geometry, widget)
 
     def _on_cell_removed(self, grid_id: GridId, geometry: CellGeometry) -> None:
         """
