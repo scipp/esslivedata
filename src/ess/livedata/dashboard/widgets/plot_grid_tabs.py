@@ -460,3 +460,8 @@ class PlotGridTabs:
     def panel(self) -> pn.Column:
         """Get the Panel viewable object for this widget."""
         return self._widget
+
+    @property
+    def tabs(self) -> pn.Tabs:
+        """Get the Tabs widget containing grid tabs."""
+        return self._tabs

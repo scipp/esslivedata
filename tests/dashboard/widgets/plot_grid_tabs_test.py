@@ -103,12 +103,12 @@ class TestPlotGridTabsInitialization:
 
     def test_creates_panel_tabs_widget(self, plot_grid_tabs):
         """Test that widget creates a Panel Tabs object."""
-        assert isinstance(plot_grid_tabs.panel, pn.Tabs)
+        assert isinstance(plot_grid_tabs.tabs, pn.Tabs)
 
     def test_starts_with_one_tab_when_no_grids(self, plot_grid_tabs):
         """Test that widget starts with only one tab when no grids exist."""
         # Should have exactly one tab (the Manage tab)
-        assert len(plot_grid_tabs.panel) == 1
+        assert len(plot_grid_tabs.tabs) == 1
 
     def test_initializes_from_existing_grids(
         self, plot_orchestrator, workflow_registry, plotting_controller
@@ -126,7 +126,7 @@ class TestPlotGridTabsInitialization:
         )
 
         # Should have 3 tabs: Manage + 2 grids
-        assert len(widget.panel) == 3
+        assert len(widget.tabs) == 3
 
     def test_subscribes_to_lifecycle_events(self, plot_orchestrator, plot_grid_tabs):
         """Test that widget subscribes to orchestrator lifecycle events."""
@@ -134,7 +134,7 @@ class TestPlotGridTabsInitialization:
         plot_orchestrator.add_grid(title='New Grid', nrows=3, ncols=3)
 
         # Should now have 2 tabs: Manage + New Grid
-        assert len(plot_grid_tabs.panel) == 2
+        assert len(plot_grid_tabs.tabs) == 2
 
 
 class TestGridTabManagement:
@@ -142,12 +142,12 @@ class TestGridTabManagement:
 
     def test_on_grid_created_adds_tab(self, plot_orchestrator, plot_grid_tabs):
         """Test that creating a grid adds a new tab."""
-        initial_count = len(plot_grid_tabs.panel)
+        initial_count = len(plot_grid_tabs.tabs)
 
         plot_orchestrator.add_grid(title='Test Grid', nrows=4, ncols=4)
 
         # Should have one more tab
-        assert len(plot_grid_tabs.panel) == initial_count + 1
+        assert len(plot_grid_tabs.tabs) == initial_count + 1
 
     def test_on_grid_created_switches_to_new_tab(
         self, plot_orchestrator, plot_grid_tabs
@@ -156,17 +156,17 @@ class TestGridTabManagement:
         plot_orchestrator.add_grid(title='Auto Switch', nrows=3, ncols=3)
 
         # Active tab should be the newly created grid (index 1, since Manage is at 0)
-        assert plot_grid_tabs.panel.active == 1
+        assert plot_grid_tabs.tabs.active == 1
 
     def test_on_grid_removed_removes_tab(self, plot_orchestrator, plot_grid_tabs):
         """Test that removing a grid removes its tab."""
         grid_id = plot_orchestrator.add_grid(title='To Remove', nrows=3, ncols=3)
-        assert len(plot_grid_tabs.panel) == 2  # Grid + Manage
+        assert len(plot_grid_tabs.tabs) == 2  # Grid + Manage
 
         plot_orchestrator.remove_grid(grid_id)
 
         # Should only have one tab left
-        assert len(plot_grid_tabs.panel) == 1
+        assert len(plot_grid_tabs.tabs) == 1
 
     def test_removing_grid_updates_correctly(self, plot_orchestrator, plot_grid_tabs):
         """Test that removing a grid from the middle works correctly."""
@@ -178,7 +178,7 @@ class TestGridTabManagement:
         plot_orchestrator.remove_grid(grid_id_2)
 
         # Should have Manage + 2 remaining grids
-        assert len(plot_grid_tabs.panel) == 3
+        assert len(plot_grid_tabs.tabs) == 3
 
     def test_multiple_widget_instances_stay_synchronized(
         self, plot_orchestrator, workflow_registry, plotting_controller
@@ -199,15 +199,15 @@ class TestGridTabManagement:
         grid_id = plot_orchestrator.add_grid(title='Shared Grid', nrows=3, ncols=3)
 
         # Both widgets should have the new tab
-        assert len(widget1.panel) == 2  # Manage + Shared Grid
-        assert len(widget2.panel) == 2
+        assert len(widget1.tabs) == 2  # Manage + Shared Grid
+        assert len(widget2.tabs) == 2
 
         # Remove grid
         plot_orchestrator.remove_grid(grid_id)
 
         # Both widgets should reflect removal
-        assert len(widget1.panel) == 1  # Only Manage
-        assert len(widget2.panel) == 1
+        assert len(widget1.tabs) == 1  # Only Manage
+        assert len(widget2.tabs) == 1
 
 
 class TestManageTab:
@@ -217,14 +217,14 @@ class TestManageTab:
         self, plot_orchestrator, plot_grid_tabs
     ):
         """Test that adding grids doesn't remove or duplicate the Manage tab."""
-        initial_count = len(plot_grid_tabs.panel)
+        initial_count = len(plot_grid_tabs.tabs)
         plot_orchestrator.add_grid(title='Grid 1', nrows=2, ncols=2)
         # Should have exactly one more tab
-        assert len(plot_grid_tabs.panel) == initial_count + 1
+        assert len(plot_grid_tabs.tabs) == initial_count + 1
 
         plot_orchestrator.add_grid(title='Grid 2', nrows=3, ncols=3)
         # Should have exactly one more tab again
-        assert len(plot_grid_tabs.panel) == initial_count + 2
+        assert len(plot_grid_tabs.tabs) == initial_count + 2
 
 
 class TestShutdown:
@@ -238,11 +238,11 @@ class TestShutdown:
         plot_grid_tabs.shutdown()
 
         # Adding a grid should not affect the widget anymore
-        initial_count = len(plot_grid_tabs.panel)
+        initial_count = len(plot_grid_tabs.tabs)
         plot_orchestrator.add_grid(title='After Shutdown', nrows=3, ncols=3)
 
         # Tab count should not change
-        assert len(plot_grid_tabs.panel) == initial_count
+        assert len(plot_grid_tabs.tabs) == initial_count
 
     def test_shutdown_can_be_called_multiple_times(self, plot_grid_tabs):
         """Test that shutdown is idempotent."""
