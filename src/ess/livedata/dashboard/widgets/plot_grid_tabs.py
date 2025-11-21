@@ -28,7 +28,7 @@ from ..plot_orchestrator import (
     SubscriptionId,
 )
 from .plot_config_modal import PlotConfigModal
-from .plot_grid import PlotGrid
+from .plot_grid import GridCellStyles, PlotGrid
 from .plot_grid_manager import PlotGridManager
 from .plot_widgets import create_close_button, create_gear_button
 
@@ -399,6 +399,7 @@ class PlotGridTabs:
                 'border': border,
                 'position': 'relative',
             },
+            margin=GridCellStyles.CELL_MARGIN,
         )
         return status_widget
 
@@ -450,6 +451,7 @@ class PlotGridTabs:
             plot_pane,
             sizing_mode='stretch_both',
             styles={'position': 'relative'},
+            margin=GridCellStyles.CELL_MARGIN,
         )
 
     def shutdown(self) -> None:
