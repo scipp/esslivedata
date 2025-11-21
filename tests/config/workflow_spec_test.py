@@ -144,16 +144,8 @@ class TestWorkflowConfigFromParams:
         self, sample_workflow_id: WorkflowId
     ) -> None:
         """Test from_params with params and aux_source_names."""
-
-        class ParamsModel(BaseModel):
-            param1: int = 10
-            param2: str = "value"
-
-        class AuxSourcesModel(BaseModel):
-            monitor: str = "monitor1"
-
-        params = ParamsModel(param1=20, param2="custom")
-        aux_sources = AuxSourcesModel(monitor="monitor1")
+        params = {"param1": 20, "param2": "custom"}
+        aux_sources = {"monitor": "monitor1"}
 
         config = WorkflowConfig.from_params(
             workflow_id=sample_workflow_id,
@@ -195,23 +187,17 @@ class TestWorkflowConfigFromParams:
 
         assert config.job_number == custom_job_number
 
-    def test_from_params_serializes_pydantic_model(
+    def test_from_params_with_complex_params(
         self, sample_workflow_id: WorkflowId
     ) -> None:
-        """Test that from_params correctly serializes Pydantic model to dict."""
-
-        class ComplexParams(BaseModel):
-            nested_value: int = 5
-            string_list: list[str] = ["a", "b"]
-
-        params = ComplexParams(nested_value=10, string_list=["x", "y", "z"])
+        """Test from_params with complex nested dict params."""
+        params = {"nested_value": 10, "string_list": ["x", "y", "z"]}
 
         config = WorkflowConfig.from_params(
             workflow_id=sample_workflow_id,
             params=params,
         )
 
-        # Should be serialized to dict
         assert isinstance(config.params, dict)
         assert config.params == {"nested_value": 10, "string_list": ["x", "y", "z"]}
 

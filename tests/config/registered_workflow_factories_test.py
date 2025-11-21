@@ -121,8 +121,10 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
     # This simulates what WorkflowController.start_workflow does
     workflow_config = WorkflowConfig.from_params(
         workflow_id=workflow_id,
-        params=params_model,
-        aux_source_names=aux_sources_model,
+        params=params_model.model_dump() if params_model is not None else None,
+        aux_source_names=aux_sources_model.model_dump()
+        if aux_sources_model is not None
+        else None,
     )
 
     # Step 4: Instantiate workflow via backend path (JobFactory → WorkflowFactory)

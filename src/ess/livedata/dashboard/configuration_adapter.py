@@ -17,6 +17,23 @@ class ConfigurationState(BaseModel):
     This model captures the user's configuration choices (sources, params,
     aux sources) that should be restored when reopening the dashboard.
     Used by both workflow and plotter configurations.
+
+    Schema Limitation
+    -----------------
+    This schema currently assumes all sources share the same `params` configuration,
+    with only `aux_source_names` varying per source. In reality, JobOrchestrator's
+    internal state (`staged_jobs`) allows different params per source via
+    `dict[SourceName, JobConfig]`.
+
+    For now, we expand on load: the single `params` dict is applied to all sources
+    in `source_names`, and `aux_source_names` is expanded per-source as needed.
+    This works because the current UI (WorkflowController.start_workflow) stages
+    the same params for all sources in a single operation.
+
+    Future work: If we support per-source params in the UI (e.g., "stage source1
+    with configA, stage source2 with configB"), this schema should be extended to:
+    `jobs: dict[str, JobConfigState]` where `JobConfigState` contains both params
+    and aux_source_names per source.
     """
 
     source_names: list[str] = Field(
@@ -157,11 +174,34 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         """
         Initial parameter values.
 
-        Default implementation returns persisted parameter values if available,
-        otherwise returns empty dict.
+        Default implementation returns persisted parameter values if available
+        and compatible with the current model, otherwise returns empty dict to
+        trigger default values.
+
+        If stored params have no field overlap with the current model (indicating
+        complete incompatibility, e.g., from a different workflow version), returns
+        empty dict to fall back to defaults rather than propagating invalid data.
         """
         if not self._config_state:
             return {}
+
+        # Check compatibility with current model
+        model_class = self.model_class()
+        if model_class is None:
+            # No model defined, return params as-is
+            return self._config_state.params
+
+        # Check if stored params have ANY overlap with current model fields
+        # If no field names match, the config is from an incompatible version
+        stored_keys = set(self._config_state.params.keys())
+        model_fields = set(model_class.model_fields.keys())
+
+        if stored_keys and not stored_keys.intersection(model_fields):
+            # Complete incompatibility: no field overlap, fall back to defaults
+            return {}
+
+        # Partial or full compatibility: let Pydantic handle defaults/validation
+        # Note: Pydantic ignores extra fields and uses defaults for missing ones
         return self._config_state.params
 
     @abstractmethod

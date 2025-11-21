@@ -132,7 +132,7 @@ def test_workflow_params_serialization_roundtrip(
     # Simulate WorkflowConfig.from_params serialization
     workflow_config = WorkflowConfig.from_params(
         workflow_id=workflow_id,
-        params=original,
+        params=original.model_dump(),
     )
     serialized = workflow_config.params
 
@@ -166,7 +166,7 @@ def test_workflow_aux_sources_serialization_roundtrip(
     # Simulate WorkflowConfig.from_params storing aux sources
     workflow_config = WorkflowConfig.from_params(
         workflow_id=workflow_id,
-        aux_source_names=original,  # Pass model instance
+        aux_source_names=original.model_dump(),
     )
     serialized = workflow_config.aux_source_names
 

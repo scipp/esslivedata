@@ -5,10 +5,12 @@
 import logging
 from contextlib import ExitStack
 from types import TracebackType
+from typing import Literal
 
 from ess.livedata.dashboard.config_store import ConfigStoreManager
 from ess.livedata.dashboard.dashboard_services import DashboardServices
 from ess.livedata.dashboard.kafka_transport import DashboardKafkaTransport
+from ess.livedata.dashboard.transport import NullTransport, Transport
 
 
 class DashboardBackend:
@@ -31,6 +33,9 @@ class DashboardBackend:
         Use dev mode with simplified topic structure
     log_level:
         Logging level
+    transport:
+        Transport type to use ('kafka' or 'none'). Defaults to 'kafka'.
+        Use 'none' for tests that don't need Kafka.
 
     Notes
     -----
@@ -44,6 +49,8 @@ class DashboardBackend:
         instrument: str = 'dummy',
         dev: bool = True,
         log_level: int | str = logging.INFO,
+        transport: Literal['kafka', 'none'] = 'kafka',
+        config_dir: str | None = None,
     ):
         self._instrument = instrument
         self._dev = dev
@@ -57,14 +64,26 @@ class DashboardBackend:
         self._exit_stack.__enter__()
 
         # Create config manager with in-memory stores for tests (no file I/O)
-        self._config_manager = ConfigStoreManager(
-            instrument=instrument, store_type='memory'
-        )
+        # unless config_dir is specified (for testing persistence)
+        if config_dir is None:
+            self._config_manager = ConfigStoreManager(
+                instrument=instrument, store_type='memory'
+            )
+        else:
+            self._config_manager = ConfigStoreManager(
+                instrument=instrument, store_type='file', config_dir=config_dir
+            )
 
-        # Create Kafka transport for integration tests
-        transport = DashboardKafkaTransport(
-            instrument=instrument, dev=dev, logger=self._logger
-        )
+        # Create transport based on configuration
+        transport_impl: Transport
+        if transport == 'none':
+            transport_impl = NullTransport()
+        elif transport == 'kafka':
+            transport_impl = DashboardKafkaTransport(
+                instrument=instrument, dev=dev, logger=self._logger
+            )
+        else:
+            raise ValueError(f"Unknown transport type: {transport}")
 
         # Setup all dashboard services (no GUI components)
         self._services = DashboardServices(
@@ -73,7 +92,7 @@ class DashboardBackend:
             exit_stack=self._exit_stack,
             logger=self._logger,
             pipe_factory=lambda data: None,  # No-op for tests
-            transport=transport,
+            transport=transport_impl,
             config_manager=self._config_manager,
         )
 

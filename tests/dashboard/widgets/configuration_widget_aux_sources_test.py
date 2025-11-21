@@ -69,7 +69,7 @@ class TestAuxSourcesSerialization:
         )
         config = WorkflowConfig.from_params(
             workflow_id=workflow_id,
-            aux_source_names=aux_sources,
+            aux_source_names=aux_sources.model_dump(),
         )
 
         # Verify serialization produces dict[str, str]
@@ -91,7 +91,7 @@ class TestAuxSourcesSerialization:
         )
         config = WorkflowConfig.from_params(
             workflow_id=workflow_id,
-            aux_source_names=aux_sources,
+            aux_source_names=aux_sources.model_dump(),
         )
 
         # Verify serialization produces dict[str, str]
@@ -123,7 +123,7 @@ class TestAuxSourcesSerialization:
         ):
             WorkflowConfig.from_params(
                 workflow_id=workflow_id,
-                aux_source_names=aux_sources,
+                aux_source_names=aux_sources.model_dump(),
             )
 
     def test_aux_sources_with_custom_serialization(self) -> None:
@@ -160,7 +160,7 @@ class TestAuxSourcesSerialization:
         )
         config = WorkflowConfig.from_params(
             workflow_id=workflow_id,
-            aux_source_names=aux_sources,
+            aux_source_names=aux_sources.model_dump(mode='json'),
         )
 
         assert config.aux_source_names == {'use_primary': 'true', 'monitor_id': '42'}

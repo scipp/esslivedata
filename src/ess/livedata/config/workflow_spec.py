@@ -272,22 +272,21 @@ class WorkflowConfig(BaseModel):
     def from_params(
         cls,
         workflow_id: WorkflowId,
-        params: BaseModel | None = None,
-        aux_source_names: BaseModel | None = None,
+        params: dict | None = None,
+        aux_source_names: dict | None = None,
         job_number: JobNumber | None = None,
     ) -> WorkflowConfig:
         """
-        Create a WorkflowConfig from validated Pydantic models.
+        Create a WorkflowConfig from parameters.
 
         Parameters
         ----------
         workflow_id:
             Identifier for the workflow
         params:
-            Validated Pydantic model with workflow parameters, or None if no params
+            Workflow parameters as dict, or None if no params
         aux_source_names:
-            Validated Pydantic model with auxiliary source selections, or None if no
-            aux sources
+            Auxiliary source selections as dict, or None if no aux sources
         job_number:
             Optional job number (generated if not provided)
 
@@ -299,12 +298,8 @@ class WorkflowConfig(BaseModel):
         return cls(
             identifier=workflow_id,
             job_number=job_number if job_number is not None else uuid.uuid4(),
-            aux_source_names=(
-                aux_source_names.model_dump(mode='json')
-                if aux_source_names is not None
-                else {}
-            ),
-            params=params.model_dump() if params is not None else {},
+            aux_source_names=aux_source_names or {},
+            params=params or {},
         )
 
 
