@@ -59,11 +59,13 @@ class Instrument:
     active_namespace: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
     _monitor_workflow_handle: SpecHandle | None = field(default=None, init=False)
+    _monitor_ratemeter_handle: SpecHandle | None = field(default=None, init=False)
     _timeseries_workflow_handle: SpecHandle | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         """Auto-register standard workflow specs based on instrument metadata."""
         from ess.livedata.handlers.monitor_workflow_specs import (
+            register_monitor_ratemeter_spec,
             register_monitor_workflow_specs,
         )
         from ess.livedata.handlers.timeseries_workflow_specs import (
@@ -73,6 +75,17 @@ class Instrument:
         self._monitor_workflow_handle = register_monitor_workflow_specs(
             instrument=self, source_names=self.monitors
         )
+
+        # Only register monitor interval timeseries if nexus file is available
+        # (required by the workflow to create GenericTofWorkflow)
+        try:
+            _ = self.nexus_file  # Cache in _nexus_file if successful
+        except ValueError:
+            pass  # nexus file not available for this instrument
+        else:
+            self._monitor_ratemeter_handle = register_monitor_ratemeter_spec(
+                instrument=self, source_names=self.monitors
+            )
 
         timeseries_names = list(self.f144_attribute_registry.keys())
         self._timeseries_workflow_handle = register_timeseries_workflow_specs(
@@ -240,6 +253,14 @@ class Instrument:
             self._monitor_workflow_handle.attach_factory()(
                 MonitorStreamProcessor.create_workflow
             )
+
+        if self._monitor_ratemeter_handle is not None:
+            from ess.livedata.handlers.monitor_data_handler import (
+                create_monitor_ratemeter_factory,
+            )
+
+            factory = create_monitor_ratemeter_factory(self)
+            self._monitor_ratemeter_handle.attach_factory()(factory)
 
         if self._timeseries_workflow_handle is not None:
             from ess.livedata.handlers.timeseries_handler import (
