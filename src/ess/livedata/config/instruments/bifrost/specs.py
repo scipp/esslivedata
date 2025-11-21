@@ -19,7 +19,10 @@ import scipp as sc
 
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
-from ess.livedata.handlers.detector_view_specs import DetectorViewParams
+from ess.livedata.handlers.detector_view_specs import (
+    DetectorViewOutputs,
+    DetectorViewParams,
+)
 from ess.livedata.parameter_models import EnergyEdges, QEdges
 
 
@@ -96,6 +99,15 @@ class SpectrumViewOutputs(WorkflowOutputsBase):
     spectrum_view: sc.DataArray = pydantic.Field(
         title='Spectrum View',
         description='Spectrum view showing time-of-flight vs. detector position.',
+    )
+
+
+class DetectorRatemeterOutputs(WorkflowOutputsBase):
+    """Outputs for detector ratemeter workflow."""
+
+    detector_region_counts: sc.DataArray = pydantic.Field(
+        title='Detector Region Counts',
+        description='Total counts for the selected arc and pixel range.',
     )
 
 
@@ -246,6 +258,7 @@ unified_detector_view_handle = instrument.register_spec(
     description='All banks merged into a single detector view.',
     source_names=['unified_detector'],
     params=DetectorViewParams,
+    outputs=DetectorViewOutputs,
 )
 
 # Register spectroscopy workflow specs
@@ -266,6 +279,7 @@ detector_ratemeter_handle = instrument.register_spec(
     description='Counts for a selected arc and pixel range.',
     source_names=['unified_detector'],
     params=DetectorRatemeterParams,
+    outputs=DetectorRatemeterOutputs,
 )
 
 # Register Q-map workflow specs

@@ -238,6 +238,28 @@ class Wizard:
         self._step_results = []
         self._update_content()
 
+    def reset_to_step(self, step_index: int) -> None:
+        """
+        Reset wizard to specific step.
+
+        This is useful for editing existing configurations where you want
+        to skip to a later step. Steps should be designed to handle None
+        input gracefully (e.g., by using initial configuration provided
+        in their constructors).
+
+        Parameters
+        ----------
+        step_index
+            The step index (0-based) to start at.
+        """
+        if step_index < 0 or step_index >= len(self._steps):
+            raise ValueError(f"Invalid step index: {step_index}")
+
+        self._current_step_index = step_index
+        self._finished = False
+        self._step_results = []
+        self._update_content()
+
     def render(self) -> pn.Column:
         """Render the wizard content."""
         return self._content
@@ -265,11 +287,14 @@ class Wizard:
         """Update modal content for current step."""
         self._current_step.on_ready_changed(self._on_step_ready_changed)
 
-        # Get input for this step: None for first step, otherwise previous step's result
+        # Get input for this step: None for first step or when results not available
         if self._current_step_index == 0:
             input_data = None
-        else:
+        elif self._current_step_index - 1 < len(self._step_results):
             input_data = self._step_results[self._current_step_index - 1]
+        else:
+            # No result available for previous step (jumping to step)
+            input_data = None
 
         self._current_step.on_enter(input_data)
         self._render_step()

@@ -372,6 +372,121 @@ class TestWizardReset:
 
         assert not wizard.is_finished()
 
+    def test_reset_to_step_sets_correct_step_index(self):
+        steps = [
+            FakeWizardStep("step1"),
+            FakeWizardStep("step2"),
+            FakeWizardStep("step3"),
+        ]
+        wizard = Wizard(
+            steps=steps,
+            on_complete=lambda result: None,
+            on_cancel=lambda: None,
+        )
+
+        wizard.reset_to_step(2)
+
+        assert wizard._current_step_index == 2
+
+    def test_reset_to_step_clears_finished_flag(self):
+        steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
+        wizard = Wizard(
+            steps=steps,
+            on_complete=lambda result: None,
+            on_cancel=lambda: None,
+        )
+
+        wizard.complete(None)
+        wizard.reset_to_step(1)
+
+        assert not wizard.is_finished()
+
+    def test_reset_to_step_clears_step_results(self):
+        steps = [
+            FakeWizardStep("step1"),
+            FakeWizardStep("step2"),
+            FakeWizardStep("step3"),
+        ]
+        wizard = Wizard(
+            steps=steps,
+            on_complete=lambda result: None,
+            on_cancel=lambda: None,
+        )
+
+        # Advance through steps to populate results
+        wizard._update_content()
+        wizard.advance()
+        wizard.advance()
+        assert len(wizard._step_results) > 0
+
+        # Reset should clear results
+        wizard.reset_to_step(2)
+        assert wizard._step_results == []
+
+    def test_reset_to_step_calls_on_enter_with_none(self):
+        steps = [
+            FakeWizardStep("step1"),
+            FakeWizardStep("step2"),
+            FakeWizardStep("step3"),
+        ]
+        wizard = Wizard(
+            steps=steps,
+            on_complete=lambda result: None,
+            on_cancel=lambda: None,
+        )
+
+        wizard.reset_to_step(2)
+
+        assert steps[2].enter_called
+        assert steps[2].received_input is None
+
+    def test_reset_to_step_with_negative_index_raises(self):
+        steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
+        wizard = Wizard(
+            steps=steps,
+            on_complete=lambda result: None,
+            on_cancel=lambda: None,
+        )
+
+        import pytest
+
+        with pytest.raises(ValueError, match="Invalid step index: -1"):
+            wizard.reset_to_step(-1)
+
+    def test_reset_to_step_with_out_of_bounds_index_raises(self):
+        steps = [FakeWizardStep("step1"), FakeWizardStep("step2")]
+        wizard = Wizard(
+            steps=steps,
+            on_complete=lambda result: None,
+            on_cancel=lambda: None,
+        )
+
+        import pytest
+
+        with pytest.raises(ValueError, match="Invalid step index: 2"):
+            wizard.reset_to_step(2)
+
+    def test_reset_to_step_allows_navigating_back_with_none_input(self):
+        steps = [
+            FakeWizardStep("step1"),
+            FakeWizardStep("step2"),
+            FakeWizardStep("step3"),
+        ]
+        wizard = Wizard(
+            steps=steps,
+            on_complete=lambda result: None,
+            on_cancel=lambda: None,
+        )
+
+        # Reset to last step
+        wizard.reset_to_step(2)
+
+        # Navigate back to previous step
+        wizard.back()
+        assert wizard._current_step_index == 1
+        # Previous step should receive None as input since no results are stored
+        assert steps[1].received_input is None
+
 
 class TestWizardRendering:
     """Tests for wizard rendering."""

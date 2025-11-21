@@ -3,6 +3,7 @@
 from enum import Enum
 
 import pytest
+import scipp as sc
 from pydantic import BaseModel, Field
 
 from ess.livedata.config.workflow_spec import (
@@ -10,6 +11,7 @@ from ess.livedata.config.workflow_spec import (
     JobId,
     WorkflowConfig,
     WorkflowId,
+    WorkflowOutputsBase,
     WorkflowSpec,
 )
 
@@ -95,6 +97,165 @@ class TestWorkflowSpecAuxSources:
         assert loaded.aux_sources is not None
         # Both should be the same class (not just equal instances)
         assert loaded.aux_sources.__name__ == spec.aux_sources.__name__
+
+
+class TestWorkflowSpecOutputs:
+    """Tests for WorkflowSpec.outputs field and get_output_template()."""
+
+    def test_workflow_spec_without_outputs(self) -> None:
+        """Test that WorkflowSpec can be created without outputs."""
+        spec = WorkflowSpec(
+            instrument="test",
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            description="A test workflow",
+            params=None,
+        )
+        assert spec.outputs is None
+
+    def test_workflow_spec_with_outputs_model(self) -> None:
+        """Test WorkflowSpec with outputs as a Pydantic model."""
+
+        class TestOutputs(WorkflowOutputsBase):
+            result: sc.DataArray = Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['x'], shape=[0], unit='counts'),
+                    coords={'x': sc.arange('x', 0, unit='m')},
+                ),
+                title='Result',
+                description='Test output',
+            )
+
+        spec = WorkflowSpec(
+            instrument="test",
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            description="A test workflow",
+            params=None,
+            outputs=TestOutputs,
+        )
+        assert spec.outputs is TestOutputs
+
+    def test_get_output_template_returns_dataarray(self) -> None:
+        """Test that get_output_template returns a DataArray from default_factory."""
+
+        class TestOutputs(WorkflowOutputsBase):
+            result: sc.DataArray = Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['x', 'y'], shape=[0, 0], unit='counts'),
+                    coords={
+                        'x': sc.arange('x', 0, unit='m'),
+                        'y': sc.arange('y', 0, unit='m'),
+                    },
+                ),
+                title='Result',
+            )
+
+        spec = WorkflowSpec(
+            instrument="test",
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            description="A test workflow",
+            params=None,
+            outputs=TestOutputs,
+        )
+
+        template = spec.get_output_template('result')
+
+        assert template is not None
+        assert isinstance(template, sc.DataArray)
+        assert template.dims == ('x', 'y')
+        assert set(template.coords.keys()) == {'x', 'y'}
+        assert template.unit == 'counts'
+
+    def test_get_output_template_returns_none_for_missing_output(self) -> None:
+        """Test that get_output_template returns None for non-existent output."""
+
+        class TestOutputs(WorkflowOutputsBase):
+            result: sc.DataArray = Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['x'], shape=[0]),
+                    coords={'x': sc.arange('x', 0)},
+                )
+            )
+
+        spec = WorkflowSpec(
+            instrument="test",
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            description="A test workflow",
+            params=None,
+            outputs=TestOutputs,
+        )
+
+        template = spec.get_output_template('nonexistent')
+        assert template is None
+
+    def test_get_output_template_returns_none_when_no_outputs_defined(self) -> None:
+        """Test that get_output_template returns None when outputs field is None."""
+        spec = WorkflowSpec(
+            instrument="test",
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            description="A test workflow",
+            params=None,
+        )
+
+        template = spec.get_output_template('any_output')
+        assert template is None
+
+    def test_get_output_template_returns_none_without_default_factory(
+        self,
+    ) -> None:
+        """Test that get_output_template returns None without default_factory."""
+
+        class TestOutputs(WorkflowOutputsBase):
+            result: sc.DataArray = Field(title='Result')
+
+        spec = WorkflowSpec(
+            instrument="test",
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            description="A test workflow",
+            params=None,
+            outputs=TestOutputs,
+        )
+
+        template = spec.get_output_template('result')
+        assert template is None
+
+    def test_get_output_template_creates_fresh_instances(self) -> None:
+        """Test that get_output_template creates a new instance each time."""
+
+        class TestOutputs(WorkflowOutputsBase):
+            result: sc.DataArray = Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['x'], shape=[0]),
+                    coords={'x': sc.arange('x', 0)},
+                )
+            )
+
+        spec = WorkflowSpec(
+            instrument="test",
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            description="A test workflow",
+            params=None,
+            outputs=TestOutputs,
+        )
+
+        template1 = spec.get_output_template('result')
+        template2 = spec.get_output_template('result')
+
+        # Should be different instances (not the same mutable object)
+        assert template1 is not template2
 
 
 class TestWorkflowConfigAuxSourceNames:

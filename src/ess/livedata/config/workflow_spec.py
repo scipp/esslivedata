@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, TypeVar
 
+import scipp as sc
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 T = TypeVar('T')
@@ -155,9 +156,21 @@ class WorkflowSpec(BaseModel):
             "Pydantic model defining workflow outputs with their metadata. "
             "Field names are simplified identifiers (e.g., 'i_of_d_two_theta') "
             "that match keys returned by workflow.finalize(). Field types should "
-            "be scipp.DataArray or more specific types. Field metadata (title, "
-            "description) provides human-readable names and explanations for "
-            "the UI."
+            "be scipp.DataArray. Field metadata (title, description) provides "
+            "human-readable names and explanations for the UI. "
+            "\n\n"
+            "IMPORTANT: Use default_factory to provide an empty DataArray template "
+            "with the correct structure (dims, coords, units). This enables the "
+            "dashboard to perform automatic plotter selection before data exists. "
+            "Example:\n"
+            "    field: sc.DataArray = Field(\n"
+            "        default_factory=lambda: sc.DataArray(\n"
+            "            sc.zeros(dims=['x'], shape=[0], unit='counts'),\n"
+            "            coords={'x': sc.arange('x', 0, unit='m')}\n"
+            "        ),\n"
+            "        title='Result',\n"
+            "        description='Output description'\n"
+            "    )"
         ),
     )
 
@@ -203,6 +216,38 @@ class WorkflowSpec(BaseModel):
             name=self.name,
             version=self.version,
         )
+
+    def get_output_template(self, output_name: str) -> sc.DataArray | None:
+        """
+        Get a template DataArray for the specified output.
+
+        Returns a DataArray created by the field's default_factory. By convention,
+        this should be an empty DataArray (shape=0) that demonstrates the expected
+        structure (dims, coords, units) of the workflow output.
+
+        Parameters
+        ----------
+        output_name:
+            Name of the output field.
+
+        Returns
+        -------
+        :
+            DataArray created by the field's default_factory, or None if the field
+            is not found or has no default_factory defined.
+        """
+        if self.outputs is None:
+            return None
+
+        field_info = self.outputs.model_fields.get(output_name)
+        if field_info is None:
+            return None
+
+        # Call the factory to get a fresh template
+        if field_info.default_factory:
+            return field_info.default_factory()
+
+        return None
 
 
 @dataclass

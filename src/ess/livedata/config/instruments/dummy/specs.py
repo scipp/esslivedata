@@ -9,7 +9,10 @@ import scipp as sc
 
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import WorkflowOutputsBase
-from ess.livedata.handlers.detector_view_specs import DetectorViewParams
+from ess.livedata.handlers.detector_view_specs import (
+    DetectorViewOutputs,
+    DetectorViewParams,
+)
 
 
 class TotalCountsOutputs(WorkflowOutputsBase):
@@ -44,6 +47,7 @@ panel_0_view_handle = instrument.register_spec(
     description='',
     source_names=['panel_0'],
     params=DetectorViewParams,
+    outputs=DetectorViewOutputs,
 )
 
 # Register total counts workflow spec

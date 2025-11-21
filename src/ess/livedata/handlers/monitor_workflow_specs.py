@@ -47,6 +47,30 @@ class MonitorRatemeterOutputs(WorkflowOutputsBase):
     )
 
 
+class MonitorHistogramOutputs(WorkflowOutputsBase):
+    """Outputs for the monitor histogram workflow."""
+
+    cumulative: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['time_of_arrival'], shape=[0], unit='counts'),
+            coords={'time_of_arrival': sc.arange('time_of_arrival', 0, unit='ms')},
+        ),
+        title='Cumulative Counts',
+        description='Time-integrated monitor counts accumulated over all time.',
+    )
+    current: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['time_of_arrival'], shape=[0], unit='counts'),
+            coords={
+                'time_of_arrival': sc.arange('time_of_arrival', 0, unit='ms'),
+                'time': sc.scalar(0, unit='ns'),
+            },
+        ),
+        title='Current Counts',
+        description='Monitor counts for the current time window since last update.',
+    )
+
+
 def register_monitor_workflow_specs(
     instrument: Instrument, source_names: list[str]
 ) -> SpecHandle | None:
@@ -77,6 +101,7 @@ def register_monitor_workflow_specs(
         "is histogrammed or rebinned into specified time-of-arrival (TOA) bins.",
         source_names=source_names,
         params=MonitorDataParams,
+        outputs=MonitorHistogramOutputs,
     )
 
 

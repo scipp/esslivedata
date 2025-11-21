@@ -7,6 +7,7 @@ import pytest
 
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 from ess.livedata.dashboard.plot_orchestrator import (
+    CellGeometry,
     GridId,
     PlotCell,
     PlotConfig,
@@ -225,13 +226,8 @@ def plot_config(workflow_id):
 @pytest.fixture
 def plot_cell(plot_config):
     """Create a basic PlotCell."""
-    return PlotCell(
-        row=0,
-        col=0,
-        row_span=1,
-        col_span=1,
-        config=plot_config,
-    )
+    geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+    return PlotCell(geometry=geometry, config=plot_config)
 
 
 @pytest.fixture
@@ -325,12 +321,12 @@ class TestGridManagement:
         # Get grid and modify a cell
         grid = plot_orchestrator.get_grid(grid_id)
         grid.cells[cell_id].config.params['new_param'] = 'new_value'
-        grid.cells[cell_id].row = 99
 
         # Verify internal state unchanged
         internal_grid = plot_orchestrator.get_grid(grid_id)
         assert 'new_param' not in internal_grid.cells[cell_id].config.params
-        assert internal_grid.cells[cell_id].row == 0
+        # Geometry is frozen and cannot be modified
+        assert internal_grid.cells[cell_id].geometry.row == 0
 
     def test_get_all_grids_returns_copy_that_can_be_modified_safely(
         self, plot_orchestrator
@@ -361,12 +357,12 @@ class TestGridManagement:
         # Get all grids and modify a cell
         all_grids = plot_orchestrator.get_all_grids()
         all_grids[grid_id].cells[cell_id].config.params['new_param'] = 'new_value'
-        all_grids[grid_id].cells[cell_id].row = 99
 
         # Verify internal state unchanged
         internal_grid = plot_orchestrator.get_grid(grid_id)
         assert 'new_param' not in internal_grid.cells[cell_id].config.params
-        assert internal_grid.cells[cell_id].row == 0
+        # Geometry is frozen and cannot be modified
+        assert internal_grid.cells[cell_id].geometry.row == 0
 
 
 class TestCellManagement:
@@ -432,10 +428,7 @@ class TestCellManagement:
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
 
         cell_1 = PlotCell(
-            row=0,
-            col=0,
-            row_span=1,
-            col_span=1,
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
             config=PlotConfig(
                 workflow_id=workflow_id,
                 output_name='out1',
@@ -445,10 +438,7 @@ class TestCellManagement:
             ),
         )
         cell_2 = PlotCell(
-            row=1,
-            col=1,
-            row_span=1,
-            col_span=1,
+            geometry=CellGeometry(row=1, col=1, row_span=1, col_span=1),
             config=PlotConfig(
                 workflow_id=workflow_id,
                 output_name='out2',
@@ -584,10 +574,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
 
         # Add multiple cells with same workflow_id
         cell_1 = PlotCell(
-            row=0,
-            col=0,
-            row_span=1,
-            col_span=1,
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
             config=PlotConfig(
                 workflow_id=workflow_id,
                 output_name='out1',
@@ -597,10 +584,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
             ),
         )
         cell_2 = PlotCell(
-            row=1,
-            col=1,
-            row_span=1,
-            col_span=1,
+            geometry=CellGeometry(row=1, col=1, row_span=1, col_span=1),
             config=PlotConfig(
                 workflow_id=workflow_id,
                 output_name='out2',
@@ -723,16 +707,23 @@ class TestLifecycleEventNotifications:
         plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        plot_orchestrator.add_plot(grid_id, plot_cell)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
         callback.assert_called_once()
-        call_args = callback.call_args[0]
-        assert call_args[0] == grid_id
-        assert call_args[1] == plot_cell
-        assert call_args[2] is None  # No plot yet
-        assert len(callback.call_args[0]) == 4
-        # Fourth argument is error, should be None
-        assert call_args[3] is None
+        call_kwargs = callback.call_args[1]
+        assert call_kwargs['grid_id'] == grid_id
+        assert call_kwargs['cell_id'] == cell_id
+        assert call_kwargs['cell'] == plot_cell
+        assert call_kwargs['plot'] is None  # No plot yet
+        assert set(call_kwargs.keys()) == {
+            'grid_id',
+            'cell_id',
+            'cell',
+            'plot',
+            'error',
+        }
+        # error should be None
+        assert call_kwargs['error'] is None
 
     def test_on_cell_updated_called_when_plot_created_with_plot_object(
         self,
@@ -748,7 +739,7 @@ class TestLifecycleEventNotifications:
         plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        plot_orchestrator.add_plot(grid_id, plot_cell)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
         # Should have been called once when cell was added
         assert callback.call_count == 1
@@ -758,11 +749,12 @@ class TestLifecycleEventNotifications:
 
         # Should be called again with plot object
         assert callback.call_count == 2
-        call_args = callback.call_args[0]
-        assert call_args[0] == grid_id
-        assert call_args[1] == plot_cell
-        assert call_args[2] == fake_plotting_controller._plot_object
-        assert call_args[3] is None  # No error
+        call_kwargs = callback.call_args[1]
+        assert call_kwargs['grid_id'] == grid_id
+        assert call_kwargs['cell_id'] == cell_id
+        assert call_kwargs['cell'] == plot_cell
+        assert call_kwargs['plot'] == fake_plotting_controller._plot_object
+        assert call_kwargs['error'] is None  # No error
 
     def test_on_cell_updated_called_when_plot_fails_with_error_message(
         self,
@@ -778,7 +770,7 @@ class TestLifecycleEventNotifications:
         plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        plot_orchestrator.add_plot(grid_id, plot_cell)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
         # Configure controller to raise exception
         fake_plotting_controller.configure_to_raise(ValueError('Test error'))
@@ -788,11 +780,12 @@ class TestLifecycleEventNotifications:
 
         # Should be called with error
         assert callback.call_count == 2
-        call_args = callback.call_args[0]
-        assert call_args[0] == grid_id
-        assert call_args[1] == plot_cell
-        assert call_args[2] is None  # No plot
-        assert 'Test error' in call_args[3]  # Error message
+        call_kwargs = callback.call_args[1]
+        assert call_kwargs['grid_id'] == grid_id
+        assert call_kwargs['cell_id'] == cell_id
+        assert call_kwargs['cell'] == plot_cell
+        assert call_kwargs['plot'] is None  # No plot
+        assert 'Test error' in call_kwargs['error']  # Error message
 
     def test_on_cell_updated_called_when_config_updated_no_plot_yet(
         self, plot_orchestrator, plot_cell, workflow_id
@@ -816,8 +809,8 @@ class TestLifecycleEventNotifications:
 
         # Should have been called twice (add + update)
         assert callback.call_count == 2
-        call_args = callback.call_args[0]
-        assert call_args[2] is None  # No plot yet after update
+        call_kwargs = callback.call_args[1]
+        assert call_kwargs['plot'] is None  # No plot yet after update
 
     def test_on_cell_removed_called_when_cell_removed(
         self, plot_orchestrator, plot_cell
@@ -833,7 +826,7 @@ class TestLifecycleEventNotifications:
         callback.assert_called_once()
         call_args = callback.call_args[0]
         assert call_args[0] == grid_id
-        assert call_args[1] == plot_cell
+        assert call_args[1] == plot_cell.geometry
 
     def test_multiple_subscribers_all_receive_notifications(self, plot_orchestrator):
         """Multiple subscribers all receive notifications."""
@@ -908,8 +901,8 @@ class TestErrorHandling:
 
         # Should have been called with error
         assert callback.call_count == 2
-        call_args = callback.call_args[0]
-        assert 'Plot creation failed' in call_args[3]
+        call_kwargs = callback.call_args[1]
+        assert 'Plot creation failed' in call_kwargs['error']
 
     def test_plotting_controller_raises_exception_orchestrator_remains_usable(
         self,
@@ -976,10 +969,7 @@ class TestCleanupAndResourceManagement:
         # Add multiple cells
         for i in range(3):
             cell = PlotCell(
-                row=i,
-                col=0,
-                row_span=1,
-                col_span=1,
+                geometry=CellGeometry(row=i, col=0, row_span=1, col_span=1),
                 config=PlotConfig(
                     workflow_id=workflow_id,
                     output_name=f'out{i}',
@@ -1006,10 +996,7 @@ class TestCleanupAndResourceManagement:
         for i in range(2):
             grid_id = plot_orchestrator.add_grid(title=f'Grid {i}', nrows=3, ncols=3)
             cell = PlotCell(
-                row=0,
-                col=0,
-                row_span=1,
-                col_span=1,
+                geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
                 config=PlotConfig(
                     workflow_id=workflow_id,
                     output_name=f'out{i}',

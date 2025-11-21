@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NewType, Protocol
 from uuid import UUID, uuid4
 
+import pydantic
+
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 from .config_store import ConfigStore
@@ -97,6 +99,20 @@ class StubJobOrchestrator:
             del self._subscriptions[subscription_id]
 
 
+@dataclass(frozen=True)
+class CellGeometry:
+    """
+    Grid cell geometry (position and size).
+
+    Defines the location and span of a cell in a plot grid.
+    """
+
+    row: int
+    col: int
+    row_span: int
+    col_span: int
+
+
 @dataclass
 class PlotConfig:
     """Configuration for a single plot."""
@@ -105,7 +121,7 @@ class PlotConfig:
     output_name: str | None
     source_names: list[str]
     plot_name: str
-    params: dict
+    params: pydantic.BaseModel | dict[str, Any]
 
 
 @dataclass
@@ -117,10 +133,7 @@ class PlotCell:
     the given number of rows and columns.
     """
 
-    row: int
-    col: int
-    row_span: int
-    col_span: int
+    geometry: CellGeometry
     config: PlotConfig
 
 
@@ -136,8 +149,37 @@ class PlotGridConfig:
 
 GridCreatedCallback = Callable[[GridId, PlotGridConfig], None]
 GridRemovedCallback = Callable[[GridId], None]
-CellUpdatedCallback = Callable[[GridId, PlotCell, Any, str | None], None]
-CellRemovedCallback = Callable[[GridId, PlotCell], None]
+CellRemovedCallback = Callable[[GridId, CellGeometry], None]
+
+
+class CellUpdatedCallback(Protocol):
+    """Callback for cell updates with all keyword-only parameters."""
+
+    def __call__(
+        self,
+        *,
+        grid_id: GridId,
+        cell_id: CellId,
+        cell: PlotCell,
+        plot: Any = None,
+        error: str | None = None,
+    ) -> None:
+        """
+        Handle cell update.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid containing the cell.
+        cell_id
+            ID of the cell being updated.
+        cell
+            Plot cell configuration.
+        plot
+            The plot widget, or None if not yet available.
+        error
+            Error message if plot creation failed, or None.
+        """
 
 
 @dataclass
@@ -269,11 +311,11 @@ class PlotOrchestrator:
             'Added plot %s to grid %s at (%d,%d) for workflow %s',
             cell_id,
             grid_id,
-            cell.row,
-            cell.col,
+            cell.geometry.row,
+            cell.geometry.col,
             cell.config.workflow_id,
         )
-        self._notify_cell_updated(grid_id, cell)
+        self._notify_cell_updated(grid_id, cell_id, cell)
         return cell_id
 
     def remove_plot(self, cell_id: CellId) -> None:
@@ -302,10 +344,10 @@ class PlotOrchestrator:
             'Removed plot %s from grid %s at (%d,%d)',
             cell_id,
             grid_id,
-            cell.row,
-            cell.col,
+            cell.geometry.row,
+            cell.geometry.col,
         )
-        self._notify_cell_removed(grid_id, cell)
+        self._notify_cell_removed(grid_id, cell_id, cell)
 
     def get_plot_config(self, cell_id: CellId) -> PlotConfig:
         """
@@ -359,7 +401,7 @@ class PlotOrchestrator:
         self._persist_to_store()
 
         self._logger.info('Updated plot config for cell %s', cell_id)
-        self._notify_cell_updated(grid_id, cell)
+        self._notify_cell_updated(grid_id, cell_id, cell)
 
     def _on_job_available(self, cell_id: CellId, job_number: JobNumber) -> None:
         """
@@ -394,11 +436,11 @@ class PlotOrchestrator:
                 plot_name=cell.config.plot_name,
                 params=cell.config.params,
             )
-            self._notify_cell_updated(grid_id, cell, plot=plot)
+            self._notify_cell_updated(grid_id, cell_id, cell, plot=plot)
             self._logger.info('Created plot for cell %s at job %s', cell_id, job_number)
         except Exception as e:
             error_msg = str(e)
-            self._notify_cell_updated(grid_id, cell, error=error_msg)
+            self._notify_cell_updated(grid_id, cell_id, cell, error=error_msg)
             self._logger.exception('Failed to create plot for cell %s', cell_id)
 
     def _persist_to_store(self) -> None:
@@ -521,6 +563,7 @@ class PlotOrchestrator:
     def _notify_cell_updated(
         self,
         grid_id: GridId,
+        cell_id: CellId,
         cell: PlotCell,
         plot: hv.DynamicMap | hv.Layout | None = None,
         error: str | None = None,
@@ -529,27 +572,37 @@ class PlotOrchestrator:
         for subscription in self._lifecycle_subscribers.values():
             if subscription.on_cell_updated:
                 try:
-                    subscription.on_cell_updated(grid_id, cell, plot, error)
+                    subscription.on_cell_updated(
+                        grid_id=grid_id,
+                        cell_id=cell_id,
+                        cell=cell,
+                        plot=plot,
+                        error=error,
+                    )
                 except Exception:
                     self._logger.exception(
-                        'Error in cell updated callback for grid %s at (%d,%d)',
+                        'Error in cell updated callback for grid %s cell %s at (%d,%d)',
                         grid_id,
-                        cell.row,
-                        cell.col,
+                        cell_id,
+                        cell.geometry.row,
+                        cell.geometry.col,
                     )
 
-    def _notify_cell_removed(self, grid_id: GridId, cell: PlotCell) -> None:
+    def _notify_cell_removed(
+        self, grid_id: GridId, cell_id: CellId, cell: PlotCell
+    ) -> None:
         """Notify subscribers that a cell was removed."""
         for subscription in self._lifecycle_subscribers.values():
             if subscription.on_cell_removed:
                 try:
-                    subscription.on_cell_removed(grid_id, cell)
+                    subscription.on_cell_removed(grid_id, cell.geometry)
                 except Exception:
                     self._logger.exception(
-                        'Error in cell removed callback for grid %s at (%d,%d)',
+                        'Error in cell removed callback for grid %s cell %s at (%d,%d)',
                         grid_id,
-                        cell.row,
-                        cell.col,
+                        cell_id,
+                        cell.geometry.row,
+                        cell.geometry.col,
                     )
 
     def shutdown(self) -> None:

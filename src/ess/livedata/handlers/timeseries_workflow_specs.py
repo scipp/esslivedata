@@ -4,8 +4,21 @@
 
 from __future__ import annotations
 
+import pydantic
+import scipp as sc
+
 from ..config.instrument import Instrument
+from ..config.workflow_spec import WorkflowOutputsBase
 from ..handlers.workflow_factory import SpecHandle
+
+
+class TimeseriesOutputs(WorkflowOutputsBase):
+    """Outputs for the timeseries workflow."""
+
+    delta: sc.DataArray = pydantic.Field(
+        title='Delta',
+        description='New timeseries data since last update.',
+    )
 
 
 def register_timeseries_workflow_specs(
@@ -36,4 +49,5 @@ def register_timeseries_workflow_specs(
         title="Timeseries data",
         description="Accumulated log data as timeseries.",
         source_names=source_names,
+        outputs=TimeseriesOutputs,
     )

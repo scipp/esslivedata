@@ -6,12 +6,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-import holoviews as hv
 import panel as pn
+
+from ..plot_orchestrator import CellGeometry
 
 
 @dataclass(frozen=True)
-class _CellStyles:
+class GridCellStyles:
     """Styling constants for PlotGrid cells."""
 
     # Colors
@@ -22,21 +23,15 @@ class _CellStyles:
     VERY_LIGHT_GRAY = '#f8f9fa'
     MEDIUM_GRAY = '#6c757d'
     MUTED_GRAY = '#adb5bd'
-    DANGER_RED = '#dc3545'
 
     # Dimensions
     CELL_MIN_HEIGHT_PX = 100
     CELL_BORDER_WIDTH_NORMAL = 1
     CELL_BORDER_WIDTH_HIGHLIGHTED = 3
     CELL_MARGIN = 2
-    CLOSE_BUTTON_SIZE = 40
-    CLOSE_BUTTON_TOP_OFFSET = '5px'
-    CLOSE_BUTTON_RIGHT_OFFSET = '5px'
-    CLOSE_BUTTON_Z_INDEX = '1000'
 
     # Typography
     FONT_SIZE_LARGE = '24px'
-    FONT_SIZE_CLOSE_BUTTON = '20px'
 
 
 def _normalize_region(r1: int, c1: int, r2: int, c2: int) -> tuple[int, int, int, int]:
@@ -122,26 +117,24 @@ class PlotGrid:
     ncols:
         Number of columns in the grid.
     plot_request_callback:
-        Callback invoked when a region is selected. This callback will be
-        called asynchronously and should not return a value. The plot should
-        be inserted later via `insert_plot_deferred()`.
+        Callback invoked when a region is selected with the cell geometry.
+        This callback will be called asynchronously and should not return a value.
     """
 
     def __init__(
         self,
         nrows: int,
         ncols: int,
-        plot_request_callback: Callable[[], None],
+        plot_request_callback: Callable[[CellGeometry], None],
     ) -> None:
         self._nrows = nrows
         self._ncols = ncols
         self._plot_request_callback = plot_request_callback
 
         # State tracking
-        self._occupied_cells: dict[tuple[int, int, int, int], pn.Column] = {}
+        self._occupied_cells: dict[CellGeometry, pn.Column] = {}
         self._first_click: tuple[int, int] | None = None
         self._highlighted_cell: pn.pane.HTML | None = None
-        self._pending_selection: tuple[int, int, int, int] | None = None
 
         # Create the grid
         self._grid = pn.GridSpec(
@@ -169,24 +162,24 @@ class PlotGrid:
     ) -> pn.Column:
         """Create an empty cell with placeholder text and click handler."""
         border_color = (
-            _CellStyles.PRIMARY_BLUE if highlighted else _CellStyles.LIGHT_GRAY
+            GridCellStyles.PRIMARY_BLUE if highlighted else GridCellStyles.LIGHT_GRAY
         )
         border_width = (
-            _CellStyles.CELL_BORDER_WIDTH_HIGHLIGHTED
+            GridCellStyles.CELL_BORDER_WIDTH_HIGHLIGHTED
             if highlighted
-            else _CellStyles.CELL_BORDER_WIDTH_NORMAL
+            else GridCellStyles.CELL_BORDER_WIDTH_NORMAL
         )
         border_style = 'dashed' if highlighted else 'solid'
 
         if disabled:
-            background_color = _CellStyles.LIGHT_RED
-            text_color = _CellStyles.MUTED_GRAY
+            background_color = GridCellStyles.LIGHT_RED
+            text_color = GridCellStyles.MUTED_GRAY
         elif highlighted:
-            background_color = _CellStyles.LIGHT_BLUE
-            text_color = _CellStyles.MEDIUM_GRAY
+            background_color = GridCellStyles.LIGHT_BLUE
+            text_color = GridCellStyles.MEDIUM_GRAY
         else:
-            background_color = _CellStyles.VERY_LIGHT_GRAY
-            text_color = _CellStyles.MEDIUM_GRAY
+            background_color = GridCellStyles.VERY_LIGHT_GRAY
+            text_color = GridCellStyles.MEDIUM_GRAY
 
         # Determine button label
         if label is None:
@@ -198,7 +191,7 @@ class PlotGrid:
             stylesheets = [
                 f"""
                 button {{
-                    font-size: {_CellStyles.FONT_SIZE_LARGE};
+                    font-size: {GridCellStyles.FONT_SIZE_LARGE};
                     font-weight: bold;
                 }}
                 """
@@ -216,14 +209,14 @@ class PlotGrid:
                 'background-color': background_color,
                 'border': f'{border_width}px {border_style} {border_color}',
                 'color': text_color,
-                'min-height': f'{_CellStyles.CELL_MIN_HEIGHT_PX}px',
+                'min-height': f'{GridCellStyles.CELL_MIN_HEIGHT_PX}px',
             },
             stylesheets=stylesheets,
-            margin=_CellStyles.CELL_MARGIN,
+            margin=GridCellStyles.CELL_MARGIN,
         )
 
         # Attach click handler (even if disabled, for consistency)
-        def on_click(event: Any) -> None:
+        def on_click(_: Any) -> None:
             if not disabled:
                 self._on_cell_click(row, col)
 
@@ -251,19 +244,22 @@ class PlotGrid:
                 row_start, row_end, col_start, col_end
             )
 
-            # Store selection for plot insertion
-            self._pending_selection = (row_start, col_start, row_span, col_span)
-
             # Clear selection highlight
             self._clear_selection()
 
-            # Request plot from callback (async, no return value)
-            self._plot_request_callback()
+            # Request plot from callback, passing cell geometry
+            geometry = CellGeometry(
+                row=row_start, col=col_start, row_span=row_span, col_span=col_span
+            )
+            self._plot_request_callback(geometry)
 
     def _is_cell_occupied(self, row: int, col: int) -> bool:
         """Check if a specific cell is occupied by a plot."""
-        for r, c, r_span, c_span in self._occupied_cells:
-            if r <= row < r + r_span and c <= col < c + c_span:
+        for geometry in self._occupied_cells:
+            if (
+                geometry.row <= row < geometry.row + geometry.row_span
+                and geometry.col <= col < geometry.col + geometry.col_span
+            ):
                 return True
         return False
 
@@ -286,8 +282,8 @@ class PlotGrid:
                         # Delete the old cell first to avoid overlap warnings
                         try:
                             del self._grid[row, col]
-                        except (KeyError, IndexError):
-                            # Cell might not exist yet (during initialization)
+                        except (KeyError, IndexError, TypeError):
+                            # Cell might not exist yet or grid state issue
                             pass
                         self._grid[row, col] = self._get_cell_for_state(row, col)
 
@@ -333,88 +329,32 @@ class PlotGrid:
         self._highlighted_cell = None
         self._refresh_all_cells()
 
-    def _insert_plot(self, plot: hv.DynamicMap) -> None:
-        """Insert a plot into the grid at the pending selection."""
-        if self._pending_selection is None:
-            return
+    def _delete_cells_in_region(
+        self, row: int, col: int, row_span: int, col_span: int
+    ) -> None:
+        """Delete all cells in the specified region from the grid."""
+        for r in range(row, row + row_span):
+            for c in range(col, col + col_span):
+                try:
+                    del self._grid[r, c]
+                except (KeyError, IndexError, TypeError):
+                    # Cell might not exist (spanned widgets) or grid state issue
+                    pass
 
-        row, col, row_span, col_span = self._pending_selection
-
-        # Create plot pane using the .layout pattern for DynamicMaps
-        plot_pane_wrapper = pn.pane.HoloViews(plot, sizing_mode='stretch_both')
-        plot_pane = plot_pane_wrapper.layout
-
-        # Create close button with stylesheets for proper styling override
-        close_button = pn.widgets.Button(
-            name='\u00d7',  # "X" multiplication sign
-            width=_CellStyles.CLOSE_BUTTON_SIZE,
-            height=_CellStyles.CLOSE_BUTTON_SIZE,
-            button_type='light',
-            sizing_mode='fixed',
-            margin=(_CellStyles.CELL_MARGIN, _CellStyles.CELL_MARGIN),
-            styles={
-                'position': 'absolute',
-                'top': _CellStyles.CLOSE_BUTTON_TOP_OFFSET,
-                'right': _CellStyles.CLOSE_BUTTON_RIGHT_OFFSET,
-                'z-index': _CellStyles.CLOSE_BUTTON_Z_INDEX,
-            },
-            stylesheets=[
-                f"""
-                button {{
-                    background-color: transparent !important;
-                    border: none !important;
-                    color: {_CellStyles.DANGER_RED} !important;
-                    font-weight: bold !important;
-                    font-size: {_CellStyles.FONT_SIZE_CLOSE_BUTTON} !important;
-                    padding: 0 !important;
-                }}
-                button:hover {{
-                    background-color: rgba(220, 53, 69, 0.1) !important;
-                }}
-                """
-            ],
-        )
-
-        def on_close(event: Any) -> None:
-            self._remove_plot(row, col, row_span, col_span)
-
-        close_button.on_click(on_close)
-
-        container = pn.Column(
-            close_button,
-            plot_pane,
-            sizing_mode='stretch_both',
-            margin=2,
-            styles={'position': 'relative'},
-        )
-
+    def _insert_widget_into_grid(
+        self, row: int, col: int, row_span: int, col_span: int, widget: Any
+    ) -> None:
+        """Insert a widget into the grid at the specified region."""
         with pn.io.hold():
-            # Delete existing cells in the region to avoid overlap warnings
-            for r in range(row, row + row_span):
-                for c in range(col, col + col_span):
-                    try:
-                        del self._grid[r, c]
-                    except (KeyError, IndexError):
-                        pass
+            self._delete_cells_in_region(row, col, row_span, col_span)
+            self._grid[row : row + row_span, col : col + col_span] = widget
 
-            # Insert into grid
-            self._grid[row : row + row_span, col : col + col_span] = container
-
-        # Track occupation
-        self._occupied_cells[(row, col, row_span, col_span)] = container
-
-        # Clear pending selection
-        self._pending_selection = None
-
-    def _remove_plot(self, row: int, col: int, row_span: int, col_span: int) -> None:
-        """Remove a plot from the grid and restore empty cells."""
-        # Remove from tracking
-        key = (row, col, row_span, col_span)
-        if key in self._occupied_cells:
-            del self._occupied_cells[key]
-
-        # Restore empty cells
+    def _restore_empty_cells_in_region(
+        self, row: int, col: int, row_span: int, col_span: int
+    ) -> None:
+        """Restore empty cells in the specified region."""
         with pn.io.hold():
+            self._delete_cells_in_region(row, col, row_span, col_span)
             for r in range(row, row + row_span):
                 for c in range(col, col + col_span):
                     self._grid[r, c] = self._create_empty_cell(r, c)
@@ -424,33 +364,71 @@ class PlotGrid:
         if pn.state.notifications is not None:
             pn.state.notifications.error(message, duration=3000)
 
-    def insert_plot_deferred(self, plot: hv.DynamicMap) -> None:
+    def insert_widget_at(self, geometry: CellGeometry, widget: Any) -> None:
         """
-        Complete plot insertion after async workflow.
+        Insert a widget at an explicit position (for orchestrator-driven updates).
 
-        This method should be called after the plot request callback completes
-        successfully. It inserts the plot at the pending selection location
-        and clears the in-flight state.
+        This method is used for multi-user synchronized plot management via the
+        orchestrator pattern and can be called from lifecycle callbacks.
 
         Parameters
         ----------
-        plot:
-            The HoloViews DynamicMap to insert into the grid.
+        geometry:
+            Cell geometry specifying position and span.
+        widget:
+            Panel widget or viewable to insert.
         """
-        if self._pending_selection is None:
-            self._show_error('No pending selection to insert plot into')
+        # Validate position is within grid bounds
+        if (
+            geometry.row < 0
+            or geometry.row >= self._nrows
+            or geometry.col < 0
+            or geometry.col >= self._ncols
+        ):
+            self._show_error(f'Invalid position: ({geometry.row}, {geometry.col})')
             return
 
-        self._insert_plot(plot)
+        if (
+            geometry.row + geometry.row_span > self._nrows
+            or geometry.col + geometry.col_span > self._ncols
+        ):
+            self._show_error(
+                f'Widget extends beyond grid: ({geometry.row}, {geometry.col}) + '
+                f'span ({geometry.row_span}, {geometry.col_span})'
+            )
+            return
 
-    def cancel_pending_selection(self) -> None:
-        """
-        Abort the current plot creation workflow and reset state.
+        # Remove any existing widget at this exact position
+        if geometry in self._occupied_cells:
+            del self._occupied_cells[geometry]
 
-        This method should be called when the plot request callback is cancelled
-        or fails. It clears the pending selection.
+        self._insert_widget_into_grid(
+            geometry.row, geometry.col, geometry.row_span, geometry.col_span, widget
+        )
+
+        # Track occupation
+        self._occupied_cells[geometry] = widget
+
+    def remove_widget_at(self, geometry: CellGeometry) -> None:
         """
-        self._pending_selection = None
+        Remove a widget at an explicit position (for orchestrator-driven updates).
+
+        This method is used for multi-user synchronized plot management via the
+        orchestrator pattern.
+
+        Parameters
+        ----------
+        geometry:
+            Cell geometry specifying position and span.
+        """
+        # Remove from tracking
+        if geometry in self._occupied_cells:
+            del self._occupied_cells[geometry]
+
+        # Restore empty cells
+        self._restore_empty_cells_in_region(
+            geometry.row, geometry.col, geometry.row_span, geometry.col_span
+        )
 
     @property
     def panel(self) -> pn.viewable.Viewable:

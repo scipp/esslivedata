@@ -14,6 +14,7 @@ from ess.livedata.config.workflow_spec import (
     JobNumber,
     ResultKey,
     WorkflowId,
+    WorkflowSpec,
 )
 
 from .config_store import ConfigStore
@@ -90,6 +91,39 @@ class PlottingController:
         job_data = self._job_service.job_data[job_number]
         data = {k: v[output_name] for k, v in job_data.items()}
         return plotter_registry.get_compatible_plotters(data)
+
+    def get_available_plotters_from_spec(
+        self, workflow_spec: WorkflowSpec, output_name: str
+    ) -> tuple[dict[str, PlotterSpec], bool]:
+        """
+        Get available plotters based on workflow spec template (before data exists).
+
+        Uses the output template DataArray from the workflow specification to
+        determine compatible plotters. The template is an "empty" DataArray with
+        the expected structure (dims, coords, units) that allows full validation
+        including custom validators.
+
+        When a template is not available, falls back to returning all registered
+        plotters. The boolean flag indicates whether a template was available.
+
+        Parameters
+        ----------
+        workflow_spec:
+            WorkflowSpec object containing output templates.
+        output_name:
+            The name of the output to get plotters for.
+
+        Returns
+        -------
+        :
+            Tuple of (plotters_dict, has_template). If has_template is False,
+            all registered plotters are returned as a fallback, and the caller
+            should warn the user that some plotters may not work with the data.
+        """
+        template = workflow_spec.get_output_template(output_name)
+        if template is None:
+            return plotter_registry.get_specs(), False
+        return plotter_registry.get_compatible_plotters({output_name: template}), True
 
     def get_spec(self, plot_name: str) -> PlotterSpec:
         """

@@ -15,7 +15,6 @@ from ess.livedata.dashboard.workflow_controller import WorkflowController
 from ..plot_configuration_adapter import PlotConfigurationAdapter
 from .configuration_widget import ConfigurationModal
 from .job_status_widget import JobStatusListWidget
-from .plot_grid_tab import PlotGridTab
 
 
 class PlotCreationWidget:
@@ -55,12 +54,6 @@ class PlotCreationWidget:
         self._job_status_widget = JobStatusListWidget(
             job_service=job_service, job_controller=job_controller
         )
-        # PlotCreationWidget is legacy; PlotGridTab placement here is temporary
-        self._plot_grid_tab = PlotGridTab(
-            job_service=job_service,
-            job_controller=job_controller,
-            plotting_controller=plotting_controller,
-        )
         self._job_output_table = self._create_job_output_table()
         self._plot_selector = self._create_plot_selector()
         self._create_button = self._create_plot_button()
@@ -82,7 +75,6 @@ class PlotCreationWidget:
         self._main_tabs = pn.Tabs(
             ("Jobs", self._job_status_widget.panel()),
             ("Create Plot", self._creation_tab),
-            ("Plot Grid", self._plot_grid_tab.widget),
             ("Plots", self._plot_tabs),
             sizing_mode='stretch_width',
             closable=False,
@@ -315,22 +307,48 @@ class PlotCreationWidget:
         if not is_valid:
             return
 
+        if self._selected_job is None:
+            return
+
         # Get available sources
         job_data = self._job_service.job_data.get(self._selected_job, {})
         available_sources = list(job_data.keys())
 
         # Get plot spec
         plot_name = self._plot_selector.value
+        if plot_name is None:
+            return
+
         spec = self._plotting_controller.get_spec(plot_name)
+
+        config_state = self._plotting_controller.get_persistent_plotter_config(
+            job_number=self._selected_job,
+            output_name=self._selected_output,
+            plot_name=spec.name,
+        )
+
+        # Capture state at modal creation time to avoid reading stale widget state
+        job_number = self._selected_job
+        output_name = self._selected_output
+        selected_output_title = self._selected_output_title
+
+        def on_plot_created(selected_sources: list[str], params) -> None:
+            """Create plot with captured state."""
+            plot = self._plotting_controller.create_plot(
+                job_number=job_number,
+                source_names=selected_sources,
+                output_name=output_name,
+                plot_name=plot_name,
+                params=params,
+            )
+            self._add_plot_to_tabs(plot, selected_sources, selected_output_title)
 
         # Create configuration adapter
         config = PlotConfigurationAdapter(
-            job_number=self._selected_job,
-            output_name=self._selected_output,
             plot_spec=spec,
-            available_sources=available_sources,
-            plotting_controller=self._plotting_controller,
-            success_callback=self._on_plot_created,
+            source_names=available_sources,
+            success_callback=on_plot_created,
+            config_state=config_state,
         )
 
         # Create and show configuration modal
@@ -341,10 +359,13 @@ class PlotCreationWidget:
         self._modal_container.append(modal.modal)
         modal.show()
 
-    def _on_plot_created(
-        self, plot: hv.DynamicMap, selected_sources: list[str]
+    def _add_plot_to_tabs(
+        self,
+        plot: hv.DynamicMap | hv.Layout,
+        selected_sources: list[str],
+        output_title: str | None,
     ) -> None:
-        """Handle successful plot creation."""
+        """Add created plot to the tabs container."""
         # Use .layout to preserve widgets for DynamicMaps with kdims.
         # When pn.pane.HoloViews wraps a DynamicMap with kdims, it generates
         # widgets. However, these widgets don't render when the pane is placed
@@ -356,11 +377,7 @@ class PlotCreationWidget:
 
         # Generate tab name with output title
         self._plot_counter += 1
-        output_label = (
-            self._selected_output_title
-            if self._selected_output_title
-            else self._selected_output
-        )
+        output_label = output_title if output_title else "Unknown"
         sources_str = "_".join(selected_sources[:2])  # Limit length
         if len(selected_sources) > 2:
             sources_str += f"_+{len(selected_sources) - 2}"

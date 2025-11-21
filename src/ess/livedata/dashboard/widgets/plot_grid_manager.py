@@ -42,7 +42,10 @@ class PlotGridManager:
         self._add_button.on_click(self._on_add_grid)
 
         # Grid list container
-        self._grid_list = pn.Column(sizing_mode='stretch_width')
+        # IMPORTANT: Use stretch_both (not stretch_width) to ensure consistent
+        # sizing behavior with PlotGrid tabs. Panel's Tabs widget handles dynamic
+        # tab addition better when all tabs have the same sizing mode.
+        self._grid_list = pn.Column(sizing_mode='stretch_both')
 
         # Subscribe to orchestrator updates
         self._subscription_id: SubscriptionId | None = (
@@ -56,6 +59,8 @@ class PlotGridManager:
         self._update_grid_list()
 
         # Main widget layout
+        # IMPORTANT: Use stretch_both to match PlotGrid tab sizing. This ensures
+        # Panel's Tabs widget properly handles height when tabs are added/removed.
         self._widget = pn.Column(
             pn.pane.Markdown('## Add New Grid'),
             self._title_input,
@@ -64,7 +69,7 @@ class PlotGridManager:
             pn.layout.Divider(),
             pn.pane.Markdown('## Existing Grids'),
             self._grid_list,
-            sizing_mode='stretch_width',
+            sizing_mode='stretch_both',
         )
 
     def _on_add_grid(self, event) -> None:

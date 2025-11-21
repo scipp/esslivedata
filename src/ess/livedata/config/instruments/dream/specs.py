@@ -14,6 +14,7 @@ from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import (
+    DetectorViewOutputs,
     DetectorViewParams,
     register_detector_view_spec,
 )
@@ -73,6 +74,7 @@ mantle_front_layer_handle = instrument.register_spec(
     description='All voxels of the front layer of the mantle detector.',
     source_names=['mantle_detector'],
     params=DetectorViewParams,
+    outputs=DetectorViewOutputs,
 )
 
 mantle_wire_view_handle = instrument.register_spec(
@@ -83,6 +85,7 @@ mantle_wire_view_handle = instrument.register_spec(
     description='Sum over strips to show counts per wire in the mantle detector.',
     source_names=['mantle_detector'],
     params=DetectorViewParams,
+    outputs=DetectorViewOutputs,
 )
 
 
@@ -175,10 +178,21 @@ class PowderReductionOutputs(WorkflowOutputsBase):
     """Outputs for DREAM powder reduction workflow."""
 
     focussed_data_dspacing: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['dspacing'], shape=[0], unit='counts'),
+            coords={'dspacing': sc.arange('dspacing', 0, unit='angstrom')},
+        ),
         title='I(d)',
         description='Focussed intensity as a function of d-spacing.',
     )
     focussed_data_dspacing_two_theta: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['dspacing', 'two_theta'], shape=[0, 0], unit='counts'),
+            coords={
+                'dspacing': sc.arange('dspacing', 0, unit='angstrom'),
+                'two_theta': sc.arange('two_theta', 0, unit='rad'),
+            },
+        ),
         title='I(d, 2θ)',
         description='Focussed intensity as a function of d-spacing and two-theta.',
     )
@@ -188,12 +202,23 @@ class PowderReductionWithVanadiumOutputs(PowderReductionOutputs):
     """Outputs for DREAM powder reduction workflow with vanadium normalization."""
 
     i_of_dspacing: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['dspacing'], shape=[0], unit='counts'),
+            coords={'dspacing': sc.arange('dspacing', 0, unit='angstrom')},
+        ),
         title='Normalized I(d)',
         description=(
             'Normalized intensity as a function of d-spacing (vanadium-corrected).'
         ),
     )
     i_of_dspacing_two_theta: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['dspacing', 'two_theta'], shape=[0, 0], unit='counts'),
+            coords={
+                'dspacing': sc.arange('dspacing', 0, unit='angstrom'),
+                'two_theta': sc.arange('two_theta', 0, unit='rad'),
+            },
+        ),
         title='Normalized I(d, 2θ)',
         description=(
             'Normalized intensity as a function of d-spacing and two-theta '

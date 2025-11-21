@@ -3,10 +3,17 @@
 import uuid
 
 import holoviews as hv
+import pydantic
 import pytest
 import scipp as sc
 
-from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import (
+    JobId,
+    ResultKey,
+    WorkflowId,
+    WorkflowOutputsBase,
+    WorkflowSpec,
+)
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.plot_params import (
@@ -175,3 +182,94 @@ class TestPlottingControllerROIDetectorIntegration:
                 plot_name='roi_detector',
                 params=wrong_params,
             )
+
+
+class TestGetAvailablePlottersFromSpec:
+    """Tests for PlottingController.get_available_plotters_from_spec()."""
+
+    def test_returns_compatible_plotters_for_1d_template(self, plotting_controller):
+        """Test that 1D output template returns compatible plotters."""
+
+        class TestOutputs(WorkflowOutputsBase):
+            i_of_q: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['Q'], shape=[0], unit='counts'),
+                    coords={'Q': sc.arange('Q', 0, unit='1/angstrom')},
+                )
+            )
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='test_workflow',
+            version=1,
+            title='Test',
+            description='Test',
+            outputs=TestOutputs,
+            params=None,
+        )
+
+        plotters, has_template = plotting_controller.get_available_plotters_from_spec(
+            workflow_spec=spec, output_name='i_of_q'
+        )
+
+        assert has_template is True
+        assert 'lines' in plotters
+        assert 'image' not in plotters
+
+    def test_returns_compatible_plotters_for_2d_template(self, plotting_controller):
+        """Test that 2D output template returns compatible plotters."""
+
+        class TestOutputs(WorkflowOutputsBase):
+            detector: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['x', 'y'], shape=[0, 0], unit='counts'),
+                    coords={
+                        'x': sc.arange('x', 0, unit='m'),
+                        'y': sc.arange('y', 0, unit='m'),
+                    },
+                )
+            )
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='test_workflow',
+            version=1,
+            title='Test',
+            description='Test',
+            outputs=TestOutputs,
+            params=None,
+        )
+
+        plotters, has_template = plotting_controller.get_available_plotters_from_spec(
+            workflow_spec=spec, output_name='detector'
+        )
+
+        assert has_template is True
+        assert 'image' in plotters
+        assert 'roi_detector' in plotters
+        assert 'lines' not in plotters
+
+    def test_returns_all_plotters_when_no_template(self, plotting_controller):
+        """Test that all plotters are returned as fallback when no template exists."""
+
+        class TestOutputs(WorkflowOutputsBase):
+            result: sc.DataArray = pydantic.Field(title='Result')
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='test_workflow',
+            version=1,
+            title='Test',
+            description='Test',
+            outputs=TestOutputs,
+            params=None,
+        )
+
+        plotters, has_template = plotting_controller.get_available_plotters_from_spec(
+            workflow_spec=spec, output_name='result'
+        )
+
+        assert has_template is False
+        assert len(plotters) > 0
+        assert 'lines' in plotters
+        assert 'image' in plotters
