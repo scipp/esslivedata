@@ -33,11 +33,13 @@ class Orchestrator:
         data_service: DataService,
         job_service: JobService,
         workflow_config_service: WorkflowConfigService | None = None,
+        job_orchestrator=None,  # Import would create circular dependency
     ) -> None:
         self._message_source = message_source
         self._data_service = data_service
         self._job_service = job_service
         self._workflow_config_service = workflow_config_service
+        self._job_orchestrator = job_orchestrator
         self._logger = logging.getLogger(__name__)
 
     def update(self) -> None:
@@ -71,7 +73,10 @@ class Orchestrator:
             The data to be forwarded.
         """
         if stream_id == STATUS_STREAM_ID:
+            # Forward job status to both JobService and JobOrchestrator
             self._job_service.status_updated(value)
+            if self._job_orchestrator is not None:
+                self._job_orchestrator.status_updated(value)
         elif stream_id == RESPONSES_STREAM_ID:
             if self._workflow_config_service is not None:
                 self._workflow_config_service.process_response(value)

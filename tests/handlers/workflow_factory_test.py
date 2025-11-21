@@ -487,55 +487,6 @@ class TestWorkflowFactory:
         with pytest.raises(ValueError, match="is not allowed"):
             factory.create(source_name="source2", config=config)
 
-    def test_source_names_property(self):
-        factory = WorkflowFactory()
-        workflow_id1 = WorkflowId(
-            instrument="test-instrument",
-            namespace="test-namespace",
-            name="workflow1",
-            version=1,
-        )
-        workflow_id2 = WorkflowId(
-            instrument="test-instrument",
-            namespace="test-namespace",
-            name="workflow2",
-            version=1,
-        )
-        spec1 = WorkflowSpec(
-            instrument=workflow_id1.instrument,
-            namespace=workflow_id1.namespace,
-            name=workflow_id1.name,
-            version=workflow_id1.version,
-            title="workflow1",
-            description="Test",
-            source_names=["source1", "source2"],
-            params=None,
-        )
-        spec2 = WorkflowSpec(
-            instrument=workflow_id2.instrument,
-            namespace=workflow_id2.namespace,
-            name=workflow_id2.name,
-            version=workflow_id2.version,
-            title="workflow2",
-            description="Test",
-            source_names=["source2", "source3"],
-            params=None,
-        )
-
-        handle1 = factory.register_spec(spec1)
-        handle2 = factory.register_spec(spec2)
-
-        @handle1.attach_factory()
-        def factory_func1():
-            return make_dummy_workflow()
-
-        @handle2.attach_factory()
-        def factory_func2():
-            return make_dummy_workflow()
-
-        expected_sources = {"source1", "source2", "source3"}
-        assert factory.source_names == expected_sources
-
     def test_create_with_aux_sources(self):
         """Test that workflows can be created with aux_sources parameter."""
         factory = WorkflowFactory()

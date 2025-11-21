@@ -602,15 +602,21 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         return None
 
     def is_valid(self) -> bool:
-        """Step is valid when configuration is valid."""
-        if self._config_panel is None:
-            return False
-        is_valid, _ = self._config_panel.validate()
-        return is_valid
+        """
+        Step is always considered valid to keep button enabled.
+
+        Actual validation happens in commit() to show errors when user clicks.
+        """
+        return True
 
     def commit(self) -> PlotConfig | None:
         """Commit the plot configuration."""
         if self._config_panel is None or self._plotter_selection is None:
+            return None
+
+        # Validate configuration first (shows errors if invalid)
+        is_valid, _ = self._config_panel.validate()
+        if not is_valid:
             return None
 
         # Clear previous result
@@ -688,7 +694,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             config_state = ConfigurationState(
                 source_names=self._initial_config.source_names,
                 params=(
-                    self._initial_config.params.model_dump()
+                    self._initial_config.params.model_dump(mode='json')
                     if isinstance(self._initial_config.params, pydantic.BaseModel)
                     else self._initial_config.params
                 ),
