@@ -23,11 +23,13 @@ def get_defaults(model: type[pydantic.BaseModel]) -> dict[str, Any]:
     dict[str, Any]
         Dictionary of field names and their default values
     """
-    return {
-        field_name: field_info.default
-        for field_name, field_info in model.model_fields.items()
-        if field_info.default is not PydanticUndefined
-    }
+    defaults = {}
+    for field_name, field_info in model.model_fields.items():
+        if field_info.default is not PydanticUndefined:
+            defaults[field_name] = field_info.default
+        elif callable(field_info.default_factory):
+            defaults[field_name] = field_info.default_factory()
+    return defaults
 
 
 class ModelWidget:
