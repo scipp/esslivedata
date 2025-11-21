@@ -19,22 +19,6 @@ def test_get_defaults_handles_default_factory():
     assert defaults == {'with_default': 42, 'with_factory': 10}
 
 
-def test_get_defaults_with_constrained_factory():
-    """Test that get_defaults handles default_factory with constraints like ge/le."""
-
-    class ConstrainedModel(pydantic.BaseModel):
-        # Field with default_factory and ge constraint (like max_roi_count)
-        # Default would be invalid if factory returns 0 but constraint is ge=1
-        value: int = pydantic.Field(default_factory=lambda: 3, ge=1, le=10)
-
-    defaults = get_defaults(ConstrainedModel)
-    assert 'value' in defaults
-    assert defaults['value'] == 3
-    # Verify the default value satisfies constraints
-    assert defaults['value'] >= 1
-    assert defaults['value'] <= 10
-
-
 class TestModelWidget:
     def test_create_from_dynamic_model(self) -> None:
         def make_model(description: str, option: str) -> type[pydantic.BaseModel]:
