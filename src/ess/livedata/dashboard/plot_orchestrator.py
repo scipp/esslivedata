@@ -495,13 +495,20 @@ class PlotOrchestrator:
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
-        # Check if job data already exists
-        if job_number in self._job_service.job_data:
+        # Check if job data exists for ANY required source_names
+        # Plots handle partial data gracefully and update as more sources arrive
+        job_data = self._job_service.job_data.get(job_number, {})
+        available_sources = [s for s in cell.config.source_names if s in job_data]
+        if available_sources:
             self._logger.debug(
-                'Job data exists, creating plot immediately for cell_id=%s, '
-                'job_number=%s',
+                'Job data exists for %d/%d required sources, creating plot '
+                'for cell_id=%s, job_number=%s, available=%s, required=%s',
+                len(available_sources),
+                len(cell.config.source_names),
                 cell_id,
                 job_number,
+                available_sources,
+                cell.config.source_names,
             )
             self._create_plot_for_cell(cell_id, job_number)
         else:
@@ -523,15 +530,30 @@ class PlotOrchestrator:
                         isinstance(key, ResultKey)
                         and key.job_id.job_number == job_number
                     ):
-                        self._logger.debug(
-                            'Data arrived for job=%s, creating plot for cell=%s',
-                            job_number,
-                            cell_id,
-                        )
-                        # Data arrived! Create plot and unsubscribe
-                        self._create_plot_for_cell(cell_id, job_number)
-                        self._data_service.unregister_update_callback(on_data_updated)
-                        self._cell_to_data_callback.pop(cell_id, None)
+                        # Data arrived - check if ANY required sources exist now
+                        job_data = self._job_service.job_data.get(job_number, {})
+                        available_sources = [
+                            s for s in cell.config.source_names if s in job_data
+                        ]
+                        if available_sources:
+                            self._logger.debug(
+                                'Data arrived, %d/%d required sources available '
+                                '(job=%s, available=%s, required=%s), creating plot '
+                                'for cell=%s',
+                                len(available_sources),
+                                len(cell.config.source_names),
+                                job_number,
+                                available_sources,
+                                cell.config.source_names,
+                                cell_id,
+                            )
+                            # At least one required source available! Create plot
+                            # Plot will update automatically as more sources arrive
+                            self._create_plot_for_cell(cell_id, job_number)
+                            self._data_service.unregister_update_callback(
+                                on_data_updated
+                            )
+                            self._cell_to_data_callback.pop(cell_id, None)
                         return
 
             # Register temporary subscription

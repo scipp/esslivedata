@@ -516,15 +516,14 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        # Add data to JobService (simulating data arrival)
-        result_key = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(
-                source_name=plot_cell.config.source_names[0], job_number=job_number
-            ),
-            output_name=plot_cell.config.output_name,
-        )
-        fake_data_service[result_key] = sc.scalar(1.0)  # Triggers notification
+        # Add data for ALL sources (plot requires both source1 and source2)
+        for source_name in plot_cell.config.source_names:
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=job_number),
+                output_name=plot_cell.config.output_name,
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
 
         # Now plot should be created
         assert fake_plotting_controller.call_count() == 1
@@ -553,19 +552,18 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         # Commit workflow
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
-        # Simulate data arrival
+        # Simulate data arrival for ALL sources
         import scipp as sc
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        result_key = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(
-                source_name=plot_cell.config.source_names[0], job_number=job_number
-            ),
-            output_name=plot_cell.config.output_name,
-        )
-        fake_data_service[result_key] = sc.scalar(1.0)
+        for source_name in plot_cell.config.source_names:
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=job_number),
+                output_name=plot_cell.config.output_name,
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
 
         # Verify plot was created
         assert fake_plotting_controller.call_count() == 1
@@ -788,19 +786,18 @@ class TestLifecycleEventNotifications:
         # Simulate workflow commit
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
-        # Simulate data arrival
+        # Simulate data arrival for ALL sources
         import scipp as sc
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        result_key = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(
-                source_name=plot_cell.config.source_names[0], job_number=job_number
-            ),
-            output_name=plot_cell.config.output_name,
-        )
-        fake_data_service[result_key] = sc.scalar(1.0)
+        for source_name in plot_cell.config.source_names:
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=job_number),
+                output_name=plot_cell.config.output_name,
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
 
         # Called 3x: add cell, commit (waiting), data arrival (plot created)
         assert callback.call_count == 3
@@ -834,19 +831,18 @@ class TestLifecycleEventNotifications:
         # Simulate workflow commit
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
-        # Simulate data arrival (will trigger plot creation attempt that fails)
+        # Simulate data arrival for ALL sources (will trigger plot creation that fails)
         import scipp as sc
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        result_key = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(
-                source_name=plot_cell.config.source_names[0], job_number=job_number
-            ),
-            output_name=plot_cell.config.output_name,
-        )
-        fake_data_service[result_key] = sc.scalar(1.0)
+        for source_name in plot_cell.config.source_names:
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=job_number),
+                output_name=plot_cell.config.output_name,
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
 
         # Called 3x: add cell, commit (waiting), data arrival (error)
         assert callback.call_count == 3
@@ -970,19 +966,18 @@ class TestErrorHandling:
         )
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
-        # Simulate data arrival (will trigger plot creation attempt that fails)
+        # Simulate data arrival for ALL sources (will trigger plot creation that fails)
         import scipp as sc
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        result_key = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(
-                source_name=plot_cell.config.source_names[0], job_number=job_number
-            ),
-            output_name=plot_cell.config.output_name,
-        )
-        fake_data_service[result_key] = sc.scalar(1.0)
+        for source_name in plot_cell.config.source_names:
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=job_number),
+                output_name=plot_cell.config.output_name,
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
 
         # Called 3x: add cell, commit (waiting), data arrival (error)
         assert callback.call_count == 3
@@ -1246,19 +1241,18 @@ class TestLateSubscriberPlotRetrieval:
         job_number = uuid.uuid4()
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
-        # Simulate data arrival
+        # Simulate data arrival for ALL sources
         import scipp as sc
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        result_key = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(
-                source_name=plot_cell.config.source_names[0], job_number=job_number
-            ),
-            output_name=plot_cell.config.output_name,
-        )
-        fake_data_service[result_key] = sc.scalar(1.0)
+        for source_name in plot_cell.config.source_names:
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=job_number),
+                output_name=plot_cell.config.output_name,
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
 
         # Now get_cell_state should return the plot
         plot, error = plot_orchestrator.get_cell_state(cell_id)
@@ -1406,19 +1400,18 @@ class TestLateSubscriberPlotRetrieval:
         job_number1 = uuid.uuid4()
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number1)
 
-        # Simulate data arrival
+        # Simulate data arrival for ALL sources
         import scipp as sc
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        result_key = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(
-                source_name=plot_cell.config.source_names[0], job_number=job_number1
-            ),
-            output_name=plot_cell.config.output_name,
-        )
-        fake_data_service[result_key] = sc.scalar(1.0)
+        for source_name in plot_cell.config.source_names:
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=job_number1),
+                output_name=plot_cell.config.output_name,
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
 
         # Verify plot exists
         plot1, error = plot_orchestrator.get_cell_state(cell_id)
@@ -1466,19 +1459,18 @@ class TestLateSubscriberPlotRetrieval:
         job_number = uuid.uuid4()
         fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
 
-        # Simulate data arrival
+        # Simulate data arrival for ALL sources
         import scipp as sc
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        result_key = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(
-                source_name=plot_cell.config.source_names[0], job_number=job_number
-            ),
-            output_name=plot_cell.config.output_name,
-        )
-        fake_data_service[result_key] = sc.scalar(1.0)
+        for source_name in plot_cell.config.source_names:
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=job_number),
+                output_name=plot_cell.config.output_name,
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
 
         # Verify plot exists
         plot, error = plot_orchestrator.get_cell_state(cell_id)
@@ -1491,3 +1483,248 @@ class TestLateSubscriberPlotRetrieval:
         plot, error = plot_orchestrator.get_cell_state(cell_id)
         assert plot is None
         assert error is None
+
+
+class TestSourceNameFiltering:
+    """Test that plots only create when their specific source_names have data."""
+
+    def test_plot_not_created_when_job_has_different_source_names(
+        self,
+        plot_orchestrator,
+        workflow_id,
+        fake_job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+    ):
+        """
+        Plot should NOT be created when job exists for different source_names.
+
+        This test demonstrates the bug where a plot wanting source_A tries
+        to create when only source_B has data (same workflow, same job_number).
+        """
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+
+        # Create a plot that wants data from source_A
+        plot_cell = PlotCell(
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
+            config=PlotConfig(
+                workflow_id=workflow_id,
+                output_name='test_output',
+                source_names=['source_A'],  # Plot wants source_A
+                plot_name='test_plot',
+                params={},
+            ),
+        )
+        plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Commit workflow (notifies the plot that workflow is running)
+        job_number = uuid.uuid4()
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+        # Simulate data arrival for source_B (NOT source_A)
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        result_key_B = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source_B', job_number=job_number),
+            output_name='test_output',
+        )
+        fake_data_service[result_key_B] = sc.scalar(1.0)
+
+        # Plot should NOT be created (data is for wrong source)
+        assert (
+            fake_plotting_controller.call_count() == 0
+        ), "Plot should not be created for different source_name"
+
+        # Now simulate data arrival for source_A (the one the plot wants)
+        result_key_A = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source_A', job_number=job_number),
+            output_name='test_output',
+        )
+        fake_data_service[result_key_A] = sc.scalar(2.0)
+
+        # NOW the plot should be created
+        assert (
+            fake_plotting_controller.call_count() == 1
+        ), "Plot should be created when correct source_name has data"
+        calls = fake_plotting_controller.get_calls()
+        assert calls[0]['source_names'] == ['source_A']
+
+    def test_plot_created_progressively_as_sources_arrive(
+        self,
+        plot_orchestrator,
+        workflow_id,
+        fake_job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+    ):
+        """
+        Plot with multiple source_names created as soon as first source has data.
+
+        A plot wanting sources [A, B] should create when only A has data,
+        then update automatically when B arrives (progressive plotting).
+        """
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+
+        # Create a plot that wants data from BOTH source_A and source_B
+        plot_cell = PlotCell(
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
+            config=PlotConfig(
+                workflow_id=workflow_id,
+                output_name='test_output',
+                source_names=['source_A', 'source_B'],  # Plot wants BOTH
+                plot_name='test_plot',
+                params={},
+            ),
+        )
+        plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Commit workflow
+        job_number = uuid.uuid4()
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+        # Simulate data arrival for source_A only
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        result_key_A = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source_A', job_number=job_number),
+            output_name='test_output',
+        )
+        fake_data_service[result_key_A] = sc.scalar(1.0)
+
+        # Plot SHOULD be created with partial data (progressive plotting)
+        assert (
+            fake_plotting_controller.call_count() == 1
+        ), "Plot should be created as soon as first source has data"
+        calls = fake_plotting_controller.get_calls()
+        # Controller is called with both source_names (subscriber handles filtering)
+        assert set(calls[0]['source_names']) == {'source_A', 'source_B'}
+
+        # When source_B arrives, the DynamicMap will automatically update
+        # (no new create_plot call needed - the existing plot subscribes to updates)
+        result_key_B = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source_B', job_number=job_number),
+            output_name='test_output',
+        )
+        fake_data_service[result_key_B] = sc.scalar(2.0)
+
+        # Still only 1 create_plot call (plot updates via streaming, not recreation)
+        assert fake_plotting_controller.call_count() == 1
+
+    def test_immediate_creation_when_subscribing_to_running_job_with_correct_sources(
+        self,
+        plot_orchestrator,
+        workflow_id,
+        fake_job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+    ):
+        """
+        When subscribing to already-running job, plot creates if sources exist.
+
+        This tests the "late subscription" path where workflow is already
+        running and has data for the plot's source_names.
+        """
+        # Commit workflow FIRST
+        job_number = uuid.uuid4()
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+        # Add data for source_A
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        result_key_A = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source_A', job_number=job_number),
+            output_name='test_output',
+        )
+        fake_data_service[result_key_A] = sc.scalar(1.0)
+
+        # NOW add the plot (late subscription)
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        plot_cell = PlotCell(
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
+            config=PlotConfig(
+                workflow_id=workflow_id,
+                output_name='test_output',
+                source_names=['source_A'],
+                plot_name='test_plot',
+                params={},
+            ),
+        )
+        plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Plot should be created immediately (data already exists)
+        assert (
+            fake_plotting_controller.call_count() == 1
+        ), "Plot should be created immediately when subscribing to running job"
+
+    def test_no_creation_when_subscribing_to_running_job_without_correct_sources(
+        self,
+        plot_orchestrator,
+        workflow_id,
+        fake_job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+    ):
+        """
+        When subscribing to already-running job, plot waits if sources missing.
+
+        This tests the "late subscription" path where workflow is running
+        but doesn't have data for the plot's specific source_names.
+        """
+        # Commit workflow FIRST
+        job_number = uuid.uuid4()
+        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+
+        # Add data for source_B (not what the plot will want)
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        result_key_B = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source_B', job_number=job_number),
+            output_name='test_output',
+        )
+        fake_data_service[result_key_B] = sc.scalar(1.0)
+
+        # NOW add the plot wanting source_A (late subscription)
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        plot_cell = PlotCell(
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
+            config=PlotConfig(
+                workflow_id=workflow_id,
+                output_name='test_output',
+                source_names=['source_A'],  # Plot wants A, but only B exists
+                plot_name='test_plot',
+                params={},
+            ),
+        )
+        plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Plot should NOT be created (wrong source)
+        assert (
+            fake_plotting_controller.call_count() == 0
+        ), "Plot should not be created when only wrong sources exist"
+
+        # Add data for source_A (what the plot wants)
+        result_key_A = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source_A', job_number=job_number),
+            output_name='test_output',
+        )
+        fake_data_service[result_key_A] = sc.scalar(2.0)
+
+        # NOW plot should be created
+        assert (
+            fake_plotting_controller.call_count() == 1
+        ), "Plot should be created when correct source arrives"
