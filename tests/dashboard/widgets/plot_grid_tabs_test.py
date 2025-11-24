@@ -11,7 +11,6 @@ from ess.livedata.dashboard.plot_orchestrator import PlotOrchestrator
 from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.stream_manager import StreamManager
 from ess.livedata.dashboard.widgets.plot_grid_tabs import PlotGridTabs
-from tests.dashboard.fakes import FakeJobOrchestrator
 
 hv.extension('bokeh')
 
@@ -44,12 +43,6 @@ def plotting_controller(job_service, stream_manager):
 
 
 @pytest.fixture
-def fake_job_orchestrator():
-    """Create a fake JobOrchestrator for testing."""
-    return FakeJobOrchestrator()
-
-
-@pytest.fixture
 def fake_data_service():
     """Create a fake DataService."""
     from ess.livedata.dashboard.data_service import DataService
@@ -67,12 +60,12 @@ def fake_job_service(fake_data_service):
 
 @pytest.fixture
 def plot_orchestrator(
-    plotting_controller, fake_job_orchestrator, fake_data_service, fake_job_service
+    plotting_controller, job_orchestrator, fake_data_service, fake_job_service
 ):
     """Create a PlotOrchestrator for testing."""
     return PlotOrchestrator(
         plotting_controller=plotting_controller,
-        job_orchestrator=fake_job_orchestrator,
+        job_orchestrator=job_orchestrator,
         data_service=fake_data_service,
         job_service=fake_job_service,
     )

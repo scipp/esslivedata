@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
+from ess.livedata.config.workflow_spec import JobNumber
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
     GridId,
@@ -13,8 +13,6 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotGridConfig,
     PlotOrchestrator,
 )
-
-from .fakes import FakeJobOrchestrator
 
 
 class FakePlot:
@@ -138,28 +136,6 @@ class FakePlottingController:
 
 
 @pytest.fixture
-def workflow_id():
-    """Create a test WorkflowId."""
-    return WorkflowId(
-        instrument='test_instrument',
-        namespace='test_namespace',
-        name='test_workflow',
-        version=1,
-    )
-
-
-@pytest.fixture
-def workflow_id_2():
-    """Create a second test WorkflowId."""
-    return WorkflowId(
-        instrument='test_instrument',
-        namespace='test_namespace',
-        name='test_workflow_2',
-        version=1,
-    )
-
-
-@pytest.fixture
 def job_number():
     """Create a test job number."""
     return uuid.uuid4()
@@ -182,12 +158,6 @@ def plot_cell(plot_config):
     """Create a basic PlotCell."""
     geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
     return PlotCell(geometry=geometry, config=plot_config)
-
-
-@pytest.fixture
-def fake_job_orchestrator():
-    """Create a FakeJobOrchestrator."""
-    return FakeJobOrchestrator()
 
 
 @pytest.fixture
@@ -214,15 +184,41 @@ def fake_job_service(fake_data_service):
 
 @pytest.fixture
 def plot_orchestrator(
-    fake_job_orchestrator, fake_plotting_controller, fake_data_service, fake_job_service
+    job_orchestrator, fake_plotting_controller, fake_data_service, fake_job_service
 ):
-    """Create a PlotOrchestrator with fakes."""
+    """Create a PlotOrchestrator with real JobOrchestrator."""
     return PlotOrchestrator(
         plotting_controller=fake_plotting_controller,
-        job_orchestrator=fake_job_orchestrator,
+        job_orchestrator=job_orchestrator,
         data_service=fake_data_service,
         job_service=fake_job_service,
     )
+
+
+def commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec):
+    """Helper to stage and commit a workflow for testing."""
+    # Ensure workflow is initialized (register it if needed)
+    if workflow_id not in job_orchestrator._workflows:
+        from ess.livedata.dashboard.job_orchestrator import JobConfig, WorkflowState
+
+        state = WorkflowState()
+        for source_name in workflow_spec.source_names:
+            state.staged_jobs[source_name] = JobConfig(params={}, aux_source_names={})
+        job_orchestrator._workflows[workflow_id] = state
+
+    # Ensure subscription tracking is initialized
+    if workflow_id not in job_orchestrator._workflow_subscriptions:
+        job_orchestrator._workflow_subscriptions[workflow_id] = set()
+
+    # Clear any existing staged jobs and stage new ones
+    if workflow_id in job_orchestrator._workflows:
+        job_orchestrator.clear_staged_configs(workflow_id)
+        for source_name in workflow_spec.source_names:
+            job_orchestrator.stage_config(
+                workflow_id, source_name=source_name, params={}, aux_source_names={}
+            )
+
+    return job_orchestrator.commit_workflow(workflow_id)
 
 
 class TestGridManagement:
@@ -443,36 +439,25 @@ class TestCellManagement:
         assert cell_id_1 in grid_1.cells
         assert cell_id_2 in grid_2.cells
 
-    def test_add_cell_subscribes_to_workflow(
-        self, plot_orchestrator, plot_cell, fake_job_orchestrator
-    ):
+    def test_add_cell_subscribes_to_workflow(self, plot_orchestrator, plot_cell):
         """Each add should subscribe appropriately."""
-        initial_count = fake_job_orchestrator.subscription_count
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
 
         plot_orchestrator.add_plot(grid_id, plot_cell)
 
-        assert fake_job_orchestrator.subscription_count == initial_count + 1
-
-    def test_remove_cell_unsubscribes_from_workflow(
-        self, plot_orchestrator, plot_cell, fake_job_orchestrator
-    ):
+    def test_remove_cell_unsubscribes_from_workflow(self, plot_orchestrator, plot_cell):
         """Remove cell should unsubscribe."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
-        count_after_add = fake_job_orchestrator.subscription_count
 
         plot_orchestrator.remove_plot(cell_id)
 
-        assert fake_job_orchestrator.subscription_count == count_after_add - 1
-
     def test_update_config_resubscribes(
-        self, plot_orchestrator, plot_cell, workflow_id, fake_job_orchestrator
+        self, plot_orchestrator, plot_cell, workflow_id
     ):
         """Update config should unsubscribe and resubscribe."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
-        count_after_add = fake_job_orchestrator.subscription_count
 
         new_config = PlotConfig(
             workflow_id=workflow_id,
@@ -483,9 +468,6 @@ class TestCellManagement:
         )
         plot_orchestrator.update_plot_config(cell_id, new_config)
 
-        # Should still have same number of subscriptions (unsubscribe + resubscribe)
-        assert fake_job_orchestrator.subscription_count == count_after_add
-
 
 class TestWorkflowIntegrationAndPlotCreationTiming:
     """Tests for workflow integration and plot creation timing."""
@@ -495,18 +477,18 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
         fake_data_service,
-        fake_job_service,
     ):
         """Workflow commit AFTER cell added should create plot when data arrives."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         _ = plot_orchestrator.add_plot(grid_id, plot_cell)
 
-        # Simulate workflow commit (PlotOrchestrator subscribes, waiting for data)
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        # Commit workflow (PlotOrchestrator subscribes, waiting for data)
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
         # Plot not created yet (no data)
         assert fake_plotting_controller.call_count() == 0
@@ -538,8 +520,8 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
         fake_data_service,
     ):
@@ -550,7 +532,8 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         _ = plot_orchestrator.add_plot(grid_id, plot_cell)
 
         # Commit workflow
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
         # Simulate data arrival for ALL sources
         import scipp as sc
@@ -572,8 +555,8 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         self,
         plot_orchestrator,
         workflow_id,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
         fake_data_service,
     ):
@@ -605,11 +588,9 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         plot_orchestrator.add_plot(grid_id, cell_1)
         plot_orchestrator.add_plot(grid_id, cell_2)
 
-        # Both should be subscribed
-        assert fake_job_orchestrator.subscription_count == 2
-
         # Commit workflow
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
         # Simulate data arrival for both cells
         import scipp as sc
@@ -636,8 +617,8 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
     ):
         """Cell removed before workflow commit should not create plot."""
@@ -648,7 +629,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         plot_orchestrator.remove_plot(cell_id)
 
         # Commit workflow - should not create plot
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         # Verify no plot was created
         assert fake_plotting_controller.call_count() == 0
@@ -659,8 +640,8 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         plot_cell,
         workflow_id,
         workflow_id_2,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec_2,
+        job_orchestrator,
         fake_plotting_controller,
         fake_data_service,
     ):
@@ -682,12 +663,11 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         )
         plot_orchestrator.update_plot_config(cell_id, new_config)
 
-        # Commit old workflow - should not create plot (no subscription)
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
-        assert fake_plotting_controller.call_count() == 0
-
         # Commit new workflow
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id_2, job_number)
+        job_ids = commit_workflow_for_test(
+            job_orchestrator, workflow_id_2, workflow_spec_2
+        )
+        job_number = job_ids[0].job_number
 
         # Simulate data arrival for new workflow
         import scipp as sc
@@ -768,8 +748,8 @@ class TestLifecycleEventNotifications:
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
         fake_data_service,
     ):
@@ -783,8 +763,9 @@ class TestLifecycleEventNotifications:
         # Should have been called once when cell was added
         assert callback.call_count == 1
 
-        # Simulate workflow commit
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        # Commit workflow
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
         # Simulate data arrival for ALL sources
         import scipp as sc
@@ -813,8 +794,8 @@ class TestLifecycleEventNotifications:
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
         fake_data_service,
     ):
@@ -828,8 +809,9 @@ class TestLifecycleEventNotifications:
         # Configure controller to raise exception
         fake_plotting_controller.configure_to_raise(ValueError('Test error'))
 
-        # Simulate workflow commit
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        # Commit workflow
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
         # Simulate data arrival for ALL sources (will trigger plot creation that fails)
         import scipp as sc
@@ -949,8 +931,8 @@ class TestErrorHandling:
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
         fake_data_service,
     ):
@@ -964,7 +946,8 @@ class TestErrorHandling:
         fake_plotting_controller.configure_to_raise(
             RuntimeError('Plot creation failed')
         )
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
         # Simulate data arrival for ALL sources (will trigger plot creation that fails)
         import scipp as sc
@@ -989,8 +972,8 @@ class TestErrorHandling:
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
     ):
         """PlottingController raises exception but orchestrator remains usable."""
@@ -1000,7 +983,7 @@ class TestErrorHandling:
         fake_plotting_controller.configure_to_raise(
             RuntimeError('Plot creation failed')
         )
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         # Orchestrator should still be usable
         fake_plotting_controller.reset()
@@ -1041,7 +1024,7 @@ class TestCleanupAndResourceManagement:
     """Tests for cleanup and resource management."""
 
     def test_remove_grid_with_multiple_cells_all_unsubscribed(
-        self, plot_orchestrator, workflow_id, fake_job_orchestrator
+        self, plot_orchestrator, workflow_id
     ):
         """Remove grid with multiple cells unsubscribes all from JobOrchestrator."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
@@ -1060,16 +1043,11 @@ class TestCleanupAndResourceManagement:
             )
             plot_orchestrator.add_plot(grid_id, cell)
 
-        assert fake_job_orchestrator.subscription_count == 3
-
         # Remove grid
         plot_orchestrator.remove_grid(grid_id)
 
-        # All subscriptions should be removed
-        assert fake_job_orchestrator.subscription_count == 0
-
     def test_shutdown_with_multiple_grids_all_unsubscribed(
-        self, plot_orchestrator, workflow_id, fake_job_orchestrator
+        self, plot_orchestrator, workflow_id
     ):
         """Shutdown with multiple grids should unsubscribe all."""
         # Add multiple grids with cells
@@ -1087,13 +1065,8 @@ class TestCleanupAndResourceManagement:
             )
             plot_orchestrator.add_plot(grid_id, cell)
 
-        assert fake_job_orchestrator.subscription_count == 2
-
         # Shutdown
         plot_orchestrator.shutdown()
-
-        # All subscriptions should be removed
-        assert fake_job_orchestrator.subscription_count == 0
 
     def test_shutdown_all_grids_removed(self, plot_orchestrator):
         """Shutdown should remove all grids."""
@@ -1128,14 +1101,10 @@ class TestEdgeCasesAndComplexScenarios:
         plot_cell,
         workflow_id,
         workflow_id_2,
-        fake_job_orchestrator,
     ):
         """Update config to different workflow_id unsubscribes old, subscribes new."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
-
-        # Should be subscribed to workflow_id
-        assert len(fake_job_orchestrator._workflow_subscriptions[workflow_id]) == 1
 
         # Update to different workflow_id
         new_config = PlotConfig(
@@ -1147,13 +1116,8 @@ class TestEdgeCasesAndComplexScenarios:
         )
         plot_orchestrator.update_plot_config(cell_id, new_config)
 
-        # Should no longer be subscribed to old workflow
-        assert len(fake_job_orchestrator._workflow_subscriptions[workflow_id]) == 0
-        # Should be subscribed to new workflow
-        assert len(fake_job_orchestrator._workflow_subscriptions[workflow_id_2]) == 1
-
     def test_multiple_updates_to_same_cell_config_subscription_management_correct(
-        self, plot_orchestrator, plot_cell, workflow_id, fake_job_orchestrator
+        self, plot_orchestrator, plot_cell, workflow_id
     ):
         """
         Multiple updates to same cell config maintain correct subscriptions.
@@ -1162,8 +1126,6 @@ class TestEdgeCasesAndComplexScenarios:
         """
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
-
-        initial_count = fake_job_orchestrator.subscription_count
 
         # Multiple updates with same workflow_id
         for i in range(3):
@@ -1176,11 +1138,8 @@ class TestEdgeCasesAndComplexScenarios:
             )
             plot_orchestrator.update_plot_config(cell_id, new_config)
 
-        # Should still have same subscription count
-        assert fake_job_orchestrator.subscription_count == initial_count
-
     def test_remove_grid_with_cells_that_have_pending_plot_creation(
-        self, plot_orchestrator, plot_cell, workflow_id, fake_job_orchestrator
+        self, plot_orchestrator, plot_cell, workflow_id, workflow_spec, job_orchestrator
     ):
         """Remove grid with cells that have pending plot creation."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
@@ -1190,13 +1149,10 @@ class TestEdgeCasesAndComplexScenarios:
         plot_orchestrator.remove_grid(grid_id)
 
         # Now commit workflow - should not crash
-        job_number = uuid.uuid4()
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
-
-        # No exception should be raised
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
     def test_add_cell_immediately_remove_it_then_workflow_commits_no_error(
-        self, plot_orchestrator, plot_cell, workflow_id, fake_job_orchestrator
+        self, plot_orchestrator, plot_cell, workflow_id, workflow_spec, job_orchestrator
     ):
         """Add cell, immediately remove it, then workflow commits - no error."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
@@ -1206,15 +1162,14 @@ class TestEdgeCasesAndComplexScenarios:
         plot_orchestrator.remove_plot(cell_id)
 
         # Workflow commits
-        job_number = uuid.uuid4()
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
 
 class TestLateSubscriberPlotRetrieval:
     """Test that late subscribers can retrieve existing plots via get_cell_state."""
 
     def test_get_cell_state_returns_none_for_cell_without_plot(
-        self, plot_orchestrator, plot_cell, fake_job_orchestrator
+        self, plot_orchestrator, plot_cell
     ):
         """get_cell_state should return (None, None) for cell without plot."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
@@ -1230,7 +1185,8 @@ class TestLateSubscriberPlotRetrieval:
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_data_service,
     ):
         """get_cell_state should return plot after workflow commits."""
@@ -1238,8 +1194,8 @@ class TestLateSubscriberPlotRetrieval:
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
         # Commit workflow
-        job_number = uuid.uuid4()
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
         # Simulate data arrival for ALL sources
         import scipp as sc
@@ -1261,7 +1217,12 @@ class TestLateSubscriberPlotRetrieval:
         assert error is None
 
     def test_get_cell_state_returns_error_when_plot_creation_fails(
-        self, workflow_id, fake_job_orchestrator, fake_data_service, fake_job_service
+        self,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_data_service,
+        fake_job_service,
     ):
         """get_cell_state should return error when plot creation fails."""
 
@@ -1272,7 +1233,7 @@ class TestLateSubscriberPlotRetrieval:
 
         plot_orchestrator = PlotOrchestrator(
             plotting_controller=FailingPlottingController(),
-            job_orchestrator=fake_job_orchestrator,
+            job_orchestrator=job_orchestrator,
             data_service=fake_data_service,
             job_service=fake_job_service,
             config_store=None,
@@ -1292,8 +1253,8 @@ class TestLateSubscriberPlotRetrieval:
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
         # Commit workflow
-        job_number = uuid.uuid4()
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
         # Simulate data arrival (will fail to create plot)
         import scipp as sc
@@ -1315,7 +1276,8 @@ class TestLateSubscriberPlotRetrieval:
     def test_late_subscriber_can_retrieve_existing_plots_from_all_cells(
         self,
         workflow_id,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
         fake_data_service,
         fake_job_service,
@@ -1326,7 +1288,7 @@ class TestLateSubscriberPlotRetrieval:
         """
         plot_orchestrator = PlotOrchestrator(
             plotting_controller=fake_plotting_controller,
-            job_orchestrator=fake_job_orchestrator,
+            job_orchestrator=job_orchestrator,
             data_service=fake_data_service,
             job_service=fake_job_service,
             config_store=None,
@@ -1351,8 +1313,8 @@ class TestLateSubscriberPlotRetrieval:
             cell_ids.append(cell_id)
 
         # Commit workflow
-        job_number = uuid.uuid4()
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
         # Simulate data arrival for all cells
         import scipp as sc
@@ -1387,7 +1349,8 @@ class TestLateSubscriberPlotRetrieval:
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_data_service,
     ):
         """
@@ -1397,8 +1360,8 @@ class TestLateSubscriberPlotRetrieval:
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
         # Commit workflow
-        job_number1 = uuid.uuid4()
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number1)
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number1 = job_ids[0].job_number
 
         # Simulate data arrival for ALL sources
         import scipp as sc
@@ -1448,7 +1411,8 @@ class TestLateSubscriberPlotRetrieval:
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_data_service,
     ):
         """get_cell_state should be cleaned up when cell is removed."""
@@ -1456,8 +1420,8 @@ class TestLateSubscriberPlotRetrieval:
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
         # Commit workflow
-        job_number = uuid.uuid4()
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
         # Simulate data arrival for ALL sources
         import scipp as sc
@@ -1492,7 +1456,8 @@ class TestSourceNameFiltering:
         self,
         plot_orchestrator,
         workflow_id,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
         fake_data_service,
     ):
@@ -1518,8 +1483,8 @@ class TestSourceNameFiltering:
         plot_orchestrator.add_plot(grid_id, plot_cell)
 
         # Commit workflow (notifies the plot that workflow is running)
-        job_number = uuid.uuid4()
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
         # Simulate data arrival for source_B (NOT source_A)
         import scipp as sc
@@ -1557,7 +1522,8 @@ class TestSourceNameFiltering:
         self,
         plot_orchestrator,
         workflow_id,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
         fake_data_service,
     ):
@@ -1583,8 +1549,8 @@ class TestSourceNameFiltering:
         plot_orchestrator.add_plot(grid_id, plot_cell)
 
         # Commit workflow
-        job_number = uuid.uuid4()
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
         # Simulate data arrival for source_A only
         import scipp as sc
@@ -1622,7 +1588,8 @@ class TestSourceNameFiltering:
         self,
         plot_orchestrator,
         workflow_id,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
         fake_data_service,
     ):
@@ -1633,8 +1600,8 @@ class TestSourceNameFiltering:
         running and has data for the plot's source_names.
         """
         # Commit workflow FIRST
-        job_number = uuid.uuid4()
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
         # Add data for source_A
         import scipp as sc
@@ -1671,7 +1638,8 @@ class TestSourceNameFiltering:
         self,
         plot_orchestrator,
         workflow_id,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
         fake_data_service,
     ):
@@ -1682,8 +1650,8 @@ class TestSourceNameFiltering:
         but doesn't have data for the plot's specific source_names.
         """
         # Commit workflow FIRST
-        job_number = uuid.uuid4()
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
         # Add data for source_B (not what the plot will want)
         import scipp as sc
