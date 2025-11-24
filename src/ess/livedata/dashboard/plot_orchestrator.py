@@ -647,29 +647,9 @@ class PlotOrchestrator:
         error: str | None = None,
     ) -> None:
         """Notify subscribers that a cell was added or updated."""
-        subscriber_count = len(
-            [s for s in self._lifecycle_subscribers.values() if s.on_cell_updated]
-        )
-        self._logger.debug(
-            'Notifying %d subscriber(s) of cell update: '
-            'cell_id=%s, grid_id=%s, has_plot=%s, error=%s',
-            subscriber_count,
-            cell_id,
-            grid_id,
-            plot is not None,
-            error,
-        )
-
         for subscription in self._lifecycle_subscribers.values():
             if subscription.on_cell_updated:
                 try:
-                    self._logger.debug(
-                        'Calling on_cell_updated callback for cell_id=%s with '
-                        'plot=%s, error=%s',
-                        cell_id,
-                        type(plot).__name__ if plot is not None else None,
-                        error,
-                    )
                     subscription.on_cell_updated(
                         grid_id=grid_id,
                         cell_id=cell_id,
