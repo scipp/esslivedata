@@ -25,7 +25,7 @@ import pydantic
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 from .config_store import ConfigStore
-from .data_service import DataService, DataServiceSubscriber
+from .data_service import DataService
 from .plotting_controller import PlottingController
 
 if TYPE_CHECKING:
@@ -173,54 +173,6 @@ class CellUpdatedCallback(Protocol):
         """
 
 
-class _DataPipelineMonitor(DataServiceSubscriber):
-    """
-    Monitors a data pipeline for first data arrival.
-
-    Wraps an original subscriber and calls a callback when the first trigger
-    occurs, indicating that data has arrived for the plot.
-    """
-
-    def __init__(
-        self,
-        original_subscriber: DataServiceSubscriber,
-        on_data_arrived: Callable[[], None],
-    ) -> None:
-        """
-        Initialize the monitor.
-
-        Parameters
-        ----------
-        original_subscriber:
-            The DataSubscriber to wrap.
-        on_data_arrived:
-            Callback to invoke when trigger is called.
-        """
-        self._original = original_subscriber
-        self._on_data_arrived = on_data_arrived
-        super().__init__()
-
-    @property
-    def extractors(self):
-        """Delegate to original subscriber."""
-        return self._original.extractors
-
-    def trigger(self, store: dict[Any, Any]) -> None:
-        """
-        Pass through to original and invoke callback if data exists.
-
-        Parameters
-        ----------
-        store:
-            Data store passed by DataService. Only triggers on_data_arrived
-            if the store is non-empty (data is present).
-        """
-        self._original.trigger(store)
-        # Only call the callback if there's actual data
-        if store:
-            self._on_data_arrived()
-
-
 @dataclass
 class LifecycleSubscription:
     """Subscription to plot grid lifecycle events."""
@@ -267,9 +219,6 @@ class PlotOrchestrator:
         self._cell_to_subscription: dict[CellId, SubscriptionId] = {}
         self._cell_state: dict[CellId, CellState] = {}
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
-
-        # Track monitoring subscribers for cells waiting for data to arrive
-        self._cell_to_monitoring_subscriber: dict[CellId, _DataPipelineMonitor] = {}
 
     def add_grid(self, title: str, nrows: int, ncols: int) -> GridId:
         """
@@ -397,14 +346,6 @@ class PlotOrchestrator:
         self._job_orchestrator.unsubscribe(self._cell_to_subscription[cell_id])
         del self._cell_to_subscription[cell_id]
 
-        # Clean up monitoring subscriber if waiting for data
-        if cell_id in self._cell_to_monitoring_subscriber:
-            monitor = self._cell_to_monitoring_subscriber.pop(cell_id)
-            self._data_service.unregister_subscriber(monitor)
-            self._logger.debug(
-                'Cleaned up monitoring subscriber for removed cell_id=%s', cell_id
-            )
-
         # Remove stored state
         self._cell_state.pop(cell_id, None)
 
@@ -519,7 +460,7 @@ class PlotOrchestrator:
         """
         Handle workflow availability notification from JobOrchestrator.
 
-        Sets up the data pipeline immediately and waits for first data arrival.
+        Sets up the data pipeline with callback for first data arrival.
         When data arrives, creates the plot.
 
         Parameters
@@ -539,7 +480,6 @@ class PlotOrchestrator:
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
-        # Phase 1: Set up data pipeline (creates subscriber but not plot)
         self._logger.debug(
             'Setting up data pipeline for cell_id=%s, job_number=%s, '
             'sources=%s, output=%s',
@@ -549,37 +489,13 @@ class PlotOrchestrator:
             cell.config.output_name,
         )
 
-        try:
-            subscriber, pipe, keys = self._plotting_controller.setup_data_pipeline(
-                job_number=job_number,
-                workflow_id=cell.config.workflow_id,
-                source_names=cell.config.source_names,
-                output_name=cell.config.output_name,
-                plot_name=cell.config.plot_name,
-                params=cell.config.params,
-            )
-        except Exception:
-            error_msg = traceback.format_exc()
-            self._logger.exception(
-                'Failed to set up data pipeline for cell_id=%s', cell_id
-            )
-            self._cell_state[cell_id] = CellState(error=error_msg)
-            self._notify_cell_updated(grid_id, cell_id, cell, error=error_msg)
-            return
-
-        # Phase 2: Monitor for data arrival and create plot when it comes
-        def on_data_arrived() -> None:
+        def on_data_arrived(pipe) -> None:
             """Create plot when first data arrives for the pipeline."""
             self._logger.debug(
                 'Data arrived for cell_id=%s, job_number=%s, creating plot',
                 cell_id,
                 job_number,
             )
-            # Unregister the monitoring subscriber
-            if cell_id in self._cell_to_monitoring_subscriber:
-                monitor = self._cell_to_monitoring_subscriber.pop(cell_id)
-                self._data_service.unregister_subscriber(monitor)
-
             # Create the plot with the now-populated pipe
             try:
                 plot = self._plotting_controller.create_plot_from_pipeline(
@@ -602,13 +518,27 @@ class PlotOrchestrator:
                 self._cell_state[cell_id] = CellState(error=error_msg)
                 self._notify_cell_updated(grid_id, cell_id, cell, error=error_msg)
 
-        # Create monitoring subscriber that wraps the data subscriber
-        monitor = _DataPipelineMonitor(subscriber, on_data_arrived)
-        self._data_service.register_subscriber(monitor)
-        self._cell_to_monitoring_subscriber[cell_id] = monitor
+        # Set up data pipeline with callback
+        try:
+            self._plotting_controller.setup_data_pipeline(
+                job_number=job_number,
+                workflow_id=cell.config.workflow_id,
+                source_names=cell.config.source_names,
+                output_name=cell.config.output_name,
+                plot_name=cell.config.plot_name,
+                params=cell.config.params,
+                on_first_data=on_data_arrived,
+            )
+        except Exception:
+            error_msg = traceback.format_exc()
+            self._logger.exception(
+                'Failed to set up data pipeline for cell_id=%s', cell_id
+            )
+            self._cell_state[cell_id] = CellState(error=error_msg)
+            self._notify_cell_updated(grid_id, cell_id, cell, error=error_msg)
+            return
 
-        # Check if data already exists (on_data_arrived was called immediately
-        # by register_subscriber if data exists). If not, show "waiting" state.
+        # Check if callback already ran (data was already present)
         if cell_id not in self._cell_state:
             self._logger.debug(
                 'Waiting for data for cell_id=%s, job_number=%s',

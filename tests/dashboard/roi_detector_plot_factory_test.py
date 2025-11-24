@@ -121,6 +121,24 @@ def get_detector_pipe(
     raise KeyError(f"Key {detector_key} not found in data service")
 
 
+def create_detector_pipe(
+    data_service: DataService, detector_key: ResultKey
+) -> hv.streams.Pipe:
+    """
+    Create a detector pipe for testing with data already present.
+
+    Creates a pipe directly from DataService data, mimicking what would happen
+    after a subscription is triggered.
+    """
+    # Get data from DataService
+    if detector_key not in data_service:
+        raise KeyError(f"Key {detector_key} not in DataService")
+
+    # Create pipe with data
+    data = {detector_key: data_service[detector_key]}
+    return hv.streams.Pipe(data=data)
+
+
 class TestROIDetectorPlotFactory:
     def test_create_roi_detector_plot_components_returns_detector_and_spectrum(
         self,
@@ -130,6 +148,7 @@ class TestROIDetectorPlotFactory:
         job_number,
         detector_data,
         spectrum_data,
+        stream_manager,
     ):
         """Test create_roi_detector_plot_components returns detector and spectrum."""
         # Create result keys for detector and spectrum
@@ -149,6 +168,9 @@ class TestROIDetectorPlotFactory:
         data_service[detector_key] = detector_data
         data_service[spectrum_key] = spectrum_data
 
+        # Create detector pipe
+        detector_pipe = create_detector_pipe(data_service, detector_key)
+
         # Create plot params
         params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
@@ -157,6 +179,7 @@ class TestROIDetectorPlotFactory:
             roi_plot_factory.create_roi_detector_plot_components(
                 detector_key=detector_key,
                 params=params,
+                detector_pipe=detector_pipe,
             )
         )
 
@@ -172,6 +195,7 @@ class TestROIDetectorPlotFactory:
         workflow_id,
         job_number,
         detector_data,
+        stream_manager,
     ):
         """Test ROI detector plot components with only detector data (no spectrum)."""
         # Create result key for detector only (spectrum doesn't exist yet)
@@ -185,6 +209,9 @@ class TestROIDetectorPlotFactory:
         data_service[detector_key] = detector_data
 
         # Create plot params
+        # Create detector pipe
+        detector_pipe = create_detector_pipe(data_service, detector_key)
+
         params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot components
@@ -192,6 +219,7 @@ class TestROIDetectorPlotFactory:
             roi_plot_factory.create_roi_detector_plot_components(
                 detector_key=detector_key,
                 params=params,
+                detector_pipe=detector_pipe,
             )
         )
 
@@ -208,6 +236,7 @@ class TestROIDetectorPlotFactory:
         job_number,
         detector_data,
         spectrum_data,
+        stream_manager,
     ):
         """Test that create_roi_detector_plot_components returns valid components."""
         # Create result keys
@@ -226,6 +255,9 @@ class TestROIDetectorPlotFactory:
         data_service[detector_key] = detector_data
         data_service[spectrum_key] = spectrum_data
 
+        # Create detector pipe
+        detector_pipe = create_detector_pipe(data_service, detector_key)
+
         # Create plot params
         params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
@@ -234,6 +266,7 @@ class TestROIDetectorPlotFactory:
             roi_plot_factory.create_roi_detector_plot_components(
                 detector_key=detector_key,
                 params=params,
+                detector_pipe=detector_pipe,
             )
         )
 
@@ -245,7 +278,7 @@ class TestROIDetectorPlotFactory:
 
 
 def test_roi_detector_plot_publishes_roi_on_box_edit(
-    roi_plot_factory, data_service, workflow_id, job_number
+    roi_plot_factory, data_service, workflow_id, job_number, stream_manager
 ):
     """Integration test: BoxEdit changes trigger ROI publishing."""
     from ess.livedata.dashboard.roi_publisher import FakeROIPublisher
@@ -267,6 +300,9 @@ def test_roi_detector_plot_publishes_roi_on_box_edit(
     data_service[detector_key] = detector_data
 
     # Create plot params
+    # Create detector pipe
+    detector_pipe = create_detector_pipe(data_service, detector_key)
+
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
     # Create ROI detector plot components using public API
@@ -274,6 +310,7 @@ def test_roi_detector_plot_publishes_roi_on_box_edit(
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
             params=params,
+            detector_pipe=detector_pipe,
         )
     )
 
@@ -296,7 +333,7 @@ def test_roi_detector_plot_publishes_roi_on_box_edit(
 
 
 def test_roi_detector_plot_only_publishes_changed_rois(
-    roi_plot_factory, data_service, workflow_id, job_number
+    roi_plot_factory, data_service, workflow_id, job_number, stream_manager
 ):
     """Integration test: ROI publishing only happens when ROI changes."""
     from ess.livedata.dashboard.roi_publisher import FakeROIPublisher
@@ -318,11 +355,15 @@ def test_roi_detector_plot_only_publishes_changed_rois(
     data_service[detector_key] = detector_data
 
     # Create plot components using public API
+    # Create detector pipe
+    detector_pipe = create_detector_pipe(data_service, detector_key)
+
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
     _detector_dmap, _roi_dmap, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
             params=params,
+            detector_pipe=detector_pipe,
         )
     )
 
@@ -343,7 +384,7 @@ def test_roi_detector_plot_only_publishes_changed_rois(
 
 
 def test_roi_detector_plot_without_publisher_does_not_crash(
-    roi_plot_factory, data_service, workflow_id, job_number
+    roi_plot_factory, data_service, workflow_id, job_number, stream_manager
 ):
     """Test that ROI plot works without a publisher configured."""
     # Ensure no publisher is set
@@ -362,11 +403,15 @@ def test_roi_detector_plot_without_publisher_does_not_crash(
     data_service[detector_key] = detector_data
 
     # Create plot components - should not crash
+    # Create detector pipe
+    detector_pipe = create_detector_pipe(data_service, detector_key)
+
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
     detector_with_boxes, roi_spectrum, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
             params=params,
+            detector_pipe=detector_pipe,
         )
     )
 
@@ -532,7 +577,12 @@ def test_rois_to_rectangles_sorts_by_index():
 
 
 def test_create_roi_plot_with_initial_rois(
-    roi_plot_factory, data_service, workflow_id, job_number, detector_data
+    roi_plot_factory,
+    data_service,
+    workflow_id,
+    job_number,
+    detector_data,
+    stream_manager,
 ):
     """Test that ROI plot can be initialized with existing ROI configurations."""
     from ess.livedata.config.models import ROI
@@ -556,12 +606,15 @@ def test_create_roi_plot_with_initial_rois(
     roi_readback_data = ROI.to_concatenated_data_array(initial_rois)
     data_service[roi_readback_key] = roi_readback_data
 
+    # Create detector pipe
+    detector_pipe = create_detector_pipe(data_service, detector_key)
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
     _detector_with_boxes, _roi_dmap, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
             params=params,
+            detector_pipe=detector_pipe,
         )
     )
 
@@ -578,7 +631,12 @@ def test_create_roi_plot_with_initial_rois(
 
 
 def test_custom_max_roi_count(
-    roi_plot_factory, data_service, detector_data, workflow_id, job_number
+    roi_plot_factory,
+    data_service,
+    detector_data,
+    workflow_id,
+    job_number,
+    stream_manager,
 ):
     """Test that max_roi_count parameter is correctly applied to BoxEdit."""
     detector_key = ResultKey(
@@ -591,6 +649,9 @@ def test_custom_max_roi_count(
     data_service[detector_key] = detector_data
 
     # Create params with custom max_roi_count
+    # Create detector pipe
+    detector_pipe = create_detector_pipe(data_service, detector_key)
+
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
     params.roi_options.max_roi_count = 5
 
@@ -598,6 +659,7 @@ def test_custom_max_roi_count(
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
             params=params,
+            detector_pipe=detector_pipe,
         )
     )
 
@@ -607,7 +669,12 @@ def test_custom_max_roi_count(
 
 
 def test_stale_readback_filtering(
-    roi_plot_factory, data_service, detector_data, workflow_id, job_number
+    roi_plot_factory,
+    data_service,
+    detector_data,
+    workflow_id,
+    job_number,
+    stream_manager,
 ):
     """Test that backend is the source of truth for ROI state (state-based sync)."""
     from ess.livedata.dashboard.roi_publisher import FakeROIPublisher
@@ -625,12 +692,16 @@ def test_stale_readback_filtering(
     # Populate DataService with detector data
     data_service[detector_key] = detector_data
 
+    # Create detector pipe
+    detector_pipe = create_detector_pipe(data_service, detector_key)
+
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
     _detector_with_boxes, _roi_dmap, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
             params=params,
+            detector_pipe=detector_pipe,
         )
     )
 
@@ -690,7 +761,12 @@ def test_stale_readback_filtering(
 
 
 def test_backend_update_from_another_view(
-    roi_plot_factory, data_service, detector_data, workflow_id, job_number
+    roi_plot_factory,
+    data_service,
+    detector_data,
+    workflow_id,
+    job_number,
+    stream_manager,
 ):
     """Test that backend updates from other clients are applied correctly."""
     from ess.livedata.dashboard.roi_publisher import FakeROIPublisher
@@ -708,12 +784,16 @@ def test_backend_update_from_another_view(
     # Populate DataService with detector data
     data_service[detector_key] = detector_data
 
+    # Create detector pipe
+    detector_pipe = create_detector_pipe(data_service, detector_key)
+
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
     _detector_with_boxes, _roi_dmap, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
             params=params,
+            detector_pipe=detector_pipe,
         )
     )
 

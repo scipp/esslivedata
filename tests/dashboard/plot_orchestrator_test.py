@@ -87,11 +87,12 @@ class CallbackCapture:
 class FakePlottingController:
     """Fake PlottingController for testing."""
 
-    def __init__(self):
+    def __init__(self, data_service=None):
         self._should_raise = False
         self._exception_to_raise = None
         self._plot_object = FakePlot()
         self._calls: list[dict] = []
+        self._data_service = data_service
 
     def create_plot(
         self,
@@ -142,12 +143,17 @@ class FakePlottingController:
         output_name: str | None,
         plot_name: str,
         params: dict,
+        on_first_data,
     ):
-        """Fake setup_data_pipeline for testing two-phase plot creation."""
+        """Fake setup_data_pipeline that uses real DataService with callback."""
         from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.dashboard.data_subscriber import (
+            DataSubscriber,
+            MergingStreamAssembler,
+        )
         from ess.livedata.dashboard.extractors import LatestValueExtractor
 
-        # Create fake subscriber and pipe
+        # Build result keys
         keys = [
             ResultKey(
                 workflow_id=workflow_id,
@@ -157,34 +163,29 @@ class FakePlottingController:
             for source_name in source_names
         ]
 
-        class FakeSubscriber:
-            """Fake data subscriber for testing."""
+        # Create extractors and assembler
+        extractors = {key: LatestValueExtractor() for key in keys}
+        assembler = MergingStreamAssembler(set(keys))
 
-            def __init__(self, keys_to_monitor):
-                self._keys = keys_to_monitor
-                self._extractors = {
-                    key: LatestValueExtractor() for key in keys_to_monitor
-                }
+        # Create pipe factory
+        def pipe_factory(data):
+            class FakePipe:
+                """Fake pipe for testing."""
 
-            @property
-            def keys(self):
-                return set(self._keys)
+                def __init__(self, initial_data):
+                    self.data = initial_data
 
-            @property
-            def extractors(self):
-                return self._extractors
+                def send(self, data):
+                    self.data = data
 
-            def trigger(self, store):
-                pass
+            return FakePipe(data)
 
-        class FakePipe:
-            """Fake pipe with data dictionary."""
+        # Create subscriber with callback and register with DataService
+        subscriber = DataSubscriber(assembler, pipe_factory, extractors, on_first_data)
 
-            @property
-            def data(self):
-                return {}
-
-        return FakeSubscriber(keys), FakePipe(), keys
+        # Register subscriber with DataService if available
+        if self._data_service is not None:
+            self._data_service.register_subscriber(subscriber)
 
     def create_plot_from_pipeline(
         self,
@@ -232,9 +233,9 @@ def plot_cell(plot_config):
 
 
 @pytest.fixture
-def fake_plotting_controller():
-    """Create a FakePlottingController."""
-    return FakePlottingController()
+def fake_plotting_controller(fake_data_service):
+    """Create a FakePlottingController with DataService."""
+    return FakePlottingController(data_service=fake_data_service)
 
 
 @pytest.fixture
@@ -1295,17 +1296,25 @@ class TestLateSubscriberPlotRetrieval:
 
         # Create plotting controller that raises exception
         class FailingPlottingController:
+            def __init__(self, data_service):
+                self._data_service = data_service
+
             def create_plot(self, **kwargs):
                 raise ValueError("Plot creation failed")
 
             def setup_data_pipeline(self, **kwargs):
                 from ess.livedata.config.workflow_spec import JobId, ResultKey
+                from ess.livedata.dashboard.data_subscriber import (
+                    DataSubscriber,
+                    MergingStreamAssembler,
+                )
                 from ess.livedata.dashboard.extractors import LatestValueExtractor
 
                 workflow_id = kwargs['workflow_id']
                 job_number = kwargs['job_number']
                 source_names = kwargs['source_names']
                 output_name = kwargs['output_name']
+                on_first_data = kwargs['on_first_data']
 
                 keys = [
                     ResultKey(
@@ -1316,36 +1325,30 @@ class TestLateSubscriberPlotRetrieval:
                     for source_name in source_names
                 ]
 
-                class FakeSubscriber:
-                    def __init__(self, keys_to_monitor):
-                        self._keys = keys_to_monitor
-                        self._extractors = {
-                            key: LatestValueExtractor() for key in keys_to_monitor
-                        }
+                # Create pipe factory
+                def pipe_factory(data):
+                    class FakePipe:
+                        def __init__(self, initial_data):
+                            self.data = initial_data
 
-                    @property
-                    def keys(self):
-                        return set(self._keys)
+                        def send(self, data):
+                            self.data = data
 
-                    @property
-                    def extractors(self):
-                        return self._extractors
+                    return FakePipe(data)
 
-                    def trigger(self, store):
-                        pass
-
-                class FakePipe:
-                    @property
-                    def data(self):
-                        return {}
-
-                return FakeSubscriber(keys), FakePipe(), keys
+                # Create and register subscriber with callback
+                extractors = {key: LatestValueExtractor() for key in keys}
+                assembler = MergingStreamAssembler(set(keys))
+                subscriber = DataSubscriber(
+                    assembler, pipe_factory, extractors, on_first_data
+                )
+                self._data_service.register_subscriber(subscriber)
 
             def create_plot_from_pipeline(self, **kwargs):
                 raise ValueError("Plot creation failed")
 
         plot_orchestrator = PlotOrchestrator(
-            plotting_controller=FailingPlottingController(),
+            plotting_controller=FailingPlottingController(fake_data_service),
             job_orchestrator=job_orchestrator,
             data_service=fake_data_service,
             config_store=None,

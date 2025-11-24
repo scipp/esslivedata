@@ -548,6 +548,7 @@ class ROIDetectorPlotFactory:
         self,
         detector_key: ResultKey,
         params: PlotParamsROIDetector,
+        detector_pipe: hv.streams.Pipe,
     ) -> tuple[hv.DynamicMap, hv.DynamicMap, ROIPlotState]:
         """
         Create ROI detector plot components without layout assembly.
@@ -563,16 +564,16 @@ class ROIDetectorPlotFactory:
         Initial ROI configurations are automatically loaded from DataService via
         the ROI readback subscription if available.
 
-        The detector data must be present in DataService at detector_key before
-        calling this method, as it will be accessed via extractors.
-
         Parameters
         ----------
         detector_key:
-            ResultKey identifying the detector output. The detector data must
-            already be present in DataService at this key.
+            ResultKey identifying the detector output.
         params:
             The plotter parameters (PlotParamsROIDetector).
+        detector_pipe:
+            Pre-configured pipe for detector data with data already present.
+            This pipe should have been created by the caller using proper
+            extractors (via create_extractors_from_params).
 
         Returns
         -------
@@ -582,11 +583,8 @@ class ROIDetectorPlotFactory:
         if not isinstance(params, PlotParamsROIDetector):
             raise TypeError("roi_detector requires PlotParamsROIDetector")
 
-        # FIXME: Memory leak - subscribers registered via stream_manager are never
-        # unregistered. When this plot is closed, the subscriber remains in
-        # DataService._subscribers, preventing garbage collection of plot components.
-        extractors = {detector_key: LatestValueExtractor()}
-        merged_detector_pipe = self._stream_manager.make_merging_stream(extractors)
+        # Detector subscription is managed by the caller and passed via detector_pipe.
+        # This factory only creates spectrum and readback subscriptions.
 
         detector_plotter = ImagePlotter(
             value_margin_factor=0.1,
@@ -595,10 +593,10 @@ class ROIDetectorPlotFactory:
             scale_opts=params.plot_scale,
         )
         # Use extracted data from pipe for plotter initialization
-        detector_plotter.initialize_from_data(merged_detector_pipe.data)
+        detector_plotter.initialize_from_data(detector_pipe.data)
 
         detector_dmap = hv.DynamicMap(
-            detector_plotter, streams=[merged_detector_pipe], cache_size=1
+            detector_plotter, streams=[detector_pipe], cache_size=1
         ).opts(shared_axes=False)
 
         # Get color cycle for ROI styling
@@ -654,7 +652,7 @@ class ROIDetectorPlotFactory:
         )
 
         # Extract coordinate units from the extracted detector data in pipe
-        detector_data = merged_detector_pipe.data[detector_key]
+        detector_data = detector_pipe.data[detector_key]
         x_dim, y_dim = detector_data.dims[1], detector_data.dims[0]
         x_unit = self._extract_unit_for_dim(detector_data, x_dim)
         y_unit = self._extract_unit_for_dim(detector_data, y_dim)
