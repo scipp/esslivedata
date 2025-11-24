@@ -25,6 +25,8 @@ import pydantic
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 from .config_store import ConfigStore
+from .data_service import DataService
+from .job_service import JobService
 from .plotting_controller import PlottingController
 
 if TYPE_CHECKING:
@@ -190,8 +192,8 @@ class PlotOrchestrator:
         *,
         plotting_controller: PlottingController,
         job_orchestrator: JobOrchestratorProtocol,
-        data_service,  # DataService (avoiding circular import)
-        job_service,  # JobService (avoiding circular import)
+        data_service: DataService,
+        job_service: JobService,
         config_store: ConfigStore | None = None,
     ) -> None:
         """
