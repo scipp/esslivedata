@@ -123,6 +123,53 @@ class JobOrchestrator:
         # Load persisted configs
         self._load_configs_from_store()
 
+    def _serialize_job_set(self, job_set: JobSet) -> dict:
+        """Serialize a JobSet to a dict for storage.
+
+        Parameters
+        ----------
+        job_set
+            The JobSet to serialize.
+
+        Returns
+        -------
+        :
+            Dict representation of the JobSet.
+        """
+        return {
+            'job_number': str(job_set.job_number),
+            'jobs': {
+                source_name: {
+                    'params': job_config.params,
+                    'aux_source_names': job_config.aux_source_names,
+                }
+                for source_name, job_config in job_set.jobs.items()
+            },
+        }
+
+    def _deserialize_job_set(self, data: dict) -> JobSet:
+        """Deserialize a JobSet from stored dict.
+
+        Parameters
+        ----------
+        data
+            Dict representation of a JobSet.
+
+        Returns
+        -------
+        :
+            Reconstructed JobSet.
+        """
+        job_number = UUID(data['job_number'])
+        jobs = {
+            source_name: JobConfig(
+                params=job_data['params'],
+                aux_source_names=job_data['aux_source_names'],
+            )
+            for source_name, job_data in data['jobs'].items()
+        }
+        return JobSet(job_number=job_number, jobs=jobs)
+
     def _load_configs_from_store(self) -> None:
         """Initialize all workflows with either loaded configs or defaults from spec."""
         for workflow_id, spec in self._workflow_registry.items():
@@ -170,18 +217,55 @@ class JobOrchestrator:
                 )
 
             # Initialize staged_jobs with dict-based configs
+            state = WorkflowState()
             if params:
-                state = WorkflowState()
                 for source_name in source_names:
                     state.staged_jobs[source_name] = JobConfig(
                         params=params.copy(),
                         aux_source_names=aux_source_names.copy(),
                     )
-                self._workflows[workflow_id] = state
-            else:
-                # Workflow has no params - create empty WorkflowState
-                self._workflows[workflow_id] = WorkflowState()
-                self._logger.debug('Initialized workflow %s (no params)', workflow_id)
+
+            # Restore active job state if present
+            if config_data:
+                if current_data := config_data.get('current_job'):
+                    try:
+                        state.current = self._deserialize_job_set(current_data)
+                        self._logger.info(
+                            'Restored active job for workflow %s: job_number=%s',
+                            workflow_id,
+                            state.current.job_number,
+                        )
+                    except (KeyError, ValueError, TypeError) as e:
+                        self._logger.warning(
+                            'Failed to restore active job for workflow %s: %s',
+                            workflow_id,
+                            e,
+                        )
+
+                if previous_data := config_data.get('previous_job'):
+                    try:
+                        state.previous = self._deserialize_job_set(previous_data)
+                        self._logger.debug(
+                            'Restored previous job for workflow %s: job_number=%s',
+                            workflow_id,
+                            state.previous.job_number,
+                        )
+                    except (KeyError, ValueError, TypeError) as e:
+                        self._logger.warning(
+                            'Failed to restore previous job for workflow %s: %s',
+                            workflow_id,
+                            e,
+                        )
+
+            self._workflows[workflow_id] = state
+
+            # Notify subscribers if workflow has an active job
+            if state.current is not None:
+                self._logger.info(
+                    'Workflow %s has restored active job, will notify subscribers',
+                    workflow_id,
+                )
+                self._notify_workflow_available(workflow_id, state.current.job_number)
 
     def clear_staged_configs(self, workflow_id: WorkflowId) -> None:
         """
@@ -300,8 +384,8 @@ class JobOrchestrator:
         # Set as current JobSet
         state.current = job_set
 
-        # Persist staged configs to store (keeping staged_jobs as working copy)
-        self._persist_config_to_store(workflow_id, state.staged_jobs)
+        # Persist full state (staged configs + active jobs) to store
+        self._persist_state_to_store(workflow_id)
 
         # Notify subscribers immediately that job is active
         self._logger.info(
@@ -314,6 +398,63 @@ class JobOrchestrator:
         # Return JobIds for all created jobs
         return job_set.job_ids()
 
+    def _persist_state_to_store(self, workflow_id: WorkflowId) -> None:
+        """Persist full workflow state (config + active jobs) to config store.
+
+        Returns silently if config_store is None (persistence is optional).
+        """
+        if self._config_store is None:
+            self._logger.debug('No config store - skipping persistence')
+            return
+
+        state = self._workflows.get(workflow_id)
+        if state is None:
+            self._logger.warning(
+                'No state for workflow %s - skipping persistence', workflow_id
+            )
+            return
+
+        # Build config dict from staged_jobs if present
+        config_dict = {}
+        if state.staged_jobs:
+            source_names = list(state.staged_jobs.keys())
+            first_job_config = next(iter(state.staged_jobs.values()))
+            config_dict = {
+                'source_names': source_names,
+                'params': first_job_config.params,
+                'aux_source_names': first_job_config.aux_source_names,
+            }
+            self._logger.debug(
+                'Built config dict from %d staged jobs', len(source_names)
+            )
+
+        # Add active job state
+        if state.current is not None:
+            config_dict['current_job'] = self._serialize_job_set(state.current)
+            self._logger.debug(
+                'Added current_job to config dict: %s', state.current.job_number
+            )
+
+        if state.previous is not None:
+            config_dict['previous_job'] = self._serialize_job_set(state.previous)
+            self._logger.debug(
+                'Added previous_job to config dict: %s', state.previous.job_number
+            )
+
+        # Only persist if we have something to save
+        if config_dict:
+            self._config_store[workflow_id] = config_dict
+            self._logger.info(
+                'Persisted state for workflow %s to store '
+                '(staged=%d, current=%s, previous=%s)',
+                workflow_id,
+                len(state.staged_jobs),
+                state.current.job_number if state.current else None,
+                state.previous.job_number if state.previous else None,
+            )
+        else:
+            self._logger.warning('No config to persist for workflow %s', workflow_id)
+
     def _persist_config_to_store(
         self, workflow_id: WorkflowId, staged_jobs: dict[SourceName, JobConfig]
     ) -> None:
@@ -321,6 +462,9 @@ class JobOrchestrator:
 
         Returns silently if config_store is None (persistence is optional)
         or if staged_jobs is empty (nothing to persist).
+
+        Note: This is a legacy method. New code should use _persist_state_to_store
+        which persists both config and active job state.
         """
         if self._config_store is None or not staged_jobs:
             return
