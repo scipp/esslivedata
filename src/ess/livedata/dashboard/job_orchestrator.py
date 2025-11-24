@@ -106,11 +106,6 @@ class JobOrchestrator:
         config_store
             Optional store for persisting workflow configurations across sessions.
             Orchestrator loads configs on init and persists on commit.
-
-        Notes
-        -----
-        JobOrchestrator receives job status updates via the `status_updated` method,
-        which is called by the main Orchestrator when STATUS_STREAM messages arrive.
         """
         self._command_service = command_service
         self._workflow_config_service = workflow_config_service
@@ -454,8 +449,7 @@ class JobOrchestrator:
 
         The callback will be called with the job_number when:
         1. A workflow is committed (immediately after commit)
-        2. A running job is discovered via status_updated()
-        3. Immediately if subscribing and workflow already has an active job
+        2. Immediately if subscribing and workflow already has an active job
 
         Parameters
         ----------
