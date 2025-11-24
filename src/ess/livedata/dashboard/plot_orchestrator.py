@@ -291,41 +291,10 @@ class PlotOrchestrator:
         cell_id = CellId(uuid4())
         grid = self._grids[grid_id]
         grid.cells[cell_id] = cell
-
-        # Map cell to its grid for fast lookup
         self._cell_to_grid[cell_id] = grid_id
 
-        # Subscribe to workflow availability and store subscription ID
-        # Note: If workflow is already running, JobOrchestrator will call
-        # the callback immediately during subscription
-        callback_was_called = [False]  # Use list to allow modification in lambda
-
-        def on_workflow_available(job_number: JobNumber) -> None:
-            callback_was_called[0] = True
-            self._on_job_available(cell_id, job_number)
-
-        subscription_id = self._job_orchestrator.subscribe_to_workflow(
-            workflow_id=cell.config.workflow_id,
-            callback=on_workflow_available,
-        )
-        self._cell_to_subscription[cell_id] = subscription_id
-
-        self._persist_to_store()
-        self._logger.info(
-            'Added plot cell_id=%s to grid_id=%s at (%d,%d) for '
-            'workflow=%s, subscription_id=%s',
-            cell_id,
-            grid_id,
-            cell.geometry.row,
-            cell.geometry.col,
-            cell.config.workflow_id,
-            subscription_id,
-        )
-
-        # If callback wasn't called immediately (workflow not running yet),
-        # notify that cell was added without a plot
-        if not callback_was_called[0]:
-            self._notify_cell_updated(grid_id, cell_id, cell)
+        # Subscribe to workflow
+        self._subscribe_and_setup(grid_id, cell_id, cell.config.workflow_id)
 
         return cell_id
 
@@ -431,30 +400,50 @@ class PlotOrchestrator:
         # Clear stored state since config changed (new plot will be created)
         self._cell_state.pop(cell_id, None)
 
-        # Re-subscribe to workflow (in case workflow_id changed)
-        # Note: If workflow is already running, JobOrchestrator will call
-        # the callback immediately during subscription
-        callback_was_called = [False]  # Use list to allow modification in lambda
+        # Re-subscribe to workflow
+        self._subscribe_and_setup(grid_id, cell_id, new_config.workflow_id)
+
+    def _subscribe_and_setup(
+        self, grid_id: GridId, cell_id: CellId, workflow_id: WorkflowId
+    ) -> None:
+        """
+        Subscribe to workflow availability and set up initial notification.
+
+        If the workflow is not yet running, notifies subscribers that the cell
+        is waiting for data. If the workflow is already running, the callback
+        will be triggered immediately. Persists configuration to store.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid containing the cell.
+        cell_id
+            ID of the cell to set up.
+        workflow_id
+            ID of the workflow to subscribe to.
+        """
+        # Track whether callback was called immediately (workflow already running)
+        callback_was_called = [False]
 
         def on_workflow_available(job_number: JobNumber) -> None:
             callback_was_called[0] = True
             self._on_job_available(cell_id, job_number)
 
+        # Subscribe to workflow availability
         subscription_id = self._job_orchestrator.subscribe_to_workflow(
-            workflow_id=new_config.workflow_id,
+            workflow_id=workflow_id,
             callback=on_workflow_available,
         )
         self._cell_to_subscription[cell_id] = subscription_id
 
-        # Persist updated configuration
-        self._persist_to_store()
-
-        self._logger.info('Updated plot config for cell %s', cell_id)
-
         # If callback wasn't called immediately (workflow not running yet),
-        # notify that cell was updated without a plot
+        # notify that cell is waiting for workflow data
         if not callback_was_called[0]:
+            cell = self._grids[grid_id].cells[cell_id]
             self._notify_cell_updated(grid_id, cell_id, cell)
+
+        # Persist updated state
+        self._persist_to_store()
 
     def _on_job_available(self, cell_id: CellId, job_number: JobNumber) -> None:
         """
