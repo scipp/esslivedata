@@ -70,9 +70,6 @@ def get_batch_calls(sink: FakeMessageSink) -> list[int]:
     return [len(messages) for messages in sink.published_messages]
 
 
-# FakeWorkflowConfigService is now defined in conftest.py
-
-
 @pytest.fixture
 def source_names() -> list[str]:
     """Test source names."""
