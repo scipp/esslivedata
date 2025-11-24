@@ -406,7 +406,7 @@ class JobOrchestrator:
         job_number
             The job number for the new JobSet.
         """
-        for subscription_id in self._workflow_subscriptions[workflow_id]:
+        for subscription_id in self._workflow_subscriptions.get(workflow_id, set()):
             if subscription_id in self._subscriptions:
                 try:
                     self._logger.debug(
