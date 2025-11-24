@@ -331,8 +331,6 @@ class JobOrchestrator:
         # Take params from first source (all should be same in current implementation)
         first_job_config = next(iter(staged_jobs.values()))
 
-        # Params and aux_source_names are already JSON-serializable (Enums converted
-        # to strings via model_dump(mode='json') in workflow_controller.start_workflow)
         config_dict = {
             'source_names': source_names,
             'params': first_job_config.params,
@@ -408,22 +406,6 @@ class JobOrchestrator:
         job_number
             The job number for the new JobSet.
         """
-        if workflow_id not in self._workflow_subscriptions:
-            self._logger.debug(
-                'No subscribers for workflow %s (job_number=%s)',
-                workflow_id,
-                job_number,
-            )
-            return
-
-        subscriber_count = len(self._workflow_subscriptions[workflow_id])
-        self._logger.info(
-            'Notifying %d subscriber(s) that workflow %s is available (job_number=%s)',
-            subscriber_count,
-            workflow_id,
-            job_number,
-        )
-
         for subscription_id in self._workflow_subscriptions[workflow_id]:
             if subscription_id in self._subscriptions:
                 try:
