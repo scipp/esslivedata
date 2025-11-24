@@ -538,17 +538,6 @@ class PlotOrchestrator:
                             s for s in cell.config.source_names if s in job_data
                         ]
                         if available_sources:
-                            self._logger.debug(
-                                'Data arrived, %d/%d required sources available '
-                                '(job=%s, available=%s, required=%s), creating plot '
-                                'for cell=%s',
-                                len(available_sources),
-                                len(cell.config.source_names),
-                                job_number,
-                                available_sources,
-                                cell.config.source_names,
-                                cell_id,
-                            )
                             # At least one required source available! Create plot
                             # Plot will update automatically as more sources arrive
                             self._create_plot_for_cell(cell_id, job_number)
@@ -578,17 +567,6 @@ class PlotOrchestrator:
         """
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
-
-        self._logger.debug(
-            'Creating plot for cell_id=%s, grid_id=%s, workflow=%s, '
-            'job_number=%s, plot_name=%s, source_names=%s',
-            cell_id,
-            grid_id,
-            cell.config.workflow_id,
-            job_number,
-            cell.config.plot_name,
-            cell.config.source_names,
-        )
 
         # Create plot and notify subscribers
         try:

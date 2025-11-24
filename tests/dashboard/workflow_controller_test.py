@@ -14,10 +14,11 @@ from ess.livedata.config.workflow_spec import (
 from ess.livedata.core.message import COMMANDS_STREAM_ID
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.configuration_adapter import ConfigurationState
-from ess.livedata.dashboard.workflow_config_service import WorkflowConfigService
 from ess.livedata.dashboard.workflow_controller import WorkflowController
 from ess.livedata.fakes import FakeMessageSink
 from ess.livedata.handlers.config_handler import ConfigUpdate
+
+from .conftest import FakeWorkflowConfigService
 
 
 class WorkflowControllerFixture(NamedTuple):
@@ -69,12 +70,7 @@ def get_batch_calls(sink: FakeMessageSink) -> list[int]:
     return [len(messages) for messages in sink.published_messages]
 
 
-class FakeWorkflowConfigService(WorkflowConfigService):
-    """Fake service for testing WorkflowController."""
-
-    def subscribe_to_workflow_status(self, source_name: str, callback) -> None:
-        """No-op implementation for testing."""
-        pass
+# FakeWorkflowConfigService is now defined in conftest.py
 
 
 @pytest.fixture
@@ -124,12 +120,6 @@ def fake_message_sink() -> FakeMessageSink:
 def command_service(fake_message_sink: FakeMessageSink) -> CommandService:
     """Create a command service with fake sink."""
     return CommandService(sink=fake_message_sink)
-
-
-@pytest.fixture
-def fake_workflow_config_service() -> FakeWorkflowConfigService:
-    """Fake workflow config service for testing."""
-    return FakeWorkflowConfigService()
 
 
 @pytest.fixture

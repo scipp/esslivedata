@@ -17,9 +17,10 @@ from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.config_store import FileBackedConfigStore
 from ess.livedata.dashboard.configuration_adapter import ConfigurationState
 from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
-from ess.livedata.dashboard.workflow_config_service import WorkflowConfigService
 from ess.livedata.fakes import FakeMessageSink
 from ess.livedata.handlers.config_handler import ConfigUpdate
+
+from .conftest import FakeWorkflowConfigService
 
 
 class WorkflowParams(pydantic.BaseModel):
@@ -144,19 +145,6 @@ def workflow_with_enum_params() -> WorkflowSpec:
         source_names=["det_1"],
         params=ParamsWithEnum,
     )
-
-
-class FakeWorkflowConfigService(WorkflowConfigService):
-    """Minimal fake for WorkflowConfigService."""
-
-    def subscribe_to_workflow_status(self, source_name, callback):
-        pass
-
-
-@pytest.fixture
-def fake_workflow_config_service() -> FakeWorkflowConfigService:
-    """Create a fake workflow config service for tests."""
-    return FakeWorkflowConfigService()
 
 
 def get_sent_commands(sink: FakeMessageSink) -> list[tuple[ConfigKey, Any]]:
