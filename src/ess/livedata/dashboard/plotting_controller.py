@@ -405,15 +405,6 @@ class PlottingController:
             spec = plotter_registry.get_spec(plot_name)
             params = spec.params(**params) if spec.params else pydantic.BaseModel()
 
-        # Save config
-        self._save_plotting_config(
-            workflow_id=workflow_id,
-            source_names=source_names,
-            output_name=output_name,
-            plot_name=plot_name,
-            params=params,
-        )
-
         # Build result keys for all sources
         keys = [
             ResultKey(
