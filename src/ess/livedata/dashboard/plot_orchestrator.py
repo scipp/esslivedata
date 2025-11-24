@@ -436,8 +436,9 @@ class PlotOrchestrator:
         )
         self._cell_to_subscription[cell_id] = subscription_id
 
-        # If callback wasn't called immediately (workflow not running yet),
-        # notify that cell is waiting for workflow data
+        # Case 1: Workflow doesn't exist yet
+        # Notify UI that cell is waiting for workflow to be committed.
+        # When workflow starts, _on_job_available will be called (see case 2 there).
         if not callback_was_called[0]:
             cell = self._grids[grid_id].cells[cell_id]
             self._notify_cell_updated(grid_id, cell_id, cell)
@@ -513,7 +514,10 @@ class PlotOrchestrator:
             self._notify_cell_updated(grid_id, cell_id, cell, error=error_msg)
             return
 
-        # Check if callback already ran (data was already present)
+        # Case 2: Workflow exists but data hasn't arrived yet
+        # Notify UI that cell is waiting for first data to arrive.
+        # When data arrives, on_data_arrived callback above will notify with the plot.
+        # (If data was already present, on_data_arrived ran and stored state)
         if cell_id not in self._cell_state:
             self._notify_cell_updated(grid_id, cell_id, cell)
 
