@@ -156,9 +156,6 @@ class DashboardServices:
             workflow_registry=self.processor_factory,
             config_store=self.workflow_config_store,
         )
-        # Connect job_orchestrator to main orchestrator for STATUS_STREAM forwarding
-        self.orchestrator._job_orchestrator = self.job_orchestrator
-
         self.workflow_controller = WorkflowController(
             job_orchestrator=self.job_orchestrator,
             workflow_registry=self.processor_factory,
