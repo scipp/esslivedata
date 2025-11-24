@@ -6,7 +6,6 @@ JobOrchestrator - Manages workflow job lifecycle and state transitions.
 Coordinates workflow execution across multiple sources, handling:
 - Configuration staging and commit (two-phase workflow start)
 - Job number generation and JobSet lifecycle
-- Workflow status tracking and aggregation
 - Job transitions and cleanup
 """
 
@@ -319,72 +318,6 @@ class JobOrchestrator:
 
         # Return JobIds for all created jobs
         return job_set.job_ids()
-
-    def status_updated(self, job_status: object) -> None:
-        """
-        Process job status updates from the STATUS_STREAM.
-
-        This method is called by the main Orchestrator when STATUS_STREAM messages
-        arrive. When we discover an active job we didn't know about (e.g., dashboard
-        reconnecting to a running backend), we notify subscribers.
-
-        Parameters
-        ----------
-        job_status
-            JobStatus object from the STATUS_STREAM.
-
-        Notes
-        -----
-        Future: Full state machine for job lifecycle tracking:
-        - Aggregate per-source status to JobSet state
-        - Confirm job starts/stops
-        - Handle failures and retries
-        - Manage transitions between old and new JobSets
-        """
-        from ess.livedata.core.job import JobState, JobStatus
-
-        self._logger.debug('Received job status: %s', job_status)
-
-        # Type guard - only process JobStatus objects
-        if not isinstance(job_status, JobStatus):
-            self._logger.warning(
-                'Received non-JobStatus object in status_updated: %s', type(job_status)
-            )
-            return
-
-        workflow_id = job_status.workflow_id
-        job_number = job_status.job_id.job_number
-        source_name = job_status.job_id.source_name
-
-        # Only track workflows we know about
-        if workflow_id not in self._workflows:
-            self._logger.debug('Ignoring status for untracked workflow %s', workflow_id)
-            return
-
-        state = self._workflows[workflow_id]
-
-        # If we receive an active/scheduled status and don't have a current job,
-        # or have a different job number, update our state and notify subscribers
-        if job_status.state in (JobState.active, JobState.scheduled):
-            # Check if this is a new job we didn't know about
-            if state.current is None or state.current.job_number != job_number:
-                self._logger.info(
-                    'Discovered running job for workflow %s: job_number=%s '
-                    'from source=%s (previous job_number=%s)',
-                    workflow_id,
-                    job_number,
-                    source_name,
-                    state.current.job_number if state.current else None,
-                )
-
-                # Create a JobSet to track this running job
-                # Note: We don't know all sources yet, but that's OK - subscribers
-                # will request specific sources they need
-                job_set = JobSet(job_number=job_number, jobs={})
-                state.current = job_set
-
-                # Notify subscribers that job is active
-                self._notify_workflow_available(workflow_id, job_number)
 
     def _persist_config_to_store(
         self, workflow_id: WorkflowId, staged_jobs: dict[SourceName, JobConfig]

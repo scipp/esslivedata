@@ -73,10 +73,8 @@ class Orchestrator:
             The data to be forwarded.
         """
         if stream_id == STATUS_STREAM_ID:
-            # Forward job status to both JobService and JobOrchestrator
+            # Forward job status to JobService (legacy)
             self._job_service.status_updated(value)
-            if self._job_orchestrator is not None:
-                self._job_orchestrator.status_updated(value)
         elif stream_id == RESPONSES_STREAM_ID:
             if self._workflow_config_service is not None:
                 self._workflow_config_service.process_response(value)
