@@ -19,6 +19,7 @@ from typing import NewType
 from uuid import UUID
 
 import pydantic
+from pydantic import BaseModel, Field
 
 import ess.livedata.config.keys as keys
 from ess.livedata.config.models import ConfigKey
@@ -39,24 +40,22 @@ SourceName = str
 SubscriptionId = NewType('SubscriptionId', UUID)
 
 
-@dataclass
-class JobConfig:
+class JobConfig(BaseModel):
     """Configuration for a single job within a JobSet."""
 
     params: dict
     aux_source_names: dict
 
 
-@dataclass
-class JobSet:
+class JobSet(BaseModel):
     """A set of jobs sharing the same job_number.
 
     Maps source_name to config for each running job.
     JobId can be reconstructed as JobId(source_name, job_number).
     """
 
-    job_number: JobNumber = field(default_factory=uuid.uuid4)
-    jobs: dict[SourceName, JobConfig] = field(default_factory=dict)
+    job_number: JobNumber = Field(default_factory=uuid.uuid4)
+    jobs: dict[SourceName, JobConfig] = Field(default_factory=dict)
 
     def job_ids(self) -> list[JobId]:
         """Create JobIds for all jobs in this set.
@@ -123,53 +122,6 @@ class JobOrchestrator:
         # Load persisted configs
         self._load_configs_from_store()
 
-    def _serialize_job_set(self, job_set: JobSet) -> dict:
-        """Serialize a JobSet to a dict for storage.
-
-        Parameters
-        ----------
-        job_set
-            The JobSet to serialize.
-
-        Returns
-        -------
-        :
-            Dict representation of the JobSet.
-        """
-        return {
-            'job_number': str(job_set.job_number),
-            'jobs': {
-                source_name: {
-                    'params': job_config.params,
-                    'aux_source_names': job_config.aux_source_names,
-                }
-                for source_name, job_config in job_set.jobs.items()
-            },
-        }
-
-    def _deserialize_job_set(self, data: dict) -> JobSet:
-        """Deserialize a JobSet from stored dict.
-
-        Parameters
-        ----------
-        data
-            Dict representation of a JobSet.
-
-        Returns
-        -------
-        :
-            Reconstructed JobSet.
-        """
-        job_number = UUID(data['job_number'])
-        jobs = {
-            source_name: JobConfig(
-                params=job_data['params'],
-                aux_source_names=job_data['aux_source_names'],
-            )
-            for source_name, job_data in data['jobs'].items()
-        }
-        return JobSet(job_number=job_number, jobs=jobs)
-
     def _load_configs_from_store(self) -> None:
         """Initialize all workflows with either loaded configs or defaults from spec."""
         for workflow_id, spec in self._workflow_registry.items():
@@ -229,12 +181,7 @@ class JobOrchestrator:
             if config_data:
                 if current_data := config_data.get('current_job'):
                     try:
-                        state.current = self._deserialize_job_set(current_data)
-                        self._logger.info(
-                            'Restored active job for workflow %s: job_number=%s',
-                            workflow_id,
-                            state.current.job_number,
-                        )
+                        state.current = JobSet.model_validate(current_data)
                     except (KeyError, ValueError, TypeError) as e:
                         self._logger.warning(
                             'Failed to restore active job for workflow %s: %s',
@@ -244,12 +191,7 @@ class JobOrchestrator:
 
                 if previous_data := config_data.get('previous_job'):
                     try:
-                        state.previous = self._deserialize_job_set(previous_data)
-                        self._logger.debug(
-                            'Restored previous job for workflow %s: job_number=%s',
-                            workflow_id,
-                            state.previous.job_number,
-                        )
+                        state.previous = JobSet.model_validate(previous_data)
                     except (KeyError, ValueError, TypeError) as e:
                         self._logger.warning(
                             'Failed to restore previous job for workflow %s: %s',
@@ -259,13 +201,9 @@ class JobOrchestrator:
 
             self._workflows[workflow_id] = state
 
-            # Notify subscribers if workflow has an active job
-            if state.current is not None:
-                self._logger.info(
-                    'Workflow %s has restored active job, will notify subscribers',
-                    workflow_id,
-                )
-                self._notify_workflow_available(workflow_id, state.current.job_number)
+            # Note: No need to notify subscribers here - none exist during __init__.
+            # Future subscribers are notified via subscribe_to_workflow(), which
+            # checks for existing active jobs and notifies immediately.
 
     def clear_staged_configs(self, workflow_id: WorkflowId) -> None:
         """
@@ -404,14 +342,10 @@ class JobOrchestrator:
         Returns silently if config_store is None (persistence is optional).
         """
         if self._config_store is None:
-            self._logger.debug('No config store - skipping persistence')
             return
 
         state = self._workflows.get(workflow_id)
         if state is None:
-            self._logger.warning(
-                'No state for workflow %s - skipping persistence', workflow_id
-            )
             return
 
         # Build config dict from staged_jobs if present
@@ -424,69 +358,17 @@ class JobOrchestrator:
                 'params': first_job_config.params,
                 'aux_source_names': first_job_config.aux_source_names,
             }
-            self._logger.debug(
-                'Built config dict from %d staged jobs', len(source_names)
-            )
 
         # Add active job state
         if state.current is not None:
-            config_dict['current_job'] = self._serialize_job_set(state.current)
-            self._logger.debug(
-                'Added current_job to config dict: %s', state.current.job_number
-            )
+            config_dict['current_job'] = state.current.model_dump(mode='json')
 
         if state.previous is not None:
-            config_dict['previous_job'] = self._serialize_job_set(state.previous)
-            self._logger.debug(
-                'Added previous_job to config dict: %s', state.previous.job_number
-            )
+            config_dict['previous_job'] = state.previous.model_dump(mode='json')
 
-        # Only persist if we have something to save
+        # Persist if we have something to save
         if config_dict:
             self._config_store[workflow_id] = config_dict
-            self._logger.info(
-                'Persisted state for workflow %s to store '
-                '(staged=%d, current=%s, previous=%s)',
-                workflow_id,
-                len(state.staged_jobs),
-                state.current.job_number if state.current else None,
-                state.previous.job_number if state.previous else None,
-            )
-        else:
-            self._logger.warning('No config to persist for workflow %s', workflow_id)
-
-    def _persist_config_to_store(
-        self, workflow_id: WorkflowId, staged_jobs: dict[SourceName, JobConfig]
-    ) -> None:
-        """Persist staged job configs to config store.
-
-        Returns silently if config_store is None (persistence is optional)
-        or if staged_jobs is empty (nothing to persist).
-
-        Note: This is a legacy method. New code should use _persist_state_to_store
-        which persists both config and active job state.
-        """
-        if self._config_store is None or not staged_jobs:
-            return
-
-        # Contract staged_jobs to storage format
-        # (single params, list of sources - see ConfigurationState schema note)
-        source_names = list(staged_jobs.keys())
-        # Take params from first source (all should be same in current implementation)
-        first_job_config = next(iter(staged_jobs.values()))
-
-        config_dict = {
-            'source_names': source_names,
-            'params': first_job_config.params,
-            'aux_source_names': first_job_config.aux_source_names,
-        }
-
-        self._config_store[workflow_id] = config_dict
-        self._logger.debug(
-            'Persisted config for workflow %s to store: %d sources',
-            workflow_id,
-            len(source_names),
-        )
 
     def get_staged_config(self, workflow_id: WorkflowId) -> dict[SourceName, JobConfig]:
         """
