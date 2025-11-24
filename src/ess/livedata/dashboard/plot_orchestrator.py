@@ -469,15 +469,6 @@ class PlotOrchestrator:
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
-        self._logger.debug(
-            'Setting up data pipeline for cell_id=%s, job_number=%s, '
-            'sources=%s, output=%s',
-            cell_id,
-            job_number,
-            cell.config.source_names,
-            cell.config.output_name,
-        )
-
         def on_data_arrived(pipe) -> None:
             """Create plot when first data arrives for the pipeline."""
             self._logger.debug(
@@ -491,11 +482,6 @@ class PlotOrchestrator:
                     plot_name=cell.config.plot_name,
                     params=cell.config.params,
                     pipe=pipe,
-                )
-                self._logger.debug(
-                    'Successfully created plot for cell_id=%s, type=%s',
-                    cell_id,
-                    type(plot).__name__,
                 )
                 # Store the plot so late subscribers can access it
                 self._cell_state[cell_id] = CellState(plot=plot)
@@ -529,11 +515,6 @@ class PlotOrchestrator:
 
         # Check if callback already ran (data was already present)
         if cell_id not in self._cell_state:
-            self._logger.debug(
-                'Waiting for data for cell_id=%s, job_number=%s',
-                cell_id,
-                job_number,
-            )
             self._notify_cell_updated(grid_id, cell_id, cell)
 
     def _persist_to_store(self) -> None:
