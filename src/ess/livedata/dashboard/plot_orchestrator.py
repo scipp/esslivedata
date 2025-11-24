@@ -25,8 +25,7 @@ import pydantic
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 from .config_store import ConfigStore
-from .data_service import DataService
-from .job_service import JobService
+from .data_service import DataService, DataServiceSubscriber
 from .plotting_controller import PlottingController
 
 if TYPE_CHECKING:
@@ -174,6 +173,54 @@ class CellUpdatedCallback(Protocol):
         """
 
 
+class _DataPipelineMonitor(DataServiceSubscriber):
+    """
+    Monitors a data pipeline for first data arrival.
+
+    Wraps an original subscriber and calls a callback when the first trigger
+    occurs, indicating that data has arrived for the plot.
+    """
+
+    def __init__(
+        self,
+        original_subscriber: DataServiceSubscriber,
+        on_data_arrived: Callable[[], None],
+    ) -> None:
+        """
+        Initialize the monitor.
+
+        Parameters
+        ----------
+        original_subscriber:
+            The DataSubscriber to wrap.
+        on_data_arrived:
+            Callback to invoke when trigger is called.
+        """
+        self._original = original_subscriber
+        self._on_data_arrived = on_data_arrived
+        super().__init__()
+
+    @property
+    def extractors(self):
+        """Delegate to original subscriber."""
+        return self._original.extractors
+
+    def trigger(self, store: dict[Any, Any]) -> None:
+        """
+        Pass through to original and invoke callback if data exists.
+
+        Parameters
+        ----------
+        store:
+            Data store passed by DataService. Only triggers on_data_arrived
+            if the store is non-empty (data is present).
+        """
+        self._original.trigger(store)
+        # Only call the callback if there's actual data
+        if store:
+            self._on_data_arrived()
+
+
 @dataclass
 class LifecycleSubscription:
     """Subscription to plot grid lifecycle events."""
@@ -193,7 +240,6 @@ class PlotOrchestrator:
         plotting_controller: PlottingController,
         job_orchestrator: JobOrchestratorProtocol,
         data_service: DataService,
-        job_service: JobService,
         config_store: ConfigStore | None = None,
     ) -> None:
         """
@@ -206,16 +252,13 @@ class PlotOrchestrator:
         job_orchestrator
             Orchestrator for subscribing to workflow availability.
         data_service
-            DataService for detecting when workflow data arrives.
-        job_service
-            JobService for checking if job data exists.
+            DataService for monitoring data arrival.
         config_store
             Optional store for persisting plot grid configurations across sessions.
         """
         self._plotting_controller = plotting_controller
         self._job_orchestrator = job_orchestrator
         self._data_service = data_service
-        self._job_service = job_service
         self._config_store = config_store
         self._logger = logging.getLogger(__name__)
 
@@ -225,8 +268,8 @@ class PlotOrchestrator:
         self._cell_state: dict[CellId, CellState] = {}
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
 
-        # Track temporary data subscriptions for cells waiting for data
-        self._cell_to_data_callback: dict[CellId, Any] = {}
+        # Track monitoring subscribers for cells waiting for data to arrive
+        self._cell_to_monitoring_subscriber: dict[CellId, _DataPipelineMonitor] = {}
 
     def add_grid(self, title: str, nrows: int, ncols: int) -> GridId:
         """
@@ -354,12 +397,12 @@ class PlotOrchestrator:
         self._job_orchestrator.unsubscribe(self._cell_to_subscription[cell_id])
         del self._cell_to_subscription[cell_id]
 
-        # Clean up temporary data subscription if waiting for data
-        if cell_id in self._cell_to_data_callback:
-            callback = self._cell_to_data_callback.pop(cell_id)
-            self._data_service.unregister_update_callback(callback)
+        # Clean up monitoring subscriber if waiting for data
+        if cell_id in self._cell_to_monitoring_subscriber:
+            monitor = self._cell_to_monitoring_subscriber.pop(cell_id)
+            self._data_service.unregister_subscriber(monitor)
             self._logger.debug(
-                'Cleaned up temporary data subscription for removed cell_id=%s', cell_id
+                'Cleaned up monitoring subscriber for removed cell_id=%s', cell_id
             )
 
         # Remove stored state
@@ -476,9 +519,8 @@ class PlotOrchestrator:
         """
         Handle workflow availability notification from JobOrchestrator.
 
-        Called when a workflow is committed (started or restarted). If data exists,
-        creates the plot immediately. Otherwise, subscribes to DataService and waits
-        for first data to arrive.
+        Sets up the data pipeline immediately and waits for first data arrival.
+        When data arrives, creates the plot.
 
         Parameters
         ----------
@@ -497,100 +539,83 @@ class PlotOrchestrator:
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
-        # Check if job data exists for ANY required source_names
-        # Plots handle partial data gracefully and update as more sources arrive
-        job_data = self._job_service.job_data.get(job_number, {})
-        available_sources = [s for s in cell.config.source_names if s in job_data]
-        if available_sources:
-            self._logger.debug(
-                'Job data exists for %d/%d required sources, creating plot '
-                'for cell_id=%s, job_number=%s, available=%s, required=%s',
-                len(available_sources),
-                len(cell.config.source_names),
-                cell_id,
-                job_number,
-                available_sources,
-                cell.config.source_names,
-            )
-            self._create_plot_for_cell(cell_id, job_number)
-        else:
-            # Data doesn't exist yet - subscribe and wait
-            self._logger.debug(
-                'Job data not yet available for cell_id=%s, job_number=%s, '
-                'subscribing to DataService',
-                cell_id,
-                job_number,
-            )
+        # Phase 1: Set up data pipeline (creates subscriber but not plot)
+        self._logger.debug(
+            'Setting up data pipeline for cell_id=%s, job_number=%s, '
+            'sources=%s, output=%s',
+            cell_id,
+            job_number,
+            cell.config.source_names,
+            cell.config.output_name,
+        )
 
-            def on_data_updated(updated_keys):
-                """Temporary callback that waits for our job's data."""
-                from ess.livedata.config.workflow_spec import ResultKey
-
-                # Check if any updated key matches our job_number
-                for key in updated_keys:
-                    if (
-                        isinstance(key, ResultKey)
-                        and key.job_id.job_number == job_number
-                    ):
-                        # Data arrived - check if ANY required sources exist now
-                        job_data = self._job_service.job_data.get(job_number, {})
-                        available_sources = [
-                            s for s in cell.config.source_names if s in job_data
-                        ]
-                        if available_sources:
-                            # At least one required source available! Create plot
-                            # Plot will update automatically as more sources arrive
-                            self._create_plot_for_cell(cell_id, job_number)
-                            self._data_service.unregister_update_callback(
-                                on_data_updated
-                            )
-                            self._cell_to_data_callback.pop(cell_id, None)
-                        return
-
-            # Register temporary subscription
-            self._data_service.register_update_callback(on_data_updated)
-            self._cell_to_data_callback[cell_id] = on_data_updated
-
-            # Show "waiting for data" state in UI
-            self._notify_cell_updated(grid_id, cell_id, cell)
-
-    def _create_plot_for_cell(self, cell_id: CellId, job_number: JobNumber) -> None:
-        """
-        Create a plot for a cell (helper extracted from _on_job_available).
-
-        Parameters
-        ----------
-        cell_id
-            ID of the plot cell.
-        job_number
-            Job number for the workflow.
-        """
-        grid_id = self._cell_to_grid[cell_id]
-        cell = self._grids[grid_id].cells[cell_id]
-
-        # Create plot and notify subscribers
         try:
-            plot = self._plotting_controller.create_plot(
+            subscriber, pipe, keys = self._plotting_controller.setup_data_pipeline(
                 job_number=job_number,
+                workflow_id=cell.config.workflow_id,
                 source_names=cell.config.source_names,
                 output_name=cell.config.output_name,
                 plot_name=cell.config.plot_name,
                 params=cell.config.params,
             )
-            self._logger.debug(
-                'Successfully created plot for cell_id=%s, type=%s',
-                cell_id,
-                type(plot).__name__,
-            )
-            # Store the plot so late subscribers can access it
-            self._cell_state[cell_id] = CellState(plot=plot)
-            self._notify_cell_updated(grid_id, cell_id, cell, plot=plot)
         except Exception:
             error_msg = traceback.format_exc()
-            self._logger.exception('Failed to create plot for cell_id=%s', cell_id)
-            # Store the error so late subscribers can see it
+            self._logger.exception(
+                'Failed to set up data pipeline for cell_id=%s', cell_id
+            )
             self._cell_state[cell_id] = CellState(error=error_msg)
             self._notify_cell_updated(grid_id, cell_id, cell, error=error_msg)
+            return
+
+        # Phase 2: Monitor for data arrival and create plot when it comes
+        def on_data_arrived() -> None:
+            """Create plot when first data arrives for the pipeline."""
+            self._logger.debug(
+                'Data arrived for cell_id=%s, job_number=%s, creating plot',
+                cell_id,
+                job_number,
+            )
+            # Unregister the monitoring subscriber
+            if cell_id in self._cell_to_monitoring_subscriber:
+                monitor = self._cell_to_monitoring_subscriber.pop(cell_id)
+                self._data_service.unregister_subscriber(monitor)
+
+            # Create the plot with the now-populated pipe
+            try:
+                plot = self._plotting_controller.create_plot_from_pipeline(
+                    plot_name=cell.config.plot_name,
+                    params=cell.config.params,
+                    pipe=pipe,
+                )
+                self._logger.debug(
+                    'Successfully created plot for cell_id=%s, type=%s',
+                    cell_id,
+                    type(plot).__name__,
+                )
+                # Store the plot so late subscribers can access it
+                self._cell_state[cell_id] = CellState(plot=plot)
+                self._notify_cell_updated(grid_id, cell_id, cell, plot=plot)
+            except Exception:
+                error_msg = traceback.format_exc()
+                self._logger.exception('Failed to create plot for cell_id=%s', cell_id)
+                # Store the error so late subscribers can see it
+                self._cell_state[cell_id] = CellState(error=error_msg)
+                self._notify_cell_updated(grid_id, cell_id, cell, error=error_msg)
+
+        # Create monitoring subscriber that wraps the data subscriber
+        monitor = _DataPipelineMonitor(subscriber, on_data_arrived)
+        self._data_service.register_subscriber(monitor)
+        self._cell_to_monitoring_subscriber[cell_id] = monitor
+
+        # Check if data already exists (on_data_arrived was called immediately
+        # by register_subscriber if data exists). If not, show "waiting" state.
+        if cell_id not in self._cell_state:
+            self._logger.debug(
+                'Waiting for data for cell_id=%s, job_number=%s',
+                cell_id,
+                job_number,
+            )
+            self._notify_cell_updated(grid_id, cell_id, cell)
 
     def _persist_to_store(self) -> None:
         """Persist plot grid configurations to config store."""

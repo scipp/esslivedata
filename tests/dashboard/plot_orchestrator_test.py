@@ -134,6 +134,77 @@ class FakePlottingController:
         """Return all recorded create_plot calls."""
         return self._calls.copy()
 
+    def setup_data_pipeline(
+        self,
+        job_number,
+        workflow_id,
+        source_names: list[str],
+        output_name: str | None,
+        plot_name: str,
+        params: dict,
+    ):
+        """Fake setup_data_pipeline for testing two-phase plot creation."""
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        from ess.livedata.dashboard.extractors import LatestValueExtractor
+
+        # Create fake subscriber and pipe
+        keys = [
+            ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(job_number=job_number, source_name=source_name),
+                output_name=output_name,
+            )
+            for source_name in source_names
+        ]
+
+        class FakeSubscriber:
+            """Fake data subscriber for testing."""
+
+            def __init__(self, keys_to_monitor):
+                self._keys = keys_to_monitor
+                self._extractors = {
+                    key: LatestValueExtractor() for key in keys_to_monitor
+                }
+
+            @property
+            def keys(self):
+                return set(self._keys)
+
+            @property
+            def extractors(self):
+                return self._extractors
+
+            def trigger(self, store):
+                pass
+
+        class FakePipe:
+            """Fake pipe with data dictionary."""
+
+            @property
+            def data(self):
+                return {}
+
+        return FakeSubscriber(keys), FakePipe(), keys
+
+    def create_plot_from_pipeline(
+        self,
+        plot_name: str,
+        params: dict,
+        pipe,
+    ):
+        """Fake create_plot_from_pipeline for testing two-phase plot creation."""
+        # Record call as if it were create_plot for backward compatibility with tests
+        self._calls.append(
+            {
+                'plot_name': plot_name,
+                'params': params,
+                '_from_pipeline': True,
+            }
+        )
+        if self._should_raise:
+            raise self._exception_to_raise
+        return self._plot_object
+
 
 @pytest.fixture
 def job_number():
@@ -183,15 +254,12 @@ def fake_job_service(fake_data_service):
 
 
 @pytest.fixture
-def plot_orchestrator(
-    job_orchestrator, fake_plotting_controller, fake_data_service, fake_job_service
-):
+def plot_orchestrator(job_orchestrator, fake_plotting_controller, fake_data_service):
     """Create a PlotOrchestrator with real JobOrchestrator."""
     return PlotOrchestrator(
         plotting_controller=fake_plotting_controller,
         job_orchestrator=job_orchestrator,
         data_service=fake_data_service,
-        job_service=fake_job_service,
     )
 
 
@@ -510,9 +578,8 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         # Now plot should be created
         assert fake_plotting_controller.call_count() == 1
         calls = fake_plotting_controller.get_calls()
-        assert calls[0]['job_number'] == job_number
-        assert calls[0]['source_names'] == plot_cell.config.source_names
-        assert calls[0]['output_name'] == plot_cell.config.output_name
+        # With two-phase creation, create_plot_from_pipeline is called (not create_plot)
+        assert calls[0]['_from_pipeline'] is True
         assert calls[0]['plot_name'] == plot_cell.config.plot_name
 
     def test_workflow_commit_before_cell_added_creates_plot_when_cell_added(
@@ -1231,11 +1298,56 @@ class TestLateSubscriberPlotRetrieval:
             def create_plot(self, **kwargs):
                 raise ValueError("Plot creation failed")
 
+            def setup_data_pipeline(self, **kwargs):
+                from ess.livedata.config.workflow_spec import JobId, ResultKey
+                from ess.livedata.dashboard.extractors import LatestValueExtractor
+
+                workflow_id = kwargs['workflow_id']
+                job_number = kwargs['job_number']
+                source_names = kwargs['source_names']
+                output_name = kwargs['output_name']
+
+                keys = [
+                    ResultKey(
+                        workflow_id=workflow_id,
+                        job_id=JobId(job_number=job_number, source_name=source_name),
+                        output_name=output_name,
+                    )
+                    for source_name in source_names
+                ]
+
+                class FakeSubscriber:
+                    def __init__(self, keys_to_monitor):
+                        self._keys = keys_to_monitor
+                        self._extractors = {
+                            key: LatestValueExtractor() for key in keys_to_monitor
+                        }
+
+                    @property
+                    def keys(self):
+                        return set(self._keys)
+
+                    @property
+                    def extractors(self):
+                        return self._extractors
+
+                    def trigger(self, store):
+                        pass
+
+                class FakePipe:
+                    @property
+                    def data(self):
+                        return {}
+
+                return FakeSubscriber(keys), FakePipe(), keys
+
+            def create_plot_from_pipeline(self, **kwargs):
+                raise ValueError("Plot creation failed")
+
         plot_orchestrator = PlotOrchestrator(
             plotting_controller=FailingPlottingController(),
             job_orchestrator=job_orchestrator,
             data_service=fake_data_service,
-            job_service=fake_job_service,
             config_store=None,
         )
 
@@ -1290,7 +1402,6 @@ class TestLateSubscriberPlotRetrieval:
             plotting_controller=fake_plotting_controller,
             job_orchestrator=job_orchestrator,
             data_service=fake_data_service,
-            job_service=fake_job_service,
             config_store=None,
         )
 
@@ -1516,7 +1627,8 @@ class TestSourceNameFiltering:
             fake_plotting_controller.call_count() == 1
         ), "Plot should be created when correct source_name has data"
         calls = fake_plotting_controller.get_calls()
-        assert calls[0]['source_names'] == ['source_A']
+        # With two-phase creation, create_plot_from_pipeline is called
+        assert calls[0]['_from_pipeline'] is True
 
     def test_plot_created_progressively_as_sources_arrive(
         self,
@@ -1569,8 +1681,8 @@ class TestSourceNameFiltering:
             fake_plotting_controller.call_count() == 1
         ), "Plot should be created as soon as first source has data"
         calls = fake_plotting_controller.get_calls()
-        # Controller is called with both source_names (subscriber handles filtering)
-        assert set(calls[0]['source_names']) == {'source_A', 'source_B'}
+        # With two-phase creation, create_plot_from_pipeline is called
+        assert calls[0]['_from_pipeline'] is True
 
         # When source_B arrives, the DynamicMap will automatically update
         # (no new create_plot call needed - the existing plot subscribes to updates)

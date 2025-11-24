@@ -165,6 +165,20 @@ class DataService(MutableMapping[K, V]):
         existing_data = self._build_subscriber_data(subscriber)
         subscriber.trigger(existing_data)
 
+    def unregister_subscriber(self, subscriber: DataServiceSubscriber[K]) -> None:
+        """
+        Unregister a previously registered subscriber.
+
+        Parameters
+        ----------
+        subscriber:
+            The subscriber to remove. Must be the same object that was registered.
+        """
+        try:
+            self._subscribers.remove(subscriber)
+        except ValueError:
+            pass  # Subscriber wasn't registered, ignore
+
     def register_update_callback(self, callback: Callable[[set[K]], None]) -> None:
         """
         Register a callback for key update notifications.

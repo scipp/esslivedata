@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Hashable
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import holoviews as hv
 import pydantic
@@ -345,6 +345,121 @@ class PlottingController:
         extractors = create_extractors_from_params(keys, window, spec)
 
         pipe = self._stream_manager.make_merging_stream(extractors)
+        plotter = plotter_registry.create_plotter(plot_name, params=params)
+
+        # Initialize plotter with extracted data from pipe to determine kdims
+        plotter.initialize_from_data(pipe.data)
+
+        # Create DynamicMap with kdims (None if plotter doesn't use them)
+        dmap = hv.DynamicMap(plotter, streams=[pipe], kdims=plotter.kdims, cache_size=1)
+
+        return dmap.opts(shared_axes=False)
+
+    def setup_data_pipeline(
+        self,
+        job_number: JobNumber,
+        workflow_id: WorkflowId,
+        source_names: list[str],
+        output_name: str | None,
+        plot_name: str,
+        params: dict | pydantic.BaseModel,
+    ) -> tuple:
+        """
+        Set up the data pipeline for a plot without initializing the plotter.
+
+        This is Phase 1 of two-phase plot creation. It creates the data subscriber
+        and stream without creating the plotter. Use create_plot_from_pipeline()
+        for Phase 2 once data has arrived.
+
+        The returned subscriber will trigger when data arrives for the plot's
+        result keys.
+
+        Parameters
+        ----------
+        job_number:
+            The job number to set up the pipeline for.
+        workflow_id:
+            The workflow ID for this plot.
+        source_names:
+            List of data source names to include.
+        output_name:
+            The name of the output.
+        plot_name:
+            The name of the plotter to use.
+        params:
+            The plotter parameters as a dict or validated Pydantic model.
+
+        Returns
+        -------
+        :
+            Tuple of (subscriber, pipe, keys) where:
+            - subscriber: Can be monitored via trigger callbacks
+            - pipe: Will receive data updates
+            - keys: ResultKeys being monitored
+        """
+        # Validate params if dict, pass through if already a model
+        if isinstance(params, dict):
+            spec = plotter_registry.get_spec(plot_name)
+            params = spec.params(**params) if spec.params else pydantic.BaseModel()
+
+        # Save config
+        self._save_plotting_config(
+            workflow_id=workflow_id,
+            source_names=source_names,
+            output_name=output_name,
+            plot_name=plot_name,
+            params=params,
+        )
+
+        # Build result keys for all sources
+        keys = [
+            ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(job_number=job_number, source_name=source_name),
+                output_name=output_name,
+            )
+            for source_name in source_names
+        ]
+
+        # Create extractors based on plotter requirements
+        spec = plotter_registry.get_spec(plot_name)
+        window = getattr(params, 'window', None)
+        extractors = create_extractors_from_params(keys, window, spec)
+
+        # Set up data pipeline and return subscriber for monitoring
+        subscriber, pipe = self._stream_manager.make_merging_stream_with_subscriber(
+            extractors
+        )
+
+        return subscriber, pipe, keys
+
+    def create_plot_from_pipeline(
+        self,
+        plot_name: str,
+        params: dict | pydantic.BaseModel,
+        pipe: Any,
+    ) -> hv.DynamicMap:
+        """
+        Create a plot from an already-initialized data pipeline.
+
+        This is Phase 2 of two-phase plot creation. The pipeline must have
+        data already (typically called after setup_data_pipeline's subscriber
+        has been triggered).
+
+        Parameters
+        ----------
+        plot_name:
+            The name of the plotter to use.
+        params:
+            The plotter parameters as a dict or validated Pydantic model.
+        pipe:
+            The pipe from setup_data_pipeline() with data available.
+
+        Returns
+        -------
+        :
+            A HoloViews DynamicMap that updates with streaming data.
+        """
         plotter = plotter_registry.create_plotter(plot_name, params=params)
 
         # Initialize plotter with extracted data from pipe to determine kdims
