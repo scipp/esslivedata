@@ -41,7 +41,7 @@ class JobOrchestratorProtocol(Protocol):
 
     def subscribe_to_workflow(
         self, workflow_id: WorkflowId, callback: Callable[[JobNumber], None]
-    ) -> SubscriptionId:
+    ) -> tuple[SubscriptionId, bool]:
         """
         Subscribe to workflow data availability notifications.
 
@@ -61,7 +61,10 @@ class JobOrchestratorProtocol(Protocol):
         Returns
         -------
         :
-            Subscription ID that can be used to unsubscribe.
+            Tuple of (subscription_id, callback_invoked_immediately).
+            subscription_id can be used to unsubscribe.
+            callback_invoked_immediately is True if the workflow was already
+            running and the callback was invoked synchronously during this call.
         """
         ...
 
@@ -409,9 +412,23 @@ class PlotOrchestrator:
         """
         Subscribe to workflow availability and set up initial notification.
 
-        If the workflow is not yet running, notifies subscribers that the cell
-        is waiting for data. If the workflow is already running, the callback
-        will be triggered immediately. Persists configuration to store.
+        This method handles two scenarios depending on workflow state:
+
+        **Scenario A: Workflow not yet running**
+
+        1. Subscribe to workflow (callback not invoked)
+        2. Notify UI that cell is "waiting for workflow"
+        3. Later, when workflow is committed, callback fires -> _on_job_available
+
+        **Scenario B: Workflow already running**
+
+        1. Subscribe to workflow (callback invoked immediately with job_number)
+        2. _on_job_available sets up data pipeline
+        3. If data exists: plot created immediately
+           If no data yet: notify UI "waiting for data"
+
+        In both scenarios, the UI receives exactly one notification from this method
+        or from _on_job_available, never both.
 
         Parameters
         ----------
@@ -422,24 +439,22 @@ class PlotOrchestrator:
         workflow_id
             ID of the workflow to subscribe to.
         """
-        # Track whether callback was called immediately (workflow already running)
-        callback_was_called = [False]
 
         def on_workflow_available(job_number: JobNumber) -> None:
-            callback_was_called[0] = True
             self._on_job_available(cell_id, job_number)
 
-        # Subscribe to workflow availability
-        subscription_id = self._job_orchestrator.subscribe_to_workflow(
+        # Subscribe to workflow availability.
+        # Returns whether callback was invoked immediately (workflow already running).
+        subscription_id, was_invoked = self._job_orchestrator.subscribe_to_workflow(
             workflow_id=workflow_id,
             callback=on_workflow_available,
         )
         self._cell_to_subscription[cell_id] = subscription_id
 
-        # Case 1: Workflow doesn't exist yet
+        # Scenario A: Workflow doesn't exist yet.
         # Notify UI that cell is waiting for workflow to be committed.
-        # When workflow starts, _on_job_available will be called (see case 2 there).
-        if not callback_was_called[0]:
+        # When workflow starts, _on_job_available will handle the rest.
+        if not was_invoked:
             cell = self._grids[grid_id].cells[cell_id]
             self._notify_cell_updated(grid_id, cell_id, cell)
 
@@ -450,8 +465,24 @@ class PlotOrchestrator:
         """
         Handle workflow availability notification from JobOrchestrator.
 
-        Sets up the data pipeline with callback for first data arrival.
-        When data arrives, creates the plot.
+        Called when a workflow job becomes available (either immediately during
+        subscription if workflow was already running, or later when committed).
+
+        **Flow:**
+
+        1. Set up data pipeline with on_first_data callback
+        2. If data already exists in DataService:
+           - on_first_data fires immediately -> plot created -> state stored
+           - No notification here (on_first_data already notified)
+        3. If no data yet:
+           - Notify UI that cell is "waiting for data"
+           - Later when data arrives, on_first_data fires -> plot created
+
+        **State tracking:**
+
+        - ``self._cell_state[cell_id]`` is set when plot is created or on error
+        - The check ``if cell_id not in self._cell_state`` prevents double
+          notification when on_first_data already ran synchronously
 
         Parameters
         ----------

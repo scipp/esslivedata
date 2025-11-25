@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Shared test fixtures for dashboard tests."""
 
+import pydantic
 import pytest
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
@@ -9,6 +10,12 @@ from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
 from ess.livedata.dashboard.workflow_config_service import WorkflowConfigService
 from ess.livedata.fakes import FakeMessageSink
+
+
+class TestWorkflowParams(pydantic.BaseModel):
+    """Simple params model for testing workflows."""
+
+    threshold: float = 100.0
 
 
 class FakeWorkflowConfigService(WorkflowConfigService):
@@ -42,7 +49,11 @@ def workflow_id_2():
 
 @pytest.fixture
 def workflow_spec(workflow_id):
-    """Create a basic WorkflowSpec for testing."""
+    """Create a WorkflowSpec with params for testing.
+
+    Having params ensures JobOrchestrator initializes staged configs,
+    allowing tests to use public API (stage_config, commit_workflow).
+    """
     return WorkflowSpec(
         instrument=workflow_id.instrument,
         namespace=workflow_id.namespace,
@@ -51,14 +62,14 @@ def workflow_spec(workflow_id):
         title='Test Workflow',
         description='A test workflow',
         source_names=['source1', 'source2'],
-        params=None,
+        params=TestWorkflowParams,
         aux_sources=None,
     )
 
 
 @pytest.fixture
 def workflow_spec_2(workflow_id_2):
-    """Create a second WorkflowSpec for testing."""
+    """Create a second WorkflowSpec with params for testing."""
     return WorkflowSpec(
         instrument=workflow_id_2.instrument,
         namespace=workflow_id_2.namespace,
@@ -67,15 +78,15 @@ def workflow_spec_2(workflow_id_2):
         title='Test Workflow 2',
         description='A second test workflow',
         source_names=['source_a', 'source_b'],
-        params=None,
+        params=TestWorkflowParams,
         aux_sources=None,
     )
 
 
 @pytest.fixture
-def workflow_registry(workflow_id, workflow_spec):
-    """Create a minimal workflow registry for testing."""
-    return {workflow_id: workflow_spec}
+def workflow_registry(workflow_id, workflow_spec, workflow_id_2, workflow_spec_2):
+    """Create a workflow registry with two workflows for testing."""
+    return {workflow_id: workflow_spec, workflow_id_2: workflow_spec_2}
 
 
 @pytest.fixture

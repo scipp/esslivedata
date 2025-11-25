@@ -425,7 +425,7 @@ class JobOrchestrator:
 
     def subscribe_to_workflow(
         self, workflow_id: WorkflowId, callback: Callable[[JobNumber], None]
-    ) -> SubscriptionId:
+    ) -> tuple[SubscriptionId, bool]:
         """
         Subscribe to workflow job availability notifications.
 
@@ -443,10 +443,14 @@ class JobOrchestrator:
         Returns
         -------
         :
-            Subscription ID that can be used to unsubscribe.
+            Tuple of (subscription_id, callback_invoked_immediately).
+            subscription_id can be used to unsubscribe.
+            callback_invoked_immediately is True if the workflow was already
+            running and the callback was invoked synchronously during this call.
         """
         subscription_id = SubscriptionId(uuid.uuid4())
         self._subscriptions[subscription_id] = callback
+        callback_invoked = False
 
         # Track which workflows have subscriptions
         if workflow_id not in self._workflow_subscriptions:
@@ -467,13 +471,14 @@ class JobOrchestrator:
                 )
                 try:
                     callback(current_job_number)
+                    callback_invoked = True
                 except Exception:
                     self._logger.exception(
                         'Error in immediate callback for subscription %s',
                         subscription_id,
                     )
 
-        return subscription_id
+        return subscription_id, callback_invoked
 
     def unsubscribe(self, subscription_id: SubscriptionId) -> None:
         """

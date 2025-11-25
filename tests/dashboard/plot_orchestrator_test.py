@@ -4,7 +4,6 @@ import uuid
 
 import pytest
 
-from ess.livedata.config.workflow_spec import JobNumber
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
     GridId,
@@ -84,37 +83,30 @@ class CallbackCapture:
         assert self.call_count == 0, f"Expected 0 calls, got {self.call_count}"
 
 
-class FakePlottingController:
-    """Fake PlottingController for testing."""
+class FakePipe:
+    """Fake HoloViews Pipe for testing."""
 
-    def __init__(self, data_service=None):
+    def __init__(self, data):
+        self.data = data
+
+    def send(self, data):
+        self.data = data
+
+
+class FakePlottingController:
+    """
+    Fake PlottingController for testing plot orchestration.
+
+    Uses real StreamManager for data pipeline setup (avoiding duplication of
+    subscription logic), but returns fake plots for easy assertion.
+    """
+
+    def __init__(self, stream_manager):
+        self._stream_manager = stream_manager
         self._should_raise = False
         self._exception_to_raise = None
         self._plot_object = FakePlot()
         self._calls: list[dict] = []
-        self._data_service = data_service
-
-    def create_plot(
-        self,
-        job_number: JobNumber,
-        source_names: list[str],
-        output_name: str | None,
-        plot_name: str,
-        params: dict,
-    ):
-        """Create a fake plot or raise an exception if configured to do so."""
-        self._calls.append(
-            {
-                'job_number': job_number,
-                'source_names': source_names,
-                'output_name': output_name,
-                'plot_name': plot_name,
-                'params': params,
-            }
-        )
-        if self._should_raise:
-            raise self._exception_to_raise
-        return self._plot_object
 
     def configure_to_raise(self, exception: Exception) -> None:
         """Configure the controller to raise an exception on create_plot."""
@@ -128,11 +120,11 @@ class FakePlottingController:
         self._calls.clear()
 
     def call_count(self) -> int:
-        """Return the number of create_plot calls."""
+        """Return the number of create_plot_from_pipeline calls."""
         return len(self._calls)
 
     def get_calls(self) -> list[dict]:
-        """Return all recorded create_plot calls."""
+        """Return all recorded calls."""
         return self._calls.copy()
 
     def setup_data_pipeline(
@@ -145,15 +137,10 @@ class FakePlottingController:
         params: dict,
         on_first_data,
     ):
-        """Fake setup_data_pipeline that uses real DataService with callback."""
+        """Set up data pipeline using real StreamManager."""
         from ess.livedata.config.workflow_spec import JobId, ResultKey
-        from ess.livedata.dashboard.data_subscriber import (
-            DataSubscriber,
-            MergingStreamAssembler,
-        )
-        from ess.livedata.dashboard.extractors import LatestValueExtractor
 
-        # Build result keys
+        # Build result keys (same as real PlottingController)
         keys = [
             ResultKey(
                 workflow_id=workflow_id,
@@ -163,29 +150,8 @@ class FakePlottingController:
             for source_name in source_names
         ]
 
-        # Create extractors and assembler
-        extractors = {key: LatestValueExtractor() for key in keys}
-        assembler = MergingStreamAssembler(set(keys))
-
-        # Create pipe factory
-        def pipe_factory(data):
-            class FakePipe:
-                """Fake pipe for testing."""
-
-                def __init__(self, initial_data):
-                    self.data = initial_data
-
-                def send(self, data):
-                    self.data = data
-
-            return FakePipe(data)
-
-        # Create subscriber with callback and register with DataService
-        subscriber = DataSubscriber(assembler, pipe_factory, extractors, on_first_data)
-
-        # Register subscriber with DataService if available
-        if self._data_service is not None:
-            self._data_service.register_subscriber(subscriber)
+        # Use real StreamManager for subscription (avoids duplicating logic)
+        self._stream_manager.make_merging_stream(keys, on_first_data=on_first_data)
 
     def create_plot_from_pipeline(
         self,
@@ -193,8 +159,7 @@ class FakePlottingController:
         params: dict,
         pipe,
     ):
-        """Fake create_plot_from_pipeline for testing two-phase plot creation."""
-        # Record call as if it were create_plot for backward compatibility with tests
+        """Create a fake plot, recording the call for assertions."""
         self._calls.append(
             {
                 'plot_name': plot_name,
@@ -233,22 +198,30 @@ def plot_cell(plot_config):
 
 
 @pytest.fixture
-def fake_plotting_controller(fake_data_service):
-    """Create a FakePlottingController with DataService."""
-    return FakePlottingController(data_service=fake_data_service)
-
-
-@pytest.fixture
 def fake_data_service():
-    """Create a fake DataService."""
+    """Create a real DataService for testing."""
     from ess.livedata.dashboard.data_service import DataService
 
     return DataService()
 
 
 @pytest.fixture
+def fake_stream_manager(fake_data_service):
+    """Create a real StreamManager with FakePipe factory for testing."""
+    from ess.livedata.dashboard.stream_manager import StreamManager
+
+    return StreamManager(data_service=fake_data_service, pipe_factory=FakePipe)
+
+
+@pytest.fixture
+def fake_plotting_controller(fake_stream_manager):
+    """Create a FakePlottingController with StreamManager."""
+    return FakePlottingController(stream_manager=fake_stream_manager)
+
+
+@pytest.fixture
 def fake_job_service(fake_data_service):
-    """Create a fake JobService."""
+    """Create a real JobService for testing."""
     from ess.livedata.dashboard.job_service import JobService
 
     return JobService(data_service=fake_data_service)
@@ -265,28 +238,14 @@ def plot_orchestrator(job_orchestrator, fake_plotting_controller, fake_data_serv
 
 
 def commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec):
-    """Helper to stage and commit a workflow for testing."""
-    # Ensure workflow is initialized (register it if needed)
-    if workflow_id not in job_orchestrator._workflows:
-        from ess.livedata.dashboard.job_orchestrator import JobConfig, WorkflowState
+    """
+    Stage and commit a workflow for testing using public API only.
 
-        state = WorkflowState()
-        for source_name in workflow_spec.source_names:
-            state.staged_jobs[source_name] = JobConfig(params={}, aux_source_names={})
-        job_orchestrator._workflows[workflow_id] = state
-
-    # Ensure subscription tracking is initialized
-    if workflow_id not in job_orchestrator._workflow_subscriptions:
-        job_orchestrator._workflow_subscriptions[workflow_id] = set()
-
-    # Clear any existing staged jobs and stage new ones
-    if workflow_id in job_orchestrator._workflows:
-        job_orchestrator.clear_staged_configs(workflow_id)
-        for source_name in workflow_spec.source_names:
-            job_orchestrator.stage_config(
-                workflow_id, source_name=source_name, params={}, aux_source_names={}
-            )
-
+    Requires the workflow_spec to have params so that JobOrchestrator
+    initializes the workflow with staged configs during construction.
+    """
+    # With params in workflow_spec, the workflow is already initialized
+    # with staged configs. Just commit it.
     return job_orchestrator.commit_workflow(workflow_id)
 
 
@@ -1290,65 +1249,15 @@ class TestLateSubscriberPlotRetrieval:
         workflow_spec,
         job_orchestrator,
         fake_data_service,
-        fake_job_service,
+        fake_stream_manager,
     ):
         """get_cell_state should return error when plot creation fails."""
-
-        # Create plotting controller that raises exception
-        class FailingPlottingController:
-            def __init__(self, data_service):
-                self._data_service = data_service
-
-            def create_plot(self, **kwargs):
-                raise ValueError("Plot creation failed")
-
-            def setup_data_pipeline(self, **kwargs):
-                from ess.livedata.config.workflow_spec import JobId, ResultKey
-                from ess.livedata.dashboard.data_subscriber import (
-                    DataSubscriber,
-                    MergingStreamAssembler,
-                )
-                from ess.livedata.dashboard.extractors import LatestValueExtractor
-
-                workflow_id = kwargs['workflow_id']
-                job_number = kwargs['job_number']
-                source_names = kwargs['source_names']
-                output_name = kwargs['output_name']
-                on_first_data = kwargs['on_first_data']
-
-                keys = [
-                    ResultKey(
-                        workflow_id=workflow_id,
-                        job_id=JobId(job_number=job_number, source_name=source_name),
-                        output_name=output_name,
-                    )
-                    for source_name in source_names
-                ]
-
-                # Create pipe factory
-                def pipe_factory(data):
-                    class FakePipe:
-                        def __init__(self, initial_data):
-                            self.data = initial_data
-
-                        def send(self, data):
-                            self.data = data
-
-                    return FakePipe(data)
-
-                # Create and register subscriber with callback
-                extractors = {key: LatestValueExtractor() for key in keys}
-                assembler = MergingStreamAssembler(set(keys))
-                subscriber = DataSubscriber(
-                    assembler, pipe_factory, extractors, on_first_data
-                )
-                self._data_service.register_subscriber(subscriber)
-
-            def create_plot_from_pipeline(self, **kwargs):
-                raise ValueError("Plot creation failed")
+        # Create plotting controller configured to fail
+        failing_controller = FakePlottingController(stream_manager=fake_stream_manager)
+        failing_controller.configure_to_raise(ValueError("Plot creation failed"))
 
         plot_orchestrator = PlotOrchestrator(
-            plotting_controller=FailingPlottingController(fake_data_service),
+            plotting_controller=failing_controller,
             job_orchestrator=job_orchestrator,
             data_service=fake_data_service,
             config_store=None,
