@@ -177,6 +177,12 @@ class TestInMemoryConfigStore:
         assert str(workflow_id_1) in keys
         assert str(workflow_id_2) in keys
 
+    def test_rejects_non_string_keys(self, workflow_id_1, config_value_1):
+        """Test that non-string keys are rejected with TypeError."""
+        store = InMemoryConfigStore()
+        with pytest.raises(TypeError, match="ConfigStore keys must be str"):
+            store[workflow_id_1] = config_value_1
+
 
 class TestFileBackedConfigStore:
     """Tests for FileBackedConfigStore."""
@@ -390,6 +396,14 @@ class TestFileBackedConfigStore:
             store[str(wf_id)] = {'params': {'value': i}}
 
         assert len(store) == 150
+
+    def test_rejects_non_string_keys(
+        self, temp_config_file, workflow_id_1, config_value_1
+    ):
+        """Test that non-string keys are rejected with TypeError."""
+        store = FileBackedConfigStore(temp_config_file)
+        with pytest.raises(TypeError, match="ConfigStore keys must be str"):
+            store[workflow_id_1] = config_value_1
 
 
 class TestConfigStoreManager:

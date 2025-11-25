@@ -85,6 +85,8 @@ class InMemoryConfigStore(UserDict[str, dict[str, Any]]):
 
     def __setitem__(self, key: str, value: dict[str, Any]) -> None:
         """Save configuration with automatic LRU eviction."""
+        if not isinstance(key, str):
+            raise TypeError(f"ConfigStore keys must be str, got {type(key).__name__}")
         with self._lock:
             super().__setitem__(key, value)
 
@@ -150,6 +152,8 @@ class FileBackedConfigStore(UserDict[str, dict[str, Any]]):
 
     def __setitem__(self, key: str, value: dict[str, Any]) -> None:
         """Save configuration with automatic LRU eviction and file persistence."""
+        if not isinstance(key, str):
+            raise TypeError(f"ConfigStore keys must be str, got {type(key).__name__}")
         with self._lock:
             super().__setitem__(key, value)
 

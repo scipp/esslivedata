@@ -419,6 +419,44 @@ class JobOrchestrator:
             for source_name, job_config in state.current.jobs.items()
         }
 
+    def get_active_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:
+        """
+        Get the job number of the currently active job for a workflow.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to query.
+
+        Returns
+        -------
+        :
+            The job number if there's an active job, None otherwise.
+        """
+        state = self._workflows.get(workflow_id)
+        if state is None or state.current is None:
+            return None
+        return state.current.job_number
+
+    def get_previous_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:
+        """
+        Get the job number of the previous job for a workflow.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to query.
+
+        Returns
+        -------
+        :
+            The job number if there's a previous job, None otherwise.
+        """
+        state = self._workflows.get(workflow_id)
+        if state is None or state.previous is None:
+            return None
+        return state.previous.job_number
+
     def _notify_workflow_available(
         self, workflow_id: WorkflowId, job_number: JobNumber
     ) -> None:

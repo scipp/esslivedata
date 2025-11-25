@@ -2,22 +2,11 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Integration tests for job state persistence in JobOrchestrator."""
 
-from collections.abc import Generator
-
-import pytest
-
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 from ess.livedata.dashboard.config_store import ConfigStoreManager
 from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
 from ess.livedata.parameter_models import Scale, TimeUnit, TOAEdges
 from tests.integration.backend import DashboardBackend
-
-
-@pytest.fixture
-def backend_with_null_transport() -> Generator[DashboardBackend, None, None]:
-    """Create DashboardBackend with null transport (no Kafka required)."""
-    with DashboardBackend(instrument='dummy', dev=True, transport='none') as backend:
-        yield backend
 
 
 def test_active_job_persisted_and_restored(tmp_path) -> None:
@@ -62,9 +51,7 @@ def test_active_job_persisted_and_restored(tmp_path) -> None:
         original_job_number = job_ids[0].job_number
 
         # Verify active config is available
-        active_config = backend1.workflow_controller._orchestrator.get_active_config(
-            workflow_id
-        )
+        active_config = backend1.job_orchestrator.get_active_config(workflow_id)
         assert len(active_config) == 2
         assert 'monitor1' in active_config
         assert 'monitor2' in active_config
@@ -75,18 +62,18 @@ def test_active_job_persisted_and_restored(tmp_path) -> None:
         instrument='dummy', dev=True, transport='none', config_dir=tmp_path
     ) as backend2:
         # Verify active job was restored
-        restored_active = backend2.workflow_controller._orchestrator.get_active_config(
-            workflow_id
-        )
+        restored_active = backend2.job_orchestrator.get_active_config(workflow_id)
         assert len(restored_active) == 2, "Active jobs should be restored"
         assert 'monitor1' in restored_active
         assert 'monitor2' in restored_active
 
         # Verify job_number is the same
-        state = backend2.workflow_controller._orchestrator._workflows[workflow_id]
-        assert state.current is not None, "Current job should be restored"
+        restored_job_number = backend2.job_orchestrator.get_active_job_number(
+            workflow_id
+        )
+        assert restored_job_number is not None, "Current job should be restored"
         assert (
-            state.current.job_number == original_job_number
+            restored_job_number == original_job_number
         ), "Job number should match original"
 
         # Verify params were also restored correctly
@@ -130,9 +117,7 @@ def test_subscriber_notified_on_job_restoration(tmp_path) -> None:
             notified_job_numbers.append(job_number)
 
         # Subscribe to workflow - should be immediately notified of restored job
-        backend2.workflow_controller._orchestrator.subscribe_to_workflow(
-            workflow_id, track_notification
-        )
+        backend2.job_orchestrator.subscribe_to_workflow(workflow_id, track_notification)
 
         # Subscriber should have been notified immediately with restored job_number
         assert len(notified_job_numbers) == 1
@@ -180,25 +165,31 @@ def test_job_transition_persists_previous_job(tmp_path) -> None:
         )
         second_job_number = job_ids_2[0].job_number
 
-        # Verify state in first backend
-        state1 = backend1.workflow_controller._orchestrator._workflows[workflow_id]
-        assert state1.current is not None
-        assert state1.current.job_number == second_job_number
-        assert state1.previous is not None
-        assert state1.previous.job_number == first_job_number
+        # Verify state in first backend using public API
+        current_job_number = backend1.job_orchestrator.get_active_job_number(
+            workflow_id
+        )
+        previous_job_number = backend1.job_orchestrator.get_previous_job_number(
+            workflow_id
+        )
+        assert current_job_number == second_job_number
+        assert previous_job_number == first_job_number
 
     # Restore in second backend
     with DashboardBackend(
         instrument='dummy', dev=True, transport='none', config_dir=tmp_path
     ) as backend2:
-        state2 = backend2.workflow_controller._orchestrator._workflows[workflow_id]
-
         # Both current and previous should be restored
-        assert state2.current is not None
-        assert state2.current.job_number == second_job_number
+        restored_current = backend2.job_orchestrator.get_active_job_number(workflow_id)
+        restored_previous = backend2.job_orchestrator.get_previous_job_number(
+            workflow_id
+        )
 
-        assert state2.previous is not None
-        assert state2.previous.job_number == first_job_number
+        assert restored_current is not None
+        assert restored_current == second_job_number
+
+        assert restored_previous is not None
+        assert restored_previous == first_job_number
 
 
 def test_corrupted_job_state_does_not_break_restoration(tmp_path) -> None:
@@ -219,7 +210,7 @@ def test_corrupted_job_state_does_not_break_restoration(tmp_path) -> None:
     config_manager = ConfigStoreManager(instrument='dummy', config_dir=tmp_path)
     config_store = config_manager.get_store('workflow_configs')
 
-    config_store[workflow_id] = {
+    config_store[str(workflow_id)] = {
         'source_names': ['monitor1'],
         'params': MonitorDataParams().model_dump(),
         'aux_source_names': {},
@@ -239,15 +230,11 @@ def test_corrupted_job_state_does_not_break_restoration(tmp_path) -> None:
         instrument='dummy', dev=True, transport='none', config_dir=tmp_path
     ) as backend:
         # Config should be restored
-        staged = backend.workflow_controller._orchestrator.get_staged_config(
-            workflow_id
-        )
+        staged = backend.job_orchestrator.get_staged_config(workflow_id)
         assert 'monitor1' in staged
 
         # Active job should not be restored (corruption)
-        active = backend.workflow_controller._orchestrator.get_active_config(
-            workflow_id
-        )
+        active = backend.job_orchestrator.get_active_config(workflow_id)
         assert len(active) == 0, "Corrupted job state should not be restored"
 
 
@@ -270,9 +257,7 @@ def test_no_active_job_persists_empty_state(tmp_path) -> None:
     ) as backend1:
         # Just check that the workflow exists with default config
         # Don't start it
-        staged = backend1.workflow_controller._orchestrator.get_staged_config(
-            workflow_id
-        )
+        staged = backend1.job_orchestrator.get_staged_config(workflow_id)
         assert len(staged) > 0  # Default sources from spec
 
     # Verify stored config doesn't have job state
@@ -281,7 +266,7 @@ def test_no_active_job_persists_empty_state(tmp_path) -> None:
 
     # The workflow won't be persisted until it's committed, so there should be nothing
     # in the store yet (since we only initialized but never committed)
-    stored = config_store.get(workflow_id)
+    stored = config_store.get(str(workflow_id))
     # If anything is stored, it should not have current_job
     if stored:
         assert 'current_job' not in stored

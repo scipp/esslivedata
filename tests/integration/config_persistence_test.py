@@ -116,9 +116,7 @@ def test_adapter_filters_removed_sources(tmp_path) -> None:
         instrument='dummy', dev=True, transport='none', config_dir=tmp_path
     ) as backend:
         # Verify config was loaded into orchestrator's staged_jobs
-        staged = backend.workflow_controller._orchestrator.get_staged_config(
-            workflow_id
-        )
+        staged = backend.job_orchestrator.get_staged_config(workflow_id)
         # Only monitor1 and monitor2 should be staged (motion1 filtered by spec)
         assert set(staged.keys()) == {'monitor1', 'monitor2'}
 
