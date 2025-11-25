@@ -33,7 +33,7 @@ dependencies = [
   "PyYAML",
   "confluent_kafka",
   "ess-streaming-data-types",
-  "essreduce>=25.07.0",
+  "essreduce>=25.11.2",
   "jinja2",
   "pydantic>=2",
   "scipp>=25.02.0",  # Improved performance of scipp.group
@@ -45,9 +45,9 @@ dynamic = ["version"]
 
 [project.optional-dependencies]
 test = [
-    "essdiffraction>=25.08.0",
+    "essdiffraction>=25.11.1",
     "esssans",
-    "essspectroscopy>=25.10.0",
+    "essspectroscopy>=25.11.1",
     "holoviews",
     "markdown-it-py==3.0.0",  # Work around myst-parser upper bound
     "panel",
@@ -57,13 +57,13 @@ test = [
     "scippneutron>=25.07.0",
 ]
 bifrost = [
-    "essspectroscopy>=25.10.0",
+    "essspectroscopy>=25.11.1",
 ]
 dream = [
-    "essdiffraction>=25.08.0",
+    "essdiffraction>=25.11.1",
 ]
 loki = [
-    "esssans",
+    "esssans>=25.11.0",
 ]
 odin = [
     "essimaging",

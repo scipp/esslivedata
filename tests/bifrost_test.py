@@ -12,7 +12,7 @@ from ess.livedata.config.instruments.bifrost.factories import (
     _create_base_reduction_workflow,
 )
 from ess.reduce.nexus.types import (
-    CalibratedBeamline,
+    EmptyDetector,
     NeXusData,
     SampleRun,
 )
@@ -41,7 +41,7 @@ def bifrost_workflow():
 
 def test_workflow_produces_detector_with_consecutive_detector_number(bifrost_workflow):
     wf, _DetectorRegionCounts = bifrost_workflow
-    da = wf.compute(CalibratedBeamline[SampleRun])
+    da = wf.compute(EmptyDetector[SampleRun])
     assert_identical(
         da.coords['detector_number'].transpose(da.dims),
         sc.arange('', 1, 13500 + 1, unit=None, dtype='int32').fold(

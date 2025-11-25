@@ -60,10 +60,10 @@ def setup_factories(instrument: Instrument) -> None:
     )
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
     from ess.reduce.nexus.types import (
-        DetectorData,
         Filename,
         NeXusData,
         NeXusName,
+        RawDetector,
         RunType,
         SampleRun,
         VanadiumRun,
@@ -118,7 +118,7 @@ def setup_factories(instrument: Instrument) -> None:
 
     TotalCounts = NewType('TotalCounts', sc.DataArray)
 
-    def _total_counts(data: DetectorData[SampleRun]) -> TotalCounts:
+    def _total_counts(data: RawDetector[SampleRun]) -> TotalCounts:
         """Dummy provider for some plottable result of total counts."""
         return TotalCounts(
             data.nanhist(
@@ -130,7 +130,7 @@ def setup_factories(instrument: Instrument) -> None:
         )
 
     def _fake_proton_charge(
-        data: powder.types.ReducedCountsDspacing[RunType],
+        data: powder.types.CorrectedDspacing[RunType],
     ) -> powder.types.AccumulatedProtonCharge[RunType]:
         """
         Fake approximate proton charge for consistent normalization.
@@ -186,7 +186,7 @@ def setup_factories(instrument: Instrument) -> None:
                 ),
             },
             accumulators=(
-                powder.types.ReducedCountsDspacing[SampleRun],
+                powder.types.CorrectedDspacing[SampleRun],
                 powder.types.WavelengthMonitor[SampleRun, powder.types.CaveMonitor],
             ),
         )
@@ -221,11 +221,13 @@ def setup_factories(instrument: Instrument) -> None:
                 'focussed_data_dspacing_two_theta': (
                     powder.types.FocussedDataDspacingTwoTheta[SampleRun]
                 ),
-                'i_of_dspacing': powder.types.IofDspacing[SampleRun],
-                'i_of_dspacing_two_theta': powder.types.IofDspacingTwoTheta[SampleRun],
+                'i_of_dspacing': powder.types.IntensityDspacing[SampleRun],
+                'i_of_dspacing_two_theta': powder.types.IntensityDspacingTwoTheta[
+                    SampleRun
+                ],
             },
             accumulators=(
-                powder.types.ReducedCountsDspacing[SampleRun],
+                powder.types.CorrectedDspacing[SampleRun],
                 powder.types.WavelengthMonitor[SampleRun, powder.types.CaveMonitor],
             ),
         )

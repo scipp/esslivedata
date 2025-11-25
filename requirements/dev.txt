@@ -20,13 +20,13 @@ argon2-cffi==25.1.0
     # via jupyter-server
 argon2-cffi-bindings==25.1.0
     # via argon2-cffi
-arrow==1.3.0
+arrow==1.4.0
     # via isoduration
 async-lru==2.0.5
     # via jupyterlab
 cffi==2.0.0
     # via argon2-cffi-bindings
-copier==9.10.2
+copier==9.11.0
     # via -r dev.in
 dunamai==1.25.0
     # via copier
@@ -65,11 +65,11 @@ jupyter-server==2.17.0
     #   notebook-shim
 jupyter-server-terminals==0.5.3
     # via jupyter-server
-jupyterlab==4.4.9
+jupyterlab==4.5.0
     # via -r dev.in
-jupyterlab-server==2.27.3
+jupyterlab-server==2.28.0
     # via jupyterlab
-lark==1.3.0
+lark==1.3.1
     # via rfc3987-syntax
 notebook-shim==0.2.4
     # via jupyterlab
@@ -77,9 +77,9 @@ overrides==7.7.0
     # via jupyter-server
 pip-compile-multi==3.2.2
     # via -r dev.in
-pip-tools==7.5.1
+pip-tools==7.5.2
     # via pip-compile-multi
-plumbum==1.9.0
+plumbum==1.10.0
     # via copier
 prometheus-client==0.23.1
     # via jupyter-server
@@ -109,11 +109,9 @@ terminado==0.18.1
     #   jupyter-server-terminals
 toposort==1.10
     # via pip-compile-multi
-types-python-dateutil==2.9.0.20251008
-    # via arrow
 uri-template==1.3.0
     # via jsonschema
-webcolors==24.11.1
+webcolors==25.10.0
     # via jsonschema
 websocket-client==1.9.0
     # via jupyter-server

@@ -313,10 +313,10 @@ def _create_base_reduction_workflow():
 
     from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
     from ess.reduce.nexus.types import (
-        CalibratedBeamline,
-        DetectorData,
+        EmptyDetector,
         Filename,
         NeXusName,
+        RawDetector,
         SampleRun,
     )
     from ess.spectroscopy.indirect.time_of_flight import TofWorkflow
@@ -339,7 +339,7 @@ def _create_base_reduction_workflow():
     DetectorRegionCounts = NewType('DetectorRegionCounts', sc.DataArray)
 
     def _detector_ratemeter(
-        data: DetectorData[SampleRun], region: DetectorRatemeterRegionParams
+        data: RawDetector[SampleRun], region: DetectorRatemeterRegionParams
     ) -> DetectorRegionCounts:
         """Calculate detector count rate for selected arc and pixel range."""
         arc_idx = _arc_energy_to_index[region.arc]
@@ -357,7 +357,7 @@ def _create_base_reduction_workflow():
     SpectrumViewPixelsPerTube = NewType('SpectrumViewPixelsPerTube', int)
 
     def _make_spectrum_view(
-        data: DetectorData[SampleRun],
+        data: RawDetector[SampleRun],
         time_bins: SpectrumViewTimeBins,
         pixels_per_tube: SpectrumViewPixelsPerTube,
     ) -> SpectrumView:
@@ -383,8 +383,8 @@ def _create_base_reduction_workflow():
 
     reduction_workflow = TofWorkflow(run_types=(SampleRun,), monitor_types=())
     reduction_workflow[Filename[SampleRun]] = get_nexus_geometry_filename('bifrost')
-    reduction_workflow[CalibratedBeamline[SampleRun]] = (
-        reduction_workflow[CalibratedBeamline[SampleRun]]
+    reduction_workflow[EmptyDetector[SampleRun]] = (
+        reduction_workflow[EmptyDetector[SampleRun]]
         .map({NeXusName[NXdetector]: _detector_names})
         .reduce(func=_combine_banks)
     )
