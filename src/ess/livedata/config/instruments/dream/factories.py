@@ -45,6 +45,13 @@ def _get_wire_view(da: sc.DataArray) -> sc.DataArray:
     )
 
 
+def _get_strip_view(da: sc.DataArray) -> sc.DataArray:
+    """Transform function to extract strip view (sum over all but strip)."""
+    return da.fold(dim=da.dim, sizes=_bank_sizes['mantle_detector']).sum(
+        ('wire', 'module', 'segment', 'counter')
+    )
+
+
 def setup_factories(instrument: Instrument) -> None:
     """Initialize DREAM-specific factories and workflows."""
     # Lazy imports - all expensive imports go inside the function
@@ -104,10 +111,15 @@ def setup_factories(instrument: Instrument) -> None:
         instrument=instrument, transform=_get_wire_view
     )
 
+    _mantle_strip_view = DetectorLogicalView(
+        instrument=instrument, transform=_get_strip_view
+    )
+
     # Attach logical view factories
     # Note: Logical views only have view handles, no ROI handles
     specs.mantle_front_layer_handle.attach_factory()(_mantle_front_layer_view.make_view)
     specs.mantle_wire_view_handle.attach_factory()(_mantle_wire_view.make_view)
+    specs.mantle_strip_view_handle.attach_factory()(_mantle_strip_view.make_view)
 
     # Powder reduction workflow setup
     # Normalization to monitors is partially broken due to some wavelength-range check
