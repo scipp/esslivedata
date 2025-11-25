@@ -583,7 +583,7 @@ class PlotOrchestrator:
                             'source_names': cell.config.source_names,
                             'plot_name': cell.config.plot_name,
                             'params': (
-                                cell.config.params.model_dump()
+                                cell.config.params.model_dump(mode='json')
                                 if isinstance(cell.config.params, pydantic.BaseModel)
                                 else cell.config.params
                             ),

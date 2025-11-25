@@ -371,3 +371,83 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         assert cell3_restored.config.output_name == 'output3'
         assert cell3_restored.config.source_names == ['monitor2']
         assert cell3_restored.config.params == {}
+
+
+def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None:
+    """
+    Test that PlotOrchestrator correctly serializes Pydantic params containing enums.
+
+    This regression test ensures that enum values (like CombineMode, PlotScale) in
+    Pydantic models are properly converted to strings during YAML serialization.
+    Previously, enum instances caused serialization failures.
+    """
+    from ess.livedata.config.workflow_spec import WorkflowId
+    from ess.livedata.dashboard.plot_orchestrator import (
+        CellGeometry,
+        PlotCell,
+        PlotConfig,
+    )
+    from ess.livedata.dashboard.plot_params import (
+        CombineMode,
+        PlotParams2d,
+        PlotScale,
+        WindowMode,
+    )
+
+    # Create params with enum values (the problematic case)
+    params_with_enums = PlotParams2d(
+        layout={'combine_mode': CombineMode.layout, 'layout_columns': 2},
+        window={'mode': WindowMode.window, 'window_duration_seconds': 10.0},
+        plot_scale={
+            'x_scale': PlotScale.linear,
+            'y_scale': PlotScale.log,
+            'color_scale': PlotScale.log,
+        },
+    )
+
+    with DashboardBackend(
+        instrument='dummy', dev=True, transport='none', config_dir=tmp_path
+    ) as backend1:
+        orchestrator1 = backend1.plot_orchestrator
+
+        grid_id = orchestrator1.add_grid(title='Enum Test Grid', nrows=1, ncols=1)
+
+        workflow_id = WorkflowId(
+            instrument='dummy',
+            namespace='monitor_data',
+            name='monitor_histogram',
+            version=1,
+        )
+        # Pass Pydantic model directly (this is what the UI does)
+        plot_config = PlotConfig(
+            workflow_id=workflow_id,
+            output_name='image',
+            source_names=['monitor1'],
+            plot_name='test_plotter',
+            params=params_with_enums,
+        )
+        geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+        cell = PlotCell(geometry=geometry, config=plot_config)
+
+        cell_id = orchestrator1.add_plot(grid_id=grid_id, cell=cell)
+
+    # Restart backend - this should not fail during deserialization
+    with DashboardBackend(
+        instrument='dummy', dev=True, transport='none', config_dir=tmp_path
+    ) as backend2:
+        orchestrator2 = backend2.plot_orchestrator
+
+        all_grids = orchestrator2.get_all_grids()
+        assert len(all_grids) == 1
+
+        restored_grid = all_grids[grid_id]
+        assert cell_id in restored_grid.cells
+
+        restored_params = restored_grid.cells[cell_id].config.params
+        # Params are stored as dict with string enum values
+        assert restored_params['layout']['combine_mode'] == 'layout'
+        assert restored_params['window']['mode'] == 'window'
+        assert restored_params['window']['window_duration_seconds'] == 10.0
+        assert restored_params['plot_scale']['x_scale'] == 'linear'
+        assert restored_params['plot_scale']['y_scale'] == 'log'
+        assert restored_params['plot_scale']['color_scale'] == 'log'
