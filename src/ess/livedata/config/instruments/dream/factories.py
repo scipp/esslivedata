@@ -60,10 +60,10 @@ def setup_factories(instrument: Instrument) -> None:
     )
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
     from ess.reduce.nexus.types import (
-        DetectorData,
         Filename,
         NeXusData,
         NeXusName,
+        RawDetector,
         RunType,
         SampleRun,
         VanadiumRun,
@@ -118,7 +118,7 @@ def setup_factories(instrument: Instrument) -> None:
 
     TotalCounts = NewType('TotalCounts', sc.DataArray)
 
-    def _total_counts(data: DetectorData[SampleRun]) -> TotalCounts:
+    def _total_counts(data: RawDetector[SampleRun]) -> TotalCounts:
         """Dummy provider for some plottable result of total counts."""
         return TotalCounts(
             data.nanhist(
