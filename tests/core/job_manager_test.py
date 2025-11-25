@@ -343,6 +343,51 @@ class TestJobManager:
         with pytest.raises(KeyError, match="Job 999 not found"):
             manager.reset_job(999)
 
+    def test_reset_multiple_jobs_in_succession(
+        self, fake_job_factory, base_workflow_config
+    ):
+        """
+        Test resetting multiple jobs in quick succession.
+
+        This is a regression test for issue #548 where sending two restart commands
+        for different job IDs in quick succession resulted in only one being processed.
+        """
+        manager = JobManager(fake_job_factory)
+
+        # Create two active jobs
+        job_id_1 = manager.schedule_job("source1", base_workflow_config)
+        job_id_2 = manager.schedule_job("source2", base_workflow_config)
+
+        # Activate both jobs by pushing data
+        data = WorkflowData(
+            start_time=100,
+            end_time=200,
+            data={
+                StreamId(name="source1"): sc.scalar(42.0),
+                StreamId(name="source2"): sc.scalar(43.0),
+            },
+        )
+        manager.push_data(data)
+
+        # Verify both jobs have data
+        assert len(manager.active_jobs) == 2
+        for job in manager.active_jobs:
+            assert job.start_time == 100
+            assert job.end_time == 200
+
+        # Reset both jobs in quick succession (simulating the reported bug)
+        manager.reset_job(job_id_1)
+        manager.reset_job(job_id_2)
+
+        # CRITICAL: Both jobs should be reset
+        for job in manager.active_jobs:
+            assert job.start_time is None, f"Job {job.job_id} was not reset"
+            assert job.end_time is None, f"Job {job.job_id} was not reset"
+
+        # Verify both processors were cleared
+        assert fake_job_factory.processors[job_id_1].clear_calls == 1
+        assert fake_job_factory.processors[job_id_2].clear_calls == 1
+
     def test_compute_results_returns_job_results(
         self, fake_job_factory, base_workflow_config
     ):

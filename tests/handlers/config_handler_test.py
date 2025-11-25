@@ -320,6 +320,49 @@ class TestConfigProcessor:
         # But no results should be returned due to exception
         assert len(result_messages) == 0
 
+    def test_process_multiple_job_commands_different_sources_same_batch(self):
+        """
+        Test that multiple job commands for different jobs (different sources)
+        are ALL processed when received in the same batch.
+
+        This is a regression test for issue #548 where sending two restart commands
+        for different job IDs in quick succession resulted in only one being processed.
+        """
+        mock_job_manager = MockJobManagerAdapter()
+        processor = ConfigProcessor(job_manager_adapter=mock_job_manager)
+
+        # Simulate two reset commands for different jobs (different source_names)
+        # In the real system, source_name is str(job_id) = "source_name/job_number"
+        job_command_1 = JobCommand(action=JobAction.reset)
+        job_command_2 = JobCommand(action=JobAction.reset)
+
+        messages = [
+            Message(
+                value=RawConfigItem(
+                    key=b'mantle%2Fuuid1/*/job_command',  # URL-encoded source_name
+                    value=job_command_1.model_dump_json().encode('utf-8'),
+                ),
+                timestamp=123456789,
+                stream=COMMANDS_STREAM_ID,
+            ),
+            Message(
+                value=RawConfigItem(
+                    key=b'hr%2Fuuid2/*/job_command',  # Different source_name
+                    value=job_command_2.model_dump_json().encode('utf-8'),
+                ),
+                timestamp=123456790,
+                stream=COMMANDS_STREAM_ID,
+            ),
+        ]
+
+        _ = processor.process_messages(messages)
+
+        # CRITICAL: Both job commands should be processed
+        assert len(mock_job_manager.job_command_calls) == 2
+        # Verify the source_names are correctly decoded
+        source_names = {call[0] for call in mock_job_manager.job_command_calls}
+        assert source_names == {"mantle/uuid1", "hr/uuid2"}
+
 
 class MockJobManagerAdapter:
     def __init__(self):
