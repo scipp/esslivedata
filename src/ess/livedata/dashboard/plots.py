@@ -262,7 +262,7 @@ class LinePlotter(Plotter):
         """Create a line plot from a scipp DataArray."""
         # TODO Currently we do not plot histograms or else we get a bar chart that is
         # not looking great if we have many bins.
-        if data.coords.is_edges(data.dim):
+        if data.dim in data.coords and data.coords.is_edges(data.dim):
             da = data.assign_coords({data.dim: sc.midpoints(data.coords[data.dim])})
         else:
             da = data

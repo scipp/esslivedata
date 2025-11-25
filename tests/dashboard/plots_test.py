@@ -156,6 +156,56 @@ class TestImagePlotter:
             render_to_bokeh(hv_element)
 
 
+class TestLinePlotter:
+    @pytest.fixture
+    def line_plotter(self):
+        """Create a LinePlotter instance."""
+        from ess.livedata.dashboard.plot_params import PlotParams1d
+
+        return plots.LinePlotter.from_params(PlotParams1d())
+
+    def test_plot_without_dimension_coord(self, line_plotter, data_key):
+        """Test that LinePlotter handles data without dimension coordinate."""
+        # Create 1D data without a coordinate for the dimension (like strip view)
+        data = sc.DataArray(
+            sc.array(dims=['strip'], values=[1.0, 2.0, 3.0], unit='counts'),
+        )
+        result = line_plotter.plot(data, data_key)
+        assert isinstance(result, hv.Curve)
+
+    def test_plot_with_metadata_coord_but_no_dimension_coord(
+        self, line_plotter, data_key
+    ):
+        """Test LinePlotter with metadata coord but no dimension coordinate."""
+        # This is the actual case that was failing: data has a 'time' metadata coord
+        # but no coord for the 'strip' dimension
+        data = sc.DataArray(
+            sc.array(dims=['strip'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'time': sc.scalar(123456789, unit='ns')},
+        )
+        result = line_plotter.plot(data, data_key)
+        assert isinstance(result, hv.Curve)
+
+    def test_plot_with_dimension_coord(self, line_plotter, data_key):
+        """Test that LinePlotter works normally with dimension coordinate."""
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        result = line_plotter.plot(data, data_key)
+        assert isinstance(result, hv.Curve)
+
+    def test_plot_with_edge_coord(self, line_plotter, data_key):
+        """Test that LinePlotter handles bin-edge coordinates."""
+        edges = sc.array(dims=['x'], values=[0.0, 10.0, 20.0, 30.0], unit='m')
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': edges},
+        )
+        result = line_plotter.plot(data, data_key)
+        assert isinstance(result, hv.Curve)
+
+
 class TestSlicerPlotter:
     @pytest.fixture
     def coordinates_3d(self):
