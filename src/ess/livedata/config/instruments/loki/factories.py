@@ -28,7 +28,7 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.sans.types import (
         Filename,
         Incident,
-        IofQ,
+        IntensityQ,
         Numerator,
         ReducedQ,
         Transmission,
@@ -62,8 +62,8 @@ def setup_factories(instrument: Instrument) -> None:
     specs.xy_projection_handle.attach_factory()(_xy_projection.make_view)
 
     def _transmission_from_current_run(
-        data: sans_types.CleanMonitor[SampleRun, sans_types.MonitorType],
-    ) -> sans_types.CleanMonitor[
+        data: sans_types.CorrectedMonitor[SampleRun, sans_types.MonitorType],
+    ) -> sans_types.CorrectedMonitor[
         sans_types.TransmissionRun[SampleRun], sans_types.MonitorType
     ]:
         return data
@@ -77,8 +77,8 @@ def setup_factories(instrument: Instrument) -> None:
 
     _accumulators = (
         ReducedQ[SampleRun, Numerator],
-        sans_types.CleanMonitor[SampleRun, Incident],
-        sans_types.CleanMonitor[SampleRun, Transmission],
+        sans_types.CorrectedMonitor[SampleRun, Incident],
+        sans_types.CorrectedMonitor[SampleRun, Transmission],
     )
 
     @specs.i_of_q_handle.attach_factory()
@@ -88,7 +88,7 @@ def setup_factories(instrument: Instrument) -> None:
         return StreamProcessorWorkflow(
             wf,
             dynamic_keys=_dynamic_keys(source_name),
-            target_keys={'i_of_q': IofQ[SampleRun]},
+            target_keys={'i_of_q': IntensityQ[SampleRun]},
             accumulators=_accumulators,
         )
 
@@ -104,13 +104,13 @@ def setup_factories(instrument: Instrument) -> None:
 
         if not params.options.use_transmission_run:
             target_keys = {
-                'i_of_q': IofQ[SampleRun],
+                'i_of_q': IntensityQ[SampleRun],
                 'transmission_fraction': sans_types.TransmissionFraction[SampleRun],
             }
             wf.insert(_transmission_from_current_run)
         else:
             # Transmission fraction is static, do not display
-            target_keys = {'i_of_q': IofQ[SampleRun]}
+            target_keys = {'i_of_q': IntensityQ[SampleRun]}
         return StreamProcessorWorkflow(
             wf,
             dynamic_keys=_dynamic_keys(source_name),
