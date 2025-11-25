@@ -223,6 +223,9 @@ class PlotOrchestrator:
         self._cell_state: dict[CellId, CellState] = {}
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
 
+        # Load persisted configurations
+        self._load_from_store()
+
     def add_grid(self, title: str, nrows: int, ncols: int) -> GridId:
         """
         Add a new plot grid.
@@ -552,13 +555,129 @@ class PlotOrchestrator:
         if cell_id not in self._cell_state:
             self._notify_cell_updated(grid_id, cell_id, cell)
 
+    def _serialize_grids(self) -> dict[str, Any]:
+        """
+        Serialize all grids to dict for persistence.
+
+        Returns
+        -------
+        :
+            Dictionary mapping grid IDs (as strings) to grid configurations.
+        """
+        return {
+            str(grid_id): {
+                'title': grid.title,
+                'nrows': grid.nrows,
+                'ncols': grid.ncols,
+                'cells': {
+                    str(cell_id): {
+                        'geometry': {
+                            'row': cell.geometry.row,
+                            'col': cell.geometry.col,
+                            'row_span': cell.geometry.row_span,
+                            'col_span': cell.geometry.col_span,
+                        },
+                        'config': {
+                            'workflow_id': str(cell.config.workflow_id),
+                            'output_name': cell.config.output_name,
+                            'source_names': cell.config.source_names,
+                            'plot_name': cell.config.plot_name,
+                            'params': (
+                                cell.config.params.model_dump()
+                                if isinstance(cell.config.params, pydantic.BaseModel)
+                                else cell.config.params
+                            ),
+                        },
+                    }
+                    for cell_id, cell in grid.cells.items()
+                },
+            }
+            for grid_id, grid in self._grids.items()
+        }
+
+    def _deserialize_grids(self, data: dict[str, Any]) -> None:
+        """
+        Deserialize grids from dict and restore state.
+
+        This reconstructs the grid configurations and subscribes to workflows
+        to recreate cell state when data becomes available.
+
+        Parameters
+        ----------
+        data
+            Dictionary mapping grid IDs (as strings) to grid configurations.
+        """
+        from uuid import UUID
+
+        for grid_id_str, grid_data in data.items():
+            grid_id = GridId(UUID(grid_id_str))
+
+            # Recreate the grid
+            grid = PlotGridConfig(
+                title=grid_data['title'],
+                nrows=grid_data['nrows'],
+                ncols=grid_data['ncols'],
+            )
+
+            # Store the grid first (needed by _subscribe_and_setup)
+            self._grids[grid_id] = grid
+
+            # Recreate cells
+            for cell_id_str, cell_data in grid_data.get('cells', {}).items():
+                cell_id = CellId(UUID(cell_id_str))
+
+                # Recreate geometry
+                geometry = CellGeometry(**cell_data['geometry'])
+
+                # Recreate config
+                config_data = cell_data['config']
+                config = PlotConfig(
+                    workflow_id=WorkflowId.from_string(config_data['workflow_id']),
+                    output_name=config_data['output_name'],
+                    source_names=config_data['source_names'],
+                    plot_name=config_data['plot_name'],
+                    params=config_data['params'],  # Keep as dict
+                )
+
+                cell = PlotCell(geometry=geometry, config=config)
+                grid.cells[cell_id] = cell
+
+                # Set up tracking mappings
+                self._cell_to_grid[cell_id] = grid_id
+
+                # Subscribe to workflow availability
+                self._subscribe_and_setup(grid_id, cell_id, config.workflow_id)
+
+            # Notify subscribers of grid creation
+            self._notify_grid_created(grid_id)
+
+    def _load_from_store(self) -> None:
+        """Load plot grid configurations from config store."""
+        if self._config_store is None:
+            return
+
+        try:
+            data = self._config_store.get('plot_grids')
+            if data is None:
+                self._logger.debug('No persisted plot grids found in store')
+                return
+
+            self._deserialize_grids(data)
+            self._logger.info('Loaded %d plot grids from store', len(self._grids))
+        except Exception:
+            self._logger.exception('Failed to load plot grids from store')
+
     def _persist_to_store(self) -> None:
         """Persist plot grid configurations to config store."""
         if self._config_store is None:
             return
 
-        # TODO: Implement persistence when needed
-        self._logger.debug('Plot grid configs would be persisted to store')
+        try:
+            serialized = self._serialize_grids()
+            self._config_store['plot_grids'] = serialized
+            self._logger.debug('Persisted %d plot grids to store', len(self._grids))
+        except Exception as e:
+            self._logger.error('Failed to persist plot grids: %s', e)
 
     def get_grid(self, grid_id: GridId) -> PlotGridConfig | None:
         """

@@ -74,43 +74,43 @@ class TestInMemoryConfigStore:
     def test_write_and_read(self, workflow_id_1, config_value_1):
         """Test writing and reading a config."""
         store = InMemoryConfigStore()
-        store[workflow_id_1] = config_value_1
+        store[str(workflow_id_1)] = config_value_1
 
-        assert workflow_id_1 in store
-        assert store[workflow_id_1] == config_value_1
+        assert str(workflow_id_1) in store
+        assert store[str(workflow_id_1)] == config_value_1
 
     def test_multiple_configs(
         self, workflow_id_1, workflow_id_2, config_value_1, config_value_2
     ):
         """Test storing multiple configs."""
         store = InMemoryConfigStore()
-        store[workflow_id_1] = config_value_1
-        store[workflow_id_2] = config_value_2
+        store[str(workflow_id_1)] = config_value_1
+        store[str(workflow_id_2)] = config_value_2
 
         assert len(store) == 2
-        assert store[workflow_id_1] == config_value_1
-        assert store[workflow_id_2] == config_value_2
+        assert store[str(workflow_id_1)] == config_value_1
+        assert store[str(workflow_id_2)] == config_value_2
 
     def test_update_existing_config(self, workflow_id_1, config_value_1):
         """Test updating an existing config."""
         store = InMemoryConfigStore()
-        store[workflow_id_1] = config_value_1
+        store[str(workflow_id_1)] = config_value_1
 
         # Update the config
         new_value = {'source_names': ['detector_3'], 'params': {'threshold': 300.0}}
-        store[workflow_id_1] = new_value
+        store[str(workflow_id_1)] = new_value
 
         assert len(store) == 1
-        assert store[workflow_id_1] == new_value
+        assert store[str(workflow_id_1)] == new_value
 
     def test_delete_config(self, workflow_id_1, config_value_1):
         """Test deleting a config."""
         store = InMemoryConfigStore()
-        store[workflow_id_1] = config_value_1
-        assert workflow_id_1 in store
+        store[str(workflow_id_1)] = config_value_1
+        assert str(workflow_id_1) in store
 
-        del store[workflow_id_1]
-        assert workflow_id_1 not in store
+        del store[str(workflow_id_1)]
+        assert str(workflow_id_1) not in store
         assert len(store) == 0
 
     def test_lru_eviction(self):
@@ -125,7 +125,7 @@ class TestInMemoryConfigStore:
                 name=f'workflow_{i}',
                 version=1,
             )
-            store[wf_id] = {'params': {'value': i}}
+            store[str(wf_id)] = {'params': {'value': i}}
 
         # Should have evicted 40% (2 configs), leaving 4
         assert len(store) == 4
@@ -137,8 +137,8 @@ class TestInMemoryConfigStore:
         wf_id_1 = WorkflowId(
             instrument='dummy', namespace='reduction', name='workflow_1', version=1
         )
-        assert wf_id_0 not in store
-        assert wf_id_1 not in store
+        assert str(wf_id_0) not in store
+        assert str(wf_id_1) not in store
 
         # Last four should remain
         for i in range(2, 6):
@@ -148,7 +148,7 @@ class TestInMemoryConfigStore:
                 name=f'workflow_{i}',
                 version=1,
             )
-            assert wf_id in store
+            assert str(wf_id) in store
 
     def test_no_max_configs(self):
         """Test store without max_configs limit."""
@@ -162,20 +162,20 @@ class TestInMemoryConfigStore:
                 name=f'workflow_{i}',
                 version=1,
             )
-            store[wf_id] = {'params': {'value': i}}
+            store[str(wf_id)] = {'params': {'value': i}}
 
         assert len(store) == 150
 
     def test_iteration(self, workflow_id_1, workflow_id_2):
         """Test iterating over configs."""
         store = InMemoryConfigStore()
-        store[workflow_id_1] = {'params': {'value': 1}}
-        store[workflow_id_2] = {'params': {'value': 2}}
+        store[str(workflow_id_1)] = {'params': {'value': 1}}
+        store[str(workflow_id_2)] = {'params': {'value': 2}}
 
         keys = list(store.keys())
         assert len(keys) == 2
-        assert workflow_id_1 in keys
-        assert workflow_id_2 in keys
+        assert str(workflow_id_1) in keys
+        assert str(workflow_id_2) in keys
 
 
 class TestFileBackedConfigStore:
@@ -192,7 +192,7 @@ class TestFileBackedConfigStore:
     def test_write_and_read(self, temp_config_file, workflow_id_1, config_value_1):
         """Test writing and reading a config."""
         store = FileBackedConfigStore(temp_config_file)
-        store[workflow_id_1] = config_value_1
+        store[str(workflow_id_1)] = config_value_1
 
         # Verify file was created and contains the config
         assert temp_config_file.exists()
@@ -202,8 +202,8 @@ class TestFileBackedConfigStore:
         assert data[str(workflow_id_1)] == config_value_1
 
         # Verify reading from store
-        assert workflow_id_1 in store
-        assert store[workflow_id_1] == config_value_1
+        assert str(workflow_id_1) in store
+        assert store[str(workflow_id_1)] == config_value_1
 
     def test_persistence_across_instances(
         self, temp_config_file, workflow_id_1, config_value_1
@@ -211,12 +211,12 @@ class TestFileBackedConfigStore:
         """Test that configs persist when creating a new store instance."""
         # Write with first instance
         store1 = FileBackedConfigStore(temp_config_file)
-        store1[workflow_id_1] = config_value_1
+        store1[str(workflow_id_1)] = config_value_1
 
         # Read with second instance
         store2 = FileBackedConfigStore(temp_config_file)
-        assert workflow_id_1 in store2
-        assert store2[workflow_id_1] == config_value_1
+        assert str(workflow_id_1) in store2
+        assert store2[str(workflow_id_1)] == config_value_1
 
     def test_multiple_configs(
         self,
@@ -228,44 +228,44 @@ class TestFileBackedConfigStore:
     ):
         """Test storing multiple configs."""
         store = FileBackedConfigStore(temp_config_file)
-        store[workflow_id_1] = config_value_1
-        store[workflow_id_2] = config_value_2
+        store[str(workflow_id_1)] = config_value_1
+        store[str(workflow_id_2)] = config_value_2
 
         assert len(store) == 2
-        assert store[workflow_id_1] == config_value_1
-        assert store[workflow_id_2] == config_value_2
+        assert store[str(workflow_id_1)] == config_value_1
+        assert store[str(workflow_id_2)] == config_value_2
 
     def test_update_existing_config(
         self, temp_config_file, workflow_id_1, config_value_1
     ):
         """Test updating an existing config."""
         store = FileBackedConfigStore(temp_config_file)
-        store[workflow_id_1] = config_value_1
+        store[str(workflow_id_1)] = config_value_1
 
         # Update the config
         new_value = {'source_names': ['detector_3'], 'params': {'threshold': 300.0}}
-        store[workflow_id_1] = new_value
+        store[str(workflow_id_1)] = new_value
 
         assert len(store) == 1
-        assert store[workflow_id_1] == new_value
+        assert store[str(workflow_id_1)] == new_value
 
         # Verify persistence
         store2 = FileBackedConfigStore(temp_config_file)
-        assert store2[workflow_id_1] == new_value
+        assert store2[str(workflow_id_1)] == new_value
 
     def test_delete_config(self, temp_config_file, workflow_id_1, config_value_1):
         """Test deleting a config."""
         store = FileBackedConfigStore(temp_config_file)
-        store[workflow_id_1] = config_value_1
-        assert workflow_id_1 in store
+        store[str(workflow_id_1)] = config_value_1
+        assert str(workflow_id_1) in store
 
-        del store[workflow_id_1]
-        assert workflow_id_1 not in store
+        del store[str(workflow_id_1)]
+        assert str(workflow_id_1) not in store
         assert len(store) == 0
 
         # Verify deletion persisted
         store2 = FileBackedConfigStore(temp_config_file)
-        assert workflow_id_1 not in store2
+        assert str(workflow_id_1) not in store2
 
     def test_lru_eviction(self, temp_config_file):
         """Test LRU eviction when max_configs is exceeded."""
@@ -281,7 +281,7 @@ class TestFileBackedConfigStore:
                 name=f'workflow_{i}',
                 version=1,
             )
-            store[wf_id] = {'params': {'value': i}}
+            store[str(wf_id)] = {'params': {'value': i}}
 
         # Should have evicted 40% (2 configs), leaving 4
         assert len(store) == 4
@@ -293,8 +293,8 @@ class TestFileBackedConfigStore:
         wf_id_1 = WorkflowId(
             instrument='dummy', namespace='reduction', name='workflow_1', version=1
         )
-        assert wf_id_0 not in store
-        assert wf_id_1 not in store
+        assert str(wf_id_0) not in store
+        assert str(wf_id_1) not in store
 
         # Last four should remain
         for i in range(2, 6):
@@ -304,7 +304,7 @@ class TestFileBackedConfigStore:
                 name=f'workflow_{i}',
                 version=1,
             )
-            assert wf_id in store
+            assert str(wf_id) in store
 
     def test_corrupted_file_handling(
         self, temp_config_file, workflow_id_1, config_value_1
@@ -319,8 +319,8 @@ class TestFileBackedConfigStore:
         assert len(store) == 0
 
         # Should be able to write new configs
-        store[workflow_id_1] = config_value_1
-        assert workflow_id_1 in store
+        store[str(workflow_id_1)] = config_value_1
+        assert str(workflow_id_1) in store
 
     def test_empty_file_handling(self, temp_config_file):
         """Test graceful handling of empty file."""
@@ -330,24 +330,25 @@ class TestFileBackedConfigStore:
         store = FileBackedConfigStore(temp_config_file)
         assert len(store) == 0
 
-    def test_invalid_workflow_id_in_file(
+    def test_arbitrary_string_keys_in_file(
         self, temp_config_file, workflow_id_1, config_value_1
     ):
-        """Test graceful handling of invalid WorkflowId strings in file."""
-        # Write file with invalid WorkflowId format
+        """Test that arbitrary string keys can be stored and loaded."""
+        # Write file with different key formats
         with open(temp_config_file, 'w') as f:
             yaml.safe_dump(
                 {
-                    str(workflow_id_1): config_value_1,  # Valid WorkflowId
-                    'invalid_format': {'params': {}},  # Missing slashes
+                    str(workflow_id_1): config_value_1,  # WorkflowId string format
+                    'custom_key': {'params': {}},  # Arbitrary string key
                 },
                 f,
             )
 
         store = FileBackedConfigStore(temp_config_file)
-        # Should load only the valid entry
-        assert len(store) == 1
-        assert workflow_id_1 in store
+        # Should load both entries since we accept arbitrary string keys
+        assert len(store) == 2
+        assert str(workflow_id_1) in store
+        assert 'custom_key' in store
 
     def test_parent_directory_creation(self):
         """Test that parent directories are created if they don't exist."""
@@ -358,7 +359,7 @@ class TestFileBackedConfigStore:
             wf_id = WorkflowId(
                 instrument='dummy', namespace='reduction', name='test', version=1
             )
-            store[wf_id] = {'params': {}}
+            store[str(wf_id)] = {'params': {}}
 
             assert nested_path.exists()
             assert nested_path.parent.exists()
@@ -366,13 +367,13 @@ class TestFileBackedConfigStore:
     def test_iteration(self, temp_config_file, workflow_id_1, workflow_id_2):
         """Test iterating over configs."""
         store = FileBackedConfigStore(temp_config_file)
-        store[workflow_id_1] = {'params': {'value': 1}}
-        store[workflow_id_2] = {'params': {'value': 2}}
+        store[str(workflow_id_1)] = {'params': {'value': 1}}
+        store[str(workflow_id_2)] = {'params': {'value': 2}}
 
         keys = list(store.keys())
         assert len(keys) == 2
-        assert workflow_id_1 in keys
-        assert workflow_id_2 in keys
+        assert str(workflow_id_1) in keys
+        assert str(workflow_id_2) in keys
 
     def test_no_max_configs(self, temp_config_file):
         """Test store without max_configs limit."""
@@ -386,7 +387,7 @@ class TestFileBackedConfigStore:
                 name=f'workflow_{i}',
                 version=1,
             )
-            store[wf_id] = {'params': {'value': i}}
+            store[str(wf_id)] = {'params': {'value': i}}
 
         assert len(store) == 150
 
@@ -436,11 +437,11 @@ class TestConfigStoreManager:
             wf_id = WorkflowId(
                 instrument='dummy', namespace='reduction', name='test', version=1
             )
-            store1[wf_id] = {'params': {'value': 42}}
+            store1[str(wf_id)] = {'params': {'value': 42}}
 
             # Data should be visible through second reference
-            assert wf_id in store2
-            assert store2[wf_id] == {'params': {'value': 42}}
+            assert str(wf_id) in store2
+            assert store2[str(wf_id)] == {'params': {'value': 42}}
 
     def test_respects_max_configs(self):
         """Test that ConfigStoreManager passes max_configs to stores."""
@@ -458,7 +459,7 @@ class TestConfigStoreManager:
                 wf_id = WorkflowId(
                     instrument='dummy', namespace='reduction', name=f'wf_{i}', version=1
                 )
-                store[wf_id] = {'params': {'value': i}}
+                store[str(wf_id)] = {'params': {'value': i}}
 
             # Should have evicted 40% (2 configs), leaving 4
             assert len(store) == 4
@@ -474,14 +475,14 @@ class TestConfigStoreManager:
             # Create manager and store data
             manager1 = ConfigStoreManager(instrument='dummy', config_dir=tmpdir)
             store1 = manager1.get_store('workflow_configs')
-            store1[wf_id] = config_value
+            store1[str(wf_id)] = config_value
 
             # Create new manager and verify data persists
             manager2 = ConfigStoreManager(instrument='dummy', config_dir=tmpdir)
             store2 = manager2.get_store('workflow_configs')
 
-            assert wf_id in store2
-            assert store2[wf_id] == config_value
+            assert str(wf_id) in store2
+            assert store2[str(wf_id)] == config_value
 
     def test_multiple_stores_independent(self):
         """Test that multiple stores created by manager are independent."""
@@ -499,14 +500,14 @@ class TestConfigStoreManager:
             )
 
             # Add to different stores
-            workflow_store[wf_id1] = {'params': {'a': 1}}
-            plotter_store[wf_id2] = {'params': {'b': 2}}
+            workflow_store[str(wf_id1)] = {'params': {'a': 1}}
+            plotter_store[str(wf_id2)] = {'params': {'b': 2}}
 
             # Should not interfere with each other
-            assert wf_id1 in workflow_store
-            assert wf_id1 not in plotter_store
-            assert wf_id2 in plotter_store
-            assert wf_id2 not in workflow_store
+            assert str(wf_id1) in workflow_store
+            assert str(wf_id1) not in plotter_store
+            assert str(wf_id2) in plotter_store
+            assert str(wf_id2) not in workflow_store
 
     def test_different_instruments_isolated(self):
         """Test that configs for different instruments are stored separately."""
@@ -531,14 +532,14 @@ class TestConfigStoreManager:
             dream_config = {'params': {'threshold': 200.0}}
 
             # Add configs to respective stores
-            dummy_store[dummy_wf_id] = dummy_config
-            dream_store[dream_wf_id] = dream_config
+            dummy_store[str(dummy_wf_id)] = dummy_config
+            dream_store[str(dream_wf_id)] = dream_config
 
             # Verify configs are in separate stores
-            assert dummy_wf_id in dummy_store
-            assert dummy_wf_id not in dream_store
-            assert dream_wf_id in dream_store
-            assert dream_wf_id not in dummy_store
+            assert str(dummy_wf_id) in dummy_store
+            assert str(dummy_wf_id) not in dream_store
+            assert str(dream_wf_id) in dream_store
+            assert str(dream_wf_id) not in dummy_store
 
             # Verify files are in separate directories
             dummy_config_file = Path(tmpdir) / 'dummy' / 'workflow_configs.yaml'
@@ -555,13 +556,13 @@ class TestConfigStoreManager:
             dream_store2 = manager_dream2.get_store('workflow_configs')
 
             # Each instrument should only have its own config
-            assert dummy_wf_id in dummy_store2
-            assert dummy_store2[dummy_wf_id] == dummy_config
-            assert dream_wf_id not in dummy_store2
+            assert str(dummy_wf_id) in dummy_store2
+            assert dummy_store2[str(dummy_wf_id)] == dummy_config
+            assert str(dream_wf_id) not in dummy_store2
 
-            assert dream_wf_id in dream_store2
-            assert dream_store2[dream_wf_id] == dream_config
-            assert dummy_wf_id not in dream_store2
+            assert str(dream_wf_id) in dream_store2
+            assert dream_store2[str(dream_wf_id)] == dream_config
+            assert str(dummy_wf_id) not in dream_store2
 
     def test_thread_safety(self):
         """Test that concurrent get_store calls are thread-safe."""

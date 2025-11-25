@@ -128,7 +128,7 @@ class JobOrchestrator:
             # Try to load persisted config directly as dict
             config_data = None
             if self._config_store is not None:
-                config_data = self._config_store.get(workflow_id)
+                config_data = self._config_store.get(str(workflow_id))
 
             # Get params/aux_source_names/source_names as dicts
             if config_data and config_data.get('params'):
@@ -368,7 +368,7 @@ class JobOrchestrator:
 
         # Persist if we have something to save
         if config_dict:
-            self._config_store[workflow_id] = config_dict
+            self._config_store[str(workflow_id)] = config_dict
 
     def get_staged_config(self, workflow_id: WorkflowId) -> dict[SourceName, JobConfig]:
         """

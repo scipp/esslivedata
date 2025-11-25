@@ -109,7 +109,7 @@ def test_adapter_filters_removed_sources(tmp_path) -> None:
         aux_source_names={},
         params=MonitorDataParams().model_dump(),
     )
-    config_store[workflow_id] = legacy_config.model_dump()
+    config_store[str(workflow_id)] = legacy_config.model_dump()
 
     # Now create backend with the same config dir - orchestrator loads legacy config
     with DashboardBackend(
@@ -210,7 +210,7 @@ def test_incompatible_config_falls_back_to_defaults(tmp_path) -> None:
             # Completely wrong structure - not matching current MonitorDataParams
         },
     )
-    config_store[workflow_id] = incompatible_config.model_dump()
+    config_store[str(workflow_id)] = incompatible_config.model_dump()
 
     # Now create backend with the same config dir
     with DashboardBackend(
@@ -229,3 +229,145 @@ def test_incompatible_config_falls_back_to_defaults(tmp_path) -> None:
 
         # Verify source names are still restored (only params validation failed)
         assert adapter.initial_source_names == ['monitor1']
+
+
+def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None:
+    """
+    Test that PlotOrchestrator state persists across backend restarts.
+
+    This test verifies the complete persistence flow for PlotOrchestrator:
+    1. Create plot grids with cells via PlotOrchestrator
+    2. Stop the backend
+    3. Create a new backend with the same config dir
+    4. Verify all grids and cells are restored correctly
+    """
+    from ess.livedata.config.workflow_spec import WorkflowId
+    from ess.livedata.dashboard.plot_orchestrator import (
+        CellGeometry,
+        PlotCell,
+        PlotConfig,
+    )
+
+    # Create first backend instance
+    with DashboardBackend(
+        instrument='dummy', dev=True, transport='none', config_dir=tmp_path
+    ) as backend1:
+        orchestrator1 = backend1.plot_orchestrator
+
+        # Add a grid
+        grid_id = orchestrator1.add_grid(title='Test Grid', nrows=2, ncols=2)
+
+        # Add a cell with plot configuration
+        workflow_id = WorkflowId(
+            instrument='dummy',
+            namespace='monitor_data',
+            name='monitor_histogram',
+            version=1,
+        )
+        plot_config = PlotConfig(
+            workflow_id=workflow_id,
+            output_name='histogram',
+            source_names=['monitor1', 'monitor2'],
+            plot_name='test_plotter',
+            params={'param1': 'value1', 'param2': 42},
+        )
+        geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+        cell = PlotCell(geometry=geometry, config=plot_config)
+
+        cell_id = orchestrator1.add_plot(grid_id=grid_id, cell=cell)
+
+        # Add another cell in the same grid
+        plot_config2 = PlotConfig(
+            workflow_id=workflow_id,
+            output_name='spectrum',
+            source_names=['monitor1'],
+            plot_name='another_plotter',
+            params={'threshold': 100.0},
+        )
+        geometry2 = CellGeometry(row=0, col=1, row_span=1, col_span=1)
+        cell2 = PlotCell(geometry=geometry2, config=plot_config2)
+
+        cell_id2 = orchestrator1.add_plot(grid_id=grid_id, cell=cell2)
+
+        # Add a second grid with one cell
+        grid_id2 = orchestrator1.add_grid(title='Second Grid', nrows=1, ncols=1)
+        plot_config3 = PlotConfig(
+            workflow_id=workflow_id,
+            output_name='output3',
+            source_names=['monitor2'],
+            plot_name='third_plotter',
+            params={},
+        )
+        geometry3 = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+        cell3 = PlotCell(geometry=geometry3, config=plot_config3)
+
+        cell_id3 = orchestrator1.add_plot(grid_id=grid_id2, cell=cell3)
+
+        # Verify grids exist before shutdown
+        all_grids1 = orchestrator1.get_all_grids()
+        assert len(all_grids1) == 2
+        assert grid_id in all_grids1
+        assert grid_id2 in all_grids1
+
+    # Backend1 is now stopped and cleaned up
+
+    # Create a new backend with the same config dir
+    with DashboardBackend(
+        instrument='dummy', dev=True, transport='none', config_dir=tmp_path
+    ) as backend2:
+        orchestrator2 = backend2.plot_orchestrator
+
+        # Verify grids were restored
+        all_grids2 = orchestrator2.get_all_grids()
+        assert len(all_grids2) == 2, f"Expected 2 grids, got {len(all_grids2)}"
+
+        # Verify grid IDs match (UUIDs should be preserved)
+        restored_grid_ids = set(all_grids2.keys())
+        original_grid_ids = {grid_id, grid_id2}
+        assert (
+            restored_grid_ids == original_grid_ids
+        ), f"Grid IDs don't match: {restored_grid_ids} != {original_grid_ids}"
+
+        # Verify first grid configuration
+        grid1_restored = all_grids2[grid_id]
+        assert grid1_restored.title == 'Test Grid'
+        assert grid1_restored.nrows == 2
+        assert grid1_restored.ncols == 2
+        assert len(grid1_restored.cells) == 2
+
+        # Verify first cell configuration
+        assert cell_id in grid1_restored.cells
+        cell1_restored = grid1_restored.cells[cell_id]
+        assert cell1_restored.geometry.row == 0
+        assert cell1_restored.geometry.col == 0
+        assert cell1_restored.geometry.row_span == 1
+        assert cell1_restored.geometry.col_span == 1
+        assert cell1_restored.config.workflow_id == workflow_id
+        assert cell1_restored.config.output_name == 'histogram'
+        assert cell1_restored.config.source_names == ['monitor1', 'monitor2']
+        assert cell1_restored.config.plot_name == 'test_plotter'
+        # Params are stored as dict (not validated on load)
+        assert cell1_restored.config.params == {'param1': 'value1', 'param2': 42}
+
+        # Verify second cell configuration
+        assert cell_id2 in grid1_restored.cells
+        cell2_restored = grid1_restored.cells[cell_id2]
+        assert cell2_restored.geometry.row == 0
+        assert cell2_restored.geometry.col == 1
+        assert cell2_restored.config.output_name == 'spectrum'
+        assert cell2_restored.config.source_names == ['monitor1']
+        assert cell2_restored.config.params == {'threshold': 100.0}
+
+        # Verify second grid configuration
+        grid2_restored = all_grids2[grid_id2]
+        assert grid2_restored.title == 'Second Grid'
+        assert grid2_restored.nrows == 1
+        assert grid2_restored.ncols == 1
+        assert len(grid2_restored.cells) == 1
+
+        # Verify third cell configuration
+        assert cell_id3 in grid2_restored.cells
+        cell3_restored = grid2_restored.cells[cell_id3]
+        assert cell3_restored.config.output_name == 'output3'
+        assert cell3_restored.config.source_names == ['monitor2']
+        assert cell3_restored.config.params == {}
