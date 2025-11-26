@@ -285,6 +285,44 @@ class TestEv44ToDetectorEventsAdapter:
         assert result.stream.name == "unified_detector"
         assert isinstance(result.value, DetectorEvents)
 
+    def test_adapter_exclude_from_merge(self) -> None:
+        adapter = Ev44ToDetectorEventsAdapter(
+            merge_detectors=True,
+            exclude_from_merge=frozenset({'special_detector'}),
+        )
+
+        # Regular detector should be merged
+        regular_message = Message(
+            timestamp=1234,
+            stream=StreamId(kind=StreamKind.DETECTOR_EVENTS, name="detector1"),
+            value=eventdata_ev44.EventData(
+                source_name="detector1",
+                message_id=0,
+                reference_time=np.array([1234]),
+                reference_time_index=[0],
+                time_of_flight=np.array([123456]),
+                pixel_id=np.array([1]),
+            ),
+        )
+        result = adapter.adapt(regular_message)
+        assert result.stream.name == "unified_detector"
+
+        # Excluded detector should keep its name
+        excluded_message = Message(
+            timestamp=1234,
+            stream=StreamId(kind=StreamKind.DETECTOR_EVENTS, name="special_detector"),
+            value=eventdata_ev44.EventData(
+                source_name="special_detector",
+                message_id=0,
+                reference_time=np.array([1234]),
+                reference_time_index=[0],
+                time_of_flight=np.array([123456]),
+                pixel_id=np.array([1]),
+            ),
+        )
+        result = adapter.adapt(excluded_message)
+        assert result.stream.name == "special_detector"
+
 
 def message_with_schema(schema: str) -> KafkaMessage:
     """
