@@ -88,6 +88,17 @@ mantle_wire_view_handle = instrument.register_spec(
     outputs=DetectorViewOutputs,
 )
 
+mantle_strip_view_handle = instrument.register_spec(
+    namespace='detector_data',
+    name='mantle_strip_view',
+    version=1,
+    title='Mantle strip view',
+    description='Sum over all dimensions except strip to show counts per strip.',
+    source_names=['mantle_detector'],
+    params=DetectorViewParams,
+    outputs=DetectorViewOutputs,
+)
+
 
 # Pydantic models for DREAM workflows
 class InstrumentConfigurationEnum(StrEnum):
