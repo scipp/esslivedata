@@ -11,6 +11,7 @@ from typing import Any, Generic, Protocol, TypeVar
 import pydantic
 import scipp as sc
 
+from ..handlers.detector_view_specs import DetectorROIAuxSources
 from .extractors import FullHistoryExtractor, UpdateExtractor
 from .plot_params import PlotParamsROIDetector
 from .plots import (
@@ -68,6 +69,40 @@ class DataRequirements:
         return True
 
 
+@dataclass
+class SpecRequirements:
+    """Requirements based on workflow spec metadata.
+
+    Allows plotters to declare dependencies on workflow spec features like
+    auxiliary sources (e.g., ROI support).
+    """
+
+    requires_aux_sources: list[type] = field(default_factory=list)
+
+    def validate_spec(self, aux_sources_type: type | None) -> bool:
+        """Check if spec meets these requirements.
+
+        Parameters
+        ----------
+        aux_sources_type:
+            The aux_sources type from the workflow spec, or None if not defined.
+
+        Returns
+        -------
+        :
+            True if the spec meets the requirements, False otherwise.
+        """
+        if not self.requires_aux_sources:
+            return True
+        if aux_sources_type is None:
+            return False
+        # Check if aux_sources_type is one of the required types or a subclass
+        return any(
+            issubclass(aux_sources_type, required)
+            for required in self.requires_aux_sources
+        )
+
+
 class PlotterSpec(pydantic.BaseModel):
     """
     Specification for a plotter.
@@ -86,6 +121,10 @@ class PlotterSpec(pydantic.BaseModel):
     )
     data_requirements: DataRequirements = pydantic.Field(
         description="Requirements the data to be plotted must fulfill."
+    )
+    spec_requirements: SpecRequirements = pydantic.Field(
+        default_factory=SpecRequirements,
+        description="Requirements based on workflow spec metadata.",
     )
 
 
@@ -113,6 +152,7 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
         description: str,
         data_requirements: DataRequirements,
         factory: PlotterFactory[P],
+        spec_requirements: SpecRequirements | None = None,
     ) -> None:
         # Try to get the type hint of the 'params' argument if it exists
         # Use get_type_hints to resolve forward references, in case we used
@@ -124,17 +164,48 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
             description=description,
             params=type_hints['params'],
             data_requirements=data_requirements,
+            spec_requirements=spec_requirements or SpecRequirements(),
         )
         self[name] = PlotterEntry(spec=spec, factory=factory)
 
     def get_compatible_plotters(
         self, data: dict[Any, sc.DataArray]
     ) -> dict[str, PlotterSpec]:
-        """Get plotters compatible with the given data."""
+        """Get plotters compatible with the given data.
+
+        Note: This only checks data requirements, not spec requirements.
+        Use get_compatible_plotters_with_spec() when workflow spec is available.
+        """
         return {
             name: entry.spec
             for name, entry in self.items()
             if entry.spec.data_requirements.validate_data(data)
+        }
+
+    def get_compatible_plotters_with_spec(
+        self,
+        data: dict[Any, sc.DataArray],
+        aux_sources_type: type | None,
+    ) -> dict[str, PlotterSpec]:
+        """Get plotters compatible with both data and workflow spec.
+
+        Parameters
+        ----------
+        data:
+            Dictionary mapping keys to DataArrays.
+        aux_sources_type:
+            The aux_sources type from the workflow spec, or None if not defined.
+
+        Returns
+        -------
+        :
+            Dictionary of compatible plotter names to their specifications.
+        """
+        return {
+            name: entry.spec
+            for name, entry in self.items()
+            if entry.spec.data_requirements.validate_data(data)
+            and entry.spec.spec_requirements.validate_spec(aux_sources_type)
         }
 
     def get_specs(self) -> dict[str, PlotterSpec]:
@@ -230,5 +301,6 @@ plotter_registry.register_plotter(
         '</ul>'
     ),
     data_requirements=DataRequirements(min_dims=2, max_dims=2, multiple_datasets=True),
+    spec_requirements=SpecRequirements(requires_aux_sources=[DetectorROIAuxSources]),
     factory=_roi_detector_plotter_factory,
 )

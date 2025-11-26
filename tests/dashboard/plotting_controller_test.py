@@ -246,6 +246,44 @@ class TestGetAvailablePlottersFromSpec:
 
         assert has_template is True
         assert 'image' in plotters
+        # roi_detector requires aux_sources with ROI support, not included here
+        assert 'roi_detector' not in plotters
+        assert 'lines' not in plotters
+
+    def test_returns_roi_detector_for_2d_template_with_roi_aux_sources(
+        self, plotting_controller
+    ):
+        """Test that roi_detector is included when aux_sources supports ROI."""
+        from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
+
+        class TestOutputs(WorkflowOutputsBase):
+            detector: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['x', 'y'], shape=[0, 0], unit='counts'),
+                    coords={
+                        'x': sc.arange('x', 0, unit='m'),
+                        'y': sc.arange('y', 0, unit='m'),
+                    },
+                )
+            )
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='test_workflow',
+            version=1,
+            title='Test',
+            description='Test',
+            outputs=TestOutputs,
+            params=None,
+            aux_sources=DetectorROIAuxSources,
+        )
+
+        plotters, has_template = plotting_controller.get_available_plotters_from_spec(
+            workflow_spec=spec, output_name='detector'
+        )
+
+        assert has_template is True
+        assert 'image' in plotters
         assert 'roi_detector' in plotters
         assert 'lines' not in plotters
 
