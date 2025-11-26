@@ -296,7 +296,7 @@ class PlotGridTabs:
         if plot is not None:
             # Schedule insertion on next event loop iteration
             pn.state.add_periodic_callback(
-                lambda: plot_grid.insert_widget_at(cell.geometry, widget),
+                lambda g=cell.geometry: plot_grid.insert_widget_at(g, widget),
                 period=1,  # milliseconds
                 count=1,  # run once
             )
