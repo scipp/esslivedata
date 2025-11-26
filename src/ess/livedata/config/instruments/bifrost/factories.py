@@ -18,6 +18,7 @@ from .specs import (
     BifrostElasticQMapParams,
     BifrostQMapParams,
     BifrostWorkflowParams,
+    BraggPeakQMapParams,
     DetectorRatemeterParams,
     DetectorRatemeterRegionParams,
 )
@@ -211,6 +212,93 @@ def setup_factories(instrument: Instrument) -> None:
         wf[CutAxis1] = axis1
         wf[CutAxis2] = axis2
         return _make_cut_stream_processor(wf)
+
+    # Bragg peak monitor Q-map workflow
+    from ess.bifrost.single_crystal import BifrostBraggPeakMonitorWorkflow
+    from ess.bifrost.single_crystal.types import (
+        IntensityQparQperp,
+        QParallelBins,
+        QPerpendicularBins,
+    )
+    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
+    from ess.reduce.nexus.types import (
+        EmptyDetector,
+        GravityVector,
+        Position,
+        RawDetector,
+        RunType,
+    )
+    from ess.reduce.nexus.workflow import assemble_detector_data
+    from ess.reduce.time_of_flight import DetectorLtotal
+
+    def _bragg_peak_monitor_ltotal(
+        detector_beamline: RawDetector[RunType],
+        source_position: Position[snx.NXsource, RunType],
+        sample_position: Position[snx.NXsample, RunType],
+        gravity: GravityVector,
+    ) -> DetectorLtotal[RunType]:
+        """Compute detector Ltotal using straight line approximation."""
+        from ess.reduce.time_of_flight import eto_to_tof
+
+        return eto_to_tof.detector_ltotal_from_straight_line_approximation(
+            detector_beamline,  # type: ignore[arg-type]
+            source_position=source_position,
+            sample_position=sample_position,
+            gravity=gravity,
+        )
+
+    def _make_bragg_peak_monitor_empty_detector() -> sc.DataArray:
+        """
+        Create EmptyDetector geometry for the Bragg peak monitor.
+
+        Hard-coded position approximately 1m upstream of the sample along the beam.
+        This is a placeholder until the actual geometry is in the NeXus file.
+        """
+        # Position: 1m upstream of sample (sample is at origin, beam along -z)
+        position = sc.vector([0.0, 0.0, -1.0], unit='m')
+        return sc.DataArray(
+            data=sc.zeros(sizes={}, unit='counts'),
+            coords={
+                'position': position,
+                'detector_number': sc.scalar(0, unit=None),
+            },
+        )
+
+    @specs.bragg_peak_qmap_handle.attach_factory()
+    def _bragg_peak_qmap_workflow(
+        params: BraggPeakQMapParams,
+    ) -> StreamProcessorWorkflow:
+        wf = BifrostBraggPeakMonitorWorkflow()
+        wf[Filename[SampleRun]] = get_nexus_geometry_filename('bifrost')
+        wf[TimeOfFlightLookupTableFilename] = tof_lookup_table_simulation()
+        wf[PreopenNeXusFile] = PreopenNeXusFile(True)
+
+        # Provide hard-coded Bragg peak monitor geometry
+        # (bypass NeXus loading for detector position)
+        wf[EmptyDetector[SampleRun]] = _make_bragg_peak_monitor_empty_detector()
+
+        # Insert custom providers:
+        # - assemble_detector_data: bypasses McStas chain (NeXusData → RawDetector)
+        # - _bragg_peak_monitor_ltotal: straight-line Ltotal for monitor geometry
+        wf.insert(assemble_detector_data)
+        wf.insert(_bragg_peak_monitor_ltotal)
+
+        # Set histogram bins from params
+        wf[QParallelBins] = params.q_parallel_bins.get_edges().rename(Q='Q_parallel')
+        wf[QPerpendicularBins] = params.q_perpendicular_bins.get_edges().rename(
+            Q='Q_perpendicular'
+        )
+
+        return StreamProcessorWorkflow(
+            wf,
+            dynamic_keys={'bragg_peak_monitor': NeXusData[NXdetector, SampleRun]},
+            context_keys={
+                'detector_rotation': InstrumentAngle[SampleRun],
+                'sample_rotation': SampleAngle[SampleRun],
+            },
+            target_keys={'q_map': IntensityQparQperp[SampleRun]},
+            accumulators=(IntensityQparQperp[SampleRun],),
+        )
 
 
 def _transpose_with_coords(data: sc.DataArray, dims: tuple[str, ...]) -> sc.DataArray:

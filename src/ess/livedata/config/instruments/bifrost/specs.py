@@ -23,7 +23,7 @@ from ess.livedata.handlers.detector_view_specs import (
     DetectorViewOutputs,
     DetectorViewParams,
 )
-from ess.livedata.parameter_models import EnergyEdges, QEdges
+from ess.livedata.parameter_models import EnergyEdges, QEdges, QUnit
 
 
 # Arc energies in meV
@@ -212,6 +212,41 @@ class BifrostAuxSources(AuxSourcesBase):
     )
 
 
+class BraggPeakAuxSources(AuxSourcesBase):
+    """Auxiliary source for Bragg peak monitor Q-map workflow."""
+
+    detector_rotation: Literal['detector_rotation'] = pydantic.Field(
+        default='detector_rotation',
+        description='Detector tank rotation angle (a4). '
+        'Required because the monitor is mounted on the detector tank.',
+    )
+    sample_rotation: Literal['sample_rotation'] = pydantic.Field(
+        default='sample_rotation', description='Sample rotation angle (a3).'
+    )
+
+
+class BraggPeakQMapParams(pydantic.BaseModel):
+    """Parameters for Bragg peak monitor Q-map workflow."""
+
+    q_parallel_bins: QEdges = pydantic.Field(
+        default=QEdges(start=-3.0, stop=3.0, num_bins=100, unit=QUnit.INVERSE_ANGSTROM),
+        description="Q_parallel bin edges.",
+    )
+    q_perpendicular_bins: QEdges = pydantic.Field(
+        default=QEdges(start=-3.0, stop=3.0, num_bins=100, unit=QUnit.INVERSE_ANGSTROM),
+        description="Q_perpendicular bin edges.",
+    )
+
+
+class BraggPeakQMapOutputs(WorkflowOutputsBase):
+    """Outputs for Bragg peak monitor Q-map workflow."""
+
+    q_map: sc.DataArray = pydantic.Field(
+        title='Q Map',
+        description='2D histogram in Q_parallel vs Q_perpendicular.',
+    )
+
+
 class QMapOutputs(WorkflowOutputsBase):
     """Outputs for Bifrost Q-map workflows."""
 
@@ -314,4 +349,16 @@ elastic_qmap_custom_handle = instrument.register_spec(
     params=BifrostCustomElasticQMapParams,
     aux_sources=BifrostAuxSources,
     outputs=QMapOutputs,
+)
+
+# Bragg peak monitor Q-map workflow
+bragg_peak_qmap_handle = instrument.register_spec(
+    name='bragg_peak_qmap',
+    version=1,
+    title='Bragg peak Q map',
+    description='Q-map from Bragg peak monitor in Q_parallel vs Q_perpendicular.',
+    source_names=['bragg_peak_monitor'],
+    params=BraggPeakQMapParams,
+    aux_sources=BraggPeakAuxSources,
+    outputs=BraggPeakQMapOutputs,
 )
