@@ -17,10 +17,10 @@ sequenceDiagram
     participant PO as PlotOrchestrator
     participant JO as JobOrchestrator
     participant PC as PlottingController
-    participant SM as StreamManager
+    participant Sub as DataSubscriber
     participant DS as DataService
 
-    Note over User,DS: === Setup Phase ===
+    Note over User,DS: Setup Phase
     User->>PO: add_plot(grid_id, PlotCell)<br/>"Plot workflow A output X here"
     PO->>JO: subscribe_to_workflow(workflow_id, callback)
 
@@ -35,22 +35,27 @@ sequenceDiagram
         JO-->>PO: (subscription_id, was_invoked=true)
     end
 
-    Note over User,DS: === Data Pipeline Setup ===
+    Note over User,DS: Data Pipeline Setup
     PO->>PC: setup_data_pipeline(job_number,<br/>workflow_id, source_names,<br/>output_name, on_first_data)
-    PC->>SM: make_merging_stream(extractors,<br/>on_first_data)
-    SM->>DS: Subscribe to ResultKey(s)
+    PC->>Sub: Create with extractors and callback
+    Sub->>DS: Subscribe to ResultKey(s)
 
-    alt Data not yet available
+    opt Data not yet available
         PO-->>User: on_cell_updated(cell, plot=None)<br/>"Waiting for data"
     end
 
-    Note over User,DS: === Data Arrival & Plot Creation ===
-    DS-->>SM: Data arrives for job 12345
-    SM-->>PC: Pipe updated with data
-    SM->>PO: on_first_data(pipe)
+    Note over User,DS: Plot Creation (on first data)
+    DS-->>Sub: Data for job 12345
+    Sub->>PO: on_first_data(pipe)
     PO->>PC: create_plot_from_pipeline(plot_name,<br/>params, pipe)
     PC-->>PO: HoloViews DynamicMap
     PO-->>User: on_cell_updated(cell, plot=DynamicMap)
+
+    Note over User,DS: Subsequent Data Updates
+    loop Streaming updates
+        DS-->>Sub: New data for job 12345
+        Sub-->>User: Pipe triggers DynamicMap update
+    end
 ```
 
 ## Key Components
@@ -60,8 +65,8 @@ sequenceDiagram
 | **PlotGridTabs** | UI widget where user selects what to plot and where |
 | **PlotOrchestrator** | Manages plot lifecycle, subscribes to job availability, coordinates plot creation |
 | **JobOrchestrator** | Manages workflow jobs, generates job numbers, notifies subscribers on commit |
-| **PlottingController** | Creates data pipelines and HoloViews plots |
-| **StreamManager** | Creates data streams/pipes that merge multiple sources |
+| **PlottingController** | Creates DataSubscribers and HoloViews plots |
+| **DataSubscriber** | Subscribes to DataService, invokes `on_first_data` callback when data arrives |
 | **DataService** | Holds job data, notifies subscribers when data arrives |
 
 ## Waiting States
