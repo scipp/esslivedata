@@ -59,71 +59,48 @@ class DetectorProjection:
         return DetectorView(params=params, detector_view=detector_view)
 
 
+def _identity(da: sc.DataArray) -> sc.DataArray:
+    return da
+
+
 class DetectorLogicalView:
     """
-    Factory for logical detector views with optional transform.
+    Factory for logical detector views with optional transform and reduction.
 
     Logical views use detector_number arrays directly, optionally applying a transform
-    function to reshape or filter the data.
-
-    Note: ROI plots are NOT supported with this class because the simple callable
-    transform does not provide index mapping. Use :py:class:`DetectorLogicalDownsampler`
-    instead if ROI support is needed.
-    """
-
-    def __init__(
-        self,
-        *,
-        instrument: Instrument,
-        transform: Callable[[sc.DataArray], sc.DataArray] | None = None,
-    ) -> None:
-        self._instrument = instrument
-        self._transform = transform
-        self._window_length = 1
-
-    def make_view(self, source_name: str, params: DetectorViewParams) -> DetectorView:
-        """Factory method that creates a detector view for the given source."""
-        detector_view = raw.RollingDetectorView(
-            detector_number=self._instrument.get_detector_number(source_name),
-            window=self._window_length,
-            projection=self._transform,
-        )
-        return DetectorView(params=params, detector_view=detector_view)
-
-
-class DetectorLogicalDownsampler:
-    """
-    Factory for logical detector views using LogicalView.
-
-    Similar to :py:class:`DetectorLogicalView` but uses ``LogicalView`` from
-    ``ess.reduce.live`` which provides proper index mapping for ROI support.
-
-    The key difference is that this class separates the transform (grouping pixels)
-    from the reduction (summing), allowing the downsampler to track which input pixels
-    contribute to each output pixel. This enables ROI filtering to work correctly.
+    function to reshape or filter the data. Uses ``LogicalView`` from
+    ``ess.reduce.live`` for proper index mapping, enabling ROI support.
 
     Parameters
     ----------
     instrument:
         Instrument configuration.
     transform:
-        Callable that transforms input data by grouping pixels (e.g., fold operations).
-        Should NOT include summing - that is handled by the downsampler.
+        Callable that transforms input data (e.g., fold, slice, or reshape operations).
+        If reduction_dim is specified, the transform should NOT include summing - that
+        is handled separately to enable proper ROI index mapping.
     reduction_dim:
-        Dimension(s) to sum over after applying transform.
+        Dimension(s) to sum over after applying transform. If specified, enables proper
+        ROI support by tracking which input pixels contribute to each output pixel.
 
     Example
     -------
-    For downsampling a 1024x1024 image to 512x512:
+    Simple view without reduction (ROI supported):
+
+    .. code-block:: python
+
+        view = DetectorLogicalView(instrument=instrument)
+
+    View with downsampling and ROI support:
 
     .. code-block:: python
 
         def fold_image(da):
-            da = da.fold('x_pixel_offset', {'x_pixel_offset': 512, 'x_bin': -1})
-            da = da.fold('y_pixel_offset', {'y_pixel_offset': 512, 'y_bin': -1})
+            da = da.fold('x', {'x': 512, 'x_bin': -1})
+            da = da.fold('y', {'y': 512, 'y_bin': -1})
             return da
 
-        view = DetectorLogicalDownsampler(
+        view = DetectorLogicalView(
             instrument=instrument,
             transform=fold_image,
             reduction_dim=['x_bin', 'y_bin'],
@@ -134,16 +111,16 @@ class DetectorLogicalDownsampler:
         self,
         *,
         instrument: Instrument,
-        transform: Callable[[sc.DataArray], sc.DataArray],
-        reduction_dim: str | list[str],
+        transform: Callable[[sc.DataArray], sc.DataArray] | None = None,
+        reduction_dim: str | list[str] | None = None,
     ) -> None:
         self._instrument = instrument
-        self._transform = transform
+        self._transform = transform if transform is not None else _identity
         self._reduction_dim = reduction_dim
         self._window_length = 1
 
     def make_view(self, source_name: str, params: DetectorViewParams) -> DetectorView:
-        """Factory method that creates a detector view using LogicalView."""
+        """Factory method that creates a detector view for the given source."""
         detector_view = raw.RollingDetectorView.with_logical_view(
             detector_number=self._instrument.get_detector_number(source_name),
             window=self._window_length,

@@ -11,7 +11,6 @@ from ess.livedata.core.handler import StreamId
 from ess.livedata.handlers.accumulators import LatestValue
 from ess.livedata.handlers.detector_data_handler import (
     DetectorHandlerFactory,
-    DetectorLogicalDownsampler,
     DetectorLogicalView,
     get_nexus_geometry_filename,
 )
@@ -150,10 +149,10 @@ class TestDetectorLogicalView:
         assert result.sizes == {'x': 4, 'y': 4}
 
 
-class TestDetectorLogicalDownsampler:
-    """Tests for DetectorLogicalDownsampler factory.
+class TestDetectorLogicalViewWithReduction:
+    """Tests for DetectorLogicalView with reduction_dim parameter.
 
-    This factory uses LogicalView from ess.reduce.live which provides
+    When reduction_dim is specified, LogicalView from ess.reduce.live provides
     proper index mapping for ROI support.
     """
 
@@ -178,7 +177,7 @@ class TestDetectorLogicalDownsampler:
     ) -> None:
         """Test that make_view creates a DetectorView."""
         instrument = FakeInstrument(detector_number_2d)
-        factory = DetectorLogicalDownsampler(
+        factory = DetectorLogicalView(
             instrument=instrument,
             transform=fold_transform,
             reduction_dim=['x_bin', 'y_bin'],
@@ -195,7 +194,7 @@ class TestDetectorLogicalDownsampler:
     ) -> None:
         """Test that the view correctly downsamples from 8x8 to 4x4."""
         instrument = FakeInstrument(detector_number_2d)
-        factory = DetectorLogicalDownsampler(
+        factory = DetectorLogicalView(
             instrument=instrument,
             transform=fold_transform,
             reduction_dim=['x_bin', 'y_bin'],
@@ -215,13 +214,9 @@ class TestDetectorLogicalDownsampler:
     def test_make_roi_filter_returns_binned_indices(
         self, detector_number_2d: sc.Variable, fold_transform
     ) -> None:
-        """Test that ROI filter has binned indices for proper ROI support.
-
-        This is the key feature that distinguishes DetectorLogicalDownsampler from
-        DetectorLogicalView - it provides proper index mapping for ROI filtering.
-        """
+        """Test that ROI filter has binned indices for proper ROI support."""
         instrument = FakeInstrument(detector_number_2d)
-        factory = DetectorLogicalDownsampler(
+        factory = DetectorLogicalView(
             instrument=instrument,
             transform=fold_transform,
             reduction_dim=['x_bin', 'y_bin'],
@@ -241,7 +236,7 @@ class TestDetectorLogicalDownsampler:
     ) -> None:
         """Test that each output bin contains the correct 4 input pixel indices."""
         instrument = FakeInstrument(detector_number_2d)
-        factory = DetectorLogicalDownsampler(
+        factory = DetectorLogicalView(
             instrument=instrument,
             transform=fold_transform,
             reduction_dim=['x_bin', 'y_bin'],
@@ -262,7 +257,7 @@ class TestDetectorLogicalDownsampler:
         def fold_x_only(da: sc.DataArray) -> sc.DataArray:
             return da.fold(dim='x', sizes={'x': 4, 'x_bin': 2})
 
-        factory = DetectorLogicalDownsampler(
+        factory = DetectorLogicalView(
             instrument=instrument,
             transform=fold_x_only,
             reduction_dim='x_bin',  # Single string
@@ -274,3 +269,40 @@ class TestDetectorLogicalDownsampler:
 
         # Should have shape (4, 8) - x downsampled, y preserved
         assert result.sizes == {'x': 4, 'y': 8}
+
+
+class TestDetectorLogicalViewROISupport:
+    """Tests for ROI support in DetectorLogicalView without reduction."""
+
+    def test_roi_filter_works_without_transform(self) -> None:
+        """Test that ROI filter works for simple view without transform."""
+        detector_number = sc.arange('x', 16, dtype='int64').fold(
+            dim='x', sizes={'x': 4, 'y': 4}
+        )
+        instrument = FakeInstrument(detector_number)
+        factory = DetectorLogicalView(instrument=instrument)
+
+        view = factory.make_view('test_detector', DetectorViewParams())
+        roi_filter = view._view.make_roi_filter()
+
+        # ROI filter should work and have correct shape
+        assert roi_filter._indices.sizes == {'x': 4, 'y': 4}
+
+    def test_roi_filter_works_with_transform_no_reduction(self) -> None:
+        """Test ROI filter with transform that doesn't reduce dimensions."""
+        detector_number = sc.arange('x', 16, dtype='int64').fold(
+            dim='x', sizes={'x': 4, 'y': 4}
+        )
+        instrument = FakeInstrument(detector_number)
+
+        # Transform that just transposes (no reduction)
+        def transpose_dims(da: sc.DataArray) -> sc.DataArray:
+            return da.transpose(('y', 'x'))
+
+        factory = DetectorLogicalView(instrument=instrument, transform=transpose_dims)
+
+        view = factory.make_view('test_detector', DetectorViewParams())
+        roi_filter = view._view.make_roi_filter()
+
+        # ROI filter should work with transposed shape
+        assert roi_filter._indices.sizes == {'y': 4, 'x': 4}

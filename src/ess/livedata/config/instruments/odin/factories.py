@@ -24,17 +24,15 @@ def _fold_image(da: sc.DataArray) -> sc.DataArray:
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize ODIN-specific factories and workflows."""
-    from ess.livedata.handlers.detector_data_handler import (
-        DetectorLogicalDownsampler,
-    )
+    from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
 
     # Configure detector with custom group name
     instrument.configure_detector(
         'timepix3', detector_group_name='event_mode_detectors'
     )
 
-    # Detector view using LogicalView for proper ROI support
-    _panel_0_view = DetectorLogicalDownsampler(
+    # Detector view with downsampling and ROI support
+    _panel_0_view = DetectorLogicalView(
         instrument=instrument,
         transform=_fold_image,
         reduction_dim=['x_bin', 'y_bin'],
