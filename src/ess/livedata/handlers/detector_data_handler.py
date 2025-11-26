@@ -65,6 +65,10 @@ class DetectorLogicalView:
 
     Logical views use detector_number arrays directly, optionally applying a transform
     function to reshape or filter the data.
+
+    Note: ROI plots are NOT supported with this class because the simple callable
+    transform does not provide index mapping. Use :py:class:`DetectorLogicalDownsampler`
+    instead if ROI support is needed.
     """
 
     def __init__(
@@ -83,6 +87,68 @@ class DetectorLogicalView:
             detector_number=self._instrument.get_detector_number(source_name),
             window=self._window_length,
             projection=self._transform,
+        )
+        return DetectorView(params=params, detector_view=detector_view)
+
+
+class DetectorLogicalDownsampler:
+    """
+    Factory for logical detector views using LogicalView.
+
+    Similar to :py:class:`DetectorLogicalView` but uses ``LogicalView`` from
+    ``ess.reduce.live`` which provides proper index mapping for ROI support.
+
+    The key difference is that this class separates the transform (grouping pixels)
+    from the reduction (summing), allowing the downsampler to track which input pixels
+    contribute to each output pixel. This enables ROI filtering to work correctly.
+
+    Parameters
+    ----------
+    instrument:
+        Instrument configuration.
+    transform:
+        Callable that transforms input data by grouping pixels (e.g., fold operations).
+        Should NOT include summing - that is handled by the downsampler.
+    reduction_dim:
+        Dimension(s) to sum over after applying transform.
+
+    Example
+    -------
+    For downsampling a 1024x1024 image to 512x512:
+
+    .. code-block:: python
+
+        def fold_image(da):
+            da = da.fold('x_pixel_offset', {'x_pixel_offset': 512, 'x_bin': -1})
+            da = da.fold('y_pixel_offset', {'y_pixel_offset': 512, 'y_bin': -1})
+            return da
+
+        view = DetectorLogicalDownsampler(
+            instrument=instrument,
+            transform=fold_image,
+            reduction_dim=['x_bin', 'y_bin'],
+        )
+    """
+
+    def __init__(
+        self,
+        *,
+        instrument: Instrument,
+        transform: Callable[[sc.DataArray], sc.DataArray],
+        reduction_dim: str | list[str],
+    ) -> None:
+        self._instrument = instrument
+        self._transform = transform
+        self._reduction_dim = reduction_dim
+        self._window_length = 1
+
+    def make_view(self, source_name: str, params: DetectorViewParams) -> DetectorView:
+        """Factory method that creates a detector view using LogicalView."""
+        detector_view = raw.RollingDetectorView.with_logical_view(
+            detector_number=self._instrument.get_detector_number(source_name),
+            window=self._window_length,
+            transform=self._transform,
+            reduction_dim=self._reduction_dim,
         )
         return DetectorView(params=params, detector_view=detector_view)
 

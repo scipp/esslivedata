@@ -11,15 +11,13 @@ from ess.livedata.config import Instrument
 from . import specs
 
 
-def _resize_image(da: sc.DataArray) -> sc.DataArray:
-    """Downsample detector image to 512x512 for performance."""
+def _fold_image(da: sc.DataArray) -> sc.DataArray:
+    """Fold detector image dimensions for downsampling to 512x512."""
     # 2048*2048 is the actual panel size, and 1024*1024 in the test file,
     # but ess.livedata might not be able to keep up with that so we downsample to
-    # 512x512
+    # 512x512. We fold the dimensions and let LogicalView do the summing.
     da = da.fold(dim='x_pixel_offset', sizes={'x_pixel_offset': 512, 'x_bin': -1})
-    da = da.sum('x_bin')
     da = da.fold(dim='y_pixel_offset', sizes={'y_pixel_offset': 512, 'y_bin': -1})
-    da = da.sum('y_bin')
     return da
 
 
@@ -28,7 +26,7 @@ def setup_factories(instrument: Instrument) -> None:
     import h5py
 
     from ess.livedata.handlers.detector_data_handler import (
-        DetectorLogicalView,
+        DetectorLogicalDownsampler,
         DetectorProjection,
     )
 
@@ -58,7 +56,11 @@ def setup_factories(instrument: Instrument) -> None:
         resolution={'timepix3': {'y': 512, 'x': 512}},
     )
 
-    # Detector view configuration
-    _panel_0_view = DetectorLogicalView(instrument=instrument, transform=_resize_image)
+    # Detector view using LogicalView for proper ROI support
+    _panel_0_view = DetectorLogicalDownsampler(
+        instrument=instrument,
+        transform=_fold_image,
+        reduction_dim=['x_bin', 'y_bin'],
+    )
 
     specs.panel_0_view_handle.attach_factory()(_panel_0_view.make_view)
