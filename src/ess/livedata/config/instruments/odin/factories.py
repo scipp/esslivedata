@@ -13,47 +13,24 @@ from . import specs
 
 def _fold_image(da: sc.DataArray) -> sc.DataArray:
     """Fold detector image dimensions for downsampling to 512x512."""
-    # 2048*2048 is the actual panel size, and 1024*1024 in the test file,
-    # but ess.livedata might not be able to keep up with that so we downsample to
-    # 512x512. We fold the dimensions and let LogicalView do the summing.
-    da = da.fold(dim='x_pixel_offset', sizes={'x_pixel_offset': 512, 'x_bin': -1})
-    da = da.fold(dim='y_pixel_offset', sizes={'y_pixel_offset': 512, 'y_bin': -1})
+    # 4096x4096 is the actual panel size, but ess.livedata might not be able to keep
+    # up with that so we downsample to 512x512.
+    # The geometry file has generic dim_0/dim_1 names, so we rename to x/y.
+    da = da.rename_dims({'dim_0': 'x', 'dim_1': 'y'})
+    da = da.fold(dim='x', sizes={'x': 512, 'x_bin': -1})
+    da = da.fold(dim='y', sizes={'y': 512, 'y_bin': -1})
     return da
 
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize ODIN-specific factories and workflows."""
-    import h5py
-
     from ess.livedata.handlers.detector_data_handler import (
         DetectorLogicalDownsampler,
-        DetectorProjection,
     )
-
-    # Patch the Odin geometry file with:
-    # 1. Non-zero z (needed for detector xy projection)
-    # 2. Axes names and mapping to detector number shape, since ScippNexus
-    #    cannot infer these automatically from the Timepix3 data.
-    # Note: We do this every time on import. Accessing `instrument.nexus_file`
-    # the first time will actually fetch the file using pooch, so it reverts
-    # this change every time.
-    with h5py.File(instrument.nexus_file, 'r+') as f:
-        det = f['entry/instrument/event_mode_detectors/timepix3']
-        trans = det['transformations/translation']
-        trans[...] = 1.0
-        det.attrs['axes'] = ['x_pixel_offset', 'y_pixel_offset']
-        det.attrs['detector_number_indices'] = [0, 1]
 
     # Configure detector with custom group name
     instrument.configure_detector(
         'timepix3', detector_group_name='event_mode_detectors'
-    )
-
-    # Create detector projection
-    _xy_projection = DetectorProjection(
-        instrument=instrument,
-        projection='xy_plane',
-        resolution={'timepix3': {'y': 512, 'x': 512}},
     )
 
     # Detector view using LogicalView for proper ROI support
