@@ -607,8 +607,6 @@ class PlotOrchestrator:
         data
             Dictionary mapping grid IDs (as strings) to grid configurations.
         """
-        from uuid import UUID
-
         for grid_id_str, grid_data in data.items():
             grid_id = GridId(UUID(grid_id_str))
 
