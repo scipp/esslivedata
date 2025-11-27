@@ -107,6 +107,7 @@ class FakePlottingController:
         self._exception_to_raise = None
         self._plot_object = FakePlot()
         self._calls: list[dict] = []
+        self._pipeline_setups: list[dict] = []
 
     def configure_to_raise(self, exception: Exception) -> None:
         """Configure the controller to raise an exception on create_plot."""
@@ -118,6 +119,7 @@ class FakePlottingController:
         self._should_raise = False
         self._exception_to_raise = None
         self._calls.clear()
+        self._pipeline_setups.clear()
 
     def call_count(self) -> int:
         """Return the number of create_plot_from_pipeline calls."""
@@ -126,6 +128,10 @@ class FakePlottingController:
     def get_calls(self) -> list[dict]:
         """Return all recorded calls."""
         return self._calls.copy()
+
+    def get_pipeline_setups(self) -> list[dict]:
+        """Return all recorded pipeline setup calls."""
+        return self._pipeline_setups.copy()
 
     def setup_data_pipeline(
         self,
@@ -139,6 +145,15 @@ class FakePlottingController:
     ):
         """Set up data pipeline using real StreamManager."""
         from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        # Record the call for assertions
+        self._pipeline_setups.append(
+            {
+                'source_names': source_names,
+                'output_name': output_name,
+                'plot_name': plot_name,
+            }
+        )
 
         # Build result keys (same as real PlottingController)
         keys = [
@@ -1281,6 +1296,7 @@ class TestLateSubscriberPlotRetrieval:
         workflow_spec,
         job_orchestrator,
         fake_data_service,
+        fake_plotting_controller,
     ):
         """
         When config is updated and workflow is running, plot is immediately recreated.
@@ -1332,8 +1348,12 @@ class TestLateSubscriberPlotRetrieval:
         plot2, error = plot_orchestrator.get_cell_state(cell_id)
         assert plot2 is not None
         assert error is None
-        # Note: We can't reliably test for a different instance since
-        # FakePlottingController may return the same object
+
+        # Verify plot was recreated with new config
+        assert fake_plotting_controller.call_count() == 2
+        setups = fake_plotting_controller.get_pipeline_setups()
+        assert setups[1]['source_names'] == ['new_source']
+        assert setups[1]['output_name'] == 'new_output'
 
     def test_get_cell_state_cleared_when_cell_removed(
         self,
