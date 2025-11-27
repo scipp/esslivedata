@@ -1,139 +1,49 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-import numpy as np
 import pytest
 import scipp as sc
 
 from ess.livedata.handlers.area_detector_view import (
-    AreaDetectorLogicalView,
     AreaDetectorView,
-    DenseDetectorView,
+    AreaDetectorViewFactory,
 )
-from ess.livedata.handlers.detector_view_specs import DetectorViewParams
+from ess.reduce.live import raw
 
 
-class TestDenseDetectorView:
-    def test_add_image_accumulates(self):
-        """Test that add_image accumulates frames."""
-        logical_view = _make_identity_logical_view(sizes={'y': 4, 'x': 4})
-        view = DenseDetectorView(logical_view)
-
-        frame1 = sc.ones(dims=['y', 'x'], shape=[4, 4])
-        frame2 = sc.ones(dims=['y', 'x'], shape=[4, 4]) * 2
-
-        view.add_image(sc.DataArray(frame1))
-        assert view.cumulative is not None
-        assert sc.allclose(view.cumulative.data, frame1)
-
-        view.add_image(sc.DataArray(frame2))
-        assert sc.allclose(view.cumulative.data, frame1 + frame2)
-
-    def test_add_image_with_transform(self):
-        """Test that transform is applied during accumulation."""
-
-        def fold_transform(da: sc.DataArray) -> sc.DataArray:
-            return da.fold(dim='x', sizes={'x': 2, 'x_bin': 2})
-
-        logical_view = _make_logical_view(
-            sizes={'y': 4, 'x': 4},
-            transform=fold_transform,
-            reduction_dim='x_bin',
-        )
-        view = DenseDetectorView(logical_view)
-
-        # 4x4 image with values 1-16
-        data = np.arange(16).reshape(4, 4).astype(float)
-        frame = sc.DataArray(sc.array(dims=['y', 'x'], values=data))
-
-        view.add_image(frame)
-
-        # After folding x into (x:2, x_bin:2) and summing x_bin:
-        # Shape should be (y:4, x:2)
-        assert view.cumulative.shape == (4, 2)
-
-    def test_clear_counts(self):
-        """Test that clear_counts resets accumulation."""
-        logical_view = _make_identity_logical_view(sizes={'y': 4, 'x': 4})
-        view = DenseDetectorView(logical_view)
-
-        frame = sc.DataArray(sc.ones(dims=['y', 'x'], shape=[4, 4]))
-        view.add_image(frame)
-        assert view.cumulative is not None
-
-        view.clear_counts()
-        assert view.cumulative is None
-
-    def test_make_roi_filter(self):
-        """Test that make_roi_filter returns a valid ROIFilter."""
-        logical_view = _make_identity_logical_view(sizes={'y': 4, 'x': 4})
-        view = DenseDetectorView(logical_view)
-
-        roi_filter = view.make_roi_filter()
-        assert roi_filter is not None
-        assert roi_filter.spatial_dims == ('y', 'x')
-
-    def test_from_transform_factory(self):
-        """Test the from_transform static factory method."""
-
-        def my_transform(da: sc.DataArray) -> sc.DataArray:
-            return da
-
-        view = DenseDetectorView.from_transform(
-            transform=my_transform,
-            input_sizes={'y': 8, 'x': 8},
-        )
-
-        frame = sc.DataArray(sc.ones(dims=['y', 'x'], shape=[8, 8]))
-        view.add_image(frame)
-        assert view.cumulative.shape == (8, 8)
-
-
-class TestAreaDetectorLogicalView:
+class TestAreaDetectorViewFactory:
     def test_make_view_creates_workflow(self):
-        """Test that make_view creates an AreaDetectorView workflow."""
-        factory = AreaDetectorLogicalView(
-            input_sizes={'dim_0': 8, 'dim_1': 8},
-        )
-
-        params = _make_default_params()
-        workflow = factory.make_view(source_name='detector', params=params)
-
+        factory = AreaDetectorViewFactory(input_sizes={'dim_0': 8, 'dim_1': 8})
+        workflow = factory.make_view(source_name='detector')
         assert isinstance(workflow, AreaDetectorView)
 
     def test_make_view_with_transform(self):
-        """Test that make_view applies transform correctly."""
-
         def downsample(da: sc.DataArray) -> sc.DataArray:
             da = da.fold(dim='dim_0', sizes={'dim_0': 4, 'y_bin': 2})
             da = da.fold(dim='dim_1', sizes={'dim_1': 4, 'x_bin': 2})
             return da
 
-        factory = AreaDetectorLogicalView(
+        factory = AreaDetectorViewFactory(
             input_sizes={'dim_0': 8, 'dim_1': 8},
             transform=downsample,
             reduction_dim=['y_bin', 'x_bin'],
         )
+        workflow = factory.make_view(source_name='detector')
 
-        params = _make_default_params()
-        workflow = factory.make_view(source_name='detector', params=params)
-
-        # Accumulate a frame
         frame = sc.DataArray(sc.ones(dims=['dim_0', 'dim_1'], shape=[8, 8]))
         workflow.accumulate({'detector': frame}, start_time=1000, end_time=2000)
         result = workflow.finalize()
 
-        # Output should be downsampled to 4x4
         assert result['cumulative'].shape == (4, 4)
         assert result['current'].shape == (4, 4)
 
 
 class TestAreaDetectorView:
     def test_accumulate_and_finalize(self):
-        """Test basic accumulate and finalize cycle."""
-        logical_view = _make_identity_logical_view(sizes={'y': 4, 'x': 4})
-        dense_view = DenseDetectorView(logical_view)
-        params = _make_default_params()
-        workflow = AreaDetectorView(params=params, dense_view=dense_view)
+        logical_view = raw.LogicalView(
+            transform=lambda da: da,
+            input_sizes={'y': 4, 'x': 4},
+        )
+        workflow = AreaDetectorView(logical_view)
 
         frame = sc.DataArray(sc.ones(dims=['y', 'x'], shape=[4, 4]))
         workflow.accumulate({'detector': frame}, start_time=1000, end_time=2000)
@@ -146,35 +56,31 @@ class TestAreaDetectorView:
         assert 'time' in result['current'].coords
 
     def test_current_is_delta(self):
-        """Test that current result is delta from previous."""
-        logical_view = _make_identity_logical_view(sizes={'y': 4, 'x': 4})
-        dense_view = DenseDetectorView(logical_view)
-        params = _make_default_params()
-        workflow = AreaDetectorView(params=params, dense_view=dense_view)
+        logical_view = raw.LogicalView(
+            transform=lambda da: da,
+            input_sizes={'y': 4, 'x': 4},
+        )
+        workflow = AreaDetectorView(logical_view)
 
         frame1 = sc.DataArray(sc.ones(dims=['y', 'x'], shape=[4, 4]))
         frame2 = sc.DataArray(sc.ones(dims=['y', 'x'], shape=[4, 4]) * 2)
 
-        # First cycle
         workflow.accumulate({'detector': frame1}, start_time=1000, end_time=2000)
         workflow.finalize()
 
-        # Second cycle
         workflow.accumulate({'detector': frame2}, start_time=2000, end_time=3000)
         result2 = workflow.finalize()
 
-        # Current should be only frame2, not frame1+frame2
         assert sc.allclose(result2['current'].data, frame2.data)
-        # Cumulative should be frame1+frame2
         expected_cumulative = frame1.data + frame2.data
         assert sc.allclose(result2['cumulative'].data, expected_cumulative)
 
     def test_clear_resets_state(self):
-        """Test that clear resets all state."""
-        logical_view = _make_identity_logical_view(sizes={'y': 4, 'x': 4})
-        dense_view = DenseDetectorView(logical_view)
-        params = _make_default_params()
-        workflow = AreaDetectorView(params=params, dense_view=dense_view)
+        logical_view = raw.LogicalView(
+            transform=lambda da: da,
+            input_sizes={'y': 4, 'x': 4},
+        )
+        workflow = AreaDetectorView(logical_view)
 
         frame = sc.DataArray(sc.ones(dims=['y', 'x'], shape=[4, 4]))
         workflow.accumulate({'detector': frame}, start_time=1000, end_time=2000)
@@ -182,127 +88,15 @@ class TestAreaDetectorView:
 
         workflow.clear()
 
-        # After clear, finalize should fail (no data)
         with pytest.raises(RuntimeError, match="finalize called without"):
             workflow.finalize()
 
     def test_finalize_without_accumulate_raises(self):
-        """Test that finalize raises if no data accumulated."""
-        logical_view = _make_identity_logical_view(sizes={'y': 4, 'x': 4})
-        dense_view = DenseDetectorView(logical_view)
-        params = _make_default_params()
-        workflow = AreaDetectorView(params=params, dense_view=dense_view)
+        logical_view = raw.LogicalView(
+            transform=lambda da: da,
+            input_sizes={'y': 4, 'x': 4},
+        )
+        workflow = AreaDetectorView(logical_view)
 
         with pytest.raises(RuntimeError, match="finalize called without"):
             workflow.finalize()
-
-
-class TestAreaDetectorROIHistogram:
-    """Tests for ROI filtering with different data shapes."""
-
-    def test_roi_on_2d_image_returns_0d_scalar(self):
-        """ROI on plain 2D image (no depth) should return 0D scalar."""
-        from ess.livedata.config import models
-
-        logical_view = _make_identity_logical_view(sizes={'y': 8, 'x': 8})
-        dense_view = DenseDetectorView(logical_view)
-        params = _make_default_params()
-        workflow = AreaDetectorView(params=params, dense_view=dense_view)
-
-        # Create ROI covering center 4x4 region
-        roi = models.RectangleROI(
-            x=models.Interval(min=2, max=6),
-            y=models.Interval(min=2, max=6),
-        )
-        roi_data = models.RectangleROI.to_concatenated_data_array({0: roi})
-
-        # 8x8 image with all ones
-        frame = sc.DataArray(sc.ones(dims=['y', 'x'], shape=[8, 8], unit='counts'))
-
-        workflow.accumulate(
-            {'detector': frame, 'roi': roi_data}, start_time=1000, end_time=2000
-        )
-        result = workflow.finalize()
-
-        # ROI result should be 0D (scalar) - sum of 16 pixels
-        roi_current = result['roi_current_0']
-        assert roi_current.ndim == 0
-        assert roi_current.value == 16.0  # 4x4 = 16 pixels, each with value 1
-
-    def test_roi_on_3d_image_returns_1d_spectrum(self):
-        """ROI on 3D image (y, x, toa) should return 1D TOA spectrum."""
-        from ess.livedata.config import models
-
-        # 3D input: y, x, toa - only y, x are spatial
-        logical_view = _make_identity_logical_view(sizes={'y': 8, 'x': 8, 'toa': 10})
-        dense_view = DenseDetectorView(logical_view, spatial_dims=('y', 'x'))
-        params = _make_default_params()
-        workflow = AreaDetectorView(params=params, dense_view=dense_view)
-
-        # Create ROI covering center 4x4 region (spatial dims only)
-        roi = models.RectangleROI(
-            x=models.Interval(min=2, max=6),
-            y=models.Interval(min=2, max=6),
-        )
-        roi_data = models.RectangleROI.to_concatenated_data_array({0: roi})
-
-        # 8x8x10 image with all ones
-        frame = sc.DataArray(
-            sc.ones(dims=['y', 'x', 'toa'], shape=[8, 8, 10], unit='counts')
-        )
-
-        workflow.accumulate(
-            {'detector': frame, 'roi': roi_data}, start_time=1000, end_time=2000
-        )
-        result = workflow.finalize()
-
-        # ROI result should be 1D with toa dimension preserved
-        roi_current = result['roi_current_0']
-        assert roi_current.ndim == 1
-        assert 'toa' in roi_current.dims
-        assert roi_current.sizes['toa'] == 10
-        # Each TOA bin should have sum of 16 pixels (4x4 ROI)
-        assert sc.allclose(
-            roi_current.data,
-            sc.array(dims=['toa'], values=[16.0] * 10, unit='counts'),
-        )
-
-
-# Helper functions
-
-
-def _make_identity_logical_view(sizes: dict[str, int]):
-    """Create a LogicalView with identity transform."""
-    from ess.reduce.live import raw
-
-    return raw.LogicalView(
-        transform=lambda da: da,
-        input_sizes=sizes,
-    )
-
-
-def _make_logical_view(
-    sizes: dict[str, int],
-    transform=None,
-    reduction_dim=None,
-):
-    """Create a LogicalView with specified transform."""
-    from ess.reduce.live import raw
-
-    return raw.LogicalView(
-        transform=transform if transform else lambda da: da,
-        input_sizes=sizes,
-        reduction_dim=reduction_dim,
-    )
-
-
-def _make_default_params() -> DetectorViewParams:
-    """Create default DetectorViewParams for testing."""
-    from ess.livedata import parameter_models
-    from ess.livedata.config import models
-
-    return DetectorViewParams(
-        toa_range=parameter_models.TOARange(enabled=False),
-        toa_edges=parameter_models.TOAEdges(),
-        pixel_weighting=models.PixelWeighting(enabled=False),
-    )

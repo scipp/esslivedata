@@ -58,7 +58,7 @@ area_panel_view_handle = instrument.register_spec(
     title='Area Panel',
     description='Area detector image view',
     source_names=['area_panel'],
-    params=DetectorViewParams,
+    params=None,
     outputs=DetectorViewOutputs,
 )
 

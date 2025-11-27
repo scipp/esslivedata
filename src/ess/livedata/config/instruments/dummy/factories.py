@@ -26,7 +26,7 @@ def setup_factories(instrument: Instrument) -> None:
     """Initialize dummy-specific factories and workflows."""
     import sciline
 
-    from ess.livedata.handlers.area_detector_view import AreaDetectorLogicalView
+    from ess.livedata.handlers.area_detector_view import AreaDetectorViewFactory
     from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 
@@ -44,7 +44,7 @@ def setup_factories(instrument: Instrument) -> None:
     specs.panel_0_view_handle.attach_factory()(_panel_0_view.make_view)
 
     # Create area detector view for area_panel (ad00 images)
-    _area_panel_view = AreaDetectorLogicalView(
+    _area_panel_view = AreaDetectorViewFactory(
         input_sizes={'dim_0': 256, 'dim_1': 256},
     )
 
