@@ -212,6 +212,8 @@ def get_nexus_geometry_filename(
 
     The file is fetched and cached with Pooch.
     """
+    if instrument == 'tbl':
+        return pathlib.Path('tbl_999999_00008104.hdf')
     _pooch = _make_pooch()
     dt = (date if date is not None else sc.datetime('now')).to(unit='s')
     try:

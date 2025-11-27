@@ -5,6 +5,6 @@ TBL (Test Beamline) instrument configuration.
 """
 
 from .factories import setup_factories
-from .streams import detector_fakes, stream_mapping
+from .streams import area_detector_fakes, detector_fakes, stream_mapping
 
-__all__ = ['detector_fakes', 'setup_factories', 'stream_mapping']
+__all__ = ['area_detector_fakes', 'detector_fakes', 'setup_factories', 'stream_mapping']
