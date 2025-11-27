@@ -197,6 +197,77 @@ class TestAreaDetectorView:
             workflow.finalize()
 
 
+class TestAreaDetectorROIHistogram:
+    """Tests for ROI filtering with different data shapes."""
+
+    def test_roi_on_2d_image_returns_0d_scalar(self):
+        """ROI on plain 2D image (no depth) should return 0D scalar."""
+        from ess.livedata.config import models
+
+        logical_view = _make_identity_logical_view(sizes={'y': 8, 'x': 8})
+        dense_view = DenseDetectorView(logical_view)
+        params = _make_default_params()
+        workflow = AreaDetectorView(params=params, dense_view=dense_view)
+
+        # Create ROI covering center 4x4 region
+        roi = models.RectangleROI(
+            x=models.Interval(min=2, max=6),
+            y=models.Interval(min=2, max=6),
+        )
+        roi_data = models.RectangleROI.to_concatenated_data_array({0: roi})
+
+        # 8x8 image with all ones
+        frame = sc.DataArray(sc.ones(dims=['y', 'x'], shape=[8, 8], unit='counts'))
+
+        workflow.accumulate(
+            {'detector': frame, 'roi': roi_data}, start_time=1000, end_time=2000
+        )
+        result = workflow.finalize()
+
+        # ROI result should be 0D (scalar) - sum of 16 pixels
+        roi_current = result['roi_current_0']
+        assert roi_current.ndim == 0
+        assert roi_current.value == 16.0  # 4x4 = 16 pixels, each with value 1
+
+    def test_roi_on_3d_image_returns_1d_spectrum(self):
+        """ROI on 3D image (y, x, toa) should return 1D TOA spectrum."""
+        from ess.livedata.config import models
+
+        # 3D input: y, x, toa - only y, x are spatial
+        logical_view = _make_identity_logical_view(sizes={'y': 8, 'x': 8, 'toa': 10})
+        dense_view = DenseDetectorView(logical_view, spatial_dims=('y', 'x'))
+        params = _make_default_params()
+        workflow = AreaDetectorView(params=params, dense_view=dense_view)
+
+        # Create ROI covering center 4x4 region (spatial dims only)
+        roi = models.RectangleROI(
+            x=models.Interval(min=2, max=6),
+            y=models.Interval(min=2, max=6),
+        )
+        roi_data = models.RectangleROI.to_concatenated_data_array({0: roi})
+
+        # 8x8x10 image with all ones
+        frame = sc.DataArray(
+            sc.ones(dims=['y', 'x', 'toa'], shape=[8, 8, 10], unit='counts')
+        )
+
+        workflow.accumulate(
+            {'detector': frame, 'roi': roi_data}, start_time=1000, end_time=2000
+        )
+        result = workflow.finalize()
+
+        # ROI result should be 1D with toa dimension preserved
+        roi_current = result['roi_current_0']
+        assert roi_current.ndim == 1
+        assert 'toa' in roi_current.dims
+        assert roi_current.sizes['toa'] == 10
+        # Each TOA bin should have sum of 16 pixels (4x4 ROI)
+        assert sc.allclose(
+            roi_current.data,
+            sc.array(dims=['toa'], values=[16.0] * 10, unit='counts'),
+        )
+
+
 # Helper functions
 
 

@@ -34,11 +34,21 @@ class DenseDetectorView:
     ----------
     logical_view:
         LogicalView instance for transforming images (e.g., folding for downsampling).
+    spatial_dims:
+        Names of spatial dimensions for ROI filtering. If None, all dimensions from
+        the logical view are treated as spatial.
     """
 
-    def __init__(self, logical_view: raw.LogicalView) -> None:
+    def __init__(
+        self,
+        logical_view: raw.LogicalView,
+        spatial_dims: tuple[str, ...] | None = None,
+    ) -> None:
         self._logical_view = logical_view
         self._cumulative: sc.DataArray | None = None
+        # Determine spatial dims: use provided or fall back to all input dims
+        indices = logical_view.input_indices()
+        self._spatial_dims = spatial_dims if spatial_dims else tuple(indices.dims)
 
     def add_image(self, data: sc.DataArray) -> None:
         """
@@ -60,17 +70,34 @@ class DenseDetectorView:
         """Get the cumulative image, or None if no data added yet."""
         return self._cumulative
 
-    def make_roi_filter(self) -> roi.ROIFilter:
+    @property
+    def spatial_dims(self) -> tuple[str, ...]:
+        """Get the spatial dimensions used for ROI filtering."""
+        return self._spatial_dims
+
+    @property
+    def has_spectral_dim(self) -> bool:
+        """Check if data has non-spatial (spectral) dimensions."""
+        indices = self._logical_view.input_indices()
+        return len(indices.dims) > len(self._spatial_dims)
+
+    def make_roi_filter(self) -> roi.ROIFilter | None:
         """
         Create an ROI filter using the logical view's index mapping.
+
+        Returns None for 3D+ data where ROIFilter doesn't work properly.
+        In those cases, direct slicing should be used instead.
 
         Returns
         -------
         :
-            ROIFilter configured with the logical view's input indices.
+            ROIFilter configured with the logical view's input indices,
+            or None if data has non-spatial dimensions.
         """
+        if self.has_spectral_dim:
+            return None
         indices = self._logical_view.input_indices()
-        return roi.ROIFilter(indices, spatial_dims=tuple(indices.dims))
+        return roi.ROIFilter(indices, spatial_dims=self._spatial_dims)
 
     def transform_weights(
         self,
@@ -134,6 +161,7 @@ class DenseDetectorView:
         transform: Callable[[sc.DataArray], sc.DataArray],
         input_sizes: dict[str, int],
         reduction_dim: str | list[str] | None = None,
+        spatial_dims: tuple[str, ...] | None = None,
     ) -> DenseDetectorView:
         """
         Create a DenseDetectorView from a transform function.
@@ -146,6 +174,9 @@ class DenseDetectorView:
             Dictionary defining the input dimension sizes.
         reduction_dim:
             Dimension(s) to sum over after applying transform.
+        spatial_dims:
+            Names of spatial dimensions for ROI filtering. If None, all input
+            dimensions are treated as spatial.
 
         Returns
         -------
@@ -157,7 +188,7 @@ class DenseDetectorView:
             reduction_dim=reduction_dim,
             input_sizes=input_sizes,
         )
-        return DenseDetectorView(logical_view)
+        return DenseDetectorView(logical_view, spatial_dims=spatial_dims)
 
 
 class AreaDetectorROIHistogram:
@@ -166,12 +197,15 @@ class AreaDetectorROIHistogram:
 
     For dense data, the ROI filtering sums over spatial dimensions. If the data
     has a time-of-arrival dimension, this produces a TOA histogram for the region.
+
+    For 2D data, uses ROIFilter for efficient index-based filtering.
+    For 3D data with spectral dimension, uses direct slicing to preserve the spectrum.
     """
 
     def __init__(
         self,
         *,
-        roi_filter: roi.ROIFilter,
+        roi_filter: roi.ROIFilter | None,
         model: models.ROI,
         spatial_dims: tuple[str, ...],
     ):
@@ -179,6 +213,7 @@ class AreaDetectorROIHistogram:
         self._model = model
         self._spatial_dims = spatial_dims
         self._cumulative: sc.DataArray | None = None
+        self._bounds: dict[str, tuple[int, int]] | None = None
         self._configure_filter(model)
 
     @property
@@ -191,9 +226,16 @@ class AreaDetectorROIHistogram:
 
     def _configure_filter(self, roi_model: models.ROI) -> None:
         if isinstance(roi_model, models.RectangleROI):
-            y, x = self._roi_filter._indices.dims
-            intervals = roi_model.get_bounds(x_dim=x, y_dim=y)
-            self._roi_filter.set_roi_from_intervals(sc.DataGroup(intervals))
+            if len(self._spatial_dims) < 2:
+                raise ValueError(
+                    f"Rectangle ROI requires at least 2 spatial dims, "
+                    f"got {self._spatial_dims}"
+                )
+            y, x = self._spatial_dims[0], self._spatial_dims[1]
+            self._bounds = roi_model.get_bounds(x_dim=x, y_dim=y)
+            # Only use ROIFilter for 2D data (when all dims are spatial)
+            if self._roi_filter is not None:
+                self._roi_filter.set_roi_from_intervals(sc.DataGroup(self._bounds))
         else:
             roi_type = type(roi_model).__name__
             raise ValueError(
@@ -214,9 +256,16 @@ class AreaDetectorROIHistogram:
         :
             Data summed over spatial dimensions within the ROI.
         """
-        filtered, scale = self._roi_filter.apply(data)
-        # Sum over spatial dimensions to get spectrum (or scalar if no TOA dim)
-        result = (filtered * scale).sum(self._spatial_dims)
+        if self._roi_filter is not None:
+            # 2D case: use index-based filtering
+            filtered, scale = self._roi_filter.apply(data)
+            result = (filtered * scale).sum('detector_number')
+        else:
+            # 3D+ case: use direct slicing to preserve non-spatial dims
+            sliced = data
+            for dim, (lo, hi) in self._bounds.items():
+                sliced = sliced[dim, int(lo) : int(hi)]
+            result = sliced.sum(self._spatial_dims)
         return result
 
     def get_delta(self, data: sc.DataArray) -> sc.DataArray:
@@ -371,8 +420,7 @@ class AreaDetectorView(Workflow):
         if rois_changed:
             self._rois_updated = True
             self._rois.clear()
-            roi_filter = self._view.make_roi_filter()
-            spatial_dims = roi_filter.spatial_dims
+            spatial_dims = self._view.spatial_dims
             for idx, roi_model in rois.items():
                 self._rois[idx] = AreaDetectorROIHistogram(
                     roi_filter=self._view.make_roi_filter(),
@@ -399,6 +447,10 @@ class AreaDetectorLogicalView:
     reduction_dim:
         Dimension(s) to sum over after applying transform. Enables downsampling
         with proper ROI index mapping.
+    spatial_dims:
+        Names of spatial dimensions for ROI filtering. If None, all input
+        dimensions are treated as spatial. For 3D data (y, x, toa), specify
+        ('y', 'x') or equivalent to preserve the spectral dimension during ROI.
     """
 
     def __init__(
@@ -407,10 +459,12 @@ class AreaDetectorLogicalView:
         input_sizes: dict[str, int],
         transform: Callable[[sc.DataArray], sc.DataArray] | None = None,
         reduction_dim: str | list[str] | None = None,
+        spatial_dims: tuple[str, ...] | None = None,
     ) -> None:
         self._input_sizes = input_sizes
         self._transform = transform if transform is not None else _identity
         self._reduction_dim = reduction_dim
+        self._spatial_dims = spatial_dims
 
     def make_view(
         self, source_name: str, params: DetectorViewParams
@@ -436,7 +490,7 @@ class AreaDetectorLogicalView:
             reduction_dim=self._reduction_dim,
             input_sizes=self._input_sizes,
         )
-        dense_view = DenseDetectorView(logical_view)
+        dense_view = DenseDetectorView(logical_view, spatial_dims=self._spatial_dims)
         return AreaDetectorView(params=params, dense_view=dense_view)
 
 
