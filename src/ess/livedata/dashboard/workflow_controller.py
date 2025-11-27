@@ -18,13 +18,11 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
 )
 
-from .command_service import CommandService
 from .config_store import ConfigStore
 from .configuration_adapter import ConfigurationState
 from .correlation_histogram import CorrelationHistogramController, make_workflow_spec
 from .data_service import DataService
 from .job_orchestrator import JobOrchestrator
-from .workflow_config_service import WorkflowConfigService
 from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
 
@@ -50,9 +48,7 @@ class WorkflowController:
     def __init__(
         self,
         *,
-        command_service: CommandService,
-        workflow_config_service: WorkflowConfigService,
-        source_names: list[str],
+        job_orchestrator: JobOrchestrator,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         config_store: ConfigStore | None = None,
         data_service: DataService[ResultKey, object] | None = None,
@@ -63,12 +59,8 @@ class WorkflowController:
 
         Parameters
         ----------
-        command_service
-            Service for sending workflow commands to backend services.
-        workflow_config_service
-            Service for receiving workflow status updates from backend services.
-        source_names
-            List of source names to monitor for workflow status updates.
+        job_orchestrator
+            Shared job orchestrator for workflow lifecycle management.
         workflow_registry
             Registry of available workflows and their specifications.
         config_store
@@ -80,8 +72,7 @@ class WorkflowController:
         """
         self._config_store = config_store
         self._logger = logging.getLogger(__name__)
-
-        self._source_names = source_names
+        self._orchestrator = job_orchestrator
 
         # Extend registry with correlation histogram specs if controller provided
         self._workflow_registry = dict(workflow_registry)
@@ -93,15 +84,6 @@ class WorkflowController:
             self._workflow_registry[correlation_2d_spec.get_id()] = correlation_2d_spec
 
         self._data_service = data_service
-
-        # Create job orchestrator for workflow lifecycle management
-        self._orchestrator = JobOrchestrator(
-            command_service=command_service,
-            workflow_config_service=workflow_config_service,
-            source_names=source_names,
-            workflow_registry=self._workflow_registry,
-            config_store=config_store,
-        )
 
     def start_workflow(
         self,
@@ -134,7 +116,8 @@ class WorkflowController:
             If the workflow spec is not found.
         """
         self._logger.info(
-            'Starting workflow %s on sources %s with config %s and aux_sources %s',
+            'WorkflowController.start_workflow: workflow_id=%s, sources=%s, '
+            'config=%s, aux_sources=%s',
             workflow_id,
             source_names,
             config,
@@ -156,8 +139,8 @@ class WorkflowController:
         self._orchestrator.clear_staged_configs(workflow_id)
 
         # Convert Pydantic models to dicts for orchestrator
-        params_dict = config.model_dump()
-        aux_dict = aux_source_names.model_dump() if aux_source_names else {}
+        params_dict = config.model_dump(mode='json')
+        aux_dict = aux_source_names.model_dump(mode='json') if aux_source_names else {}
 
         for source_name in source_names:
             self._orchestrator.stage_config(

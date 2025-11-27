@@ -177,8 +177,8 @@ class Wizard:
         )
         self._cancel_button.on_click(self._on_cancel_clicked)
 
-        # Content container
-        self._content = pn.Column(sizing_mode='stretch_width')
+        # Content container - stretch both to fill modal and allow proper scrolling
+        self._content = pn.Column(sizing_mode='stretch_both')
 
     def advance(self) -> None:
         """Move to next step if current step is valid."""
@@ -303,12 +303,6 @@ class Wizard:
         """Render current step with navigation buttons."""
         self._content.clear()
 
-        # Add step content with 1-based step number
-        self._content.append(self._current_step.render(self._current_step_index + 1))
-
-        # Add vertical spacer to push buttons to bottom
-        self._content.append(pn.layout.VSpacer())
-
         # Update next button state based on step validity
         self._next_button.disabled = not self._current_step.is_valid()
 
@@ -326,9 +320,20 @@ class Wizard:
             self._next_button.name = "Next"
             nav_buttons.append(self._next_button)
 
-        self._content.append(
-            pn.Row(*nav_buttons, sizing_mode='stretch_width', margin=(10, 0))
+        # Create navigation button row (fixed at bottom)
+        nav_row = pn.Row(*nav_buttons, sizing_mode='stretch_width', margin=(10, 0))
+
+        # Create scrollable content area
+        # Use scroll=True to enable scrolling when content exceeds available space
+        scrollable_content = pn.Column(
+            self._current_step.render(self._current_step_index + 1),
+            sizing_mode='stretch_both',
+            scroll=True,
         )
+
+        # Layout: scrollable content above fixed buttons
+        self._content.append(scrollable_content)
+        self._content.append(nav_row)
 
     def _on_next_clicked(self, event) -> None:
         """Handle next button click."""

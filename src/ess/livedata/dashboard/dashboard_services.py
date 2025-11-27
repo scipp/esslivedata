@@ -18,6 +18,7 @@ from .config_store import ConfigStoreManager
 from .correlation_histogram import CorrelationHistogramController
 from .data_service import DataService
 from .job_controller import JobController
+from .job_orchestrator import JobOrchestrator
 from .job_service import JobService
 from .orchestrator import Orchestrator
 from .plotting_controller import PlottingController
@@ -149,10 +150,14 @@ class DashboardServices:
         self.processor_factory = instrument_registry[self._instrument].workflow_factory
 
         self.correlation_controller = CorrelationHistogramController(self.data_service)
-        self.workflow_controller = WorkflowController(
+        self.job_orchestrator = JobOrchestrator(
             command_service=self.command_service,
             workflow_config_service=self.workflow_config_service,
-            source_names=sorted(self.processor_factory.source_names),
+            workflow_registry=self.processor_factory,
+            config_store=self.workflow_config_store,
+        )
+        self.workflow_controller = WorkflowController(
+            job_orchestrator=self.job_orchestrator,
             workflow_registry=self.processor_factory,
             config_store=self.workflow_config_store,
             data_service=self.data_service,

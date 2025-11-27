@@ -8,7 +8,7 @@ import panel as pn
 from ess.livedata import Service
 
 from .dashboard import DashboardBase
-from .plot_orchestrator import PlotOrchestrator, StubJobOrchestrator
+from .plot_orchestrator import PlotOrchestrator
 from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_creation_widget import PlotCreationWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
@@ -39,10 +39,10 @@ class ReductionApp(DashboardBase):
         )
 
         # Create shared orchestrators (must be shared across all sessions)
-        stub_job_orchestrator = StubJobOrchestrator()
         self._plot_orchestrator = PlotOrchestrator(
             plotting_controller=self._services.plotting_controller,
-            job_orchestrator=stub_job_orchestrator,
+            job_orchestrator=self._services.job_orchestrator,
+            data_service=self._services.data_service,
             config_store=self._services.plotter_config_store,
         )
 

@@ -58,21 +58,6 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
     def __len__(self) -> int:
         return len(self._workflow_specs)
 
-    @property
-    def source_names(self) -> set[str]:
-        """
-        Get all source names that have associated workflows.
-
-        Returns
-        -------
-        Set of source names.
-        """
-        return {
-            source_name
-            for spec in self._workflow_specs.values()
-            for source_name in spec.source_names
-        }
-
     def register_spec(self, spec: WorkflowSpec) -> SpecHandle:
         """
         Register workflow spec, return handle for later factory attachment.

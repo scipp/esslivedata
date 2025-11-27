@@ -28,7 +28,7 @@ from ..plot_orchestrator import (
     SubscriptionId,
 )
 from .plot_config_modal import PlotConfigModal
-from .plot_grid import PlotGrid
+from .plot_grid import GridCellStyles, PlotGrid
 from .plot_grid_manager import PlotGridManager
 from .plot_widgets import create_close_button, create_gear_button
 
@@ -129,9 +129,12 @@ class PlotGridTabs:
 
         # Populate with existing cells (important for late subscribers / new sessions)
         for cell_id, cell in grid_config.cells.items():
-            # Create placeholder widget for each existing cell
-            # (actual plots will be created when workflows commit)
-            self._on_cell_updated(grid_id=grid_id, cell_id=cell_id, cell=cell)
+            # Get current plot/error state from orchestrator
+            # This ensures late subscribers (new sessions) see existing plots
+            plot, error = self._orchestrator.get_cell_state(cell_id)
+            self._on_cell_updated(
+                grid_id=grid_id, cell_id=cell_id, cell=cell, plot=plot, error=error
+            )
 
     def _remove_grid_tab(self, grid_id: GridId) -> None:
         """Remove a grid tab."""
@@ -283,8 +286,23 @@ class PlotGridTabs:
             # Show status widget (either waiting for data or error)
             widget = self._create_status_widget(cell_id, cell, error=error)
 
-        # Insert widget at explicit position
-        plot_grid.insert_widget_at(cell.geometry, widget)
+        # Defer insertion for plots to allow Panel to update layout sizing.
+        # When a workflow is already running with data, subscribing triggers
+        # plot creation synchronously (in subscribe_to_workflow's immediate
+        # callback path). This can cause the HoloViews pane to initialize with
+        # collapsed/default size before the grid container is properly sized,
+        # resulting in "glitched" rendering. Deferring to the next event loop
+        # iteration allows Panel to process layout updates first.
+        if plot is not None:
+            # Schedule insertion on next event loop iteration
+            pn.state.add_periodic_callback(
+                lambda g=cell.geometry: plot_grid.insert_widget_at(g, widget),
+                period=1,  # milliseconds
+                count=1,  # run once
+            )
+        else:
+            # Status widgets can be inserted immediately
+            plot_grid.insert_widget_at(cell.geometry, widget)
 
     def _on_cell_removed(self, grid_id: GridId, geometry: CellGeometry) -> None:
         """
@@ -396,6 +414,7 @@ class PlotGridTabs:
                 'border': border,
                 'position': 'relative',
             },
+            margin=GridCellStyles.CELL_MARGIN,
         )
         return status_widget
 
@@ -447,6 +466,7 @@ class PlotGridTabs:
             plot_pane,
             sizing_mode='stretch_both',
             styles={'position': 'relative'},
+            margin=GridCellStyles.CELL_MARGIN,
         )
 
     def shutdown(self) -> None:
