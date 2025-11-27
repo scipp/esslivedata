@@ -29,6 +29,13 @@ from ess.livedata.dashboard.plotting import PlotterSpec
 from .configuration_widget import ConfigurationPanel
 from .wizard import Wizard, WizardStep
 
+# CSS to disable button transition animations for snappier UI response
+_NO_TRANSITION_CSS = """
+.bk-btn {
+    transition: none !important;
+}
+"""
+
 
 @dataclass
 class OutputSelection:
@@ -164,6 +171,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             button_type='primary',
             button_style='outline',
             sizing_mode='stretch_width',
+            stylesheets=[_NO_TRANSITION_CSS],
         )
         buttons.param.watch(self._on_namespace_change, 'value')
         return buttons
@@ -177,6 +185,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             button_type='primary',
             button_style='outline',
             sizing_mode='stretch_width',
+            stylesheets=[_NO_TRANSITION_CSS],
         )
         buttons.param.watch(self._on_workflow_change, 'value')
         return buttons
@@ -190,6 +199,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             button_type='primary',
             button_style='outline',
             sizing_mode='stretch_width',
+            stylesheets=[_NO_TRANSITION_CSS],
         )
         buttons.param.watch(self._on_output_change, 'value')
         return buttons
