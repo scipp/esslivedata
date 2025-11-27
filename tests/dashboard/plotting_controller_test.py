@@ -246,6 +246,44 @@ class TestGetAvailablePlottersFromSpec:
 
         assert has_template is True
         assert 'image' in plotters
+        # roi_detector requires aux_sources with ROI support, not included here
+        assert 'roi_detector' not in plotters
+        assert 'lines' not in plotters
+
+    def test_returns_roi_detector_for_2d_template_with_roi_aux_sources(
+        self, plotting_controller
+    ):
+        """Test that roi_detector is included when aux_sources supports ROI."""
+        from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
+
+        class TestOutputs(WorkflowOutputsBase):
+            detector: sc.DataArray = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['x', 'y'], shape=[0, 0], unit='counts'),
+                    coords={
+                        'x': sc.arange('x', 0, unit='m'),
+                        'y': sc.arange('y', 0, unit='m'),
+                    },
+                )
+            )
+
+        spec = WorkflowSpec(
+            instrument='test',
+            name='test_workflow',
+            version=1,
+            title='Test',
+            description='Test',
+            outputs=TestOutputs,
+            params=None,
+            aux_sources=DetectorROIAuxSources,
+        )
+
+        plotters, has_template = plotting_controller.get_available_plotters_from_spec(
+            workflow_spec=spec, output_name='detector'
+        )
+
+        assert has_template is True
+        assert 'image' in plotters
         assert 'roi_detector' in plotters
         assert 'lines' not in plotters
 
@@ -273,3 +311,71 @@ class TestGetAvailablePlottersFromSpec:
         assert len(plotters) > 0
         assert 'lines' in plotters
         assert 'image' in plotters
+
+
+class TestSpecRequirements:
+    """Tests for SpecRequirements validation logic."""
+
+    def test_empty_requirements_always_validates(self) -> None:
+        """Test that empty requires_aux_sources always returns True."""
+        from ess.livedata.dashboard.plotting import SpecRequirements
+
+        spec_req = SpecRequirements(requires_aux_sources=[])
+
+        # Should return True regardless of aux_sources_type
+        assert spec_req.validate_spec(None) is True
+        assert spec_req.validate_spec(object) is True
+
+    def test_returns_false_when_aux_sources_is_none_but_required(self) -> None:
+        """Test that validation fails when aux_sources is None but required."""
+        from ess.livedata.dashboard.plotting import SpecRequirements
+        from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
+
+        spec_req = SpecRequirements(requires_aux_sources=[DetectorROIAuxSources])
+
+        assert spec_req.validate_spec(None) is False
+
+    def test_returns_true_when_aux_sources_matches_required(self) -> None:
+        """Test that validation passes when aux_sources matches requirement."""
+        from ess.livedata.dashboard.plotting import SpecRequirements
+        from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
+
+        spec_req = SpecRequirements(requires_aux_sources=[DetectorROIAuxSources])
+
+        assert spec_req.validate_spec(DetectorROIAuxSources) is True
+
+    def test_returns_true_for_subclass_of_required(self) -> None:
+        """Test that validation passes for subclasses of required type."""
+        from ess.livedata.dashboard.plotting import SpecRequirements
+        from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
+
+        # Create a subclass of DetectorROIAuxSources
+        class CustomROIAuxSources(DetectorROIAuxSources):
+            pass
+
+        spec_req = SpecRequirements(requires_aux_sources=[DetectorROIAuxSources])
+
+        assert spec_req.validate_spec(CustomROIAuxSources) is True
+
+    def test_returns_false_when_aux_sources_does_not_match(self) -> None:
+        """Test that validation fails when aux_sources doesn't match requirement."""
+        from ess.livedata.config.workflow_spec import AuxSourcesBase
+        from ess.livedata.dashboard.plotting import SpecRequirements
+        from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
+
+        # Create a different aux_sources type
+        class OtherAuxSources(AuxSourcesBase):
+            pass
+
+        spec_req = SpecRequirements(requires_aux_sources=[DetectorROIAuxSources])
+
+        assert spec_req.validate_spec(OtherAuxSources) is False
+
+    def test_default_spec_requirements_has_no_requirements(self) -> None:
+        """Test that default SpecRequirements has no aux_sources requirements."""
+        from ess.livedata.dashboard.plotting import SpecRequirements
+
+        spec_req = SpecRequirements()
+
+        assert spec_req.requires_aux_sources == []
+        assert spec_req.validate_spec(None) is True
