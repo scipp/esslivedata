@@ -101,7 +101,7 @@ class JobFactory:
 
         # Get workflow spec to access output metadata
         workflow_spec = self.get_workflow_spec(result.workflow_id)
-        if workflow_spec is None or workflow_spec.outputs is None:
+        if workflow_spec is None:
             return result
 
         def set_name_from_metadata(value, output_name: str) -> None:
@@ -115,8 +115,8 @@ class JobFactory:
         if isinstance(result.data, sc.DataGroup):
             for output_name, value in result.data.items():
                 set_name_from_metadata(value, output_name)
-        # If data is a single DataArray and we have a single output
-        elif result.output_name is not None:
+        # If data is a single DataArray with a specific output_name
+        elif result.output_name:
             set_name_from_metadata(result.data, result.output_name)
 
         return result

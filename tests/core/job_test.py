@@ -15,9 +15,12 @@ from ess.livedata.handlers.workflow_factory import Workflow
 class TestJobResult:
     @pytest.mark.parametrize(
         ("output_name", "expected"),
-        [("output1", '"output1"'), (None, "null")],
+        [
+            ("output1", '"output1"'),
+            ("", '""'),
+        ],  # Empty string is placeholder for DataGroup
     )
-    def test_stream_name(self, output_name: str | None, expected: str):
+    def test_stream_name(self, output_name: str, expected: str):
         workflow_id = WorkflowId(
             instrument="TEST",
             namespace="data_reduction",

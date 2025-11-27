@@ -7,10 +7,16 @@ from typing import Any
 
 import pydantic
 import pytest
+import scipp as sc
 import yaml
 
 from ess.livedata.config.models import ConfigKey
-from ess.livedata.config.workflow_spec import WorkflowConfig, WorkflowId, WorkflowSpec
+from ess.livedata.config.workflow_spec import (
+    WorkflowConfig,
+    WorkflowId,
+    WorkflowOutputsBase,
+    WorkflowSpec,
+)
 from ess.livedata.core.job_manager import JobAction, JobCommand
 from ess.livedata.core.message import COMMANDS_STREAM_ID
 from ess.livedata.dashboard.command_service import CommandService
@@ -56,6 +62,12 @@ class ParamsWithEnum(pydantic.BaseModel):
     choice: SampleEnum = SampleEnum.OPTION_A
 
 
+class SimpleTestOutputs(WorkflowOutputsBase):
+    """Simple outputs model for testing."""
+
+    result: sc.DataArray = pydantic.Field(title='Result')
+
+
 @pytest.fixture
 def workflow_with_params() -> WorkflowSpec:
     """Workflow spec with params model."""
@@ -68,6 +80,7 @@ def workflow_with_params() -> WorkflowSpec:
         description="Test workflow with params",
         source_names=["det_1", "det_2"],
         params=WorkflowParams,
+        outputs=SimpleTestOutputs,
     )
 
 
@@ -84,6 +97,7 @@ def workflow_with_params_and_aux() -> WorkflowSpec:
         source_names=["det_1"],
         params=WorkflowParams,
         aux_sources=AuxSources,
+        outputs=SimpleTestOutputs,
     )
 
 
@@ -99,6 +113,7 @@ def workflow_no_params() -> WorkflowSpec:
         description="Test workflow without params",
         source_names=["det_1", "det_2"],
         params=None,
+        outputs=SimpleTestOutputs,
     )
 
 
@@ -114,6 +129,7 @@ def workflow_empty_sources() -> WorkflowSpec:
         description="Test workflow with no sources",
         source_names=[],
         params=WorkflowParams,
+        outputs=SimpleTestOutputs,
     )
 
 
@@ -129,6 +145,7 @@ def workflow_params_without_defaults() -> WorkflowSpec:
         description="Test workflow like correlation histograms",
         source_names=["det_1"],
         params=ParamsWithRequiredFields,
+        outputs=SimpleTestOutputs,
     )
 
 
@@ -144,6 +161,7 @@ def workflow_with_enum_params() -> WorkflowSpec:
         description="Test workflow with enum params for serialization testing",
         source_names=["det_1"],
         params=ParamsWithEnum,
+        outputs=SimpleTestOutputs,
     )
 
 

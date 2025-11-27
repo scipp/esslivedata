@@ -167,6 +167,6 @@ class MergingStreamAssembler(StreamAssembler):
         # Sort by (workflow_id, job_id, output_name) for consistent ordering
         sorted_keys = sorted(
             (key for key in self.keys if key in data),
-            key=lambda k: (str(k.workflow_id), str(k.job_id), k.output_name or ''),
+            key=lambda k: (str(k.workflow_id), str(k.job_id), k.output_name),
         )
         return {key: data[key] for key in sorted_keys}

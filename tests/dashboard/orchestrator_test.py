@@ -91,7 +91,9 @@ class TestOrchestrator:
             version=1,
         )
         job_id = JobId(source_name="detector1", job_number=make_job_number())
-        result_key = ResultKey(workflow_id=workflow_id, job_id=job_id)
+        result_key = ResultKey(
+            workflow_id=workflow_id, job_id=job_id, output_name='result'
+        )
 
         data = sc.DataArray(sc.array(dims=['x'], values=[1, 2, 3]))
         source.add_message(result_key.model_dump_json(), data)
@@ -125,8 +127,12 @@ class TestOrchestrator:
         job_id1 = JobId(source_name="detector1", job_number=make_job_number())
         job_id2 = JobId(source_name="detector2", job_number=make_job_number())
 
-        result_key1 = ResultKey(workflow_id=workflow_id1, job_id=job_id1)
-        result_key2 = ResultKey(workflow_id=workflow_id2, job_id=job_id2)
+        result_key1 = ResultKey(
+            workflow_id=workflow_id1, job_id=job_id1, output_name='result'
+        )
+        result_key2 = ResultKey(
+            workflow_id=workflow_id2, job_id=job_id2, output_name='result'
+        )
 
         data1 = sc.DataArray(sc.array(dims=['x'], values=[1, 2]))
         data2 = sc.DataArray(sc.array(dims=['y'], values=[3, 4, 5]))
@@ -156,7 +162,9 @@ class TestOrchestrator:
             version=1,
         )
         job_id = JobId(source_name="detector1", job_number=make_job_number())
-        result_key = ResultKey(workflow_id=workflow_id, job_id=job_id)
+        result_key = ResultKey(
+            workflow_id=workflow_id, job_id=job_id, output_name='result'
+        )
 
         original_data = sc.DataArray(sc.array(dims=['x'], values=[1, 2]))
         new_data = sc.DataArray(sc.array(dims=['y'], values=[3, 4, 5]))
@@ -213,7 +221,9 @@ class TestOrchestrator:
             version=1,
         )
         job_id = JobId(source_name="detector1", job_number=make_job_number())
-        result_key = ResultKey(workflow_id=workflow_id, job_id=job_id)
+        result_key = ResultKey(
+            workflow_id=workflow_id, job_id=job_id, output_name='result'
+        )
 
         data = sc.DataArray(sc.array(dims=['x'], values=[1, 2, 3]))
 
@@ -306,7 +316,9 @@ class TestOrchestrator:
             version=1,
         )
         job_id = JobId(source_name="detector1", job_number=make_job_number())
-        result_key = ResultKey(workflow_id=workflow_id, job_id=job_id)
+        result_key = ResultKey(
+            workflow_id=workflow_id, job_id=job_id, output_name='result'
+        )
 
         data = sc.DataArray(sc.array(dims=['x'], values=[1, 2, 3]))
         source.add_message(result_key.model_dump_json(), data)
@@ -405,7 +417,9 @@ class TestOrchestratorConfigProcessing:
             version=1,
         )
         job_id = JobId(source_name="detector1", job_number=make_job_number())
-        result_key = ResultKey(workflow_id=workflow_id, job_id=job_id)
+        result_key = ResultKey(
+            workflow_id=workflow_id, job_id=job_id, output_name='result'
+        )
 
         config_data = {"instrument": "test"}
         data = sc.DataArray(sc.array(dims=['x'], values=[1, 2, 3]))

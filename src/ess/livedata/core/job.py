@@ -34,7 +34,9 @@ class JobData:
 class JobResult:
     job_id: JobId
     workflow_id: WorkflowId
-    output_name: str | None = None
+    # For DataGroup results (multiple outputs), this is a placeholder that gets
+    # replaced when UnrollingSinkAdapter unpacks the DataGroup into individual messages.
+    output_name: str = ""
     # Should this be included in the data instead?
     start_time: int | None
     end_time: int | None

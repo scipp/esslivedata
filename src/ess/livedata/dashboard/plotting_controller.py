@@ -71,7 +71,7 @@ class PlottingController:
         )
 
     def get_available_plotters(
-        self, job_number: JobNumber, output_name: str | None
+        self, job_number: JobNumber, output_name: str
     ) -> dict[str, PlotterSpec]:
         """
         Get all available plotters for a given job and output.

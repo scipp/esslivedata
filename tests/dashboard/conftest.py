@@ -4,8 +4,13 @@
 
 import pydantic
 import pytest
+import scipp as sc
 
-from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
+from ess.livedata.config.workflow_spec import (
+    WorkflowId,
+    WorkflowOutputsBase,
+    WorkflowSpec,
+)
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
 from ess.livedata.dashboard.workflow_config_service import WorkflowConfigService
@@ -16,6 +21,12 @@ class TestWorkflowParams(pydantic.BaseModel):
     """Simple params model for testing workflows."""
 
     threshold: float = 100.0
+
+
+class SimpleTestOutputs(WorkflowOutputsBase):
+    """Simple outputs model for testing."""
+
+    result: sc.DataArray = pydantic.Field(title='Result')
 
 
 class FakeWorkflowConfigService(WorkflowConfigService):
@@ -64,6 +75,7 @@ def workflow_spec(workflow_id):
         source_names=['source1', 'source2'],
         params=TestWorkflowParams,
         aux_sources=None,
+        outputs=SimpleTestOutputs,
     )
 
 
@@ -80,6 +92,7 @@ def workflow_spec_2(workflow_id_2):
         source_names=['source_a', 'source_b'],
         params=TestWorkflowParams,
         aux_sources=None,
+        outputs=SimpleTestOutputs,
     )
 
 

@@ -152,8 +152,7 @@ class JobService:
                 )
             all_source_data = self._job_data.setdefault(job_number, {})
             # Store in DataService for access by plots etc.
-            # Single or multiple outputs, store in a dict. If only one output, then the
-            # output_name is None.
+            # Outputs are stored in a dict keyed by output_name.
             if source_name not in all_source_data:
                 notify_job_data_update = True
             source_data = all_source_data.setdefault(source_name, {})
