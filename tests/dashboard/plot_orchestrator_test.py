@@ -467,35 +467,6 @@ class TestCellManagement:
         assert cell_id_1 in grid_1.cells
         assert cell_id_2 in grid_2.cells
 
-    def test_add_cell_subscribes_to_workflow(self, plot_orchestrator, plot_cell):
-        """Each add should subscribe appropriately."""
-        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-
-        plot_orchestrator.add_plot(grid_id, plot_cell)
-
-    def test_remove_cell_unsubscribes_from_workflow(self, plot_orchestrator, plot_cell):
-        """Remove cell should unsubscribe."""
-        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
-
-        plot_orchestrator.remove_plot(cell_id)
-
-    def test_update_config_resubscribes(
-        self, plot_orchestrator, plot_cell, workflow_id
-    ):
-        """Update config should unsubscribe and resubscribe."""
-        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
-
-        new_config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='new_output',
-            source_names=['new_source'],
-            plot_name='new_plot',
-            params={},
-        )
-        plot_orchestrator.update_plot_config(cell_id, new_config)
-
 
 class TestWorkflowIntegrationAndPlotCreationTiming:
     """Tests for workflow integration and plot creation timing."""
@@ -1051,12 +1022,16 @@ class TestCleanupAndResourceManagement:
     """Tests for cleanup and resource management."""
 
     def test_remove_grid_with_multiple_cells_all_unsubscribed(
-        self, plot_orchestrator, workflow_id
+        self,
+        plot_orchestrator,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
     ):
-        """Remove grid with multiple cells unsubscribes all from JobOrchestrator."""
+        """Remove grid with cells unsubscribes all, so commit creates no plots."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
 
-        # Add multiple cells
         for i in range(3):
             cell = PlotCell(
                 geometry=CellGeometry(row=i, col=0, row_span=1, col_span=1),
@@ -1070,30 +1045,11 @@ class TestCleanupAndResourceManagement:
             )
             plot_orchestrator.add_plot(grid_id, cell)
 
-        # Remove grid
         plot_orchestrator.remove_grid(grid_id)
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
-    def test_shutdown_with_multiple_grids_all_unsubscribed(
-        self, plot_orchestrator, workflow_id
-    ):
-        """Shutdown with multiple grids should unsubscribe all."""
-        # Add multiple grids with cells
-        for i in range(2):
-            grid_id = plot_orchestrator.add_grid(title=f'Grid {i}', nrows=3, ncols=3)
-            cell = PlotCell(
-                geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
-                config=PlotConfig(
-                    workflow_id=workflow_id,
-                    output_name=f'out{i}',
-                    source_names=[f'src{i}'],
-                    plot_name=f'plot{i}',
-                    params={},
-                ),
-            )
-            plot_orchestrator.add_plot(grid_id, cell)
-
-        # Shutdown
-        plot_orchestrator.shutdown()
+        assert plot_orchestrator.get_grid(grid_id) is None
+        assert fake_plotting_controller.call_count() == 0
 
     def test_shutdown_all_grids_removed(self, plot_orchestrator):
         """Shutdown should remove all grids."""
@@ -1122,74 +1078,24 @@ class TestCleanupAndResourceManagement:
 class TestEdgeCasesAndComplexScenarios:
     """Tests for edge cases and complex scenarios."""
 
-    def test_update_config_to_different_workflow_id_unsubscribe_old_subscribe_new(
+    def test_remove_grid_with_cells_that_have_pending_plot_creation(
         self,
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        workflow_id_2,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
     ):
-        """Update config to different workflow_id unsubscribes old, subscribes new."""
-        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
-
-        # Update to different workflow_id
-        new_config = PlotConfig(
-            workflow_id=workflow_id_2,
-            output_name='new_output',
-            source_names=['new_source'],
-            plot_name='new_plot',
-            params={},
-        )
-        plot_orchestrator.update_plot_config(cell_id, new_config)
-
-    def test_multiple_updates_to_same_cell_config_subscription_management_correct(
-        self, plot_orchestrator, plot_cell, workflow_id
-    ):
-        """
-        Multiple updates to same cell config maintain correct subscriptions.
-
-        Updating the same cell multiple times should not leak subscriptions.
-        """
-        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
-
-        # Multiple updates with same workflow_id
-        for i in range(3):
-            new_config = PlotConfig(
-                workflow_id=workflow_id,
-                output_name=f'output_{i}',
-                source_names=[f'source_{i}'],
-                plot_name=f'plot_{i}',
-                params={},
-            )
-            plot_orchestrator.update_plot_config(cell_id, new_config)
-
-    def test_remove_grid_with_cells_that_have_pending_plot_creation(
-        self, plot_orchestrator, plot_cell, workflow_id, workflow_spec, job_orchestrator
-    ):
-        """Remove grid with cells that have pending plot creation."""
+        """Remove grid with pending plots unsubscribes, so commit creates no plots."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         plot_orchestrator.add_plot(grid_id, plot_cell)
 
-        # Remove grid before workflow commits
         plot_orchestrator.remove_grid(grid_id)
-
-        # Now commit workflow - should not crash
         commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
-    def test_add_cell_immediately_remove_it_then_workflow_commits_no_error(
-        self, plot_orchestrator, plot_cell, workflow_id, workflow_spec, job_orchestrator
-    ):
-        """Add cell, immediately remove it, then workflow commits - no error."""
-        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
-
-        # Immediately remove
-        plot_orchestrator.remove_plot(cell_id)
-
-        # Workflow commits
-        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        assert plot_orchestrator.get_grid(grid_id) is None
+        assert fake_plotting_controller.call_count() == 0
 
 
 class TestLateSubscriberPlotRetrieval:
