@@ -20,6 +20,7 @@ def make_reduction_service_builder(
         RoutingAdapterBuilder(stream_mapping=stream_mapping)
         .with_beam_monitor_route()
         .with_detector_route()
+        .with_area_detector_route()
         .with_logdata_route()
         .with_livedata_commands_route()
         .build()

@@ -103,6 +103,9 @@ class PlottingController:
         the expected structure (dims, coords, units) that allows full validation
         including custom validators.
 
+        Also checks spec requirements (e.g., aux_sources for ROI support) to filter
+        out plotters that require features not supported by the workflow spec.
+
         When a template is not available, falls back to returning all registered
         plotters. The boolean flag indicates whether a template was available.
 
@@ -123,7 +126,12 @@ class PlottingController:
         template = workflow_spec.get_output_template(output_name)
         if template is None:
             return plotter_registry.get_specs(), False
-        return plotter_registry.get_compatible_plotters({output_name: template}), True
+        return (
+            plotter_registry.get_compatible_plotters_with_spec(
+                {output_name: template}, workflow_spec.aux_sources
+            ),
+            True,
+        )
 
     def get_spec(self, plot_name: str) -> PlotterSpec:
         """

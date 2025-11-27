@@ -19,6 +19,7 @@ def make_detector_service_builder(
     adapter = (
         RoutingAdapterBuilder(stream_mapping=stream_mapping)
         .with_detector_route()
+        .with_area_detector_route()
         .with_livedata_commands_route()
         .with_livedata_roi_route()
         .build()

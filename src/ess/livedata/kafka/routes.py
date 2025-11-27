@@ -4,11 +4,13 @@ from typing import Self
 
 from ..core.message import StreamKind
 from .message_adapter import (
+    Ad00ToScippAdapter,
     ChainedAdapter,
     CommandsAdapter,
     Da00ToScippAdapter,
     Ev44ToDetectorEventsAdapter,
     F144ToLogDataAdapter,
+    KafkaToAd00Adapter,
     KafkaToDa00Adapter,
     KafkaToEv44Adapter,
     KafkaToF144Adapter,
@@ -52,7 +54,7 @@ class RoutingAdapterBuilder:
         return self
 
     def with_detector_route(self) -> Self:
-        """Adds the detector route."""
+        """Adds the detector route for ev44 schema."""
         adapter = ChainedAdapter(
             first=KafkaToEv44Adapter(
                 stream_lut=self._stream_mapping.detectors,
@@ -63,6 +65,19 @@ class RoutingAdapterBuilder:
             ),
         )
         for topic in self._stream_mapping.detector_topics:
+            self._routes[topic] = adapter
+        return self
+
+    def with_area_detector_route(self) -> Self:
+        """Adds the area detector route for ad00 schema."""
+        adapter = ChainedAdapter(
+            first=KafkaToAd00Adapter(
+                stream_lut=self._stream_mapping.area_detectors,
+                stream_kind=StreamKind.AREA_DETECTOR,
+            ),
+            second=Ad00ToScippAdapter(),
+        )
+        for topic in self._stream_mapping.area_detector_topics:
             self._routes[topic] = adapter
         return self
 

@@ -9,7 +9,7 @@ from typing import NoReturn
 import numpy as np
 import scipp as sc
 import scippnexus as snx
-from streaming_data_types import eventdata_ev44
+from streaming_data_types import area_detector_ad00, eventdata_ev44
 
 from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
 from ess.livedata.config import config_names
@@ -151,6 +151,74 @@ class FakeDetectorSource(MessageSource[sc.Dataset]):
         )
 
 
+class FakeAreaDetectorSource(MessageSource[sc.DataArray]):
+    """Fake message source that generates random area detector images."""
+
+    def __init__(
+        self,
+        *,
+        interval_ns: int = int(1e9 / 14),
+        instrument: str,
+        logger: logging.Logger | None = None,
+    ):
+        self._logger = logger or logging.getLogger(__name__)
+        self._instrument = instrument
+        self._config = get_config(instrument).area_detector_fakes
+        self._rng = np.random.default_rng()
+        self._interval_ns = interval_ns
+        self._unique_id = 0
+
+        detector_names = list(self._config.keys())
+        self._logger.info("Configured area detectors: %s", detector_names)
+
+        self._last_message_time = {
+            detector: time.time_ns() for detector in detector_names
+        }
+
+    def get_messages(self) -> list[Message[sc.DataArray]]:
+        current_time = time.time_ns()
+        messages = []
+
+        for name in self._last_message_time:
+            elapsed = current_time - self._last_message_time[name]
+            num_intervals = int(elapsed // self._interval_ns)
+
+            for i in range(num_intervals):
+                msg_time = self._last_message_time[name] + (i + 1) * self._interval_ns
+                messages.append(self._make_message(name=name, timestamp=msg_time))
+            self._last_message_time[name] += num_intervals * self._interval_ns
+
+        return messages
+
+    def _make_message(self, name: str, timestamp: int) -> Message[sc.DataArray]:
+        shape = self._config[name]
+        # Generate a random image with some structure (gaussian blob + noise)
+        y, x = np.ogrid[: shape[0], : shape[1]]
+        cy, cx = shape[0] // 2, shape[1] // 2
+        # Create a gaussian blob that moves over time in a circular pattern
+        # Full cycle every ~10 seconds at 14 msg/sec (140 steps)
+        t = self._unique_id * 2 * np.pi / 140
+        radius = min(shape) // 6  # Move within inner region
+        offset_y = int(radius * np.sin(t))
+        offset_x = int(radius * np.cos(t))
+        sigma = 15  # Smaller blob so movement is more visible
+        blob = np.exp(
+            -((y - cy - offset_y) ** 2 + (x - cx - offset_x) ** 2) / (2 * sigma**2)
+        )
+        noise = self._rng.poisson(lam=5, size=shape)
+        data = (blob * 500 + noise).astype(np.int32)
+
+        self._unique_id += 1
+
+        return Message(
+            timestamp=timestamp,
+            stream=StreamId(kind=StreamKind.AREA_DETECTOR, name=name),
+            value=sc.DataArray(
+                sc.array(dims=['dim_0', 'dim_1'], values=data, unit='counts')
+            ),
+        )
+
+
 def serialize_detector_events_to_ev44(
     msg: Message[tuple[sc.Variable, sc.Variable]],
 ) -> bytes:
@@ -170,16 +238,43 @@ def serialize_detector_events_to_ev44(
     return ev44
 
 
+def serialize_area_detector_to_ad00(msg: Message[sc.DataArray]) -> bytes:
+    """Serialize area detector data to ad00 format."""
+    data = msg.value.values
+    try:
+        ad00 = area_detector_ad00.serialise_ad00(
+            source_name=msg.stream.name,
+            unique_id=0,
+            timestamp_ns=msg.timestamp,
+            data=data,
+        )
+    except (ValueError, TypeError) as e:
+        raise SerializationError(f"Failed to serialize ad00 message: {e}") from None
+    return ad00
+
+
 def run_service(
-    *, instrument: str, nexus_file: str | None = None, log_level: int = logging.INFO
+    *,
+    instrument: str,
+    nexus_file: str | None = None,
+    mode: str = 'ev44',
+    log_level: int = logging.INFO,
 ) -> NoReturn:
     from contextlib import ExitStack
 
     kafka_config = load_config(namespace=config_names.kafka_upstream)
-    serializer = serialize_detector_events_to_ev44
     name = 'fake_producer'
     Service.configure_logging(log_level)
     logger = logging.getLogger(f'{instrument}_{name}')
+
+    if mode == 'ad00':
+        serializer = serialize_area_detector_to_ad00
+        source = FakeAreaDetectorSource(instrument=instrument, logger=logger)
+    else:
+        serializer = serialize_detector_events_to_ev44
+        source = FakeDetectorSource(
+            instrument=instrument, nexus_file=nexus_file, logger=logger
+        )
 
     resources = ExitStack()
     with resources:
@@ -188,12 +283,7 @@ def run_service(
                 instrument=instrument, kafka_config=kafka_config, serializer=serializer
             )
         )
-        processor = IdentityProcessor(
-            source=FakeDetectorSource(
-                instrument=instrument, nexus_file=nexus_file, logger=logger
-            ),
-            sink=sink,
-        )
+        processor = IdentityProcessor(source=source, sink=sink)
         service = Service(
             processor=processor,
             name=f'{instrument}_{name}',
@@ -214,6 +304,13 @@ def main() -> NoReturn:
             'Path to NeXus file containing event data to replay. '
             'The event data will be looped over indefinitely.'
         ),
+    )
+    parser.add_argument(
+        '--mode',
+        type=str,
+        choices=['ev44', 'ad00'],
+        default='ev44',
+        help='Data format to generate: ev44 (events) or ad00 (area detector images).',
     )
     run_service(**vars(parser.parse_args()))
 

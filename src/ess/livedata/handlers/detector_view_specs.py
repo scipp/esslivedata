@@ -161,3 +161,55 @@ def register_detector_view_spec(
         params=DetectorViewParams,
         outputs=DetectorViewOutputs,
     )
+
+
+def register_logical_detector_view_spec(
+    *,
+    instrument: Instrument,
+    name: str,
+    title: str,
+    description: str,
+    source_names: list[str],
+    roi_support: bool = True,
+) -> SpecHandle:
+    """
+    Register a logical detector view spec with custom metadata.
+
+    Use this helper for logical detector views that don't use the standard
+    projection pattern. Unlike projection-based views, logical views are
+    bespoke and require custom titles and descriptions.
+
+    Parameters
+    ----------
+    instrument:
+        Instrument to register specs with.
+    name:
+        Unique name for the spec within the detector_data namespace.
+    title:
+        Human-readable title for the view.
+    description:
+        Description of the view.
+    source_names:
+        List of detector source names.
+    roi_support:
+        Whether ROI selection is supported for this view. If True, includes
+        DetectorROIAuxSources which enables the ROI detector plotter.
+        Set to False for views where ROI doesn't make sense (e.g., views
+        that sum over dimensions internally).
+
+    Returns
+    -------
+    :
+        A SpecHandle.
+    """
+    return instrument.register_spec(
+        namespace="detector_data",
+        name=name,
+        version=1,
+        title=title,
+        description=description,
+        source_names=source_names,
+        aux_sources=DetectorROIAuxSources if roi_support else None,
+        params=DetectorViewParams,
+        outputs=DetectorViewOutputs,
+    )

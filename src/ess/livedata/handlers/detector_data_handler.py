@@ -14,7 +14,7 @@ from ess.reduce.live import raw
 from ..config.instrument import Instrument
 from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
-from .accumulators import DetectorEvents, GroupIntoPixels, LatestValue
+from .accumulators import Cumulative, DetectorEvents, GroupIntoPixels, LatestValue
 from .detector_view import DetectorView, DetectorViewParams
 
 
@@ -59,12 +59,52 @@ class DetectorProjection:
         return DetectorView(params=params, detector_view=detector_view)
 
 
+def _identity(da: sc.DataArray) -> sc.DataArray:
+    return da
+
+
 class DetectorLogicalView:
     """
-    Factory for logical detector views with optional transform.
+    Factory for logical detector views with optional transform and reduction.
 
     Logical views use detector_number arrays directly, optionally applying a transform
-    function to reshape or filter the data.
+    function to reshape or filter the data. Uses ``LogicalView`` from
+    ``ess.reduce.live`` for proper index mapping, enabling ROI support.
+
+    Parameters
+    ----------
+    instrument:
+        Instrument configuration.
+    transform:
+        Callable that transforms input data (e.g., fold, slice, or reshape operations).
+        If reduction_dim is specified, the transform should NOT include summing - that
+        is handled separately to enable proper ROI index mapping.
+    reduction_dim:
+        Dimension(s) to sum over after applying transform. If specified, enables proper
+        ROI support by tracking which input pixels contribute to each output pixel.
+
+    Example
+    -------
+    Simple view without reduction (ROI supported):
+
+    .. code-block:: python
+
+        view = DetectorLogicalView(instrument=instrument)
+
+    View with downsampling and ROI support:
+
+    .. code-block:: python
+
+        def fold_image(da):
+            da = da.fold('x', {'x': 512, 'x_bin': -1})
+            da = da.fold('y', {'y': 512, 'y_bin': -1})
+            return da
+
+        view = DetectorLogicalView(
+            instrument=instrument,
+            transform=fold_image,
+            reduction_dim=['x_bin', 'y_bin'],
+        )
     """
 
     def __init__(
@@ -72,17 +112,20 @@ class DetectorLogicalView:
         *,
         instrument: Instrument,
         transform: Callable[[sc.DataArray], sc.DataArray] | None = None,
+        reduction_dim: str | list[str] | None = None,
     ) -> None:
         self._instrument = instrument
-        self._transform = transform
+        self._transform = transform if transform is not None else _identity
+        self._reduction_dim = reduction_dim
         self._window_length = 1
 
     def make_view(self, source_name: str, params: DetectorViewParams) -> DetectorView:
         """Factory method that creates a detector view for the given source."""
-        detector_view = raw.RollingDetectorView(
+        detector_view = raw.RollingDetectorView.with_logical_view(
             detector_number=self._instrument.get_detector_number(source_name),
             window=self._window_length,
-            projection=self._transform,
+            transform=self._transform,
+            reduction_dim=self._reduction_dim,
         )
         return DetectorView(params=params, detector_view=detector_view)
 
@@ -104,6 +147,8 @@ class DetectorHandlerFactory(
             case StreamKind.DETECTOR_EVENTS:
                 detector_number = self._instrument.get_detector_number(key.name)
                 return GroupIntoPixels(detector_number=detector_number)
+            case StreamKind.AREA_DETECTOR:
+                return Cumulative(clear_on_get=True)
             case StreamKind.LIVEDATA_ROI:
                 return LatestValue()
             case _:

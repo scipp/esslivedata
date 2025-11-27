@@ -76,15 +76,18 @@ class _CumulativeAccumulationMixin:
 
     def _add_cumulative(self, data: sc.DataArray) -> None:
         """Add data to the cumulative accumulation."""
-        if (
-            self._cumulative is None
-            or data.sizes != self._cumulative.sizes
-            or not sc.identical(
-                data.coords[data.dim], self._cumulative.coords[data.dim]
-            )
-        ):
+        if self._cumulative is None or data.sizes != self._cumulative.sizes:
             self._cumulative = data.copy()
+        elif data.ndim == 1 and data.dim in data.coords:
+            # Check if coordinate changed (e.g., rebinning)
+            if not sc.identical(
+                data.coords[data.dim], self._cumulative.coords[data.dim]
+            ):
+                self._cumulative = data.copy()
+            else:
+                self._cumulative += data
         else:
+            # For multi-dimensional data or data without coordinates, just accumulate
             self._cumulative += data
 
     def _get_cumulative(self) -> sc.DataArray:

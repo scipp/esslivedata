@@ -33,7 +33,7 @@ dependencies = [
   "PyYAML",
   "confluent_kafka",
   "ess-streaming-data-types",
-  "essreduce>=25.11.2",
+  "essreduce>=25.11.4",
   "jinja2",
   "pydantic>=2",
   "scipp>=25.02.0",  # Improved performance of scipp.group
