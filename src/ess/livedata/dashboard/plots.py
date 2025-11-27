@@ -58,15 +58,6 @@ class Plotter(ABC):
         self.layout_params = layout_params or LayoutParams()
         aspect_params = aspect_params or PlotAspect()
 
-        # Note: The way Holoviews (or Bokeh?) determines the axes and data sizing seems
-        # to be broken in weird ways. This happens in particular when we return a Layout
-        # of multiple plots. Axis ranges that cover less than one unit in data space are
-        # problematic in particular, but I have not been able to nail down the exact
-        # conditions. Plots will then either have zero frame width or height, or be very
-        # small, etc. It is therefore important to set either width or height when using
-        # data_aspect or aspect='equal'.
-        # However, even that does not solve all problem, for example we can end up with
-        # whitespace between plots in a layout.
         self._sizing_opts: dict[str, Any]
         match aspect_params.aspect_type:
             case PlotAspectType.free:
@@ -79,10 +70,6 @@ class Plotter(ABC):
                 self._sizing_opts = {'aspect': aspect_params.ratio}
             case PlotAspectType.data_aspect:
                 self._sizing_opts = {'data_aspect': aspect_params.ratio}
-        if aspect_params.fix_width:
-            self._sizing_opts['frame_width'] = aspect_params.width
-        if aspect_params.fix_height:
-            self._sizing_opts['frame_height'] = aspect_params.height
         self._sizing_opts['responsive'] = True
 
     @staticmethod
@@ -178,7 +165,7 @@ class Plotter(ABC):
         return hv.Layout(plots).cols(self.layout_params.layout_columns)
 
     def _apply_generic_options(self, plot_element: hv.Element) -> hv.Element:
-        """Apply generic options like height, responsive, hooks to a plot element."""
+        """Apply generic options like aspect ratio to a plot element."""
         base_opts = {
             'hooks': [remove_bokeh_logo],
             **self._sizing_opts,

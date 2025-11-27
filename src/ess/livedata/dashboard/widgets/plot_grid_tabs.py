@@ -27,10 +27,35 @@ from ..plot_orchestrator import (
     PlotOrchestrator,
     SubscriptionId,
 )
+from ..plot_params import PlotAspectType, StretchMode
 from .plot_config_modal import PlotConfigModal
 from .plot_grid import GridCellStyles, PlotGrid
 from .plot_grid_manager import PlotGridManager
 from .plot_widgets import create_close_button, create_gear_button
+
+
+def _get_sizing_mode(config: PlotConfig) -> str:
+    """Extract Panel sizing_mode from plot configuration.
+
+    Parameters
+    ----------
+    config:
+        Plot configuration containing plotter params.
+
+    Returns
+    -------
+    :
+        Panel sizing_mode string ('stretch_both', 'stretch_width', or 'stretch_height').
+    """
+    params = config.params
+    if hasattr(params, 'plot_aspect'):
+        aspect = params.plot_aspect
+        if aspect.aspect_type == PlotAspectType.free:
+            return 'stretch_both'
+        if aspect.stretch_mode == StretchMode.width:
+            return 'stretch_width'
+        return 'stretch_height'
+    return 'stretch_both'
 
 
 class PlotGridTabs:
@@ -285,7 +310,7 @@ class PlotGridTabs:
         # Create appropriate widget based on what's available
         if plot is not None:
             # Show actual plot
-            widget = self._create_plot_widget(cell_id, plot)
+            widget = self._create_plot_widget(cell_id, cell, plot)
         else:
             # Show status widget (either waiting for data or error)
             widget = self._create_status_widget(cell_id, cell, error=error)
@@ -425,6 +450,7 @@ class PlotGridTabs:
     def _create_plot_widget(
         self,
         cell_id: CellId,
+        cell: PlotCell,
         plot: hv.DynamicMap | hv.Layout,
     ) -> pn.Column:
         """
@@ -434,6 +460,8 @@ class PlotGridTabs:
         ----------
         cell_id
             ID of the cell.
+        cell
+            Plot cell configuration.
         plot
             HoloViews plot object.
 
@@ -461,14 +489,15 @@ class PlotGridTabs:
         # in a Panel layout (Tabs, Column, etc.). The .layout property contains
         # both the plot and widgets, which renders correctly in layouts.
         # See: https://github.com/holoviz/panel/issues/5628
-        plot_pane_wrapper = pn.pane.HoloViews(plot, sizing_mode='stretch_both')
+        sizing_mode = _get_sizing_mode(cell.config)
+        plot_pane_wrapper = pn.pane.HoloViews(plot, sizing_mode=sizing_mode)
         plot_pane = plot_pane_wrapper.layout
 
         return pn.Column(
             gear_button,
             close_button,
             plot_pane,
-            sizing_mode='stretch_both',
+            sizing_mode=sizing_mode,
             styles={'position': 'relative'},
             margin=GridCellStyles.CELL_MARGIN,
         )
