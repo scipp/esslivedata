@@ -76,45 +76,28 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         self._selected_workflow_id: WorkflowId | None = None
         self._selected_output: str | None = None
 
-        # Initialize containers first before creating buttons (to avoid callback issues)
+        # Guard to prevent cascading callbacks during programmatic updates
+        self._updating_programmatically = False
+
+        # Initialize containers
         self._content_container = pn.Column(sizing_mode='stretch_width')
         self._workflow_container = pn.Column(sizing_mode='stretch_width')
         self._output_container = pn.Column(sizing_mode='stretch_width')
-        self._workflow_buttons: pn.widgets.RadioButtonGroup | None = None
-        self._output_buttons: pn.widgets.RadioButtonGroup | None = None
 
-        # Create namespace selector radio buttons
+        # Create all button widgets once (reuse by updating options)
         self._namespace_buttons = self._create_namespace_buttons()
+        self._workflow_buttons = self._create_workflow_buttons()
+        self._output_buttons = self._create_output_buttons()
 
-        # Initial layout
+        # Add buttons to containers
+        self._workflow_container.append(self._workflow_buttons)
+        self._output_container.append(self._output_buttons)
+
+        # Build layout
         self._update_content()
 
-        # Set initial values based on initial_config or defaults
-        if initial_config is not None:
-            # Edit mode: pre-select workflow and output from config
-            self._selected_namespace = initial_config.workflow_id.namespace
-            self._selected_workflow_id = initial_config.workflow_id
-            self._selected_output = initial_config.output_name
-            # Set namespace button value (triggers callback which updates workflows)
-            namespace_label = self._format_namespace_label(
-                initial_config.workflow_id.namespace
-            )
-            if namespace_label in self._namespace_buttons.options:
-                self._namespace_buttons.value = initial_config.workflow_id.namespace
-                self._update_workflow_buttons()
-                # Pre-select workflow and output after buttons are created
-                if self._workflow_buttons is not None:
-                    self._workflow_buttons.value = initial_config.workflow_id
-                if self._output_buttons is not None:
-                    self._output_buttons.value = initial_config.output_name
-        else:
-            # New mode: select first available option
-            if self._namespace_buttons.options:
-                namespace_value = next(iter(self._namespace_buttons.options.values()))
-                self._selected_namespace = namespace_value
-                self._namespace_buttons.value = namespace_value
-                # Explicitly initialize workflow and output buttons
-                self._update_workflow_buttons()
+        # Initialize selections
+        self._initialize_selections(initial_config)
 
     @property
     def name(self) -> str:
@@ -133,15 +116,45 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         """
         return namespace.replace('_', ' ').title()
 
+    def _initialize_selections(self, initial_config: PlotConfig | None) -> None:
+        """Initialize all selections, updating widgets without triggering cascades."""
+        self._updating_programmatically = True
+        try:
+            if initial_config is not None:
+                # Edit mode: pre-select from config
+                self._selected_namespace = initial_config.workflow_id.namespace
+                self._namespace_buttons.value = initial_config.workflow_id.namespace
+                self._update_workflow_options()
+                self._selected_workflow_id = initial_config.workflow_id
+                self._workflow_buttons.value = initial_config.workflow_id
+                self._update_output_options()
+                self._selected_output = initial_config.output_name
+                self._output_buttons.value = initial_config.output_name
+            elif self._namespace_buttons.options:
+                # New mode: select first available option
+                namespace_value = next(iter(self._namespace_buttons.options.values()))
+                self._selected_namespace = namespace_value
+                self._namespace_buttons.value = namespace_value
+                self._update_workflow_options()
+                if self._workflow_buttons.options:
+                    workflow_value = next(iter(self._workflow_buttons.options.values()))
+                    self._selected_workflow_id = workflow_value
+                    self._workflow_buttons.value = workflow_value
+                    self._update_output_options()
+                    if self._output_buttons.options:
+                        output_value = next(iter(self._output_buttons.options.values()))
+                        self._selected_output = output_value
+                        self._output_buttons.value = output_value
+        finally:
+            self._updating_programmatically = False
+        self._validate()
+
     def _create_namespace_buttons(self) -> pn.widgets.RadioButtonGroup:
         """Create namespace selection radio buttons."""
-        # Extract unique namespaces and sort them in reverse order
         namespaces = sorted(
             {wid.namespace for wid in self._workflow_registry.keys()},
             reverse=True,
         )
-
-        # Create options mapping display label -> internal namespace name
         options = {self._format_namespace_label(ns): ns for ns in namespaces}
 
         buttons = pn.widgets.RadioButtonGroup(
@@ -152,156 +165,129 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             button_style='outline',
             sizing_mode='stretch_width',
         )
-
-        # Watch for selection changes
         buttons.param.watch(self._on_namespace_change, 'value')
-
         return buttons
 
-    def _create_workflow_buttons(
-        self, namespace: str
-    ) -> pn.widgets.RadioButtonGroup | None:
-        """Create workflow selection radio buttons for a given namespace."""
-        # Filter workflows by selected namespace
-        filtered_workflows = [
-            (wid, spec)
-            for wid, spec in self._workflow_registry.items()
-            if wid.namespace == namespace
-        ]
-
-        if not filtered_workflows:
-            return None
-
-        # Sort workflows by title for better UX
-        sorted_workflows = sorted(filtered_workflows, key=lambda item: item[1].title)
-
-        # Create options mapping title -> workflow_id
-        options = {spec.title: wid for wid, spec in sorted_workflows}
-
+    def _create_workflow_buttons(self) -> pn.widgets.RadioButtonGroup:
+        """Create workflow selection radio buttons (options updated dynamically)."""
         buttons = pn.widgets.RadioButtonGroup(
             name='Workflow',
-            options=options,
+            options={},
             orientation='vertical',
             button_type='primary',
             button_style='outline',
             sizing_mode='stretch_width',
         )
-
-        # Watch for selection changes
         buttons.param.watch(self._on_workflow_change, 'value')
+        return buttons
 
+    def _create_output_buttons(self) -> pn.widgets.RadioButtonGroup:
+        """Create output selection radio buttons (options updated dynamically)."""
+        buttons = pn.widgets.RadioButtonGroup(
+            name='Output',
+            options={},
+            orientation='vertical',
+            button_type='primary',
+            button_style='outline',
+            sizing_mode='stretch_width',
+        )
+        buttons.param.watch(self._on_output_change, 'value')
         return buttons
 
     def _on_namespace_change(self, event) -> None:
         """Handle namespace selection change."""
+        if self._updating_programmatically:
+            return
         if event.new is not None:
             self._selected_namespace = event.new
-            self._selected_workflow_id = None  # Reset workflow selection
-            self._selected_output = None  # Reset output selection
-            self._update_workflow_buttons()
-            self._validate()
+            self._selected_workflow_id = None
+            self._selected_output = None
+            self._update_workflow_options()
+            # Select first workflow and trigger output update
+            if self._workflow_buttons.options:
+                first_workflow = next(iter(self._workflow_buttons.options.values()))
+                self._selected_workflow_id = first_workflow
+                self._workflow_buttons.value = first_workflow
+                self._update_output_options()
+                if self._output_buttons.options:
+                    first_output = next(iter(self._output_buttons.options.values()))
+                    self._selected_output = first_output
+                    self._output_buttons.value = first_output
         else:
             self._selected_namespace = None
             self._selected_workflow_id = None
             self._selected_output = None
-            self._validate()
+        self._validate()
 
     def _on_workflow_change(self, event) -> None:
         """Handle workflow selection change."""
+        if self._updating_programmatically:
+            return
         if event.new is not None:
             self._selected_workflow_id = event.new
-            self._selected_output = None  # Reset output selection
-            self._update_output_buttons()
-            self._validate()
+            self._selected_output = None
+            self._update_output_options()
+            # Select first output
+            if self._output_buttons.options:
+                first_output = next(iter(self._output_buttons.options.values()))
+                self._selected_output = first_output
+                self._output_buttons.value = first_output
         else:
             self._selected_workflow_id = None
             self._selected_output = None
-            self._validate()
-
-    def _update_workflow_buttons(self) -> None:
-        """Update workflow radio buttons based on selected namespace."""
-        self._workflow_container.clear()
-        self._workflow_buttons = None
-        self._output_container.clear()
-        self._output_buttons = None
-
-        if self._selected_namespace is None:
-            return
-
-        self._workflow_buttons = self._create_workflow_buttons(self._selected_namespace)
-        if self._workflow_buttons is None:
-            self._workflow_container.append(
-                pn.pane.Markdown("*No workflows available for this namespace*")
-            )
-            return
-
-        self._workflow_container.append(self._workflow_buttons)
-
-        # Initialize with first selection
-        if self._workflow_buttons.options:
-            self._workflow_buttons.value = next(
-                iter(self._workflow_buttons.options.values())
-            )
-            self._selected_workflow_id = self._workflow_buttons.value
-            self._update_output_buttons()
-
-    def _update_output_buttons(self) -> None:
-        """Update output radio buttons based on selected workflow."""
-        self._output_container.clear()
-        self._output_buttons = None
-
-        if self._selected_workflow_id is None:
-            return
-
-        workflow_spec = self._workflow_registry.get(self._selected_workflow_id)
-        if workflow_spec is None or workflow_spec.outputs is None:
-            self._output_container.append(
-                pn.pane.Markdown("*No outputs available for this workflow*")
-            )
-            return
-
-        # Extract output names from the Pydantic model
-        output_fields = workflow_spec.outputs.model_fields
-        if not output_fields:
-            self._output_container.append(
-                pn.pane.Markdown("*No outputs defined for this workflow*")
-            )
-            return
-
-        # Create options mapping from output title to output name
-        options = {}
-        for field_name, field_info in output_fields.items():
-            title = field_info.title if field_info.title else field_name
-            options[title] = field_name
-
-        self._output_buttons = pn.widgets.RadioButtonGroup(
-            name='Output',
-            options=options,
-            orientation='vertical',
-            button_type='primary',
-            button_style='outline',
-            sizing_mode='stretch_width',
-        )
-
-        # Watch for selection changes
-        self._output_buttons.param.watch(self._on_output_change, 'value')
-
-        # Initialize with first selection
-        if options:
-            self._output_buttons.value = next(iter(options.values()))
-            self._selected_output = self._output_buttons.value
-
-        self._output_container.append(self._output_buttons)
         self._validate()
 
     def _on_output_change(self, event) -> None:
         """Handle output selection change."""
+        if self._updating_programmatically:
+            return
         if event.new is not None:
             self._selected_output = event.new
-            self._validate()
         else:
             self._selected_output = None
-            self._validate()
+        self._validate()
+
+    def _update_workflow_options(self) -> None:
+        """Update workflow button options based on selected namespace."""
+        if self._selected_namespace is None:
+            self._workflow_buttons.options = {}
+            return
+
+        filtered_workflows = [
+            (wid, spec)
+            for wid, spec in self._workflow_registry.items()
+            if wid.namespace == self._selected_namespace
+        ]
+
+        if not filtered_workflows:
+            self._workflow_buttons.options = {}
+            return
+
+        sorted_workflows = sorted(filtered_workflows, key=lambda item: item[1].title)
+        options = {spec.title: wid for wid, spec in sorted_workflows}
+        self._workflow_buttons.options = options
+
+    def _update_output_options(self) -> None:
+        """Update output button options based on selected workflow."""
+        if self._selected_workflow_id is None:
+            self._output_buttons.options = {}
+            return
+
+        workflow_spec = self._workflow_registry.get(self._selected_workflow_id)
+        if workflow_spec is None or workflow_spec.outputs is None:
+            self._output_buttons.options = {}
+            return
+
+        output_fields = workflow_spec.outputs.model_fields
+        if not output_fields:
+            self._output_buttons.options = {}
+            return
+
+        options = {}
+        for field_name, field_info in output_fields.items():
+            title = field_info.title if field_info.title else field_name
+            options[title] = field_name
+        self._output_buttons.options = options
 
     def _update_content(self) -> None:
         """Update content with namespace selector above workflow/output columns."""
