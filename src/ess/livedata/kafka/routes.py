@@ -54,28 +54,30 @@ class RoutingAdapterBuilder:
         return self
 
     def with_detector_route(self) -> Self:
-        """Adds the detector route for both ev44 and ad00 schemas."""
-        adapter = RouteBySchemaAdapter(
-            routes={
-                'ev44': ChainedAdapter(
-                    first=KafkaToEv44Adapter(
-                        stream_lut=self._stream_mapping.detectors,
-                        stream_kind=StreamKind.DETECTOR_EVENTS,
-                    ),
-                    second=Ev44ToDetectorEventsAdapter(
-                        merge_detectors=self._stream_mapping.instrument == 'bifrost'
-                    ),
-                ),
-                'ad00': ChainedAdapter(
-                    first=KafkaToAd00Adapter(
-                        stream_lut=self._stream_mapping.detectors,
-                        stream_kind=StreamKind.AREA_DETECTOR,
-                    ),
-                    second=Ad00ToScippAdapter(),
-                ),
-            }
+        """Adds the detector route for ev44 schema."""
+        adapter = ChainedAdapter(
+            first=KafkaToEv44Adapter(
+                stream_lut=self._stream_mapping.detectors,
+                stream_kind=StreamKind.DETECTOR_EVENTS,
+            ),
+            second=Ev44ToDetectorEventsAdapter(
+                merge_detectors=self._stream_mapping.instrument == 'bifrost'
+            ),
         )
         for topic in self._stream_mapping.detector_topics:
+            self._routes[topic] = adapter
+        return self
+
+    def with_area_detector_route(self) -> Self:
+        """Adds the area detector route for ad00 schema."""
+        adapter = ChainedAdapter(
+            first=KafkaToAd00Adapter(
+                stream_lut=self._stream_mapping.area_detectors,
+                stream_kind=StreamKind.AREA_DETECTOR,
+            ),
+            second=Ad00ToScippAdapter(),
+        )
+        for topic in self._stream_mapping.area_detector_topics:
             self._routes[topic] = adapter
         return self
 

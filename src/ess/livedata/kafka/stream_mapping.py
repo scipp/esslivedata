@@ -31,6 +31,7 @@ class StreamMapping:
         instrument: str,
         detectors: StreamLUT,
         monitors: StreamLUT,
+        area_detectors: StreamLUT | None = None,
         log_topics: set[KafkaTopic] | None = None,
         livedata_commands_topic: str,
         livedata_data_topic: str,
@@ -41,6 +42,7 @@ class StreamMapping:
         self.instrument = instrument
         self._detectors = detectors
         self._monitors = monitors
+        self._area_detectors = area_detectors or {}
         # Currently we simply reuse the source_name as the stream name
         self._logs = None
         self._log_topics = log_topics or set()
@@ -81,6 +83,11 @@ class StreamMapping:
         return {stream.topic for stream in self.detectors.keys()}
 
     @property
+    def area_detector_topics(self) -> set[KafkaTopic]:
+        """Returns the list of area detector topics."""
+        return {stream.topic for stream in self.area_detectors.keys()}
+
+    @property
     def monitor_topics(self) -> set[KafkaTopic]:
         """Returns the list of monitor topics."""
         return {stream.topic for stream in self.monitors.keys()}
@@ -99,6 +106,11 @@ class StreamMapping:
     def monitors(self) -> StreamLUT:
         """Returns the mapping for monitor data."""
         return self._monitors
+
+    @property
+    def area_detectors(self) -> StreamLUT:
+        """Returns the mapping for area detector data."""
+        return self._area_detectors
 
     @property
     def logs(self) -> StreamLUT | None:

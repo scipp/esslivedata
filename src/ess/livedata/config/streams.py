@@ -32,7 +32,7 @@ def stream_kind_to_topic(instrument: str, kind: StreamKind) -> str:
         case StreamKind.DETECTOR_EVENTS:
             return f'{instrument}_detector'
         case StreamKind.AREA_DETECTOR:
-            return f'{instrument}_detector'
+            return f'{instrument}_area_detector'
         case StreamKind.LOG:
             return f'{instrument}_motion'
         case StreamKind.LIVEDATA_DATA:

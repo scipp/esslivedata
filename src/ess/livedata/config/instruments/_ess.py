@@ -31,6 +31,15 @@ def _make_dev_detectors(*, instrument: str, detectors: list[str]) -> StreamLUT:
     return {InputStreamKey(topic=topic, source_name=name): name for name in detectors}
 
 
+def _make_dev_area_detectors(
+    *, instrument: str, area_detectors: list[str]
+) -> StreamLUT:
+    topic = stream_kind_to_topic(instrument=instrument, kind=StreamKind.AREA_DETECTOR)
+    return {
+        InputStreamKey(topic=topic, source_name=name): name for name in area_detectors
+    }
+
+
 def _make_dev_beam_monitors(
     instrument: str, monitor_names: list[str] | None = None
 ) -> StreamLUT:
@@ -69,14 +78,23 @@ def make_dev_stream_mapping(
     instrument: str,
     *,
     detector_names: list[str],
+    area_detector_names: list[str] | None = None,
     monitor_names: list[str] | None = None,
 ) -> StreamMapping:
     motion_topic = f'{instrument}_motion'
     log_topics = {motion_topic}
+    area_detectors = (
+        _make_dev_area_detectors(
+            instrument=instrument, area_detectors=area_detector_names
+        )
+        if area_detector_names
+        else {}
+    )
     return StreamMapping(
         instrument=instrument,
         detectors=_make_dev_detectors(instrument=instrument, detectors=detector_names),
         monitors=_make_dev_beam_monitors(instrument, monitor_names=monitor_names),
+        area_detectors=area_detectors,
         log_topics=log_topics,
         **_make_livedata_topics(instrument),
     )
