@@ -5,7 +5,12 @@ import json
 import numpy as np
 import pytest
 import scipp as sc
-from streaming_data_types import dataarray_da00, eventdata_ev44, logdata_f144
+from streaming_data_types import (
+    area_detector_ad00,
+    dataarray_da00,
+    eventdata_ev44,
+    logdata_f144,
+)
 from streaming_data_types.exceptions import WrongSchemaException
 
 from ess.livedata.core.message import (
@@ -18,6 +23,7 @@ from ess.livedata.core.message import (
 )
 from ess.livedata.handlers.accumulators import DetectorEvents
 from ess.livedata.kafka.message_adapter import (
+    Ad00ToScippAdapter,
     AdaptingMessageSource,
     ChainedAdapter,
     CommandsAdapter,
@@ -28,6 +34,7 @@ from ess.livedata.kafka.message_adapter import (
     FakeKafkaMessage,
     InputStreamKey,
     KafkaMessage,
+    KafkaToAd00Adapter,
     KafkaToDa00Adapter,
     KafkaToEv44Adapter,
     KafkaToF144Adapter,
@@ -86,6 +93,16 @@ class FakeDa00KafkaMessageSource(MessageSource[KafkaMessage]):
     def get_messages(self) -> list[KafkaMessage]:
         da00 = make_serialized_da00()
         return [FakeKafkaMessage(value=da00, topic="instrument")]
+
+
+def make_serialized_ad00() -> bytes:
+    """Create serialized ad00 message for testing."""
+    return area_detector_ad00.serialise_ad00(
+        source_name="area_detector",
+        unique_id=42,
+        timestamp_ns=9876,
+        data=np.array([[1.0, 2.0], [3.0, 4.0]]),
+    )
 
 
 class TestFakeKafkaMessageSource:
@@ -242,6 +259,54 @@ class TestDa00ToScippAdapter:
         assert 'temperature' in result.value.coords
 
 
+class TestKafkaToAd00Adapter:
+    def test_adapter(self) -> None:
+        message = FakeKafkaMessage(value=make_serialized_ad00(), topic="detector")
+        adapter = KafkaToAd00Adapter(stream_kind=StreamKind.AREA_DETECTOR)
+        result = adapter.adapt(message)
+
+        assert result.stream.kind == StreamKind.AREA_DETECTOR
+        assert result.stream.name == "area_detector"
+        assert result.timestamp == 9876
+        assert result.value.unique_id == 42
+        np.testing.assert_array_equal(
+            result.value.data.reshape(result.value.dimensions),
+            [[1.0, 2.0], [3.0, 4.0]],
+        )
+
+    def test_adapter_with_stream_mapping(self) -> None:
+        message = FakeKafkaMessage(value=make_serialized_ad00(), topic="detector")
+        adapter = KafkaToAd00Adapter(
+            stream_kind=StreamKind.AREA_DETECTOR,
+            stream_lut={
+                InputStreamKey(
+                    topic="detector", source_name="area_detector"
+                ): "mapped_detector"
+            },
+        )
+        result = adapter.adapt(message)
+
+        assert result.stream.kind == StreamKind.AREA_DETECTOR
+        assert result.stream.name == "mapped_detector"
+
+
+class TestAd00ToScippAdapter:
+    def test_adapter(self) -> None:
+        ad00_adapter = KafkaToAd00Adapter(stream_kind=StreamKind.AREA_DETECTOR)
+        message = FakeKafkaMessage(value=make_serialized_ad00(), topic="detector")
+        adapted_ad00 = ad00_adapter.adapt(message)
+
+        scipp_adapter = Ad00ToScippAdapter()
+        result = scipp_adapter.adapt(adapted_ad00)
+
+        assert result.stream.kind == StreamKind.AREA_DETECTOR
+        assert result.stream.name == "area_detector"
+        assert isinstance(result.value, sc.DataArray)
+        assert result.value.dims == ('dim_0', 'dim_1')
+        assert result.value.shape == (2, 2)
+        np.testing.assert_array_equal(result.value.values, [[1.0, 2.0], [3.0, 4.0]])
+
+
 class TestEv44ToDetectorEventsAdapter:
     def test_adapter(self) -> None:
         ev44_message = Message(
@@ -296,9 +361,9 @@ def message_with_schema(schema: str) -> KafkaMessage:
 
 
 class TestRouteBySchemaAdapter:
-    def test_raises_KeyError_if_no_route_found(self) -> None:
+    def test_raises_WrongSchemaException_if_no_route_found(self) -> None:
         adapter = RouteBySchemaAdapter(routes={})
-        with pytest.raises(KeyError, match="ev44"):
+        with pytest.raises(WrongSchemaException):
             adapter.adapt(message_with_schema("ev44"))
 
     def test_calls_adapter_based_on_route(self) -> None:
@@ -680,10 +745,13 @@ class TestErrorHandling:
 
         source.get_messages()
 
-        assert len(self.fake_logger.exception_calls) == 2
-        assert isinstance(self.fake_logger.exception_calls[0][1][1], KeyError)
+        # Unknown schema is caught and logged as a warning
+        assert len(self.fake_logger.warning_calls) == 1
+        assert "unknown schema" in self.fake_logger.warning_calls[0][0].lower()
+        # The ValueError from the mocked deserializer is logged as an exception
+        assert len(self.fake_logger.exception_calls) == 1
         assert (
-            "error adapting message" in self.fake_logger.exception_calls[1][0].lower()
+            "error adapting message" in self.fake_logger.exception_calls[0][0].lower()
         )
 
     def test_non_fatal_error_handling_option(self):

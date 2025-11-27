@@ -25,5 +25,7 @@ class ReductionHandlerFactory(
                 return ToNXlog(attrs=attrs)
             case StreamKind.MONITOR_EVENTS | StreamKind.DETECTOR_EVENTS:
                 return ToNXevent_data()
+            case StreamKind.AREA_DETECTOR:
+                return Cumulative(clear_on_get=True)
             case _:
                 return None

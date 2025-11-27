@@ -233,6 +233,32 @@ class TestCumulative:
         with pytest.raises(ValueError, match="No data has been added"):
             cumulative.get()
 
+    def test_accumulates_2d_data_without_coordinates(self) -> None:
+        """Area detector images are 2D and typically have no coordinates."""
+        cumulative = Cumulative(config={})
+        da = sc.DataArray(
+            sc.array(dims=['y', 'x'], values=[[1, 2], [3, 4]], unit='counts'),
+        )
+        cumulative.add(0, da)
+        cumulative.add(1, da)
+        result = cumulative.get()
+        expected = sc.array(dims=['y', 'x'], values=[[2, 4], [6, 8]], unit='counts')
+        assert sc.identical(result.data, expected)
+
+    def test_2d_data_resets_when_sizes_change(self) -> None:
+        cumulative = Cumulative(config={})
+        da1 = sc.DataArray(
+            sc.array(dims=['y', 'x'], values=[[1, 2], [3, 4]], unit='counts'),
+        )
+        da2 = sc.DataArray(
+            sc.array(dims=['y', 'x'], values=[[5, 6, 7], [8, 9, 10]], unit='counts'),
+        )
+        cumulative.add(0, da1)
+        cumulative.add(1, da1)
+        cumulative.add(2, da2)  # Different shape, should reset
+        result = cumulative.get()
+        assert sc.identical(result.data, da2.data)
+
 
 class TestCollectTOA:
     def test_get_before_add_returns_empty_array(self) -> None:

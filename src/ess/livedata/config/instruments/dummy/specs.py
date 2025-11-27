@@ -24,7 +24,7 @@ class TotalCountsOutputs(WorkflowOutputsBase):
     )
 
 
-detector_names = ['panel_0']
+detector_names = ['panel_0', 'area_panel']
 
 instrument = Instrument(
     name='dummy',
@@ -47,6 +47,18 @@ panel_0_view_handle = instrument.register_spec(
     description='',
     source_names=['panel_0'],
     params=DetectorViewParams,
+    outputs=DetectorViewOutputs,
+)
+
+# Register area detector view spec
+area_panel_view_handle = instrument.register_spec(
+    namespace='detector_data',
+    name='area_panel_xy',
+    version=1,
+    title='Area Panel',
+    description='Area detector image view',
+    source_names=['area_panel'],
+    params=None,
     outputs=DetectorViewOutputs,
 )
 
