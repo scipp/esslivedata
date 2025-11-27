@@ -14,10 +14,11 @@ from ess.livedata.config.workflow_spec import (
 from ess.livedata.core.message import COMMANDS_STREAM_ID
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.configuration_adapter import ConfigurationState
-from ess.livedata.dashboard.workflow_config_service import WorkflowConfigService
 from ess.livedata.dashboard.workflow_controller import WorkflowController
 from ess.livedata.fakes import FakeMessageSink
 from ess.livedata.handlers.config_handler import ConfigUpdate
+
+from .conftest import FakeWorkflowConfigService
 
 
 class WorkflowControllerFixture(NamedTuple):
@@ -67,14 +68,6 @@ def get_sent_workflow_configs(
 def get_batch_calls(sink: FakeMessageSink) -> list[int]:
     """Extract batch call sizes from the sink."""
     return [len(messages) for messages in sink.published_messages]
-
-
-class FakeWorkflowConfigService(WorkflowConfigService):
-    """Fake service for testing WorkflowController."""
-
-    def subscribe_to_workflow_status(self, source_name: str, callback) -> None:
-        """No-op implementation for testing."""
-        pass
 
 
 @pytest.fixture
@@ -127,12 +120,6 @@ def command_service(fake_message_sink: FakeMessageSink) -> CommandService:
 
 
 @pytest.fixture
-def fake_workflow_config_service() -> FakeWorkflowConfigService:
-    """Fake workflow config service for testing."""
-    return FakeWorkflowConfigService()
-
-
-@pytest.fixture
 def fake_config_store() -> dict[WorkflowId, dict]:
     """Plain dict for config store testing."""
     return {}
@@ -148,10 +135,18 @@ def workflow_controller(
     workflow_registry: dict[WorkflowId, WorkflowSpec],
 ) -> WorkflowControllerFixture:
     """Workflow controller instance for testing."""
-    controller = WorkflowController(
+    # Create JobOrchestrator with shared services
+    from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
+
+    job_orchestrator = JobOrchestrator(
         command_service=command_service,
         workflow_config_service=fake_workflow_config_service,
-        source_names=source_names,
+        workflow_registry=workflow_registry,
+        config_store=fake_config_store,
+    )
+
+    controller = WorkflowController(
+        job_orchestrator=job_orchestrator,
         workflow_registry=workflow_registry,
         config_store=fake_config_store,
     )
@@ -236,7 +231,7 @@ class TestWorkflowController:
         config = SomeWorkflowParams(threshold=100.0)
 
         # Act & Assert
-        with pytest.raises(ValueError, match="Workflow spec for .* not found"):
+        with pytest.raises(ValueError, match=r"Workflow spec for .* not found"):
             workflow_controller.controller.start_workflow(
                 nonexistent_workflow_id, source_names, config
             )
@@ -254,7 +249,6 @@ class TestWorkflowController:
         source_names: list[str],
     ):
         """Test that multiple workflow configurations can be stored persistently."""
-        workflow_config_service = fake_workflow_config_service
         config_store = fake_config_store
 
         config_1 = SomeWorkflowParams(threshold=100.0, mode="fast")
@@ -285,10 +279,19 @@ class TestWorkflowController:
         workflow_id_2 = workflow_spec_2.get_id()
 
         registry = {workflow_id_1: workflow_spec_1, workflow_id_2: workflow_spec_2}
-        controller = WorkflowController(
+
+        # Create JobOrchestrator
+        from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
+
+        job_orchestrator = JobOrchestrator(
             command_service=command_service,
-            workflow_config_service=workflow_config_service,
-            source_names=source_names,
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=config_store,
+        )
+
+        controller = WorkflowController(
+            job_orchestrator=job_orchestrator,
             workflow_registry=registry,
             config_store=config_store,
         )
