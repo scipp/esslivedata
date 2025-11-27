@@ -8,7 +8,6 @@ import panel as pn
 from ess.livedata import Service
 
 from .dashboard import DashboardBase
-from .plot_orchestrator import PlotOrchestrator
 from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_creation_widget import PlotCreationWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
@@ -37,15 +36,6 @@ class ReductionApp(DashboardBase):
             port=5009,  # Default port for reduction dashboard
             transport=transport,
         )
-
-        # Create shared orchestrators (must be shared across all sessions)
-        self._plot_orchestrator = PlotOrchestrator(
-            plotting_controller=self._services.plotting_controller,
-            job_orchestrator=self._services.job_orchestrator,
-            data_service=self._services.data_service,
-            config_store=self._services.plotter_config_store,
-        )
-
         self._logger.info("Reduction dashboard initialized")
 
     def create_sidebar_content(self) -> pn.viewable.Viewable:
@@ -83,7 +73,7 @@ class ReductionApp(DashboardBase):
 
         # Create UI widget connected to shared orchestrator
         plot_grid_tabs = PlotGridTabs(
-            plot_orchestrator=self._plot_orchestrator,
+            plot_orchestrator=self._services.plot_orchestrator,
             # Temporary hack, will likely get this from JobOrchestrator, or make
             # registry more accessible.
             workflow_registry=self._services.workflow_controller._workflow_registry,
