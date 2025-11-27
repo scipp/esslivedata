@@ -3,31 +3,27 @@
 import pytest
 import scipp as sc
 
-from ess.livedata.handlers.area_detector_view import (
-    AreaDetectorView,
-    AreaDetectorViewFactory,
-)
+from ess.livedata.handlers.area_detector_view import AreaDetectorView
 from ess.reduce.live import raw
 
 
 class TestAreaDetectorViewFactory:
-    def test_make_view_creates_workflow(self):
-        factory = AreaDetectorViewFactory(input_sizes={'dim_0': 8, 'dim_1': 8})
-        workflow = factory.make_view(source_name='detector')
+    def test_view_factory_returns_callable(self):
+        factory = AreaDetectorView.view_factory()
+        workflow = factory('detector')
         assert isinstance(workflow, AreaDetectorView)
 
-    def test_make_view_with_transform(self):
+    def test_view_factory_with_transform(self):
         def downsample(da: sc.DataArray) -> sc.DataArray:
             da = da.fold(dim='dim_0', sizes={'dim_0': 4, 'y_bin': 2})
             da = da.fold(dim='dim_1', sizes={'dim_1': 4, 'x_bin': 2})
             return da
 
-        factory = AreaDetectorViewFactory(
-            input_sizes={'dim_0': 8, 'dim_1': 8},
+        factory = AreaDetectorView.view_factory(
             transform=downsample,
             reduction_dim=['y_bin', 'x_bin'],
         )
-        workflow = factory.make_view(source_name='detector')
+        workflow = factory('detector')
 
         frame = sc.DataArray(sc.ones(dims=['dim_0', 'dim_1'], shape=[8, 8]))
         workflow.accumulate({'detector': frame}, start_time=1000, end_time=2000)

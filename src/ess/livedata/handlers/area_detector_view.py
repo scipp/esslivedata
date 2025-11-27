@@ -99,58 +99,35 @@ class AreaDetectorView(Workflow):
         self._previous = None
         self._current_start_time = None
 
-
-class AreaDetectorViewFactory:
-    """
-    Factory for area detector views with optional transform and reduction.
-
-    Creates AreaDetectorView workflows that use LogicalView for data transformation.
-
-    Parameters
-    ----------
-    input_sizes:
-        Dictionary defining the input dimension sizes
-        (e.g., {'dim_0': 512, 'dim_1': 512}).
-    transform:
-        Callable that transforms input data (e.g., fold or slice operations).
-        If None, identity transform is used.
-    reduction_dim:
-        Dimension(s) to sum over after applying transform. Enables downsampling.
-    """
-
-    def __init__(
-        self,
+    @staticmethod
+    def view_factory(
         *,
-        input_sizes: dict[str, int],
         transform: Callable[[sc.DataArray], sc.DataArray] | None = None,
         reduction_dim: str | list[str] | None = None,
-    ) -> None:
-        self._input_sizes = input_sizes
-        self._transform = transform if transform is not None else _identity
-        self._reduction_dim = reduction_dim
-
-    def make_view(self, source_name: str) -> AreaDetectorView:
+    ) -> Callable[[str], AreaDetectorView]:
         """
-        Factory method that creates an area detector view for the given source.
+        Create a factory function for area detector views.
 
         Parameters
         ----------
-        source_name:
-            Name of the detector source (used for identification).
+        transform:
+            Callable that transforms input data (e.g., fold or slice operations).
+            If None, identity transform is used.
+        reduction_dim:
+            Dimension(s) to sum over after applying transform. Enables downsampling.
 
         Returns
         -------
         :
-            AreaDetectorView workflow instance.
+            Factory function that takes source_name and returns an AreaDetectorView.
         """
-        _ = source_name  # Not used currently, but kept for API consistency
-        logical_view = raw.LogicalView(
-            transform=self._transform,
-            reduction_dim=self._reduction_dim,
-            input_sizes=self._input_sizes,
-        )
-        return AreaDetectorView(logical_view)
+        actual_transform = transform if transform is not None else (lambda da: da)
 
+        def factory(source_name: str) -> AreaDetectorView:
+            _ = source_name
+            logical_view = raw.LogicalView(
+                transform=actual_transform, reduction_dim=reduction_dim
+            )
+            return AreaDetectorView(logical_view)
 
-def _identity(da: sc.DataArray) -> sc.DataArray:
-    return da
+        return factory
