@@ -53,9 +53,14 @@ def test_factory_can_create_preprocessor(instrument_name: str) -> None:
     instrument = get_instrument(instrument_name)
     factory = DetectorHandlerFactory(instrument=instrument)
     for name in instrument.detector_names:
-        _ = factory.make_preprocessor(
-            StreamId(kind=StreamKind.DETECTOR_EVENTS, name=name)
-        )
+        # Try to get detector_number to determine if this is an event detector
+        try:
+            _ = instrument.get_detector_number(name)
+            kind = StreamKind.DETECTOR_EVENTS
+        except KeyError:
+            # No detector_number means this is an area detector
+            kind = StreamKind.AREA_DETECTOR
+        _ = factory.make_preprocessor(StreamId(kind=kind, name=name))
 
 
 def test_factory_creates_latest_value_accumulator_for_roi_messages() -> None:
