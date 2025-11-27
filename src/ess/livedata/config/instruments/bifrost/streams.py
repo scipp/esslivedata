@@ -38,6 +38,10 @@ def _bifrost_generator() -> Generator[tuple[str, tuple[int, int]]]:
 
 detector_fakes = dict(_bifrost_generator())
 
+# Bragg peak monitor: single pixel detector with detector_number range 1-1
+# (conceptually similar to a monitor but uses detector event format)
+detector_fakes['bragg_peak_monitor'] = (1, 1)
+
 # Detector number configuration
 detector_number = sc.arange('detector_number', 1, 5 * 3 * 9 * 100 + 1, unit=None).fold(
     dim='detector_number', sizes={'arc': 5, 'tube': 3, 'channel': 9, 'pixel': 100}

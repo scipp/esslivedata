@@ -222,3 +222,103 @@ class TestDetectorRatemeter:
 
         assert 'time' in result.coords
         assert result.coords['time'].unit == 'ns'
+
+
+class TestBraggPeakQMap:
+    """Tests for the Bragg peak monitor Q-map workflow."""
+
+    def test_bragg_peak_qmap_workflow_can_be_created(self):
+        """Test that the workflow factory can create the workflow."""
+        from ess.livedata.config import workflow_spec
+        from ess.livedata.config.instruments.bifrost import factories
+        from ess.livedata.config.instruments.bifrost.specs import instrument
+
+        # Load factories
+        factories.setup_factories(instrument)
+
+        # Get the workflow spec
+        workflow_id = workflow_spec.WorkflowId(
+            instrument='bifrost',
+            namespace='data_reduction',
+            name='bragg_peak_qmap',
+            version=1,
+        )
+        config = workflow_spec.WorkflowConfig(
+            identifier=workflow_id,
+            aux_source_names={
+                'detector_rotation': 'detector_rotation',
+                'sample_rotation': 'sample_rotation',
+            },
+        )
+
+        # Try to create the workflow
+        workflow = instrument.workflow_factory.create(
+            source_name='bragg_peak_monitor', config=config
+        )
+        assert workflow is not None
+
+    def test_bragg_peak_qmap_workflow_can_accumulate_data(self):
+        """Test that the workflow can accumulate data without errors."""
+        from ess.livedata.config import workflow_spec
+        from ess.livedata.config.instruments.bifrost import factories
+        from ess.livedata.config.instruments.bifrost.specs import instrument
+
+        # Load factories
+        factories.setup_factories(instrument)
+
+        # Get the workflow spec
+        workflow_id = workflow_spec.WorkflowId(
+            instrument='bifrost',
+            namespace='data_reduction',
+            name='bragg_peak_qmap',
+            version=1,
+        )
+        config = workflow_spec.WorkflowConfig(
+            identifier=workflow_id,
+            aux_source_names={
+                'detector_rotation': 'detector_rotation',
+                'sample_rotation': 'sample_rotation',
+            },
+        )
+
+        # Create the workflow
+        workflow = instrument.workflow_factory.create(
+            source_name='bragg_peak_monitor', config=config
+        )
+
+        # Create minimal test data for bragg_peak_monitor
+        # Single pixel detector with some events
+        epoch = sc.epoch(unit='ns')
+        event_time_zero = epoch + sc.array(
+            dims=['event_time_zero'], values=[1_000_000], unit='ns', dtype='int64'
+        )
+        event_id = sc.array(dims=['event'], values=[1], unit=None, dtype='int32')
+        event_time_offset = sc.array(
+            dims=['event'], values=[100], unit='ns', dtype='int64'
+        )
+        weights = sc.ones(sizes={'event': 1}, dtype='float64', unit='counts')
+        events = sc.DataArray(
+            data=weights, coords={'event_time_offset': event_time_offset}
+        )
+        events.coords['event_id'] = event_id
+
+        sizes = sc.array(dims=['event_time_zero'], values=[1], unit=None, dtype='int64')
+        begin = sc.cumsum(sizes, mode='exclusive')
+        detector_data = sc.DataArray(sc.bins(begin=begin, dim='event', data=events))
+        detector_data.coords['event_time_zero'] = event_time_zero
+
+        # Create rotation data (as DataArrays, not scalars)
+        detector_rotation = sc.DataArray(
+            data=sc.scalar(90.0, unit='deg')
+        )  # a4 - detector tank at 90 deg
+        sample_rotation = sc.DataArray(
+            data=sc.scalar(45.0, unit='deg')
+        )  # a3 - sample rotation
+
+        # Try to accumulate
+        data = {
+            'bragg_peak_monitor': detector_data,
+            'detector_rotation': detector_rotation,
+            'sample_rotation': sample_rotation,
+        }
+        workflow.accumulate(data, start_time=0, end_time=1_000_000_000)

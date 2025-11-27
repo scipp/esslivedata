@@ -53,13 +53,19 @@ class RoutingAdapterBuilder:
 
     def with_detector_route(self) -> Self:
         """Adds the detector route."""
+        # Bifrost merges all detector banks into unified_detector, except for
+        # standalone detectors like bragg_peak_monitor that need separate streams.
+        is_bifrost = self._stream_mapping.instrument == 'bifrost'
         adapter = ChainedAdapter(
             first=KafkaToEv44Adapter(
                 stream_lut=self._stream_mapping.detectors,
                 stream_kind=StreamKind.DETECTOR_EVENTS,
             ),
             second=Ev44ToDetectorEventsAdapter(
-                merge_detectors=self._stream_mapping.instrument == 'bifrost'
+                merge_detectors=is_bifrost,
+                exclude_from_merge=frozenset({'bragg_peak_monitor'})
+                if is_bifrost
+                else None,
             ),
         )
         for topic in self._stream_mapping.detector_topics:

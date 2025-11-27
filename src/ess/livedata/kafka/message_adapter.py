@@ -209,7 +209,12 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents]):
 class Ev44ToDetectorEventsAdapter(
     MessageAdapter[Message[eventdata_ev44.EventData], Message[DetectorEvents]]
 ):
-    def __init__(self, *, merge_detectors: bool = False):
+    def __init__(
+        self,
+        *,
+        merge_detectors: bool = False,
+        exclude_from_merge: frozenset[str] | None = None,
+    ):
         """
         Parameters
         ----------
@@ -218,14 +223,18 @@ class Ev44ToDetectorEventsAdapter(
             useful for instruments with many detector banks that should be treated as a
             single bank. Note that event_id/detector_number must be unique across all
             detectors.
+        exclude_from_merge
+            Set of detector names to exclude from merging. These detectors will keep
+            their original stream name even when merge_detectors is True.
         """
         self._merge_detectors = merge_detectors
+        self._exclude_from_merge = exclude_from_merge or frozenset()
 
     def adapt(
         self, message: Message[eventdata_ev44.EventData]
     ) -> Message[DetectorEvents]:
         stream = message.stream
-        if self._merge_detectors:
+        if self._merge_detectors and stream.name not in self._exclude_from_merge:
             stream = replace(stream, name='unified_detector')
         return Message(
             timestamp=message.timestamp,
