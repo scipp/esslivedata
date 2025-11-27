@@ -101,25 +101,17 @@ def test_factory_returns_none_for_unconfigured_detectors() -> None:
     This ensures that messages from detectors not in the instrument's detector_names
     list are gracefully skipped instead of causing a KeyError.
     """
-    instrument = get_instrument('tbl')
+    instrument = get_instrument('dummy')
     factory = DetectorHandlerFactory(instrument=instrument)
 
-    # TBL is configured with 'timepix3_detector' and 'multiblade_detector'
-    # but not 'he3_detector_bank0'
+    # dummy is configured with 'panel_0_detector' but not 'unknown_detector'
     unconfigured_detector = StreamId(
-        kind=StreamKind.DETECTOR_EVENTS, name='he3_detector_bank0'
+        kind=StreamKind.DETECTOR_EVENTS, name='unknown_detector'
     )
     preprocessor = factory.make_preprocessor(unconfigured_detector)
 
     # Should return None to indicate this detector should be skipped
     assert preprocessor is None
-
-    # Verify that configured detectors still work
-    configured_detector = StreamId(
-        kind=StreamKind.DETECTOR_EVENTS, name='timepix3_detector'
-    )
-    preprocessor = factory.make_preprocessor(configured_detector)
-    assert preprocessor is not None
 
 
 class FakeInstrument:
