@@ -195,11 +195,18 @@ class FakeAreaDetectorSource(MessageSource[sc.DataArray]):
         # Generate a random image with some structure (gaussian blob + noise)
         y, x = np.ogrid[: shape[0], : shape[1]]
         cy, cx = shape[0] // 2, shape[1] // 2
-        # Create a gaussian blob that moves slightly over time
-        offset = (self._unique_id % 20) - 10
-        blob = np.exp(-((y - cy - offset) ** 2 + (x - cx + offset) ** 2) / (2 * 30**2))
-        noise = self._rng.poisson(lam=10, size=shape)
-        data = (blob * 1000 + noise).astype(np.int32)
+        # Create a gaussian blob that moves over time in a circular pattern
+        # Full cycle every ~10 seconds at 14 msg/sec (140 steps)
+        t = self._unique_id * 2 * np.pi / 140
+        radius = min(shape) // 6  # Move within inner region
+        offset_y = int(radius * np.sin(t))
+        offset_x = int(radius * np.cos(t))
+        sigma = 15  # Smaller blob so movement is more visible
+        blob = np.exp(
+            -((y - cy - offset_y) ** 2 + (x - cx - offset_x) ** 2) / (2 * sigma**2)
+        )
+        noise = self._rng.poisson(lam=5, size=shape)
+        data = (blob * 500 + noise).astype(np.int32)
 
         self._unique_id += 1
 

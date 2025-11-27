@@ -148,7 +148,7 @@ class DetectorHandlerFactory(
                 detector_number = self._instrument.get_detector_number(key.name)
                 return GroupIntoPixels(detector_number=detector_number)
             case StreamKind.AREA_DETECTOR:
-                return Cumulative()
+                return Cumulative(clear_on_get=True)
             case StreamKind.LIVEDATA_ROI:
                 return LatestValue()
             case _:
