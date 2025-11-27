@@ -14,7 +14,7 @@ from ess.reduce.live import raw
 from ..config.instrument import Instrument
 from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
-from .accumulators import DetectorEvents, GroupIntoPixels, LatestValue
+from .accumulators import Cumulative, DetectorEvents, GroupIntoPixels, LatestValue
 from .detector_view import DetectorView, DetectorViewParams
 
 
@@ -147,6 +147,8 @@ class DetectorHandlerFactory(
             case StreamKind.DETECTOR_EVENTS:
                 detector_number = self._instrument.get_detector_number(key.name)
                 return GroupIntoPixels(detector_number=detector_number)
+            case StreamKind.AREA_DETECTOR:
+                return Cumulative()
             case StreamKind.LIVEDATA_ROI:
                 return LatestValue()
             case _:

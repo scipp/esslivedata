@@ -8,7 +8,12 @@ from typing import Any, Generic, Protocol, TypeVar
 import scipp as sc
 import streaming_data_types
 import streaming_data_types.exceptions
-from streaming_data_types import dataarray_da00, eventdata_ev44, logdata_f144
+from streaming_data_types import (
+    area_detector_ad00,
+    dataarray_da00,
+    eventdata_ev44,
+    logdata_f144,
+)
 from streaming_data_types.fbschemas.eventdata_ev44 import Event44Message
 
 from ess.livedata.core.job import JobStatus
@@ -23,6 +28,7 @@ from ..core.message import (
     StreamKind,
 )
 from ..handlers.accumulators import DetectorEvents, LogData, MonitorEvents
+from .scipp_ad00_compat import ad00_to_scipp
 from .scipp_da00_compat import da00_to_scipp
 from .stream_mapping import InputStreamKey, StreamLUT
 from .x5f2_compat import x5f2_to_job_status
@@ -247,6 +253,27 @@ class Da00ToScippAdapter(
         )
 
 
+class KafkaToAd00Adapter(KafkaAdapter[area_detector_ad00.ADArray]):
+    def adapt(self, message: KafkaMessage) -> Message[area_detector_ad00.ADArray]:
+        ad00 = area_detector_ad00.deserialise_ad00(message.value())
+        key = self.get_stream_id(topic=message.topic(), source_name=ad00.source_name)
+        timestamp = ad00.timestamp_ns
+        return Message(timestamp=timestamp, stream=key, value=ad00)
+
+
+class Ad00ToScippAdapter(
+    MessageAdapter[Message[area_detector_ad00.ADArray], Message[sc.DataArray]]
+):
+    def adapt(
+        self, message: Message[area_detector_ad00.ADArray]
+    ) -> Message[sc.DataArray]:
+        return Message(
+            timestamp=message.timestamp,
+            stream=message.stream,
+            value=ad00_to_scipp(message.value),
+        )
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RawConfigItem:
     key: bytes
@@ -299,7 +326,7 @@ class RouteBySchemaAdapter(MessageAdapter[KafkaMessage, T]):
 
     def adapt(self, message: KafkaMessage) -> T:
         schema = streaming_data_types.utils.get_schema(message.value())
-        if schema is None:
+        if schema is None or schema not in self._routes:
             raise streaming_data_types.exceptions.WrongSchemaException()
         return self._routes[schema].adapt(message)
 
