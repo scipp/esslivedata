@@ -555,22 +555,23 @@ class PlotOrchestrator:
         if cell_id not in self._cell_state:
             self._notify_cell_updated(grid_id, cell_id, cell)
 
-    def _serialize_grids(self) -> dict[str, Any]:
+    def _serialize_grids(self) -> list[dict[str, Any]]:
         """
-        Serialize all grids to dict for persistence.
+        Serialize all grids to list for persistence.
 
         Returns
         -------
         :
-            Dictionary mapping grid IDs (as strings) to grid configurations.
+            List of grid configurations. UUIDs are not persisted as they are
+            runtime identity handles with no cross-session significance.
         """
-        return {
-            str(grid_id): {
+        return [
+            {
                 'title': grid.title,
                 'nrows': grid.nrows,
                 'ncols': grid.ncols,
-                'cells': {
-                    str(cell_id): {
+                'cells': [
+                    {
                         'geometry': {
                             'row': cell.geometry.row,
                             'col': cell.geometry.col,
@@ -589,26 +590,27 @@ class PlotOrchestrator:
                             ),
                         },
                     }
-                    for cell_id, cell in grid.cells.items()
-                },
+                    for cell in grid.cells.values()
+                ],
             }
-            for grid_id, grid in self._grids.items()
-        }
+            for grid in self._grids.values()
+        ]
 
-    def _deserialize_grids(self, data: dict[str, Any]) -> None:
+    def _deserialize_grids(self, data: list[dict[str, Any]]) -> None:
         """
-        Deserialize grids from dict and restore state.
+        Deserialize grids from list and restore state.
 
         This reconstructs the grid configurations and subscribes to workflows
-        to recreate cell state when data becomes available.
+        to recreate cell state when data becomes available. Fresh UUIDs are
+        generated for grids and cells since they are runtime identity handles.
 
         Parameters
         ----------
         data
-            Dictionary mapping grid IDs (as strings) to grid configurations.
+            List of grid configurations.
         """
-        for grid_id_str, grid_data in data.items():
-            grid_id = GridId(UUID(grid_id_str))
+        for grid_data in data:
+            grid_id = GridId(uuid4())
 
             # Recreate the grid
             grid = PlotGridConfig(
@@ -621,8 +623,8 @@ class PlotOrchestrator:
             self._grids[grid_id] = grid
 
             # Recreate cells
-            for cell_id_str, cell_data in grid_data.get('cells', {}).items():
-                cell_id = CellId(UUID(cell_id_str))
+            for cell_data in grid_data.get('cells', []):
+                cell_id = CellId(uuid4())
 
                 # Recreate geometry
                 geometry = CellGeometry(**cell_data['geometry'])
@@ -660,7 +662,8 @@ class PlotOrchestrator:
                 self._logger.debug('No persisted plot grids found in store')
                 return
 
-            self._deserialize_grids(data)
+            grids = data.get('grids', [])
+            self._deserialize_grids(grids)
             self._logger.info('Loaded %d plot grids from store', len(self._grids))
         except Exception:
             self._logger.exception('Failed to load plot grids from store')
@@ -672,7 +675,7 @@ class PlotOrchestrator:
 
         try:
             serialized = self._serialize_grids()
-            self._config_store['plot_grids'] = serialized
+            self._config_store['plot_grids'] = {'grids': serialized}
             self._logger.debug('Persisted %d plot grids to store', len(self._grids))
         except Exception as e:
             self._logger.error('Failed to persist plot grids: %s', e)

@@ -238,6 +238,9 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
     2. Stop the backend
     3. Create a new backend with the same config dir
     4. Verify all grids and cells are restored correctly
+
+    Note: UUIDs are regenerated on load as they are runtime identity handles.
+    We verify content equality, not ID equality.
     """
     from ess.livedata.config.workflow_spec import WorkflowId
     from ess.livedata.dashboard.plot_orchestrator import (
@@ -253,7 +256,7 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         orchestrator1 = backend1.plot_orchestrator
 
         # Add a grid
-        grid_id = orchestrator1.add_grid(title='Test Grid', nrows=2, ncols=2)
+        orchestrator1.add_grid(title='Test Grid', nrows=2, ncols=2)
 
         # Add a cell with plot configuration
         workflow_id = WorkflowId(
@@ -272,7 +275,10 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
         cell = PlotCell(geometry=geometry, config=plot_config)
 
-        cell_id = orchestrator1.add_plot(grid_id=grid_id, cell=cell)
+        # Find the grid by title to add cells
+        grids1 = orchestrator1.get_all_grids()
+        grid_id = next(gid for gid, g in grids1.items() if g.title == 'Test Grid')
+        orchestrator1.add_plot(grid_id=grid_id, cell=cell)
 
         # Add another cell in the same grid
         plot_config2 = PlotConfig(
@@ -285,10 +291,13 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         geometry2 = CellGeometry(row=0, col=1, row_span=1, col_span=1)
         cell2 = PlotCell(geometry=geometry2, config=plot_config2)
 
-        cell_id2 = orchestrator1.add_plot(grid_id=grid_id, cell=cell2)
+        orchestrator1.add_plot(grid_id=grid_id, cell=cell2)
 
         # Add a second grid with one cell
-        grid_id2 = orchestrator1.add_grid(title='Second Grid', nrows=1, ncols=1)
+        orchestrator1.add_grid(title='Second Grid', nrows=1, ncols=1)
+        grids1 = orchestrator1.get_all_grids()
+        grid_id2 = next(gid for gid, g in grids1.items() if g.title == 'Second Grid')
+
         plot_config3 = PlotConfig(
             workflow_id=workflow_id,
             output_name='output3',
@@ -299,13 +308,11 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         geometry3 = CellGeometry(row=0, col=0, row_span=1, col_span=1)
         cell3 = PlotCell(geometry=geometry3, config=plot_config3)
 
-        cell_id3 = orchestrator1.add_plot(grid_id=grid_id2, cell=cell3)
+        orchestrator1.add_plot(grid_id=grid_id2, cell=cell3)
 
         # Verify grids exist before shutdown
         all_grids1 = orchestrator1.get_all_grids()
         assert len(all_grids1) == 2
-        assert grid_id in all_grids1
-        assert grid_id2 in all_grids1
 
     # Backend1 is now stopped and cleaned up
 
@@ -319,23 +326,27 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         all_grids2 = orchestrator2.get_all_grids()
         assert len(all_grids2) == 2, f"Expected 2 grids, got {len(all_grids2)}"
 
-        # Verify grid IDs match (UUIDs should be preserved)
-        restored_grid_ids = set(all_grids2.keys())
-        original_grid_ids = {grid_id, grid_id2}
-        assert (
-            restored_grid_ids == original_grid_ids
-        ), f"Grid IDs don't match: {restored_grid_ids} != {original_grid_ids}"
+        # Find grids by title (UUIDs are regenerated on load)
+        grid1_restored = next(g for g in all_grids2.values() if g.title == 'Test Grid')
+        grid2_restored = next(
+            g for g in all_grids2.values() if g.title == 'Second Grid'
+        )
 
         # Verify first grid configuration
-        grid1_restored = all_grids2[grid_id]
         assert grid1_restored.title == 'Test Grid'
         assert grid1_restored.nrows == 2
         assert grid1_restored.ncols == 2
         assert len(grid1_restored.cells) == 2
 
+        # Find cells by geometry (UUIDs are regenerated)
+        cell1_restored = next(
+            c for c in grid1_restored.cells.values() if c.geometry.col == 0
+        )
+        cell2_restored = next(
+            c for c in grid1_restored.cells.values() if c.geometry.col == 1
+        )
+
         # Verify first cell configuration
-        assert cell_id in grid1_restored.cells
-        cell1_restored = grid1_restored.cells[cell_id]
         assert cell1_restored.geometry.row == 0
         assert cell1_restored.geometry.col == 0
         assert cell1_restored.geometry.row_span == 1
@@ -348,8 +359,6 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         assert cell1_restored.config.params == {'param1': 'value1', 'param2': 42}
 
         # Verify second cell configuration
-        assert cell_id2 in grid1_restored.cells
-        cell2_restored = grid1_restored.cells[cell_id2]
         assert cell2_restored.geometry.row == 0
         assert cell2_restored.geometry.col == 1
         assert cell2_restored.config.output_name == 'spectrum'
@@ -357,15 +366,13 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         assert cell2_restored.config.params == {'threshold': 100.0}
 
         # Verify second grid configuration
-        grid2_restored = all_grids2[grid_id2]
         assert grid2_restored.title == 'Second Grid'
         assert grid2_restored.nrows == 1
         assert grid2_restored.ncols == 1
         assert len(grid2_restored.cells) == 1
 
         # Verify third cell configuration
-        assert cell_id3 in grid2_restored.cells
-        cell3_restored = grid2_restored.cells[cell_id3]
+        cell3_restored = next(iter(grid2_restored.cells.values()))
         assert cell3_restored.config.output_name == 'output3'
         assert cell3_restored.config.source_names == ['monitor2']
         assert cell3_restored.config.params == {}
@@ -408,7 +415,7 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
     ) as backend1:
         orchestrator1 = backend1.plot_orchestrator
 
-        grid_id = orchestrator1.add_grid(title='Enum Test Grid', nrows=1, ncols=1)
+        orchestrator1.add_grid(title='Enum Test Grid', nrows=1, ncols=1)
 
         workflow_id = WorkflowId(
             instrument='dummy',
@@ -427,7 +434,10 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
         geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
         cell = PlotCell(geometry=geometry, config=plot_config)
 
-        cell_id = orchestrator1.add_plot(grid_id=grid_id, cell=cell)
+        # Find the grid by title to add the cell
+        grids1 = orchestrator1.get_all_grids()
+        grid_id = next(gid for gid, g in grids1.items() if g.title == 'Enum Test Grid')
+        orchestrator1.add_plot(grid_id=grid_id, cell=cell)
 
     # Restart backend - this should not fail during deserialization
     with DashboardBackend(
@@ -438,10 +448,13 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
         all_grids = orchestrator2.get_all_grids()
         assert len(all_grids) == 1
 
-        restored_grid = all_grids[grid_id]
-        assert cell_id in restored_grid.cells
+        # Find grid and cell by content (UUIDs are regenerated on load)
+        restored_grid = next(iter(all_grids.values()))
+        assert restored_grid.title == 'Enum Test Grid'
+        assert len(restored_grid.cells) == 1
 
-        restored_params = restored_grid.cells[cell_id].config.params
+        restored_cell = next(iter(restored_grid.cells.values()))
+        restored_params = restored_cell.config.params
         # Params are stored as dict with string enum values
         assert restored_params['layout']['combine_mode'] == 'layout'
         assert restored_params['window']['mode'] == 'window'
