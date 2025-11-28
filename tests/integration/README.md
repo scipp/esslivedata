@@ -50,11 +50,12 @@ def test_my_workflow(integration_env):
     )
 
     # Use helper to wait for data for the specific jobs we created
-    wait_for_job_data(backend, job_ids, timeout=10.0)
+    # Returns dict[JobId, dict[ResultKey, data]]
+    job_data = wait_for_job_data(backend, job_ids, timeout=10.0)
 
     # Make assertions about the jobs we created
-    job_data = backend.job_service.job_data[job_ids[0].job_number]
-    assert 'monitor1' in job_data
+    assert job_ids[0] in job_data
+    assert len(job_data[job_ids[0]]) > 0  # At least one result key
 
     # Clean up
     backend.workflow_controller.stop_workflow(workflow_id)
@@ -66,10 +67,3 @@ def test_my_workflow(integration_env):
 2. **Wait for the specific jobs you created**: Pass the `job_ids` returned from `start_workflow()` to the helpers
 3. **Check properties, not global state**: Assert on your test's data, not total job counts
 4. **Add clear docstrings**: Explain what each test verifies
-
-Example of what to avoid:
-```python
-# ❌ BAD: Assumes no other workflows or tests
-assert len(backend.job_service.job_data) == 1
-assert job_ids[0].job_number == 0
-```
