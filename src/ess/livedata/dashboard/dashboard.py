@@ -32,12 +32,23 @@ class DashboardBase(ServiceBase, ABC):
         dashboard_name: str,
         port: int = 5007,
         transport: str = 'kafka',
+        basic_auth_password: str | None = None,
+        basic_auth_cookie_secret: str | None = None,
     ):
         name = f'{instrument}_{dashboard_name}'
         super().__init__(name=name, log_level=log_level)
         self._instrument = instrument
         self._port = port
         self._dev = dev
+
+        # Validate basic auth configuration
+        if (basic_auth_password is None) != (basic_auth_cookie_secret is None):
+            raise ValueError(
+                "Both 'basic_auth_password' and 'basic_auth_cookie_secret' must be "
+                "provided together, or neither should be provided."
+            )
+        self._basic_auth_password = basic_auth_password
+        self._basic_auth_cookie_secret = basic_auth_cookie_secret
 
         self._exit_stack = ExitStack()
         self._exit_stack.__enter__()
@@ -163,6 +174,8 @@ class DashboardBase(ServiceBase, ABC):
             show=False,
             autoreload=False,
             dev=self._dev,
+            basic_auth=self._basic_auth_password,
+            cookie_secret=self._basic_auth_cookie_secret,
         )
 
     def _start_impl(self) -> None:
@@ -181,6 +194,8 @@ class DashboardBase(ServiceBase, ABC):
                 show=False,
                 autoreload=True,
                 dev=self._dev,
+                basic_auth=self._basic_auth_password,
+                cookie_secret=self._basic_auth_cookie_secret,
             )
         except KeyboardInterrupt:
             self._logger.info("Keyboard interrupt received, shutting down...")

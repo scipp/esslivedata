@@ -28,6 +28,8 @@ class ReductionApp(DashboardBase):
         dev: bool = False,
         log_level: int,
         transport: str = 'kafka',
+        basic_auth_password: str | None = None,
+        basic_auth_cookie_secret: str | None = None,
     ):
         super().__init__(
             instrument=instrument,
@@ -36,6 +38,8 @@ class ReductionApp(DashboardBase):
             dashboard_name='reduction_dashboard',
             port=5009,  # Default port for reduction dashboard
             transport=transport,
+            basic_auth_password=basic_auth_password,
+            basic_auth_cookie_secret=basic_auth_cookie_secret,
         )
 
         # Create shared orchestrators (must be shared across all sessions)
@@ -110,6 +114,20 @@ def get_arg_parser() -> argparse.ArgumentParser:
         choices=['kafka', 'none'],
         default='kafka',
         help='Transport backend for message handling',
+    )
+    parser.add_argument(
+        '--basic-auth-password',
+        default=None,
+        help='Basic authentication password for the dashboard. '
+        'For better security, use the environment variable '
+        'LIVEDATA_BASIC_AUTH_PASSWORD instead.',
+    )
+    parser.add_argument(
+        '--basic-auth-cookie-secret',
+        default=None,
+        help='Basic authentication cookie secret for the dashboard. '
+        'For better security, use the environment variable '
+        'LIVEDATA_BASIC_AUTH_COOKIE_SECRET instead.',
     )
     return parser
 
