@@ -17,7 +17,6 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
 )
 
-from .config_store import ConfigStore
 from .job_service import JobService
 from .plot_params import create_extractors_from_params
 from .plotting import PlotterSpec, plotter_registry
@@ -33,9 +32,8 @@ class PlottingController:
     """
     Controller for managing plotting operations and configurations.
 
-    Handles the creation of plots from job data, manages persistent plotter
-    configurations, and coordinates between job services, stream managers,
-    and configuration services.
+    Coordinates between job services, stream managers, and plot creation,
+    using a two-phase pipeline for creating plots with streaming data.
 
     Parameters
     ----------
@@ -43,10 +41,6 @@ class PlottingController:
         Service for accessing job data and information.
     stream_manager:
         Manager for creating data streams.
-    config_store:
-        Store for persisting plotter configurations across sessions.
-        If None, configurations will not be persisted. The store handles
-        cleanup policies (e.g., LRU eviction) internally.
     logger:
         Logger instance. If None, creates a logger using the module name.
     roi_publisher:
@@ -57,13 +51,11 @@ class PlottingController:
         self,
         job_service: JobService,
         stream_manager: StreamManager,
-        config_store: ConfigStore | None = None,
         logger: logging.Logger | None = None,
         roi_publisher: ROIPublisher | None = None,
     ) -> None:
         self._job_service = job_service
         self._stream_manager = stream_manager
-        self._config_store = config_store
         self._logger = logger or logging.getLogger(__name__)
         self._roi_detector_plot_factory = ROIDetectorPlotFactory(
             stream_manager=stream_manager, roi_publisher=roi_publisher, logger=logger
