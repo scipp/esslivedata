@@ -235,11 +235,11 @@ def fake_plotting_controller(fake_stream_manager):
 
 
 @pytest.fixture
-def fake_job_service(fake_data_service):
+def fake_job_service():
     """Create a real JobService for testing."""
     from ess.livedata.dashboard.job_service import JobService
 
-    return JobService(data_service=fake_data_service)
+    return JobService()
 
 
 @pytest.fixture

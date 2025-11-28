@@ -116,9 +116,7 @@ class DashboardServices:
         self.stream_manager = StreamManager(
             data_service=self.data_service, pipe_factory=self._pipe_factory
         )
-        self.job_service = JobService(
-            data_service=self.data_service, logger=self._logger
-        )
+        self.job_service = JobService(logger=self._logger)
         self.job_controller = JobController(
             command_service=self.command_service, job_service=self.job_service
         )

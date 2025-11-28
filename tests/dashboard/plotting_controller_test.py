@@ -61,9 +61,9 @@ def data_service():
 
 
 @pytest.fixture
-def job_service(data_service):
+def job_service():
     """Create a JobService for testing."""
-    return JobService(data_service=data_service)
+    return JobService()
 
 
 @pytest.fixture
