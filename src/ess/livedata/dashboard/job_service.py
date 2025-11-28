@@ -35,7 +35,6 @@ class JobService:
         self._job_statuses: dict[JobId, JobStatus] = {}
         self._last_status_update: dict[JobId, float] = {}
         self._removed_jobs: set[JobId] = set()
-        self._job_data_update_subscribers: list[Callable[[], None]] = []
         self._job_status_update_subscribers: list[Callable[[], None]] = []
         self._data_service.register_update_callback(self.data_updated)
 
@@ -98,15 +97,6 @@ class JobService:
 
         return stale_jobs
 
-    def register_job_update_subscriber(self, callback: Callable[[], None]) -> None:
-        """Register a callback to be called when job data is updated."""
-        self._job_data_update_subscribers.append(callback)
-        # Immediately notify the new subscriber of current state
-        try:
-            callback()
-        except Exception as e:
-            self._logger.error("Error in job update callback: %s", e)
-
     def register_job_status_update_subscriber(
         self, callback: Callable[[], None]
     ) -> None:
@@ -136,7 +126,6 @@ class JobService:
         self._notify_job_status_update()
 
     def data_updated(self, updated_keys: set[ResultKey]) -> None:
-        notify_job_data_update = False
         for key in updated_keys:
             value = self._data_service[key]
             job_number = key.job_id.job_number
@@ -154,25 +143,8 @@ class JobService:
             # Store in DataService for access by plots etc.
             # Single or multiple outputs, store in a dict. If only one output, then the
             # output_name is None.
-            if source_name not in all_source_data:
-                notify_job_data_update = True
             source_data = all_source_data.setdefault(source_name, {})
             source_data[key.output_name] = value
-        if notify_job_data_update:
-            self._notify_job_data_update()
-
-    def _notify_job_data_update(self) -> None:
-        """Notify listeners about job updates."""
-        # For now we just log the job updates. In future we may want to have a more
-        # sophisticated notification mechanism.
-        self._logger.debug("Job data updated for jobs: %s", list(self._job_info.keys()))
-
-        # Notify all subscribers
-        for callback in self._job_data_update_subscribers:
-            try:
-                callback()
-            except Exception as e:
-                self._logger.error("Error in job update callback: %s", e)
 
     def _notify_job_status_update(self) -> None:
         """Notify listeners about job status updates."""
