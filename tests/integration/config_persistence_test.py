@@ -248,6 +248,7 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         PlotCell,
         PlotConfig,
     )
+    from ess.livedata.dashboard.plot_params import PlotParams1d, WindowMode
 
     # Create first backend instance
     with DashboardBackend(
@@ -265,12 +266,16 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
             name='monitor_histogram',
             version=1,
         )
+        # Use real plotter with custom params
+        params1 = PlotParams1d(
+            window={'mode': WindowMode.window, 'window_duration_seconds': 5.0}
+        )
         plot_config = PlotConfig(
             workflow_id=workflow_id,
             output_name='histogram',
             source_names=['monitor1', 'monitor2'],
-            plot_name='test_plotter',
-            params={'param1': 'value1', 'param2': 42},
+            plot_name='lines',
+            params=params1,
         )
         geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
         cell = PlotCell(geometry=geometry, config=plot_config)
@@ -280,30 +285,34 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         grid_id = next(gid for gid, g in grids1.items() if g.title == 'Test Grid')
         orchestrator1.add_plot(grid_id=grid_id, cell=cell)
 
-        # Add another cell in the same grid
+        # Add another cell in the same grid with different params
+        params2 = PlotParams1d(
+            window={'mode': WindowMode.latest, 'window_duration_seconds': 10.0}
+        )
         plot_config2 = PlotConfig(
             workflow_id=workflow_id,
             output_name='spectrum',
             source_names=['monitor1'],
-            plot_name='another_plotter',
-            params={'threshold': 100.0},
+            plot_name='lines',
+            params=params2,
         )
         geometry2 = CellGeometry(row=0, col=1, row_span=1, col_span=1)
         cell2 = PlotCell(geometry=geometry2, config=plot_config2)
 
         orchestrator1.add_plot(grid_id=grid_id, cell=cell2)
 
-        # Add a second grid with one cell
+        # Add a second grid with one cell using default params
         orchestrator1.add_grid(title='Second Grid', nrows=1, ncols=1)
         grids1 = orchestrator1.get_all_grids()
         grid_id2 = next(gid for gid, g in grids1.items() if g.title == 'Second Grid')
 
+        params3 = PlotParams1d()  # Default params
         plot_config3 = PlotConfig(
             workflow_id=workflow_id,
             output_name='output3',
             source_names=['monitor2'],
-            plot_name='third_plotter',
-            params={},
+            plot_name='lines',
+            params=params3,
         )
         geometry3 = CellGeometry(row=0, col=0, row_span=1, col_span=1)
         cell3 = PlotCell(geometry=geometry3, config=plot_config3)
@@ -354,16 +363,16 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         assert cell1_restored.config.workflow_id == workflow_id
         assert cell1_restored.config.output_name == 'histogram'
         assert cell1_restored.config.source_names == ['monitor1', 'monitor2']
-        assert cell1_restored.config.plot_name == 'test_plotter'
-        # Params are stored as dict (not validated on load)
-        assert cell1_restored.config.params == {'param1': 'value1', 'param2': 42}
+        assert cell1_restored.config.plot_name == 'lines'
+        # Params are validated and restored as model
+        assert cell1_restored.config.params == params1
 
         # Verify second cell configuration
         assert cell2_restored.geometry.row == 0
         assert cell2_restored.geometry.col == 1
         assert cell2_restored.config.output_name == 'spectrum'
         assert cell2_restored.config.source_names == ['monitor1']
-        assert cell2_restored.config.params == {'threshold': 100.0}
+        assert cell2_restored.config.params == params2
 
         # Verify second grid configuration
         assert grid2_restored.title == 'Second Grid'
@@ -375,7 +384,7 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         cell3_restored = next(iter(grid2_restored.cells.values()))
         assert cell3_restored.config.output_name == 'output3'
         assert cell3_restored.config.source_names == ['monitor2']
-        assert cell3_restored.config.params == {}
+        assert cell3_restored.config.params == params3
 
 
 def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None:
@@ -428,7 +437,7 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
             workflow_id=workflow_id,
             output_name='image',
             source_names=['monitor1'],
-            plot_name='test_plotter',
+            plot_name='image',  # Use real plotter that accepts PlotParams2d
             params=params_with_enums,
         )
         geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
@@ -455,10 +464,5 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
 
         restored_cell = next(iter(restored_grid.cells.values()))
         restored_params = restored_cell.config.params
-        # Params are stored as dict with string enum values
-        assert restored_params['layout']['combine_mode'] == 'layout'
-        assert restored_params['window']['mode'] == 'window'
-        assert restored_params['window']['window_duration_seconds'] == 10.0
-        assert restored_params['plot_scale']['x_scale'] == 'linear'
-        assert restored_params['plot_scale']['y_scale'] == 'log'
-        assert restored_params['plot_scale']['color_scale'] == 'log'
+        # Params are validated and restored as model, equal to original
+        assert restored_params == params_with_enums

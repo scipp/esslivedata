@@ -115,7 +115,7 @@ class PlotConfig:
     output_name: str | None
     source_names: list[str]
     plot_name: str
-    params: pydantic.BaseModel | dict[str, Any]
+    params: pydantic.BaseModel
 
 
 @dataclass
@@ -555,6 +555,44 @@ class PlotOrchestrator:
         if cell_id not in self._cell_state:
             self._notify_cell_updated(grid_id, cell_id, cell)
 
+    def _validate_params(
+        self, plot_name: str, params: dict[str, Any]
+    ) -> pydantic.BaseModel | None:
+        """
+        Validate params dict against the plotter's spec.
+
+        Returns validated model, or None if plotter is unknown (cell should be skipped).
+        Falls back to default-constructed model if validation fails.
+
+        Parameters
+        ----------
+        plot_name
+            Name of the plotter.
+        params
+            Parameters dict to validate.
+
+        Returns
+        -------
+        :
+            Validated params model, or None if plotter is unknown.
+        """
+        try:
+            spec = self._plotting_controller.get_spec(plot_name)
+        except KeyError:
+            self._logger.warning('Skipping cell with unknown plotter %s', plot_name)
+            return None
+
+        if spec.params is None:
+            return pydantic.BaseModel()
+
+        try:
+            return spec.params(**params)
+        except Exception:
+            self._logger.warning(
+                'Params validation failed for plotter %s, using defaults', plot_name
+            )
+            return spec.params()
+
     def _serialize_grids(self) -> list[dict[str, Any]]:
         """
         Serialize all grids to list for persistence.
@@ -583,11 +621,7 @@ class PlotOrchestrator:
                             'output_name': cell.config.output_name,
                             'source_names': cell.config.source_names,
                             'plot_name': cell.config.plot_name,
-                            'params': (
-                                cell.config.params.model_dump(mode='json')
-                                if isinstance(cell.config.params, pydantic.BaseModel)
-                                else cell.config.params
-                            ),
+                            'params': cell.config.params.model_dump(mode='json'),
                         },
                     }
                     for cell in grid.cells.values()
@@ -624,19 +658,26 @@ class PlotOrchestrator:
 
             # Recreate cells
             for cell_data in grid_data.get('cells', []):
+                config_data = cell_data['config']
+                plot_name = config_data['plot_name']
+
+                # Validate params, skipping cells with unknown plotters
+                params = self._validate_params(plot_name, config_data['params'])
+                if params is None:
+                    continue
+
                 cell_id = CellId(uuid4())
 
                 # Recreate geometry
                 geometry = CellGeometry(**cell_data['geometry'])
 
                 # Recreate config
-                config_data = cell_data['config']
                 config = PlotConfig(
                     workflow_id=WorkflowId.from_string(config_data['workflow_id']),
                     output_name=config_data['output_name'],
                     source_names=config_data['source_names'],
-                    plot_name=config_data['plot_name'],
-                    params=config_data['params'],  # Keep as dict
+                    plot_name=plot_name,
+                    params=params,
                 )
 
                 cell = PlotCell(geometry=geometry, config=config)
