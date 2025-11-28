@@ -13,14 +13,8 @@ from ess.livedata.handlers.workflow_factory import Workflow
 
 
 class TestJobResult:
-    @pytest.mark.parametrize(
-        ("output_name", "expected"),
-        [
-            ("output1", '"output1"'),
-            ("", '""'),
-        ],  # Empty string is placeholder for DataGroup
-    )
-    def test_stream_name(self, output_name: str, expected: str):
+    def test_stream_name_uses_default_output_name(self):
+        """stream_name uses default output_name; UnrollingSinkAdapter replaces it."""
         workflow_id = WorkflowId(
             instrument="TEST",
             namespace="data_reduction",
@@ -32,16 +26,15 @@ class TestJobResult:
         result = JobResult(
             job_id=job_id,
             workflow_id=workflow_id,
-            output_name=output_name,
             start_time=100,
             end_time=200,
-            data=sc.DataArray(sc.scalar(3.14)),
+            data=sc.DataGroup({'out': sc.DataArray(sc.scalar(3.14))}),
             error_message=None,
         )
         assert result.stream_name == (
             '{"workflow_id":{"instrument":"TEST","namespace":"data_reduction",'
             '"name":"test_workflow","version":1},"job_id":{"source_name":"test_source",'
-            '"job_number":"' + str(job_number) + '"},"output_name":' + expected + '}'
+            '"job_number":"' + str(job_number) + '"},"output_name":"result"}'
         )
 
 

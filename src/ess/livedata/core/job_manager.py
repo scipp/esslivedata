@@ -104,20 +104,11 @@ class JobFactory:
         if workflow_spec is None:
             return result
 
-        def set_name_from_metadata(value, output_name: str) -> None:
-            """Set human-readable name on a value based on output metadata."""
+        for output_name, value in result.data.items():
             if isinstance(value, sc.DataArray):
                 field_info = workflow_spec.outputs.model_fields.get(output_name)
                 if field_info is not None and field_info.title is not None:
                     value.name = field_info.title
-
-        # If data is a DataGroup, enrich each DataArray
-        if isinstance(result.data, sc.DataGroup):
-            for output_name, value in result.data.items():
-                set_name_from_metadata(value, output_name)
-        # If data is a single DataArray with a specific output_name
-        elif result.output_name:
-            set_name_from_metadata(result.data, result.output_name)
 
         return result
 
