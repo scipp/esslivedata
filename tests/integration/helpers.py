@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from ess.livedata.config.workflow_spec import JobId
+from ess.livedata.config.workflow_spec import JobId, ResultKey
 
 
 class WaitTimeout(Exception):
@@ -44,6 +44,11 @@ def wait_for_condition(
         time.sleep(poll_interval)
 
 
+def _get_result_keys_for_job_id(data_service: Any, job_id: JobId) -> list[ResultKey]:
+    """Get all ResultKeys in DataService that match the given JobId."""
+    return [key for key in data_service if key.job_id == job_id]
+
+
 # Job-specific helpers
 
 
@@ -52,7 +57,7 @@ def wait_for_job_data(
     job_ids: list[JobId],
     timeout: float = 10.0,
     poll_interval: float = 0.5,
-) -> dict[JobId, dict[str, dict]]:
+) -> dict[JobId, dict[ResultKey, Any]]:
     """
     Wait for job data to arrive for specific jobs.
 
@@ -62,7 +67,7 @@ def wait_for_job_data(
     Parameters
     ----------
     backend:
-        The DashboardBackend instance (must have .update() and .job_service)
+        The DashboardBackend instance (must have .update() and .data_service)
     job_ids:
         List of JobIds to wait for
     timeout:
@@ -73,7 +78,7 @@ def wait_for_job_data(
     Returns
     -------
     :
-        Dictionary mapping JobId to source data for each job
+        Dictionary mapping JobId to {ResultKey: data} for each job
 
     Raises
     ------
@@ -84,16 +89,18 @@ def wait_for_job_data(
     def check_for_job_data():
         backend.update()
         for job_id in job_ids:
-            job_data = backend.job_service.job_data.get(job_id.job_number, {})
-            if job_id.source_name not in job_data:
+            keys = _get_result_keys_for_job_id(backend.data_service, job_id)
+            if not keys:
                 return False
         return True
 
     wait_for_condition(check_for_job_data, timeout=timeout, poll_interval=poll_interval)
 
-    return {
-        job_id: backend.job_service.job_data[job_id.job_number] for job_id in job_ids
-    }
+    result = {}
+    for job_id in job_ids:
+        keys = _get_result_keys_for_job_id(backend.data_service, job_id)
+        result[job_id] = {key: backend.data_service[key] for key in keys}
+    return result
 
 
 def wait_for_job_statuses(

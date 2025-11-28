@@ -96,6 +96,7 @@ class DataSubscriber(DataServiceSubscriber[Key], Generic[Key, P]):
         assembler: StreamAssembler[Key],
         pipe_factory: Callable[[dict[Key, Any]], P],
         extractors: Mapping[Key, UpdateExtractor],
+        on_first_data: Callable[[P], None] | None = None,
     ) -> None:
         """
         Initialize the subscriber with an assembler and pipe factory.
@@ -108,11 +109,16 @@ class DataSubscriber(DataServiceSubscriber[Key], Generic[Key, P]):
             Factory function to create the pipe on first trigger.
         extractors:
             Mapping from keys to their UpdateExtractor instances.
+        on_first_data:
+            Optional callback invoked when first data arrives with the created pipe.
+            Called after pipe creation with non-empty data.
         """
         self._assembler = assembler
         self._pipe_factory = pipe_factory
         self._pipe: P | None = None
         self._extractors = extractors
+        self._on_first_data = on_first_data
+        self._first_data_callback_invoked = False
         # Initialize parent class to cache keys
         super().__init__()
 
@@ -141,11 +147,16 @@ class DataSubscriber(DataServiceSubscriber[Key], Generic[Key, P]):
         assembled_data = self._assembler.assemble(data)
 
         if self._pipe is None:
-            # First trigger - create pipe with correctly extracted data
+            # First trigger - always create pipe (even with empty data)
             self._pipe = self._pipe_factory(assembled_data)
         else:
             # Subsequent triggers - send to existing pipe
             self._pipe.send(assembled_data)
+
+        # Invoke first-data callback when we have actual data for the first time
+        if data and not self._first_data_callback_invoked and self._on_first_data:
+            self._on_first_data(self._pipe)
+            self._first_data_callback_invoked = True
 
 
 class MergingStreamAssembler(StreamAssembler):

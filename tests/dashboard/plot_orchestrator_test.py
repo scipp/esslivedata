@@ -1,11 +1,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import uuid
-from collections.abc import Callable
 
 import pytest
 
-from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
     GridId,
@@ -13,7 +11,6 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotConfig,
     PlotGridConfig,
     PlotOrchestrator,
-    SubscriptionId,
 )
 
 
@@ -86,82 +83,31 @@ class CallbackCapture:
         assert self.call_count == 0, f"Expected 0 calls, got {self.call_count}"
 
 
-class FakeJobOrchestrator:
-    """Fake JobOrchestrator for testing."""
+class FakePipe:
+    """Fake HoloViews Pipe for testing."""
 
-    def __init__(self):
-        self._subscriptions: dict[SubscriptionId, Callable[[JobNumber], None]] = {}
-        self._workflow_subscriptions: dict[WorkflowId, set[SubscriptionId]] = {}
+    def __init__(self, data):
+        self.data = data
 
-    def subscribe_to_workflow(
-        self, workflow_id: WorkflowId, callback: Callable[[JobNumber], None]
-    ) -> SubscriptionId:
-        """Subscribe to workflow availability notifications."""
-        subscription_id = SubscriptionId(uuid.uuid4())
-        self._subscriptions[subscription_id] = callback
-
-        # Track which workflows have subscriptions
-        if workflow_id not in self._workflow_subscriptions:
-            self._workflow_subscriptions[workflow_id] = set()
-        self._workflow_subscriptions[workflow_id].add(subscription_id)
-
-        return subscription_id
-
-    def unsubscribe(self, subscription_id: SubscriptionId) -> None:
-        """Unsubscribe from workflow availability notifications."""
-        if subscription_id in self._subscriptions:
-            del self._subscriptions[subscription_id]
-            # Remove from workflow tracking
-            for workflow_subs in self._workflow_subscriptions.values():
-                workflow_subs.discard(subscription_id)
-
-    def simulate_workflow_commit(
-        self, workflow_id: WorkflowId, job_number: JobNumber
-    ) -> None:
-        """Simulate a workflow commit by calling all callbacks for that workflow."""
-        if workflow_id not in self._workflow_subscriptions:
-            return
-
-        for subscription_id in self._workflow_subscriptions[workflow_id]:
-            if subscription_id in self._subscriptions:
-                self._subscriptions[subscription_id](job_number)
-
-    @property
-    def subscription_count(self) -> int:
-        """Return the total number of active subscriptions."""
-        return len(self._subscriptions)
+    def send(self, data):
+        self.data = data
 
 
 class FakePlottingController:
-    """Fake PlottingController for testing."""
+    """
+    Fake PlottingController for testing plot orchestration.
 
-    def __init__(self):
+    Uses real StreamManager for data pipeline setup (avoiding duplication of
+    subscription logic), but returns fake plots for easy assertion.
+    """
+
+    def __init__(self, stream_manager):
+        self._stream_manager = stream_manager
         self._should_raise = False
         self._exception_to_raise = None
         self._plot_object = FakePlot()
         self._calls: list[dict] = []
-
-    def create_plot(
-        self,
-        job_number: JobNumber,
-        source_names: list[str],
-        output_name: str | None,
-        plot_name: str,
-        params: dict,
-    ):
-        """Create a fake plot or raise an exception if configured to do so."""
-        self._calls.append(
-            {
-                'job_number': job_number,
-                'source_names': source_names,
-                'output_name': output_name,
-                'plot_name': plot_name,
-                'params': params,
-            }
-        )
-        if self._should_raise:
-            raise self._exception_to_raise
-        return self._plot_object
+        self._pipeline_setups: list[dict] = []
 
     def configure_to_raise(self, exception: Exception) -> None:
         """Configure the controller to raise an exception on create_plot."""
@@ -173,36 +119,72 @@ class FakePlottingController:
         self._should_raise = False
         self._exception_to_raise = None
         self._calls.clear()
+        self._pipeline_setups.clear()
 
     def call_count(self) -> int:
-        """Return the number of create_plot calls."""
+        """Return the number of create_plot_from_pipeline calls."""
         return len(self._calls)
 
     def get_calls(self) -> list[dict]:
-        """Return all recorded create_plot calls."""
+        """Return all recorded calls."""
         return self._calls.copy()
 
+    def get_pipeline_setups(self) -> list[dict]:
+        """Return all recorded pipeline setup calls."""
+        return self._pipeline_setups.copy()
 
-@pytest.fixture
-def workflow_id():
-    """Create a test WorkflowId."""
-    return WorkflowId(
-        instrument='test_instrument',
-        namespace='test_namespace',
-        name='test_workflow',
-        version=1,
-    )
+    def setup_data_pipeline(
+        self,
+        job_number,
+        workflow_id,
+        source_names: list[str],
+        output_name: str | None,
+        plot_name: str,
+        params: dict,
+        on_first_data,
+    ):
+        """Set up data pipeline using real StreamManager."""
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
 
+        # Record the call for assertions
+        self._pipeline_setups.append(
+            {
+                'source_names': source_names,
+                'output_name': output_name,
+                'plot_name': plot_name,
+            }
+        )
 
-@pytest.fixture
-def workflow_id_2():
-    """Create a second test WorkflowId."""
-    return WorkflowId(
-        instrument='test_instrument',
-        namespace='test_namespace',
-        name='test_workflow_2',
-        version=1,
-    )
+        # Build result keys (same as real PlottingController)
+        keys = [
+            ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(job_number=job_number, source_name=source_name),
+                output_name=output_name,
+            )
+            for source_name in source_names
+        ]
+
+        # Use real StreamManager for subscription (avoids duplicating logic)
+        self._stream_manager.make_merging_stream(keys, on_first_data=on_first_data)
+
+    def create_plot_from_pipeline(
+        self,
+        plot_name: str,
+        params: dict,
+        pipe,
+    ):
+        """Create a fake plot, recording the call for assertions."""
+        self._calls.append(
+            {
+                'plot_name': plot_name,
+                'params': params,
+                '_from_pipeline': True,
+            }
+        )
+        if self._should_raise:
+            raise self._exception_to_raise
+        return self._plot_object
 
 
 @pytest.fixture
@@ -231,24 +213,55 @@ def plot_cell(plot_config):
 
 
 @pytest.fixture
-def fake_job_orchestrator():
-    """Create a FakeJobOrchestrator."""
-    return FakeJobOrchestrator()
+def fake_data_service():
+    """Create a real DataService for testing."""
+    from ess.livedata.dashboard.data_service import DataService
+
+    return DataService()
 
 
 @pytest.fixture
-def fake_plotting_controller():
-    """Create a FakePlottingController."""
-    return FakePlottingController()
+def fake_stream_manager(fake_data_service):
+    """Create a real StreamManager with FakePipe factory for testing."""
+    from ess.livedata.dashboard.stream_manager import StreamManager
+
+    return StreamManager(data_service=fake_data_service, pipe_factory=FakePipe)
 
 
 @pytest.fixture
-def plot_orchestrator(fake_job_orchestrator, fake_plotting_controller):
-    """Create a PlotOrchestrator with fakes."""
+def fake_plotting_controller(fake_stream_manager):
+    """Create a FakePlottingController with StreamManager."""
+    return FakePlottingController(stream_manager=fake_stream_manager)
+
+
+@pytest.fixture
+def fake_job_service():
+    """Create a real JobService for testing."""
+    from ess.livedata.dashboard.job_service import JobService
+
+    return JobService()
+
+
+@pytest.fixture
+def plot_orchestrator(job_orchestrator, fake_plotting_controller, fake_data_service):
+    """Create a PlotOrchestrator with real JobOrchestrator."""
     return PlotOrchestrator(
         plotting_controller=fake_plotting_controller,
-        job_orchestrator=fake_job_orchestrator,
+        job_orchestrator=job_orchestrator,
+        data_service=fake_data_service,
     )
+
+
+def commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec):
+    """
+    Stage and commit a workflow for testing using public API only.
+
+    Requires the workflow_spec to have params so that JobOrchestrator
+    initializes the workflow with staged configs during construction.
+    """
+    # With params in workflow_spec, the workflow is already initialized
+    # with staged configs. Just commit it.
+    return job_orchestrator.commit_workflow(workflow_id)
 
 
 class TestGridManagement:
@@ -469,49 +482,6 @@ class TestCellManagement:
         assert cell_id_1 in grid_1.cells
         assert cell_id_2 in grid_2.cells
 
-    def test_add_cell_subscribes_to_workflow(
-        self, plot_orchestrator, plot_cell, fake_job_orchestrator
-    ):
-        """Each add should subscribe appropriately."""
-        initial_count = fake_job_orchestrator.subscription_count
-        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-
-        plot_orchestrator.add_plot(grid_id, plot_cell)
-
-        assert fake_job_orchestrator.subscription_count == initial_count + 1
-
-    def test_remove_cell_unsubscribes_from_workflow(
-        self, plot_orchestrator, plot_cell, fake_job_orchestrator
-    ):
-        """Remove cell should unsubscribe."""
-        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
-        count_after_add = fake_job_orchestrator.subscription_count
-
-        plot_orchestrator.remove_plot(cell_id)
-
-        assert fake_job_orchestrator.subscription_count == count_after_add - 1
-
-    def test_update_config_resubscribes(
-        self, plot_orchestrator, plot_cell, workflow_id, fake_job_orchestrator
-    ):
-        """Update config should unsubscribe and resubscribe."""
-        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
-        count_after_add = fake_job_orchestrator.subscription_count
-
-        new_config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='new_output',
-            source_names=['new_source'],
-            plot_name='new_plot',
-            params={},
-        )
-        plot_orchestrator.update_plot_config(cell_id, new_config)
-
-        # Should still have same number of subscriptions (unsubscribe + resubscribe)
-        assert fake_job_orchestrator.subscription_count == count_after_add
-
 
 class TestWorkflowIntegrationAndPlotCreationTiming:
     """Tests for workflow integration and plot creation timing."""
@@ -521,23 +491,41 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
+        fake_data_service,
     ):
-        """Workflow commit AFTER cell added should create plot."""
+        """Workflow commit AFTER cell added should create plot when data arrives."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         _ = plot_orchestrator.add_plot(grid_id, plot_cell)
 
-        # Simulate workflow commit
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        # Commit workflow (PlotOrchestrator subscribes, waiting for data)
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
-        # Verify plot was created
+        # Plot not created yet (no data)
+        assert fake_plotting_controller.call_count() == 0
+
+        # Simulate data arrival by populating JobService
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        # Add data for ALL sources (plot requires both source1 and source2)
+        for source_name in plot_cell.config.source_names:
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=job_number),
+                output_name=plot_cell.config.output_name,
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
+
+        # Now plot should be created
         assert fake_plotting_controller.call_count() == 1
         calls = fake_plotting_controller.get_calls()
-        assert calls[0]['job_number'] == job_number
-        assert calls[0]['source_names'] == plot_cell.config.source_names
-        assert calls[0]['output_name'] == plot_cell.config.output_name
+        # With two-phase creation, create_plot_from_pipeline is called (not create_plot)
+        assert calls[0]['_from_pipeline'] is True
         assert calls[0]['plot_name'] == plot_cell.config.plot_name
 
     def test_workflow_commit_before_cell_added_creates_plot_when_cell_added(
@@ -545,9 +533,10 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
+        fake_data_service,
     ):
         """Adding cell subscribes to workflow, then workflow commit creates plot."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
@@ -555,8 +544,22 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         # Add cell (subscribes to workflow)
         _ = plot_orchestrator.add_plot(grid_id, plot_cell)
 
-        # Commit workflow - should trigger plot creation
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        # Commit workflow
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
+
+        # Simulate data arrival for ALL sources
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        for source_name in plot_cell.config.source_names:
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=job_number),
+                output_name=plot_cell.config.output_name,
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
 
         # Verify plot was created
         assert fake_plotting_controller.call_count() == 1
@@ -565,9 +568,10 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         self,
         plot_orchestrator,
         workflow_id,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
+        fake_data_service,
     ):
         """Multiple cells subscribed to same workflow should all receive plots."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
@@ -597,11 +601,24 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         plot_orchestrator.add_plot(grid_id, cell_1)
         plot_orchestrator.add_plot(grid_id, cell_2)
 
-        # Both should be subscribed
-        assert fake_job_orchestrator.subscription_count == 2
+        # Commit workflow
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
-        # Commit workflow - both should receive notification
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        # Simulate data arrival for both cells
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        for cell in [cell_1, cell_2]:
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(
+                    source_name=cell.config.source_names[0], job_number=job_number
+                ),
+                output_name=cell.config.output_name,
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
 
         # Both plots should be created
         assert fake_plotting_controller.call_count() == 2
@@ -613,8 +630,8 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
     ):
         """Cell removed before workflow commit should not create plot."""
@@ -625,7 +642,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         plot_orchestrator.remove_plot(cell_id)
 
         # Commit workflow - should not create plot
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         # Verify no plot was created
         assert fake_plotting_controller.call_count() == 0
@@ -636,9 +653,10 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         plot_cell,
         workflow_id,
         workflow_id_2,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec_2,
+        job_orchestrator,
         fake_plotting_controller,
+        fake_data_service,
     ):
         """
         Update config resubscribes to new workflow and creates plot.
@@ -658,12 +676,25 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         )
         plot_orchestrator.update_plot_config(cell_id, new_config)
 
-        # Commit old workflow - should not create plot
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
-        assert fake_plotting_controller.call_count() == 0
+        # Commit new workflow
+        job_ids = commit_workflow_for_test(
+            job_orchestrator, workflow_id_2, workflow_spec_2
+        )
+        job_number = job_ids[0].job_number
 
-        # Commit new workflow - should create plot
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id_2, job_number)
+        # Simulate data arrival for new workflow
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        result_key = ResultKey(
+            workflow_id=workflow_id_2,
+            job_id=JobId(source_name='new_source', job_number=job_number),
+            output_name='new_output',
+        )
+        fake_data_service[result_key] = sc.scalar(1.0)
+
+        # Verify plot was created for new workflow
         assert fake_plotting_controller.call_count() == 1
         calls = fake_plotting_controller.get_calls()
         assert calls[0]['plot_name'] == 'new_plot'
@@ -730,9 +761,10 @@ class TestLifecycleEventNotifications:
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
+        fake_data_service,
     ):
         """on_cell_updated called when plot created (with plot object)."""
         callback = CallbackCapture()
@@ -744,11 +776,25 @@ class TestLifecycleEventNotifications:
         # Should have been called once when cell was added
         assert callback.call_count == 1
 
-        # Simulate workflow commit
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        # Commit workflow
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
-        # Should be called again with plot object
-        assert callback.call_count == 2
+        # Simulate data arrival for ALL sources
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        for source_name in plot_cell.config.source_names:
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=job_number),
+                output_name=plot_cell.config.output_name,
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
+
+        # Called 3x: add cell, commit (waiting), data arrival (plot created)
+        assert callback.call_count == 3
         call_kwargs = callback.call_args[1]
         assert call_kwargs['grid_id'] == grid_id
         assert call_kwargs['cell_id'] == cell_id
@@ -761,9 +807,10 @@ class TestLifecycleEventNotifications:
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
+        fake_data_service,
     ):
         """on_cell_updated called when plot fails (with error message)."""
         callback = CallbackCapture()
@@ -775,11 +822,25 @@ class TestLifecycleEventNotifications:
         # Configure controller to raise exception
         fake_plotting_controller.configure_to_raise(ValueError('Test error'))
 
-        # Simulate workflow commit
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        # Commit workflow
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
-        # Should be called with error
-        assert callback.call_count == 2
+        # Simulate data arrival for ALL sources (will trigger plot creation that fails)
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        for source_name in plot_cell.config.source_names:
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=job_number),
+                output_name=plot_cell.config.output_name,
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
+
+        # Called 3x: add cell, commit (waiting), data arrival (error)
+        assert callback.call_count == 3
         call_kwargs = callback.call_args[1]
         assert call_kwargs['grid_id'] == grid_id
         assert call_kwargs['cell_id'] == cell_id
@@ -883,9 +944,10 @@ class TestErrorHandling:
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
+        fake_data_service,
     ):
         """PlottingController exception calls on_cell_updated with error."""
         callback = CallbackCapture()
@@ -897,10 +959,24 @@ class TestErrorHandling:
         fake_plotting_controller.configure_to_raise(
             RuntimeError('Plot creation failed')
         )
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
-        # Should have been called with error
-        assert callback.call_count == 2
+        # Simulate data arrival for ALL sources (will trigger plot creation that fails)
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        for source_name in plot_cell.config.source_names:
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=job_number),
+                output_name=plot_cell.config.output_name,
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
+
+        # Called 3x: add cell, commit (waiting), data arrival (error)
+        assert callback.call_count == 3
         call_kwargs = callback.call_args[1]
         assert 'Plot creation failed' in call_kwargs['error']
 
@@ -909,8 +985,8 @@ class TestErrorHandling:
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        job_number,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
         fake_plotting_controller,
     ):
         """PlottingController raises exception but orchestrator remains usable."""
@@ -920,7 +996,7 @@ class TestErrorHandling:
         fake_plotting_controller.configure_to_raise(
             RuntimeError('Plot creation failed')
         )
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         # Orchestrator should still be usable
         fake_plotting_controller.reset()
@@ -961,12 +1037,16 @@ class TestCleanupAndResourceManagement:
     """Tests for cleanup and resource management."""
 
     def test_remove_grid_with_multiple_cells_all_unsubscribed(
-        self, plot_orchestrator, workflow_id, fake_job_orchestrator
+        self,
+        plot_orchestrator,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
     ):
-        """Remove grid with multiple cells unsubscribes all from JobOrchestrator."""
+        """Remove grid with cells unsubscribes all, so commit creates no plots."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
 
-        # Add multiple cells
         for i in range(3):
             cell = PlotCell(
                 geometry=CellGeometry(row=i, col=0, row_span=1, col_span=1),
@@ -980,40 +1060,11 @@ class TestCleanupAndResourceManagement:
             )
             plot_orchestrator.add_plot(grid_id, cell)
 
-        assert fake_job_orchestrator.subscription_count == 3
-
-        # Remove grid
         plot_orchestrator.remove_grid(grid_id)
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
-        # All subscriptions should be removed
-        assert fake_job_orchestrator.subscription_count == 0
-
-    def test_shutdown_with_multiple_grids_all_unsubscribed(
-        self, plot_orchestrator, workflow_id, fake_job_orchestrator
-    ):
-        """Shutdown with multiple grids should unsubscribe all."""
-        # Add multiple grids with cells
-        for i in range(2):
-            grid_id = plot_orchestrator.add_grid(title=f'Grid {i}', nrows=3, ncols=3)
-            cell = PlotCell(
-                geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
-                config=PlotConfig(
-                    workflow_id=workflow_id,
-                    output_name=f'out{i}',
-                    source_names=[f'src{i}'],
-                    plot_name=f'plot{i}',
-                    params={},
-                ),
-            )
-            plot_orchestrator.add_plot(grid_id, cell)
-
-        assert fake_job_orchestrator.subscription_count == 2
-
-        # Shutdown
-        plot_orchestrator.shutdown()
-
-        # All subscriptions should be removed
-        assert fake_job_orchestrator.subscription_count == 0
+        assert plot_orchestrator.get_grid(grid_id) is None
+        assert fake_plotting_controller.call_count() == 0
 
     def test_shutdown_all_grids_removed(self, plot_orchestrator):
         """Shutdown should remove all grids."""
@@ -1042,24 +1093,242 @@ class TestCleanupAndResourceManagement:
 class TestEdgeCasesAndComplexScenarios:
     """Tests for edge cases and complex scenarios."""
 
-    def test_update_config_to_different_workflow_id_unsubscribe_old_subscribe_new(
+    def test_remove_grid_with_cells_that_have_pending_plot_creation(
         self,
         plot_orchestrator,
         plot_cell,
         workflow_id,
-        workflow_id_2,
-        fake_job_orchestrator,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
     ):
-        """Update config to different workflow_id unsubscribes old, subscribes new."""
+        """Remove grid with pending plots unsubscribes, so commit creates no plots."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        plot_orchestrator.remove_grid(grid_id)
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+
+        assert plot_orchestrator.get_grid(grid_id) is None
+        assert fake_plotting_controller.call_count() == 0
+
+
+class TestLateSubscriberPlotRetrieval:
+    """Test that late subscribers can retrieve existing plots via get_cell_state."""
+
+    def test_get_cell_state_returns_none_for_cell_without_plot(
+        self, plot_orchestrator, plot_cell
+    ):
+        """get_cell_state should return (None, None) for cell without plot."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
-        # Should be subscribed to workflow_id
-        assert len(fake_job_orchestrator._workflow_subscriptions[workflow_id]) == 1
+        # Cell exists but workflow hasn't committed yet
+        plot, error = plot_orchestrator.get_cell_state(cell_id)
+        assert plot is None
+        assert error is None
 
-        # Update to different workflow_id
+    def test_get_cell_state_returns_plot_after_workflow_commits(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_data_service,
+    ):
+        """get_cell_state should return plot after workflow commits."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Commit workflow
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
+
+        # Simulate data arrival for ALL sources
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        for source_name in plot_cell.config.source_names:
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=job_number),
+                output_name=plot_cell.config.output_name,
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
+
+        # Now get_cell_state should return the plot
+        plot, error = plot_orchestrator.get_cell_state(cell_id)
+        assert plot is not None
+        assert isinstance(plot, FakePlot)
+        assert error is None
+
+    def test_get_cell_state_returns_error_when_plot_creation_fails(
+        self,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_data_service,
+        fake_stream_manager,
+    ):
+        """get_cell_state should return error when plot creation fails."""
+        # Create plotting controller configured to fail
+        failing_controller = FakePlottingController(stream_manager=fake_stream_manager)
+        failing_controller.configure_to_raise(ValueError("Plot creation failed"))
+
+        plot_orchestrator = PlotOrchestrator(
+            plotting_controller=failing_controller,
+            job_orchestrator=job_orchestrator,
+            data_service=fake_data_service,
+            config_store=None,
+        )
+
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        plot_cell = PlotCell(
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
+            config=PlotConfig(
+                workflow_id=workflow_id,
+                output_name='test_output',
+                source_names=['source1'],
+                plot_name='test_plot',
+                params={},
+            ),
+        )
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Commit workflow
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
+
+        # Simulate data arrival (will fail to create plot)
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        result_key = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source1', job_number=job_number),
+            output_name='test_output',
+        )
+        fake_data_service[result_key] = sc.scalar(1.0)
+
+        # get_cell_state should return error (full traceback)
+        plot, error = plot_orchestrator.get_cell_state(cell_id)
+        assert plot is None
+        assert "Plot creation failed" in error
+
+    def test_late_subscriber_can_retrieve_existing_plots_from_all_cells(
+        self,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        fake_job_service,
+    ):
+        """
+        Simulate late subscriber scenario: plots exist, new UI component
+        initializes and retrieves them via get_cell_state.
+        """
+        plot_orchestrator = PlotOrchestrator(
+            plotting_controller=fake_plotting_controller,
+            job_orchestrator=job_orchestrator,
+            data_service=fake_data_service,
+            config_store=None,
+        )
+
+        # Create grid with multiple cells
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+
+        cell_ids = []
+        for i in range(3):
+            plot_cell = PlotCell(
+                geometry=CellGeometry(row=i, col=0, row_span=1, col_span=1),
+                config=PlotConfig(
+                    workflow_id=workflow_id,
+                    output_name=f'output_{i}',
+                    source_names=[f'source_{i}'],
+                    plot_name=f'plot_{i}',
+                    params={},
+                ),
+            )
+            cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+            cell_ids.append(cell_id)
+
+        # Commit workflow
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
+
+        # Simulate data arrival for all cells
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        for i in range(3):
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=f'source_{i}', job_number=job_number),
+                output_name=f'output_{i}',
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
+
+        # Simulate late subscriber (new session, page reload, etc.)
+        # Late subscriber retrieves grid config
+        grids = plot_orchestrator.get_all_grids()
+        assert grid_id in grids
+
+        grid_config = grids[grid_id]
+        assert len(grid_config.cells) == 3
+
+        # Late subscriber retrieves plots for all cells via get_cell_state
+        for cell_id in cell_ids:
+            plot, error = plot_orchestrator.get_cell_state(cell_id)
+            assert plot is not None, f"Plot should exist for cell {cell_id}"
+            assert isinstance(plot, FakePlot)
+            assert error is None
+
+    def test_get_cell_state_updated_when_cell_config_updated_with_running_workflow(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_data_service,
+        fake_plotting_controller,
+    ):
+        """
+        When config is updated and workflow is running, plot is immediately recreated.
+        """
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Commit workflow
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number1 = job_ids[0].job_number
+
+        # Simulate data arrival for ALL sources
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        for source_name in plot_cell.config.source_names:
+            result_key = ResultKey(
+                workflow_id=workflow_id,
+                job_id=JobId(source_name=source_name, job_number=job_number1),
+                output_name=plot_cell.config.output_name,
+            )
+            fake_data_service[result_key] = sc.scalar(1.0)
+
+        # Verify plot exists
+        plot1, error = plot_orchestrator.get_cell_state(cell_id)
+        assert plot1 is not None
+        assert error is None
+
+        # Update config while workflow is still running
         new_config = PlotConfig(
-            workflow_id=workflow_id_2,
+            workflow_id=workflow_id,
             output_name='new_output',
             source_names=['new_source'],
             plot_name='new_plot',
@@ -1067,64 +1336,313 @@ class TestEdgeCasesAndComplexScenarios:
         )
         plot_orchestrator.update_plot_config(cell_id, new_config)
 
-        # Should no longer be subscribed to old workflow
-        assert len(fake_job_orchestrator._workflow_subscriptions[workflow_id]) == 0
-        # Should be subscribed to new workflow
-        assert len(fake_job_orchestrator._workflow_subscriptions[workflow_id_2]) == 1
+        # Simulate data arrival for new config
+        result_key2 = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='new_source', job_number=job_number1),
+            output_name='new_output',
+        )
+        fake_data_service[result_key2] = sc.scalar(2.0)
 
-    def test_multiple_updates_to_same_cell_config_subscription_management_correct(
-        self, plot_orchestrator, plot_cell, workflow_id, fake_job_orchestrator
+        # Since workflow is still running, plot should be immediately recreated
+        plot2, error = plot_orchestrator.get_cell_state(cell_id)
+        assert plot2 is not None
+        assert error is None
+
+        # Verify plot was recreated with new config
+        assert fake_plotting_controller.call_count() == 2
+        setups = fake_plotting_controller.get_pipeline_setups()
+        assert setups[1]['source_names'] == ['new_source']
+        assert setups[1]['output_name'] == 'new_output'
+
+    def test_get_cell_state_cleared_when_cell_removed(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_data_service,
     ):
-        """
-        Multiple updates to same cell config maintain correct subscriptions.
-
-        Updating the same cell multiple times should not leak subscriptions.
-        """
+        """get_cell_state should be cleaned up when cell is removed."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
-        initial_count = fake_job_orchestrator.subscription_count
+        # Commit workflow
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
 
-        # Multiple updates with same workflow_id
-        for i in range(3):
-            new_config = PlotConfig(
+        # Simulate data arrival for ALL sources
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        for source_name in plot_cell.config.source_names:
+            result_key = ResultKey(
                 workflow_id=workflow_id,
-                output_name=f'output_{i}',
-                source_names=[f'source_{i}'],
-                plot_name=f'plot_{i}',
-                params={},
+                job_id=JobId(source_name=source_name, job_number=job_number),
+                output_name=plot_cell.config.output_name,
             )
-            plot_orchestrator.update_plot_config(cell_id, new_config)
+            fake_data_service[result_key] = sc.scalar(1.0)
 
-        # Should still have same subscription count
-        assert fake_job_orchestrator.subscription_count == initial_count
+        # Verify plot exists
+        plot, error = plot_orchestrator.get_cell_state(cell_id)
+        assert plot is not None
 
-    def test_remove_grid_with_cells_that_have_pending_plot_creation(
-        self, plot_orchestrator, plot_cell, workflow_id, fake_job_orchestrator
-    ):
-        """Remove grid with cells that have pending plot creation."""
-        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        plot_orchestrator.add_plot(grid_id, plot_cell)
-
-        # Remove grid before workflow commits
-        plot_orchestrator.remove_grid(grid_id)
-
-        # Now commit workflow - should not crash
-        job_number = uuid.uuid4()
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
-
-        # No exception should be raised
-
-    def test_add_cell_immediately_remove_it_then_workflow_commits_no_error(
-        self, plot_orchestrator, plot_cell, workflow_id, fake_job_orchestrator
-    ):
-        """Add cell, immediately remove it, then workflow commits - no error."""
-        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
-
-        # Immediately remove
+        # Remove cell
         plot_orchestrator.remove_plot(cell_id)
 
-        # Workflow commits
-        job_number = uuid.uuid4()
-        fake_job_orchestrator.simulate_workflow_commit(workflow_id, job_number)
+        # get_cell_state should now return None (cell doesn't exist)
+        plot, error = plot_orchestrator.get_cell_state(cell_id)
+        assert plot is None
+        assert error is None
+
+
+class TestSourceNameFiltering:
+    """Test that plots only create when their specific source_names have data."""
+
+    def test_plot_not_created_when_job_has_different_source_names(
+        self,
+        plot_orchestrator,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+    ):
+        """
+        Plot should NOT be created when job exists for different source_names.
+
+        This test demonstrates the bug where a plot wanting source_A tries
+        to create when only source_B has data (same workflow, same job_number).
+        """
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+
+        # Create a plot that wants data from source_A
+        plot_cell = PlotCell(
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
+            config=PlotConfig(
+                workflow_id=workflow_id,
+                output_name='test_output',
+                source_names=['source_A'],  # Plot wants source_A
+                plot_name='test_plot',
+                params={},
+            ),
+        )
+        plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Commit workflow (notifies the plot that workflow is running)
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
+
+        # Simulate data arrival for source_B (NOT source_A)
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        result_key_B = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source_B', job_number=job_number),
+            output_name='test_output',
+        )
+        fake_data_service[result_key_B] = sc.scalar(1.0)
+
+        # Plot should NOT be created (data is for wrong source)
+        assert (
+            fake_plotting_controller.call_count() == 0
+        ), "Plot should not be created for different source_name"
+
+        # Now simulate data arrival for source_A (the one the plot wants)
+        result_key_A = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source_A', job_number=job_number),
+            output_name='test_output',
+        )
+        fake_data_service[result_key_A] = sc.scalar(2.0)
+
+        # NOW the plot should be created
+        assert (
+            fake_plotting_controller.call_count() == 1
+        ), "Plot should be created when correct source_name has data"
+        calls = fake_plotting_controller.get_calls()
+        # With two-phase creation, create_plot_from_pipeline is called
+        assert calls[0]['_from_pipeline'] is True
+
+    def test_plot_created_progressively_as_sources_arrive(
+        self,
+        plot_orchestrator,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+    ):
+        """
+        Plot with multiple source_names created as soon as first source has data.
+
+        A plot wanting sources [A, B] should create when only A has data,
+        then update automatically when B arrives (progressive plotting).
+        """
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+
+        # Create a plot that wants data from BOTH source_A and source_B
+        plot_cell = PlotCell(
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
+            config=PlotConfig(
+                workflow_id=workflow_id,
+                output_name='test_output',
+                source_names=['source_A', 'source_B'],  # Plot wants BOTH
+                plot_name='test_plot',
+                params={},
+            ),
+        )
+        plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Commit workflow
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
+
+        # Simulate data arrival for source_A only
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        result_key_A = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source_A', job_number=job_number),
+            output_name='test_output',
+        )
+        fake_data_service[result_key_A] = sc.scalar(1.0)
+
+        # Plot SHOULD be created with partial data (progressive plotting)
+        assert (
+            fake_plotting_controller.call_count() == 1
+        ), "Plot should be created as soon as first source has data"
+        calls = fake_plotting_controller.get_calls()
+        # With two-phase creation, create_plot_from_pipeline is called
+        assert calls[0]['_from_pipeline'] is True
+
+        # When source_B arrives, the DynamicMap will automatically update
+        # (no new create_plot call needed - the existing plot subscribes to updates)
+        result_key_B = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source_B', job_number=job_number),
+            output_name='test_output',
+        )
+        fake_data_service[result_key_B] = sc.scalar(2.0)
+
+        # Still only 1 create_plot call (plot updates via streaming, not recreation)
+        assert fake_plotting_controller.call_count() == 1
+
+    def test_immediate_creation_when_subscribing_to_running_job_with_correct_sources(
+        self,
+        plot_orchestrator,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+    ):
+        """
+        When subscribing to already-running job, plot creates if sources exist.
+
+        This tests the "late subscription" path where workflow is already
+        running and has data for the plot's source_names.
+        """
+        # Commit workflow FIRST
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
+
+        # Add data for source_A
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        result_key_A = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source_A', job_number=job_number),
+            output_name='test_output',
+        )
+        fake_data_service[result_key_A] = sc.scalar(1.0)
+
+        # NOW add the plot (late subscription)
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        plot_cell = PlotCell(
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
+            config=PlotConfig(
+                workflow_id=workflow_id,
+                output_name='test_output',
+                source_names=['source_A'],
+                plot_name='test_plot',
+                params={},
+            ),
+        )
+        plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Plot should be created immediately (data already exists)
+        assert (
+            fake_plotting_controller.call_count() == 1
+        ), "Plot should be created immediately when subscribing to running job"
+
+    def test_no_creation_when_subscribing_to_running_job_without_correct_sources(
+        self,
+        plot_orchestrator,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+    ):
+        """
+        When subscribing to already-running job, plot waits if sources missing.
+
+        This tests the "late subscription" path where workflow is running
+        but doesn't have data for the plot's specific source_names.
+        """
+        # Commit workflow FIRST
+        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        job_number = job_ids[0].job_number
+
+        # Add data for source_B (not what the plot will want)
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        result_key_B = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source_B', job_number=job_number),
+            output_name='test_output',
+        )
+        fake_data_service[result_key_B] = sc.scalar(1.0)
+
+        # NOW add the plot wanting source_A (late subscription)
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        plot_cell = PlotCell(
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
+            config=PlotConfig(
+                workflow_id=workflow_id,
+                output_name='test_output',
+                source_names=['source_A'],  # Plot wants A, but only B exists
+                plot_name='test_plot',
+                params={},
+            ),
+        )
+        plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Plot should NOT be created (wrong source)
+        assert (
+            fake_plotting_controller.call_count() == 0
+        ), "Plot should not be created when only wrong sources exist"
+
+        # Add data for source_A (what the plot wants)
+        result_key_A = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source_A', job_number=job_number),
+            output_name='test_output',
+        )
+        fake_data_service[result_key_A] = sc.scalar(2.0)
+
+        # NOW plot should be created
+        assert (
+            fake_plotting_controller.call_count() == 1
+        ), "Plot should be created when correct source arrives"

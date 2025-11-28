@@ -32,6 +32,7 @@ class StreamManager(Generic[P]):
         self,
         keys: Sequence[ResultKey] | dict[ResultKey, UpdateExtractor],
         assembler_factory: Callable[[set[ResultKey]], Any] = MergingStreamAssembler,
+        on_first_data: Callable[[P], None] | None = None,
     ) -> P:
         """
         Create a merging stream for the given result keys.
@@ -46,6 +47,9 @@ class StreamManager(Generic[P]):
         assembler_factory:
             Optional callable that creates an assembler from a set of keys.
             Use functools.partial to bind additional arguments (e.g., filter_fn).
+        on_first_data:
+            Optional callback invoked when first data arrives with the created pipe.
+            Called after pipe creation with non-empty data.
 
         Returns
         -------
@@ -64,6 +68,8 @@ class StreamManager(Generic[P]):
             extractors = {key: LatestValueExtractor() for key in keys_set}
 
         assembler = assembler_factory(keys_set)
-        subscriber = DataSubscriber(assembler, self._pipe_factory, extractors)
+        subscriber = DataSubscriber(
+            assembler, self._pipe_factory, extractors, on_first_data
+        )
         self.data_service.register_subscriber(subscriber)
         return subscriber.pipe

@@ -6,10 +6,7 @@ import pytest
 
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
-from ess.livedata.dashboard.plot_orchestrator import (
-    PlotOrchestrator,
-    StubJobOrchestrator,
-)
+from ess.livedata.dashboard.plot_orchestrator import PlotOrchestrator
 from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.stream_manager import StreamManager
 from ess.livedata.dashboard.widgets.plot_grid_manager import PlotGridManager
@@ -24,9 +21,9 @@ def data_service():
 
 
 @pytest.fixture
-def job_service(data_service):
+def job_service():
     """Create a JobService for testing."""
-    return JobService(data_service=data_service)
+    return JobService()
 
 
 @pytest.fixture
@@ -45,17 +42,28 @@ def plotting_controller(job_service, stream_manager):
 
 
 @pytest.fixture
-def fake_job_orchestrator():
-    """Create a stub JobOrchestrator for testing."""
-    return StubJobOrchestrator()
+def fake_data_service():
+    """Create a fake DataService."""
+    from ess.livedata.dashboard.data_service import DataService
+
+    return DataService()
 
 
 @pytest.fixture
-def plot_orchestrator(plotting_controller, fake_job_orchestrator):
+def fake_job_service():
+    """Create a fake JobService."""
+    from ess.livedata.dashboard.job_service import JobService
+
+    return JobService()
+
+
+@pytest.fixture
+def plot_orchestrator(plotting_controller, job_orchestrator, fake_data_service):
     """Create a PlotOrchestrator for testing."""
     return PlotOrchestrator(
         plotting_controller=plotting_controller,
-        job_orchestrator=fake_job_orchestrator,
+        job_orchestrator=job_orchestrator,
+        data_service=fake_data_service,
     )
 
 

@@ -28,7 +28,7 @@ from ..plot_orchestrator import (
     SubscriptionId,
 )
 from .plot_config_modal import PlotConfigModal
-from .plot_grid import PlotGrid
+from .plot_grid import GridCellStyles, PlotGrid
 from .plot_grid_manager import PlotGridManager
 from .plot_widgets import create_close_button, create_gear_button
 
@@ -38,8 +38,9 @@ class PlotGridTabs:
     Tabbed widget for managing multiple plot grids.
 
     Displays a "Manage" tab (always first) for adding/removing grids,
-    followed by one tab per plot grid. Synchronizes with PlotOrchestrator
-    via lifecycle subscriptions to support multiple linked instances.
+    a "Jobs" tab for monitoring job status, followed by one tab per plot grid.
+    Synchronizes with PlotOrchestrator via lifecycle subscriptions to support
+    multiple linked instances.
 
     Parameters
     ----------
@@ -49,6 +50,8 @@ class PlotGridTabs:
         Registry of available workflows and their specifications.
     plotting_controller
         Controller for determining available plotters from workflow specs.
+    job_status_widget
+        Widget for displaying job status information.
     """
 
     def __init__(
@@ -56,6 +59,7 @@ class PlotGridTabs:
         plot_orchestrator: PlotOrchestrator,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         plotting_controller,
+        job_status_widget,
     ) -> None:
         self._orchestrator = plot_orchestrator
         self._workflow_registry = dict(workflow_registry)
@@ -96,9 +100,15 @@ class PlotGridTabs:
             )
         )
 
-        # Add Manage tab (always first)
+        # Add Jobs tab (always first)
+        self._tabs.append(('Jobs', job_status_widget.panel()))
+
+        # Add Manage tab (always second)
         self._grid_manager = PlotGridManager(orchestrator=plot_orchestrator)
-        self._tabs.append(('Manage', self._grid_manager.panel))
+        self._tabs.append(('Manage Plots', self._grid_manager.panel))
+
+        # Store static tabs count for use as offset in grid tab index calculations
+        self._static_tabs_count = len(self._tabs)
 
         # Initialize from existing grids
         for grid_id, grid_config in self._orchestrator.get_all_grids().items():
@@ -129,32 +139,29 @@ class PlotGridTabs:
 
         # Populate with existing cells (important for late subscribers / new sessions)
         for cell_id, cell in grid_config.cells.items():
-            # Create placeholder widget for each existing cell
-            # (actual plots will be created when workflows commit)
-            self._on_cell_updated(grid_id=grid_id, cell_id=cell_id, cell=cell)
+            # Get current plot/error state from orchestrator
+            # This ensures late subscribers (new sessions) see existing plots
+            plot, error = self._orchestrator.get_cell_state(cell_id)
+            self._on_cell_updated(
+                grid_id=grid_id, cell_id=cell_id, cell=cell, plot=plot, error=error
+            )
 
     def _remove_grid_tab(self, grid_id: GridId) -> None:
         """Remove a grid tab."""
         if grid_id not in self._grid_widgets:
             return
 
-        # Calculate tab index from position in _grid_widgets (Manage tab is at 0)
-        tab_index = list(self._grid_widgets.keys()).index(grid_id) + 1
-
-        # Remove the tab using pop()
-        self._tabs.pop(tab_index)
-
-        # Clean up tracking
+        tab_index = list(self._grid_widgets.keys()).index(grid_id)
+        self._tabs.pop(self._static_tabs_count + tab_index)
         del self._grid_widgets[grid_id]
 
     def _on_grid_created(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Handle grid creation from orchestrator."""
         self._add_grid_tab(grid_id, grid_config)
 
-        # Auto-switch to the new tab (calculate index from position in _grid_widgets)
         if grid_id in self._grid_widgets:
-            tab_index = list(self._grid_widgets.keys()).index(grid_id) + 1
-            self._tabs.active = tab_index
+            tab_index = list(self._grid_widgets.keys()).index(grid_id)
+            self._tabs.active = self._static_tabs_count + tab_index
 
     def _on_grid_removed(self, grid_id: GridId) -> None:
         """Handle grid removal from orchestrator."""
@@ -283,8 +290,23 @@ class PlotGridTabs:
             # Show status widget (either waiting for data or error)
             widget = self._create_status_widget(cell_id, cell, error=error)
 
-        # Insert widget at explicit position
-        plot_grid.insert_widget_at(cell.geometry, widget)
+        # Defer insertion for plots to allow Panel to update layout sizing.
+        # When a workflow is already running with data, subscribing triggers
+        # plot creation synchronously (in subscribe_to_workflow's immediate
+        # callback path). This can cause the HoloViews pane to initialize with
+        # collapsed/default size before the grid container is properly sized,
+        # resulting in "glitched" rendering. Deferring to the next event loop
+        # iteration allows Panel to process layout updates first.
+        if plot is not None:
+            # Schedule insertion on next event loop iteration
+            pn.state.add_periodic_callback(
+                lambda g=cell.geometry: plot_grid.insert_widget_at(g, widget),
+                period=1,  # milliseconds
+                count=1,  # run once
+            )
+        else:
+            # Status widgets can be inserted immediately
+            plot_grid.insert_widget_at(cell.geometry, widget)
 
     def _on_cell_removed(self, grid_id: GridId, geometry: CellGeometry) -> None:
         """
@@ -396,6 +418,7 @@ class PlotGridTabs:
                 'border': border,
                 'position': 'relative',
             },
+            margin=GridCellStyles.CELL_MARGIN,
         )
         return status_widget
 
@@ -447,6 +470,7 @@ class PlotGridTabs:
             plot_pane,
             sizing_mode='stretch_both',
             styles={'position': 'relative'},
+            margin=GridCellStyles.CELL_MARGIN,
         )
 
     def shutdown(self) -> None:

@@ -8,9 +8,9 @@ import panel as pn
 from ess.livedata import Service
 
 from .dashboard import DashboardBase
-from .plot_orchestrator import PlotOrchestrator, StubJobOrchestrator
+from .plot_orchestrator import PlotOrchestrator
+from .widgets.job_status_widget import JobStatusListWidget
 from .widgets.log_producer_widget import LogProducerWidget
-from .widgets.plot_creation_widget import PlotCreationWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
 from .widgets.reduction_widget import ReductionWidget
 
@@ -39,10 +39,10 @@ class ReductionApp(DashboardBase):
         )
 
         # Create shared orchestrators (must be shared across all sessions)
-        stub_job_orchestrator = StubJobOrchestrator()
         self._plot_orchestrator = PlotOrchestrator(
             plotting_controller=self._services.plotting_controller,
-            job_orchestrator=stub_job_orchestrator,
+            job_orchestrator=self._services.job_orchestrator,
+            data_service=self._services.data_service,
             config_store=self._services.plotter_config_store,
         )
 
@@ -72,14 +72,12 @@ class ReductionApp(DashboardBase):
         )
 
     def create_main_content(self) -> pn.viewable.Viewable:
-        """Create the main content area with tabs for old and new interfaces."""
-        # Create the original plot creation widget (per-session)
-        plot_creation_widget = PlotCreationWidget(
+        """Create the main content area with plot grid tabs."""
+        # Create job status widget
+        job_status_widget = JobStatusListWidget(
             job_service=self._services.job_service,
             job_controller=self._services.job_controller,
-            plotting_controller=self._services.plotting_controller,
-            workflow_controller=self._services.workflow_controller,
-        ).widget
+        )
 
         # Create UI widget connected to shared orchestrator
         plot_grid_tabs = PlotGridTabs(
@@ -88,19 +86,10 @@ class ReductionApp(DashboardBase):
             # registry more accessible.
             workflow_registry=self._services.workflow_controller._workflow_registry,
             plotting_controller=self._services.plotting_controller,
+            job_status_widget=job_status_widget,
         )
 
-        # Create tabs with both old and new interfaces
-        main_tabs = pn.Tabs(
-            ('Legacy interface', plot_creation_widget),
-            (
-                'Future interface (incomplete and not functional)',
-                plot_grid_tabs.panel,
-            ),
-            sizing_mode='stretch_both',
-        )
-
-        return main_tabs
+        return plot_grid_tabs.panel
 
 
 def get_arg_parser() -> argparse.ArgumentParser:

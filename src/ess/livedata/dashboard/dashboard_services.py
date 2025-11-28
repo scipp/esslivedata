@@ -18,6 +18,7 @@ from .config_store import ConfigStoreManager
 from .correlation_histogram import CorrelationHistogramController
 from .data_service import DataService
 from .job_controller import JobController
+from .job_orchestrator import JobOrchestrator
 from .job_service import JobService
 from .orchestrator import Orchestrator
 from .plotting_controller import PlottingController
@@ -115,9 +116,7 @@ class DashboardServices:
         self.stream_manager = StreamManager(
             data_service=self.data_service, pipe_factory=self._pipe_factory
         )
-        self.job_service = JobService(
-            data_service=self.data_service, logger=self._logger
-        )
+        self.job_service = JobService(logger=self._logger)
         self.job_controller = JobController(
             command_service=self.command_service, job_service=self.job_service
         )
@@ -129,7 +128,6 @@ class DashboardServices:
 
         self.plotting_controller = PlottingController(
             job_service=self.job_service,
-            config_store=self.plotter_config_store,
             stream_manager=self.stream_manager,
             logger=self._logger,
             roi_publisher=roi_publisher,
@@ -149,12 +147,15 @@ class DashboardServices:
         self.processor_factory = instrument_registry[self._instrument].workflow_factory
 
         self.correlation_controller = CorrelationHistogramController(self.data_service)
-        self.workflow_controller = WorkflowController(
+        self.job_orchestrator = JobOrchestrator(
             command_service=self.command_service,
             workflow_config_service=self.workflow_config_service,
-            source_names=sorted(self.processor_factory.source_names),
             workflow_registry=self.processor_factory,
             config_store=self.workflow_config_store,
+        )
+        self.workflow_controller = WorkflowController(
+            job_orchestrator=self.job_orchestrator,
+            workflow_registry=self.processor_factory,
             data_service=self.data_service,
             correlation_histogram_controller=self.correlation_controller,
         )

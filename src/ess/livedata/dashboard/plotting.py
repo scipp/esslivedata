@@ -274,9 +274,9 @@ def _roi_detector_plotter_factory(params: PlotParamsROIDetector) -> Plotter:
     """
     Dummy factory for ROI detector plotter.
 
-    This plotter is handled as a special case in PlottingController.create_plot()
-    and does not use the standard Plotter interface. This factory exists only
-    for registration purposes to enable UI integration.
+    This plotter is handled as a special case in PlottingController and does not
+    use the standard Plotter interface. This factory exists only for registration
+    purposes to enable UI integration.
     """
     raise NotImplementedError(
         "ROI detector plotter is handled specially in PlottingController"
