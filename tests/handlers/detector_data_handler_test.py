@@ -95,6 +95,25 @@ def test_factory_returns_none_for_unknown_stream_kinds() -> None:
     assert preprocessor is None
 
 
+def test_factory_returns_none_for_unconfigured_detectors() -> None:
+    """Test that DetectorHandlerFactory returns None for unconfigured detectors.
+
+    This ensures that messages from detectors not in the instrument's detector_names
+    list are gracefully skipped instead of causing a KeyError.
+    """
+    instrument = get_instrument('dummy')
+    factory = DetectorHandlerFactory(instrument=instrument)
+
+    # dummy is configured with 'panel_0_detector' but not 'unknown_detector'
+    unconfigured_detector = StreamId(
+        kind=StreamKind.DETECTOR_EVENTS, name='unknown_detector'
+    )
+    preprocessor = factory.make_preprocessor(unconfigured_detector)
+
+    # Should return None to indicate this detector should be skipped
+    assert preprocessor is None
+
+
 class FakeInstrument:
     """Minimal fake instrument for testing detector view factories."""
 

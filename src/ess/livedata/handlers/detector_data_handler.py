@@ -145,6 +145,9 @@ class DetectorHandlerFactory(
     def make_preprocessor(self, key: StreamId) -> Accumulator | None:
         match key.kind:
             case StreamKind.DETECTOR_EVENTS:
+                # Skip detectors that are not configured
+                if key.name not in self._instrument.detector_names:
+                    return None
                 detector_number = self._instrument.get_detector_number(key.name)
                 return GroupIntoPixels(detector_number=detector_number)
             case StreamKind.AREA_DETECTOR:
