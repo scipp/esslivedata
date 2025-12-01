@@ -779,4 +779,4 @@ class ROIDetectorPlotFactory:
             filtered_spectrum_plotter,
             streams=[spectrum_pipe, roi_state_stream],
             cache_size=1,
-        ).opts(shared_axes=False)
+        ).opts(shared_axes=False, max_width=400)
