@@ -4,6 +4,7 @@ import holoviews as hv
 import panel as pn
 import pytest
 
+from ess.livedata.config.grid_templates import GridTemplate
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.plot_orchestrator import PlotOrchestrator
@@ -124,3 +125,102 @@ class TestShutdown:
         """Test that shutdown is idempotent."""
         grid_manager.shutdown()
         grid_manager.shutdown()  # Should not raise
+
+
+@pytest.fixture
+def sample_template():
+    """Create a sample grid template for testing."""
+    return GridTemplate(
+        name='Test Template',
+        config={
+            'title': 'Template Grid',
+            'nrows': 3,
+            'ncols': 4,
+            'cells': [
+                {
+                    'geometry': {'row': 0, 'col': 0, 'row_span': 2, 'col_span': 2},
+                    'config': {
+                        'workflow_id': 'test/ns/wf/1',
+                        'output_name': 'output',
+                        'source_names': ['source1'],
+                        'plot_name': 'lines',
+                        'params': {},
+                    },
+                },
+            ],
+        },
+    )
+
+
+class TestTemplateSupport:
+    """Tests for grid template support in PlotGridManager."""
+
+    def test_template_selector_hidden_when_no_templates(self, plot_orchestrator):
+        """Test that template selector is hidden when no templates provided."""
+        manager = PlotGridManager(orchestrator=plot_orchestrator, templates=[])
+
+        assert manager._template_selector.visible is False
+
+    def test_template_selector_visible_when_templates_provided(
+        self, plot_orchestrator, sample_template
+    ):
+        """Test that template selector is visible when templates are provided."""
+        manager = PlotGridManager(
+            orchestrator=plot_orchestrator, templates=[sample_template]
+        )
+
+        assert manager._template_selector.visible is True
+        # Should have "-- No template --" plus the template
+        assert len(manager._template_selector.options) == 2
+
+    def test_selecting_template_populates_fields(
+        self, plot_orchestrator, sample_template
+    ):
+        """Test that selecting a template populates the form fields."""
+        manager = PlotGridManager(
+            orchestrator=plot_orchestrator, templates=[sample_template]
+        )
+
+        # Simulate template selection
+        manager._template_selector.value = 'Test Template'
+
+        assert manager._title_input.value == 'Template Grid'
+        assert manager._nrows_input.value == 3
+        assert manager._ncols_input.value == 4
+
+    def test_selecting_template_sets_minimum_rows_cols(
+        self, plot_orchestrator, sample_template
+    ):
+        """Test that selecting template sets min rows/cols based on cell geometry."""
+        manager = PlotGridManager(
+            orchestrator=plot_orchestrator, templates=[sample_template]
+        )
+
+        # Before selection, min should be 2
+        assert manager._nrows_input.start == 2
+        assert manager._ncols_input.start == 2
+
+        # After selection, min should be computed from cells
+        manager._template_selector.value = 'Test Template'
+
+        # Cell at (0,0) with span (2,2) requires min 2 rows and 2 cols
+        assert manager._nrows_input.start == 2
+        assert manager._ncols_input.start == 2
+
+    def test_deselecting_template_resets_fields(
+        self, plot_orchestrator, sample_template
+    ):
+        """Test that deselecting template resets to defaults."""
+        manager = PlotGridManager(
+            orchestrator=plot_orchestrator, templates=[sample_template]
+        )
+
+        # Select then deselect
+        manager._template_selector.value = 'Test Template'
+        manager._template_selector.value = '-- No template --'
+
+        assert manager._title_input.value == 'New Grid'
+        assert manager._nrows_input.value == 3
+        assert manager._ncols_input.value == 3
+        assert manager._nrows_input.start == 2
+        assert manager._ncols_input.start == 2

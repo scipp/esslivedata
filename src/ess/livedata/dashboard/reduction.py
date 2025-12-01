@@ -6,6 +6,7 @@ import holoviews as hv
 import panel as pn
 
 from ess.livedata import Service
+from ess.livedata.config.grid_templates import load_grid_templates
 
 from .dashboard import DashboardBase
 from .widgets.job_status_widget import JobStatusListWidget
@@ -36,6 +37,8 @@ class ReductionApp(DashboardBase):
             port=5009,  # Default port for reduction dashboard
             transport=transport,
         )
+        # Load grid templates once at startup (shared across all sessions)
+        self._grid_templates = load_grid_templates(instrument)
         self._logger.info("Reduction dashboard initialized")
 
     def create_sidebar_content(self) -> pn.viewable.Viewable:
@@ -77,6 +80,7 @@ class ReductionApp(DashboardBase):
             workflow_registry=self._services.workflow_controller._workflow_registry,
             plotting_controller=self._services.plotting_controller,
             job_status_widget=job_status_widget,
+            grid_templates=self._grid_templates,
         )
 
         return plot_grid_tabs.panel

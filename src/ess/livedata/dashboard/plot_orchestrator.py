@@ -226,9 +226,15 @@ class PlotOrchestrator:
         # Load persisted configurations
         self._load_from_store()
 
-    def add_grid(self, title: str, nrows: int, ncols: int) -> GridId:
+    def add_grid(
+        self,
+        title: str,
+        nrows: int,
+        ncols: int,
+        template_cells: list[dict[str, Any]] | None = None,
+    ) -> GridId:
         """
-        Add a new plot grid.
+        Add a new plot grid, optionally with pre-configured cells from a template.
 
         Parameters
         ----------
@@ -238,6 +244,10 @@ class PlotOrchestrator:
             Number of rows in the grid.
         ncols
             Number of columns in the grid.
+        template_cells
+            Optional list of cell configurations from a grid template.
+            Each cell dict should match the serialization format with
+            'geometry' and 'config' keys.
 
         Returns
         -------
@@ -247,9 +257,20 @@ class PlotOrchestrator:
         grid_id = GridId(uuid4())
         grid = PlotGridConfig(title=title, nrows=nrows, ncols=ncols)
         self._grids[grid_id] = grid
+
+        # Add cells from template if provided
+        if template_cells:
+            for cell_data in template_cells:
+                self._add_cell_from_data(grid_id, cell_data)
+
         self._persist_to_store()
         self._logger.info(
-            'Added plot grid %s (%s) with size %dx%d', grid_id, title, nrows, ncols
+            'Added plot grid %s (%s) with size %dx%d and %d cell(s)',
+            grid_id,
+            title,
+            nrows,
+            ncols,
+            len(template_cells) if template_cells else 0,
         )
         self._notify_grid_created(grid_id)
         return grid_id
@@ -593,6 +614,52 @@ class PlotOrchestrator:
             )
             return spec.params()
 
+    def _add_cell_from_data(self, grid_id: GridId, cell_data: dict[str, Any]) -> None:
+        """
+        Add a cell to a grid from serialized cell data.
+
+        This is used by both template instantiation and persistence restoration.
+        Cells with unknown plotters are silently skipped.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid to add the cell to.
+        cell_data
+            Cell configuration dict with 'geometry' and 'config' keys.
+        """
+        grid = self._grids[grid_id]
+        config_data = cell_data['config']
+        plot_name = config_data['plot_name']
+
+        # Validate params, skipping cells with unknown plotters
+        params = self._validate_params(plot_name, config_data.get('params', {}))
+        if params is None:
+            return
+
+        cell_id = CellId(uuid4())
+
+        # Recreate geometry
+        geometry = CellGeometry(**cell_data['geometry'])
+
+        # Recreate config
+        config = PlotConfig(
+            workflow_id=WorkflowId.from_string(config_data['workflow_id']),
+            output_name=config_data.get('output_name'),
+            source_names=config_data['source_names'],
+            plot_name=plot_name,
+            params=params,
+        )
+
+        cell = PlotCell(geometry=geometry, config=config)
+        grid.cells[cell_id] = cell
+
+        # Set up tracking mappings
+        self._cell_to_grid[cell_id] = grid_id
+
+        # Subscribe to workflow availability
+        self._subscribe_and_setup(grid_id, cell_id, config.workflow_id)
+
     def _serialize_grids(self) -> list[dict[str, Any]]:
         """
         Serialize all grids to list for persistence.
@@ -653,41 +720,12 @@ class PlotOrchestrator:
                 ncols=grid_data['ncols'],
             )
 
-            # Store the grid first (needed by _subscribe_and_setup)
+            # Store the grid first (needed by _add_cell_from_data)
             self._grids[grid_id] = grid
 
-            # Recreate cells
+            # Recreate cells using shared helper
             for cell_data in grid_data.get('cells', []):
-                config_data = cell_data['config']
-                plot_name = config_data['plot_name']
-
-                # Validate params, skipping cells with unknown plotters
-                params = self._validate_params(plot_name, config_data['params'])
-                if params is None:
-                    continue
-
-                cell_id = CellId(uuid4())
-
-                # Recreate geometry
-                geometry = CellGeometry(**cell_data['geometry'])
-
-                # Recreate config
-                config = PlotConfig(
-                    workflow_id=WorkflowId.from_string(config_data['workflow_id']),
-                    output_name=config_data['output_name'],
-                    source_names=config_data['source_names'],
-                    plot_name=plot_name,
-                    params=params,
-                )
-
-                cell = PlotCell(geometry=geometry, config=config)
-                grid.cells[cell_id] = cell
-
-                # Set up tracking mappings
-                self._cell_to_grid[cell_id] = grid_id
-
-                # Subscribe to workflow availability
-                self._subscribe_and_setup(grid_id, cell_id, config.workflow_id)
+                self._add_cell_from_data(grid_id, cell_data)
 
             # Notify subscribers of grid creation
             self._notify_grid_created(grid_id)

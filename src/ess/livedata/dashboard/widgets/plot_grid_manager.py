@@ -8,9 +8,15 @@ Provides UI for adding and removing plot grids through PlotOrchestrator.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import panel as pn
 
+from ...config.grid_templates import GridTemplate
 from ..plot_orchestrator import GridId, PlotGridConfig, PlotOrchestrator, SubscriptionId
+
+# Sentinel value for "no template selected" in the dropdown
+_NO_TEMPLATE = "-- No template --"
 
 
 class PlotGridManager:
@@ -25,10 +31,29 @@ class PlotGridManager:
     ----------
     orchestrator
         The orchestrator managing plot grid configurations.
+    templates
+        Pre-loaded grid templates to offer in the UI. Templates are loaded
+        once at app startup and shared across all browser sessions.
     """
 
-    def __init__(self, orchestrator: PlotOrchestrator) -> None:
+    def __init__(
+        self,
+        orchestrator: PlotOrchestrator,
+        templates: Sequence[GridTemplate] = (),
+    ) -> None:
         self._orchestrator = orchestrator
+        self._templates = {t.name: t for t in templates}
+        self._selected_template: GridTemplate | None = None
+
+        # Template selector (only shown if templates available)
+        template_options = [_NO_TEMPLATE, *self._templates.keys()]
+        self._template_selector = pn.widgets.Select(
+            name='Template',
+            options=template_options,
+            value=_NO_TEMPLATE,
+            visible=bool(templates),
+        )
+        self._template_selector.param.watch(self._on_template_selected, 'value')
 
         # Input fields for new grid
         self._title_input = pn.widgets.TextInput(
@@ -63,6 +88,7 @@ class PlotGridManager:
         # Panel's Tabs widget properly handles height when tabs are added/removed.
         self._widget = pn.Column(
             pn.pane.Markdown('## Add New Grid'),
+            self._template_selector,
             self._title_input,
             pn.Row(self._nrows_input, self._ncols_input),
             self._add_button,
@@ -72,17 +98,49 @@ class PlotGridManager:
             sizing_mode='stretch_both',
         )
 
+    def _on_template_selected(self, event) -> None:
+        """Handle template selection change."""
+        template_name = event.new
+        if template_name == _NO_TEMPLATE:
+            self._selected_template = None
+            # Reset to defaults
+            self._title_input.value = 'New Grid'
+            self._nrows_input.value = 3
+            self._ncols_input.value = 3
+            self._nrows_input.start = 2
+            self._ncols_input.start = 2
+        else:
+            template = self._templates[template_name]
+            self._selected_template = template
+            # Populate widgets with template values
+            self._title_input.value = template.title
+            self._nrows_input.value = template.nrows
+            self._ncols_input.value = template.ncols
+            # Set minimum to prevent shrinking below what cells require
+            self._nrows_input.start = template.min_rows
+            self._ncols_input.start = template.min_cols
+
     def _on_add_grid(self, event) -> None:
         """Handle add grid button click."""
+        template_cells = None
+        if self._selected_template is not None:
+            template_cells = self._selected_template.cells
+
         self._orchestrator.add_grid(
             title=self._title_input.value,
             nrows=self._nrows_input.value,
             ncols=self._ncols_input.value,
+            template_cells=template_cells,
         )
-        # Reset inputs
+
+        # Reset inputs and template selection
+        self._template_selector.value = _NO_TEMPLATE
+        self._selected_template = None
         self._title_input.value = 'New Grid'
         self._nrows_input.value = 3
         self._ncols_input.value = 3
+        self._nrows_input.start = 2
+        self._ncols_input.start = 2
 
     def _on_grid_created(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Handle grid creation from orchestrator."""

@@ -9,12 +9,13 @@ synchronized with PlotOrchestrator via lifecycle subscriptions.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import holoviews as hv
 import panel as pn
 
+from ess.livedata.config.grid_templates import GridTemplate
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
 from ..plot_orchestrator import (
@@ -52,6 +53,8 @@ class PlotGridTabs:
         Controller for determining available plotters from workflow specs.
     job_status_widget
         Widget for displaying job status information.
+    grid_templates
+        Pre-loaded grid templates to offer when creating new grids.
     """
 
     def __init__(
@@ -60,6 +63,7 @@ class PlotGridTabs:
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         plotting_controller,
         job_status_widget,
+        grid_templates: Sequence[GridTemplate] = (),
     ) -> None:
         self._orchestrator = plot_orchestrator
         self._workflow_registry = dict(workflow_registry)
@@ -104,7 +108,9 @@ class PlotGridTabs:
         self._tabs.append(('Jobs', job_status_widget.panel()))
 
         # Add Manage tab (always second)
-        self._grid_manager = PlotGridManager(orchestrator=plot_orchestrator)
+        self._grid_manager = PlotGridManager(
+            orchestrator=plot_orchestrator, templates=grid_templates
+        )
         self._tabs.append(('Manage Plots', self._grid_manager.panel))
 
         # Store static tabs count for use as offset in grid tab index calculations

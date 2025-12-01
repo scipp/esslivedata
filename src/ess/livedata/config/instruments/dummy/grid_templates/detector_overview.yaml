@@ -1,0 +1,28 @@
+# Example grid template for the dummy instrument.
+# Shows both detector views side by side.
+title: Detector Overview
+nrows: 2
+ncols: 2
+cells:
+  - geometry:
+      row: 0
+      col: 0
+      row_span: 2
+      col_span: 1
+    config:
+      workflow_id: dummy/detector_data/panel_0_xy/1
+      output_name: image
+      source_names: [panel_0]
+      plot_name: image
+      params: {}
+  - geometry:
+      row: 0
+      col: 1
+      row_span: 2
+      col_span: 1
+    config:
+      workflow_id: dummy/detector_data/area_panel_xy/1
+      output_name: image
+      source_names: [area_panel]
+      plot_name: image
+      params: {}
