@@ -420,22 +420,17 @@ The easiest way to create a grid template is to design it interactively in the d
 
 3. **Create the template file**: Copy the grid configuration to a new file in your instrument's `grid_templates/` directory:
 
-   ```
-   src/ess/livedata/config/instruments/<instrument>/
-   ├── __init__.py
-   ├── specs.py
-   ├── streams.py
-   ├── factories.py
-   └── grid_templates/           # Optional
-       └── detector_overview.yaml
-   ```
+```
+src/ess/livedata/config/instruments/<instrument>/
+├── __init__.py
+├── specs.py
+├── streams.py
+├── factories.py
+└── grid_templates/
+    └── detector_overview.yaml
+```
 
-4. **Add package-data entry** in `pyproject.toml`:
-
-   ```toml
-   [tool.setuptools.package-data]
-   "ess.livedata.config.instruments.<instrument>" = ["grid_templates/*.yaml"]
-   ```
+Template files in `grid_templates/` are automatically included as package data.
 
 Templates use the same format as persisted grids. You can optionally add a `description` field that will be shown in the template selector.
 
