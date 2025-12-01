@@ -614,7 +614,9 @@ class PlotOrchestrator:
             )
             return spec.params()
 
-    def _add_cell_from_data(self, grid_id: GridId, cell_data: dict[str, Any]) -> None:
+    def _add_cell_from_data(
+        self, grid_id: GridId, cell_data: dict[str, Any]
+    ) -> CellId | None:
         """
         Add a cell to a grid from serialized cell data.
 
@@ -627,22 +629,21 @@ class PlotOrchestrator:
             ID of the grid to add the cell to.
         cell_data
             Cell configuration dict with 'geometry' and 'config' keys.
+
+        Returns
+        -------
+        :
+            ID of the added cell, or None if skipped (unknown plotter).
         """
-        grid = self._grids[grid_id]
         config_data = cell_data['config']
         plot_name = config_data['plot_name']
 
         # Validate params, skipping cells with unknown plotters
         params = self._validate_params(plot_name, config_data.get('params', {}))
         if params is None:
-            return
+            return None
 
-        cell_id = CellId(uuid4())
-
-        # Recreate geometry
         geometry = CellGeometry(**cell_data['geometry'])
-
-        # Recreate config
         config = PlotConfig(
             workflow_id=WorkflowId.from_string(config_data['workflow_id']),
             output_name=config_data.get('output_name'),
@@ -651,14 +652,7 @@ class PlotOrchestrator:
             params=params,
         )
 
-        cell = PlotCell(geometry=geometry, config=config)
-        grid.cells[cell_id] = cell
-
-        # Set up tracking mappings
-        self._cell_to_grid[cell_id] = grid_id
-
-        # Subscribe to workflow availability
-        self._subscribe_and_setup(grid_id, cell_id, config.workflow_id)
+        return self.add_plot(grid_id, PlotCell(geometry=geometry, config=config))
 
     def _serialize_grids(self) -> list[dict[str, Any]]:
         """
