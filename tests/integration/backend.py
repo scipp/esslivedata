@@ -11,7 +11,6 @@ from ess.livedata.dashboard.config_store import ConfigStoreManager
 from ess.livedata.dashboard.dashboard_services import DashboardServices
 from ess.livedata.dashboard.kafka_transport import DashboardKafkaTransport
 from ess.livedata.dashboard.transport import NullTransport, Transport
-from ess.livedata.dashboard.widgets.plot_grid_manager import PlotGridManager
 
 
 class DashboardBackend:
@@ -95,13 +94,6 @@ class DashboardBackend:
             pipe_factory=lambda data: None,  # No-op for tests
             transport=transport_impl,
             config_manager=self._config_manager,
-        )
-
-        # Create PlotGridManager for tests that need it
-        # Note: persistence loading happens in DashboardServices, not here
-        self._grid_manager = PlotGridManager(
-            orchestrator=self._services.plot_orchestrator,
-            workflow_registry=self._services.workflow_controller._workflow_registry,
         )
 
         self._logger.info("DashboardBackend initialized for %s", instrument)
@@ -196,11 +188,6 @@ class DashboardBackend:
         >>> assert workflow_id in workflow_store
         """
         return self._config_manager
-
-    @property
-    def grid_manager(self):
-        self._check_available()
-        return self._grid_manager
 
     def start(self) -> None:
         """Start the background message source."""
