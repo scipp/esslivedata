@@ -47,25 +47,23 @@ class PlotGridManager:
     Parameters
     ----------
     orchestrator
-        The orchestrator managing plot grid configurations.
+        The orchestrator managing plot grid configurations. Templates are
+        retrieved from the orchestrator via get_available_templates().
     workflow_registry
         Registry of available workflows and their specifications. Used to
         look up workflow titles for display in the grid preview.
-    templates
-        Pre-loaded grid templates to offer in the UI. Templates are loaded
-        once at app startup and shared across all browser sessions.
     """
 
     def __init__(
         self,
         orchestrator: PlotOrchestrator,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
-        templates: Sequence[GridSpec] = (),
     ) -> None:
         self._orchestrator = orchestrator
         self._workflow_registry = workflow_registry
+        templates = orchestrator.get_available_templates()
         self._templates = {t.name: t for t in templates}
-        self._selected_template: GridSpec | None = None
+        self._selected_template = None
 
         # Template selector (only shown if templates available)
         template_options = [_NO_TEMPLATE, *self._templates.keys()]

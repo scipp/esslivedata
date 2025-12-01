@@ -1,15 +1,11 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Tests for grid template loading."""
+"""Tests for grid template loading and GridSpec data model."""
 
 import pydantic
 import pytest
 
-from ess.livedata.config.grid_templates import (
-    GridSpec,
-    load_raw_grid_templates,
-    parse_grid_specs,
-)
+from ess.livedata.config.grid_templates import GridSpec, load_raw_grid_templates
 from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
@@ -231,133 +227,3 @@ class TestLoadRawGridTemplates:
         assert 'geometry' in cell
         assert 'config' in cell
         assert cell['config']['workflow_id'] is not None
-
-
-class FakeOrchestrator:
-    """Fake orchestrator for testing parse_grid_specs."""
-
-    def parse_raw_cell(self, cell_data: dict) -> PlotCell | None:
-        """Parse a raw cell dict, returning None for unknown plotters."""
-        config_data = cell_data['config']
-        plot_name = config_data['plot_name']
-
-        # Simulate unknown plotter check
-        if plot_name == 'unknown_plotter':
-            return None
-
-        geometry = CellGeometry(
-            row=cell_data['geometry']['row'],
-            col=cell_data['geometry']['col'],
-            row_span=cell_data['geometry']['row_span'],
-            col_span=cell_data['geometry']['col_span'],
-        )
-        config = PlotConfig(
-            workflow_id=WorkflowId.from_string(config_data['workflow_id']),
-            output_name=config_data.get('output_name'),
-            source_names=config_data['source_names'],
-            plot_name=plot_name,
-            params=EmptyParams(),
-        )
-        return PlotCell(geometry=geometry, config=config)
-
-
-class TestParseGridSpecs:
-    """Tests for parse_grid_specs function."""
-
-    def test_parses_raw_specs(self):
-        """Test that raw specs are parsed into GridSpec objects."""
-        raw_specs = [
-            {
-                'title': 'Test Spec',
-                'description': 'A test spec',
-                'nrows': 2,
-                'ncols': 3,
-                'cells': [_make_raw_cell(0, 0)],
-            }
-        ]
-        orchestrator = FakeOrchestrator()
-
-        specs = parse_grid_specs(raw_specs, orchestrator)
-
-        assert len(specs) == 1
-        spec = specs[0]
-        assert spec.name == 'Test Spec'
-        assert spec.title == 'Test Spec'
-        assert spec.description == 'A test spec'
-        assert spec.nrows == 2
-        assert spec.ncols == 3
-        assert len(spec.cells) == 1
-        assert isinstance(spec.cells[0], PlotCell)
-
-    def test_skips_cells_with_unknown_plotters(self):
-        """Test that cells with unknown plotters are skipped."""
-        raw_specs = [
-            {
-                'title': 'Mixed Spec',
-                'nrows': 2,
-                'ncols': 2,
-                'cells': [
-                    _make_raw_cell(0, 0),  # Valid
-                    {
-                        'geometry': {'row': 1, 'col': 0, 'row_span': 1, 'col_span': 1},
-                        'config': {
-                            'workflow_id': 'test/ns/wf/1',
-                            'source_names': ['src'],
-                            'plot_name': 'unknown_plotter',
-                            'params': {},
-                        },
-                    },
-                ],
-            }
-        ]
-        orchestrator = FakeOrchestrator()
-
-        specs = parse_grid_specs(raw_specs, orchestrator)
-
-        assert len(specs) == 1
-        # Only one cell should be parsed (the valid one)
-        assert len(specs[0].cells) == 1
-
-    def test_parses_spec_with_no_cells(self):
-        """Test that specs with no cells are parsed correctly."""
-        raw_specs = [
-            {
-                'title': 'Empty Spec',
-                'nrows': 3,
-                'ncols': 3,
-                'cells': [],
-            }
-        ]
-        orchestrator = FakeOrchestrator()
-
-        specs = parse_grid_specs(raw_specs, orchestrator)
-
-        assert len(specs) == 1
-        assert specs[0].cells == ()
-
-    def test_returns_empty_list_for_empty_input(self):
-        """Test that empty input returns empty output."""
-        orchestrator = FakeOrchestrator()
-
-        specs = parse_grid_specs([], orchestrator)
-
-        assert specs == []
-
-    def test_uses_defaults_for_missing_fields(self):
-        """Test that missing fields get default values."""
-        raw_specs = [
-            {
-                'title': 'Minimal',
-                # No description, nrows, ncols, cells
-            }
-        ]
-        orchestrator = FakeOrchestrator()
-
-        specs = parse_grid_specs(raw_specs, orchestrator)
-
-        assert len(specs) == 1
-        spec = specs[0]
-        assert spec.description == ''
-        assert spec.nrows == 3
-        assert spec.ncols == 3
-        assert spec.cells == ()

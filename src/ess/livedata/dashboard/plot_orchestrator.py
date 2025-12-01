@@ -8,6 +8,7 @@ Coordinates plot creation and management across multiple plot grids:
 - Plot grid lifecycle (create, remove)
 - Plot cell management (add, remove)
 - Event-driven plot creation via JobOrchestrator subscriptions
+- Grid template loading and parsing
 """
 
 from __future__ import annotations
@@ -15,14 +16,14 @@ from __future__ import annotations
 import copy
 import logging
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NewType, Protocol
 from uuid import UUID, uuid4
 
 import pydantic
 
-from ess.livedata.config.grid_templates import parse_grid_specs
+from ess.livedata.config.grid_templates import GridSpec
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 from .config_store import ConfigStore
@@ -197,6 +198,7 @@ class PlotOrchestrator:
         job_orchestrator: JobOrchestratorProtocol,
         data_service: DataService,
         config_store: ConfigStore | None = None,
+        raw_templates: Sequence[dict[str, Any]] = (),
     ) -> None:
         """
         Initialize the plot orchestrator.
@@ -211,6 +213,9 @@ class PlotOrchestrator:
             DataService for monitoring data arrival.
         config_store
             Optional store for persisting plot grid configurations across sessions.
+        raw_templates
+            Raw grid template dicts loaded from YAML files. These are parsed
+            during initialization and made available via get_available_templates().
         """
         self._plotting_controller = plotting_controller
         self._job_orchestrator = job_orchestrator
@@ -223,6 +228,9 @@ class PlotOrchestrator:
         self._cell_to_subscription: dict[CellId, SubscriptionId] = {}
         self._cell_state: dict[CellId, CellState] = {}
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
+
+        # Parse templates (requires plotter registry, so must be done here)
+        self._templates = self._parse_grid_specs(list(raw_templates))
 
         # Load persisted configurations
         self._load_from_store()
@@ -637,6 +645,89 @@ class PlotOrchestrator:
 
         return PlotCell(geometry=geometry, config=config)
 
+    def get_available_templates(self) -> list[GridSpec]:
+        """
+        Get available grid templates.
+
+        Templates are parsed from raw YAML during initialization and cached.
+        Use these to populate template selectors in the UI.
+
+        Returns
+        -------
+        :
+            List of validated GridSpec objects. Empty if no templates were
+            provided or all templates failed to parse.
+        """
+        return list(self._templates)
+
+    def _parse_grid_specs(self, raw_specs: list[dict[str, Any]]) -> list[GridSpec]:
+        """
+        Parse raw grid dicts into validated GridSpec objects.
+
+        Validates cells using the plotter registry. Cells with unknown plotters
+        are skipped (logged as warnings).
+
+        Parameters
+        ----------
+        raw_specs
+            List of raw grid dicts from template files or persisted configurations.
+
+        Returns
+        -------
+        :
+            List of validated GridSpec objects.
+        """
+        specs: list[GridSpec] = []
+
+        for raw in raw_specs:
+            spec = self._parse_single_spec(raw)
+            if spec is not None:
+                specs.append(spec)
+
+        self._logger.info('Parsed %d grid spec(s)', len(specs))
+        return specs
+
+    def _parse_single_spec(self, raw: dict[str, Any]) -> GridSpec | None:
+        """
+        Parse a single raw dict into a GridSpec.
+
+        Parameters
+        ----------
+        raw
+            Raw grid dict.
+
+        Returns
+        -------
+        :
+            GridSpec if parsing succeeded, None otherwise.
+        """
+        try:
+            # Use title as display name, falling back to 'Untitled'
+            name = raw.get('title', 'Untitled')
+
+            # Parse cells using orchestrator's validation
+            raw_cells = raw.get('cells', [])
+            cells = []
+            for cell_data in raw_cells:
+                parsed = self.parse_raw_cell(cell_data)
+                if parsed is not None:
+                    cells.append(parsed)
+
+            return GridSpec(
+                name=name,
+                title=raw.get('title', name),
+                description=raw.get('description', ''),
+                nrows=raw.get('nrows', 3),
+                ncols=raw.get('ncols', 3),
+                cells=tuple(cells),
+            )
+
+        except Exception:
+            self._logger.exception(
+                'Failed to parse grid spec: %s', raw.get('title', 'unknown')
+            )
+            return None
+
     def _serialize_grids(self) -> list[dict[str, Any]]:
         """
         Serialize all grids to list for persistence.
@@ -687,7 +778,7 @@ class PlotOrchestrator:
 
             # Parse stored configs as GridSpecs (same parser as templates)
             raw_grids = data.get('grids', [])
-            specs = parse_grid_specs(raw_grids, self)
+            specs = self._parse_grid_specs(raw_grids)
 
             # Apply each spec through the normal API
             for spec in specs:

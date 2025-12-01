@@ -71,13 +71,23 @@ def fake_job_service():
     return JobService()
 
 
-@pytest.fixture
-def plot_orchestrator(plotting_controller, job_orchestrator, fake_data_service):
-    """Create a PlotOrchestrator for testing."""
+def _make_plot_orchestrator(
+    plotting_controller, job_orchestrator, fake_data_service, raw_templates=()
+):
+    """Helper to create a PlotOrchestrator with optional templates."""
     return PlotOrchestrator(
         plotting_controller=plotting_controller,
         job_orchestrator=job_orchestrator,
         data_service=fake_data_service,
+        raw_templates=raw_templates,
+    )
+
+
+@pytest.fixture
+def plot_orchestrator(plotting_controller, job_orchestrator, fake_data_service):
+    """Create a PlotOrchestrator for testing (without templates)."""
+    return _make_plot_orchestrator(
+        plotting_controller, job_orchestrator, fake_data_service
     )
 
 
@@ -149,8 +159,31 @@ class TestShutdown:
 
 
 @pytest.fixture
+def sample_raw_template():
+    """Create a sample raw grid template dict for testing."""
+    return {
+        'title': 'Template Grid',
+        'description': '',
+        'nrows': 3,
+        'ncols': 4,
+        'cells': [
+            {
+                'geometry': {'row': 0, 'col': 0, 'row_span': 2, 'col_span': 2},
+                'config': {
+                    'workflow_id': 'test/ns/wf/1',
+                    'output_name': 'output',
+                    'source_names': ['source1'],
+                    'plot_name': 'lines',
+                    'params': {},
+                },
+            }
+        ],
+    }
+
+
+@pytest.fixture
 def sample_template():
-    """Create a sample grid template for testing."""
+    """Create a sample grid template for testing (parsed GridSpec)."""
     cell = PlotCell(
         geometry=CellGeometry(row=0, col=0, row_span=2, col_span=2),
         config=PlotConfig(
@@ -162,7 +195,7 @@ def sample_template():
         ),
     )
     return GridSpec(
-        name='Test Template',
+        name='Template Grid',
         title='Template Grid',
         description='',
         nrows=3,
@@ -178,22 +211,32 @@ class TestTemplateSupport:
         self, plot_orchestrator, workflow_registry
     ):
         """Test that template selector is hidden when no templates provided."""
+        # plot_orchestrator fixture has no templates
         manager = PlotGridManager(
             orchestrator=plot_orchestrator,
             workflow_registry=workflow_registry,
-            templates=[],
         )
 
         assert manager._template_selector.visible is False
 
     def test_template_selector_visible_when_templates_provided(
-        self, plot_orchestrator, workflow_registry, sample_template
+        self,
+        plotting_controller,
+        job_orchestrator,
+        fake_data_service,
+        workflow_registry,
+        sample_raw_template,
     ):
         """Test that template selector is visible when templates are provided."""
+        orchestrator = _make_plot_orchestrator(
+            plotting_controller,
+            job_orchestrator,
+            fake_data_service,
+            raw_templates=[sample_raw_template],
+        )
         manager = PlotGridManager(
-            orchestrator=plot_orchestrator,
+            orchestrator=orchestrator,
             workflow_registry=workflow_registry,
-            templates=[sample_template],
         )
 
         assert manager._template_selector.visible is True
@@ -201,30 +244,50 @@ class TestTemplateSupport:
         assert len(manager._template_selector.options) == 2
 
     def test_selecting_template_populates_fields(
-        self, plot_orchestrator, workflow_registry, sample_template
+        self,
+        plotting_controller,
+        job_orchestrator,
+        fake_data_service,
+        workflow_registry,
+        sample_raw_template,
     ):
         """Test that selecting a template populates the form fields."""
+        orchestrator = _make_plot_orchestrator(
+            plotting_controller,
+            job_orchestrator,
+            fake_data_service,
+            raw_templates=[sample_raw_template],
+        )
         manager = PlotGridManager(
-            orchestrator=plot_orchestrator,
+            orchestrator=orchestrator,
             workflow_registry=workflow_registry,
-            templates=[sample_template],
         )
 
-        # Simulate template selection
-        manager._template_selector.value = 'Test Template'
+        # Simulate template selection (template name is derived from title)
+        manager._template_selector.value = 'Template Grid'
 
         assert manager._title_input.value == 'Template Grid'
         assert manager._nrows_input.value == 3
         assert manager._ncols_input.value == 4
 
     def test_selecting_template_sets_minimum_rows_cols(
-        self, plot_orchestrator, workflow_registry, sample_template
+        self,
+        plotting_controller,
+        job_orchestrator,
+        fake_data_service,
+        workflow_registry,
+        sample_raw_template,
     ):
         """Test that selecting template sets min rows/cols based on cell geometry."""
+        orchestrator = _make_plot_orchestrator(
+            plotting_controller,
+            job_orchestrator,
+            fake_data_service,
+            raw_templates=[sample_raw_template],
+        )
         manager = PlotGridManager(
-            orchestrator=plot_orchestrator,
+            orchestrator=orchestrator,
             workflow_registry=workflow_registry,
-            templates=[sample_template],
         )
 
         # Before selection, min should be 2
@@ -232,24 +295,34 @@ class TestTemplateSupport:
         assert manager._ncols_input.start == 2
 
         # After selection, min should be computed from cells
-        manager._template_selector.value = 'Test Template'
+        manager._template_selector.value = 'Template Grid'
 
         # Cell at (0,0) with span (2,2) requires min 2 rows and 2 cols
         assert manager._nrows_input.start == 2
         assert manager._ncols_input.start == 2
 
     def test_deselecting_template_resets_fields(
-        self, plot_orchestrator, workflow_registry, sample_template
+        self,
+        plotting_controller,
+        job_orchestrator,
+        fake_data_service,
+        workflow_registry,
+        sample_raw_template,
     ):
         """Test that deselecting template resets to defaults."""
+        orchestrator = _make_plot_orchestrator(
+            plotting_controller,
+            job_orchestrator,
+            fake_data_service,
+            raw_templates=[sample_raw_template],
+        )
         manager = PlotGridManager(
-            orchestrator=plot_orchestrator,
+            orchestrator=orchestrator,
             workflow_registry=workflow_registry,
-            templates=[sample_template],
         )
 
         # Select then deselect
-        manager._template_selector.value = 'Test Template'
+        manager._template_selector.value = 'Template Grid'
         manager._template_selector.value = '-- No template --'
 
         assert manager._title_input.value == 'New Grid'

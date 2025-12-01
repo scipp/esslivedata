@@ -10,6 +10,7 @@ from typing import Any
 import scipp as sc
 
 from ess.livedata.config import instrument_registry
+from ess.livedata.config.grid_templates import load_raw_grid_templates
 from ess.livedata.config.instruments import get_config
 from ess.livedata.config.workflow_spec import ResultKey
 
@@ -146,11 +147,13 @@ class DashboardServices:
         """Set up PlotOrchestrator for managing plot grids."""
         # Must be called after _setup_workflow_management (needs job_orchestrator)
         plot_config_store = self._config_manager.get_store('plot_configs')
+        raw_templates = load_raw_grid_templates(self._instrument)
         self.plot_orchestrator = PlotOrchestrator(
             plotting_controller=self.plotting_controller,
             job_orchestrator=self.job_orchestrator,
             data_service=self.data_service,
             config_store=plot_config_store,
+            raw_templates=raw_templates,
         )
         self._logger.info("PlotOrchestrator setup complete")
 

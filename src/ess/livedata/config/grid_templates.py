@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-Grid specification loading and parsing utilities.
+Grid specification data model and raw template loading.
 
 GridSpec is the universal representation of a grid configuration without runtime
 state. It is used for:
@@ -10,16 +10,14 @@ state. It is used for:
    can select when creating a new grid.
 2. **Persistence**: Restoring grid configurations from the config store on reload.
 
-Templates are loaded as raw YAML at startup, then parsed into validated GridSpec
-objects when the dashboard services are initialized.
+This module provides:
 
-Usage::
+- :py:class:`GridSpec`: The data model for grid configurations
+- :py:func:`load_raw_grid_templates`: Load raw YAML templates from package resources
 
-    # At app startup (before services exist)
-    raw_templates = load_raw_grid_templates(instrument)
-
-    # After PlotOrchestrator is created
-    specs = parse_grid_specs(raw_templates, plot_orchestrator)
+Parsing raw templates into validated GridSpec objects is handled by
+:py:class:`~ess.livedata.dashboard.plot_orchestrator.PlotOrchestrator`, which has
+access to the plotter registry needed for validation.
 """
 
 from __future__ import annotations
@@ -32,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 if TYPE_CHECKING:
-    from ess.livedata.dashboard.plot_orchestrator import PlotCell, PlotOrchestrator
+    from ess.livedata.dashboard.plot_orchestrator import PlotCell
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +48,8 @@ class GridSpec:
     2. **Persistence**: Serialized grid configurations restored on reload.
 
     The ``cells`` field contains validated PlotCell objects. GridSpecs are
-    created by parsing raw data via :py:func:`parse_grid_specs`.
+    created by parsing raw data via
+    :py:meth:`~ess.livedata.dashboard.plot_orchestrator.PlotOrchestrator._parse_grid_specs`.
 
     When applied, a GridSpec is converted to runtime state by calling
     ``add_grid()`` followed by ``add_plot()`` for each cell.
@@ -82,9 +81,9 @@ def load_raw_grid_templates(instrument: str) -> list[dict[str, Any]]:
     """
     Load raw grid template data for an instrument from package resources.
 
-    This function loads YAML files without validation. Use
-    :py:func:`parse_grid_specs` to convert the raw data into validated
-    :py:class:`GridSpec` objects.
+    This function loads YAML files without validation. The raw data is parsed
+    into validated :py:class:`GridSpec` objects by
+    :py:class:`~ess.livedata.dashboard.plot_orchestrator.PlotOrchestrator`.
 
     Templates are YAML files in the instrument's ``grid_templates/`` subdirectory.
     Each file should contain a grid configuration matching the serialization format:
@@ -170,83 +169,4 @@ def _load_template_file(file_path: resources.abc.Traversable) -> dict[str, Any] 
 
     except Exception:
         logger.exception('Failed to load template file %s', file_path.name)
-        return None
-
-
-def parse_grid_specs(
-    raw_specs: list[dict[str, Any]],
-    orchestrator: PlotOrchestrator,
-) -> list[GridSpec]:
-    """
-    Parse raw grid dicts into validated GridSpec objects.
-
-    This function validates cells using the orchestrator's plotter registry.
-    Cells with unknown plotters are skipped (logged as warnings).
-
-    Parameters
-    ----------
-    raw_specs
-        List of raw grid dicts from :py:func:`load_raw_grid_templates` or
-        from persisted configurations.
-    orchestrator
-        PlotOrchestrator used to validate and parse cell configurations.
-
-    Returns
-    -------
-    :
-        List of validated GridSpec objects.
-    """
-    specs: list[GridSpec] = []
-
-    for raw in raw_specs:
-        spec = _parse_single_spec(raw, orchestrator)
-        if spec is not None:
-            specs.append(spec)
-
-    logger.info('Parsed %d grid spec(s)', len(specs))
-    return specs
-
-
-def _parse_single_spec(
-    raw: dict[str, Any],
-    orchestrator: PlotOrchestrator,
-) -> GridSpec | None:
-    """
-    Parse a single raw dict into a GridSpec.
-
-    Parameters
-    ----------
-    raw
-        Raw grid dict.
-    orchestrator
-        PlotOrchestrator used to validate cell configurations.
-
-    Returns
-    -------
-    :
-        GridSpec if parsing succeeded, None otherwise.
-    """
-    try:
-        # Use title as display name, falling back to 'Untitled'
-        name = raw.get('title', 'Untitled')
-
-        # Parse cells using orchestrator's validation
-        raw_cells = raw.get('cells', [])
-        cells = []
-        for cell_data in raw_cells:
-            parsed = orchestrator.parse_raw_cell(cell_data)
-            if parsed is not None:
-                cells.append(parsed)
-
-        return GridSpec(
-            name=name,
-            title=raw.get('title', name),
-            description=raw.get('description', ''),
-            nrows=raw.get('nrows', 3),
-            ncols=raw.get('ncols', 3),
-            cells=tuple(cells),
-        )
-
-    except Exception:
-        logger.exception('Failed to parse grid spec: %s', raw.get('title', 'unknown'))
         return None
