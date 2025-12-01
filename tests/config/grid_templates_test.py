@@ -189,9 +189,8 @@ class TestLoadRawGridTemplates:
         raw_templates = load_raw_grid_templates('dummy')
 
         assert len(raw_templates) >= 1
-        # Check the detector_overview template we created
         titles = [t.get('title') for t in raw_templates]
-        assert 'Detector Overview' in titles
+        assert 'Detectors' in titles
 
     def test_returns_empty_for_unknown_instrument(self):
         """Test that unknown instruments return empty list."""
@@ -210,10 +209,7 @@ class TestLoadRawGridTemplates:
         """Test that loaded raw templates have the expected structure."""
         raw_templates = load_raw_grid_templates('dummy')
 
-        # Find the detector overview template
-        raw = next(
-            (t for t in raw_templates if t.get('title') == 'Detector Overview'), None
-        )
+        raw = next((t for t in raw_templates if t.get('title') == 'Detectors'), None)
         assert raw is not None
 
         # Check structure

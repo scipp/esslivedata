@@ -1,24 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""
-Grid specification data model and raw template loading.
-
-GridSpec is the universal representation of a grid configuration without runtime
-state. It is used for:
-
-1. **Templates**: Pre-defined configurations shipped with the package that users
-   can select when creating a new grid.
-2. **Persistence**: Restoring grid configurations from the config store on reload.
-
-This module provides:
-
-- :py:class:`GridSpec`: The data model for grid configurations
-- :py:func:`load_raw_grid_templates`: Load raw YAML templates from package resources
-
-Parsing raw templates into validated GridSpec objects is handled by
-:py:class:`~ess.livedata.dashboard.plot_orchestrator.PlotOrchestrator`, which has
-access to the plotter registry needed for validation.
-"""
+"""Grid specification data model and raw template loading."""
 
 from __future__ import annotations
 
@@ -38,21 +20,9 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class GridSpec:
     """
-    A validated grid specification ready for use.
+    Grid configuration without runtime state.
 
-    GridSpec is the universal representation of a grid configuration without
-    runtime state (no CellIds). It serves two purposes:
-
-    1. **Templates**: Pre-defined configurations loaded from YAML files that
-       users can select when creating a new grid.
-    2. **Persistence**: Serialized grid configurations restored on reload.
-
-    The ``cells`` field contains validated PlotCell objects. GridSpecs are
-    created by parsing raw data via
-    :py:meth:`~ess.livedata.dashboard.plot_orchestrator.PlotOrchestrator._parse_grid_specs`.
-
-    When applied, a GridSpec is converted to runtime state by calling
-    ``add_grid()`` followed by ``add_plot()`` for each cell.
+    Used for pre-defined templates and for persisting configurations across sessions.
     """
 
     name: str
@@ -79,28 +49,10 @@ class GridSpec:
 
 def load_raw_grid_templates(instrument: str) -> list[dict[str, Any]]:
     """
-    Load raw grid template data for an instrument from package resources.
+    Load raw grid template YAML files for an instrument.
 
-    This function loads YAML files without validation. The raw data is parsed
-    into validated :py:class:`GridSpec` objects by
-    :py:class:`~ess.livedata.dashboard.plot_orchestrator.PlotOrchestrator`.
-
-    Templates are YAML files in the instrument's ``grid_templates/`` subdirectory.
-    Each file should contain a grid configuration matching the serialization format:
-
-    .. code-block:: yaml
-
-        title: Monitor Overview
-        nrows: 2
-        ncols: 3
-        cells:
-          - geometry: {row: 0, col: 0, row_span: 1, col_span: 2}
-            config:
-              workflow_id: dummy/monitor_data/monitor_histogram/1
-              output_name: histogram
-              source_names: [monitor1]
-              plot_name: lines
-              params: {}
+    Templates are loaded from the instrument's ``grid_templates/`` subdirectory
+    without validation.
 
     Parameters
     ----------
@@ -110,8 +62,7 @@ def load_raw_grid_templates(instrument: str) -> list[dict[str, Any]]:
     Returns
     -------
     :
-        List of raw template dicts. Empty if the instrument has no templates
-        or the grid_templates directory doesn't exist.
+        List of raw template dicts. Empty if no templates exist.
     """
     templates: list[dict[str, Any]] = []
 
@@ -144,19 +95,7 @@ def load_raw_grid_templates(instrument: str) -> list[dict[str, Any]]:
 
 
 def _load_template_file(file_path: resources.abc.Traversable) -> dict[str, Any] | None:
-    """
-    Load a single template file as raw dict.
-
-    Parameters
-    ----------
-    file_path
-        Path to the YAML template file.
-
-    Returns
-    -------
-    :
-        Raw template dict if loading succeeded, None otherwise.
-    """
+    """Load a single YAML template file, returning None on failure."""
     try:
         with file_path.open() as f:
             config = yaml.safe_load(f)
