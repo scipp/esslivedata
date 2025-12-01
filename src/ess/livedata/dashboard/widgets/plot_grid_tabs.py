@@ -15,7 +15,7 @@ from typing import Any
 import holoviews as hv
 import panel as pn
 
-from ess.livedata.config.grid_templates import GridTemplate
+from ess.livedata.config.grid_templates import GridSpec
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
 from ..plot_orchestrator import (
@@ -63,7 +63,7 @@ class PlotGridTabs:
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         plotting_controller,
         job_status_widget,
-        grid_templates: Sequence[GridTemplate] = (),
+        grid_templates: Sequence[GridSpec] = (),
     ) -> None:
         self._orchestrator = plot_orchestrator
         self._workflow_registry = dict(workflow_registry)

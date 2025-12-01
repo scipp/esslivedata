@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 
 import panel as pn
 
-from ...config.grid_templates import GridTemplate
+from ...config.grid_templates import GridSpec
 from ...config.workflow_spec import WorkflowId, WorkflowSpec
 from ..plot_orchestrator import (
     GridId,
@@ -60,12 +60,12 @@ class PlotGridManager:
         self,
         orchestrator: PlotOrchestrator,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
-        templates: Sequence[GridTemplate] = (),
+        templates: Sequence[GridSpec] = (),
     ) -> None:
         self._orchestrator = orchestrator
         self._workflow_registry = workflow_registry
         self._templates = {t.name: t for t in templates}
-        self._selected_template: GridTemplate | None = None
+        self._selected_template: GridSpec | None = None
 
         # Template selector (only shown if templates available)
         template_options = [_NO_TEMPLATE, *self._templates.keys()]
@@ -166,7 +166,7 @@ class PlotGridManager:
         self,
         nrows: int,
         ncols: int,
-        template: GridTemplate | None,
+        template: GridSpec | None,
     ) -> pn.Column:
         """
         Create a visual preview of the grid layout.

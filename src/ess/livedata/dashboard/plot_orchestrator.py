@@ -22,6 +22,7 @@ from uuid import UUID, uuid4
 
 import pydantic
 
+from ess.livedata.config.grid_templates import parse_grid_specs
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 from .config_store import ConfigStore
@@ -673,50 +674,6 @@ class PlotOrchestrator:
             for grid in self._grids.values()
         ]
 
-    def _deserialize_grids(self, data: list[dict[str, Any]]) -> None:
-        """
-        Deserialize grids from list and restore state.
-
-        This reconstructs the grid configurations and subscribes to workflows
-        to recreate cell state when data becomes available. Fresh UUIDs are
-        generated for grids and cells since they are runtime identity handles.
-
-        Parameters
-        ----------
-        data
-            List of grid configurations.
-        """
-        for grid_data in data:
-            grid_id = GridId(uuid4())
-
-            # Recreate the grid
-            grid = PlotGridConfig(
-                title=grid_data['title'],
-                nrows=grid_data['nrows'],
-                ncols=grid_data['ncols'],
-            )
-
-            # Store the grid first (needed by _subscribe_and_setup)
-            self._grids[grid_id] = grid
-
-            # Recreate cells using parse_raw_cell for validation
-            for cell_data in grid_data.get('cells', []):
-                cell = self.parse_raw_cell(cell_data)
-                if cell is None:
-                    continue
-
-                cell_id = CellId(uuid4())
-                grid.cells[cell_id] = cell
-
-                # Set up tracking mappings
-                self._cell_to_grid[cell_id] = grid_id
-
-                # Subscribe to workflow availability
-                self._subscribe_and_setup(grid_id, cell_id, cell.config.workflow_id)
-
-            # Notify subscribers of grid creation
-            self._notify_grid_created(grid_id)
-
     def _load_from_store(self) -> None:
         """Load plot grid configurations from config store."""
         if self._config_store is None:
@@ -728,9 +685,17 @@ class PlotOrchestrator:
                 self._logger.debug('No persisted plot grids found in store')
                 return
 
-            grids = data.get('grids', [])
-            self._deserialize_grids(grids)
-            self._logger.info('Loaded %d plot grids from store', len(self._grids))
+            # Parse stored configs as GridSpecs (same parser as templates)
+            raw_grids = data.get('grids', [])
+            specs = parse_grid_specs(raw_grids, self)
+
+            # Apply each spec through the normal API
+            for spec in specs:
+                grid_id = self.add_grid(spec.title, spec.nrows, spec.ncols)
+                for cell in spec.cells:
+                    self.add_plot(grid_id, cell)
+
+            self._logger.info('Loaded %d plot grids from store', len(specs))
         except Exception:
             self._logger.exception('Failed to load plot grids from store')
 

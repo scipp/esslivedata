@@ -2,17 +2,30 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import holoviews as hv
 import panel as pn
+import pydantic
 import pytest
 
-from ess.livedata.config.grid_templates import GridTemplate
+from ess.livedata.config.grid_templates import GridSpec
+from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
-from ess.livedata.dashboard.plot_orchestrator import PlotOrchestrator
+from ess.livedata.dashboard.plot_orchestrator import (
+    CellGeometry,
+    PlotCell,
+    PlotConfig,
+    PlotOrchestrator,
+)
 from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.stream_manager import StreamManager
 from ess.livedata.dashboard.widgets.plot_grid_manager import PlotGridManager
 
 hv.extension('bokeh')
+
+
+class EmptyParams(pydantic.BaseModel):
+    """Empty params model for testing."""
+
+    pass
 
 
 @pytest.fixture
@@ -138,25 +151,23 @@ class TestShutdown:
 @pytest.fixture
 def sample_template():
     """Create a sample grid template for testing."""
-    return GridTemplate(
+    cell = PlotCell(
+        geometry=CellGeometry(row=0, col=0, row_span=2, col_span=2),
+        config=PlotConfig(
+            workflow_id=WorkflowId.from_string('test/ns/wf/1'),
+            output_name='output',
+            source_names=['source1'],
+            plot_name='lines',
+            params=EmptyParams(),
+        ),
+    )
+    return GridSpec(
         name='Test Template',
-        config={
-            'title': 'Template Grid',
-            'nrows': 3,
-            'ncols': 4,
-            'cells': [
-                {
-                    'geometry': {'row': 0, 'col': 0, 'row_span': 2, 'col_span': 2},
-                    'config': {
-                        'workflow_id': 'test/ns/wf/1',
-                        'output_name': 'output',
-                        'source_names': ['source1'],
-                        'plot_name': 'lines',
-                        'params': {},
-                    },
-                },
-            ],
-        },
+        title='Template Grid',
+        description='',
+        nrows=3,
+        ncols=4,
+        cells=(cell,),
     )
 
 
