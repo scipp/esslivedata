@@ -81,7 +81,13 @@ class PlotGridManager:
         self._add_button.on_click(self._on_add_grid)
 
         # Grid preview container (always shown)
-        self._grid_preview = pn.Column(sizing_mode='fixed', margin=(0, 0, 0, 20))
+        # Fixed dimensions prevent layout jumps when content is replaced
+        self._grid_preview = pn.Column(
+            sizing_mode='fixed',
+            width=424,  # preview_width (400) + padding (24)
+            height=264,  # preview_height (240) + padding (24)
+            margin=(0, 0, 0, 20),
+        )
 
         # Grid list container
         # IMPORTANT: Use stretch_both (not stretch_width) to ensure consistent
@@ -136,13 +142,13 @@ class PlotGridManager:
 
     def _update_preview(self) -> None:
         """Update the grid preview based on current state."""
-        self._grid_preview.clear()
         preview = self._create_grid_preview(
             nrows=self._nrows_input.value,
             ncols=self._ncols_input.value,
             template=self._selected_template,
         )
-        self._grid_preview.append(preview)
+        # Atomic replacement avoids layout jumps from separate clear+append
+        self._grid_preview.objects = [preview]
 
     def _create_grid_preview(
         self,
@@ -262,26 +268,28 @@ class PlotGridManager:
     def _on_template_selected(self, event) -> None:
         """Handle template selection change."""
         template_name = event.new
-        if template_name == _NO_TEMPLATE:
-            self._selected_template = None
-            # Reset to defaults
-            self._title_input.value = 'New Grid'
-            self._nrows_input.value = 3
-            self._ncols_input.value = 3
-            self._nrows_input.start = 2
-            self._ncols_input.start = 2
-        else:
-            template = self._templates[template_name]
-            self._selected_template = template
-            # Populate widgets with template values
-            self._title_input.value = template.title
-            self._nrows_input.value = template.nrows
-            self._ncols_input.value = template.ncols
-            # Set minimum to prevent shrinking below what cells require
-            self._nrows_input.start = template.min_rows
-            self._ncols_input.start = template.min_cols
+        # Batch widget updates to reduce render cycles
+        with pn.io.hold():
+            if template_name == _NO_TEMPLATE:
+                self._selected_template = None
+                # Reset to defaults
+                self._title_input.value = 'New Grid'
+                self._nrows_input.value = 3
+                self._ncols_input.value = 3
+                self._nrows_input.start = 2
+                self._ncols_input.start = 2
+            else:
+                template = self._templates[template_name]
+                self._selected_template = template
+                # Populate widgets with template values
+                self._title_input.value = template.title
+                self._nrows_input.value = template.nrows
+                self._ncols_input.value = template.ncols
+                # Set minimum to prevent shrinking below what cells require
+                self._nrows_input.start = template.min_rows
+                self._ncols_input.start = template.min_cols
 
-        self._update_preview()
+            self._update_preview()
 
     def _on_add_grid(self, event) -> None:
         """Handle add grid button click."""
@@ -297,14 +305,16 @@ class PlotGridManager:
         )
 
         # Reset inputs and template selection
-        self._template_selector.value = _NO_TEMPLATE
-        self._selected_template = None
-        self._title_input.value = 'New Grid'
-        self._nrows_input.value = 3
-        self._ncols_input.value = 3
-        self._nrows_input.start = 2
-        self._ncols_input.start = 2
-        self._update_preview()
+        # Batch widget updates to reduce render cycles
+        with pn.io.hold():
+            self._template_selector.value = _NO_TEMPLATE
+            self._selected_template = None
+            self._title_input.value = 'New Grid'
+            self._nrows_input.value = 3
+            self._ncols_input.value = 3
+            self._nrows_input.start = 2
+            self._ncols_input.start = 2
+            self._update_preview()
 
     def _on_grid_created(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Handle grid creation from orchestrator."""
