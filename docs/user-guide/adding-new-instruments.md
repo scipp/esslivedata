@@ -406,6 +406,89 @@ def setup_factories(instrument: Instrument) -> None:
         )
 ```
 
+## Grid Templates (Optional)
+
+Grid templates are pre-configured plot grid layouts that users can select when creating a new grid in the dashboard. They provide a convenient starting point with commonly used workflow configurations.
+
+### Adding Grid Templates
+
+1. Create a `grid_templates/` subdirectory in your instrument package:
+
+```
+src/ess/livedata/config/instruments/<instrument>/
+├── __init__.py
+├── specs.py
+├── streams.py
+├── factories.py
+└── grid_templates/           # Optional
+    └── detector_overview.yaml
+```
+
+2. Create YAML template files with this structure:
+
+```yaml
+title: Detector Overview
+description: Side-by-side view of detectors
+nrows: 2
+ncols: 2
+cells:
+  - geometry:
+      row: 0
+      col: 0
+      row_span: 2
+      col_span: 1
+    config:
+      workflow_id: my_instrument/detector_data/panel_a_xy/1
+      output_name: image
+      source_names: [panel_a]
+      plot_name: image
+      params: {}
+  - geometry:
+      row: 0
+      col: 1
+      row_span: 2
+      col_span: 1
+    config:
+      workflow_id: my_instrument/detector_data/panel_b_xy/1
+      output_name: image
+      source_names: [panel_b]
+      plot_name: image
+      params: {}
+```
+
+3. Add a package-data entry in `pyproject.toml`:
+
+```toml
+[tool.setuptools.package-data]
+"ess.livedata.config.instruments.<instrument>" = ["grid_templates/*.yaml"]
+```
+
+### Template Format Reference
+
+| Field | Description |
+|-------|-------------|
+| `title` | Display name shown in the template dropdown |
+| `description` | Optional description of the template |
+| `nrows` | Default number of rows (user can increase) |
+| `ncols` | Default number of columns (user can increase) |
+| `cells` | List of pre-configured cells |
+
+Each cell contains:
+
+| Field | Description |
+|-------|-------------|
+| `geometry.row` | Starting row (0-indexed) |
+| `geometry.col` | Starting column (0-indexed) |
+| `geometry.row_span` | Number of rows the cell spans |
+| `geometry.col_span` | Number of columns the cell spans |
+| `config.workflow_id` | Full workflow ID (`instrument/namespace/name/version`) |
+| `config.output_name` | Output name from the workflow to plot |
+| `config.source_names` | List of source names for the workflow |
+| `config.plot_name` | Name of the plotter to use (e.g., `image`, `lines`) |
+| `config.params` | Plotter-specific parameters (usually `{}`) |
+
+Templates are loaded once at dashboard startup. When a user selects a template, they can adjust the grid size before creating the grid. The minimum grid size is determined by the cells in the template.
+
 ## Reference Implementations
 
 For more complex examples, see existing instrument configurations in `src/ess/livedata/config/instruments/`.
