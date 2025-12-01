@@ -410,82 +410,34 @@ def setup_factories(instrument: Instrument) -> None:
 
 Grid templates are pre-configured plot grid layouts that users can select when creating a new grid in the dashboard. They provide a convenient starting point with commonly used workflow configurations.
 
-### Adding Grid Templates
+### Creating Grid Templates
 
-1. Create a `grid_templates/` subdirectory in your instrument package:
+The easiest way to create a grid template is to design it interactively in the dashboard:
 
-```
-src/ess/livedata/config/instruments/<instrument>/
-├── __init__.py
-├── specs.py
-├── streams.py
-├── factories.py
-└── grid_templates/           # Optional
-    └── detector_overview.yaml
-```
+1. **Create and configure a grid in the UI**: Start the dashboard for your instrument, create a new grid, and configure it with the desired layout and workflow subscriptions.
 
-2. Create YAML template files with this structure:
+2. **Extract the grid configuration**: The dashboard persists grid configurations to `~/.config/esslivedata/<instrument>/plot_configs.yaml`. Open this file and find the grid you created under the `plot_grids.grids` key.
 
-```yaml
-title: Detector Overview
-description: Side-by-side view of detectors
-nrows: 2
-ncols: 2
-cells:
-  - geometry:
-      row: 0
-      col: 0
-      row_span: 2
-      col_span: 1
-    config:
-      workflow_id: my_instrument/detector_data/panel_a_xy/1
-      output_name: image
-      source_names: [panel_a]
-      plot_name: image
-      params: {}
-  - geometry:
-      row: 0
-      col: 1
-      row_span: 2
-      col_span: 1
-    config:
-      workflow_id: my_instrument/detector_data/panel_b_xy/1
-      output_name: image
-      source_names: [panel_b]
-      plot_name: image
-      params: {}
-```
+3. **Create the template file**: Copy the grid configuration to a new file in your instrument's `grid_templates/` directory:
 
-3. Add a package-data entry in `pyproject.toml`:
+   ```
+   src/ess/livedata/config/instruments/<instrument>/
+   ├── __init__.py
+   ├── specs.py
+   ├── streams.py
+   ├── factories.py
+   └── grid_templates/           # Optional
+       └── detector_overview.yaml
+   ```
 
-```toml
-[tool.setuptools.package-data]
-"ess.livedata.config.instruments.<instrument>" = ["grid_templates/*.yaml"]
-```
+4. **Add package-data entry** in `pyproject.toml`:
 
-### Template Format Reference
+   ```toml
+   [tool.setuptools.package-data]
+   "ess.livedata.config.instruments.<instrument>" = ["grid_templates/*.yaml"]
+   ```
 
-| Field | Description |
-|-------|-------------|
-| `title` | Display name shown in the template dropdown |
-| `description` | Optional description of the template |
-| `nrows` | Default number of rows (user can increase) |
-| `ncols` | Default number of columns (user can increase) |
-| `cells` | List of pre-configured cells |
-
-Each cell contains:
-
-| Field | Description |
-|-------|-------------|
-| `geometry.row` | Starting row (0-indexed) |
-| `geometry.col` | Starting column (0-indexed) |
-| `geometry.row_span` | Number of rows the cell spans |
-| `geometry.col_span` | Number of columns the cell spans |
-| `config.workflow_id` | Full workflow ID (`instrument/namespace/name/version`) |
-| `config.output_name` | Output name from the workflow to plot |
-| `config.source_names` | List of source names for the workflow |
-| `config.plot_name` | Name of the plotter to use (e.g., `image`, `lines`) |
-| `config.params` | Plotter-specific parameters (usually `{}`) |
+Templates use the same format as persisted grids. You can optionally add a `description` field that will be shown in the template selector.
 
 Templates are loaded once at dashboard startup. When a user selects a template, they can adjust the grid size before creating the grid. The minimum grid size is determined by the cells in the template.
 
