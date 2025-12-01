@@ -65,42 +65,41 @@ class PlotAspectType(str, enum.Enum):
     free = 'Free'
 
 
+class StretchMode(str, enum.Enum):
+    """Stretch mode for responsive plots with fixed aspect.
+
+    When using a fixed aspect ratio, choose how the plot fills its container:
+    - 'Fill width': Plot fills container width, height determined by aspect ratio.
+      Use when container is more portrait-ish than the plot.
+    - 'Fill height': Plot fills container height, width determined by aspect ratio.
+      Use when container is more landscape-ish than the plot.
+    """
+
+    width = 'Fill width'
+    height = 'Fill height'
+
+
 class PlotAspect(pydantic.BaseModel):
     aspect_type: PlotAspectType = pydantic.Field(
         default=PlotAspectType.square,
-        description="Aspect type to use if custom is disabled.",
+        description="Aspect type for the plot.",
         title="Aspect Type",
     )
     ratio: float = pydantic.Field(
         default=1.0,
-        description="Aspect ratio (width/height) to use if custom is enabled.",
+        description="Aspect ratio (width/height) for 'Fixed plot/data aspect ratio'.",
         title="Aspect Ratio",
         ge=0.1,
         le=10.0,
     )
-    fix_width: bool = pydantic.Field(
-        default=False,
-        description="Whether to fix the width of the plot.",
-        title="Fix Width",
-    )
-    width: int = pydantic.Field(
-        default=400,
-        description="Width of the plot in pixels.",
-        title="Width",
-        ge=100,
-        le=2000,
-    )
-    fix_height: bool = pydantic.Field(
-        default=False,
-        description="Whether to fix the height of the plot.",
-        title="Fix Height",
-    )
-    height: int = pydantic.Field(
-        default=400,
-        description="Height of the plot in pixels.",
-        title="Height",
-        ge=100,
-        le=2000,
+    stretch_mode: StretchMode = pydantic.Field(
+        default=StretchMode.width,
+        description=(
+            "How the plot fills its container when using fixed aspect. "
+            "'Fill width' for tall containers, 'Fill height' for wide containers. "
+            "Ignored when aspect type is 'Free'."
+        ),
+        title="Stretch Mode",
     )
 
 
