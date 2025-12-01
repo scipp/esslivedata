@@ -8,11 +8,12 @@ Provides UI for adding and removing plot grids through PlotOrchestrator.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import panel as pn
 
 from ...config.grid_templates import GridTemplate
+from ...config.workflow_spec import WorkflowId, WorkflowSpec
 from ..plot_orchestrator import GridId, PlotGridConfig, PlotOrchestrator, SubscriptionId
 
 # Sentinel value for "no template selected" in the dropdown
@@ -41,6 +42,9 @@ class PlotGridManager:
     ----------
     orchestrator
         The orchestrator managing plot grid configurations.
+    workflow_registry
+        Registry of available workflows and their specifications. Used to
+        look up workflow titles for display in the grid preview.
     templates
         Pre-loaded grid templates to offer in the UI. Templates are loaded
         once at app startup and shared across all browser sessions.
@@ -49,9 +53,11 @@ class PlotGridManager:
     def __init__(
         self,
         orchestrator: PlotOrchestrator,
+        workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         templates: Sequence[GridTemplate] = (),
     ) -> None:
         self._orchestrator = orchestrator
+        self._workflow_registry = workflow_registry
         self._templates = {t.name: t for t in templates}
         self._selected_template: GridTemplate | None = None
 
@@ -217,22 +223,30 @@ class PlotGridManager:
             if row_end > nrows or col_end > ncols:
                 continue  # Cell doesn't fit, skip it
 
-            # Extract workflow name from workflow_id (last part before version)
-            workflow_id = config.get('workflow_id', '')
-            parts = workflow_id.split('/')
-            if len(parts) >= 3:
-                workflow_name = parts[2].replace('_', ' ').title()
+            # Look up workflow title from registry
+            workflow_id_str = config.get('workflow_id', '')
+            try:
+                workflow_id = WorkflowId.from_string(workflow_id_str)
+                workflow_spec = self._workflow_registry.get(workflow_id)
+            except ValueError:
+                workflow_spec = None
+            if workflow_spec is not None:
+                workflow_title = workflow_spec.title
             else:
-                workflow_name = workflow_id
+                workflow_title = workflow_id_str
 
-            # Truncate long names
-            if len(workflow_name) > 12:
-                workflow_name = workflow_name[:9] + '...'
+            # Truncate long titles
+            if len(workflow_title) > 20:
+                workflow_title = workflow_title[:17] + '...'
+
+            output_name = config.get('output_name', '')
 
             color = _CELL_COLORS[i % len(_CELL_COLORS)]
 
             label_html = (
-                f'<div style="font-size: 10px; font-weight: 500;">{workflow_name}</div>'
+                f'<div style="font-size: 10px; font-weight: 500;">'
+                f'{workflow_title}</div>'
+                f'<div style="font-size: 9px; color: #666;">{output_name}</div>'
             )
             grid[row_start:row_end, col_start:col_end] = pn.pane.HTML(
                 label_html,
@@ -241,6 +255,7 @@ class PlotGridManager:
                     'border': '2px solid #1976d2',
                     'border-radius': '4px',
                     'display': 'flex',
+                    'flex-direction': 'column',
                     'align-items': 'center',
                     'justify-content': 'center',
                     'text-align': 'center',

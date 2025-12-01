@@ -109,7 +109,9 @@ class PlotGridTabs:
 
         # Add Manage tab (always second)
         self._grid_manager = PlotGridManager(
-            orchestrator=plot_orchestrator, templates=grid_templates
+            orchestrator=plot_orchestrator,
+            workflow_registry=workflow_registry,
+            templates=grid_templates,
         )
         self._tabs.append(('Manage Plots', self._grid_manager.panel))
 
