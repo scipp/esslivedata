@@ -226,15 +226,9 @@ class PlotOrchestrator:
         # Load persisted configurations
         self._load_from_store()
 
-    def add_grid(
-        self,
-        title: str,
-        nrows: int,
-        ncols: int,
-        template_cells: list[dict[str, Any]] | None = None,
-    ) -> GridId:
+    def add_grid(self, title: str, nrows: int, ncols: int) -> GridId:
         """
-        Add a new plot grid, optionally with pre-configured cells from a template.
+        Add a new plot grid.
 
         Parameters
         ----------
@@ -244,10 +238,6 @@ class PlotOrchestrator:
             Number of rows in the grid.
         ncols
             Number of columns in the grid.
-        template_cells
-            Optional list of cell configurations from a grid template.
-            Each cell dict should match the serialization format with
-            'geometry' and 'config' keys.
 
         Returns
         -------
@@ -257,20 +247,9 @@ class PlotOrchestrator:
         grid_id = GridId(uuid4())
         grid = PlotGridConfig(title=title, nrows=nrows, ncols=ncols)
         self._grids[grid_id] = grid
-
-        # Add cells from template if provided
-        if template_cells:
-            for cell_data in template_cells:
-                self._add_cell_from_data(grid_id, cell_data)
-
         self._persist_to_store()
         self._logger.info(
-            'Added plot grid %s (%s) with size %dx%d and %d cell(s)',
-            grid_id,
-            title,
-            nrows,
-            ncols,
-            len(template_cells) if template_cells else 0,
+            'Added plot grid %s (%s) with size %dx%d', grid_id, title, nrows, ncols
         )
         self._notify_grid_created(grid_id)
         return grid_id
@@ -614,26 +593,24 @@ class PlotOrchestrator:
             )
             return spec.params()
 
-    def _add_cell_from_data(
-        self, grid_id: GridId, cell_data: dict[str, Any]
-    ) -> CellId | None:
+    def parse_raw_cell(self, cell_data: dict[str, Any]) -> PlotCell | None:
         """
-        Add a cell to a grid from serialized cell data.
+        Parse a raw cell dict into a typed PlotCell.
 
-        This is used by both template instantiation and persistence restoration.
-        Cells with unknown plotters are silently skipped.
+        Use this to convert cells from templates or persisted configurations
+        into typed objects that can be passed to :py:meth:`add_grid`.
 
         Parameters
         ----------
-        grid_id
-            ID of the grid to add the cell to.
         cell_data
             Cell configuration dict with 'geometry' and 'config' keys.
+            The config must contain: workflow_id, source_names, plot_name.
+            Optional: output_name, params.
 
         Returns
         -------
         :
-            ID of the added cell, or None if skipped (unknown plotter).
+            Parsed PlotCell, or None if the plotter is unknown (cell skipped).
         """
         config_data = cell_data['config']
         plot_name = config_data['plot_name']
@@ -643,7 +620,12 @@ class PlotOrchestrator:
         if params is None:
             return None
 
-        geometry = CellGeometry(**cell_data['geometry'])
+        geometry = CellGeometry(
+            row=cell_data['geometry']['row'],
+            col=cell_data['geometry']['col'],
+            row_span=cell_data['geometry']['row_span'],
+            col_span=cell_data['geometry']['col_span'],
+        )
         config = PlotConfig(
             workflow_id=WorkflowId.from_string(config_data['workflow_id']),
             output_name=config_data.get('output_name'),
@@ -652,7 +634,7 @@ class PlotOrchestrator:
             params=params,
         )
 
-        return self.add_plot(grid_id, PlotCell(geometry=geometry, config=config))
+        return PlotCell(geometry=geometry, config=config)
 
     def _serialize_grids(self) -> list[dict[str, Any]]:
         """
@@ -714,12 +696,23 @@ class PlotOrchestrator:
                 ncols=grid_data['ncols'],
             )
 
-            # Store the grid first (needed by _add_cell_from_data)
+            # Store the grid first (needed by _subscribe_and_setup)
             self._grids[grid_id] = grid
 
-            # Recreate cells using shared helper
+            # Recreate cells using parse_raw_cell for validation
             for cell_data in grid_data.get('cells', []):
-                self._add_cell_from_data(grid_id, cell_data)
+                cell = self.parse_raw_cell(cell_data)
+                if cell is None:
+                    continue
+
+                cell_id = CellId(uuid4())
+                grid.cells[cell_id] = cell
+
+                # Set up tracking mappings
+                self._cell_to_grid[cell_id] = grid_id
+
+                # Subscribe to workflow availability
+                self._subscribe_and_setup(grid_id, cell_id, cell.config.workflow_id)
 
             # Notify subscribers of grid creation
             self._notify_grid_created(grid_id)

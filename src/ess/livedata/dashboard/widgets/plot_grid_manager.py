@@ -14,7 +14,13 @@ import panel as pn
 
 from ...config.grid_templates import GridTemplate
 from ...config.workflow_spec import WorkflowId, WorkflowSpec
-from ..plot_orchestrator import GridId, PlotGridConfig, PlotOrchestrator, SubscriptionId
+from ..plot_orchestrator import (
+    GridId,
+    PlotCell,
+    PlotGridConfig,
+    PlotOrchestrator,
+    SubscriptionId,
+)
 
 # Sentinel value for "no template selected" in the dropdown
 _NO_TEMPLATE = "-- No template --"
@@ -182,7 +188,7 @@ class PlotGridManager:
         :
             Panel Column containing the preview.
         """
-        cells = template.cells if template else []
+        cells: Sequence[PlotCell] = template.cells if template else ()
 
         # Fixed preview size - cells scale to fit
         preview_width = 400
@@ -211,35 +217,29 @@ class PlotGridManager:
 
         # Overlay template cells if available
         for i, cell in enumerate(cells):
-            geom = cell['geometry']
-            config = cell['config']
-
             # Check if cell fits in current grid size
-            row_start = geom['row']
-            row_end = row_start + geom['row_span']
-            col_start = geom['col']
-            col_end = col_start + geom['col_span']
+            geometry = cell.geometry
+            row_start = geometry.row
+            row_end = row_start + geometry.row_span
+            col_start = geometry.col
+            col_end = col_start + geometry.col_span
 
             if row_end > nrows or col_end > ncols:
                 continue  # Cell doesn't fit, skip it
 
             # Look up workflow title from registry
-            workflow_id_str = config.get('workflow_id', '')
-            try:
-                workflow_id = WorkflowId.from_string(workflow_id_str)
-                workflow_spec = self._workflow_registry.get(workflow_id)
-            except ValueError:
-                workflow_spec = None
+            config = cell.config
+            workflow_spec = self._workflow_registry.get(config.workflow_id)
             if workflow_spec is not None:
                 workflow_title = workflow_spec.title
             else:
-                workflow_title = workflow_id_str
+                workflow_title = str(config.workflow_id)
 
             # Truncate long titles
             if len(workflow_title) > 20:
                 workflow_title = workflow_title[:17] + '...'
 
-            output_name = config.get('output_name', '')
+            output_name = config.output_name or ''
 
             color = _CELL_COLORS[i % len(_CELL_COLORS)]
 
@@ -308,16 +308,16 @@ class PlotGridManager:
 
     def _on_add_grid(self, event) -> None:
         """Handle add grid button click."""
-        template_cells = None
-        if self._selected_template is not None:
-            template_cells = self._selected_template.cells
-
-        self._orchestrator.add_grid(
+        grid_id = self._orchestrator.add_grid(
             title=self._title_input.value,
             nrows=self._nrows_input.value,
             ncols=self._ncols_input.value,
-            template_cells=template_cells,
         )
+
+        # Add template cells if a template is selected
+        if self._selected_template:
+            for cell in self._selected_template.cells:
+                self._orchestrator.add_plot(grid_id, cell)
 
         # Reset inputs and template selection
         # Batch widget updates to reduce render cycles
