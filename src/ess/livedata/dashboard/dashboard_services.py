@@ -10,7 +10,7 @@ from typing import Any
 import scipp as sc
 
 from ess.livedata.config import instrument_registry
-from ess.livedata.config.grid_templates import load_raw_grid_templates
+from ess.livedata.config.grid_template import load_raw_grid_templates
 from ess.livedata.config.instruments import get_config
 from ess.livedata.config.workflow_spec import ResultKey
 

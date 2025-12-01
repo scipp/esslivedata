@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 
 import panel as pn
 
-from ...config.grid_templates import GridSpec
+from ...config.grid_template import GridSpec
 from ...config.workflow_spec import WorkflowId, WorkflowSpec
 from ..plot_orchestrator import (
     GridId,

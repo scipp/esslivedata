@@ -5,7 +5,7 @@ import panel as pn
 import pydantic
 import pytest
 
-from ess.livedata.config.grid_templates import GridSpec
+from ess.livedata.config.grid_template import GridSpec
 from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService

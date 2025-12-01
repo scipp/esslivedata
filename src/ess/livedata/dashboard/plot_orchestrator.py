@@ -23,7 +23,7 @@ from uuid import UUID, uuid4
 
 import pydantic
 
-from ess.livedata.config.grid_templates import GridSpec
+from ess.livedata.config.grid_template import GridSpec
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 from .config_store import ConfigStore
