@@ -70,7 +70,6 @@ class ReductionApp(DashboardBase):
         )
 
         # Create UI widget connected to shared orchestrator
-        # Templates are retrieved from plot_orchestrator.get_available_templates()
         plot_grid_tabs = PlotGridTabs(
             plot_orchestrator=self._services.plot_orchestrator,
             # Temporary hack, will likely get this from JobOrchestrator, or make
