@@ -759,7 +759,7 @@ class ROIDetectorPlotFactory:
         spectrum_plotter = LinePlotter(
             value_margin_factor=0.1,
             layout_params=overlay_layout,
-            aspect_params=PlotAspect(aspect_type=PlotAspectType.free),
+            aspect_params=PlotAspect(aspect_type=PlotAspectType.square),
             scale_opts=params.plot_scale,
         )
 
