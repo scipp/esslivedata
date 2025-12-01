@@ -148,7 +148,6 @@ def workflow_controller(
     controller = WorkflowController(
         job_orchestrator=job_orchestrator,
         workflow_registry=workflow_registry,
-        config_store=fake_config_store,
     )
     return WorkflowControllerFixture(
         controller=controller,
@@ -293,7 +292,6 @@ class TestWorkflowController:
         controller = WorkflowController(
             job_orchestrator=job_orchestrator,
             workflow_registry=registry,
-            config_store=config_store,
         )
 
         # Start both workflows

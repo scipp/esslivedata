@@ -18,7 +18,6 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
 )
 
-from .config_store import ConfigStore
 from .configuration_adapter import ConfigurationState
 from .correlation_histogram import CorrelationHistogramController, make_workflow_spec
 from .data_service import DataService
@@ -50,7 +49,6 @@ class WorkflowController:
         *,
         job_orchestrator: JobOrchestrator,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
-        config_store: ConfigStore | None = None,
         data_service: DataService[ResultKey, object] | None = None,
         correlation_histogram_controller: CorrelationHistogramController | None = None,
     ) -> None:
@@ -63,14 +61,11 @@ class WorkflowController:
             Shared job orchestrator for workflow lifecycle management.
         workflow_registry
             Registry of available workflows and their specifications.
-        config_store
-            Optional store for persisting UI configuration state across sessions.
         data_service
             Optional data service for cleaning up workflow data keys.
         correlation_histogram_controller
             Optional controller for correlation histogram workflows.
         """
-        self._config_store = config_store
         self._logger = logging.getLogger(__name__)
         self._orchestrator = job_orchestrator
 

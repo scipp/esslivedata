@@ -38,8 +38,9 @@ class PlotGridTabs:
     Tabbed widget for managing multiple plot grids.
 
     Displays a "Manage" tab (always first) for adding/removing grids,
-    followed by one tab per plot grid. Synchronizes with PlotOrchestrator
-    via lifecycle subscriptions to support multiple linked instances.
+    a "Jobs" tab for monitoring job status, followed by one tab per plot grid.
+    Synchronizes with PlotOrchestrator via lifecycle subscriptions to support
+    multiple linked instances.
 
     Parameters
     ----------
@@ -49,6 +50,8 @@ class PlotGridTabs:
         Registry of available workflows and their specifications.
     plotting_controller
         Controller for determining available plotters from workflow specs.
+    job_status_widget
+        Widget for displaying job status information.
     """
 
     def __init__(
@@ -56,6 +59,7 @@ class PlotGridTabs:
         plot_orchestrator: PlotOrchestrator,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         plotting_controller,
+        job_status_widget,
     ) -> None:
         self._orchestrator = plot_orchestrator
         self._workflow_registry = dict(workflow_registry)
@@ -96,9 +100,15 @@ class PlotGridTabs:
             )
         )
 
-        # Add Manage tab (always first)
+        # Add Jobs tab (always first)
+        self._tabs.append(('Jobs', job_status_widget.panel()))
+
+        # Add Manage tab (always second)
         self._grid_manager = PlotGridManager(orchestrator=plot_orchestrator)
-        self._tabs.append(('Manage', self._grid_manager.panel))
+        self._tabs.append(('Manage Plots', self._grid_manager.panel))
+
+        # Store static tabs count for use as offset in grid tab index calculations
+        self._static_tabs_count = len(self._tabs)
 
         # Initialize from existing grids
         for grid_id, grid_config in self._orchestrator.get_all_grids().items():
@@ -141,23 +151,17 @@ class PlotGridTabs:
         if grid_id not in self._grid_widgets:
             return
 
-        # Calculate tab index from position in _grid_widgets (Manage tab is at 0)
-        tab_index = list(self._grid_widgets.keys()).index(grid_id) + 1
-
-        # Remove the tab using pop()
-        self._tabs.pop(tab_index)
-
-        # Clean up tracking
+        tab_index = list(self._grid_widgets.keys()).index(grid_id)
+        self._tabs.pop(self._static_tabs_count + tab_index)
         del self._grid_widgets[grid_id]
 
     def _on_grid_created(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Handle grid creation from orchestrator."""
         self._add_grid_tab(grid_id, grid_config)
 
-        # Auto-switch to the new tab (calculate index from position in _grid_widgets)
         if grid_id in self._grid_widgets:
-            tab_index = list(self._grid_widgets.keys()).index(grid_id) + 1
-            self._tabs.active = tab_index
+            tab_index = list(self._grid_widgets.keys()).index(grid_id)
+            self._tabs.active = self._static_tabs_count + tab_index
 
     def _on_grid_removed(self, grid_id: GridId) -> None:
         """Handle grid removal from orchestrator."""

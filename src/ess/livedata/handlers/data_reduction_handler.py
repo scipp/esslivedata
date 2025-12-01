@@ -21,7 +21,10 @@ class ReductionHandlerFactory(
             case StreamKind.MONITOR_COUNTS:
                 return Cumulative(clear_on_get=True)
             case StreamKind.LOG:
-                attrs = self._instrument.f144_attribute_registry[key.name]
+                # Skip log data for sources not in the attribute registry
+                attrs = self._instrument.f144_attribute_registry.get(key.name)
+                if attrs is None:
+                    return None
                 return ToNXlog(attrs=attrs)
             case StreamKind.MONITOR_EVENTS | StreamKind.DETECTOR_EVENTS:
                 return ToNXevent_data()

@@ -51,11 +51,12 @@ def test_workflow_can_start_and_receive_data(integration_env: IntegrationEnv) ->
     # Wait for job data to arrive for the specific jobs we created
     all_job_data = wait_for_job_data(backend, job_ids, timeout=10.0)
 
-    # Verify that we received data for the specific job
+    # Verify that we received data with expected outputs
     job_data = all_job_data[job_id]
+    output_names = {key.output_name for key in job_data}
     assert (
-        'monitor1' in job_data
-    ), f"Expected data for source 'monitor1', got sources: {list(job_data.keys())}"
+        'cumulative' in output_names
+    ), f"Expected 'cumulative' output, got outputs: {output_names}"
 
 
 @pytest.mark.integration

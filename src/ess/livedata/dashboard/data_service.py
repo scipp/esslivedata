@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Hashable, Iterator, Mapping, MutableMapping
+from collections.abc import Hashable, Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
 from typing import Any, Generic, TypeVar
 
@@ -69,7 +69,6 @@ class DataService(MutableMapping[K, V]):
         self._buffer_manager = buffer_manager
         self._default_extractor = LatestValueExtractor()
         self._subscribers: list[DataServiceSubscriber[K]] = []
-        self._update_callbacks: list[Callable[[set[K]], None]] = []
         self._pending_updates: set[K] = set()
         self._transaction_depth = 0
 
@@ -165,21 +164,6 @@ class DataService(MutableMapping[K, V]):
         existing_data = self._build_subscriber_data(subscriber)
         subscriber.trigger(existing_data)
 
-    def register_update_callback(self, callback: Callable[[set[K]], None]) -> None:
-        """
-        Register a callback for key update notifications.
-
-        Callback receives only the set of updated key names, not the data.
-        Use this for infrastructure that needs to know what changed but will
-        query data itself.
-
-        Parameters
-        ----------
-        callback:
-            Callable that accepts a set of updated keys.
-        """
-        self._update_callbacks.append(callback)
-
     def _notify_subscribers(self, updated_keys: set[K]) -> None:
         """
         Notify relevant subscribers about data updates.
@@ -189,15 +173,10 @@ class DataService(MutableMapping[K, V]):
         updated_keys
             The set of data keys that were updated.
         """
-        # Notify extractor-based subscribers
         for subscriber in self._subscribers:
             if updated_keys & subscriber.keys:
                 subscriber_data = self._build_subscriber_data(subscriber)
                 subscriber.trigger(subscriber_data)
-
-        # Notify update callbacks with just key names
-        for callback in self._update_callbacks:
-            callback(updated_keys)
 
     def __getitem__(self, key: K) -> V:
         """Get the latest value for a key."""

@@ -118,9 +118,7 @@ class DashboardServices:
         self.stream_manager = StreamManager(
             data_service=self.data_service, pipe_factory=self._pipe_factory
         )
-        self.job_service = JobService(
-            data_service=self.data_service, logger=self._logger
-        )
+        self.job_service = JobService(logger=self._logger)
         self.job_controller = JobController(
             command_service=self.command_service, job_service=self.job_service
         )
@@ -132,7 +130,6 @@ class DashboardServices:
 
         self.plotting_controller = PlottingController(
             job_service=self.job_service,
-            config_store=self.plotter_config_store,
             stream_manager=self.stream_manager,
             logger=self._logger,
             roi_publisher=roi_publisher,
@@ -173,7 +170,6 @@ class DashboardServices:
         self.workflow_controller = WorkflowController(
             job_orchestrator=self.job_orchestrator,
             workflow_registry=self.processor_factory,
-            config_store=self.workflow_config_store,
             data_service=self.data_service,
             correlation_histogram_controller=self.correlation_controller,
         )
