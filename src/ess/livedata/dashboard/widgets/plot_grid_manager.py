@@ -150,6 +150,15 @@ class PlotGridManager:
             sizing_mode='stretch_both',
         )
 
+    def _reset_to_defaults(self) -> None:
+        """Reset form inputs to default state (no template selected)."""
+        self._selected_template = None
+        self._title_input.value = 'New Grid'
+        self._nrows_input.value = 3
+        self._ncols_input.value = 3
+        self._nrows_input.start = 2
+        self._ncols_input.start = 2
+
     def _update_preview(self) -> None:
         """Update the grid preview based on current state."""
         preview = self._create_grid_preview(
@@ -299,13 +308,7 @@ class PlotGridManager:
         # Batch widget updates to reduce render cycles
         with pn.io.hold():
             if template_name == _NO_TEMPLATE:
-                self._selected_template = None
-                # Reset to defaults
-                self._title_input.value = 'New Grid'
-                self._nrows_input.value = 3
-                self._ncols_input.value = 3
-                self._nrows_input.start = 2
-                self._ncols_input.start = 2
+                self._reset_to_defaults()
             else:
                 template = self._templates[template_name]
                 self._selected_template = template
@@ -336,12 +339,7 @@ class PlotGridManager:
         # Batch widget updates to reduce render cycles
         with pn.io.hold():
             self._template_selector.value = _NO_TEMPLATE
-            self._selected_template = None
-            self._title_input.value = 'New Grid'
-            self._nrows_input.value = 3
-            self._ncols_input.value = 3
-            self._nrows_input.start = 2
-            self._ncols_input.start = 2
+            self._reset_to_defaults()
             self._update_preview()
 
     def _on_grid_created(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
