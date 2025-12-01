@@ -497,7 +497,7 @@ class PlotGridTabs:
             gear_button,
             close_button,
             plot_pane,
-            sizing_mode=sizing_mode,
+            sizing_mode='stretch_both',
             styles={'position': 'relative'},
             margin=GridCellStyles.CELL_MARGIN,
         )
