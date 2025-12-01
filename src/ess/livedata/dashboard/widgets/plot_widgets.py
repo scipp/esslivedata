@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 import panel as pn
+
+from ...config.workflow_spec import WorkflowId, WorkflowSpec
 
 
 @dataclass(frozen=True)
@@ -161,3 +163,47 @@ def create_gear_button(on_gear_callback: Callable[[], None]) -> pn.widgets.Butto
         hover_color='rgba(0, 123, 255, 0.1)',
         on_click_callback=on_gear_callback,
     )
+
+
+def get_workflow_display_info(
+    workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+    workflow_id: WorkflowId,
+    output_name: str | None,
+) -> tuple[str, str]:
+    """
+    Look up workflow and output display titles from the registry.
+
+    Parameters
+    ----------
+    workflow_registry:
+        Registry mapping workflow IDs to their specifications.
+    workflow_id:
+        ID of the workflow to look up.
+    output_name:
+        Name of the output field, or None.
+
+    Returns
+    -------
+    :
+        Tuple of (workflow_title, output_title). If the workflow is not found,
+        workflow_title falls back to str(workflow_id). If output_name is None
+        or not found in the spec, output_title falls back to output_name or
+        empty string.
+    """
+    workflow_spec = workflow_registry.get(workflow_id)
+
+    # Get workflow title
+    if workflow_spec is not None:
+        workflow_title = workflow_spec.title
+    else:
+        workflow_title = str(workflow_id)
+
+    # Get output title from spec if available
+    output_title = output_name or ''
+    if workflow_spec and workflow_spec.outputs and output_name:
+        output_fields = workflow_spec.outputs.model_fields
+        if output_name in output_fields:
+            field_info = output_fields[output_name]
+            output_title = field_info.title or output_name
+
+    return workflow_title, output_title

@@ -21,6 +21,7 @@ from ..plot_orchestrator import (
     PlotOrchestrator,
     SubscriptionId,
 )
+from .plot_widgets import get_workflow_display_info
 
 # Sentinel value for "no template selected" in the dropdown
 _NO_TEMPLATE = "-- No template --"
@@ -251,13 +252,11 @@ class PlotGridManager:
 
             # Look up workflow title from registry
             config = cell.config
-            workflow_spec = self._workflow_registry.get(config.workflow_id)
-            if workflow_spec is not None:
-                workflow_title = workflow_spec.title
-            else:
-                workflow_title = str(config.workflow_id)
+            workflow_title, _ = get_workflow_display_info(
+                self._workflow_registry, config.workflow_id, config.output_name
+            )
 
-            # Truncate long titles
+            # Truncate long titles for the compact preview
             if len(workflow_title) > 20:
                 workflow_title = workflow_title[:17] + '...'
 
