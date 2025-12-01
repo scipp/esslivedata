@@ -18,6 +18,16 @@ from ..plot_orchestrator import GridId, PlotGridConfig, PlotOrchestrator, Subscr
 # Sentinel value for "no template selected" in the dropdown
 _NO_TEMPLATE = "-- No template --"
 
+# Colors for template preview cells (cycle through these)
+_CELL_COLORS = [
+    '#e3f2fd',  # light blue
+    '#f3e5f5',  # light purple
+    '#e8f5e9',  # light green
+    '#fff3e0',  # light orange
+    '#fce4ec',  # light pink
+    '#e0f7fa',  # light cyan
+]
+
 
 class PlotGridManager:
     """
@@ -62,9 +72,16 @@ class PlotGridManager:
         self._nrows_input = pn.widgets.IntInput(name='Rows', value=3, start=2, end=6)
         self._ncols_input = pn.widgets.IntInput(name='Columns', value=3, start=2, end=6)
 
+        # Watch for rows/cols changes to update preview
+        self._nrows_input.param.watch(self._on_grid_size_changed, 'value')
+        self._ncols_input.param.watch(self._on_grid_size_changed, 'value')
+
         # Add grid button
         self._add_button = pn.widgets.Button(name='Add Grid', button_type='primary')
         self._add_button.on_click(self._on_add_grid)
+
+        # Grid preview container (always shown)
+        self._grid_preview = pn.Column(sizing_mode='fixed', margin=(0, 0, 0, 20))
 
         # Grid list container
         # IMPORTANT: Use stretch_both (not stretch_width) to ensure consistent
@@ -80,23 +97,167 @@ class PlotGridManager:
             )
         )
 
-        # Initialize grid list
+        # Initialize grid list and preview
         self._update_grid_list()
+        self._update_preview()
+
+        # Form column (left side) - fixed width
+        form_column = pn.Column(
+            self._template_selector,
+            self._title_input,
+            self._nrows_input,
+            self._ncols_input,
+            self._add_button,
+            width=200,
+            sizing_mode='fixed',
+        )
+
+        # Row containing form and preview side by side
+        # Spacer stretches to push preview to the right
+        form_row = pn.Row(
+            form_column,
+            pn.Spacer(sizing_mode='stretch_width'),
+            self._grid_preview,
+            sizing_mode='stretch_width',
+            align='start',
+        )
 
         # Main widget layout
         # IMPORTANT: Use stretch_both to match PlotGrid tab sizing. This ensures
         # Panel's Tabs widget properly handles height when tabs are added/removed.
         self._widget = pn.Column(
             pn.pane.Markdown('## Add New Grid'),
-            self._template_selector,
-            self._title_input,
-            pn.Row(self._nrows_input, self._ncols_input),
-            self._add_button,
+            form_row,
             pn.layout.Divider(),
             pn.pane.Markdown('## Existing Grids'),
             self._grid_list,
             sizing_mode='stretch_both',
         )
+
+    def _update_preview(self) -> None:
+        """Update the grid preview based on current state."""
+        self._grid_preview.clear()
+        preview = self._create_grid_preview(
+            nrows=self._nrows_input.value,
+            ncols=self._ncols_input.value,
+            template=self._selected_template,
+        )
+        self._grid_preview.append(preview)
+
+    def _create_grid_preview(
+        self,
+        nrows: int,
+        ncols: int,
+        template: GridTemplate | None,
+    ) -> pn.Column:
+        """
+        Create a visual preview of the grid layout.
+
+        Shows a mini grid with colored boxes representing each cell,
+        labeled with the workflow name if a template is selected.
+
+        Parameters
+        ----------
+        nrows
+            Number of rows in the grid.
+        ncols
+            Number of columns in the grid.
+        template
+            Optional template to show cells from.
+
+        Returns
+        -------
+        :
+            Panel Column containing the preview.
+        """
+        cells = template.cells if template else []
+
+        # Fixed preview size - cells scale to fit
+        preview_width = 400
+        preview_height = 240
+
+        # Create grid spec with fixed size
+        grid = pn.GridSpec(
+            width=preview_width,
+            height=preview_height,
+            sizing_mode='fixed',
+        )
+
+        # Add empty cells as background (light gray border)
+        for row in range(nrows):
+            for col in range(ncols):
+                grid[row, col] = pn.pane.HTML(
+                    '',
+                    styles={
+                        'background-color': '#f5f5f5',
+                        'border': '1px dashed #ccc',
+                        'box-sizing': 'border-box',
+                    },
+                    sizing_mode='stretch_both',
+                    margin=1,
+                )
+
+        # Overlay template cells if available
+        for i, cell in enumerate(cells):
+            geom = cell['geometry']
+            config = cell['config']
+
+            # Check if cell fits in current grid size
+            row_start = geom['row']
+            row_end = row_start + geom['row_span']
+            col_start = geom['col']
+            col_end = col_start + geom['col_span']
+
+            if row_end > nrows or col_end > ncols:
+                continue  # Cell doesn't fit, skip it
+
+            # Extract workflow name from workflow_id (last part before version)
+            workflow_id = config.get('workflow_id', '')
+            parts = workflow_id.split('/')
+            if len(parts) >= 3:
+                workflow_name = parts[2].replace('_', ' ').title()
+            else:
+                workflow_name = workflow_id
+
+            # Truncate long names
+            if len(workflow_name) > 12:
+                workflow_name = workflow_name[:9] + '...'
+
+            color = _CELL_COLORS[i % len(_CELL_COLORS)]
+
+            label_html = (
+                f'<div style="font-size: 10px; font-weight: 500;">{workflow_name}</div>'
+            )
+            grid[row_start:row_end, col_start:col_end] = pn.pane.HTML(
+                label_html,
+                styles={
+                    'background-color': color,
+                    'border': '2px solid #1976d2',
+                    'border-radius': '4px',
+                    'display': 'flex',
+                    'align-items': 'center',
+                    'justify-content': 'center',
+                    'text-align': 'center',
+                    'box-sizing': 'border-box',
+                },
+                sizing_mode='stretch_both',
+                margin=1,
+            )
+
+        return pn.Column(
+            grid,
+            width=preview_width + 24,
+            styles={
+                'background-color': '#fafafa',
+                'border': '1px solid #e0e0e0',
+                'border-radius': '4px',
+                'padding': '10px',
+            },
+        )
+
+    def _on_grid_size_changed(self, event) -> None:
+        """Handle rows/cols input change."""
+        self._update_preview()
 
     def _on_template_selected(self, event) -> None:
         """Handle template selection change."""
@@ -120,6 +281,8 @@ class PlotGridManager:
             self._nrows_input.start = template.min_rows
             self._ncols_input.start = template.min_cols
 
+        self._update_preview()
+
     def _on_add_grid(self, event) -> None:
         """Handle add grid button click."""
         template_cells = None
@@ -141,6 +304,7 @@ class PlotGridManager:
         self._ncols_input.value = 3
         self._nrows_input.start = 2
         self._ncols_input.start = 2
+        self._update_preview()
 
     def _on_grid_created(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Handle grid creation from orchestrator."""

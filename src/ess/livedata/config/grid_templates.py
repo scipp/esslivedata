@@ -46,6 +46,11 @@ class GridTemplate:
         return self.config.get('title', self.name)
 
     @property
+    def description(self) -> str:
+        """Optional description of the template."""
+        return self.config.get('description', '')
+
+    @property
     def nrows(self) -> int:
         """Number of rows in the template grid."""
         return self.config.get('nrows', 3)

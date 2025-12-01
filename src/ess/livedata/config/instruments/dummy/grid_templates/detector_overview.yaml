@@ -1,6 +1,7 @@
 # Example grid template for the dummy instrument.
 # Shows both detector views side by side.
 title: Detector Overview
+description: Side-by-side view of Panel 0 and Area Panel detectors
 nrows: 2
 ncols: 2
 cells:
