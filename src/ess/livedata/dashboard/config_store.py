@@ -42,15 +42,14 @@ from typing import Any, Literal
 import platformdirs
 import yaml
 
-from ess.livedata.config.workflow_spec import WorkflowId
-
 logger = logging.getLogger(__name__)
 
-# Type alias for config stores - any mutable mapping from WorkflowId to config dict
-ConfigStore = MutableMapping[WorkflowId, dict[str, Any]]
+# Type alias for config stores - any mutable mapping from str to config dict
+# Keys are typically stringified WorkflowId or other identifiers
+ConfigStore = MutableMapping[str, dict[str, Any]]
 
 
-class InMemoryConfigStore(UserDict[WorkflowId, dict[str, Any]]):
+class InMemoryConfigStore(UserDict[str, dict[str, Any]]):
     """
     Thread-safe in-memory implementation of ConfigStore with optional LRU eviction.
 
@@ -84,8 +83,10 @@ class InMemoryConfigStore(UserDict[WorkflowId, dict[str, Any]]):
         # Lock to protect all operations on this store instance
         self._lock = threading.Lock()
 
-    def __setitem__(self, key: WorkflowId, value: dict[str, Any]) -> None:
+    def __setitem__(self, key: str, value: dict[str, Any]) -> None:
         """Save configuration with automatic LRU eviction."""
+        if not isinstance(key, str):
+            raise TypeError(f"ConfigStore keys must be str, got {type(key).__name__}")
         with self._lock:
             super().__setitem__(key, value)
 
@@ -102,7 +103,7 @@ class InMemoryConfigStore(UserDict[WorkflowId, dict[str, Any]]):
             del self.data[key]
 
 
-class FileBackedConfigStore(UserDict[WorkflowId, dict[str, Any]]):
+class FileBackedConfigStore(UserDict[str, dict[str, Any]]):
     """
     Thread-safe file-backed implementation of ConfigStore with optional LRU eviction.
 
@@ -149,8 +150,10 @@ class FileBackedConfigStore(UserDict[WorkflowId, dict[str, Any]]):
         # Load existing configs from file
         self._load_from_file()
 
-    def __setitem__(self, key: WorkflowId, value: dict[str, Any]) -> None:
+    def __setitem__(self, key: str, value: dict[str, Any]) -> None:
         """Save configuration with automatic LRU eviction and file persistence."""
+        if not isinstance(key, str):
+            raise TypeError(f"ConfigStore keys must be str, got {type(key).__name__}")
         with self._lock:
             super().__setitem__(key, value)
 
@@ -161,7 +164,7 @@ class FileBackedConfigStore(UserDict[WorkflowId, dict[str, Any]]):
             # Persist to file after modification
             self._save_to_file()
 
-    def __delitem__(self, key: WorkflowId) -> None:
+    def __delitem__(self, key: str) -> None:
         """Delete configuration and persist to file."""
         with self._lock:
             super().__delitem__(key)
@@ -191,15 +194,9 @@ class FileBackedConfigStore(UserDict[WorkflowId, dict[str, Any]]):
                     logger.debug("Config file %s is empty", self._file_path)
                     return
 
-                # Deserialize WorkflowId keys from strings
-                for key_str, value in raw_data.items():
-                    try:
-                        workflow_id = WorkflowId.from_string(key_str)
-                        self.data[workflow_id] = value
-                    except (ValueError, KeyError) as e:
-                        logger.warning(
-                            "Skipping invalid config entry '%s': %s", key_str, e
-                        )
+                # Load keys directly as strings
+                for key, value in raw_data.items():
+                    self.data[key] = value
 
         except yaml.YAMLError as e:
             logger.error("Failed to parse config file %s: %s", self._file_path, e)
@@ -213,14 +210,11 @@ class FileBackedConfigStore(UserDict[WorkflowId, dict[str, Any]]):
     def _save_to_file(self) -> None:
         """Save configurations to YAML file using atomic write operation."""
         try:
-            # Serialize WorkflowId keys to strings for YAML
-            serialized_data = {str(key): value for key, value in self.data.items()}
-
             # Write atomically: write to temp file, then rename
             temp_path = self._file_path.with_suffix(".tmp")
             with open(temp_path, "w") as f:
                 yaml.safe_dump(
-                    serialized_data,
+                    self.data,
                     f,
                     default_flow_style=False,
                     sort_keys=False,  # Preserve insertion order for LRU

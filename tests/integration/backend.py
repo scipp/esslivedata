@@ -163,6 +163,16 @@ class DashboardBackend:
         return self._services.workflow_controller
 
     @property
+    def plot_orchestrator(self):
+        self._check_available()
+        return self._services.plot_orchestrator
+
+    @property
+    def job_orchestrator(self):
+        self._check_available()
+        return self._services.job_orchestrator
+
+    @property
     def config_manager(self):
         """
         Get the config store manager.

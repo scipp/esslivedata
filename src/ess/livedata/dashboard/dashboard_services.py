@@ -21,6 +21,7 @@ from .job_controller import JobController
 from .job_orchestrator import JobOrchestrator
 from .job_service import JobService
 from .orchestrator import Orchestrator
+from .plot_orchestrator import PlotOrchestrator
 from .plotting_controller import PlottingController
 from .roi_publisher import ROIPublisher
 from .stream_manager import StreamManager
@@ -89,6 +90,7 @@ class DashboardServices:
         # Setup all services
         self._setup_data_infrastructure()
         self._setup_workflow_management()
+        self._setup_plot_orchestrator()
 
         self._logger.info("DashboardServices initialized for %s", instrument)
 
@@ -139,6 +141,18 @@ class DashboardServices:
             workflow_config_service=self.workflow_config_service,
         )
         self._logger.info("Data infrastructure setup complete")
+
+    def _setup_plot_orchestrator(self) -> None:
+        """Set up PlotOrchestrator for managing plot grids."""
+        # Must be called after _setup_workflow_management (needs job_orchestrator)
+        plot_config_store = self._config_manager.get_store('plot_configs')
+        self.plot_orchestrator = PlotOrchestrator(
+            plotting_controller=self.plotting_controller,
+            job_orchestrator=self.job_orchestrator,
+            data_service=self.data_service,
+            config_store=plot_config_store,
+        )
+        self._logger.info("PlotOrchestrator setup complete")
 
     def _setup_workflow_management(self) -> None:
         """Initialize workflow controller and related components."""

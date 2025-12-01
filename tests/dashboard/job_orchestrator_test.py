@@ -288,7 +288,7 @@ class TestJobOrchestratorInitialization:
 
         # Setup config store with persisted config
         config_store = {
-            workflow_id: ConfigurationState(
+            str(workflow_id): ConfigurationState(
                 source_names=["det_1"],  # Only one source
                 params={"threshold": 50.0, "mode": "custom"},
                 aux_source_names={},
@@ -321,7 +321,7 @@ class TestJobOrchestratorInitialization:
 
         # Setup config store with invalid param types
         config_store = {
-            workflow_id: {
+            str(workflow_id): {
                 "source_names": ["det_1"],
                 "params": {"threshold": "not_a_float"},  # Invalid type
                 "aux_source_names": {},
@@ -352,7 +352,7 @@ class TestJobOrchestratorInitialization:
         registry = {workflow_id: workflow_with_params_and_aux}
 
         config_store = {
-            workflow_id: ConfigurationState(
+            str(workflow_id): ConfigurationState(
                 source_names=["det_1"],
                 params={"threshold": 75.0, "mode": "special"},
                 aux_source_names={"monitor": "monitor_2"},
@@ -649,7 +649,7 @@ class TestJobOrchestratorMutationSafety:
 
         # Config store with multiple sources
         config_store = {
-            workflow_id: ConfigurationState(
+            str(workflow_id): ConfigurationState(
                 source_names=["det_1", "det_2"],
                 params={"threshold": 50.0, "mode": "custom"},
                 aux_source_names={"monitor": "monitor_1"},
@@ -986,7 +986,7 @@ class TestJobOrchestratorCommit:
         }
 
         # Use a dict config store to verify it's not modified
-        config_store: dict[WorkflowId, dict] = {}
+        config_store: dict[str, dict] = {}
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
@@ -1005,7 +1005,7 @@ class TestJobOrchestratorCommit:
         orchestrator.commit_workflow(workflow_id_with_params)
 
         # Config store should have workflow_with_params
-        assert workflow_id_with_params in config_store
+        assert str(workflow_id_with_params) in config_store
 
         # Now try to commit workflow_no_params (has empty staged_jobs)
         # First stage something so we can commit
@@ -1023,7 +1023,7 @@ class TestJobOrchestratorCommit:
         # (it has empty staged_jobs from initialization)
         # We can't commit it directly since it has no staged configs,
         # but we can verify the initialization didn't persist it
-        assert workflow_id_no_params not in config_store
+        assert str(workflow_id_no_params) not in config_store
 
         # Config store should be unchanged for workflows with empty staged_jobs
         assert config_store == config_store_before
