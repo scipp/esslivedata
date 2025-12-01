@@ -8,6 +8,7 @@ import panel as pn
 from ess.livedata import Service
 
 from .dashboard import DashboardBase
+from .widgets.job_status_widget import JobStatusListWidget
 from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
 from .widgets.reduction_widget import ReductionWidget
