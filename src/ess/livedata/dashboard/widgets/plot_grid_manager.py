@@ -199,21 +199,36 @@ class PlotGridManager:
             sizing_mode='fixed',
         )
 
-        # Add empty cells as background (light gray border)
+        # Calculate which cells are covered by template cells
+        covered_cells: set[tuple[int, int]] = set()
+        for cell in cells:
+            geometry = cell.geometry
+            row_start = geometry.row
+            row_end = row_start + geometry.row_span
+            col_start = geometry.col
+            col_end = col_start + geometry.col_span
+            # Only count cells that fit in current grid size
+            if row_end <= nrows and col_end <= ncols:
+                for r in range(row_start, row_end):
+                    for c in range(col_start, col_end):
+                        covered_cells.add((r, c))
+
+        # Add empty cells as background (light gray border) only for uncovered cells
         for row in range(nrows):
             for col in range(ncols):
-                grid[row, col] = pn.pane.HTML(
-                    '',
-                    styles={
-                        'background-color': '#f5f5f5',
-                        'border': '1px dashed #ccc',
-                        'box-sizing': 'border-box',
-                    },
-                    sizing_mode='stretch_both',
-                    margin=1,
-                )
+                if (row, col) not in covered_cells:
+                    grid[row, col] = pn.pane.HTML(
+                        '',
+                        styles={
+                            'background-color': '#f5f5f5',
+                            'border': '1px dashed #ccc',
+                            'box-sizing': 'border-box',
+                        },
+                        sizing_mode='stretch_both',
+                        margin=1,
+                    )
 
-        # Overlay template cells if available
+        # Add template cells
         for i, cell in enumerate(cells):
             # Check if cell fits in current grid size
             geometry = cell.geometry
