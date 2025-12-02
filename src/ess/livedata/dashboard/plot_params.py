@@ -124,7 +124,7 @@ class LayoutParams(pydantic.BaseModel):
     """Parameters for layout configuration."""
 
     combine_mode: CombineMode = pydantic.Field(
-        default=CombineMode.layout,
+        default=CombineMode.overlay,
         description="How to combine multiple datasets: overlay or layout.",
         title="Combine Mode",
     )
@@ -212,6 +212,29 @@ class PlotParams3d(PlotParamsBase):
     plot_scale: PlotScaleParams2d = pydantic.Field(
         default_factory=PlotScaleParams2d,
         description="Scaling options for the plot axes and color.",
+    )
+
+
+class BarOrientation(pydantic.BaseModel):
+    """Orientation options for bar plots."""
+
+    horizontal: bool = pydantic.Field(
+        default=False,
+        description="If True, bars are horizontal; if False, bars are vertical.",
+        title="Horizontal Bars",
+    )
+
+
+class PlotParamsBars(PlotParamsBase):
+    """Parameters for bar plots of 0D scalar data."""
+
+    window: WindowParams = pydantic.Field(
+        default_factory=WindowParams,
+        description="Windowing and aggregation options.",
+    )
+    orientation: BarOrientation = pydantic.Field(
+        default_factory=BarOrientation,
+        description="Bar orientation options.",
     )
 
 

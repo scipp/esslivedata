@@ -642,20 +642,8 @@ class TestPlotterLabelChanges:
             workflow_id=workflow_id, job_id=job_id, output_name='roi_current_0'
         )
 
-    @pytest.fixture
-    def data_key_without_output_name(self):
-        """Create a test ResultKey without output_name."""
-        workflow_id = WorkflowId(
-            instrument='test_instrument',
-            namespace='test_namespace',
-            name='test_workflow',
-            version=1,
-        )
-        job_id = JobId(source_name='detector', job_number=uuid.uuid4())
-        return ResultKey(workflow_id=workflow_id, job_id=job_id, output_name=None)
-
     def test_label_includes_output_name(self, simple_data, data_key_with_output_name):
-        """Test that plot label includes output_name when present."""
+        """Test that plot label includes output_name."""
         plotter = plots.LinePlotter.from_params(PlotParams2d())
         data_dict = {data_key_with_output_name: simple_data}
 
@@ -666,17 +654,6 @@ class TestPlotterLabelChanges:
         assert hasattr(result, 'label')
         assert 'detector' in result.label
         assert 'roi_current_0' in result.label
-
-    def test_label_without_output_name(self, simple_data, data_key_without_output_name):
-        """Test that plot label uses only source_name when output_name is None."""
-        plotter = plots.LinePlotter.from_params(PlotParams2d())
-        data_dict = {data_key_without_output_name: simple_data}
-
-        result = plotter(data_dict)
-
-        # Result should have label with just source_name
-        assert hasattr(result, 'label')
-        assert 'detector' in result.label
 
 
 class TestPlotterOverlayMode:
@@ -804,3 +781,129 @@ class TestPlotterOverlayMode:
         # With layout mode and empty data, returns Text directly
         assert isinstance(result, hv.Text)
         assert 'No data' in str(result.data)
+
+
+class TestBarsPlotter:
+    """Tests for BarsPlotter with 0D data."""
+
+    @pytest.fixture
+    def bars_plotter(self):
+        """Create a BarsPlotter instance with default settings."""
+        from ess.livedata.dashboard.plot_params import PlotParamsBars
+
+        return plots.BarsPlotter.from_params(PlotParamsBars())
+
+    @pytest.fixture
+    def horizontal_bars_plotter(self):
+        """Create a BarsPlotter instance with horizontal bars."""
+        from ess.livedata.dashboard.plot_params import BarOrientation, PlotParamsBars
+
+        return plots.BarsPlotter.from_params(
+            PlotParamsBars(orientation=BarOrientation(horizontal=True))
+        )
+
+    @pytest.fixture
+    def scalar_data(self):
+        """Create 0D scalar data for testing."""
+        return sc.DataArray(sc.scalar(42.0, unit='counts'))
+
+    def test_plot_creates_bars_element(self, bars_plotter, scalar_data, data_key):
+        """Test that BarsPlotter creates hv.Bars from 0D data."""
+        result = bars_plotter.plot(scalar_data, data_key)
+        assert isinstance(result, hv.Bars)
+
+    def test_plot_contains_correct_value(self, bars_plotter, scalar_data, data_key):
+        """Test that the bar contains the correct scalar value."""
+        result = bars_plotter.plot(scalar_data, data_key)
+        # Extract the data from the Bars element (pandas DataFrame)
+        bar_data = result.data
+        assert len(bar_data) == 1
+        # The vdims column is named after output_name
+        assert bar_data[data_key.output_name].iloc[0] == 42.0
+
+    def test_plot_uses_source_name_as_label(self, bars_plotter, scalar_data, data_key):
+        """Test that the bar is labeled with source_name."""
+        result = bars_plotter.plot(scalar_data, data_key)
+        bar_data = result.data
+        # The label should contain the source_name
+        assert data_key.job_id.source_name in bar_data['source'].iloc[0]
+
+    def test_plot_uses_output_name_as_vdims(self, bars_plotter, scalar_data):
+        """Test that output_name is used as the vdims column name."""
+        workflow_id = WorkflowId(
+            instrument='test_instrument',
+            namespace='test_namespace',
+            name='test_workflow',
+            version=1,
+        )
+        job_id = JobId(source_name='detector', job_number=uuid.uuid4())
+        data_key = ResultKey(
+            workflow_id=workflow_id, job_id=job_id, output_name='roi_sum'
+        )
+
+        result = bars_plotter.plot(scalar_data, data_key)
+        bar_data = result.data
+        # output_name is used as the column name for values
+        assert 'roi_sum' in bar_data.columns
+        assert bar_data['roi_sum'].iloc[0] == 42.0
+
+    def test_vertical_bars_default(self, bars_plotter, scalar_data, data_key):
+        """Test that bars are vertical by default (invert_axes=False)."""
+        result = bars_plotter.plot(scalar_data, data_key)
+        # When invert_axes is False (default), it may not appear in options
+        opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
+        assert opts.get('invert_axes', False) is False
+
+    def test_horizontal_bars_option(
+        self, horizontal_bars_plotter, scalar_data, data_key
+    ):
+        """Test that horizontal option inverts axes."""
+        result = horizontal_bars_plotter.plot(scalar_data, data_key)
+        opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
+        assert opts.get('invert_axes') is True
+
+    def test_rejects_non_scalar_data(self, bars_plotter, data_key):
+        """Test that BarsPlotter rejects non-0D data."""
+        data_1d = sc.DataArray(sc.array(dims=['x'], values=[1.0, 2.0, 3.0]))
+        with pytest.raises(ValueError, match="Expected 0D data"):
+            bars_plotter.plot(data_1d, data_key)
+
+    def test_call_with_multiple_sources(self, bars_plotter):
+        """Test __call__ with multiple 0D data sources creates multiple bars."""
+        from ess.livedata.dashboard.plot_params import LayoutParams, PlotParamsBars
+
+        plotter = plots.BarsPlotter.from_params(
+            PlotParamsBars(layout=LayoutParams(combine_mode='layout'))
+        )
+
+        workflow_id = WorkflowId(
+            instrument='test',
+            namespace='test',
+            name='test',
+            version=1,
+        )
+        key1 = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source1', job_number=uuid.uuid4()),
+            output_name='counts',
+        )
+        key2 = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source2', job_number=uuid.uuid4()),
+            output_name='counts',
+        )
+
+        data = {
+            key1: sc.DataArray(sc.scalar(10.0, unit='counts')),
+            key2: sc.DataArray(sc.scalar(20.0, unit='counts')),
+        }
+
+        result = plotter(data)
+        # With layout mode and 2 sources, should return Layout
+        assert isinstance(result, hv.Layout)
+        assert len(result) == 2
+
+    def test_renders_to_bokeh(self, bars_plotter, scalar_data, data_key):
+        """Test that bars can be rendered to Bokeh."""
+        result = bars_plotter.plot(scalar_data, data_key)
+        render_to_bokeh(result)
