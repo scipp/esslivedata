@@ -1277,9 +1277,12 @@ class TestDetectorViewRatemeter:
         view.accumulate(
             {'detector': sample_detector_events}, start_time=1000, end_time=2000
         )
+        assert view._counts_total == TOTAL_SAMPLE_EVENTS
 
         # Clear should reset counts
         view.clear()
+        assert view._counts_total == 0
+        assert view._counts_in_toa_range == 0
 
         # Accumulate new events
         view.accumulate(
