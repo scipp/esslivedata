@@ -30,39 +30,39 @@ class ROIPublisher:
         self._logger = logger or logging.getLogger(__name__)
         self._roi_mapper = get_roi_mapper()
 
-    def publish_rois(
+    def publish_rectangles(
         self,
         job_id: JobId,
-        rectangle_rois: dict[int, RectangleROI],
-        polygon_rois: dict[int, PolygonROI] | None = None,
+        rois: dict[int, RectangleROI],
     ) -> None:
         """
-        Publish all ROIs (rectangles and polygons) as concatenated messages.
-
-        Each geometry type is sent as a separate message to its own stream.
-        ROIs are sent as DataArrays with concatenated coordinates and an
-        roi_index coordinate identifying individual ROIs. This allows the
-        backend to detect ROI deletions (missing indices).
+        Publish rectangle ROIs only.
 
         Parameters
         ----------
         job_id:
             The full job identifier (source_name and job_number).
-        rectangle_rois:
+        rois:
             Dictionary mapping ROI index to RectangleROI. Empty dict clears all.
-        polygon_rois:
-            Dictionary mapping ROI index to PolygonROI. None means no changes.
         """
-        # Publish rectangles
-        self._publish_geometry(
-            job_id, "roi_rectangle", rectangle_rois, RectangleROI, "rectangle"
-        )
+        self._publish_geometry(job_id, "roi_rectangle", rois, RectangleROI, "rectangle")
 
-        # Publish polygons if provided
-        if polygon_rois is not None:
-            self._publish_geometry(
-                job_id, "roi_polygon", polygon_rois, PolygonROI, "polygon"
-            )
+    def publish_polygons(
+        self,
+        job_id: JobId,
+        rois: dict[int, PolygonROI],
+    ) -> None:
+        """
+        Publish polygon ROIs only.
+
+        Parameters
+        ----------
+        job_id:
+            The full job identifier (source_name and job_number).
+        rois:
+            Dictionary mapping ROI index to PolygonROI. Empty dict clears all.
+        """
+        self._publish_geometry(job_id, "roi_polygon", rois, PolygonROI, "polygon")
 
     def _publish_geometry(
         self,
@@ -101,19 +101,26 @@ class FakeROIPublisher:
     """Fake ROI publisher for testing."""
 
     def __init__(self):
-        self.published_rois: list[
-            tuple[JobId, dict[int, RectangleROI], dict[int, PolygonROI] | None]
-        ] = []
+        self.published_rectangles: list[tuple[JobId, dict[int, RectangleROI]]] = []
+        self.published_polygons: list[tuple[JobId, dict[int, PolygonROI]]] = []
 
-    def publish_rois(
+    def publish_rectangles(
         self,
         job_id: JobId,
-        rectangle_rois: dict[int, RectangleROI],
-        polygon_rois: dict[int, PolygonROI] | None = None,
+        rois: dict[int, RectangleROI],
     ) -> None:
-        """Record published ROI collection."""
-        self.published_rois.append((job_id, rectangle_rois, polygon_rois))
+        """Record published rectangle ROIs."""
+        self.published_rectangles.append((job_id, rois))
+
+    def publish_polygons(
+        self,
+        job_id: JobId,
+        rois: dict[int, PolygonROI],
+    ) -> None:
+        """Record published polygon ROIs."""
+        self.published_polygons.append((job_id, rois))
 
     def reset(self) -> None:
         """Clear all recorded publishes."""
-        self.published_rois.clear()
+        self.published_rectangles.clear()
+        self.published_polygons.clear()

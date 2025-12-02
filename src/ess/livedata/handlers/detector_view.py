@@ -52,7 +52,9 @@ class DetectorView(Workflow):
 
         self._rois: dict[int, ROIHistogram] = {}
         self._toa_edges = params.toa_edges.get_edges()
-        self._rois_updated = False  # Track ROI updates at workflow level
+        self._updated_geometries: set[str] = (
+            set()
+        )  # Track which geometries were updated
         self._roi_mapper = get_roi_mapper()
         self._current_start_time: int | None = None
 
@@ -93,7 +95,7 @@ class DetectorView(Workflow):
             if roi_key in data:
                 roi_data_array = data[roi_key]
                 rois = models.ROI.from_concatenated_data_array(roi_data_array)
-                self._update_rois(rois)
+                self._update_rois(rois, roi_key)
 
         # Process detector event data (exclude ROI keys)
         detector_data = {k: v for k, v in data.items() if k not in roi_keys}
@@ -153,21 +155,34 @@ class DetectorView(Workflow):
                 roi_state.cumulative.copy()
             )
 
-        # Publish all ROIs as single concatenated message for readback, but only if
-        # the ROI collection was updated. This mirrors the frontend's publishing
-        # behavior and enables proper deletion detection.
-        if self._rois_updated:
-            # Extract ROI models from all active ROI states
-            roi_models = {idx: roi_state.model for idx, roi_state in self._rois.items()}
-            # Convert to concatenated DataArray with roi_index coordinate
-            concatenated_rois = models.RectangleROI.to_concatenated_data_array(
-                roi_models
-            )
-            # Use readback key from mapper
-            roi_result[self._roi_mapper.readback_keys[0]] = concatenated_rois
+        # Publish ROI readbacks for each geometry type that was updated.
+        # Each geometry type gets its own readback stream.
+        for geometry in self._roi_mapper.geometries:
+            geometry_key = f"roi_{geometry.geometry_type}"
+            if geometry_key not in self._updated_geometries:
+                continue
 
-            # Clear updated flag after publishing
-            self._rois_updated = False
+            # Extract ROI models for this geometry type
+            roi_models = {
+                idx: roi_state.model
+                for idx, roi_state in self._rois.items()
+                if idx in geometry.index_range
+            }
+
+            # Get the appropriate ROI class for serialization
+            if geometry.geometry_type == "rectangle":
+                roi_class = models.RectangleROI
+            elif geometry.geometry_type == "polygon":
+                roi_class = models.PolygonROI
+            else:
+                continue
+
+            # Convert to concatenated DataArray with roi_index coordinate
+            concatenated_rois = roi_class.to_concatenated_data_array(roi_models)
+            roi_result[geometry.readback_key] = concatenated_rois
+
+        # Clear updated geometries after publishing
+        self._updated_geometries.clear()
 
         # Ratemeter: output event counts and reset for next period
         counts_result = {
@@ -194,19 +209,43 @@ class DetectorView(Workflow):
         self._counts_total = 0
         self._counts_in_toa_range = 0
 
-    def _update_rois(self, rois: dict[int, models.ROI]) -> None:
+    def _update_rois(self, rois: dict[int, models.ROI], geometry_key: str) -> None:
         """
-        Update ROI configuration from incoming ROI models.
+        Update ROI configuration for a specific geometry type.
 
-        When any ROI changes (addition, deletion, or modification), all ROIs are
-        cleared and recreated. This ensures consistent accumulation periods across
-        all ROIs, which is critical since ROI spectra are overlaid on the same plot.
+        Only updates ROIs belonging to the specified geometry type, leaving other
+        geometry types unchanged. When any ROI of the specified type changes
+        (addition, deletion, or modification), all ROIs of that type are cleared
+        and recreated to ensure consistent accumulation periods.
+
+        Parameters
+        ----------
+        rois:
+            Dictionary mapping ROI index to ROI model for the geometry type.
+        geometry_key:
+            The geometry key ('roi_rectangle' or 'roi_polygon') identifying which
+            geometry type is being updated.
         """
-        # Check if the ROI set has changed
+        # Determine the index range for this geometry type
+        geometry_type = geometry_key.replace('roi_', '')  # 'rectangle' or 'polygon'
+        geometry = next(
+            (
+                g
+                for g in self._roi_mapper.geometries
+                if g.geometry_type == geometry_type
+            ),
+            None,
+        )
+        if geometry is None:
+            return
+
+        index_range = geometry.index_range
+
+        # Get current and previous indices for THIS geometry type only
         current_indices = set(rois.keys())
-        previous_indices = set(self._rois.keys())
+        previous_indices = {idx for idx in self._rois.keys() if idx in index_range}
 
-        # Detect any change in the ROI collection (addition, deletion, or modification)
+        # Detect any change in this geometry's ROI collection
         rois_changed = False
         if current_indices != previous_indices:
             # Indices changed (addition or deletion)
@@ -219,14 +258,16 @@ class DetectorView(Workflow):
                     break
 
         if rois_changed:
-            self._rois_updated = True
-            # Clear all ROIs to ensure consistent accumulation periods
-            self._rois.clear()
-            # Recreate all ROIs from scratch
+            self._updated_geometries.add(geometry_key)
+            # Clear only ROIs of this geometry type
+            for idx in list(self._rois.keys()):
+                if idx in index_range:
+                    del self._rois[idx]
+            # Recreate ROIs for this geometry type
             for idx, roi_model in rois.items():
                 self._rois[idx] = ROIHistogram(
                     toa_edges=self._toa_edges,
                     roi_filter=self._view.make_roi_filter(),
                     model=roi_model,
                 )
-        # else: No changes detected, preserve all existing ROI states
+        # else: No changes detected, preserve existing ROI states

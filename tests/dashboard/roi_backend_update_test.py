@@ -24,11 +24,16 @@ class FakeROIPublisher:
     """Fake ROI publisher for testing."""
 
     def __init__(self):
-        self.published_rois = []
+        self.published_rectangles = []
+        self.published_polygons = []
 
-    def publish_rois(self, job_id, rectangle_rois, polygon_rois=None):
-        """Record published ROIs."""
-        self.published_rois.append((job_id, rectangle_rois, polygon_rois))
+    def publish_rectangles(self, job_id, rois):
+        """Record published rectangle ROIs."""
+        self.published_rectangles.append((job_id, rois))
+
+    def publish_polygons(self, job_id, rois):
+        """Record published polygon ROIs."""
+        self.published_polygons.append((job_id, rois))
 
 
 @pytest.fixture
@@ -243,11 +248,11 @@ class TestBackendROIUpdate:
             )
         }
 
-        initial_publish_count = len(fake_publisher.published_rois)
+        initial_publish_count = len(fake_publisher.published_rectangles)
         roi_plot_state.on_backend_rect_update(backend_rois)
 
         # Should not have published back to backend
-        assert len(fake_publisher.published_rois) == initial_publish_count
+        assert len(fake_publisher.published_rectangles) == initial_publish_count
 
     def test_backend_update_no_update_if_rois_unchanged(
         self, roi_plot_state, box_stream, boxes_pipe
@@ -340,7 +345,7 @@ class TestBidirectionalSync:
         """Test user edit followed by backend update of different ROI."""
         # User creates ROI 0
         box_stream.event(data={'x0': [1.0], 'x1': [3.0], 'y0': [2.0], 'y1': [4.0]})
-        assert len(fake_publisher.published_rois) == 1
+        assert len(fake_publisher.published_rectangles) == 1
 
         # Backend updates with ROI 1 (different index)
         backend_rois = {
@@ -367,7 +372,7 @@ class TestBidirectionalSync:
         }
         roi_plot_state.on_backend_rect_update(backend_rois)
 
-        initial_publish_count = len(fake_publisher.published_rois)
+        initial_publish_count = len(fake_publisher.published_rectangles)
 
         # User modifies the ROI
         box_stream.event(
@@ -375,7 +380,7 @@ class TestBidirectionalSync:
         )
 
         # Should have published the change
-        assert len(fake_publisher.published_rois) == initial_publish_count + 1
+        assert len(fake_publisher.published_rectangles) == initial_publish_count + 1
 
     def test_backend_update_after_user_creates_same_roi(
         self, roi_plot_state, box_stream, fake_publisher
@@ -383,7 +388,7 @@ class TestBidirectionalSync:
         """Test backend echoing back the same ROI user just created."""
         # User creates ROI
         box_stream.event(data={'x0': [1.0], 'x1': [3.0], 'y0': [2.0], 'y1': [4.0]})
-        assert len(fake_publisher.published_rois) == 1
+        assert len(fake_publisher.published_rectangles) == 1
 
         # Backend echoes it back (same coordinates)
         backend_rois = {
@@ -392,8 +397,8 @@ class TestBidirectionalSync:
                 y=Interval(min=2.0, max=4.0, unit='m'),
             )
         }
-        initial_publish_count = len(fake_publisher.published_rois)
+        initial_publish_count = len(fake_publisher.published_rectangles)
         roi_plot_state.on_backend_rect_update(backend_rois)
 
         # Should NOT republish (no change detected)
-        assert len(fake_publisher.published_rois) == initial_publish_count
+        assert len(fake_publisher.published_rectangles) == initial_publish_count

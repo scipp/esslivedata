@@ -20,9 +20,9 @@ def test_roi_publisher_publishes_single_roi():
         y=Interval(min=2.0, max=6.0, unit=None),
     )
 
-    publisher.publish_rois(job_id, rectangle_rois={0: roi})
+    publisher.publish_rectangles(job_id, rois={0: roi})
 
-    # Rectangle-only publish sends one message
+    # Rectangle publish sends one message
     assert len(sink.messages) == 1
     msg = sink.messages[0]
     assert msg.stream.kind == StreamKind.LIVEDATA_ROI
@@ -51,7 +51,7 @@ def test_roi_publisher_publishes_multiple_rois():
         ),
     }
 
-    publisher.publish_rois(job_id, rectangle_rois=rois)
+    publisher.publish_rectangles(job_id, rois=rois)
 
     assert len(sink.messages) == 1
     msg = sink.messages[0]
@@ -71,7 +71,7 @@ def test_roi_publisher_publishes_empty_to_clear():
     publisher = ROIPublisher(sink=sink)
     job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
 
-    publisher.publish_rois(job_id, rectangle_rois={})
+    publisher.publish_rectangles(job_id, rois={})
 
     assert len(sink.messages) == 1
     msg = sink.messages[0]
@@ -93,7 +93,7 @@ def test_roi_publisher_serializes_to_dataarray():
         ),
     }
 
-    publisher.publish_rois(job_id, rectangle_rois=rois)
+    publisher.publish_rectangles(job_id, rois=rois)
 
     msg = sink.messages[0]
     da = msg.value
@@ -112,10 +112,10 @@ def test_fake_roi_publisher_records_publishes():
         ),
     }
 
-    publisher.publish_rois(job_id, rectangle_rois=rois)
+    publisher.publish_rectangles(job_id, rois=rois)
 
-    assert len(publisher.published_rois) == 1
-    assert publisher.published_rois[0] == (job_id, rois, None)
+    assert len(publisher.published_rectangles) == 1
+    assert publisher.published_rectangles[0] == (job_id, rois)
 
 
 def test_fake_roi_publisher_reset():
@@ -128,10 +128,10 @@ def test_fake_roi_publisher_reset():
         ),
     }
 
-    publisher.publish_rois(job_id, rectangle_rois=rois)
+    publisher.publish_rectangles(job_id, rois=rois)
     publisher.reset()
 
-    assert len(publisher.published_rois) == 0
+    assert len(publisher.published_rectangles) == 0
 
 
 def test_roi_publisher_isolates_streams_per_detector_in_multi_detector_workflow():
@@ -163,8 +163,8 @@ def test_roi_publisher_isolates_streams_per_detector_in_multi_detector_workflow(
     }
 
     # Publish ROIs for both detectors
-    publisher.publish_rois(job_id_mantle, rectangle_rois=rois_mantle)
-    publisher.publish_rois(job_id_high_res, rectangle_rois=rois_high_res)
+    publisher.publish_rectangles(job_id_mantle, rois=rois_mantle)
+    publisher.publish_rectangles(job_id_high_res, rois=rois_high_res)
 
     assert len(sink.messages) == 2
 

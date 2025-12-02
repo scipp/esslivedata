@@ -439,21 +439,30 @@ class ROIPlotState:
         )
         return poly_geom.index_offset if poly_geom else 4
 
-    def _publish_all_rois(self) -> None:
-        """Publish all ROIs (both rectangles and polygons) to backend."""
+    def _publish_rectangles(self) -> None:
+        """Publish rectangle ROIs to backend."""
         if self._roi_publisher:
-            self._roi_publisher.publish_rois(
+            self._roi_publisher.publish_rectangles(
                 self.result_key.job_id,
                 self._request_rect_rois,
-                self._request_poly_rois if self.poly_stream is not None else None,
             )
-            total_count = len(self._request_rect_rois) + len(self._request_poly_rois)
             self._logger.info(
-                "Published %d ROI(s) for job %s (rect=%d, poly=%d)",
-                total_count,
-                self.result_key.job_id,
+                "Published %d rectangle ROI(s) for job %s",
                 len(self._request_rect_rois),
+                self.result_key.job_id,
+            )
+
+    def _publish_polygons(self) -> None:
+        """Publish polygon ROIs to backend."""
+        if self._roi_publisher:
+            self._roi_publisher.publish_polygons(
+                self.result_key.job_id,
+                self._request_poly_rois,
+            )
+            self._logger.info(
+                "Published %d polygon ROI(s) for job %s",
                 len(self._request_poly_rois),
+                self.result_key.job_id,
             )
 
     def on_box_change(self, event) -> None:
@@ -486,8 +495,8 @@ class ROIPlotState:
             request_rectangles = rois_to_rectangles(current_rois, colors=self._colors)
             self.rect_request_pipe.send(request_rectangles)
 
-            # Publish all ROIs to backend
-            self._publish_all_rois()
+            # Publish rectangles only to backend
+            self._publish_rectangles()
 
         except Exception as e:
             self._logger.error("Failed to publish ROI update: %s", e)
@@ -528,8 +537,8 @@ class ROIPlotState:
             if self.poly_request_pipe is not None:
                 self.poly_request_pipe.send(hv_polygons)
 
-            # Publish all ROIs to backend
-            self._publish_all_rois()
+            # Publish polygons only to backend
+            self._publish_polygons()
 
         except Exception as e:
             self._logger.error("Failed to publish polygon ROI update: %s", e)
