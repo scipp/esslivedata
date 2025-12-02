@@ -16,10 +16,9 @@ from ess.livedata.dashboard.plot_params import (
     PlotScaleParams2d,
 )
 from ess.livedata.dashboard.roi_detector_plot_factory import (
+    RectangleConverter,
     ROIDetectorPlotFactory,
     ROIPlotState,
-    boxes_to_rois,
-    rois_to_rectangles,
 )
 from ess.livedata.dashboard.stream_manager import StreamManager
 
@@ -421,10 +420,11 @@ def test_roi_detector_plot_without_publisher_does_not_crash(
     assert plot_state is not None
 
 
-def test_boxes_to_rois_converts_single_box():
+def test_rectangle_converter_parse_stream_data_converts_single_box():
+    converter = RectangleConverter()
     box_data = {'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]}
 
-    rois = boxes_to_rois(box_data)
+    rois = converter.parse_stream_data(box_data, None, None)
 
     assert len(rois) == 1
     assert 0 in rois
@@ -437,7 +437,8 @@ def test_boxes_to_rois_converts_single_box():
     assert roi.y.unit is None
 
 
-def test_boxes_to_rois_converts_multiple_boxes():
+def test_rectangle_converter_parse_stream_data_converts_multiple_boxes():
+    converter = RectangleConverter()
     box_data = {
         'x0': [1.0, 10.0, 20.0],
         'x1': [5.0, 15.0, 25.0],
@@ -445,7 +446,7 @@ def test_boxes_to_rois_converts_multiple_boxes():
         'y1': [6.0, 16.0, 26.0],
     }
 
-    rois = boxes_to_rois(box_data)
+    rois = converter.parse_stream_data(box_data, None, None)
 
     assert len(rois) == 3
     assert rois[0].x.min == 1.0
@@ -453,11 +454,12 @@ def test_boxes_to_rois_converts_multiple_boxes():
     assert rois[2].x.min == 20.0
 
 
-def test_boxes_to_rois_handles_inverted_coordinates():
+def test_rectangle_converter_parse_stream_data_handles_inverted_coordinates():
+    converter = RectangleConverter()
     # BoxEdit can return boxes with x0 > x1 or y0 > y1
     box_data = {'x0': [5.0], 'x1': [1.0], 'y0': [6.0], 'y1': [2.0]}
 
-    rois = boxes_to_rois(box_data)
+    rois = converter.parse_stream_data(box_data, None, None)
 
     roi = rois[0]
     assert roi.x.min == 1.0
@@ -466,7 +468,8 @@ def test_boxes_to_rois_handles_inverted_coordinates():
     assert roi.y.max == 6.0
 
 
-def test_boxes_to_rois_skips_degenerate_boxes():
+def test_rectangle_converter_parse_stream_data_skips_degenerate_boxes():
+    converter = RectangleConverter()
     # Boxes with zero width or height should be skipped
     box_data = {
         'x0': [1.0, 5.0, 10.0],
@@ -475,31 +478,34 @@ def test_boxes_to_rois_skips_degenerate_boxes():
         'y1': [6.0, 10.0, 10.0],  # Third box has zero height
     }
 
-    rois = boxes_to_rois(box_data)
+    rois = converter.parse_stream_data(box_data, None, None)
 
     assert len(rois) == 1
     assert 0 in rois
     assert rois[0].x.min == 1.0
 
 
-def test_boxes_to_rois_empty_data():
-    assert boxes_to_rois({}) == {}
-    assert boxes_to_rois({'x0': []}) == {}
+def test_rectangle_converter_parse_stream_data_empty_data():
+    converter = RectangleConverter()
+    assert converter.parse_stream_data({}, None, None) == {}
+    assert converter.parse_stream_data({'x0': []}, None, None) == {}
 
 
-def test_boxes_to_rois_raises_on_inconsistent_lengths():
+def test_rectangle_converter_parse_stream_data_raises_on_inconsistent_lengths():
+    converter = RectangleConverter()
     box_data = {'x0': [1.0, 2.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]}
 
     with pytest.raises(
         ValueError, match=r"zip\(\) argument .* is (shorter|longer) than argument"
     ):
-        boxes_to_rois(box_data)
+        converter.parse_stream_data(box_data, None, None)
 
 
-def test_boxes_to_rois_with_units():
+def test_rectangle_converter_parse_stream_data_with_units():
+    converter = RectangleConverter()
     box_data = {'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]}
 
-    rois = boxes_to_rois(box_data, x_unit='m', y_unit='mm')
+    rois = converter.parse_stream_data(box_data, 'm', 'mm')
 
     assert len(rois) == 1
     roi = rois[0]
@@ -511,7 +517,8 @@ def test_boxes_to_rois_with_units():
     assert roi.y.unit == 'mm'
 
 
-def test_boxes_to_rois_preserves_units_across_multiple_boxes():
+def test_rectangle_converter_parse_stream_data_preserves_units_across_multiple_boxes():
+    converter = RectangleConverter()
     box_data = {
         'x0': [1.0, 10.0],
         'x1': [5.0, 15.0],
@@ -519,7 +526,7 @@ def test_boxes_to_rois_preserves_units_across_multiple_boxes():
         'y1': [6.0, 16.0],
     }
 
-    rois = boxes_to_rois(box_data, x_unit='angstrom', y_unit='angstrom')
+    rois = converter.parse_stream_data(box_data, 'angstrom', 'angstrom')
 
     assert len(rois) == 2
     assert rois[0].x.unit == 'angstrom'
@@ -528,7 +535,8 @@ def test_boxes_to_rois_preserves_units_across_multiple_boxes():
     assert rois[1].y.unit == 'angstrom'
 
 
-def test_rois_to_rectangles_converts_single_roi():
+def test_rectangle_converter_to_hv_data_converts_single_roi():
+    converter = RectangleConverter()
     rois = {
         0: RectangleROI(
             x=Interval(min=1.0, max=5.0, unit='m'),
@@ -536,20 +544,21 @@ def test_rois_to_rectangles_converts_single_roi():
         )
     }
 
-    rectangles = rois_to_rectangles(rois)
+    rectangles = converter.to_hv_data(rois, None)
 
     assert len(rectangles) == 1
     assert rectangles[0] == (1.0, 2.0, 5.0, 6.0)
 
 
-def test_rois_to_rectangles_converts_multiple_rois():
+def test_rectangle_converter_to_hv_data_converts_multiple_rois():
+    converter = RectangleConverter()
     rois = {
         0: RectangleROI(x=Interval(min=1.0, max=5.0), y=Interval(min=2.0, max=6.0)),
         1: RectangleROI(x=Interval(min=10.0, max=15.0), y=Interval(min=12.0, max=16.0)),
         2: RectangleROI(x=Interval(min=20.0, max=25.0), y=Interval(min=22.0, max=26.0)),
     }
 
-    rectangles = rois_to_rectangles(rois)
+    rectangles = converter.to_hv_data(rois, None)
 
     assert len(rectangles) == 3
     assert rectangles[0] == (1.0, 2.0, 5.0, 6.0)
@@ -557,18 +566,20 @@ def test_rois_to_rectangles_converts_multiple_rois():
     assert rectangles[2] == (20.0, 22.0, 25.0, 26.0)
 
 
-def test_rois_to_rectangles_empty():
-    assert rois_to_rectangles({}) == []
+def test_rectangle_converter_to_hv_data_empty():
+    converter = RectangleConverter()
+    assert converter.to_hv_data({}, None) == []
 
 
-def test_rois_to_rectangles_sorts_by_index():
+def test_rectangle_converter_to_hv_data_sorts_by_index():
+    converter = RectangleConverter()
     rois = {
         2: RectangleROI(x=Interval(min=20.0, max=25.0), y=Interval(min=22.0, max=26.0)),
         0: RectangleROI(x=Interval(min=1.0, max=5.0), y=Interval(min=2.0, max=6.0)),
         1: RectangleROI(x=Interval(min=10.0, max=15.0), y=Interval(min=12.0, max=16.0)),
     }
 
-    rectangles = rois_to_rectangles(rois)
+    rectangles = converter.to_hv_data(rois, None)
 
     # Should be in sorted order by index (0, 1, 2)
     assert rectangles[0] == (1.0, 2.0, 5.0, 6.0)

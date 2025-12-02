@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Protocol
 
 import holoviews as hv
 import param
@@ -29,127 +29,288 @@ from .plots import ImagePlotter, LinePlotter, PlotAspect, PlotAspectType
 from .roi_publisher import ROIPublisher
 from .stream_manager import StreamManager
 
-
-def boxes_to_rois(
-    box_data: dict[str, Any],
-    x_unit: str | None = None,
-    y_unit: str | None = None,
-) -> dict[int, RectangleROI]:
-    """
-    Convert BoxEdit data dictionary to RectangleROI instances.
-
-    BoxEdit returns data as a dictionary with keys 'x0', 'x1', 'y0', 'y1',
-    where each value is a list of coordinates for all boxes.
-
-    Parameters
-    ----------
-    box_data:
-        Dictionary from BoxEdit stream with keys x0, x1, y0, y1.
-    x_unit:
-        Unit for x coordinates (from the detector data coordinates).
-    y_unit:
-        Unit for y coordinates (from the detector data coordinates).
-
-    Returns
-    -------
-    :
-        Dictionary mapping box index to RectangleROI. Empty boxes are skipped.
-    """
-    if not box_data or not box_data.get("x0"):
-        return {}
-
-    x0_list = box_data.get("x0", [])
-    x1_list = box_data.get("x1", [])
-    y0_list = box_data.get("y0", [])
-    y1_list = box_data.get("y1", [])
-
-    rois = {}
-    for i, (x0, x1, y0, y1) in enumerate(
-        zip(x0_list, x1_list, y0_list, y1_list, strict=True)
-    ):
-        # Skip empty/invalid boxes (where corners are equal)
-        if x0 == x1 or y0 == y1:
-            continue
-
-        # Ensure min < max
-        x_min, x_max = (x0, x1) if x0 < x1 else (x1, x0)
-        y_min, y_max = (y0, y1) if y0 < y1 else (y1, y0)
-
-        rois[i] = RectangleROI(
-            x=Interval(min=x_min, max=x_max, unit=x_unit),
-            y=Interval(min=y_min, max=y_max, unit=y_unit),
-        )
-
-    return rois
-
-
-def rois_to_rectangles(
-    rois: dict[int, RectangleROI], colors: list[str] | None = None
-) -> list[tuple[float, ...]]:
-    """
-    Convert RectangleROI instances to HoloViews Rectangles format.
-
-    Parameters
-    ----------
-    rois:
-        Dictionary mapping ROI index to RectangleROI.
-    colors:
-        Optional list of colors to assign to rectangles based on ROI index.
-        If provided, each rectangle tuple will include the color as a fifth element.
-
-    Returns
-    -------
-    :
-        List of (x0, y0, x1, y1) or (x0, y0, x1, y1, color) tuples for HoloViews
-        Rectangles. Returned in sorted order by ROI index.
-        All coordinates are explicitly cast to float to ensure compatibility
-        with BoxEdit drag operations.
-    """
-    rectangles = []
-    for idx in sorted(rois.keys()):
-        roi = rois[idx]
-        rect_tuple = (
-            float(roi.x.min),
-            float(roi.y.min),
-            float(roi.x.max),
-            float(roi.y.max),
-        )
-        if colors is not None:
-            # Add color based on ROI index (cycle if necessary)
-            color = colors[idx % len(colors)]
-            rect_tuple = (*rect_tuple, color)
-        rectangles.append(rect_tuple)
-    return rectangles
-
-
-def rois_to_box_data(rois: dict[int, RectangleROI]) -> dict[str, list[float]]:
-    """
-    Convert RectangleROI instances to BoxEdit data format.
-
-    Parameters
-    ----------
-    rois:
-        Dictionary mapping ROI index to RectangleROI.
-
-    Returns
-    -------
-    :
-        Dictionary with keys 'x0', 'x1', 'y0', 'y1' in BoxEdit format.
-        Empty dict with empty lists if no ROIs.
-    """
-    if not rois:
-        return {"x0": [], "y0": [], "x1": [], "y1": []}
-
-    sorted_indices = sorted(rois.keys())
-    return {
-        "x0": [rois[i].x.min for i in sorted_indices],
-        "y0": [rois[i].y.min for i in sorted_indices],
-        "x1": [rois[i].x.max for i in sorted_indices],
-        "y1": [rois[i].y.max for i in sorted_indices],
-    }
-
-
 ROIType = RectangleROI | PolygonROI
+
+
+class GeometryConverter(Protocol):
+    """Protocol for geometry-specific ROI conversion logic."""
+
+    @property
+    def geometry_type(self) -> str:
+        """Type identifier ('rectangle' or 'polygon')."""
+        ...
+
+    @property
+    def roi_type(self) -> type[ROIType]:
+        """ROI class for this geometry."""
+        ...
+
+    def parse_stream_data(
+        self,
+        data: dict[str, Any],
+        x_unit: str | None,
+        y_unit: str | None,
+        index_offset: int = 0,
+    ) -> dict[int, ROIType]:
+        """Convert UI stream data to ROI instances."""
+        ...
+
+    def to_hv_data(
+        self, rois: dict[int, ROIType], colors: list[str] | None
+    ) -> list[Any]:
+        """Convert ROIs to HoloViews display format."""
+        ...
+
+    def to_stream_data(self, rois: dict[int, ROIType]) -> dict[str, Any]:
+        """Convert ROIs to edit stream data format."""
+        ...
+
+
+class RectangleConverter:
+    """Converter for rectangle ROIs using BoxEdit stream."""
+
+    @property
+    def geometry_type(self) -> str:
+        return "rectangle"
+
+    @property
+    def roi_type(self) -> type[RectangleROI]:
+        return RectangleROI
+
+    def parse_stream_data(
+        self,
+        data: dict[str, Any],
+        x_unit: str | None,
+        y_unit: str | None,
+        index_offset: int = 0,
+    ) -> dict[int, RectangleROI]:
+        """
+        Convert BoxEdit data dictionary to RectangleROI instances.
+
+        BoxEdit returns data as a dictionary with keys 'x0', 'x1', 'y0', 'y1',
+        where each value is a list of coordinates for all boxes.
+
+        Parameters
+        ----------
+        data:
+            Dictionary from BoxEdit stream with keys x0, x1, y0, y1.
+        x_unit:
+            Unit for x coordinates (from the detector data coordinates).
+        y_unit:
+            Unit for y coordinates (from the detector data coordinates).
+        index_offset:
+            Not used for rectangles (always 0).
+
+        Returns
+        -------
+        :
+            Dictionary mapping box index to RectangleROI. Empty boxes are skipped.
+        """
+        if not data or not data.get("x0"):
+            return {}
+
+        x0_list = data.get("x0", [])
+        x1_list = data.get("x1", [])
+        y0_list = data.get("y0", [])
+        y1_list = data.get("y1", [])
+
+        rois = {}
+        for i, (x0, x1, y0, y1) in enumerate(
+            zip(x0_list, x1_list, y0_list, y1_list, strict=True)
+        ):
+            # Skip empty/invalid boxes (where corners are equal)
+            if x0 == x1 or y0 == y1:
+                continue
+
+            # Ensure min < max
+            x_min, x_max = (x0, x1) if x0 < x1 else (x1, x0)
+            y_min, y_max = (y0, y1) if y0 < y1 else (y1, y0)
+
+            rois[i] = RectangleROI(
+                x=Interval(min=x_min, max=x_max, unit=x_unit),
+                y=Interval(min=y_min, max=y_max, unit=y_unit),
+            )
+
+        return rois
+
+    def to_hv_data(
+        self, rois: dict[int, RectangleROI], colors: list[str] | None
+    ) -> list[tuple[float, ...]]:
+        """
+        Convert RectangleROI instances to HoloViews Rectangles format.
+
+        Parameters
+        ----------
+        rois:
+            Dictionary mapping ROI index to RectangleROI.
+        colors:
+            Optional list of colors to assign to rectangles based on ROI index.
+            If provided, each rectangle tuple will include the color as a fifth element.
+
+        Returns
+        -------
+        :
+            List of (x0, y0, x1, y1) or (x0, y0, x1, y1, color) tuples for HoloViews
+            Rectangles. Returned in sorted order by ROI index.
+            All coordinates are explicitly cast to float to ensure compatibility
+            with BoxEdit drag operations.
+        """
+        rectangles = []
+        for idx in sorted(rois.keys()):
+            roi = rois[idx]
+            rect_tuple = (
+                float(roi.x.min),
+                float(roi.y.min),
+                float(roi.x.max),
+                float(roi.y.max),
+            )
+            if colors is not None:
+                color = colors[idx % len(colors)]
+                rect_tuple = (*rect_tuple, color)
+            rectangles.append(rect_tuple)
+        return rectangles
+
+    def to_stream_data(self, rois: dict[int, RectangleROI]) -> dict[str, list[float]]:
+        """
+        Convert RectangleROI instances to BoxEdit data format.
+
+        Parameters
+        ----------
+        rois:
+            Dictionary mapping ROI index to RectangleROI.
+
+        Returns
+        -------
+        :
+            Dictionary with keys 'x0', 'x1', 'y0', 'y1' in BoxEdit format.
+            Empty dict with empty lists if no ROIs.
+        """
+        if not rois:
+            return {"x0": [], "y0": [], "x1": [], "y1": []}
+
+        sorted_indices = sorted(rois.keys())
+        return {
+            "x0": [rois[i].x.min for i in sorted_indices],
+            "y0": [rois[i].y.min for i in sorted_indices],
+            "x1": [rois[i].x.max for i in sorted_indices],
+            "y1": [rois[i].y.max for i in sorted_indices],
+        }
+
+
+class PolygonConverter:
+    """Converter for polygon ROIs using PolyDraw stream."""
+
+    @property
+    def geometry_type(self) -> str:
+        return "polygon"
+
+    @property
+    def roi_type(self) -> type[PolygonROI]:
+        return PolygonROI
+
+    def parse_stream_data(
+        self,
+        data: dict[str, Any],
+        x_unit: str | None,
+        y_unit: str | None,
+        index_offset: int = 0,
+    ) -> dict[int, PolygonROI]:
+        """
+        Convert PolyDraw data dictionary to PolygonROI instances.
+
+        PolyDraw returns data as a dictionary with keys 'xs', 'ys',
+        where each value is a list of lists of coordinates for all polygons.
+
+        Parameters
+        ----------
+        data:
+            Dictionary from PolyDraw stream with keys 'xs', 'ys'.
+        x_unit:
+            Unit for x coordinates (from the detector data coordinates).
+        y_unit:
+            Unit for y coordinates (from the detector data coordinates).
+        index_offset:
+            Starting index for polygon ROIs (e.g., 4 for indices 4-7).
+
+        Returns
+        -------
+        :
+            Dictionary mapping polygon index to PolygonROI. Empty polygons are skipped.
+        """
+        if not data or not data.get("xs"):
+            return {}
+
+        xs_list = data.get("xs", [])
+        ys_list = data.get("ys", [])
+
+        rois = {}
+        for i, (xs, ys) in enumerate(zip(xs_list, ys_list, strict=True)):
+            # Skip polygons with fewer than 3 vertices
+            if len(xs) < 3 or len(ys) < 3:
+                continue
+
+            rois[index_offset + i] = PolygonROI(
+                x=list(xs), y=list(ys), x_unit=x_unit, y_unit=y_unit
+            )
+
+        return rois
+
+    def to_hv_data(
+        self, rois: dict[int, PolygonROI], colors: list[str] | None
+    ) -> list[dict[str, Any]]:
+        """
+        Convert PolygonROI instances to HoloViews Polygons format.
+
+        Parameters
+        ----------
+        rois:
+            Dictionary mapping ROI index to PolygonROI.
+        colors:
+            Optional list of colors to assign to polygons based on ROI index.
+
+        Returns
+        -------
+        :
+            List of dicts with 'x', 'y' (and optionally 'color') for HoloViews Polygons.
+            Returned in sorted order by ROI index.
+        """
+        polygons = []
+        for idx in sorted(rois.keys()):
+            roi = rois[idx]
+            poly_dict: dict[str, Any] = {
+                'x': [float(v) for v in roi.x],
+                'y': [float(v) for v in roi.y],
+            }
+            if colors is not None:
+                poly_dict['color'] = colors[idx % len(colors)]
+            polygons.append(poly_dict)
+        return polygons
+
+    def to_stream_data(
+        self, rois: dict[int, PolygonROI]
+    ) -> dict[str, list[list[float]]]:
+        """
+        Convert PolygonROI instances to PolyDraw data format.
+
+        Parameters
+        ----------
+        rois:
+            Dictionary mapping ROI index to PolygonROI.
+
+        Returns
+        -------
+        :
+            Dictionary with keys 'xs', 'ys' in PolyDraw format.
+            Empty dict with empty lists if no ROIs.
+        """
+        if not rois:
+            return {"xs": [], "ys": []}
+
+        sorted_indices = sorted(rois.keys())
+        return {
+            "xs": [[float(v) for v in rois[i].x] for i in sorted_indices],
+            "ys": [[float(v) for v in rois[i].y] for i in sorted_indices],
+        }
 
 
 def parse_readback_by_type(
@@ -184,125 +345,18 @@ def parse_readback_by_type(
         return {}
 
 
-def polydraw_to_polygons(
-    poly_data: dict[str, Any],
-    x_unit: str | None = None,
-    y_unit: str | None = None,
-    index_offset: int = 0,
-) -> dict[int, PolygonROI]:
-    """
-    Convert PolyDraw data dictionary to PolygonROI instances.
-
-    PolyDraw returns data as a dictionary with keys 'xs', 'ys',
-    where each value is a list of lists of coordinates for all polygons.
-
-    Parameters
-    ----------
-    poly_data:
-        Dictionary from PolyDraw stream with keys 'xs', 'ys'.
-    x_unit:
-        Unit for x coordinates (from the detector data coordinates).
-    y_unit:
-        Unit for y coordinates (from the detector data coordinates).
-    index_offset:
-        Starting index for polygon ROIs (e.g., 4 for indices 4-7).
-
-    Returns
-    -------
-    :
-        Dictionary mapping polygon index to PolygonROI. Empty polygons are skipped.
-    """
-    if not poly_data or not poly_data.get("xs"):
-        return {}
-
-    xs_list = poly_data.get("xs", [])
-    ys_list = poly_data.get("ys", [])
-
-    rois = {}
-    for i, (xs, ys) in enumerate(zip(xs_list, ys_list, strict=True)):
-        # Skip polygons with fewer than 3 vertices
-        if len(xs) < 3 or len(ys) < 3:
-            continue
-
-        rois[index_offset + i] = PolygonROI(
-            x=list(xs), y=list(ys), x_unit=x_unit, y_unit=y_unit
-        )
-
-    return rois
-
-
-def polygons_to_hv_data(
-    rois: dict[int, PolygonROI], colors: list[str] | None = None
-) -> list[dict[str, Any]]:
-    """
-    Convert PolygonROI instances to HoloViews Polygons format.
-
-    Parameters
-    ----------
-    rois:
-        Dictionary mapping ROI index to PolygonROI.
-    colors:
-        Optional list of colors to assign to polygons based on ROI index.
-
-    Returns
-    -------
-    :
-        List of dicts with 'x', 'y' (and optionally 'color') for HoloViews Polygons.
-        Returned in sorted order by ROI index.
-    """
-    polygons = []
-    for idx in sorted(rois.keys()):
-        roi = rois[idx]
-        poly_dict: dict[str, Any] = {
-            'x': [float(v) for v in roi.x],
-            'y': [float(v) for v in roi.y],
-        }
-        if colors is not None:
-            poly_dict['color'] = colors[idx % len(colors)]
-        polygons.append(poly_dict)
-    return polygons
-
-
-def polygons_to_polydraw_data(
-    rois: dict[int, PolygonROI],
-) -> dict[str, list[list[float]]]:
-    """
-    Convert PolygonROI instances to PolyDraw data format.
-
-    Parameters
-    ----------
-    rois:
-        Dictionary mapping ROI index to PolygonROI.
-
-    Returns
-    -------
-    :
-        Dictionary with keys 'xs', 'ys' in PolyDraw format.
-        Empty dict with empty lists if no ROIs.
-    """
-    if not rois:
-        return {"xs": [], "ys": []}
-
-    sorted_indices = sorted(rois.keys())
-    return {
-        "xs": [[float(v) for v in rois[i].x] for i in sorted_indices],
-        "ys": [[float(v) for v in rois[i].y] for i in sorted_indices],
-    }
-
-
 class GeometryHandler:
     """
     Encapsulates geometry-specific state and operations for ROI editing.
 
     Each handler manages a single geometry type (rectangle or polygon),
     including its request/readback state, UI streams, and conversion logic.
+    Conversion logic is delegated to a GeometryConverter.
 
     Parameters
     ----------
-    geometry_type:
-        Type identifier ("rectangle" or "polygon").
-    roi_type:
-        ROI class for this geometry (RectangleROI or PolygonROI).
+    converter:
+        Converter implementing geometry-specific parsing and formatting.
     edit_stream:
         HoloViews edit stream (BoxEdit or PolyDraw).
     request_pipe:
@@ -317,16 +371,14 @@ class GeometryHandler:
 
     def __init__(
         self,
-        geometry_type: str,
-        roi_type: type[ROIType],
+        converter: GeometryConverter,
         edit_stream: hv.streams.BoxEdit | hv.streams.PolyDraw,
         request_pipe: hv.streams.Pipe,
         readback_pipe: hv.streams.Pipe,
         index_offset: int = 0,
         initial_rois: dict[int, ROIType] | None = None,
     ) -> None:
-        self.geometry_type = geometry_type
-        self.roi_type = roi_type
+        self._converter = converter
         self.edit_stream = edit_stream
         self.request_pipe = request_pipe
         self.readback_pipe = readback_pipe
@@ -339,6 +391,16 @@ class GeometryHandler:
         self._readback_rois: dict[int, ROIType] = (
             initial_rois.copy() if initial_rois else {}
         )
+
+    @property
+    def geometry_type(self) -> str:
+        """Type identifier ('rectangle' or 'polygon')."""
+        return self._converter.geometry_type
+
+    @property
+    def roi_type(self) -> type[ROIType]:
+        """ROI class for this geometry."""
+        return self._converter.roi_type
 
     @property
     def request_rois(self) -> dict[int, ROIType]:
@@ -358,18 +420,20 @@ class GeometryHandler:
     def parse_stream_data(
         self, data: dict[str, Any], x_unit: str | None, y_unit: str | None
     ) -> dict[int, ROIType]:
-        """Convert UI stream data to ROI instances. Must be overridden."""
-        raise NotImplementedError
+        """Convert UI stream data to ROI instances."""
+        return self._converter.parse_stream_data(
+            data, x_unit, y_unit, self.index_offset
+        )
 
     def to_hv_data(
         self, rois: dict[int, ROIType], colors: list[str] | None
     ) -> list[Any]:
-        """Convert ROIs to HoloViews display format. Must be overridden."""
-        raise NotImplementedError
+        """Convert ROIs to HoloViews display format."""
+        return self._converter.to_hv_data(rois, colors)
 
     def to_stream_data(self, rois: dict[int, ROIType]) -> dict[str, Any]:
-        """Convert ROIs to edit stream data format. Must be overridden."""
-        raise NotImplementedError
+        """Convert ROIs to edit stream data format."""
+        return self._converter.to_stream_data(rois)
 
     def update_request(
         self, rois: dict[int, ROIType], colors: list[str] | None
@@ -391,85 +455,6 @@ class GeometryHandler:
         """Sync the edit stream data from ROIs (for backend updates)."""
         stream_data = self.to_stream_data(rois)
         self.edit_stream.event(data=stream_data)
-
-
-class RectangleHandler(GeometryHandler):
-    """Handler for rectangle ROIs using BoxEdit stream."""
-
-    def __init__(
-        self,
-        edit_stream: hv.streams.BoxEdit,
-        request_pipe: hv.streams.Pipe,
-        readback_pipe: hv.streams.Pipe,
-        initial_rois: dict[int, RectangleROI] | None = None,
-    ) -> None:
-        super().__init__(
-            geometry_type="rectangle",
-            roi_type=RectangleROI,
-            edit_stream=edit_stream,
-            request_pipe=request_pipe,
-            readback_pipe=readback_pipe,
-            index_offset=0,
-            initial_rois=initial_rois,
-        )
-
-    def parse_stream_data(
-        self, data: dict[str, Any], x_unit: str | None, y_unit: str | None
-    ) -> dict[int, RectangleROI]:
-        """Convert BoxEdit data to RectangleROI instances."""
-        return boxes_to_rois(data, x_unit=x_unit, y_unit=y_unit)
-
-    def to_hv_data(
-        self, rois: dict[int, RectangleROI], colors: list[str] | None
-    ) -> list[tuple[float, ...]]:
-        """Convert RectangleROIs to HoloViews Rectangles format."""
-        return rois_to_rectangles(rois, colors=colors)
-
-    def to_stream_data(self, rois: dict[int, RectangleROI]) -> dict[str, list[float]]:
-        """Convert RectangleROIs to BoxEdit data format."""
-        return rois_to_box_data(rois)
-
-
-class PolygonHandler(GeometryHandler):
-    """Handler for polygon ROIs using PolyDraw stream."""
-
-    def __init__(
-        self,
-        edit_stream: hv.streams.PolyDraw,
-        request_pipe: hv.streams.Pipe,
-        readback_pipe: hv.streams.Pipe,
-        index_offset: int = 4,
-        initial_rois: dict[int, PolygonROI] | None = None,
-    ) -> None:
-        super().__init__(
-            geometry_type="polygon",
-            roi_type=PolygonROI,
-            edit_stream=edit_stream,
-            request_pipe=request_pipe,
-            readback_pipe=readback_pipe,
-            index_offset=index_offset,
-            initial_rois=initial_rois,
-        )
-
-    def parse_stream_data(
-        self, data: dict[str, Any], x_unit: str | None, y_unit: str | None
-    ) -> dict[int, PolygonROI]:
-        """Convert PolyDraw data to PolygonROI instances."""
-        return polydraw_to_polygons(
-            data, x_unit=x_unit, y_unit=y_unit, index_offset=self.index_offset
-        )
-
-    def to_hv_data(
-        self, rois: dict[int, PolygonROI], colors: list[str] | None
-    ) -> list[dict[str, Any]]:
-        """Convert PolygonROIs to HoloViews Polygons format."""
-        return polygons_to_hv_data(rois, colors=colors)
-
-    def to_stream_data(
-        self, rois: dict[int, PolygonROI]
-    ) -> dict[str, list[list[float]]]:
-        """Convert PolygonROIs to PolyDraw data format."""
-        return polygons_to_polydraw_data(rois)
 
 
 class ROIPlotState:
@@ -552,17 +537,20 @@ class ROIPlotState:
         self._roi_mapper = roi_mapper or get_roi_mapper()
 
         # Create geometry handlers
-        self._rect_handler = RectangleHandler(
+        self._rect_handler = GeometryHandler(
+            converter=RectangleConverter(),
             edit_stream=box_stream,
             request_pipe=rect_request_pipe,
             readback_pipe=rect_readback_pipe,
+            index_offset=0,
             initial_rois=initial_rect_rois,
         )
 
         poly_index_offset = self._get_polygon_index_offset()
-        self._poly_handler: PolygonHandler | None = None
+        self._poly_handler: GeometryHandler | None = None
         if poly_stream is not None and poly_request_pipe and poly_readback_pipe:
-            self._poly_handler = PolygonHandler(
+            self._poly_handler = GeometryHandler(
+                converter=PolygonConverter(),
                 edit_stream=poly_stream,
                 request_pipe=poly_request_pipe,
                 readback_pipe=poly_readback_pipe,
