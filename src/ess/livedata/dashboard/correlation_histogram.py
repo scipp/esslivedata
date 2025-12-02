@@ -12,7 +12,13 @@ import numpy as np
 import pydantic
 import scipp as sc
 
-from ess.livedata.config.workflow_spec import JobId, JobNumber, ResultKey, WorkflowSpec
+from ess.livedata.config.workflow_spec import (
+    JobId,
+    JobNumber,
+    ResultKey,
+    WorkflowOutputsBase,
+    WorkflowSpec,
+)
 from ess.livedata.parameter_models import EdgesModel, make_edges
 
 from .configuration_adapter import ConfigurationAdapter
@@ -57,6 +63,15 @@ class CorrelationHistogram2dParams(CorrelationHistogramParams):
     y_edges: EdgesWithUnit
 
 
+class CorrelationHistogramOutputs(WorkflowOutputsBase):
+    """Outputs for correlation histogram workflows."""
+
+    histogram: sc.DataArray = pydantic.Field(
+        title='Correlation Histogram',
+        description='Histogram correlating selected timeseries.',
+    )
+
+
 # Note: make_workflow_spec encapsulates workflow configuration in the widely-used
 # WorkflowSpec format. In the future, this can be converted to WorkflowConfig and
 # submitted to a separate backend service for execution.
@@ -76,6 +91,7 @@ def make_workflow_spec(ndim: int) -> WorkflowSpec:
         source_names=[],
         aux_sources=None,
         params=params[ndim],
+        outputs=CorrelationHistogramOutputs,
     )
 
 
@@ -305,7 +321,7 @@ class CorrelationHistogramConfigurationAdapter(ConfigurationAdapter[Model], ABC)
             job_id=JobId(
                 source_name=data_key.job_id.source_name, job_number=job_number
             ),
-            output_name=None,
+            output_name='histogram',
         )
 
         def callback(result: sc.DataArray) -> None:

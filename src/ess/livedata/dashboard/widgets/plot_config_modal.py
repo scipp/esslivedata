@@ -270,7 +270,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             return
 
         workflow_spec = self._workflow_registry.get(self._selected_workflow_id)
-        if workflow_spec is None or workflow_spec.outputs is None:
+        if workflow_spec is None:
             self._output_buttons.options = {}
             return
 

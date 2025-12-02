@@ -31,6 +31,15 @@ class WorkflowOutputsBase(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
+class DefaultOutputs(WorkflowOutputsBase):
+    """Default outputs model for workflows that don't specify outputs.
+
+    Provides a single 'result' field for simple workflows.
+    """
+
+    result: sc.DataArray = Field(title='Result', description='Workflow output.')
+
+
 class WorkflowId(BaseModel, frozen=True):
     instrument: str
     namespace: str
@@ -106,14 +115,12 @@ class AuxSourcesBase(BaseModel):
 
 
 class ResultKey(BaseModel, frozen=True):
-    # If the job produced a DataGroup then it will be serialized as multiple da00
-    # messages. Each message corresponds to a single DataArray value the DataGroup.
-    # In the case the output_name is set.
+    # Workflows produce one or more named outputs. Each output is serialized as a
+    # separate da00 message. The output_name identifies which output this key refers to.
     workflow_id: WorkflowId = Field(description="Workflow ID")
     job_id: JobId = Field(description="Job ID")
-    output_name: str | None = Field(
-        default=None,
-        description="Name of the output, if the job produces multiple outputs",
+    output_name: str = Field(
+        default='result', description="Name of the workflow output"
     )
 
 
@@ -150,8 +157,8 @@ class WorkflowSpec(BaseModel):
         ),
     )
     params: type[BaseModel] | None = Field(description="Model for workflow param.")
-    outputs: type[BaseModel] | None = Field(
-        default=None,
+    outputs: type[BaseModel] = Field(
+        default=DefaultOutputs,
         description=(
             "Pydantic model defining workflow outputs with their metadata. "
             "Field names are simplified identifiers (e.g., 'i_of_d_two_theta') "
@@ -176,13 +183,8 @@ class WorkflowSpec(BaseModel):
 
     @field_validator('outputs', mode='after')
     @classmethod
-    def validate_unique_output_titles(
-        cls, outputs: type[BaseModel] | None
-    ) -> type[BaseModel] | None:
+    def validate_unique_output_titles(cls, outputs: type[BaseModel]) -> type[BaseModel]:
         """Validate that output titles are unique within the workflow."""
-        if outputs is None:
-            return outputs
-
         title_counts: dict[str, list[str]] = defaultdict(list)
         for field_name, field_info in outputs.model_fields.items():
             title = field_info.title if field_info.title is not None else field_name
@@ -236,9 +238,6 @@ class WorkflowSpec(BaseModel):
             DataArray created by the field's default_factory, or None if the field
             is not found or has no default_factory defined.
         """
-        if self.outputs is None:
-            return None
-
         field_info = self.outputs.model_fields.get(output_name)
         if field_info is None:
             return None
