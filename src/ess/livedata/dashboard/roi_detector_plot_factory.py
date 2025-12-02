@@ -184,28 +184,6 @@ def parse_readback_by_type(
         return {}
 
 
-def parse_roi_readback_data(
-    roi_data: sc.DataArray, logger: logging.Logger | None = None
-) -> dict[int, RectangleROI]:
-    """
-    Parse ROI readback data from backend into RectangleROI instances.
-
-    Parameters
-    ----------
-    roi_data:
-        Concatenated ROI data array with roi_index coordinate.
-    logger:
-        Optional logger for debug messages.
-
-    Returns
-    -------
-    :
-        Dictionary mapping ROI index to RectangleROI. Only rectangle ROIs
-        are included. Returns empty dict if parsing fails.
-    """
-    return parse_readback_by_type(roi_data, RectangleROI, logger)
-
-
 def polydraw_to_polygons(
     poly_data: dict[str, Any],
     x_unit: str | None = None,
@@ -310,28 +288,6 @@ def polygons_to_polydraw_data(
         "xs": [[float(v) for v in rois[i].x] for i in sorted_indices],
         "ys": [[float(v) for v in rois[i].y] for i in sorted_indices],
     }
-
-
-def parse_polygon_readback_data(
-    roi_data: sc.DataArray, logger: logging.Logger | None = None
-) -> dict[int, PolygonROI]:
-    """
-    Parse polygon ROI readback data from backend into PolygonROI instances.
-
-    Parameters
-    ----------
-    roi_data:
-        Concatenated ROI data array with roi_index coordinate.
-    logger:
-        Optional logger for debug messages.
-
-    Returns
-    -------
-    :
-        Dictionary mapping ROI index to PolygonROI. Only polygon ROIs
-        are included. Returns empty dict if parsing fails.
-    """
-    return parse_readback_by_type(roi_data, PolygonROI, logger)
 
 
 class GeometryHandler:
