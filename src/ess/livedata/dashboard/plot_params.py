@@ -124,7 +124,7 @@ class LayoutParams(pydantic.BaseModel):
     """Parameters for layout configuration."""
 
     combine_mode: CombineMode = pydantic.Field(
-        default=CombineMode.layout,
+        default=CombineMode.overlay,
         description="How to combine multiple datasets: overlay or layout.",
         title="Combine Mode",
     )
