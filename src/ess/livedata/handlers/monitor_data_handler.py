@@ -29,11 +29,16 @@ class MonitorStreamProcessor(Workflow):
         self._current_start_time: int | None = None
         # Ratemeter configuration - convert range to edges unit once
         self._toa_range_enabled = toa_range_enabled
+        dim = edges.dim
         if toa_range_enabled and toa_range is not None:
             low, high = toa_range
             self._toa_range = (low.to(unit=edges.unit), high.to(unit=edges.unit))
+            self._toa_range_edges = sc.concat(
+                [self._toa_range[0], self._toa_range[1]], dim
+            )
         else:
             self._toa_range = None
+            self._toa_range_edges = sc.concat([edges[dim, 0], edges[dim, -1]], dim)
 
     @staticmethod
     def create_workflow(params: MonitorDataParams) -> Workflow:
@@ -117,6 +122,7 @@ class MonitorStreamProcessor(Workflow):
             # When TOA range not enabled, counts_in_toa_range equals total
             counts_in_toa_range = counts_total.copy()
         counts_in_toa_range.coords['time'] = time_coord
+        counts_in_toa_range.coords[self._edges.dim] = self._toa_range_edges
 
         return {
             'cumulative': self._cumulative,

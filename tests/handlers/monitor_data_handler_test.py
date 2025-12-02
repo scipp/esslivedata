@@ -267,6 +267,11 @@ class TestMonitorStreamProcessorRatemeter:
         # Should have time coordinate
         assert "time" in result["counts_total"].coords
         assert result["counts_total"].coords["time"].value == 1000
+        # Should have bin-edge coordinate showing full range
+        tof_coord = result["counts_in_toa_range"].coords["tof"]
+        assert sc.identical(
+            tof_coord, sc.concat([edges["tof", 0], edges["tof", -1]], "tof")
+        )
 
     def test_counts_in_toa_range_when_enabled(self, edges):
         """Test that counts_in_toa_range is filtered when TOA range enabled."""
@@ -289,6 +294,10 @@ class TestMonitorStreamProcessorRatemeter:
         # Both should have time coordinate
         assert "time" in result["counts_total"].coords
         assert "time" in result["counts_in_toa_range"].coords
+        # Should have bin-edge coordinate showing the specified range
+        tof_coord = result["counts_in_toa_range"].coords["tof"]
+        expected = sc.concat([toa_range[0], toa_range[1]], "tof")
+        assert sc.identical(tof_coord, expected)
 
     def test_ratemeter_counts_correct_range(self, edges):
         """Test that ratemeter correctly sums counts in TOA range."""
