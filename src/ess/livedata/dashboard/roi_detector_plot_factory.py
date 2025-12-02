@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any, Protocol
 
 import holoviews as hv
@@ -31,23 +30,6 @@ from .roi_publisher import ROIPublisher
 from .stream_manager import StreamManager
 
 ROIType = RectangleROI | PolygonROI
-
-# Debounce window for polygon backend sync.
-#
-# Unlike BoxEdit (rectangles) where drawing is atomic (click-drag-release), PolyDraw
-# accumulates vertices across multiple clicks until finalized with double-click. The
-# PolyDraw stream only syncs to Python on finalization, but the Bokeh JS tool maintains
-# in-progress state (partially drawn polygon) that we cannot detect from Python.
-#
-# When we sync from backend (to support multi-session editing), we update the request
-# pipe which is PolyDraw's source. This disrupts any in-progress drawing because it
-# replaces the underlying ColumnDataSource.
-#
-# We cannot distinguish "stale echo of my own edit" from "external change by another
-# session" purely by comparing data - both appear as "backend differs from local state".
-# Time-based debounce is a simple heuristic: if the user just edited, any differing
-# backend data is probably a stale echo of their own earlier edit, so we skip sync.
-POLYGON_SYNC_DEBOUNCE_SECONDS = 2.0
 
 
 class GeometryConverter(Protocol):
@@ -410,9 +392,6 @@ class GeometryHandler:
             initial_rois.copy() if initial_rois else {}
         )
 
-        # Timestamp of last user edit (for debouncing backend sync)
-        self._last_edit_time: float = 0.0
-
     @property
     def geometry_type(self) -> str:
         """Type identifier ('rectangle' or 'polygon')."""
@@ -437,14 +416,6 @@ class GeometryHandler:
     def active_indices(self) -> set[int]:
         """Indices of currently active ROIs based on readback (backend truth)."""
         return set(self._readback_rois.keys())
-
-    def record_user_edit(self) -> None:
-        """Record that the user just made an edit (for debounce tracking)."""
-        self._last_edit_time = time.monotonic()
-
-    def is_recently_edited(self, debounce_seconds: float) -> bool:
-        """Check if user edited within the debounce window."""
-        return (time.monotonic() - self._last_edit_time) < debounce_seconds
 
     def parse_stream_data(
         self, data: dict[str, Any], x_unit: str | None, y_unit: str | None
@@ -669,9 +640,6 @@ class ROIPlotState:
             if current_rois == handler.request_rois:
                 return
 
-            # Record that user made an edit (for debounce tracking)
-            handler.record_user_edit()
-
             # Update request layer immediately (optimistic UI feedback)
             handler.update_request(current_rois, self._colors)
 
@@ -720,18 +688,8 @@ class ROIPlotState:
 
             # Sync request layer to match backend if needed
             if request_needs_sync:
-                # For polygons, debounce sync to avoid disrupting in-progress drawing.
-                # See POLYGON_SYNC_DEBOUNCE_SECONDS for detailed rationale.
-                if handler.geometry_type == "polygon" and handler.is_recently_edited(
-                    POLYGON_SYNC_DEBOUNCE_SECONDS
-                ):
-                    self._logger.debug(
-                        "Deferring polygon sync - user edited within %.1fs",
-                        POLYGON_SYNC_DEBOUNCE_SECONDS,
-                    )
-                else:
-                    handler.update_request(backend_rois, self._colors)
-                    handler.sync_stream_from_rois(backend_rois)
+                handler.update_request(backend_rois, self._colors)
+                handler.sync_stream_from_rois(backend_rois)
 
             self._logger.info(
                 "UI updated with %d %s ROI(s) from backend for job %s",
