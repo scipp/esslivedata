@@ -26,6 +26,11 @@ class MonitorDataParams(pydantic.BaseModel):
             unit=parameter_models.TimeUnit.MS,
         ),
     )
+    toa_range: parameter_models.TOARange = pydantic.Field(
+        title="Time of Arrival Range",
+        description="Time of arrival range for ratemeter output.",
+        default=parameter_models.TOARange(),
+    )
 
 
 class MonitorRatemeterParams(pydantic.BaseModel):
@@ -68,6 +73,22 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         ),
         title='Current Counts',
         description='Monitor counts for the current time window since last update.',
+    )
+    counts_total: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.scalar(0, unit='counts'),
+            coords={'time': sc.scalar(0, unit='ns')},
+        ),
+        title='Total Counts',
+        description='Total monitor counts (ratemeter).',
+    )
+    counts_in_toa_range: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.scalar(0, unit='counts'),
+            coords={'time': sc.scalar(0, unit='ns')},
+        ),
+        title='Counts in TOA Range',
+        description='Monitor counts within the specified TOA range (ratemeter).',
     )
 
 

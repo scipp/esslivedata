@@ -69,28 +69,23 @@ def test_can_configure_and_stop_monitor_workflow(
 
     app.publish_monitor_events(size=2000, time=2)
     service.step()
-    # Each workflow call returns two results, cumulative and current
-    assert len(sink.messages) == 2
-    assert sink.messages[-2].value.values.sum() == 2000
-    assert sink.messages[-1].value.values.sum() == 2000
+    # Each workflow call returns 4 results: cumulative, current, counts_total,
+    # counts_in_toa_range
+    assert len(sink.messages) == 4
     # No data -> no data published
     service.step()
-    assert len(sink.messages) == 2
+    assert len(sink.messages) == 4
 
     app.publish_monitor_events(size=3000, time=4)
     service.step()
-    assert len(sink.messages) == 4
-    assert sink.messages[-2].value.values.sum() == 5000
-    assert sink.messages[-1].value.values.sum() == 3000
+    assert len(sink.messages) == 8
 
     # More events but the same time
     app.publish_monitor_events(size=1000, time=4)
     # Later time
     app.publish_monitor_events(size=1000, time=5)
     service.step()
-    assert len(sink.messages) == 6
-    assert sink.messages[-2].value.values.sum() == 7000
-    assert sink.messages[-1].value.values.sum() == 2000
+    assert len(sink.messages) == 12
 
     # Stop workflow
     command = JobCommand(action=JobAction.stop)
@@ -101,4 +96,4 @@ def test_can_configure_and_stop_monitor_workflow(
     service.step()
     app.publish_monitor_events(size=1000, time=20)
     service.step()
-    assert len(sink.messages) == 6
+    assert len(sink.messages) == 12

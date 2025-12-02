@@ -27,17 +27,31 @@ MonitorCountsInInterval = NewType('MonitorCountsInInterval', sc.DataArray)
 
 
 class MonitorStreamProcessor(Workflow):
-    def __init__(self, edges: sc.Variable) -> None:
+    def __init__(
+        self,
+        edges: sc.Variable,
+        *,
+        toa_range_enabled: bool = False,
+        toa_range: tuple[sc.Variable, sc.Variable] | None = None,
+    ) -> None:
         self._edges = edges
         self._event_edges = edges.to(unit='ns').values
         self._cumulative: sc.DataArray | None = None
         self._current: sc.DataArray | None = None
         self._current_start_time: int | None = None
+        # Ratemeter configuration
+        self._toa_range_enabled = toa_range_enabled
+        self._toa_range = toa_range
 
     @staticmethod
     def create_workflow(params: MonitorDataParams) -> Workflow:
         """Factory method for creating MonitorStreamProcessor from params."""
-        return MonitorStreamProcessor(edges=params.toa_edges.get_edges())
+        toa_range = params.toa_range
+        return MonitorStreamProcessor(
+            edges=params.toa_edges.get_edges(),
+            toa_range_enabled=toa_range.enabled,
+            toa_range=toa_range.range_ns if toa_range.enabled else None,
+        )
 
     def accumulate(
         self,
@@ -99,7 +113,30 @@ class MonitorStreamProcessor(Workflow):
         current = current.assign_coords(time=time_coord)
         self._current_start_time = None
 
-        return {'cumulative': self._cumulative, 'current': current}
+        # Compute ratemeter counts (always output both)
+        counts_total = current.sum()
+        counts_total.coords['time'] = time_coord
+
+        if self._toa_range_enabled and self._toa_range is not None:
+            low, high = self._toa_range
+            dim = self._edges.dim
+            # Convert range to match histogram coordinate unit
+            edges_unit = self._edges.unit
+            low = low.to(unit=edges_unit)
+            high = high.to(unit=edges_unit)
+            # Slice histogram to TOA range and sum
+            counts_in_toa_range = current[dim, low:high].sum()
+        else:
+            # When TOA range not enabled, counts_in_toa_range equals total
+            counts_in_toa_range = counts_total.copy()
+        counts_in_toa_range.coords['time'] = time_coord
+
+        return {
+            'cumulative': self._cumulative,
+            'current': current,
+            'counts_total': counts_total,
+            'counts_in_toa_range': counts_in_toa_range,
+        }
 
     def clear(self) -> None:
         self._cumulative = None
