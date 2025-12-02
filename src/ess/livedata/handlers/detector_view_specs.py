@@ -77,29 +77,14 @@ class DetectorROIAuxSources(AuxSourcesBase):
     """
     Auxiliary source model for ROI configuration in detector workflows.
 
-    Allows users to select between different ROI shapes (rectangle, polygon, ellipse).
-    The render() method prefixes stream names with the job number to create job-specific
-    ROI configuration streams, since each job instance needs its own ROI.
+    Subscribes to all supported ROI geometry streams (rectangle, polygon).
+    The render() method prefixes stream names with the job_id to create job-specific
+    ROI configuration streams, since each job instance needs its own ROIs.
     """
-
-    roi: Literal['rectangle', 'polygon', 'ellipse'] = pydantic.Field(
-        default='rectangle',
-        description='Shape to use for the region of interest (ROI).',
-    )
-
-    @pydantic.field_validator('roi')
-    @classmethod
-    def validate_roi_shape(cls, v: str) -> str:
-        """Validate that only rectangle is currently supported."""
-        if v != 'rectangle':
-            raise ValueError(
-                f"Currently only 'rectangle' ROI shape is supported, got '{v}'"
-            )
-        return v
 
     def render(self, job_id: JobId) -> dict[str, str]:
         """
-        Render ROI stream name with job-specific prefix.
+        Render ROI stream names with job-specific prefix.
 
         Parameters
         ----------
@@ -109,14 +94,15 @@ class DetectorROIAuxSources(AuxSourcesBase):
         Returns
         -------
         :
-            Mapping from field name 'roi' to job-specific stream name in the
-            format '{source_name}/{job_number}/roi_{shape}' (e.g.,
-            'mantle/abc-123/roi_rectangle'). The source_name ensures ROI
-            streams are unique per detector in multi-detector workflows where
-            the same job_number is shared across detectors.
+            Mapping from ROI geometry keys to job-specific stream names.
+            Keys are 'roi_rectangle', 'roi_polygon', etc.
+            Values are in the format '{source_name}/{job_number}/roi_{shape}'
+            (e.g., 'mantle/abc-123/roi_rectangle').
         """
-        base = self.model_dump(mode='json')
-        return {field: f"{job_id}/roi_{stream}" for field, stream in base.items()}
+        return {
+            'roi_rectangle': f"{job_id}/roi_rectangle",
+            'roi_polygon': f"{job_id}/roi_polygon",
+        }
 
 
 def register_detector_view_spec(

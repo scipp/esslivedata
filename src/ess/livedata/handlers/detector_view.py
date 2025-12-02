@@ -86,16 +86,17 @@ class DetectorView(Workflow):
         end_time:
             End time of the data window in nanoseconds since epoch.
         """
-        # Check for ROI configuration update (auxiliary data)
-        # Stream name is 'roi' (from 'roi_rectangle' after job_id prefix stripped)
-        roi_key = 'roi'
-        if roi_key in data:
-            roi_data_array = data[roi_key]
-            rois = models.ROI.from_concatenated_data_array(roi_data_array)
-            self._update_rois(rois)
+        # Check for ROI configuration updates (auxiliary data)
+        # Keys are 'roi_rectangle', 'roi_polygon', etc. from DetectorROIAuxSources
+        roi_keys = ('roi_rectangle', 'roi_polygon')
+        for roi_key in roi_keys:
+            if roi_key in data:
+                roi_data_array = data[roi_key]
+                rois = models.ROI.from_concatenated_data_array(roi_data_array)
+                self._update_rois(rois)
 
-        # Process detector event data
-        detector_data = {k: v for k, v in data.items() if k != roi_key}
+        # Process detector event data (exclude ROI keys)
+        detector_data = {k: v for k, v in data.items() if k not in roi_keys}
         if len(detector_data) == 0:
             # No detector data to process (e.g., empty dict or only rois)
             return

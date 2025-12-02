@@ -175,10 +175,8 @@ class TestROIHistogram:
         assert sc.sum(delta).value == 0
         assert sc.sum(roi_histogram.cumulative).value == 0
 
-    def test_polygon_roi_raises_value_error(
-        self, detector_indices: sc.DataArray
-    ) -> None:
-        """Test that PolygonROI raises ValueError (not yet supported)."""
+    def test_polygon_roi_is_supported(self, detector_indices: sc.DataArray) -> None:
+        """Test that PolygonROI is supported."""
         polygon_roi = PolygonROI(
             x=[5.0, 25.0, 25.0, 5.0],
             y=[5.0, 5.0, 25.0, 25.0],
@@ -188,10 +186,28 @@ class TestROIHistogram:
         toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
         roi_filter = ROIFilter(detector_indices)
 
-        with pytest.raises(
-            ValueError, match='Only rectangle ROI is currently supported'
-        ):
-            ROIHistogram(toa_edges=toa_edges, roi_filter=roi_filter, model=polygon_roi)
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=polygon_roi
+        )
+        assert roi_histogram.model == polygon_roi
+
+    def test_polygon_roi_with_pixel_indices_is_supported(
+        self, detector_indices: sc.DataArray
+    ) -> None:
+        """Test that PolygonROI with pixel indices (no units) is supported."""
+        polygon_roi = PolygonROI(
+            x=[5.0, 25.0, 25.0, 5.0],
+            y=[5.0, 5.0, 25.0, 25.0],
+            x_unit=None,
+            y_unit=None,
+        )
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+        roi_filter = ROIFilter(detector_indices)
+
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=polygon_roi
+        )
+        assert roi_histogram.model == polygon_roi
 
     def test_ellipse_roi_raises_value_error(
         self, detector_indices: sc.DataArray
@@ -208,9 +224,7 @@ class TestROIHistogram:
         toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
         roi_filter = ROIFilter(detector_indices)
 
-        with pytest.raises(
-            ValueError, match='Only rectangle ROI is currently supported'
-        ):
+        with pytest.raises(ValueError, match='Unsupported ROI type: EllipseROI'):
             ROIHistogram(toa_edges=toa_edges, roi_filter=roi_filter, model=ellipse_roi)
 
     def test_toa_edges_unit_conversion_from_microseconds(

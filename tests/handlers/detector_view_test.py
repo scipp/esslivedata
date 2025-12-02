@@ -56,7 +56,7 @@ def roi_to_accumulate_data(
     roi: RectangleROI, index: int = 0
 ) -> dict[str, sc.DataArray]:
     """Convert ROI to accumulate data format."""
-    return {'roi': RectangleROI.to_concatenated_data_array({index: roi})}
+    return {'roi_rectangle': RectangleROI.to_concatenated_data_array({index: roi})}
 
 
 def assert_has_detector_view_results(result: dict) -> None:
@@ -645,7 +645,7 @@ class TestDetectorViewBothROIAndDetectorData:
         )
         view.accumulate(
             {
-                'roi': RectangleROI.to_concatenated_data_array({0: roi}),
+                'roi_rectangle': RectangleROI.to_concatenated_data_array({0: roi}),
                 'detector': sample_detector_events,
             },
             start_time=1000,
@@ -698,7 +698,7 @@ class TestDetectorViewBothROIAndDetectorData:
         )
         view.accumulate(
             {
-                'roi': RectangleROI.to_concatenated_data_array({0: roi}),
+                'roi_rectangle': RectangleROI.to_concatenated_data_array({0: roi}),
                 'detector': sample_detector_events,
             },
             start_time=1000,
@@ -734,7 +734,7 @@ class TestDetectorViewBothROIAndDetectorData:
         )
         view.accumulate(
             {
-                'roi': RectangleROI.to_concatenated_data_array({0: roi1}),
+                'roi_rectangle': RectangleROI.to_concatenated_data_array({0: roi1}),
                 'detector': sample_detector_events,
             },
             start_time=1000,
@@ -757,7 +757,7 @@ class TestDetectorViewBothROIAndDetectorData:
         )
         view.accumulate(
             {
-                'roi': RectangleROI.to_concatenated_data_array({0: roi2}),
+                'roi_rectangle': RectangleROI.to_concatenated_data_array({0: roi2}),
                 'detector': sample_detector_events,
             },
             start_time=1000,
@@ -835,7 +835,7 @@ class TestDetectorViewEdgeCases:
             x_min=5.0, x_max=25.0, y_min=5.0, y_max=25.0, x_unit='mm', y_unit='mm'
         )
         view.accumulate(
-            {'roi': RectangleROI.to_concatenated_data_array({0: roi1})},
+            {'roi_rectangle': RectangleROI.to_concatenated_data_array({0: roi1})},
             start_time=1000,
             end_time=2000,
         )
@@ -844,7 +844,7 @@ class TestDetectorViewEdgeCases:
             x_min=10.0, x_max=20.0, y_min=10.0, y_max=20.0, x_unit='mm', y_unit='mm'
         )
         view.accumulate(
-            {'roi': RectangleROI.to_concatenated_data_array({0: roi2})},
+            {'roi_rectangle': RectangleROI.to_concatenated_data_array({0: roi2})},
             start_time=1000,
             end_time=2000,
         )
@@ -905,7 +905,7 @@ class TestDetectorViewEdgeCases:
         )
         view.accumulate(
             {
-                'roi': RectangleROI.to_concatenated_data_array({0: roi1}),
+                'roi_rectangle': RectangleROI.to_concatenated_data_array({0: roi1}),
                 'detector': sample_detector_events,
             },
             start_time=1000,
@@ -927,7 +927,7 @@ class TestDetectorViewEdgeCases:
         )
         view.accumulate(
             {
-                'roi': RectangleROI.to_concatenated_data_array({0: roi2}),
+                'roi_rectangle': RectangleROI.to_concatenated_data_array({0: roi2}),
                 'detector': sample_detector_events,
             },
             start_time=1000,
@@ -967,7 +967,11 @@ class TestDetectorViewEdgeCases:
             x_min=25.0, x_max=35.0, y_min=25.0, y_max=35.0, x_unit='mm', y_unit='mm'
         )
         view.accumulate(
-            {'roi': RectangleROI.to_concatenated_data_array({0: roi0, 1: roi1})},
+            {
+                'roi_rectangle': RectangleROI.to_concatenated_data_array(
+                    {0: roi0, 1: roi1}
+                )
+            },
             start_time=1000,
             end_time=2000,
         )
@@ -995,7 +999,7 @@ class TestDetectorViewEdgeCases:
 
         # Now delete ROI 1, keeping only ROI 0
         view.accumulate(
-            {'roi': RectangleROI.to_concatenated_data_array({0: roi0})},
+            {'roi_rectangle': RectangleROI.to_concatenated_data_array({0: roi0})},
             start_time=1000,
             end_time=2000,
         )
@@ -1043,7 +1047,7 @@ class TestDetectorViewEdgeCases:
         # ROI 1: corner_roi (pixel 15) -> 1 event
         view.accumulate(
             {
-                'roi': RectangleROI.to_concatenated_data_array(
+                'roi_rectangle': RectangleROI.to_concatenated_data_array(
                     {0: standard_roi, 1: corner_roi}
                 )
             },
@@ -1068,7 +1072,7 @@ class TestDetectorViewEdgeCases:
         # Now simulate deleting ROI 0 in UI: ROI 1 gets renumbered to ROI 0
         # From backend perspective: index 0 changes from standard_roi to corner_roi
         view.accumulate(
-            {'roi': RectangleROI.to_concatenated_data_array({0: corner_roi})},
+            {'roi_rectangle': RectangleROI.to_concatenated_data_array({0: corner_roi})},
             start_time=1000,
             end_time=2000,
         )
@@ -1103,7 +1107,7 @@ class TestDetectorViewEdgeCases:
             x_min=5.0, x_max=25.0, y_min=5.0, y_max=25.0, x_unit='mm', y_unit='mm'
         )
         view.accumulate(
-            {'roi': RectangleROI.to_concatenated_data_array({0: roi0})},
+            {'roi_rectangle': RectangleROI.to_concatenated_data_array({0: roi0})},
             start_time=1000,
             end_time=2000,
         )
@@ -1125,7 +1129,7 @@ class TestDetectorViewEdgeCases:
 
         # Now resend the SAME ROI configuration (no actual change)
         view.accumulate(
-            {'roi': RectangleROI.to_concatenated_data_array({0: roi0})},
+            {'roi_rectangle': RectangleROI.to_concatenated_data_array({0: roi0})},
             start_time=1000,
             end_time=2000,
         )
