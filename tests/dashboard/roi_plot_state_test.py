@@ -438,7 +438,8 @@ class TestROIPlotState:
 
         # Check error was logged
         assert len(caplog.records) == 1
-        assert "Failed to publish ROI update" in caplog.records[0].message
+        assert "Failed to publish" in caplog.records[0].message
+        assert "ROI update" in caplog.records[0].message
         assert "Test error" in caplog.records[0].message
 
     def test_logs_info_on_successful_publish(

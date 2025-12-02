@@ -491,7 +491,7 @@ def test_boxes_to_rois_raises_on_inconsistent_lengths():
     box_data = {'x0': [1.0, 2.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]}
 
     with pytest.raises(
-        ValueError, match="zip\\(\\) argument .* is (shorter|longer) than argument"
+        ValueError, match=r"zip\(\) argument .* is (shorter|longer) than argument"
     ):
         boxes_to_rois(box_data)
 
@@ -724,7 +724,7 @@ def test_stale_readback_filtering(
     # Verify ROI B was published and request state updated
     assert len(roi_plot_factory._roi_publisher.published_rectangles) == 1
     assert roi_plot_factory._roi_publisher.published_rectangles[0][1] == roi_b
-    assert plot_state._request_rect_rois == roi_b
+    assert plot_state._rect_handler.request_rois == roi_b
 
     # Simulate user dragging to position C (rapid change)
     roi_c = {
@@ -743,21 +743,21 @@ def test_stale_readback_filtering(
     )
 
     # Verify request state updated to ROI C
-    assert plot_state._request_rect_rois == roi_c
+    assert plot_state._rect_handler.request_rois == roi_c
 
     # Backend updates with ROI B (backend is source of truth, may be behind)
     plot_state.on_backend_rect_update(roi_b)
 
     # Backend state wins - readback and request both show ROI B
-    assert plot_state._readback_rect_rois == roi_b
-    assert plot_state._request_rect_rois == roi_b
+    assert plot_state._rect_handler.readback_rois == roi_b
+    assert plot_state._rect_handler.request_rois == roi_b
 
     # Backend catches up with ROI C
     plot_state.on_backend_rect_update(roi_c)
 
     # Verify readback and request both show ROI C
-    assert plot_state._readback_rect_rois == roi_c
-    assert plot_state._request_rect_rois == roi_c
+    assert plot_state._rect_handler.readback_rois == roi_c
+    assert plot_state._rect_handler.request_rois == roi_c
 
 
 def test_backend_update_from_another_view(
@@ -814,7 +814,7 @@ def test_backend_update_from_another_view(
     )
 
     # Verify request state is ROI B
-    assert plot_state._request_rect_rois == roi_b
+    assert plot_state._rect_handler.request_rois == roi_b
 
     # Backend update from View 2 (different ROI position D)
     roi_d = {
@@ -826,8 +826,8 @@ def test_backend_update_from_another_view(
     plot_state.on_backend_rect_update(roi_d)
 
     # Verify View 1 UI updated to ROI D (backend is source of truth)
-    assert plot_state._readback_rect_rois == roi_d
-    assert plot_state._request_rect_rois == roi_d
+    assert plot_state._rect_handler.readback_rois == roi_d
+    assert plot_state._rect_handler.request_rois == roi_d
 
 
 def test_two_plots_remove_last_roi_syncs_correctly(
@@ -942,14 +942,14 @@ def test_two_plots_remove_last_roi_syncs_correctly(
     )
 
     # Verify Plot A has 2 ROIs in request state
-    assert plot_state_A._request_rect_rois == two_rois
+    assert plot_state_A._rect_handler.request_rois == two_rois
 
     # Simulate backend readback to Plot B
     plot_state_B.on_backend_rect_update(two_rois)
 
     # Verify Plot B received 2 ROIs in both readback and request states
-    assert plot_state_B._readback_rect_rois == two_rois
-    assert plot_state_B._request_rect_rois == two_rois
+    assert plot_state_B._rect_handler.readback_rois == two_rois
+    assert plot_state_B._rect_handler.request_rois == two_rois
     assert len(plot_state_B.box_stream.data['x0']) == 2
 
     # Step 2: User removes 1 ROI on Plot A (keep only ROI 0)
@@ -969,14 +969,14 @@ def test_two_plots_remove_last_roi_syncs_correctly(
     )
 
     # Verify Plot A has 1 ROI in request state
-    assert plot_state_A._request_rect_rois == one_roi
+    assert plot_state_A._rect_handler.request_rois == one_roi
 
     # Simulate backend readback to Plot B
     plot_state_B.on_backend_rect_update(one_roi)
 
     # Verify Plot B updated to 1 ROI in both states
-    assert plot_state_B._readback_rect_rois == one_roi
-    assert plot_state_B._request_rect_rois == one_roi
+    assert plot_state_B._rect_handler.readback_rois == one_roi
+    assert plot_state_B._rect_handler.request_rois == one_roi
     assert len(plot_state_B.box_stream.data['x0']) == 1
 
     # Step 3: User removes last ROI on Plot A (BUG: should sync to Plot B)
@@ -986,17 +986,17 @@ def test_two_plots_remove_last_roi_syncs_correctly(
     plot_state_A.box_stream.event(data={})
 
     # Verify Plot A has 0 ROIs in request state
-    assert plot_state_A._request_rect_rois == no_rois
+    assert plot_state_A._rect_handler.request_rois == no_rois
 
     # Simulate backend readback to Plot B
     plot_state_B.on_backend_rect_update(no_rois)
 
     # THIS IS WHERE THE BUG MIGHT BE: Plot B should update to 0 ROIs
     assert (
-        plot_state_B._readback_rect_rois == no_rois
+        plot_state_B._rect_handler.readback_rois == no_rois
     ), "Plot B should have 0 ROIs in readback after Plot A removed last ROI"
     assert (
-        plot_state_B._request_rect_rois == no_rois
+        plot_state_B._rect_handler.request_rois == no_rois
     ), "Plot B should have 0 ROIs in request after Plot A removed last ROI"
     assert (
         len(plot_state_B.box_stream.data['x0']) == 0
@@ -1118,17 +1118,17 @@ def test_two_plots_both_clear_rois_independently(
 
     # Backend syncs to Plot B
     plot_state_B.on_backend_rect_update(two_rois)
-    assert plot_state_B._readback_rect_rois == two_rois
-    assert plot_state_B._request_rect_rois == two_rois
+    assert plot_state_B._rect_handler.readback_rois == two_rois
+    assert plot_state_B._rect_handler.request_rois == two_rois
 
     # Step 2: Plot B clears all ROIs (user interaction on Plot B)
     plot_state_B.box_stream.event(data={})
-    assert plot_state_B._request_rect_rois == {}
+    assert plot_state_B._rect_handler.request_rois == {}
 
     # Backend syncs {} back to Plot A
     plot_state_A.on_backend_rect_update({})
-    assert plot_state_A._readback_rect_rois == {}
-    assert plot_state_A._request_rect_rois == {}
+    assert plot_state_A._rect_handler.readback_rois == {}
+    assert plot_state_A._rect_handler.request_rois == {}
 
     # Step 3: User re-draws ROIs on Plot A
     one_roi = {
@@ -1148,23 +1148,23 @@ def test_two_plots_both_clear_rois_independently(
 
     # Backend syncs to Plot B
     plot_state_B.on_backend_rect_update(one_roi)
-    assert plot_state_B._readback_rect_rois == one_roi
-    assert plot_state_B._request_rect_rois == one_roi
+    assert plot_state_B._rect_handler.readback_rois == one_roi
+    assert plot_state_B._rect_handler.request_rois == one_roi
 
     # Step 4: Plot A removes last ROI again
     plot_state_A.box_stream.event(data={})
-    assert plot_state_A._request_rect_rois == {}
+    assert plot_state_A._rect_handler.request_rois == {}
 
     # Backend should sync {} to Plot B
     # THIS IS THE CRITICAL TEST: Plot B might have {} in its old backlog
     plot_state_B.on_backend_rect_update({})
 
     # Plot B should update to {}
-    assert plot_state_B._readback_rect_rois == {}, (
+    assert plot_state_B._rect_handler.readback_rois == {}, (
         "Plot B should have 0 ROIs in readback after Plot A removed last ROI "
         "(second time)"
     )
-    assert plot_state_B._request_rect_rois == {}, (
+    assert plot_state_B._rect_handler.request_rois == {}, (
         "Plot B should have 0 ROIs in request after Plot A removed last ROI "
         "(second time)"
     )
