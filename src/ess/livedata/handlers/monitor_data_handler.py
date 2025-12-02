@@ -27,9 +27,13 @@ class MonitorStreamProcessor(Workflow):
         self._cumulative: sc.DataArray | None = None
         self._current: sc.DataArray | None = None
         self._current_start_time: int | None = None
-        # Ratemeter configuration
+        # Ratemeter configuration - convert range to edges unit once
         self._toa_range_enabled = toa_range_enabled
-        self._toa_range = toa_range
+        if toa_range_enabled and toa_range is not None:
+            low, high = toa_range
+            self._toa_range = (low.to(unit=edges.unit), high.to(unit=edges.unit))
+        else:
+            self._toa_range = None
 
     @staticmethod
     def create_workflow(params: MonitorDataParams) -> Workflow:
@@ -105,14 +109,9 @@ class MonitorStreamProcessor(Workflow):
         counts_total = current.sum()
         counts_total.coords['time'] = time_coord
 
-        if self._toa_range_enabled and self._toa_range is not None:
+        if self._toa_range is not None:
             low, high = self._toa_range
             dim = self._edges.dim
-            # Convert range to match histogram coordinate unit
-            edges_unit = self._edges.unit
-            low = low.to(unit=edges_unit)
-            high = high.to(unit=edges_unit)
-            # Slice histogram to TOA range and sum
             counts_in_toa_range = current[dim, low:high].sum()
         else:
             # When TOA range not enabled, counts_in_toa_range equals total
