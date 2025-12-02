@@ -509,7 +509,9 @@ class BarsPlotter(Plotter):
 
         label = data_key.job_id.source_name
         value = float(data.value)
-        bars = hv.Bars([(label, value)], kdims=['source'], vdims=[data_key.output_name or ''])
+        bars = hv.Bars(
+            [(label, value)], kdims=['source'], vdims=[data_key.output_name or '']
+        )
         opts = {'invert_axes': self._horizontal, 'show_legend': False, 'toolbar': None}
         if self._horizontal:
             opts['yrotation'] = 45
