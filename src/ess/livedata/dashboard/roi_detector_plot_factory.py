@@ -435,10 +435,23 @@ class GeometryHandler:
         """Convert ROIs to edit stream data format."""
         return self._converter.to_stream_data(rois)
 
+    def update_request_state_only(self, rois: dict[int, ROIType]) -> None:
+        """Update request state without updating the visual pipe.
+
+        Use this when responding to user edits - the polygon is already
+        visible via PolyDraw/BoxEdit, so we only need to track state.
+        Updating the pipe would disrupt the edit tool's selection state.
+        """
+        self._request_rois = rois
+
     def update_request(
         self, rois: dict[int, ROIType], colors: list[str] | None
     ) -> None:
-        """Update request state and send to request pipe."""
+        """Update request state and send to request pipe.
+
+        Use this for backend-initiated updates where we need to render
+        the ROIs visually. For user edits, use update_request_state_only.
+        """
         self._request_rois = rois
         hv_data = self.to_hv_data(rois, colors)
         self.request_pipe.send(hv_data)
@@ -640,8 +653,11 @@ class ROIPlotState:
             if current_rois == handler.request_rois:
                 return
 
-            # Update request layer immediately (optimistic UI feedback)
-            handler.update_request(current_rois, self._colors)
+            # Update state only - don't touch the visual pipe.
+            # The user's edit is already visible via PolyDraw/BoxEdit.
+            # Updating the pipe would disrupt the tool's selection state,
+            # causing issues like new polygons extending existing ones.
+            handler.update_request_state_only(current_rois)
 
             # Publish to backend
             self._publish_geometry(handler)
@@ -687,7 +703,8 @@ class ROIPlotState:
                 self.roi_state_stream.event(active_rois=self._active_roi_indices)
 
             # Sync request layer to match backend if needed
-            if request_needs_sync:
+            # TODO: Backend sync is disabled - causes issues in multi-session case.
+            if False and request_needs_sync:
                 handler.update_request(backend_rois, self._colors)
                 handler.sync_stream_from_rois(backend_rois)
 
