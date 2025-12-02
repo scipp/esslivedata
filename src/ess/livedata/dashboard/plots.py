@@ -158,7 +158,7 @@ class Plotter(ABC):
         plots = [self._apply_generic_options(p) for p in plots]
 
         if self.layout_params.combine_mode == 'overlay':
-            return hv.Overlay(plots)
+            return hv.Overlay(plots).opts(shared_axes=True)
         if len(plots) == 1:
             return plots[0]
         return hv.Layout(plots).cols(self.layout_params.layout_columns)
