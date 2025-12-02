@@ -137,6 +137,7 @@ class ROIStreamMapper:
 # Default ROI configuration - single source of truth
 DEFAULT_ROI_GEOMETRIES = [
     ROIGeometry(geometry_type="rectangle", num_rois=4, index_offset=0),
+    ROIGeometry(geometry_type="polygon", num_rois=4, index_offset=4),
 ]
 
 

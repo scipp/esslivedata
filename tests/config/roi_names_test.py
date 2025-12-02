@@ -149,10 +149,14 @@ class TestGetROIMapper:
         mapper = get_roi_mapper()
         assert "roi_rectangle" in mapper.readback_keys
 
-    def test_default_has_four_rois(self):
-        # This matches current behavior - may change in future
+    def test_default_uses_polygon_geometry(self):
         mapper = get_roi_mapper()
-        assert mapper.total_rois == 4
+        assert "roi_polygon" in mapper.readback_keys
+
+    def test_default_has_eight_rois(self):
+        # 4 rectangle ROIs (indices 0-3) + 4 polygon ROIs (indices 4-7)
+        mapper = get_roi_mapper()
+        assert mapper.total_rois == 8
 
     def test_accepts_instrument_parameter(self):
         # For future extensibility

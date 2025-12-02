@@ -11,7 +11,7 @@ import holoviews as hv
 import param
 import scipp as sc
 
-from ess.livedata.config.models import ROI, Interval, RectangleROI
+from ess.livedata.config.models import ROI, Interval, PolygonROI, RectangleROI
 from ess.livedata.config.roi_names import get_roi_mapper
 from ess.livedata.config.workflow_spec import ResultKey
 
@@ -178,32 +178,176 @@ def parse_roi_readback_data(
         return {}
 
 
+def polydraw_to_polygons(
+    poly_data: dict[str, Any],
+    x_unit: str | None = None,
+    y_unit: str | None = None,
+    index_offset: int = 0,
+) -> dict[int, PolygonROI]:
+    """
+    Convert PolyDraw data dictionary to PolygonROI instances.
+
+    PolyDraw returns data as a dictionary with keys 'xs', 'ys',
+    where each value is a list of lists of coordinates for all polygons.
+
+    Parameters
+    ----------
+    poly_data:
+        Dictionary from PolyDraw stream with keys 'xs', 'ys'.
+    x_unit:
+        Unit for x coordinates (from the detector data coordinates).
+    y_unit:
+        Unit for y coordinates (from the detector data coordinates).
+    index_offset:
+        Starting index for polygon ROIs (e.g., 4 for indices 4-7).
+
+    Returns
+    -------
+    :
+        Dictionary mapping polygon index to PolygonROI. Empty polygons are skipped.
+    """
+    if not poly_data or not poly_data.get("xs"):
+        return {}
+
+    xs_list = poly_data.get("xs", [])
+    ys_list = poly_data.get("ys", [])
+
+    rois = {}
+    for i, (xs, ys) in enumerate(zip(xs_list, ys_list, strict=True)):
+        # Skip polygons with fewer than 3 vertices
+        if len(xs) < 3 or len(ys) < 3:
+            continue
+
+        rois[index_offset + i] = PolygonROI(
+            x=list(xs),
+            y=list(ys),
+            x_unit=x_unit,
+            y_unit=y_unit,
+        )
+
+    return rois
+
+
+def polygons_to_hv_data(
+    rois: dict[int, PolygonROI], colors: list[str] | None = None
+) -> list[dict[str, Any]]:
+    """
+    Convert PolygonROI instances to HoloViews Polygons format.
+
+    Parameters
+    ----------
+    rois:
+        Dictionary mapping ROI index to PolygonROI.
+    colors:
+        Optional list of colors to assign to polygons based on ROI index.
+
+    Returns
+    -------
+    :
+        List of dicts with 'x', 'y' (and optionally 'color') for HoloViews Polygons.
+        Returned in sorted order by ROI index.
+    """
+    polygons = []
+    for idx in sorted(rois.keys()):
+        roi = rois[idx]
+        poly_dict: dict[str, Any] = {
+            'x': [float(v) for v in roi.x],
+            'y': [float(v) for v in roi.y],
+        }
+        if colors is not None:
+            poly_dict['color'] = colors[idx % len(colors)]
+        polygons.append(poly_dict)
+    return polygons
+
+
+def polygons_to_polydraw_data(
+    rois: dict[int, PolygonROI],
+) -> dict[str, list[list[float]]]:
+    """
+    Convert PolygonROI instances to PolyDraw data format.
+
+    Parameters
+    ----------
+    rois:
+        Dictionary mapping ROI index to PolygonROI.
+
+    Returns
+    -------
+    :
+        Dictionary with keys 'xs', 'ys' in PolyDraw format.
+        Empty dict with empty lists if no ROIs.
+    """
+    if not rois:
+        return {"xs": [], "ys": []}
+
+    sorted_indices = sorted(rois.keys())
+    return {
+        "xs": [[float(v) for v in rois[i].x] for i in sorted_indices],
+        "ys": [[float(v) for v in rois[i].y] for i in sorted_indices],
+    }
+
+
+def parse_polygon_readback_data(
+    roi_data: sc.DataArray, logger: logging.Logger | None = None
+) -> dict[int, PolygonROI]:
+    """
+    Parse polygon ROI readback data from backend into PolygonROI instances.
+
+    Parameters
+    ----------
+    roi_data:
+        Concatenated ROI data array with roi_index coordinate.
+    logger:
+        Optional logger for debug messages.
+
+    Returns
+    -------
+    :
+        Dictionary mapping ROI index to PolygonROI. Only polygon ROIs
+        are included. Returns empty dict if parsing fails.
+    """
+    try:
+        rois = ROI.from_concatenated_data_array(roi_data)
+        return {idx: roi for idx, roi in rois.items() if isinstance(roi, PolygonROI)}
+    except Exception as e:
+        if logger:
+            logger.debug("Failed to parse polygon ROI readback data: %s", e)
+        return {}
+
+
 class ROIPlotState:
     """
     Per-plot state for ROI detector plots.
 
     Encapsulates state and callbacks for a single ROI detector plot,
-    including active ROI tracking, publishing logic, and BoxEdit stream.
+    including active ROI tracking, publishing logic, and edit streams for
+    both rectangle (BoxEdit) and polygon (PolyDraw) ROIs.
 
     This class implements bidirectional synchronization with Kafka:
-    - User edits trigger publishes to backend (via on_box_change)
-    - Backend updates trigger UI updates (via on_backend_roi_update)
+    - User edits trigger publishes to backend (on_box_change, on_poly_change)
+    - Backend updates trigger UI updates (on_backend_rect_update, ...)
     - Kafka is the single source of truth; backend state always wins
 
-    Two visual layers are maintained:
-    - Request ROIs: Interactive dashed boxes showing user's pending changes
-    - Readback ROIs: Non-interactive solid boxes showing backend confirmed state
+    Two visual layers are maintained for each geometry type:
+    - Request ROIs: Interactive dashed shapes showing user's pending changes
+    - Readback ROIs: Non-interactive solid shapes showing backend confirmed state
 
     Parameters
     ----------
     result_key:
         ResultKey identifying this detector plot.
     box_stream:
-        HoloViews BoxEdit stream for this plot.
-    request_pipe:
-        HoloViews Pipe stream for programmatically updating request ROI rectangles.
-    readback_pipe:
-        HoloViews Pipe stream for programmatically updating readback ROI rectangles.
+        HoloViews BoxEdit stream for rectangle ROIs.
+    rect_request_pipe:
+        HoloViews Pipe stream for programmatically updating request rectangles.
+    rect_readback_pipe:
+        HoloViews Pipe stream for programmatically updating readback rectangles.
+    poly_stream:
+        HoloViews PolyDraw stream for polygon ROIs. None if polygons disabled.
+    poly_request_pipe:
+        HoloViews Pipe stream for programmatically updating request polygons.
+    poly_readback_pipe:
+        HoloViews Pipe stream for programmatically updating readback polygons.
     roi_state_stream:
         HoloViews Stream for broadcasting active ROI indices to spectrum plot.
     x_unit:
@@ -215,31 +359,39 @@ class ROIPlotState:
     logger:
         Logger instance.
     colors:
-        List of colors to use for ROI rectangles, indexed by ROI number.
-    initial_rois:
-        Optional dictionary of initial ROI configurations. Used to establish
-        the baseline state for both request and readback layers.
+        List of colors to use for ROI shapes, indexed by ROI number.
+    initial_rect_rois:
+        Optional dictionary of initial rectangle ROI configurations.
+    initial_poly_rois:
+        Optional dictionary of initial polygon ROI configurations.
     """
 
     def __init__(
         self,
         result_key: ResultKey,
         box_stream: hv.streams.BoxEdit,
-        request_pipe: hv.streams.Pipe,
-        readback_pipe: hv.streams.Pipe,
+        rect_request_pipe: hv.streams.Pipe,
+        rect_readback_pipe: hv.streams.Pipe,
+        poly_stream: hv.streams.PolyDraw | None,
+        poly_request_pipe: hv.streams.Pipe | None,
+        poly_readback_pipe: hv.streams.Pipe | None,
         roi_state_stream: hv.streams.Stream,
         x_unit: str | None,
         y_unit: str | None,
         roi_publisher: ROIPublisher | None,
         logger: logging.Logger,
         colors: list[str],
-        initial_rois: dict[int, RectangleROI] | None = None,
+        initial_rect_rois: dict[int, RectangleROI] | None = None,
+        initial_poly_rois: dict[int, PolygonROI] | None = None,
         roi_mapper=None,
     ) -> None:
         self.result_key = result_key
         self.box_stream = box_stream
-        self.request_pipe = request_pipe
-        self.readback_pipe = readback_pipe
+        self.rect_request_pipe = rect_request_pipe
+        self.rect_readback_pipe = rect_readback_pipe
+        self.poly_stream = poly_stream
+        self.poly_request_pipe = poly_request_pipe
+        self.poly_readback_pipe = poly_readback_pipe
         self.roi_state_stream = roi_state_stream
         self.x_unit = x_unit
         self.y_unit = y_unit
@@ -248,25 +400,61 @@ class ROIPlotState:
         self._colors = colors
         self._roi_mapper = roi_mapper or get_roi_mapper()
 
-        # Separate state for request (user's pending changes) and readback
-        # (backend truth). Initialize both from initial_rois (they start in sync)
-        self._request_rois: dict[int, RectangleROI] = (
-            initial_rois.copy() if initial_rois else {}
+        # Rectangle state: separate request (user's pending changes) and readback
+        self._request_rect_rois: dict[int, RectangleROI] = (
+            initial_rect_rois.copy() if initial_rect_rois else {}
         )
-        self._readback_rois: dict[int, RectangleROI] = (
-            initial_rois.copy() if initial_rois else {}
+        self._readback_rect_rois: dict[int, RectangleROI] = (
+            initial_rect_rois.copy() if initial_rect_rois else {}
         )
 
-        # Attach the callback to the stream AFTER initializing state
+        # Polygon state: separate request and readback
+        self._request_poly_rois: dict[int, PolygonROI] = (
+            initial_poly_rois.copy() if initial_poly_rois else {}
+        )
+        self._readback_poly_rois: dict[int, PolygonROI] = (
+            initial_poly_rois.copy() if initial_poly_rois else {}
+        )
+
+        # Attach callbacks AFTER initializing state
         self.box_stream.param.watch(self.on_box_change, "data")
+        if self.poly_stream is not None:
+            self.poly_stream.param.watch(self.on_poly_change, "data")
 
         # Initialize roi_state_stream with the current active ROI indices
         self.roi_state_stream.event(active_rois=self._active_roi_indices)
 
     @property
     def _active_roi_indices(self) -> set[int]:
-        """Indices of currently active ROIs based on readback (backend truth)."""
-        return set(self._readback_rois.keys())
+        """Combined indices of active ROIs from both geometry types (readback)."""
+        rect_indices = set(self._readback_rect_rois.keys())
+        poly_indices = set(self._readback_poly_rois.keys())
+        return rect_indices | poly_indices
+
+    def _get_polygon_index_offset(self) -> int:
+        """Get the index offset for polygon ROIs from the mapper."""
+        poly_geom = next(
+            (g for g in self._roi_mapper.geometries if g.geometry_type == "polygon"),
+            None,
+        )
+        return poly_geom.index_offset if poly_geom else 4
+
+    def _publish_all_rois(self) -> None:
+        """Publish all ROIs (both rectangles and polygons) to backend."""
+        if self._roi_publisher:
+            self._roi_publisher.publish_rois(
+                self.result_key.job_id,
+                self._request_rect_rois,
+                self._request_poly_rois if self.poly_stream is not None else None,
+            )
+            total_count = len(self._request_rect_rois) + len(self._request_poly_rois)
+            self._logger.info(
+                "Published %d ROI(s) for job %s (rect=%d, poly=%d)",
+                total_count,
+                self.result_key.job_id,
+                len(self._request_rect_rois),
+                len(self._request_poly_rois),
+            )
 
     def on_box_change(self, event) -> None:
         """
@@ -290,29 +478,65 @@ class ROIPlotState:
 
             # Only update and publish if ROIs changed from current request state
             # This prevents republishing when backend updates trigger box_stream.event()
-            if current_rois == self._request_rois:
+            if current_rois == self._request_rect_rois:
                 return
 
             # Update request layer immediately (optimistic UI feedback)
-            self._request_rois = current_rois
+            self._request_rect_rois = current_rois
             request_rectangles = rois_to_rectangles(current_rois, colors=self._colors)
-            self.request_pipe.send(request_rectangles)
+            self.rect_request_pipe.send(request_rectangles)
 
-            # Publish to backend
-            if self._roi_publisher:
-                self._roi_publisher.publish_rois(self.result_key.job_id, current_rois)
-                self._logger.info(
-                    "Published %d ROI(s) for job %s",
-                    len(current_rois),
-                    self.result_key.job_id,
-                )
+            # Publish all ROIs to backend
+            self._publish_all_rois()
 
         except Exception as e:
             self._logger.error("Failed to publish ROI update: %s", e)
 
-    def on_backend_roi_update(self, backend_rois: dict[int, RectangleROI]) -> None:
+    def on_poly_change(self, event) -> None:
         """
-        Handle ROI updates from the backend stream.
+        Handle PolyDraw data changes from UI.
+
+        Updates request layer immediately (optimistic UI) and publishes to backend.
+        Only publishes if ROIs differ from current request state to prevent cycles
+        when backend updates trigger poly_stream.event().
+
+        Parameters
+        ----------
+        event:
+            Event object from PolyDraw stream.
+        """
+        data = event.new if hasattr(event, "new") else event
+        if data is None:
+            data = {}
+
+        try:
+            index_offset = self._get_polygon_index_offset()
+            current_rois = polydraw_to_polygons(
+                data,
+                x_unit=self.x_unit,
+                y_unit=self.y_unit,
+                index_offset=index_offset,
+            )
+
+            # Only update and publish if ROIs changed from current request state
+            if current_rois == self._request_poly_rois:
+                return
+
+            # Update request layer immediately (optimistic UI feedback)
+            self._request_poly_rois = current_rois
+            hv_polygons = polygons_to_hv_data(current_rois, colors=self._colors)
+            if self.poly_request_pipe is not None:
+                self.poly_request_pipe.send(hv_polygons)
+
+            # Publish all ROIs to backend
+            self._publish_all_rois()
+
+        except Exception as e:
+            self._logger.error("Failed to publish polygon ROI update: %s", e)
+
+    def on_backend_rect_update(self, backend_rois: dict[int, RectangleROI]) -> None:
+        """
+        Handle rectangle ROI updates from the backend stream.
 
         The backend is the single source of truth for ROI state. This method
         updates the readback layer (solid lines) with the authoritative backend state,
@@ -325,15 +549,15 @@ class ROIPlotState:
         """
         try:
             # Check if any state needs updating
-            readback_changed = backend_rois != self._readback_rois
-            request_needs_sync = backend_rois != self._request_rois
+            readback_changed = backend_rois != self._readback_rect_rois
+            request_needs_sync = backend_rois != self._request_rect_rois
 
             if not readback_changed and not request_needs_sync:
                 # Nothing to update
                 return
 
             self._logger.debug(
-                "Applying backend ROI update for job %s",
+                "Applying backend rectangle ROI update for job %s",
                 self.result_key.job_id,
             )
 
@@ -341,32 +565,97 @@ class ROIPlotState:
 
             # Update readback layer if changed (authoritative backend state)
             if readback_changed:
-                self._readback_rois = backend_rois
-                self.readback_pipe.send(rectangles)
+                self._readback_rect_rois = backend_rois
+                self.rect_readback_pipe.send(rectangles)
 
                 # Trigger ROI state stream to update spectrum plot filtering
                 self.roi_state_stream.event(active_rois=self._active_roi_indices)
 
             # Sync request layer to match backend if needed
             if request_needs_sync:
-                self._request_rois = backend_rois
+                self._request_rect_rois = backend_rois
 
                 # Convert to BoxEdit format (dict with float arrays)
                 box_data = rois_to_box_data(backend_rois)
 
                 # Update request rectangles via pipe
-                self.request_pipe.send(rectangles)
+                self.rect_request_pipe.send(rectangles)
 
                 # Update BoxEdit stream to enable drag operations
                 self.box_stream.event(data=box_data)
 
             self._logger.info(
-                "UI updated with %d ROI(s) from backend for job %s",
+                "UI updated with %d rectangle ROI(s) from backend for job %s",
                 len(backend_rois),
                 self.result_key.job_id,
             )
         except Exception:
-            self._logger.exception("Failed to update UI from backend ROI data")
+            self._logger.exception(
+                "Failed to update UI from backend rectangle ROI data"
+            )
+
+    def on_backend_poly_update(self, backend_rois: dict[int, PolygonROI]) -> None:
+        """
+        Handle polygon ROI updates from the backend stream.
+
+        The backend is the single source of truth for ROI state. This method
+        updates the readback layer (solid lines) with the authoritative backend state,
+        and syncs the request layer (dashed lines) to match if needed.
+
+        Parameters
+        ----------
+        backend_rois:
+            Dictionary mapping ROI index to PolygonROI from backend.
+        """
+        if self.poly_stream is None:
+            return
+
+        try:
+            # Check if any state needs updating
+            readback_changed = backend_rois != self._readback_poly_rois
+            request_needs_sync = backend_rois != self._request_poly_rois
+
+            if not readback_changed and not request_needs_sync:
+                # Nothing to update
+                return
+
+            self._logger.debug(
+                "Applying backend polygon ROI update for job %s",
+                self.result_key.job_id,
+            )
+
+            hv_polygons = polygons_to_hv_data(backend_rois, colors=self._colors)
+
+            # Update readback layer if changed (authoritative backend state)
+            if readback_changed:
+                self._readback_poly_rois = backend_rois
+                if self.poly_readback_pipe is not None:
+                    self.poly_readback_pipe.send(hv_polygons)
+
+                # Trigger ROI state stream to update spectrum plot filtering
+                self.roi_state_stream.event(active_rois=self._active_roi_indices)
+
+            # Sync request layer to match backend if needed
+            if request_needs_sync:
+                self._request_poly_rois = backend_rois
+
+                # Convert to PolyDraw format
+                poly_data = polygons_to_polydraw_data(backend_rois)
+
+                # Update request polygons via pipe
+                if self.poly_request_pipe is not None:
+                    self.poly_request_pipe.send(hv_polygons)
+
+                # Update PolyDraw stream to enable drag operations
+                self.poly_stream.event(data=poly_data)
+
+            self._logger.info(
+                "UI updated with %d polygon ROI(s) from backend for job %s",
+                len(backend_rois),
+                self.result_key.job_id,
+            )
+        except Exception:
+            self._logger.exception("Failed to update UI from backend polygon ROI data")
 
     def is_roi_active(self, key: ResultKey) -> bool:
         """
@@ -486,11 +775,11 @@ class ROIDetectorPlotFactory:
         coord_unit = detector_data.coords[dim].unit
         return str(coord_unit) if coord_unit is not None else None
 
-    def _subscribe_to_roi_readback(
+    def _subscribe_to_rect_readback(
         self, roi_readback_key: ResultKey, plot_state: ROIPlotState
     ) -> None:
         """
-        Subscribe to ROI readback stream from backend.
+        Subscribe to rectangle ROI readback stream from backend.
 
         Creates a subscription that updates the plot's ROI rectangles when
         the backend publishes ROI readback data, enabling bidirectional sync.
@@ -503,8 +792,8 @@ class ROIDetectorPlotFactory:
             ROIPlotState to update when backend publishes ROIs.
         """
 
-        def on_roi_data_update(data: dict[ResultKey, sc.DataArray]) -> None:
-            """Callback for ROI readback data updates."""
+        def on_rect_data_update(data: dict[ResultKey, sc.DataArray]) -> None:
+            """Callback for rectangle ROI readback data updates."""
             if roi_readback_key not in data:
                 return
 
@@ -513,7 +802,7 @@ class ROIDetectorPlotFactory:
             # Always update, even if empty dict - this is needed to sync
             # ROI deletion across multiple plots
             if rectangle_rois is not None:
-                plot_state.on_backend_roi_update(rectangle_rois)
+                plot_state.on_backend_rect_update(rectangle_rois)
 
         # Subscribe to roi_rectangle stream if it exists in DataService
         # Note: This only triggers if the stream has data available
@@ -522,7 +811,7 @@ class ROIDetectorPlotFactory:
             initial_data = {
                 roi_readback_key: self._stream_manager.data_service[roi_readback_key]
             }
-            on_roi_data_update(initial_data)
+            on_rect_data_update(initial_data)
 
         # Create a custom pipe that calls our callback
         class ROIReadbackPipe:
@@ -534,11 +823,65 @@ class ROIDetectorPlotFactory:
 
         def roi_pipe_factory(data):
             """Factory function to create ROIReadbackPipe with callback."""
-            return ROIReadbackPipe(on_roi_data_update)
+            return ROIReadbackPipe(on_rect_data_update)
 
         assembler = MergingStreamAssembler({roi_readback_key})
         extractors = {roi_readback_key: LatestValueExtractor()}
         subscriber = DataSubscriber(assembler, roi_pipe_factory, extractors)
+        self._stream_manager.data_service.register_subscriber(subscriber)
+
+    def _subscribe_to_polygon_readback(
+        self, roi_readback_key: ResultKey, plot_state: ROIPlotState
+    ) -> None:
+        """
+        Subscribe to polygon ROI readback stream from backend.
+
+        Creates a subscription that updates the plot's ROI polygons when
+        the backend publishes ROI readback data, enabling bidirectional sync.
+
+        Parameters
+        ----------
+        roi_readback_key:
+            ResultKey for the roi_polygon stream.
+        plot_state:
+            ROIPlotState to update when backend publishes ROIs.
+        """
+
+        def on_poly_data_update(data: dict[ResultKey, sc.DataArray]) -> None:
+            """Callback for polygon ROI readback data updates."""
+            if roi_readback_key not in data:
+                return
+
+            roi_data = data[roi_readback_key]
+            polygon_rois = parse_polygon_readback_data(roi_data, self._logger)
+            # Always update, even if empty dict - this is needed to sync
+            # ROI deletion across multiple plots
+            if polygon_rois is not None:
+                plot_state.on_backend_poly_update(polygon_rois)
+
+        # Subscribe to roi_polygon stream if it exists in DataService
+        if roi_readback_key in self._stream_manager.data_service:
+            # Initialize with current data
+            initial_data = {
+                roi_readback_key: self._stream_manager.data_service[roi_readback_key]
+            }
+            on_poly_data_update(initial_data)
+
+        # Create a custom pipe that calls our callback
+        class PolyReadbackPipe:
+            def __init__(self, callback):
+                self.callback = callback
+
+            def send(self, data):
+                self.callback(data)
+
+        def poly_pipe_factory(data):
+            """Factory function to create PolyReadbackPipe with callback."""
+            return PolyReadbackPipe(on_poly_data_update)
+
+        assembler = MergingStreamAssembler({roi_readback_key})
+        extractors = {roi_readback_key: LatestValueExtractor()}
+        subscriber = DataSubscriber(assembler, poly_pipe_factory, extractors)
         self._stream_manager.data_service.register_subscriber(subscriber)
 
     def create_roi_detector_plot_components(
@@ -598,13 +941,16 @@ class ROIDetectorPlotFactory:
 
         # Get color cycle for ROI styling
         default_colors = hv.Cycle.default_cycles["default_colors"]
-        max_roi_count = params.roi_options.max_roi_count
-        colors_list = default_colors[:max_roi_count]
-
-        # Initialize with empty rectangles - actual ROI data will be loaded by
-        # _subscribe_to_roi_readback if available in DataService
-        initial_rectangles = []
-        initial_box_data = {}
+        # Get max counts for each geometry type
+        # Use params.roi_options.max_roi_count for rectangles (user override)
+        poly_geom = next(
+            (g for g in self._roi_mapper.geometries if g.geometry_type == "polygon"),
+            None,
+        )
+        max_rect_count = params.roi_options.max_roi_count
+        max_poly_count = poly_geom.num_rois if poly_geom else 4
+        total_roi_count = max_rect_count + max_poly_count
+        colors_list = default_colors[:total_roi_count]
 
         # There is a very particular way these components must be created, or else the
         # interactiveity will not work. In particular:
@@ -618,34 +964,62 @@ class ROIDetectorPlotFactory:
         #   user interaction to work correctly. The key insight is to use the
         #   DynamicMap(Rectangles) as source for BoxEdit, not the Rectangles element.
 
+        # === RECTANGLE ROI SETUP ===
         # Create two separate layers:
         # 1. Readback rectangles (solid, non-interactive) - backend truth
         # 2. Request rectangles (dashed, interactive) - user's pending changes
 
-        # Create Pipes for programmatic updates to both layers
-        readback_pipe = hv.streams.Pipe(data=initial_rectangles)
-        request_pipe = hv.streams.Pipe(data=initial_rectangles)
+        rect_readback_pipe = hv.streams.Pipe(data=[])
+        rect_request_pipe = hv.streams.Pipe(data=[])
 
-        # Create DynamicMap for readback rectangles (solid lines)
-        # This shows the backend state (single source of truth) in sync with current
-        # spectrum data
         def make_readback_boxes(data: list):
             return hv.Rectangles(data, vdims=['color']).opts(color='color')
 
-        readback_dmap = hv.DynamicMap(make_readback_boxes, streams=[readback_pipe])
-
-        # Create DynamicMap for request rectangles (dashed lines)
-        # This allows programmatic updates via request_pipe.send()
-        # and serves as the source for BoxEdit interaction
         def make_request_boxes(data: list):
             return hv.Rectangles(data, vdims=['color']).opts(color='color')
 
-        request_dmap = hv.DynamicMap(make_request_boxes, streams=[request_pipe])
+        rect_readback_dmap = hv.DynamicMap(
+            make_readback_boxes, streams=[rect_readback_pipe]
+        )
+        rect_request_dmap = hv.DynamicMap(
+            make_request_boxes, streams=[rect_request_pipe]
+        )
 
-        # Create BoxEdit stream with request_dmap as source
-        # This enables user interaction (drag, create, delete) on the request layer
+        # Create BoxEdit stream with rect_request_dmap as source
         box_stream = hv.streams.BoxEdit(
-            source=request_dmap, num_objects=max_roi_count, data=initial_box_data
+            source=rect_request_dmap, num_objects=max_rect_count, data={}
+        )
+
+        # === POLYGON ROI SETUP ===
+        # Same two-layer pattern for polygons
+
+        poly_readback_pipe = hv.streams.Pipe(data=[])
+        poly_request_pipe = hv.streams.Pipe(data=[])
+
+        def make_readback_polygons(data: list):
+            if not data:
+                return hv.Polygons([])
+            return hv.Polygons(data, vdims=['color']).opts(color='color')
+
+        def make_request_polygons(data: list):
+            if not data:
+                return hv.Polygons([])
+            return hv.Polygons(data, vdims=['color']).opts(color='color')
+
+        poly_readback_dmap = hv.DynamicMap(
+            make_readback_polygons, streams=[poly_readback_pipe]
+        )
+        poly_request_dmap = hv.DynamicMap(
+            make_request_polygons, streams=[poly_request_pipe]
+        )
+
+        # Create PolyDraw stream with poly_request_dmap as source
+        poly_stream = hv.streams.PolyDraw(
+            source=poly_request_dmap,
+            num_objects=max_poly_count,
+            drag=True,
+            show_vertices=True,
+            data={'xs': [], 'ys': []},
         )
 
         # Extract coordinate units from the extracted detector data in pipe
@@ -663,52 +1037,73 @@ class ROIDetectorPlotFactory:
 
         roi_state_stream = ROIStateStream()
 
-        # Create plot state (which will attach the watcher to box_stream)
+        # Create plot state (which will attach the watchers to streams)
         # Note: plot_state is kept alive by references from the returned plot:
-        # - box_stream holds a callback reference to plot_state.on_box_change
-        # - roi_state_stream (below) is referenced by the spectrum plot DynamicMap
-        # - roi_readback_pipe (below) holds plot_state.on_backend_roi_update
+        # - box_stream/poly_stream hold callback references
+        # - roi_state_stream is referenced by the spectrum plot DynamicMap
+        # - readback pipes hold plot_state callback references
         plot_state = ROIPlotState(
             result_key=detector_key,
             box_stream=box_stream,
-            request_pipe=request_pipe,
-            readback_pipe=readback_pipe,
+            rect_request_pipe=rect_request_pipe,
+            rect_readback_pipe=rect_readback_pipe,
+            poly_stream=poly_stream,
+            poly_request_pipe=poly_request_pipe,
+            poly_readback_pipe=poly_readback_pipe,
             roi_state_stream=roi_state_stream,
             x_unit=x_unit,
             y_unit=y_unit,
             roi_publisher=self._roi_publisher,
             logger=self._logger,
             colors=colors_list,
-            initial_rois=None,
+            initial_rect_rois=None,
+            initial_poly_rois=None,
             roi_mapper=self._roi_mapper,
         )
 
-        # Subscribe to ROI readback stream from backend for bidirectional sync.
-        # This will automatically initialize the plot with existing ROI data if
-        # available in DataService.
-        roi_readback_key = detector_key.model_copy(
-            # Index 0 is the "first" geometry readback key: The rectangle ROIs
-            update={"output_name": self._roi_mapper.readback_keys[0]}
+        # Subscribe to ROI readback streams from backend for bidirectional sync.
+        # Rectangle readback
+        rect_readback_key = detector_key.model_copy(
+            update={"output_name": "roi_rectangle"}
         )
-        self._subscribe_to_roi_readback(roi_readback_key, plot_state)
+        self._subscribe_to_rect_readback(rect_readback_key, plot_state)
 
-        # Create the detector plot with two ROI layers:
-        # 1. Readback layer (solid lines) - backend confirmed state
-        # 2. Request layer (dashed lines) - user's interactive edits
-        # Both layers start overlapping; they diverge (briefly) during user edits
-        readback_boxes = readback_dmap.opts(
+        # Polygon readback
+        poly_readback_key = detector_key.model_copy(
+            update={"output_name": "roi_polygon"}
+        )
+        self._subscribe_to_polygon_readback(poly_readback_key, plot_state)
+
+        # === STYLE AND COMPOSE LAYERS ===
+        # Layer order: detector, rect_readback, rect_request, poly_readback,
+        # poly_request
+        rect_readback_styled = rect_readback_dmap.opts(
             fill_alpha=0.3, line_width=2, line_dash='solid'
         )
-        request_boxes = request_dmap.opts(
+        rect_request_styled = rect_request_dmap.opts(
             fill_alpha=0.3,
             line_width=2,
             line_dash='dashed',
-            # There is a Bokeh(?) bug where line_dash='dashed' does not render with the
-            # WebGL backend, so we force canvas output here.
+            # Bokeh bug: line_dash='dashed' doesn't render with WebGL backend
             backend_opts={'plot.output_backend': 'canvas'},
         )
-        # Layer order: detector, then readback (solid), then request (dashed on top)
-        detector_with_boxes = detector_dmap * readback_boxes * request_boxes
+        poly_readback_styled = poly_readback_dmap.opts(
+            fill_alpha=0.3, line_width=2, line_dash='solid'
+        )
+        poly_request_styled = poly_request_dmap.opts(
+            fill_alpha=0.3,
+            line_width=2,
+            line_dash='dashed',
+            backend_opts={'plot.output_backend': 'canvas'},
+        )
+
+        detector_with_rois = (
+            detector_dmap
+            * rect_readback_styled
+            * rect_request_styled
+            * poly_readback_styled
+            * poly_request_styled
+        )
 
         # Generate spectrum keys and create ROI spectrum plot
         spectrum_keys = self._generate_spectrum_keys(detector_key)
@@ -716,7 +1111,7 @@ class ROIDetectorPlotFactory:
             spectrum_keys, roi_state_stream, params
         )
 
-        return detector_with_boxes, roi_spectrum_dmap, plot_state
+        return detector_with_rois, roi_spectrum_dmap, plot_state
 
     def _create_roi_spectrum_plot(
         self,

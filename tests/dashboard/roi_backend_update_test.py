@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-Tests for backend ROI updates (on_backend_roi_update).
+Tests for backend ROI updates (on_backend_rect_update).
 
 These tests verify that programmatic ROI updates from the backend correctly
 update both the visual representation (via Pipe) and the BoxEdit stream state
@@ -26,9 +26,9 @@ class FakeROIPublisher:
     def __init__(self):
         self.published_rois = []
 
-    def publish_rois(self, job_id, rois):
+    def publish_rois(self, job_id, rectangle_rois, polygon_rois=None):
         """Record published ROIs."""
-        self.published_rois.append((job_id, rois))
+        self.published_rois.append((job_id, rectangle_rois, polygon_rois))
 
 
 @pytest.fixture
@@ -92,9 +92,12 @@ def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
         '#bcbd22',
         '#17becf',
     ]
-    # boxes_pipe fixture is now used as readback_pipe for backward compatibility
+    # boxes_pipe fixture is now used as rect_readback_pipe for backward compatibility
     # with tests that check pipe updates
-    request_pipe = hv.streams.Pipe(data=[])
+    rect_request_pipe = hv.streams.Pipe(data=[])
+    poly_stream = hv.streams.PolyDraw()
+    poly_request_pipe = hv.streams.Pipe(data=[])
+    poly_readback_pipe = hv.streams.Pipe(data=[])
 
     # Create ROI state stream for tracking active ROIs
     class ROIStateStream(hv.streams.Stream):
@@ -105,8 +108,11 @@ def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
     return ROIPlotState(
         result_key=result_key,
         box_stream=box_stream,
-        request_pipe=request_pipe,
-        readback_pipe=boxes_pipe,  # reuse boxes_pipe fixture for readback
+        rect_request_pipe=rect_request_pipe,
+        rect_readback_pipe=boxes_pipe,  # reuse boxes_pipe fixture for readback
+        poly_stream=poly_stream,
+        poly_request_pipe=poly_request_pipe,
+        poly_readback_pipe=poly_readback_pipe,
         roi_state_stream=roi_state_stream,
         x_unit='m',
         y_unit='m',
@@ -117,7 +123,7 @@ def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
 
 
 class TestBackendROIUpdate:
-    """Tests for on_backend_roi_update method."""
+    """Tests for on_backend_rect_update method."""
 
     def test_backend_update_updates_pipe(self, roi_plot_state, boxes_pipe):
         """Test that backend update sends data to pipe."""
@@ -138,7 +144,7 @@ class TestBackendROIUpdate:
 
         boxes_pipe.send = track_send
 
-        roi_plot_state.on_backend_roi_update(backend_rois)
+        roi_plot_state.on_backend_rect_update(backend_rois)
 
         # Verify pipe was updated with color included
         assert len(pipe_updates) == 1
@@ -156,7 +162,7 @@ class TestBackendROIUpdate:
             )
         }
 
-        roi_plot_state.on_backend_roi_update(backend_rois)
+        roi_plot_state.on_backend_rect_update(backend_rois)
 
         # Verify BoxEdit has correct dict format data
         assert box_stream.data is not None
@@ -176,7 +182,7 @@ class TestBackendROIUpdate:
             )
         }
 
-        roi_plot_state.on_backend_roi_update(backend_rois)
+        roi_plot_state.on_backend_rect_update(backend_rois)
 
         # Verify all coordinates are float type
         assert isinstance(box_stream.data['x0'][0], float)
@@ -199,7 +205,7 @@ class TestBackendROIUpdate:
             ),
         }
 
-        roi_plot_state.on_backend_roi_update(backend_rois)
+        roi_plot_state.on_backend_rect_update(backend_rois)
 
         # Verify BoxEdit has all ROIs
         assert len(box_stream.data['x0']) == 2
@@ -217,11 +223,11 @@ class TestBackendROIUpdate:
                 y=Interval(min=2.0, max=4.0, unit='m'),
             )
         }
-        roi_plot_state.on_backend_roi_update(initial_rois)
+        roi_plot_state.on_backend_rect_update(initial_rois)
         assert len(box_stream.data['x0']) == 1
 
         # Now clear them
-        roi_plot_state.on_backend_roi_update({})
+        roi_plot_state.on_backend_rect_update({})
 
         assert box_stream.data is not None
         assert len(box_stream.data['x0']) == 0
@@ -238,7 +244,7 @@ class TestBackendROIUpdate:
         }
 
         initial_publish_count = len(fake_publisher.published_rois)
-        roi_plot_state.on_backend_roi_update(backend_rois)
+        roi_plot_state.on_backend_rect_update(backend_rois)
 
         # Should not have published back to backend
         assert len(fake_publisher.published_rois) == initial_publish_count
@@ -255,7 +261,7 @@ class TestBackendROIUpdate:
         }
 
         # First update
-        roi_plot_state.on_backend_roi_update(backend_rois)
+        roi_plot_state.on_backend_rect_update(backend_rois)
 
         # Track pipe updates
         pipe_updates = []
@@ -268,7 +274,7 @@ class TestBackendROIUpdate:
         boxes_pipe.send = track_send
 
         # Second update with same data
-        roi_plot_state.on_backend_roi_update(backend_rois)
+        roi_plot_state.on_backend_rect_update(backend_rois)
 
         # Should not have updated pipe (no change)
         assert len(pipe_updates) == 0
@@ -286,7 +292,7 @@ class TestBackendROIUpdate:
             ),
         }
 
-        roi_plot_state.on_backend_roi_update(backend_rois)
+        roi_plot_state.on_backend_rect_update(backend_rois)
 
         assert roi_plot_state._active_roi_indices == {0, 1}
 
@@ -309,7 +315,7 @@ class TestBackendROIUpdate:
             ),
         }
 
-        roi_plot_state.on_backend_roi_update(backend_rois)
+        roi_plot_state.on_backend_rect_update(backend_rois)
 
         # Should be sorted by index: 0, 1, 2
         assert box_stream.data['x0'] == [1.0, 3.0, 5.0]
@@ -319,10 +325,10 @@ class TestBackendROIUpdate:
         """Test that exceptions in backend update are logged and don't crash."""
         # Pass invalid data type that will cause an error
         with caplog.at_level(logging.ERROR):
-            roi_plot_state.on_backend_roi_update(None)  # type: ignore[arg-type]
+            roi_plot_state.on_backend_rect_update(None)  # type: ignore[arg-type]
 
         # Should have logged error
-        assert "Failed to update UI from backend ROI data" in caplog.text
+        assert "Failed to update UI from backend rectangle ROI data" in caplog.text
 
 
 class TestBidirectionalSync:
@@ -343,7 +349,7 @@ class TestBidirectionalSync:
                 y=Interval(min=6.0, max=8.0, unit='m'),
             )
         }
-        roi_plot_state.on_backend_roi_update(backend_rois)
+        roi_plot_state.on_backend_rect_update(backend_rois)
 
         # Should now have ROI 1 only (backend is source of truth)
         assert box_stream.data['x0'] == [5.0]
@@ -359,7 +365,7 @@ class TestBidirectionalSync:
                 y=Interval(min=2.0, max=4.0, unit='m'),
             )
         }
-        roi_plot_state.on_backend_roi_update(backend_rois)
+        roi_plot_state.on_backend_rect_update(backend_rois)
 
         initial_publish_count = len(fake_publisher.published_rois)
 
@@ -387,7 +393,7 @@ class TestBidirectionalSync:
             )
         }
         initial_publish_count = len(fake_publisher.published_rois)
-        roi_plot_state.on_backend_roi_update(backend_rois)
+        roi_plot_state.on_backend_rect_update(backend_rois)
 
         # Should NOT republish (no change detected)
         assert len(fake_publisher.published_rois) == initial_publish_count
