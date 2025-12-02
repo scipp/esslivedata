@@ -3,7 +3,7 @@
 """This file contains utilities for creating plots in the dashboard."""
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, cast
 
 import holoviews as hv
 import numpy as np
@@ -517,4 +517,4 @@ class BarsPlotter(Plotter):
             opts['yrotation'] = 45
         else:
             opts['xrotation'] = 25
-        return bars.opts(**opts)
+        return cast(hv.Bars, bars.opts(**opts))

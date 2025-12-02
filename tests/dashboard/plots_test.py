@@ -841,7 +841,8 @@ class TestBarsPlotter:
         # Extract the data from the Bars element (pandas DataFrame)
         bar_data = result.data
         assert len(bar_data) == 1
-        assert bar_data['value'].iloc[0] == 42.0
+        # The vdims column is named after output_name
+        assert bar_data[data_key.output_name].iloc[0] == 42.0
 
     def test_plot_uses_source_name_as_label(self, bars_plotter, scalar_data, data_key):
         """Test that the bar is labeled with source_name."""
@@ -850,8 +851,8 @@ class TestBarsPlotter:
         # The label should contain the source_name
         assert data_key.job_id.source_name in bar_data['source'].iloc[0]
 
-    def test_plot_includes_output_name_in_label(self, bars_plotter, scalar_data):
-        """Test that output_name is included in label when present."""
+    def test_plot_uses_output_name_as_vdims(self, bars_plotter, scalar_data):
+        """Test that output_name is used as the vdims column name."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
             namespace='test_namespace',
@@ -865,7 +866,9 @@ class TestBarsPlotter:
 
         result = bars_plotter.plot(scalar_data, data_key)
         bar_data = result.data
-        assert 'detector/roi_sum' in bar_data['source'].iloc[0]
+        # output_name is used as the column name for values
+        assert 'roi_sum' in bar_data.columns
+        assert bar_data['roi_sum'].iloc[0] == 42.0
 
     def test_vertical_bars_default(self, bars_plotter, scalar_data, data_key):
         """Test that bars are vertical by default (invert_axes=False)."""
@@ -905,12 +908,12 @@ class TestBarsPlotter:
         key1 = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='source1', job_number=uuid.uuid4()),
-            output_name=None,
+            output_name='counts',
         )
         key2 = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='source2', job_number=uuid.uuid4()),
-            output_name=None,
+            output_name='counts',
         )
 
         data = {
