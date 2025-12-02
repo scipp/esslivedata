@@ -170,8 +170,14 @@ class DetectorView(Workflow):
 
         # Ratemeter: output event counts and reset for next period
         counts_result = {
-            'counts_total': sc.scalar(self._counts_total, unit='counts'),
-            'counts_in_toa_range': sc.scalar(self._counts_in_toa_range, unit='counts'),
+            'counts_total': sc.DataArray(
+                sc.scalar(self._counts_total, unit='counts'),
+                coords={'time': time_coord},
+            ),
+            'counts_in_toa_range': sc.DataArray(
+                sc.scalar(self._counts_in_toa_range, unit='counts'),
+                coords={'time': time_coord},
+            ),
         }
         self._counts_total = 0
         self._counts_in_toa_range = 0
