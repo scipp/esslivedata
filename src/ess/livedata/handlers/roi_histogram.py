@@ -10,6 +10,10 @@ from ess.reduce.live.roi import ROIFilter
 
 from ..config import models
 
+# Temporary toggle to test polygon ROI filtering with rectangle ROIs.
+# When True, rectangles are converted to polygons before configuring the filter.
+USE_POLYGON_FOR_RECTANGLES = True
+
 
 class ROIHistogram:
     """
@@ -64,13 +68,19 @@ class ROIHistogram:
         """Configure the ROI filter from an ROI model (internal helper)."""
         if isinstance(roi, models.RectangleROI):
             y, x = self._roi_filter._indices.dims
-            intervals = roi.get_bounds(x_dim=x, y_dim=y)
-            self._roi_filter.set_roi_from_intervals(sc.DataGroup(intervals))
+            if USE_POLYGON_FOR_RECTANGLES:
+                polygon = _rectangle_to_polygon(roi, x_dim=x, y_dim=y)
+                self._roi_filter.set_roi_from_polygon(polygon)
+            else:
+                intervals = roi.get_bounds(x_dim=x, y_dim=y)
+                self._roi_filter.set_roi_from_intervals(sc.DataGroup(intervals))
+        elif isinstance(roi, models.PolygonROI):
+            y, x = self._roi_filter._indices.dims
+            polygon = _polygon_model_to_dict(roi, x_dim=x, y_dim=y)
+            self._roi_filter.set_roi_from_polygon(polygon)
         else:
             roi_type = type(roi).__name__
-            raise ValueError(
-                f"Only rectangle ROI is currently supported, got {roi_type}"
-            )
+            raise ValueError(f"Unsupported ROI type: {roi_type}")
 
     def add_data(self, data: sc.DataArray) -> None:
         """
@@ -132,3 +142,49 @@ class ROIHistogram:
         """Clear both chunks and cumulative data, preserving configuration."""
         self._chunks.clear()
         self._cumulative = None
+
+
+def _rectangle_to_polygon(
+    roi: models.RectangleROI, *, x_dim: str, y_dim: str
+) -> dict[str, sc.Variable]:
+    """
+    Convert a rectangle ROI to polygon vertices for ROIFilter.set_roi_from_polygon.
+
+    The rectangle is converted to 4 vertices in counter-clockwise order:
+    (x_min, y_min) -> (x_max, y_min) -> (x_max, y_max) -> (x_min, y_max)
+    """
+    x_bounds = roi.x.to_bounds()
+    y_bounds = roi.y.to_bounds()
+
+    # Handle both pixel indices (int tuples) and physical coordinates (Variable tuples)
+    if isinstance(x_bounds[0], int):
+        x_min, x_max = float(x_bounds[0]), float(x_bounds[1])
+        y_min, y_max = float(y_bounds[0]), float(y_bounds[1])
+        x_unit = None
+        y_unit = None
+    else:
+        x_min = x_bounds[0].value
+        x_max = x_bounds[1].value
+        x_unit = x_bounds[0].unit
+        y_min = y_bounds[0].value
+        y_max = y_bounds[1].value
+        y_unit = y_bounds[0].unit
+
+    # Polygon vertices in counter-clockwise order
+    x_vertices = [x_min, x_max, x_max, x_min]
+    y_vertices = [y_min, y_min, y_max, y_max]
+
+    return {
+        x_dim: sc.array(dims=['vertex'], values=x_vertices, unit=x_unit),
+        y_dim: sc.array(dims=['vertex'], values=y_vertices, unit=y_unit),
+    }
+
+
+def _polygon_model_to_dict(
+    roi: models.PolygonROI, *, x_dim: str, y_dim: str
+) -> dict[str, sc.Variable]:
+    """Convert a PolygonROI model to the dict format expected by ROIFilter."""
+    return {
+        x_dim: sc.array(dims=['vertex'], values=roi.x, unit=roi.x_unit),
+        y_dim: sc.array(dims=['vertex'], values=roi.y, unit=roi.y_unit),
+    }
