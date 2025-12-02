@@ -1,13 +1,21 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import pydantic
 import pytest
 import scipp as sc
 
 from ess.livedata.config.instrument import Instrument, InstrumentRegistry
+from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.handlers.workflow_factory import (
     Workflow,
     WorkflowFactory,
 )
+
+
+class SimpleTestOutputs(WorkflowOutputsBase):
+    """Simple outputs model for testing."""
+
+    result: sc.DataArray = pydantic.Field(title='Result')
 
 
 class TestInstrumentRegistry:
@@ -162,6 +170,7 @@ class TestInstrument:
             title="Test Workflow",
             description="A test workflow",
             source_names=["source1", "source2"],
+            outputs=SimpleTestOutputs,
         )
 
         # Verify spec is registered
@@ -176,6 +185,7 @@ class TestInstrument:
         assert spec.description == "A test workflow"
         assert spec.source_names == ["source1", "source2"]
         assert spec.aux_sources is None
+        assert spec.outputs is SimpleTestOutputs
 
         # Phase 2: Attach factory
         def simple_processor_factory(source_name: str) -> Workflow:
@@ -204,7 +214,10 @@ class TestInstrument:
         instrument = Instrument(name="test_instrument")
 
         instrument.register_spec(
-            name="minimal_workflow", version=1, title="Minimal Workflow"
+            name="minimal_workflow",
+            version=1,
+            title="Minimal Workflow",
+            outputs=SimpleTestOutputs,
         )
 
         specs = instrument.workflow_factory
@@ -214,6 +227,7 @@ class TestInstrument:
         assert spec.description == ""  # default
         assert spec.source_names == []  # default
         assert spec.aux_sources is None  # default
+        assert spec.outputs is SimpleTestOutputs
 
     def test_register_spec_with_aux_sources_explicit(self):
         """Test that aux_sources can be set explicitly."""
@@ -232,6 +246,7 @@ class TestInstrument:
             version=1,
             title="Workflow with Aux Sources",
             aux_sources=AuxSourcesModel,
+            outputs=SimpleTestOutputs,
         )
 
         specs = instrument.workflow_factory
@@ -255,8 +270,12 @@ class TestInstrument:
         instrument = Instrument(name="test_instrument")
 
         # Register two specs
-        instrument.register_spec(name="workflow1", version=1, title="Workflow 1")
-        instrument.register_spec(name="workflow2", version=1, title="Workflow 2")
+        instrument.register_spec(
+            name="workflow1", version=1, title="Workflow 1", outputs=SimpleTestOutputs
+        )
+        instrument.register_spec(
+            name="workflow2", version=1, title="Workflow 2", outputs=SimpleTestOutputs
+        )
 
         specs = instrument.workflow_factory
         assert len(specs) == 2
@@ -275,7 +294,10 @@ class TestInstrumentRegisterSpec:
         instrument = Instrument(name="test_instrument")
 
         handle = instrument.register_spec(
-            name="test_workflow", version=1, title="Test Workflow"
+            name="test_workflow",
+            version=1,
+            title="Test Workflow",
+            outputs=SimpleTestOutputs,
         )
 
         assert isinstance(handle, SpecHandle)
@@ -330,7 +352,10 @@ class TestInstrumentRegisterSpec:
         instrument = Instrument(name="test_instrument")
 
         handle = instrument.register_spec(
-            name="minimal_workflow", version=1, title="Minimal"
+            name="minimal_workflow",
+            version=1,
+            title="Minimal",
+            outputs=SimpleTestOutputs,
         )
 
         spec = instrument.workflow_factory[handle.workflow_id]
@@ -339,7 +364,7 @@ class TestInstrumentRegisterSpec:
         assert spec.source_names == []  # default
         assert spec.params is None  # default
         assert spec.aux_sources is None  # default
-        assert spec.outputs is None  # default
+        assert spec.outputs is SimpleTestOutputs
 
     def test_register_spec_then_attach_factory(self):
         """Test two-phase registration via Instrument.register_spec()."""
@@ -355,6 +380,7 @@ class TestInstrumentRegisterSpec:
             version=1,
             title="Test Workflow",
             params=MyParams,
+            outputs=SimpleTestOutputs,
         )
 
         @handle.attach_factory()

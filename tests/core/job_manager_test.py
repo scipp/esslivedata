@@ -1,15 +1,27 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
+import pydantic
 import pytest
 import scipp as sc
 
-from ess.livedata.config.workflow_spec import JobSchedule, WorkflowConfig, WorkflowId
+from ess.livedata.config.workflow_spec import (
+    JobSchedule,
+    WorkflowConfig,
+    WorkflowId,
+    WorkflowOutputsBase,
+)
 from ess.livedata.core.job import Job, JobId, JobReply, JobResult
 from ess.livedata.core.job_manager import JobFactory, JobManager, WorkflowData
 from ess.livedata.core.message import StreamId
 
 from .job_test import FakeProcessor
+
+
+class SimpleTestOutputs(WorkflowOutputsBase):
+    """Simple outputs model for testing."""
+
+    result: sc.DataArray = pydantic.Field(title='Result')
 
 
 class FakeJobFactory(JobFactory):
@@ -1299,6 +1311,7 @@ class TestJobFactoryRender:
             description='Test',
             source_names=['detector1'],
             aux_sources=TestAuxSources,
+            outputs=SimpleTestOutputs,
         )
 
         @handle.attach_factory()
@@ -1348,6 +1361,7 @@ class TestJobFactoryRender:
             description='Default',
             source_names=['detector1'],
             aux_sources=DefaultAuxSources,
+            outputs=SimpleTestOutputs,
         )
 
         @handle.attach_factory()
@@ -1391,6 +1405,7 @@ class TestJobFactoryRender:
             title='No Aux',
             description='No aux sources',
             source_names=['detector1'],
+            outputs=SimpleTestOutputs,
         )
 
         @handle.attach_factory()
@@ -1433,6 +1448,7 @@ class TestJobFactoryRender:
             description='Optional',
             source_names=['detector1'],
             aux_sources=OptionalAuxSources,
+            outputs=SimpleTestOutputs,
         )
 
         @handle.attach_factory()
@@ -1483,6 +1499,7 @@ class TestJobFactoryRender:
             description='Source prefix',
             source_names=['detector1', 'detector2'],
             aux_sources=SourcePrefixedAuxSources,
+            outputs=SimpleTestOutputs,
         )
 
         @handle.attach_factory()
@@ -1541,6 +1558,7 @@ class TestJobFactoryRender:
             description='Defaulted',
             source_names=['detector1'],
             aux_sources=DefaultedAuxSources,
+            outputs=SimpleTestOutputs,
         )
 
         @handle.attach_factory()
