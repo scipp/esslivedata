@@ -19,6 +19,7 @@ from typing import NewType
 from uuid import UUID
 
 import pydantic
+from pydantic import BaseModel, Field
 
 import ess.livedata.config.keys as keys
 from ess.livedata.config.models import ConfigKey
@@ -39,24 +40,22 @@ SourceName = str
 SubscriptionId = NewType('SubscriptionId', UUID)
 
 
-@dataclass
-class JobConfig:
+class JobConfig(BaseModel):
     """Configuration for a single job within a JobSet."""
 
     params: dict
     aux_source_names: dict
 
 
-@dataclass
-class JobSet:
+class JobSet(BaseModel):
     """A set of jobs sharing the same job_number.
 
     Maps source_name to config for each running job.
     JobId can be reconstructed as JobId(source_name, job_number).
     """
 
-    job_number: JobNumber = field(default_factory=uuid.uuid4)
-    jobs: dict[SourceName, JobConfig] = field(default_factory=dict)
+    job_number: JobNumber = Field(default_factory=uuid.uuid4)
+    jobs: dict[SourceName, JobConfig] = Field(default_factory=dict)
 
     def job_ids(self) -> list[JobId]:
         """Create JobIds for all jobs in this set.
@@ -129,7 +128,7 @@ class JobOrchestrator:
             # Try to load persisted config directly as dict
             config_data = None
             if self._config_store is not None:
-                config_data = self._config_store.get(workflow_id)
+                config_data = self._config_store.get(str(workflow_id))
 
             # Get params/aux_source_names/source_names as dicts
             if config_data and config_data.get('params'):
@@ -170,18 +169,41 @@ class JobOrchestrator:
                 )
 
             # Initialize staged_jobs with dict-based configs
+            state = WorkflowState()
             if params:
-                state = WorkflowState()
                 for source_name in source_names:
                     state.staged_jobs[source_name] = JobConfig(
                         params=params.copy(),
                         aux_source_names=aux_source_names.copy(),
                     )
-                self._workflows[workflow_id] = state
-            else:
-                # Workflow has no params - create empty WorkflowState
-                self._workflows[workflow_id] = WorkflowState()
-                self._logger.debug('Initialized workflow %s (no params)', workflow_id)
+
+            # Restore active job state if present
+            if config_data:
+                if current_data := config_data.get('current_job'):
+                    try:
+                        state.current = JobSet.model_validate(current_data)
+                    except (KeyError, ValueError, TypeError) as e:
+                        self._logger.warning(
+                            'Failed to restore active job for workflow %s: %s',
+                            workflow_id,
+                            e,
+                        )
+
+                if previous_data := config_data.get('previous_job'):
+                    try:
+                        state.previous = JobSet.model_validate(previous_data)
+                    except (KeyError, ValueError, TypeError) as e:
+                        self._logger.warning(
+                            'Failed to restore previous job for workflow %s: %s',
+                            workflow_id,
+                            e,
+                        )
+
+            self._workflows[workflow_id] = state
+
+            # Note: No need to notify subscribers here - none exist during __init__.
+            # Future subscribers are notified via subscribe_to_workflow(), which
+            # checks for existing active jobs and notifies immediately.
 
     def clear_staged_configs(self, workflow_id: WorkflowId) -> None:
         """
@@ -300,8 +322,8 @@ class JobOrchestrator:
         # Set as current JobSet
         state.current = job_set
 
-        # Persist staged configs to store (keeping staged_jobs as working copy)
-        self._persist_config_to_store(workflow_id, state.staged_jobs)
+        # Persist full state (staged configs + active jobs) to store
+        self._persist_state_to_store(workflow_id)
 
         # Notify subscribers immediately that job is active
         self._logger.info(
@@ -314,35 +336,39 @@ class JobOrchestrator:
         # Return JobIds for all created jobs
         return job_set.job_ids()
 
-    def _persist_config_to_store(
-        self, workflow_id: WorkflowId, staged_jobs: dict[SourceName, JobConfig]
-    ) -> None:
-        """Persist staged job configs to config store.
+    def _persist_state_to_store(self, workflow_id: WorkflowId) -> None:
+        """Persist full workflow state (config + active jobs) to config store.
 
-        Returns silently if config_store is None (persistence is optional)
-        or if staged_jobs is empty (nothing to persist).
+        Returns silently if config_store is None (persistence is optional).
         """
-        if self._config_store is None or not staged_jobs:
+        if self._config_store is None:
             return
 
-        # Contract staged_jobs to storage format
-        # (single params, list of sources - see ConfigurationState schema note)
-        source_names = list(staged_jobs.keys())
-        # Take params from first source (all should be same in current implementation)
-        first_job_config = next(iter(staged_jobs.values()))
+        state = self._workflows.get(workflow_id)
+        if state is None:
+            return
 
-        config_dict = {
-            'source_names': source_names,
-            'params': first_job_config.params,
-            'aux_source_names': first_job_config.aux_source_names,
-        }
+        # Build config dict from staged_jobs if present
+        config_dict = {}
+        if state.staged_jobs:
+            source_names = list(state.staged_jobs.keys())
+            first_job_config = next(iter(state.staged_jobs.values()))
+            config_dict = {
+                'source_names': source_names,
+                'params': first_job_config.params,
+                'aux_source_names': first_job_config.aux_source_names,
+            }
 
-        self._config_store[workflow_id] = config_dict
-        self._logger.debug(
-            'Persisted config for workflow %s to store: %d sources',
-            workflow_id,
-            len(source_names),
-        )
+        # Add active job state
+        if state.current is not None:
+            config_dict['current_job'] = state.current.model_dump(mode='json')
+
+        if state.previous is not None:
+            config_dict['previous_job'] = state.previous.model_dump(mode='json')
+
+        # Persist if we have something to save
+        if config_dict:
+            self._config_store[str(workflow_id)] = config_dict
 
     def get_staged_config(self, workflow_id: WorkflowId) -> dict[SourceName, JobConfig]:
         """
@@ -392,6 +418,44 @@ class JobOrchestrator:
             )
             for source_name, job_config in state.current.jobs.items()
         }
+
+    def get_active_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:
+        """
+        Get the job number of the currently active job for a workflow.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to query.
+
+        Returns
+        -------
+        :
+            The job number if there's an active job, None otherwise.
+        """
+        state = self._workflows.get(workflow_id)
+        if state is None or state.current is None:
+            return None
+        return state.current.job_number
+
+    def get_previous_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:
+        """
+        Get the job number of the previous job for a workflow.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to query.
+
+        Returns
+        -------
+        :
+            The job number if there's a previous job, None otherwise.
+        """
+        state = self._workflows.get(workflow_id)
+        if state is None or state.previous is None:
+            return None
+        return state.previous.job_number
 
     def _notify_workflow_available(
         self, workflow_id: WorkflowId, job_number: JobNumber

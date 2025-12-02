@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import uuid
 
+import pydantic
 import pytest
 
 from ess.livedata.dashboard.plot_orchestrator import (
@@ -12,6 +13,19 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotGridConfig,
     PlotOrchestrator,
 )
+
+
+class FakePlotParams(pydantic.BaseModel):
+    """Flexible fake params model that accepts any fields."""
+
+    model_config = pydantic.ConfigDict(extra='allow')
+
+
+class FakePlotterSpec:
+    """Fake PlotterSpec for testing."""
+
+    def __init__(self, params_class=FakePlotParams):
+        self.params = params_class
 
 
 class FakePlot:
@@ -108,6 +122,11 @@ class FakePlottingController:
         self._plot_object = FakePlot()
         self._calls: list[dict] = []
         self._pipeline_setups: list[dict] = []
+        self._fake_spec = FakePlotterSpec()
+
+    def get_spec(self, plot_name: str) -> FakePlotterSpec:
+        """Return a fake plotter spec that accepts any params."""
+        return self._fake_spec
 
     def configure_to_raise(self, exception: Exception) -> None:
         """Configure the controller to raise an exception on create_plot."""
@@ -201,7 +220,7 @@ def plot_config(workflow_id):
         output_name='test_output',
         source_names=['source1', 'source2'],
         plot_name='test_plot',
-        params={'param1': 'value1'},
+        params=FakePlotParams(param1='value1'),
     )
 
 
@@ -235,11 +254,11 @@ def fake_plotting_controller(fake_stream_manager):
 
 
 @pytest.fixture
-def fake_job_service(fake_data_service):
+def fake_job_service():
     """Create a real JobService for testing."""
     from ess.livedata.dashboard.job_service import JobService
 
-    return JobService(data_service=fake_data_service)
+    return JobService()
 
 
 @pytest.fixture
@@ -331,13 +350,13 @@ class TestGridManagement:
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
-        # Get grid and modify a cell
+        # Get grid and modify a cell's config (params is a Pydantic model)
         grid = plot_orchestrator.get_grid(grid_id)
-        grid.cells[cell_id].config.params['new_param'] = 'new_value'
+        grid.cells[cell_id].config.params.new_param = 'new_value'
 
         # Verify internal state unchanged
         internal_grid = plot_orchestrator.get_grid(grid_id)
-        assert 'new_param' not in internal_grid.cells[cell_id].config.params
+        assert not hasattr(internal_grid.cells[cell_id].config.params, 'new_param')
         # Geometry is frozen and cannot be modified
         assert internal_grid.cells[cell_id].geometry.row == 0
 
@@ -367,13 +386,13 @@ class TestGridManagement:
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
-        # Get all grids and modify a cell
+        # Get all grids and modify a cell (params is a Pydantic model)
         all_grids = plot_orchestrator.get_all_grids()
-        all_grids[grid_id].cells[cell_id].config.params['new_param'] = 'new_value'
+        all_grids[grid_id].cells[cell_id].config.params.new_param = 'new_value'
 
         # Verify internal state unchanged
         internal_grid = plot_orchestrator.get_grid(grid_id)
-        assert 'new_param' not in internal_grid.cells[cell_id].config.params
+        assert not hasattr(internal_grid.cells[cell_id].config.params, 'new_param')
         # Geometry is frozen and cannot be modified
         assert internal_grid.cells[cell_id].geometry.row == 0
 
@@ -428,7 +447,7 @@ class TestCellManagement:
             output_name='new_output',
             source_names=['new_source'],
             plot_name='new_plot',
-            params={'new_param': 'new_value'},
+            params=FakePlotParams(new_param='new_value'),
         )
         plot_orchestrator.update_plot_config(cell_id, new_config)
 
@@ -447,7 +466,7 @@ class TestCellManagement:
                 output_name='out1',
                 source_names=['src1'],
                 plot_name='plot1',
-                params={},
+                params=FakePlotParams(),
             ),
         )
         cell_2 = PlotCell(
@@ -457,7 +476,7 @@ class TestCellManagement:
                 output_name='out2',
                 source_names=['src2'],
                 plot_name='plot2',
-                params={},
+                params=FakePlotParams(),
             ),
         )
 
@@ -584,7 +603,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
                 output_name='out1',
                 source_names=['src1'],
                 plot_name='plot1',
-                params={},
+                params=FakePlotParams(),
             ),
         )
         cell_2 = PlotCell(
@@ -594,7 +613,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
                 output_name='out2',
                 source_names=['src2'],
                 plot_name='plot2',
-                params={},
+                params=FakePlotParams(),
             ),
         )
 
@@ -672,7 +691,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
             output_name='new_output',
             source_names=['new_source'],
             plot_name='new_plot',
-            params={},
+            params=FakePlotParams(),
         )
         plot_orchestrator.update_plot_config(cell_id, new_config)
 
@@ -864,7 +883,7 @@ class TestLifecycleEventNotifications:
             output_name='new_output',
             source_names=['new_source'],
             plot_name='new_plot',
-            params={},
+            params=FakePlotParams(),
         )
         plot_orchestrator.update_plot_config(cell_id, new_config)
 
@@ -1055,7 +1074,7 @@ class TestCleanupAndResourceManagement:
                     output_name=f'out{i}',
                     source_names=[f'src{i}'],
                     plot_name=f'plot{i}',
-                    params={},
+                    params=FakePlotParams(),
                 ),
             )
             plot_orchestrator.add_plot(grid_id, cell)
@@ -1192,7 +1211,7 @@ class TestLateSubscriberPlotRetrieval:
                 output_name='test_output',
                 source_names=['source1'],
                 plot_name='test_plot',
-                params={},
+                params=FakePlotParams(),
             ),
         )
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
@@ -1250,7 +1269,7 @@ class TestLateSubscriberPlotRetrieval:
                     output_name=f'output_{i}',
                     source_names=[f'source_{i}'],
                     plot_name=f'plot_{i}',
-                    params={},
+                    params=FakePlotParams(),
                 ),
             )
             cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
@@ -1332,7 +1351,7 @@ class TestLateSubscriberPlotRetrieval:
             output_name='new_output',
             source_names=['new_source'],
             plot_name='new_plot',
-            params={},
+            params=FakePlotParams(),
         )
         plot_orchestrator.update_plot_config(cell_id, new_config)
 
@@ -1426,7 +1445,7 @@ class TestSourceNameFiltering:
                 output_name='test_output',
                 source_names=['source_A'],  # Plot wants source_A
                 plot_name='test_plot',
-                params={},
+                params=FakePlotParams(),
             ),
         )
         plot_orchestrator.add_plot(grid_id, plot_cell)
@@ -1493,7 +1512,7 @@ class TestSourceNameFiltering:
                 output_name='test_output',
                 source_names=['source_A', 'source_B'],  # Plot wants BOTH
                 plot_name='test_plot',
-                params={},
+                params=FakePlotParams(),
             ),
         )
         plot_orchestrator.add_plot(grid_id, plot_cell)
@@ -1574,7 +1593,7 @@ class TestSourceNameFiltering:
                 output_name='test_output',
                 source_names=['source_A'],
                 plot_name='test_plot',
-                params={},
+                params=FakePlotParams(),
             ),
         )
         plot_orchestrator.add_plot(grid_id, plot_cell)
@@ -1624,7 +1643,7 @@ class TestSourceNameFiltering:
                 output_name='test_output',
                 source_names=['source_A'],  # Plot wants A, but only B exists
                 plot_name='test_plot',
-                params={},
+                params=FakePlotParams(),
             ),
         )
         plot_orchestrator.add_plot(grid_id, plot_cell)

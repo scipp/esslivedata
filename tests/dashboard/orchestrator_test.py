@@ -67,7 +67,7 @@ class TestOrchestrator:
     def test_update_with_no_messages(self) -> None:
         source = FakeMessageSource()
         data_service = DataService()
-        job_service = JobService(data_service=data_service)
+        job_service = JobService()
         orchestrator = Orchestrator(
             message_source=source, data_service=data_service, job_service=job_service
         )
@@ -79,7 +79,7 @@ class TestOrchestrator:
     def test_update_with_single_message(self) -> None:
         source = FakeMessageSource()
         data_service = DataService()
-        job_service = JobService(data_service=data_service)
+        job_service = JobService()
         orchestrator = Orchestrator(
             message_source=source, data_service=data_service, job_service=job_service
         )
@@ -106,7 +106,7 @@ class TestOrchestrator:
     def test_update_with_multiple_messages(self) -> None:
         source = FakeMessageSource()
         data_service = DataService()
-        job_service = JobService(data_service=data_service)
+        job_service = JobService()
         orchestrator = Orchestrator(
             message_source=source, data_service=data_service, job_service=job_service
         )
@@ -150,7 +150,7 @@ class TestOrchestrator:
     def test_update_overwrites_existing_data(self) -> None:
         source = FakeMessageSource()
         data_service = DataService()
-        job_service = JobService(data_service=data_service)
+        job_service = JobService()
         orchestrator = Orchestrator(
             message_source=source, data_service=data_service, job_service=job_service
         )
@@ -182,7 +182,7 @@ class TestOrchestrator:
     def test_update_with_output_name(self) -> None:
         source = FakeMessageSource()
         data_service = DataService()
-        job_service = JobService(data_service=data_service)
+        job_service = JobService()
         orchestrator = Orchestrator(
             message_source=source, data_service=data_service, job_service=job_service
         )
@@ -209,7 +209,7 @@ class TestOrchestrator:
     def test_forward_with_valid_result_key(self) -> None:
         source = FakeMessageSource()
         data_service = DataService()
-        job_service = JobService(data_service=data_service)
+        job_service = JobService()
         orchestrator = Orchestrator(
             message_source=source, data_service=data_service, job_service=job_service
         )
@@ -235,7 +235,7 @@ class TestOrchestrator:
     def test_forward_with_invalid_json(self) -> None:
         source = FakeMessageSource()
         data_service = DataService()
-        job_service = JobService(data_service=data_service)
+        job_service = JobService()
         orchestrator = Orchestrator(
             message_source=source, data_service=data_service, job_service=job_service
         )
@@ -251,7 +251,7 @@ class TestOrchestrator:
     def test_forward_with_different_data_types(self) -> None:
         source = FakeMessageSource()
         data_service = DataService()
-        job_service = JobService(data_service=data_service)
+        job_service = JobService()
         orchestrator = Orchestrator(
             message_source=source, data_service=data_service, job_service=job_service
         )
@@ -293,7 +293,7 @@ class TestOrchestrator:
         """Test that updates are batched in transactions."""
         source = FakeMessageSource()
         data_service = DataService()
-        job_service = JobService(data_service=data_service)
+        job_service = JobService()
         orchestrator = Orchestrator(
             message_source=source, data_service=data_service, job_service=job_service
         )
@@ -345,7 +345,7 @@ class TestOrchestratorConfigProcessing:
         """Test that config messages are forwarded to workflow config service."""
         source = FakeMessageSource()
         data_service = DataService()
-        job_service = JobService(data_service=data_service)
+        job_service = JobService()
         workflow_config_service = FakeWorkflowConfigService()
         orchestrator = Orchestrator(
             message_source=source,
@@ -364,7 +364,7 @@ class TestOrchestratorConfigProcessing:
         """Test that config messages are processed in update."""
         source = FakeMessageSource()
         data_service = DataService()
-        job_service = JobService(data_service=data_service)
+        job_service = JobService()
         workflow_config_service = FakeWorkflowConfigService()
         orchestrator = Orchestrator(
             message_source=source,
@@ -385,7 +385,7 @@ class TestOrchestratorConfigProcessing:
         """Test that config messages are handled gracefully without service."""
         source = FakeMessageSource()
         data_service = DataService()
-        job_service = JobService(data_service=data_service)
+        job_service = JobService()
         orchestrator = Orchestrator(
             message_source=source,
             data_service=data_service,
@@ -401,7 +401,7 @@ class TestOrchestratorConfigProcessing:
         """Test that config and data messages are batched in transaction."""
         source = FakeMessageSource()
         data_service = DataService()
-        job_service = JobService(data_service=data_service)
+        job_service = JobService()
         workflow_config_service = FakeWorkflowConfigService()
         orchestrator = Orchestrator(
             message_source=source,

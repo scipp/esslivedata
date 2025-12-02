@@ -21,9 +21,9 @@ def data_service():
 
 
 @pytest.fixture
-def job_service(data_service):
+def job_service():
     """Create a JobService for testing."""
-    return JobService(data_service=data_service)
+    return JobService()
 
 
 @pytest.fixture
@@ -50,11 +50,11 @@ def fake_data_service():
 
 
 @pytest.fixture
-def fake_job_service(fake_data_service):
+def fake_job_service():
     """Create a fake JobService."""
     from ess.livedata.dashboard.job_service import JobService
 
-    return JobService(data_service=fake_data_service)
+    return JobService()
 
 
 @pytest.fixture

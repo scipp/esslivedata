@@ -752,11 +752,7 @@ class ROIDetectorPlotFactory:
         spectrum_plotter = LinePlotter(
             value_margin_factor=0.1,
             layout_params=overlay_layout,
-            # These settings are not perfect, but the spectrum-plot height will match
-            # that of the detector-plot.
-            aspect_params=PlotAspect(
-                aspect_type=PlotAspectType.free, fix_width=True, width=500
-            ),
+            aspect_params=PlotAspect(aspect_type=PlotAspectType.square),
             scale_opts=params.plot_scale,
         )
 
@@ -776,4 +772,4 @@ class ROIDetectorPlotFactory:
             filtered_spectrum_plotter,
             streams=[spectrum_pipe, roi_state_stream],
             cache_size=1,
-        ).opts(shared_axes=False)
+        ).opts(shared_axes=False, max_width=400)

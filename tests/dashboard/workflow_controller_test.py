@@ -120,7 +120,7 @@ def command_service(fake_message_sink: FakeMessageSink) -> CommandService:
 
 
 @pytest.fixture
-def fake_config_store() -> dict[WorkflowId, dict]:
+def fake_config_store() -> dict[str, dict]:
     """Plain dict for config store testing."""
     return {}
 
@@ -130,7 +130,7 @@ def workflow_controller(
     command_service: CommandService,
     fake_message_sink: FakeMessageSink,
     fake_workflow_config_service: FakeWorkflowConfigService,
-    fake_config_store: dict[WorkflowId, dict],
+    fake_config_store: dict[str, dict],
     source_names: list[str],
     workflow_registry: dict[WorkflowId, WorkflowSpec],
 ) -> WorkflowControllerFixture:
@@ -148,7 +148,6 @@ def workflow_controller(
     controller = WorkflowController(
         job_orchestrator=job_orchestrator,
         workflow_registry=workflow_registry,
-        config_store=fake_config_store,
     )
     return WorkflowControllerFixture(
         controller=controller,
@@ -197,7 +196,7 @@ class TestWorkflowController:
         workflow_controller.controller.start_workflow(workflow_id, source_names, config)
 
         # Assert - check ConfigStore instead of service
-        persistent_config_data = workflow_controller.config_store.get(workflow_id)
+        persistent_config_data = workflow_controller.config_store.get(str(workflow_id))
         assert persistent_config_data is not None
         persistent_config = ConfigurationState.model_validate(persistent_config_data)
         assert persistent_config.source_names == source_names
@@ -245,7 +244,7 @@ class TestWorkflowController:
         command_service: CommandService,
         fake_message_sink: FakeMessageSink,
         fake_workflow_config_service: FakeWorkflowConfigService,
-        fake_config_store: dict[WorkflowId, dict],
+        fake_config_store: dict[str, dict],
         source_names: list[str],
     ):
         """Test that multiple workflow configurations can be stored persistently."""
@@ -293,7 +292,6 @@ class TestWorkflowController:
         controller = WorkflowController(
             job_orchestrator=job_orchestrator,
             workflow_registry=registry,
-            config_store=config_store,
         )
 
         # Start both workflows
@@ -301,13 +299,13 @@ class TestWorkflowController:
         controller.start_workflow(workflow_id_2, sources_2, config_2)
 
         # Assert - check ConfigStore instead of service
-        config_1_data = config_store.get(workflow_id_1)
+        config_1_data = config_store.get(str(workflow_id_1))
         assert config_1_data is not None
         config_1 = ConfigurationState.model_validate(config_1_data)
         assert config_1.source_names == sources_1
         assert config_1.params == {"threshold": 100.0, "mode": "fast"}
 
-        config_2_data = config_store.get(workflow_id_2)
+        config_2_data = config_store.get(str(workflow_id_2))
         assert config_2_data is not None
         config_2 = ConfigurationState.model_validate(config_2_data)
         assert config_2.source_names == sources_2
@@ -334,7 +332,7 @@ class TestWorkflowController:
         )
 
         # Assert - check ConfigStore instead of service
-        workflow_config_data = workflow_controller.config_store.get(workflow_id)
+        workflow_config_data = workflow_controller.config_store.get(str(workflow_id))
         assert workflow_config_data is not None
         workflow_config = ConfigurationState.model_validate(workflow_config_data)
 
