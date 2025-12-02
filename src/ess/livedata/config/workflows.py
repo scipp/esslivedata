@@ -13,33 +13,6 @@ from ess.livedata.handlers.to_nxlog import ToNXlog
 from ess.reduce import streaming
 
 
-class LatestValueAccumulator(streaming.Accumulator[sc.DataArray]):
-    """Accumulator that keeps only the latest pushed value.
-
-    Unlike TimeseriesAccumulator, this does not build up history internally.
-    It simply stores and returns the most recent value.
-    """
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._latest: sc.DataArray | None = None
-
-    @property
-    def is_empty(self) -> bool:
-        return self._latest is None
-
-    def _get_value(self) -> sc.DataArray:
-        if self._latest is None:
-            raise ValueError("No data accumulated")
-        return self._latest
-
-    def _do_push(self, value: sc.DataArray) -> None:
-        self._latest = value
-
-    def clear(self) -> None:
-        self._latest = None
-
-
 class TimeseriesAccumulator(streaming.Accumulator[sc.DataArray]):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
