@@ -174,7 +174,7 @@ class Instrument:
         source_names: Sequence[str] | None = None,
         params: type[Any] | None = None,
         aux_sources: type[Any] | None = None,
-        outputs: type[Any] | None = None,
+        outputs: type[Any],
     ) -> SpecHandle:
         """
         Register workflow spec, return handle for later factory attachment.
@@ -208,7 +208,7 @@ class Instrument:
             configuration is handled by the Job layer and is not passed to the workflow
             factory function.
         outputs:
-            Optional Pydantic model class defining workflow outputs with metadata.
+            Pydantic model class defining workflow outputs with metadata.
             Field names should be simplified identifiers (e.g., 'i_of_d_two_theta')
             that match keys returned by workflow.finalize(). Field metadata (title,
             description) provides human-readable information for the UI.

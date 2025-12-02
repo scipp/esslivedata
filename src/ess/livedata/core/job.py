@@ -34,20 +34,22 @@ class JobData:
 class JobResult:
     job_id: JobId
     workflow_id: WorkflowId
-    output_name: str | None = None
     # Should this be included in the data instead?
     start_time: int | None
     end_time: int | None
-    data: sc.DataArray | sc.DataGroup | None = None
+    data: sc.DataGroup | None = None
     error_message: str | None = None
 
     @property
     def stream_name(self) -> str:
-        """Get the stream name associated with this job result."""
+        """Get the stream name associated with this job result.
+
+        The output_name in the ResultKey is a placeholder. UnrollingSinkAdapter
+        unpacks the DataGroup and replaces it with the actual output names.
+        """
         return ResultKey(
             workflow_id=self.workflow_id,
             job_id=self.job_id,
-            output_name=self.output_name,
         ).model_dump_json()
 
 

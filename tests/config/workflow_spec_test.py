@@ -16,6 +16,12 @@ from ess.livedata.config.workflow_spec import (
 )
 
 
+class SimpleTestOutputs(WorkflowOutputsBase):
+    """Simple outputs model for testing."""
+
+    result: sc.DataArray = Field(title='Result')
+
+
 @pytest.fixture
 def sample_workflow_id() -> WorkflowId:
     return WorkflowId(
@@ -46,6 +52,7 @@ class TestWorkflowSpecAuxSources:
             title="Test Workflow",
             description="A test workflow",
             params=None,
+            outputs=SimpleTestOutputs,
         )
         assert spec.aux_sources is None
 
@@ -71,6 +78,7 @@ class TestWorkflowSpecAuxSources:
             description="A test workflow",
             params=None,
             aux_sources=AuxSources,
+            outputs=SimpleTestOutputs,
         )
         assert spec.aux_sources is AuxSources
 
@@ -88,6 +96,7 @@ class TestWorkflowSpecAuxSources:
             description="A test workflow",
             params=None,
             aux_sources=AuxSources,
+            outputs=SimpleTestOutputs,
         )
 
         # Serialize and deserialize
@@ -101,18 +110,6 @@ class TestWorkflowSpecAuxSources:
 
 class TestWorkflowSpecOutputs:
     """Tests for WorkflowSpec.outputs field and get_output_template()."""
-
-    def test_workflow_spec_without_outputs(self) -> None:
-        """Test that WorkflowSpec can be created without outputs."""
-        spec = WorkflowSpec(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-            title="Test Workflow",
-            description="A test workflow",
-            params=None,
-        )
-        assert spec.outputs is None
 
     def test_workflow_spec_with_outputs_model(self) -> None:
         """Test WorkflowSpec with outputs as a Pydantic model."""
@@ -193,20 +190,6 @@ class TestWorkflowSpecOutputs:
         )
 
         template = spec.get_output_template('nonexistent')
-        assert template is None
-
-    def test_get_output_template_returns_none_when_no_outputs_defined(self) -> None:
-        """Test that get_output_template returns None when outputs field is None."""
-        spec = WorkflowSpec(
-            instrument="test",
-            name="test_workflow",
-            version=1,
-            title="Test Workflow",
-            description="A test workflow",
-            params=None,
-        )
-
-        template = spec.get_output_template('any_output')
         assert template is None
 
     def test_get_output_template_returns_none_without_default_factory(

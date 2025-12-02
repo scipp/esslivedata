@@ -642,20 +642,8 @@ class TestPlotterLabelChanges:
             workflow_id=workflow_id, job_id=job_id, output_name='roi_current_0'
         )
 
-    @pytest.fixture
-    def data_key_without_output_name(self):
-        """Create a test ResultKey without output_name."""
-        workflow_id = WorkflowId(
-            instrument='test_instrument',
-            namespace='test_namespace',
-            name='test_workflow',
-            version=1,
-        )
-        job_id = JobId(source_name='detector', job_number=uuid.uuid4())
-        return ResultKey(workflow_id=workflow_id, job_id=job_id, output_name=None)
-
     def test_label_includes_output_name(self, simple_data, data_key_with_output_name):
-        """Test that plot label includes output_name when present."""
+        """Test that plot label includes output_name."""
         plotter = plots.LinePlotter.from_params(PlotParams2d())
         data_dict = {data_key_with_output_name: simple_data}
 
@@ -666,17 +654,6 @@ class TestPlotterLabelChanges:
         assert hasattr(result, 'label')
         assert 'detector' in result.label
         assert 'roi_current_0' in result.label
-
-    def test_label_without_output_name(self, simple_data, data_key_without_output_name):
-        """Test that plot label uses only source_name when output_name is None."""
-        plotter = plots.LinePlotter.from_params(PlotParams2d())
-        data_dict = {data_key_without_output_name: simple_data}
-
-        result = plotter(data_dict)
-
-        # Result should have label with just source_name
-        assert hasattr(result, 'label')
-        assert 'detector' in result.label
 
 
 class TestPlotterOverlayMode:
