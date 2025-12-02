@@ -508,9 +508,11 @@ class BarsPlotter(Plotter):
             raise ValueError(f"Expected 0D data, got {data.ndim}D")
 
         label = data_key.job_id.source_name
-        if data_key.output_name is not None:
-            label = f'{label}/{data_key.output_name}'
-
         value = float(data.value)
-        bars = hv.Bars([(label, value)], kdims=['source'], vdims=['value'])
-        return bars.opts(invert_axes=self._horizontal)
+        bars = hv.Bars([(label, value)], kdims=['source'], vdims=[data_key.output_name])
+        opts = {'invert_axes': self._horizontal, 'show_legend': False, 'toolbar': None}
+        if self._horizontal:
+            opts['yrotation'] = 45
+        else:
+            opts['xrotation'] = 25
+        return bars.opts(**opts)
