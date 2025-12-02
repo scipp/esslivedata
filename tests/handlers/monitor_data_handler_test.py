@@ -14,7 +14,10 @@ from ess.livedata.handlers.monitor_data_handler import (
     MonitorHandlerFactory,
     MonitorStreamProcessor,
 )
-from ess.livedata.handlers.monitor_workflow_specs import register_monitor_workflow_specs
+from ess.livedata.handlers.monitor_workflow_specs import (
+    register_monitor_ratemeter_spec,
+    register_monitor_workflow_specs,
+)
 from ess.livedata.parameter_models import TimeUnit, TOAEdges
 
 
@@ -311,3 +314,29 @@ class TestMonitorHandlerFactory:
 
         assert preprocessor1 is not preprocessor2
         assert type(preprocessor1) is type(preprocessor2)
+
+
+class TestMonitorRatemeterSpec:
+    def test_ratemeter_spec_uses_data_reduction_namespace(self):
+        """Test that monitor ratemeter spec is in data_reduction namespace."""
+        instrument = Instrument(name="test_instrument", monitors=["monitor1"])
+        source_names = ["monitor1"]
+
+        handle = register_monitor_ratemeter_spec(instrument, source_names)
+
+        assert handle is not None
+        # Get the spec from the instrument's workflow factory
+        specs = list(instrument.workflow_factory.items())
+        ratemeter_spec = next(
+            (spec for _, spec in specs if spec.name == 'monitor_ratemeter'), None
+        )
+        assert ratemeter_spec is not None
+        assert ratemeter_spec.namespace == 'data_reduction'
+
+    def test_ratemeter_spec_returns_none_for_empty_sources(self):
+        """Test that register_monitor_ratemeter_spec returns None for empty sources."""
+        instrument = Instrument(name="test_instrument")
+
+        handle = register_monitor_ratemeter_spec(instrument, source_names=[])
+
+        assert handle is None

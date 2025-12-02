@@ -127,7 +127,7 @@ def register_monitor_ratemeter_spec(
         return None
 
     return instrument.register_spec(
-        namespace='monitor_data',
+        namespace='data_reduction',
         name='monitor_ratemeter',
         version=1,
         title='Monitor Ratemeter',

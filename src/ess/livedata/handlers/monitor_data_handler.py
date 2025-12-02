@@ -12,7 +12,7 @@ from ess.reduce.nexus.types import Filename, NeXusData, NeXusName
 from ess.reduce.time_of_flight import GenericTofWorkflow
 
 from .. import parameter_models
-from ..config.workflows import TimeseriesAccumulator
+from ..config.workflows import LatestValueAccumulator
 from ..core.handler import JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import Accumulator, CollectTOA, Cumulative, MonitorEvents
@@ -180,7 +180,7 @@ def create_monitor_ratemeter_factory(instrument):
             base_workflow=wf,
             dynamic_keys={source_name: NeXusData[CustomMonitor, CurrentRun]},
             target_keys={'monitor_counts': MonitorCountsInInterval},
-            accumulators={MonitorCountsInInterval: TimeseriesAccumulator},
+            accumulators={MonitorCountsInInterval: LatestValueAccumulator},
         )
 
     return factory
