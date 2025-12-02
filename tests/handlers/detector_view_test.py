@@ -1144,3 +1144,148 @@ class TestDetectorViewEdgeCases:
             f"{3 * expected_events}), but got {cumulative_after_resend}. "
             "Resending identical ROI config should not reset cumulative histogram!"
         )
+
+
+class TestDetectorViewRatemeter:
+    """Tests for ratemeter (event count) functionality."""
+
+    def test_counts_output_in_finalize(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that finalize outputs counts_total and counts_in_toa_range."""
+        params = DetectorViewParams()
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=1000, end_time=2000
+        )
+        result = view.finalize()
+
+        assert 'counts_total' in result
+        assert 'counts_in_toa_range' in result
+        assert result['counts_total'].unit == 'counts'
+        assert result['counts_in_toa_range'].unit == 'counts'
+
+    def test_counts_match_total_events_without_toa_filter(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that counts equal total events when TOA filter is disabled."""
+        params = DetectorViewParams()  # TOA range disabled by default
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=1000, end_time=2000
+        )
+        result = view.finalize()
+
+        assert result['counts_total'].value == TOTAL_SAMPLE_EVENTS
+        assert result['counts_in_toa_range'].value == TOTAL_SAMPLE_EVENTS
+
+    def test_counts_filtered_by_toa_range(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        detector_number: sc.Variable,
+    ) -> None:
+        """Test that counts_in_toa_range respects TOA filter."""
+        from ess.livedata.parameter_models import TOARange
+
+        # Enable TOA range filter for 200-600 ns (should capture 4 of 8 events)
+        params = DetectorViewParams(
+            toa_range=TOARange(enabled=True, start=200.0, stop=600.0, unit='ns')
+        )
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # Create events with known TOA values: 100, 200, 300, 400, 500, 600, 700, 800
+        # Filter 200-600 should include: 200, 300, 400, 500 (4 events)
+        pixel_ids = [0, 1, 2, 5, 6, 10, 11, 15]
+        toa_values = [100, 200, 300, 400, 500, 600, 700, 800]
+
+        events = DetectorEvents(
+            pixel_id=pixel_ids,
+            time_of_arrival=toa_values,
+            unit='ns',
+        )
+        grouper = GroupIntoPixels(detector_number=detector_number)
+        grouper.add(0, events)
+        detector_events = grouper.get()
+
+        view.accumulate({'detector': detector_events}, start_time=1000, end_time=2000)
+        result = view.finalize()
+
+        assert result['counts_total'].value == 8
+        # TOA range [200, 600) should include events at 200, 300, 400, 500
+        assert result['counts_in_toa_range'].value == 4
+
+    def test_counts_reset_after_finalize(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that counts are reset after each finalize call."""
+        params = DetectorViewParams()
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # First accumulation
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=1000, end_time=2000
+        )
+        result1 = view.finalize()
+        assert result1['counts_total'].value == TOTAL_SAMPLE_EVENTS
+
+        # Second accumulation - counts should be fresh, not cumulative
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=2000, end_time=3000
+        )
+        result2 = view.finalize()
+        assert result2['counts_total'].value == TOTAL_SAMPLE_EVENTS
+
+    def test_counts_accumulate_within_finalize_period(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that multiple accumulate calls sum counts before finalize."""
+        params = DetectorViewParams()
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # Two accumulate calls before finalize
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=1000, end_time=2000
+        )
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=2000, end_time=3000
+        )
+        result = view.finalize()
+
+        # Should have sum of both accumulations
+        assert result['counts_total'].value == 2 * TOTAL_SAMPLE_EVENTS
+
+    def test_counts_reset_by_clear(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that clear() resets accumulated counts."""
+        params = DetectorViewParams()
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # Accumulate some events (don't finalize yet)
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=1000, end_time=2000
+        )
+
+        # Clear should reset counts
+        view.clear()
+
+        # Accumulate new events
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=2000, end_time=3000
+        )
+        result = view.finalize()
+
+        # Should only have events from after clear
+        assert result['counts_total'].value == TOTAL_SAMPLE_EVENTS

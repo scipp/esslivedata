@@ -56,6 +56,10 @@ class DetectorView(Workflow):
         self._roi_mapper = get_roi_mapper()
         self._current_start_time: int | None = None
 
+        # Ratemeter: track event counts per finalize period
+        self._counts_total: int = 0
+        self._counts_in_toa_range: int = 0
+
     def apply_toa_range(self, data: sc.DataArray) -> sc.DataArray:
         if not self._use_toa_range:
             return data
@@ -110,6 +114,10 @@ class DetectorView(Workflow):
         for roi_state in self._rois.values():
             roi_state.add_data(raw)
 
+        # Ratemeter: accumulate event counts
+        self._counts_total += raw.bins.size().sum().value
+        self._counts_in_toa_range += filtered.bins.size().sum().value
+
     def finalize(self) -> dict[str, sc.DataArray]:
         if self._current_start_time is None:
             raise RuntimeError(
@@ -160,7 +168,15 @@ class DetectorView(Workflow):
             # Clear updated flag after publishing
             self._rois_updated = False
 
-        return {**view_result, **roi_result}
+        # Ratemeter: output event counts and reset for next period
+        counts_result = {
+            'counts_total': sc.scalar(self._counts_total, unit='counts'),
+            'counts_in_toa_range': sc.scalar(self._counts_in_toa_range, unit='counts'),
+        }
+        self._counts_total = 0
+        self._counts_in_toa_range = 0
+
+        return {**view_result, **roi_result, **counts_result}
 
     def clear(self) -> None:
         self._view.clear_counts()
@@ -168,6 +184,8 @@ class DetectorView(Workflow):
         self._current_start_time = None
         for roi_state in self._rois.values():
             roi_state.clear()
+        self._counts_total = 0
+        self._counts_in_toa_range = 0
 
     def _update_rois(self, rois: dict[int, models.ROI]) -> None:
         """

@@ -63,6 +63,14 @@ class DetectorViewOutputs(WorkflowOutputsBase):
         title='Current Counts',
         description='Detector counts for the current time window since last update.',
     )
+    counts_total: sc.Variable = pydantic.Field(
+        title='Total Event Count',
+        description='Total number of detector events in the current time window.',
+    )
+    counts_in_toa_range: sc.Variable = pydantic.Field(
+        title='Event Count in TOA Range',
+        description='Number of detector events within the configured TOA range filter.',
+    )
 
 
 class DetectorROIAuxSources(AuxSourcesBase):
