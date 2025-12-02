@@ -49,7 +49,9 @@ class FakeMonitorSource(MessageSource[sc.Variable]):
         for i in range(self._num_monitors):
             name = f"monitor{i + 1}"
             # Start with 10000 counts, decrease by ~30% each monitor
-            size = max(100, int(10000 * (0.7**i)))
+            base_size = int(10000 * (0.7**i))
+            # Add ~10% noise to the count
+            size = max(100, int(self._rng.normal(base_size, base_size * 0.1)))
             # Mean goes from 20ms to 50ms across monitors
             mean_ms = 20 + (30 * i / max(1, self._num_monitors - 1))
 
