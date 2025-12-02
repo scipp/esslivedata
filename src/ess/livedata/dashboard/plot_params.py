@@ -215,6 +215,20 @@ class PlotParams3d(PlotParamsBase):
     )
 
 
+class PlotParamsBars(PlotParamsBase):
+    """Parameters for bar plots of 0D scalar data."""
+
+    window: WindowParams = pydantic.Field(
+        default_factory=WindowParams,
+        description="Windowing and aggregation options.",
+    )
+    horizontal: bool = pydantic.Field(
+        default=False,
+        description="If True, bars are horizontal; if False, bars are vertical.",
+        title="Horizontal Bars",
+    )
+
+
 class ROIOptions(pydantic.BaseModel):
     """Options for ROI detector plots."""
 

@@ -15,6 +15,7 @@ from ..handlers.detector_view_specs import DetectorROIAuxSources
 from .extractors import FullHistoryExtractor, UpdateExtractor
 from .plot_params import PlotParamsROIDetector
 from .plots import (
+    BarsPlotter,
     ImagePlotter,
     LinePlotter,
     Plotter,
@@ -253,6 +254,15 @@ plotter_registry.register_plotter(
         required_extractor=FullHistoryExtractor,
     ),
     factory=LinePlotter.from_params,
+)
+
+
+plotter_registry.register_plotter(
+    name='bars',
+    title='Bars',
+    description='Plot 0D scalar values as bars.',
+    data_requirements=DataRequirements(min_dims=0, max_dims=0, multiple_datasets=True),
+    factory=BarsPlotter.from_params,
 )
 
 

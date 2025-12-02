@@ -19,6 +19,7 @@ from .plot_params import (
     PlotParams1d,
     PlotParams2d,
     PlotParams3d,
+    PlotParamsBars,
     PlotScale,
     PlotScaleParams,
     PlotScaleParams2d,
@@ -468,3 +469,48 @@ class SlicerPlotter(Plotter):
         image = to_holoviews(plot_data)
 
         return image.opts(framewise=framewise, **self._base_opts)
+
+
+class BarsPlotter(Plotter):
+    """Plotter for bar charts of 0D scalar data."""
+
+    def __init__(
+        self,
+        *,
+        horizontal: bool = False,
+        **kwargs,
+    ):
+        """
+        Initialize the bars plotter.
+
+        Parameters
+        ----------
+        horizontal:
+            If True, bars are horizontal; if False, bars are vertical.
+        **kwargs:
+            Additional keyword arguments passed to the base class.
+        """
+        super().__init__(**kwargs)
+        self._horizontal = horizontal
+
+    @classmethod
+    def from_params(cls, params: PlotParamsBars):
+        """Create BarsPlotter from PlotParamsBars."""
+        return cls(
+            horizontal=params.horizontal,
+            layout_params=params.layout,
+            aspect_params=params.plot_aspect,
+        )
+
+    def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Bars:
+        """Create a bar chart from a 0D scipp DataArray."""
+        if data.ndim != 0:
+            raise ValueError(f"Expected 0D data, got {data.ndim}D")
+
+        label = data_key.job_id.source_name
+        if data_key.output_name is not None:
+            label = f'{label}/{data_key.output_name}'
+
+        value = float(data.value)
+        bars = hv.Bars([(label, value)], kdims=['source'], vdims=['value'])
+        return bars.opts(invert_axes=self._horizontal)
