@@ -215,6 +215,16 @@ class PlotParams3d(PlotParamsBase):
     )
 
 
+class BarOrientation(pydantic.BaseModel):
+    """Orientation options for bar plots."""
+
+    horizontal: bool = pydantic.Field(
+        default=False,
+        description="If True, bars are horizontal; if False, bars are vertical.",
+        title="Horizontal Bars",
+    )
+
+
 class PlotParamsBars(PlotParamsBase):
     """Parameters for bar plots of 0D scalar data."""
 
@@ -222,10 +232,9 @@ class PlotParamsBars(PlotParamsBase):
         default_factory=WindowParams,
         description="Windowing and aggregation options.",
     )
-    horizontal: bool = pydantic.Field(
-        default=False,
-        description="If True, bars are horizontal; if False, bars are vertical.",
-        title="Horizontal Bars",
+    orientation: BarOrientation = pydantic.Field(
+        default_factory=BarOrientation,
+        description="Bar orientation options.",
     )
 
 

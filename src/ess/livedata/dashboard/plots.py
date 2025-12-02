@@ -497,7 +497,7 @@ class BarsPlotter(Plotter):
     def from_params(cls, params: PlotParamsBars):
         """Create BarsPlotter from PlotParamsBars."""
         return cls(
-            horizontal=params.horizontal,
+            horizontal=params.orientation.horizontal,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
         )

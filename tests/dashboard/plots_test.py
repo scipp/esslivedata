@@ -819,9 +819,11 @@ class TestBarsPlotter:
     @pytest.fixture
     def horizontal_bars_plotter(self):
         """Create a BarsPlotter instance with horizontal bars."""
-        from ess.livedata.dashboard.plot_params import PlotParamsBars
+        from ess.livedata.dashboard.plot_params import BarOrientation, PlotParamsBars
 
-        return plots.BarsPlotter.from_params(PlotParamsBars(horizontal=True))
+        return plots.BarsPlotter.from_params(
+            PlotParamsBars(orientation=BarOrientation(horizontal=True))
+        )
 
     @pytest.fixture
     def scalar_data(self):
