@@ -114,8 +114,8 @@ class PlotConfig:
     workflow_id: WorkflowId
     source_names: list[str]
     plot_name: str
-    output_name: str = 'result'
     params: pydantic.BaseModel
+    output_name: str = 'result'
 
 
 @dataclass
