@@ -19,7 +19,6 @@ class MonitorStreamProcessor(Workflow):
         self,
         edges: sc.Variable,
         *,
-        toa_range_enabled: bool = False,
         toa_range: tuple[sc.Variable, sc.Variable] | None = None,
     ) -> None:
         self._edges = edges
@@ -28,9 +27,8 @@ class MonitorStreamProcessor(Workflow):
         self._current: sc.DataArray | None = None
         self._current_start_time: int | None = None
         # Ratemeter configuration - convert range to edges unit once
-        self._toa_range_enabled = toa_range_enabled
         dim = edges.dim
-        if toa_range_enabled and toa_range is not None:
+        if toa_range is not None:
             low, high = toa_range
             self._toa_range = (low.to(unit=edges.unit), high.to(unit=edges.unit))
             self._toa_range_edges = sc.concat(
@@ -46,7 +44,6 @@ class MonitorStreamProcessor(Workflow):
         toa_range = params.toa_range
         return MonitorStreamProcessor(
             edges=params.toa_edges.get_edges(),
-            toa_range_enabled=toa_range.enabled,
             toa_range=toa_range.range_ns if toa_range.enabled else None,
         )
 

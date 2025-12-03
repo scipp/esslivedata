@@ -276,9 +276,7 @@ class TestMonitorStreamProcessorRatemeter:
     def test_counts_in_toa_range_when_enabled(self, edges):
         """Test that counts_in_toa_range is filtered when TOA range enabled."""
         toa_range = (sc.scalar(20.0, unit='ms'), sc.scalar(50.0, unit='ms'))
-        processor = MonitorStreamProcessor(
-            edges, toa_range_enabled=True, toa_range=toa_range
-        )
+        processor = MonitorStreamProcessor(edges, toa_range=toa_range)
         toa_data = np.array([10e6, 25e6, 45e6, 75e6])  # 10, 25, 45, 75 ms in ns
         processor.accumulate({"det1": toa_data}, start_time=1000, end_time=2000)
 
@@ -298,24 +296,6 @@ class TestMonitorStreamProcessorRatemeter:
         tof_coord = result["counts_in_toa_range"].coords["tof"]
         expected = sc.concat([toa_range[0], toa_range[1]], "tof")
         assert sc.identical(tof_coord, expected)
-
-    def test_ratemeter_counts_correct_range(self, edges):
-        """Test that ratemeter correctly sums counts in TOA range."""
-        # Range 20-50 ms should capture bins [20-30), [30-40), [40-50)
-        toa_range = (sc.scalar(20.0, unit='ms'), sc.scalar(50.0, unit='ms'))
-        processor = MonitorStreamProcessor(
-            edges, toa_range_enabled=True, toa_range=toa_range
-        )
-        # Events: 10ms (outside), 25ms (inside), 35ms (inside), 75ms (outside)
-        toa_data = np.array([10e6, 25e6, 35e6, 75e6])
-        processor.accumulate({"det1": toa_data}, start_time=1000, end_time=2000)
-
-        result = processor.finalize()
-
-        # Total counts includes all 4 events
-        assert result["counts_total"].value == 4
-        # counts_in_toa_range: only 2 events (25ms and 35ms) inside range
-        assert result["counts_in_toa_range"].value == 2
 
     def test_ratemeter_with_create_workflow(self):
         """Test ratemeter through create_workflow factory."""
