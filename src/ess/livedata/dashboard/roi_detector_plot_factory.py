@@ -414,7 +414,7 @@ class ROIDetectorPlotFactory:
         self._logger = logger or logging.getLogger(__name__)
         self._roi_mapper = get_roi_mapper()
 
-    def _parse_roi_index(self, output_name: str | None) -> int | None:
+    def _parse_roi_index(self, output_name: str) -> int | None:
         """
         Extract ROI index from output name.
 
@@ -428,9 +428,6 @@ class ROIDetectorPlotFactory:
         :
             ROI index if parsing succeeds, None otherwise.
         """
-        if output_name is None:
-            return None
-
         return self._roi_mapper.parse_roi_index(output_name)
 
     def _generate_spectrum_keys(self, detector_key: ResultKey) -> list[ResultKey]:
@@ -714,10 +711,6 @@ class ROIDetectorPlotFactory:
         detector_with_boxes = detector_dmap * readback_boxes * request_boxes
 
         # Generate spectrum keys and create ROI spectrum plot
-        if detector_key.output_name is None:
-            raise ValueError(
-                "detector_key.output_name must be set for ROI detector plots"
-            )
         spectrum_keys = self._generate_spectrum_keys(detector_key)
         roi_spectrum_dmap = self._create_roi_spectrum_plot(
             spectrum_keys, roi_state_stream, params
@@ -759,11 +752,7 @@ class ROIDetectorPlotFactory:
         spectrum_plotter = LinePlotter(
             value_margin_factor=0.1,
             layout_params=overlay_layout,
-            # These settings are not perfect, but the spectrum-plot height will match
-            # that of the detector-plot.
-            aspect_params=PlotAspect(
-                aspect_type=PlotAspectType.free, fix_width=True, width=500
-            ),
+            aspect_params=PlotAspect(aspect_type=PlotAspectType.square),
             scale_opts=params.plot_scale,
         )
 
@@ -783,4 +772,4 @@ class ROIDetectorPlotFactory:
             filtered_spectrum_plotter,
             streams=[spectrum_pipe, roi_state_stream],
             cache_size=1,
-        ).opts(shared_axes=False)
+        ).opts(shared_axes=False, max_width=400)

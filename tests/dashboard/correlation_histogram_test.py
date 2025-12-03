@@ -54,7 +54,7 @@ def make_result_key(source_name: str) -> ResultKey:
             instrument='test', namespace='test', name='workflow', version=1
         ),
         job_id=JobId(source_name=source_name, job_number=uuid.uuid4()),
-        output_name=None,
+        output_name='histogram',
     )
 
 

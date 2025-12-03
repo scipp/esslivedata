@@ -114,10 +114,10 @@ class PlotConfig:
     """Configuration for a single plot."""
 
     workflow_id: WorkflowId
-    output_name: str | None
     source_names: list[str]
     plot_name: str
     params: pydantic.BaseModel
+    output_name: str = 'result'
 
 
 @dataclass

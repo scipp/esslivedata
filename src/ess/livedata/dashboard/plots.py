@@ -3,7 +3,7 @@
 """This file contains utilities for creating plots in the dashboard."""
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, cast
 
 import holoviews as hv
 import numpy as np
@@ -19,6 +19,7 @@ from .plot_params import (
     PlotParams1d,
     PlotParams2d,
     PlotParams3d,
+    PlotParamsBars,
     PlotScale,
     PlotScaleParams,
     PlotScaleParams2d,
@@ -58,15 +59,6 @@ class Plotter(ABC):
         self.layout_params = layout_params or LayoutParams()
         aspect_params = aspect_params or PlotAspect()
 
-        # Note: The way Holoviews (or Bokeh?) determines the axes and data sizing seems
-        # to be broken in weird ways. This happens in particular when we return a Layout
-        # of multiple plots. Axis ranges that cover less than one unit in data space are
-        # problematic in particular, but I have not been able to nail down the exact
-        # conditions. Plots will then either have zero frame width or height, or be very
-        # small, etc. It is therefore important to set either width or height when using
-        # data_aspect or aspect='equal'.
-        # However, even that does not solve all problem, for example we can end up with
-        # whitespace between plots in a layout.
         self._sizing_opts: dict[str, Any]
         match aspect_params.aspect_type:
             case PlotAspectType.free:
@@ -79,10 +71,6 @@ class Plotter(ABC):
                 self._sizing_opts = {'aspect': aspect_params.ratio}
             case PlotAspectType.data_aspect:
                 self._sizing_opts = {'data_aspect': aspect_params.ratio}
-        if aspect_params.fix_width:
-            self._sizing_opts['frame_width'] = aspect_params.width
-        if aspect_params.fix_height:
-            self._sizing_opts['frame_height'] = aspect_params.height
         self._sizing_opts['responsive'] = True
 
     @staticmethod
@@ -150,9 +138,7 @@ class Plotter(ABC):
                 plot_element = self.plot(da, data_key, **kwargs)
                 # Add label from data_key if the plot supports it
                 if hasattr(plot_element, 'relabel'):
-                    label = data_key.job_id.source_name
-                    if data_key.output_name is not None:
-                        label = f'{label}/{data_key.output_name}'
+                    label = f'{data_key.job_id.source_name}/{data_key.output_name}'
                     plot_element = plot_element.relabel(label)
                 plots.append(plot_element)
         except Exception as e:
@@ -172,13 +158,13 @@ class Plotter(ABC):
         plots = [self._apply_generic_options(p) for p in plots]
 
         if self.layout_params.combine_mode == 'overlay':
-            return hv.Overlay(plots)
+            return hv.Overlay(plots).opts(shared_axes=True)
         if len(plots) == 1:
             return plots[0]
         return hv.Layout(plots).cols(self.layout_params.layout_columns)
 
     def _apply_generic_options(self, plot_element: hv.Element) -> hv.Element:
-        """Apply generic options like height, responsive, hooks to a plot element."""
+        """Apply generic options like aspect ratio to a plot element."""
         base_opts = {
             'hooks': [remove_bokeh_logo],
             **self._sizing_opts,
@@ -481,3 +467,52 @@ class SlicerPlotter(Plotter):
         image = to_holoviews(plot_data)
 
         return image.opts(framewise=framewise, **self._base_opts)
+
+
+class BarsPlotter(Plotter):
+    """Plotter for bar charts of 0D scalar data."""
+
+    def __init__(
+        self,
+        *,
+        horizontal: bool = False,
+        **kwargs,
+    ):
+        """
+        Initialize the bars plotter.
+
+        Parameters
+        ----------
+        horizontal:
+            If True, bars are horizontal; if False, bars are vertical.
+        **kwargs:
+            Additional keyword arguments passed to the base class.
+        """
+        super().__init__(**kwargs)
+        self._horizontal = horizontal
+
+    @classmethod
+    def from_params(cls, params: PlotParamsBars):
+        """Create BarsPlotter from PlotParamsBars."""
+        return cls(
+            horizontal=params.orientation.horizontal,
+            layout_params=params.layout,
+            aspect_params=params.plot_aspect,
+        )
+
+    def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Bars:
+        """Create a bar chart from a 0D scipp DataArray."""
+        if data.ndim != 0:
+            raise ValueError(f"Expected 0D data, got {data.ndim}D")
+
+        label = data_key.job_id.source_name
+        value = float(data.value)
+        bars = hv.Bars(
+            [(label, value)], kdims=['source'], vdims=[data_key.output_name or '']
+        )
+        opts = {'invert_axes': self._horizontal, 'show_legend': False, 'toolbar': None}
+        if self._horizontal:
+            opts['yrotation'] = 45
+        else:
+            opts['xrotation'] = 25
+        return cast(hv.Bars, bars.opts(**opts))
