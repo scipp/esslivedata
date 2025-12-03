@@ -14,8 +14,10 @@ from ess.livedata.handlers.monitor_data_handler import (
     MonitorHandlerFactory,
     MonitorStreamProcessor,
 )
-from ess.livedata.handlers.monitor_workflow_specs import register_monitor_workflow_specs
-from ess.livedata.parameter_models import TimeUnit, TOAEdges
+from ess.livedata.handlers.monitor_workflow_specs import (
+    register_monitor_workflow_specs,
+)
+from ess.livedata.parameter_models import TimeUnit, TOAEdges, TOARange
 
 
 class TestMonitorDataParams:
@@ -27,6 +29,10 @@ class TestMonitorDataParams:
         assert params.toa_edges.stop == 1000.0 / 14
         assert params.toa_edges.num_bins == 100
         assert params.toa_edges.unit == TimeUnit.MS
+        # Ratemeter defaults
+        assert params.toa_range.enabled is False
+        assert params.toa_range.start == 0.0
+        assert params.toa_range.stop == 10.0
 
     def test_custom_values(self):
         """Test MonitorDataParams with custom values."""
@@ -232,6 +238,97 @@ class TestMonitorStreamProcessor:
 
         assert "current" in result
         assert result["current"].coords["tof"].unit == 'ms'
+
+
+class TestMonitorStreamProcessorRatemeter:
+    """Test integrated ratemeter functionality in MonitorStreamProcessor."""
+
+    @pytest.fixture
+    def edges(self):
+        """Create test edges: 0-100 ms in 10 bins."""
+        return sc.linspace("tof", 0.0, 100.0, 11, unit="ms")
+
+    def test_counts_always_present(self, edges):
+        """Test that both counts outputs are always included."""
+        processor = MonitorStreamProcessor(edges)
+        toa_data = np.array([10e6, 25e6, 45e6])  # 10, 25, 45 ms in ns
+        processor.accumulate({"det1": toa_data}, start_time=1000, end_time=2000)
+
+        result = processor.finalize()
+
+        assert "cumulative" in result
+        assert "current" in result
+        assert "counts_total" in result
+        assert "counts_in_toa_range" in result
+        # Total counts should equal sum of all events
+        assert result["counts_total"].value == 3
+        # When TOA range not enabled, counts_in_toa_range equals total
+        assert result["counts_in_toa_range"].value == 3
+        # Should have time coordinate
+        assert "time" in result["counts_total"].coords
+        assert result["counts_total"].coords["time"].value == 1000
+        # Should have bin-edge coordinate showing full range
+        tof_coord = result["counts_in_toa_range"].coords["tof"]
+        assert sc.identical(
+            tof_coord, sc.concat([edges["tof", 0], edges["tof", -1]], "tof")
+        )
+
+    def test_counts_in_toa_range_when_enabled(self, edges):
+        """Test that counts_in_toa_range is filtered when TOA range enabled."""
+        toa_range = (sc.scalar(20.0, unit='ms'), sc.scalar(50.0, unit='ms'))
+        processor = MonitorStreamProcessor(edges, toa_range=toa_range)
+        toa_data = np.array([10e6, 25e6, 45e6, 75e6])  # 10, 25, 45, 75 ms in ns
+        processor.accumulate({"det1": toa_data}, start_time=1000, end_time=2000)
+
+        result = processor.finalize()
+
+        # Both always present
+        assert "counts_total" in result
+        assert "counts_in_toa_range" in result
+        # Total counts includes all events
+        assert result["counts_total"].value == 4
+        # counts_in_toa_range is filtered (25ms and 45ms inside range)
+        assert result["counts_in_toa_range"].value == 2
+        # Both should have time coordinate
+        assert "time" in result["counts_total"].coords
+        assert "time" in result["counts_in_toa_range"].coords
+        # Should have bin-edge coordinate showing the specified range
+        tof_coord = result["counts_in_toa_range"].coords["tof"]
+        expected = sc.concat([toa_range[0], toa_range[1]], "tof")
+        assert sc.identical(tof_coord, expected)
+
+    def test_ratemeter_with_create_workflow(self):
+        """Test ratemeter through create_workflow factory."""
+        params = MonitorDataParams(
+            toa_edges=TOAEdges(start=0.0, stop=100.0, num_bins=10, unit=TimeUnit.MS),
+            toa_range=TOARange(enabled=True, start=20.0, stop=50.0, unit=TimeUnit.MS),
+        )
+
+        processor = MonitorStreamProcessor.create_workflow(params)
+
+        toa_data = np.array([10e6, 25e6, 35e6, 75e6])
+        processor.accumulate({"det1": toa_data}, start_time=1000, end_time=2000)
+        result = processor.finalize()
+
+        assert result["counts_total"].value == 4
+        assert result["counts_in_toa_range"].value == 2
+
+    def test_ratemeter_disabled_via_create_workflow(self):
+        """Test that disabled TOA range outputs equal counts."""
+        params = MonitorDataParams(
+            toa_edges=TOAEdges(start=0.0, stop=100.0, num_bins=10, unit=TimeUnit.MS),
+            toa_range=TOARange(enabled=False, start=20.0, stop=50.0, unit=TimeUnit.MS),
+        )
+
+        processor = MonitorStreamProcessor.create_workflow(params)
+
+        toa_data = np.array([10e6, 25e6, 35e6, 75e6])
+        processor.accumulate({"det1": toa_data}, start_time=1000, end_time=2000)
+        result = processor.finalize()
+
+        # Both always present, equal when TOA range disabled
+        assert result["counts_total"].value == 4
+        assert result["counts_in_toa_range"].value == 4
 
 
 @pytest.fixture

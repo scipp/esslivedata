@@ -3,41 +3,49 @@
 from __future__ import annotations
 
 from collections.abc import Hashable
-from typing import NewType
 
 import numpy as np
 import scipp as sc
 
-from ess.reduce.nexus.types import Filename, NeXusData, NeXusName
-from ess.reduce.time_of_flight import GenericTofWorkflow
-
-from .. import parameter_models
-from ..config.workflows import TimeseriesAccumulator
 from ..core.handler import JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
 from .accumulators import Accumulator, CollectTOA, Cumulative, MonitorEvents
-from .monitor_workflow_specs import MonitorDataParams, MonitorRatemeterParams
-from .stream_processor_workflow import StreamProcessorWorkflow
+from .monitor_workflow_specs import MonitorDataParams
 from .workflow_factory import Workflow
-
-# Type aliases for monitor ratemeter workflow
-CustomMonitor = NewType('CustomMonitor', int)
-CurrentRun = NewType('CurrentRun', int)
-MonitorCountsInInterval = NewType('MonitorCountsInInterval', sc.DataArray)
 
 
 class MonitorStreamProcessor(Workflow):
-    def __init__(self, edges: sc.Variable) -> None:
+    def __init__(
+        self,
+        edges: sc.Variable,
+        *,
+        toa_range: tuple[sc.Variable, sc.Variable] | None = None,
+    ) -> None:
         self._edges = edges
         self._event_edges = edges.to(unit='ns').values
         self._cumulative: sc.DataArray | None = None
         self._current: sc.DataArray | None = None
         self._current_start_time: int | None = None
+        # Ratemeter configuration - convert range to edges unit once
+        dim = edges.dim
+        if toa_range is not None:
+            low, high = toa_range
+            self._toa_range = (low.to(unit=edges.unit), high.to(unit=edges.unit))
+            self._toa_range_edges = sc.concat(
+                [self._toa_range[0], self._toa_range[1]], dim
+            )
+        else:
+            self._toa_range = None
+            self._toa_range_edges = sc.concat([edges[dim, 0], edges[dim, -1]], dim)
 
     @staticmethod
     def create_workflow(params: MonitorDataParams) -> Workflow:
         """Factory method for creating MonitorStreamProcessor from params."""
-        return MonitorStreamProcessor(edges=params.toa_edges.get_edges())
+        toa_range = params.toa_range
+        return MonitorStreamProcessor(
+            edges=params.toa_edges.get_edges(),
+            toa_range=toa_range.range_ns if toa_range.enabled else None,
+        )
 
     def accumulate(
         self,
@@ -99,7 +107,26 @@ class MonitorStreamProcessor(Workflow):
         current = current.assign_coords(time=time_coord)
         self._current_start_time = None
 
-        return {'cumulative': self._cumulative, 'current': current}
+        # Compute ratemeter counts (always output both)
+        counts_total = current.sum()
+        counts_total.coords['time'] = time_coord
+
+        if self._toa_range is not None:
+            low, high = self._toa_range
+            dim = self._edges.dim
+            counts_in_toa_range = current[dim, low:high].sum()
+        else:
+            # When TOA range not enabled, counts_in_toa_range equals total
+            counts_in_toa_range = counts_total.copy()
+        counts_in_toa_range.coords['time'] = time_coord
+        counts_in_toa_range.coords[self._edges.dim] = self._toa_range_edges
+
+        return {
+            'cumulative': self._cumulative,
+            'current': current,
+            'counts_total': counts_total,
+            'counts_in_toa_range': counts_in_toa_range,
+        }
 
     def clear(self) -> None:
         self._cumulative = None
@@ -118,69 +145,3 @@ class MonitorHandlerFactory(
                 return CollectTOA()
             case _:
                 return None
-
-
-def _get_interval(
-    data: NeXusData[CustomMonitor, CurrentRun],
-    range: parameter_models.TOARange,
-) -> MonitorCountsInInterval:
-    """Extract monitor counts within a time-of-arrival interval."""
-    start, stop = range.range_ns
-    if data.bins is not None:
-        counts = data.bins['event_time_offset', start:stop].sum()
-        counts.coords['time'] = data.coords['event_time_zero'][0]
-    else:
-        counts = data['time', start:stop].sum()
-        counts.coords['time'] = data.coords['frame_time'][0]
-    return MonitorCountsInInterval(counts)
-
-
-def create_monitor_ratemeter_factory(instrument):
-    """
-    Create factory function for monitor ratemeter workflow.
-
-    This is generic workflow logic that can be used by any instrument.
-    Auto-attached by Instrument.load_factories().
-
-    Parameters
-    ----------
-    instrument
-        Instrument instance
-
-    Returns
-    -------
-    :
-        Factory function that can be attached to the spec handle
-    """
-
-    def factory(
-        source_name: str,
-        params: MonitorRatemeterParams,
-    ) -> StreamProcessorWorkflow:
-        """Factory function for monitor interval timeseries workflow.
-
-        Parameters
-        ----------
-        source_name:
-            Monitor source name
-        params:
-            MonitorTimeseriesParams with toa_range configuration
-
-        Returns
-        -------
-        :
-            StreamProcessorWorkflow instance
-        """
-        wf = GenericTofWorkflow(run_types=[CurrentRun], monitor_types=[CustomMonitor])
-        wf[Filename[CurrentRun]] = instrument.nexus_file
-        wf[NeXusName[CustomMonitor]] = source_name
-        wf[parameter_models.TOARange] = params.toa_range
-        wf.insert(_get_interval)
-        return StreamProcessorWorkflow(
-            base_workflow=wf,
-            dynamic_keys={source_name: NeXusData[CustomMonitor, CurrentRun]},
-            target_keys={'monitor_counts': MonitorCountsInInterval},
-            accumulators={MonitorCountsInInterval: TimeseriesAccumulator},
-        )
-
-    return factory

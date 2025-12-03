@@ -26,24 +26,10 @@ class MonitorDataParams(pydantic.BaseModel):
             unit=parameter_models.TimeUnit.MS,
         ),
     )
-
-
-class MonitorRatemeterParams(pydantic.BaseModel):
-    """Parameters for monitor ratemeter workflow."""
-
     toa_range: parameter_models.TOARange = pydantic.Field(
         title="Time of Arrival Range",
-        description="Time of arrival range to include.",
+        description="Time of arrival range for ratemeter output.",
         default=parameter_models.TOARange(),
-    )
-
-
-class MonitorRatemeterOutputs(WorkflowOutputsBase):
-    """Outputs for monitor ratemeter workflow."""
-
-    monitor_counts: sc.DataArray = pydantic.Field(
-        title="Monitor Counts",
-        description="Monitor counts within the specified TOA range.",
     )
 
 
@@ -68,6 +54,22 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         ),
         title='Current Counts',
         description='Monitor counts for the current time window since last update.',
+    )
+    counts_total: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.scalar(0, unit='counts'),
+            coords={'time': sc.scalar(0, unit='ns')},
+        ),
+        title='Total counts',
+        description='Total monitor counts in the current time window.',
+    )
+    counts_in_toa_range: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.scalar(0, unit='counts'),
+            coords={'time': sc.scalar(0, unit='ns')},
+        ),
+        title='Counts in TOA Range',
+        description='Number of monitor events within the configured TOA range filter.',
     )
 
 
@@ -102,37 +104,4 @@ def register_monitor_workflow_specs(
         source_names=source_names,
         params=MonitorDataParams,
         outputs=MonitorHistogramOutputs,
-    )
-
-
-def register_monitor_ratemeter_spec(
-    instrument: Instrument, source_names: list[str]
-) -> SpecHandle | None:
-    """
-    Register monitor ratemeter workflow spec.
-
-    Parameters
-    ----------
-    instrument
-        The instrument to register the workflow spec for.
-    source_names
-        List of monitor names (source names) for which to register the workflow.
-        If empty, returns None without registering.
-
-    Returns
-    -------
-    SpecHandle for later factory attachment, or None if no monitors.
-    """
-    if not source_names:
-        return None
-
-    return instrument.register_spec(
-        namespace='monitor_data',
-        name='monitor_ratemeter',
-        version=1,
-        title='Monitor Ratemeter',
-        description='Monitor counts within a specified time-of-arrival range.',
-        source_names=source_names,
-        params=MonitorRatemeterParams,
-        outputs=MonitorRatemeterOutputs,
     )
