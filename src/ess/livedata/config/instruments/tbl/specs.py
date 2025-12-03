@@ -10,7 +10,13 @@ from ess.livedata.handlers.detector_view_specs import (
     register_logical_detector_view_spec,
 )
 
-detector_names = ['timepix3_detector', 'multiblade_detector']
+detector_names = [
+    'timepix3_detector',
+    'multiblade_detector',
+    'he3_detector_bank0',
+    'he3_detector_bank1',
+    'ngem_detector',
+]
 
 instrument = Instrument(name='tbl', detector_names=detector_names)
 
@@ -32,6 +38,24 @@ multiblade_view_handle = register_logical_detector_view_spec(
     title='Multiblade Detector Counts',
     description='',
     source_names=['multiblade_detector'],
+    roi_support=True,
+)
+
+he3_detector_handle = register_logical_detector_view_spec(
+    instrument=instrument,
+    name='he3_detector_view',
+    title='He3 Detector Counts',
+    description='',
+    source_names=['he3_detector_bank0', 'he3_detector_bank1'],
+    roi_support=True,
+)
+
+ngem_detector_handle = register_logical_detector_view_spec(
+    instrument=instrument,
+    name='ngem_detector_view',
+    title='NGEM Detector Counts',
+    description='',
+    source_names=['ngem_detector'],
     roi_support=True,
 )
 

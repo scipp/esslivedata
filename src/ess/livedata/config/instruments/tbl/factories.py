@@ -51,6 +51,16 @@ def setup_factories(instrument: Instrument) -> None:
         ),
     )
     specs.multiblade_view_handle.attach_factory()(_multiblade_view.make_view)
+    _he3_detector_view = DetectorLogicalView(
+        instrument=instrument,
+        transform=lambda da: da.rename_dims(dim_0='tube', dim_1='pixel'),
+    )
+    specs.he3_detector_handle.attach_factory()(_he3_detector_view.make_view)
+
+    _ngem_view = DetectorLogicalView(
+        instrument=instrument, transform=lambda da: da, reduction_dim='dim_0'
+    )
+    specs.ngem_detector_handle.attach_factory()(_ngem_view.make_view)
 
     # Orca area detector view (ad00 image detector)
     specs.orca_view_handle.attach_factory()(

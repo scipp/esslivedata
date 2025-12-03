@@ -12,9 +12,9 @@ from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
 # Note: Panel size is fake and does not correspond to production setting
 detector_fakes = {
     'timepix3_detector': (1, 4096**2),
-    #'he3_detector_bank0': (1, 400),
-    #'he3_detector_bank1': (401, 800),
-    #'ngem_detector': (1, 2 * 128**2),
+    'he3_detector_bank0': (1, 400),  # 4x100
+    'he3_detector_bank1': (401, 800),  # 4x100
+    'ngem_detector': (1, 2 * 128**2),
     'multiblade_detector': (1, 14 * 64 * 32),
 }
 
