@@ -313,6 +313,40 @@ class PolygonConverter:
         }
 
 
+def _request_needs_backend_sync(
+    backend_rois: dict[int, ROIType], request_rois: dict[int, ROIType]
+) -> bool:
+    """
+    Check if request layer needs syncing from backend.
+
+    Returns False if the UI appears ahead of the backend, e.g., when the user
+    added vertices to a polygon during the backend roundtrip.
+
+    This check handles the race condition where:
+    1. User finishes drawing polygon with N vertices → published to backend
+    2. User starts drawing next polygon or adds vertices
+    3. Backend responds with N-vertex state
+    4. Without this check, we'd overwrite the user's new work
+
+    We detect "UI ahead" by comparing vertex counts. If request has more
+    vertices than backend for the same polygon, the user has added vertices
+    since the backend last saw it.
+    """
+    if backend_rois == request_rois:
+        return False
+
+    for idx, backend_roi in backend_rois.items():
+        request_roi = request_rois.get(idx)
+        if (
+            isinstance(backend_roi, PolygonROI)
+            and isinstance(request_roi, PolygonROI)
+            and len(request_roi.x) > len(backend_roi.x)
+        ):
+            return False  # UI ahead, skip sync
+
+    return True
+
+
 def parse_readback_by_type(
     roi_data: sc.DataArray,
     roi_type: type[ROIType],
@@ -653,6 +687,16 @@ class ROIPlotState:
             if current_rois == handler.request_rois:
                 return
 
+            # Skip publishing while user is actively drawing a polygon.
+            # PolyDraw reports the cursor position as a trailing duplicate vertex
+            # (last vertex == second-to-last vertex). We only publish when the
+            # user clicks to confirm a vertex, which removes the duplicate.
+            # This avoids race conditions with backend updates during drawing.
+            for roi in current_rois.values():
+                if isinstance(roi, PolygonROI) and len(roi.x) >= 2:
+                    if roi.x[-1] == roi.x[-2] and roi.y[-1] == roi.y[-2]:
+                        return  # Still drawing, don't publish yet
+
             # Update state only - don't touch the visual pipe.
             # The user's edit is already visible via PolyDraw/BoxEdit.
             # Updating the pipe would disrupt the tool's selection state,
@@ -686,7 +730,9 @@ class ROIPlotState:
         """
         try:
             readback_changed = backend_rois != handler.readback_rois
-            request_needs_sync = backend_rois != handler.request_rois
+            request_needs_sync = _request_needs_backend_sync(
+                backend_rois, handler.request_rois
+            )
 
             if not readback_changed and not request_needs_sync:
                 return
@@ -704,7 +750,7 @@ class ROIPlotState:
 
             # Sync request layer to match backend if needed
             # TODO: Backend sync is disabled - causes issues in multi-session case.
-            if False and request_needs_sync:
+            if request_needs_sync:
                 handler.update_request(backend_rois, self._colors)
                 handler.sync_stream_from_rois(backend_rois)
 
