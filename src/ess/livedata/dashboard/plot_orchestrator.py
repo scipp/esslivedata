@@ -8,6 +8,7 @@ Coordinates plot creation and management across multiple plot grids:
 - Plot grid lifecycle (create, remove)
 - Plot cell management (add, remove)
 - Event-driven plot creation via JobOrchestrator subscriptions
+- Grid template loading and parsing
 """
 
 from __future__ import annotations
@@ -15,13 +16,14 @@ from __future__ import annotations
 import copy
 import logging
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NewType, Protocol
 from uuid import UUID, uuid4
 
 import pydantic
 
+from ess.livedata.config.grid_template import GridSpec
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 from .config_store import ConfigStore
@@ -196,6 +198,7 @@ class PlotOrchestrator:
         job_orchestrator: JobOrchestratorProtocol,
         data_service: DataService,
         config_store: ConfigStore | None = None,
+        raw_templates: Sequence[dict[str, Any]] = (),
     ) -> None:
         """
         Initialize the plot orchestrator.
@@ -210,6 +213,9 @@ class PlotOrchestrator:
             DataService for monitoring data arrival.
         config_store
             Optional store for persisting plot grid configurations across sessions.
+        raw_templates
+            Raw grid template dicts loaded from YAML files. These are parsed
+            during initialization and made available via get_available_templates().
         """
         self._plotting_controller = plotting_controller
         self._job_orchestrator = job_orchestrator
@@ -222,6 +228,9 @@ class PlotOrchestrator:
         self._cell_to_subscription: dict[CellId, SubscriptionId] = {}
         self._cell_state: dict[CellId, CellState] = {}
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
+
+        # Parse templates (requires plotter registry, so must be done here)
+        self._templates = self._parse_grid_specs(list(raw_templates))
 
         # Load persisted configurations
         self._load_from_store()
@@ -593,6 +602,132 @@ class PlotOrchestrator:
             )
             return spec.params()
 
+    def parse_raw_cell(self, cell_data: dict[str, Any]) -> PlotCell | None:
+        """
+        Parse a raw cell dict into a typed PlotCell.
+
+        Use this to convert cells from templates or persisted configurations
+        into typed objects that can be passed to :py:meth:`add_grid`.
+
+        Parameters
+        ----------
+        cell_data
+            Cell configuration dict with 'geometry' and 'config' keys.
+            The config must contain: workflow_id, source_names, plot_name.
+            Optional: output_name, params.
+
+        Returns
+        -------
+        :
+            Parsed PlotCell, or None if the plotter is unknown (cell skipped).
+        """
+        config_data = cell_data['config']
+        plot_name = config_data['plot_name']
+
+        # Validate params, skipping cells with unknown plotters
+        params = self._validate_params(plot_name, config_data.get('params', {}))
+        if params is None:
+            return None
+
+        geometry = CellGeometry(
+            row=cell_data['geometry']['row'],
+            col=cell_data['geometry']['col'],
+            row_span=cell_data['geometry']['row_span'],
+            col_span=cell_data['geometry']['col_span'],
+        )
+        config = PlotConfig(
+            workflow_id=WorkflowId.from_string(config_data['workflow_id']),
+            output_name=config_data.get('output_name'),
+            source_names=config_data['source_names'],
+            plot_name=plot_name,
+            params=params,
+        )
+
+        return PlotCell(geometry=geometry, config=config)
+
+    def get_available_templates(self) -> list[GridSpec]:
+        """
+        Get available grid templates.
+
+        Templates are parsed from raw YAML during initialization and cached.
+        Use these to populate template selectors in the UI.
+
+        Returns
+        -------
+        :
+            List of validated GridSpec objects. Empty if no templates were
+            provided or all templates failed to parse.
+        """
+        return list(self._templates)
+
+    def _parse_grid_specs(self, raw_specs: list[dict[str, Any]]) -> list[GridSpec]:
+        """
+        Parse raw grid dicts into validated GridSpec objects.
+
+        Validates cells using the plotter registry. Cells with unknown plotters
+        are skipped (logged as warnings).
+
+        Parameters
+        ----------
+        raw_specs
+            List of raw grid dicts from template files or persisted configurations.
+
+        Returns
+        -------
+        :
+            List of validated GridSpec objects.
+        """
+        specs: list[GridSpec] = []
+
+        for raw in raw_specs:
+            spec = self._parse_single_spec(raw)
+            if spec is not None:
+                specs.append(spec)
+
+        self._logger.info('Parsed %d grid spec(s)', len(specs))
+        return specs
+
+    def _parse_single_spec(self, raw: dict[str, Any]) -> GridSpec | None:
+        """
+        Parse a single raw dict into a GridSpec.
+
+        Parameters
+        ----------
+        raw
+            Raw grid dict.
+
+        Returns
+        -------
+        :
+            GridSpec if parsing succeeded, None otherwise.
+        """
+        try:
+            # Use title as display name, falling back to 'Untitled'
+            name = raw.get('title', 'Untitled')
+
+            # Parse cells using orchestrator's validation
+            raw_cells = raw.get('cells', [])
+            cells = []
+            for cell_data in raw_cells:
+                parsed = self.parse_raw_cell(cell_data)
+                if parsed is not None:
+                    cells.append(parsed)
+
+            return GridSpec(
+                name=name,
+                title=raw.get('title', name),
+                description=raw.get('description', ''),
+                nrows=raw.get('nrows', 3),
+                ncols=raw.get('ncols', 3),
+                cells=tuple(cells),
+            )
+
+        except Exception:
+            self._logger.exception(
+                'Failed to parse grid spec: %s', raw.get('title', 'unknown')
+            )
+            return None
+
     def _serialize_grids(self) -> list[dict[str, Any]]:
         """
         Serialize all grids to list for persistence.
@@ -630,68 +765,6 @@ class PlotOrchestrator:
             for grid in self._grids.values()
         ]
 
-    def _deserialize_grids(self, data: list[dict[str, Any]]) -> None:
-        """
-        Deserialize grids from list and restore state.
-
-        This reconstructs the grid configurations and subscribes to workflows
-        to recreate cell state when data becomes available. Fresh UUIDs are
-        generated for grids and cells since they are runtime identity handles.
-
-        Parameters
-        ----------
-        data
-            List of grid configurations.
-        """
-        for grid_data in data:
-            grid_id = GridId(uuid4())
-
-            # Recreate the grid
-            grid = PlotGridConfig(
-                title=grid_data['title'],
-                nrows=grid_data['nrows'],
-                ncols=grid_data['ncols'],
-            )
-
-            # Store the grid first (needed by _subscribe_and_setup)
-            self._grids[grid_id] = grid
-
-            # Recreate cells
-            for cell_data in grid_data.get('cells', []):
-                config_data = cell_data['config']
-                plot_name = config_data['plot_name']
-
-                # Validate params, skipping cells with unknown plotters
-                params = self._validate_params(plot_name, config_data['params'])
-                if params is None:
-                    continue
-
-                cell_id = CellId(uuid4())
-
-                # Recreate geometry
-                geometry = CellGeometry(**cell_data['geometry'])
-
-                # Recreate config
-                config = PlotConfig(
-                    workflow_id=WorkflowId.from_string(config_data['workflow_id']),
-                    output_name=config_data['output_name'],
-                    source_names=config_data['source_names'],
-                    plot_name=plot_name,
-                    params=params,
-                )
-
-                cell = PlotCell(geometry=geometry, config=config)
-                grid.cells[cell_id] = cell
-
-                # Set up tracking mappings
-                self._cell_to_grid[cell_id] = grid_id
-
-                # Subscribe to workflow availability
-                self._subscribe_and_setup(grid_id, cell_id, config.workflow_id)
-
-            # Notify subscribers of grid creation
-            self._notify_grid_created(grid_id)
-
     def _load_from_store(self) -> None:
         """Load plot grid configurations from config store."""
         if self._config_store is None:
@@ -703,9 +776,17 @@ class PlotOrchestrator:
                 self._logger.debug('No persisted plot grids found in store')
                 return
 
-            grids = data.get('grids', [])
-            self._deserialize_grids(grids)
-            self._logger.info('Loaded %d plot grids from store', len(self._grids))
+            # Parse stored configs as GridSpecs (same parser as templates)
+            raw_grids = data.get('grids', [])
+            specs = self._parse_grid_specs(raw_grids)
+
+            # Apply each spec through the normal API
+            for spec in specs:
+                grid_id = self.add_grid(spec.title, spec.nrows, spec.ncols)
+                for cell in spec.cells:
+                    self.add_plot(grid_id, cell)
+
+            self._logger.info('Loaded %d plot grids from store', len(specs))
         except Exception:
             self._logger.exception('Failed to load plot grids from store')
 

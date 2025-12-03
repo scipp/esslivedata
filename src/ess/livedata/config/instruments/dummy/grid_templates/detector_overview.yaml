@@ -1,0 +1,67 @@
+# Example grid template for the dummy instrument.
+# Shows both detector views side by side.
+title: Detectors
+description: Side-by-side view of Panel 0 and Area Panel detectors
+nrows: 2
+ncols: 2
+cells:
+- geometry:
+    row: 0
+    col: 0
+    row_span: 2
+    col_span: 1
+  config:
+    workflow_id: dummy/detector_data/area_panel_xy/1
+    output_name: current
+    source_names:
+    - area_panel
+    plot_name: image
+    params:
+      layout:
+        combine_mode: layout
+        layout_columns: 2
+      plot_aspect:
+        aspect_type: Square
+        ratio: 1.0
+        fix_width: false
+        width: 400
+        fix_height: false
+        height: 400
+      window:
+        mode: latest
+        window_duration_seconds: 1.0
+        aggregation: auto
+      plot_scale:
+        x_scale: linear
+        y_scale: linear
+        color_scale: log
+- geometry:
+    row: 0
+    col: 1
+    row_span: 2
+    col_span: 1
+  config:
+    workflow_id: dummy/detector_data/panel_0_xy/1
+    output_name: current
+    source_names:
+    - panel_0
+    plot_name: image
+    params:
+      layout:
+        combine_mode: layout
+        layout_columns: 2
+      plot_aspect:
+        aspect_type: Square
+        ratio: 1.0
+        fix_width: false
+        width: 400
+        fix_height: false
+        height: 400
+      window:
+        mode: latest
+        window_duration_seconds: 1.0
+        aggregation: auto
+      plot_scale:
+        x_scale: linear
+        y_scale: linear
+        color_scale: log

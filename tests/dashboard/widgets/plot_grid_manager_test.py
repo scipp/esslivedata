@@ -50,14 +50,6 @@ def fake_data_service():
 
 
 @pytest.fixture
-def fake_job_service():
-    """Create a fake JobService."""
-    from ess.livedata.dashboard.job_service import JobService
-
-    return JobService()
-
-
-@pytest.fixture
 def plot_orchestrator(plotting_controller, job_orchestrator, fake_data_service):
     """Create a PlotOrchestrator for testing."""
     return PlotOrchestrator(
@@ -68,9 +60,11 @@ def plot_orchestrator(plotting_controller, job_orchestrator, fake_data_service):
 
 
 @pytest.fixture
-def grid_manager(plot_orchestrator):
+def grid_manager(plot_orchestrator, workflow_registry):
     """Create a PlotGridManager for testing."""
-    return PlotGridManager(orchestrator=plot_orchestrator)
+    return PlotGridManager(
+        orchestrator=plot_orchestrator, workflow_registry=workflow_registry
+    )
 
 
 class TestPlotGridManagerInitialization:
@@ -84,11 +78,17 @@ class TestPlotGridManagerInitialization:
 class TestMultipleManagers:
     """Tests for multiple manager instances (multi-user scenario)."""
 
-    def test_multiple_managers_stay_synchronized(self, plot_orchestrator):
+    def test_multiple_managers_stay_synchronized(
+        self, plot_orchestrator, workflow_registry
+    ):
         """Test that multiple managers sharing same orchestrator stay in sync."""
         # Create managers which register as callbacks with orchestrator
-        _manager1 = PlotGridManager(orchestrator=plot_orchestrator)
-        _manager2 = PlotGridManager(orchestrator=plot_orchestrator)
+        _manager1 = PlotGridManager(
+            orchestrator=plot_orchestrator, workflow_registry=workflow_registry
+        )
+        _manager2 = PlotGridManager(
+            orchestrator=plot_orchestrator, workflow_registry=workflow_registry
+        )
 
         # Add grid via orchestrator
         grid_id = plot_orchestrator.add_grid(title='Shared Grid', nrows=3, ncols=3)
