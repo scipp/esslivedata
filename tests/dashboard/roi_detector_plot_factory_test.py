@@ -7,7 +7,7 @@ import param
 import pytest
 import scipp as sc
 
-from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
+from ess.livedata.config.models import Interval, RectangleROI
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
@@ -19,7 +19,6 @@ from ess.livedata.dashboard.roi_detector_plot_factory import (
     RectangleConverter,
     ROIDetectorPlotFactory,
     ROIPlotState,
-    _request_needs_backend_sync,
 )
 from ess.livedata.dashboard.stream_manager import StreamManager
 
@@ -1183,131 +1182,3 @@ def test_two_plots_both_clear_rois_independently(
     assert (
         len(plot_state_B.box_stream.data['x0']) == 0
     ), "Plot B BoxEdit should have 0 boxes"
-
-
-class TestRequestNeedsBackendSync:
-    """Tests for _request_needs_backend_sync race condition handling."""
-
-    def test_equal_rois_returns_false(self):
-        """When backend and request are equal, no sync needed."""
-        rois = {
-            0: PolygonROI(
-                x=[0.0, 1.0, 0.5], y=[0.0, 0.0, 1.0], x_unit=None, y_unit=None
-            )
-        }
-        assert _request_needs_backend_sync(rois, rois) is False
-
-    def test_different_rois_returns_true(self):
-        """When backend has different coordinates, sync needed."""
-        backend = {
-            0: PolygonROI(
-                x=[0.0, 1.0, 0.5], y=[0.0, 0.0, 1.0], x_unit=None, y_unit=None
-            )
-        }
-        request = {
-            0: PolygonROI(
-                x=[0.0, 2.0, 1.0], y=[0.0, 0.0, 2.0], x_unit=None, y_unit=None
-            )
-        }
-        assert _request_needs_backend_sync(backend, request) is True
-
-    def test_request_has_more_vertices_returns_false(self):
-        """When request has more vertices, UI is ahead - no sync.
-
-        PolyDraw always has a trailing duplicate vertex (cursor position),
-        so we can't rely on prefix matching. Simply having more vertices
-        means the user is actively drawing.
-        """
-        backend = {
-            0: PolygonROI(
-                x=[0.0, 1.0, 0.5], y=[0.0, 0.0, 1.0], x_unit=None, y_unit=None
-            )
-        }
-        request = {
-            0: PolygonROI(
-                x=[0.0, 1.0, 0.5, 0.25],
-                y=[0.0, 0.0, 1.0, 0.5],
-                x_unit=None,
-                y_unit=None,
-            )
-        }
-        assert _request_needs_backend_sync(backend, request) is False
-
-    def test_request_has_more_vertices_different_coords_still_skips_sync(self):
-        """Even with different coordinates, more vertices means UI ahead.
-
-        This happens because PolyDraw's trailing duplicate gets replaced
-        by new vertex coordinates when the user clicks.
-        """
-        backend = {
-            0: PolygonROI(
-                x=[0.0, 1.0, 0.5], y=[0.0, 0.0, 1.0], x_unit=None, y_unit=None
-            )
-        }
-        # Different coordinates - simulates PolyDraw's trailing duplicate being replaced
-        request = {
-            0: PolygonROI(
-                x=[0.0, 1.0, 0.8, 0.25],
-                y=[0.0, 0.0, 0.8, 0.5],
-                x_unit=None,
-                y_unit=None,
-            )
-        }
-        assert _request_needs_backend_sync(backend, request) is False
-
-    def test_backend_has_more_vertices_returns_true(self):
-        """When backend has more vertices (e.g., from another session), sync needed."""
-        backend = {
-            0: PolygonROI(
-                x=[0.0, 1.0, 0.5, 0.25],
-                y=[0.0, 0.0, 1.0, 0.5],
-                x_unit=None,
-                y_unit=None,
-            )
-        }
-        request = {
-            0: PolygonROI(
-                x=[0.0, 1.0, 0.5], y=[0.0, 0.0, 1.0], x_unit=None, y_unit=None
-            )
-        }
-        assert _request_needs_backend_sync(backend, request) is True
-
-    def test_backend_has_roi_not_in_request_returns_true(self):
-        """When backend has an ROI that request doesn't, sync needed."""
-        backend = {
-            0: PolygonROI(
-                x=[0.0, 1.0, 0.5], y=[0.0, 0.0, 1.0], x_unit=None, y_unit=None
-            )
-        }
-        request: dict = {}
-        assert _request_needs_backend_sync(backend, request) is True
-
-    def test_request_has_roi_not_in_backend_returns_true(self):
-        """When request has ROI not in backend (deleted?), sync needed."""
-        backend: dict = {}
-        request = {
-            0: PolygonROI(
-                x=[0.0, 1.0, 0.5], y=[0.0, 0.0, 1.0], x_unit=None, y_unit=None
-            )
-        }
-        assert _request_needs_backend_sync(backend, request) is True
-
-    def test_rectangles_always_sync_when_different(self):
-        """Rectangles don't have vertex count logic - always sync when different."""
-        backend = {
-            0: RectangleROI(
-                x=Interval(min=0.0, max=1.0),
-                y=Interval(min=0.0, max=1.0),
-                x_unit=None,
-                y_unit=None,
-            )
-        }
-        request = {
-            0: RectangleROI(
-                x=Interval(min=0.0, max=2.0),
-                y=Interval(min=0.0, max=2.0),
-                x_unit=None,
-                y_unit=None,
-            )
-        }
-        assert _request_needs_backend_sync(backend, request) is True
