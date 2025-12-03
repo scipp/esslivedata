@@ -31,7 +31,11 @@ from ..plot_params import PlotAspectType, StretchMode
 from .plot_config_modal import PlotConfigModal
 from .plot_grid import GridCellStyles, PlotGrid
 from .plot_grid_manager import PlotGridManager
-from .plot_widgets import create_close_button, create_gear_button
+from .plot_widgets import (
+    create_close_button,
+    create_gear_button,
+    get_workflow_display_info,
+)
 
 
 def _get_sizing_mode(config: PlotConfig) -> str:
@@ -70,7 +74,8 @@ class PlotGridTabs:
     Parameters
     ----------
     plot_orchestrator
-        The orchestrator managing plot grid configurations.
+        The orchestrator managing plot grid configurations. Templates are
+        retrieved from the orchestrator via get_available_templates().
     workflow_registry
         Registry of available workflows and their specifications.
     plotting_controller
@@ -129,7 +134,10 @@ class PlotGridTabs:
         self._tabs.append(('Jobs', job_status_widget.panel()))
 
         # Add Manage tab (always second)
-        self._grid_manager = PlotGridManager(orchestrator=plot_orchestrator)
+        self._grid_manager = PlotGridManager(
+            orchestrator=plot_orchestrator,
+            workflow_registry=workflow_registry,
+        )
         self._tabs.append(('Manage Plots', self._grid_manager.panel))
 
         # Store static tabs count for use as offset in grid tab index calculations
@@ -378,19 +386,10 @@ class PlotGridTabs:
         """
         config = cell.config
 
-        # Get workflow spec for display information
-        workflow_spec = self._workflow_registry.get(config.workflow_id)
-        workflow_title = (
-            workflow_spec.title if workflow_spec else str(config.workflow_id)
+        # Get workflow and output display titles from registry
+        workflow_title, output_title = get_workflow_display_info(
+            self._workflow_registry, config.workflow_id, config.output_name
         )
-
-        # Get output title from spec if available
-        output_title = config.output_name
-        if workflow_spec and workflow_spec.outputs:
-            output_fields = workflow_spec.outputs.model_fields
-            if config.output_name in output_fields:
-                field_info = output_fields[config.output_name]
-                output_title = field_info.title or config.output_name
 
         # Build title from workflow and output (most prominent)
         title = f"### {workflow_title} - {output_title}"

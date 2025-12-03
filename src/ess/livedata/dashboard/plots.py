@@ -3,7 +3,7 @@
 """This file contains utilities for creating plots in the dashboard."""
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, cast
 
 import holoviews as hv
 import numpy as np
@@ -19,6 +19,7 @@ from .plot_params import (
     PlotParams1d,
     PlotParams2d,
     PlotParams3d,
+    PlotParamsBars,
     PlotScale,
     PlotScaleParams,
     PlotScaleParams2d,
@@ -157,7 +158,7 @@ class Plotter(ABC):
         plots = [self._apply_generic_options(p) for p in plots]
 
         if self.layout_params.combine_mode == 'overlay':
-            return hv.Overlay(plots)
+            return hv.Overlay(plots).opts(shared_axes=True)
         if len(plots) == 1:
             return plots[0]
         return hv.Layout(plots).cols(self.layout_params.layout_columns)
@@ -466,3 +467,52 @@ class SlicerPlotter(Plotter):
         image = to_holoviews(plot_data)
 
         return image.opts(framewise=framewise, **self._base_opts)
+
+
+class BarsPlotter(Plotter):
+    """Plotter for bar charts of 0D scalar data."""
+
+    def __init__(
+        self,
+        *,
+        horizontal: bool = False,
+        **kwargs,
+    ):
+        """
+        Initialize the bars plotter.
+
+        Parameters
+        ----------
+        horizontal:
+            If True, bars are horizontal; if False, bars are vertical.
+        **kwargs:
+            Additional keyword arguments passed to the base class.
+        """
+        super().__init__(**kwargs)
+        self._horizontal = horizontal
+
+    @classmethod
+    def from_params(cls, params: PlotParamsBars):
+        """Create BarsPlotter from PlotParamsBars."""
+        return cls(
+            horizontal=params.orientation.horizontal,
+            layout_params=params.layout,
+            aspect_params=params.plot_aspect,
+        )
+
+    def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Bars:
+        """Create a bar chart from a 0D scipp DataArray."""
+        if data.ndim != 0:
+            raise ValueError(f"Expected 0D data, got {data.ndim}D")
+
+        label = data_key.job_id.source_name
+        value = float(data.value)
+        bars = hv.Bars(
+            [(label, value)], kdims=['source'], vdims=[data_key.output_name or '']
+        )
+        opts = {'invert_axes': self._horizontal, 'show_legend': False, 'toolbar': None}
+        if self._horizontal:
+            opts['yrotation'] = 45
+        else:
+            opts['xrotation'] = 25
+        return cast(hv.Bars, bars.opts(**opts))

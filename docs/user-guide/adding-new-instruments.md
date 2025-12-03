@@ -406,6 +406,36 @@ def setup_factories(instrument: Instrument) -> None:
         )
 ```
 
+## Grid Templates (Optional)
+
+Grid templates are pre-configured plot grid layouts that users can select when creating a new grid in the dashboard. They provide a convenient starting point with commonly used workflow configurations.
+
+### Creating Grid Templates
+
+The easiest way to create a grid template is to design it interactively in the dashboard:
+
+1. **Create and configure a grid in the UI**: Start the dashboard for your instrument, create a new grid, and configure it with the desired layout and workflow subscriptions.
+
+2. **Extract the grid configuration**: The dashboard persists grid configurations to `~/.config/esslivedata/<instrument>/plot_configs.yaml`. Open this file and find the grid you created under the `plot_grids.grids` key.
+
+3. **Create the template file**: Copy the grid configuration to a new file in your instrument's `grid_templates/` directory:
+
+```
+src/ess/livedata/config/instruments/<instrument>/
+├── __init__.py
+├── specs.py
+├── streams.py
+├── factories.py
+└── grid_templates/
+    └── detector_overview.yaml
+```
+
+Template files in `grid_templates/` are automatically included as package data.
+
+Templates use the same format as persisted grids. You can optionally add a `description` field that will be shown in the template selector.
+
+Templates are loaded once at dashboard startup. When a user selects a template, they can adjust the grid size before creating the grid. The minimum grid size is determined by the cells in the template.
+
 ## Reference Implementations
 
 For more complex examples, see existing instrument configurations in `src/ess/livedata/config/instruments/`.

@@ -264,4 +264,7 @@ class PlottingController:
         # Create DynamicMap with kdims (None if plotter doesn't use them)
         dmap = hv.DynamicMap(plotter, streams=[pipe], kdims=plotter.kdims, cache_size=1)
 
-        return dmap.opts(shared_axes=False)
+        # Wrap in Layout with shared_axes=False to prevent axis linking between
+        # separate plots while preserving framewise autoscaling within overlays.
+        # Setting shared_axes=False directly on DynamicMap breaks framewise.
+        return hv.Layout([dmap]).opts(shared_axes=False)
