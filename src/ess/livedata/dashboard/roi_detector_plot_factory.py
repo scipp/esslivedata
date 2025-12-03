@@ -658,6 +658,13 @@ class ROIPlotState:
             # (last vertex == second-to-last vertex). We only publish when the
             # user clicks to confirm a vertex, which removes the duplicate.
             # This avoids race conditions with backend updates during drawing.
+            #
+            # NOTE: This relies on undocumented Bokeh PolyDrawTool behavior.
+            # In poly_draw_tool.ts, "new" mode initializes with [x,x]/[y,y] and
+            # "add" mode captures-then-pushes the last vertex, creating a brief
+            # duplicate after each click until cursor movement updates it.
+            # This is fundamental to the rubber-band preview UX but not a
+            # documented API guarantee.
             for roi in current_rois.values():
                 if isinstance(roi, PolygonROI) and len(roi.x) >= 2:
                     if roi.x[-1] == roi.x[-2] and roi.y[-1] == roi.y[-2]:
