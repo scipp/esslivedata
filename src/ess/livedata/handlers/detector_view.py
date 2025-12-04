@@ -17,7 +17,7 @@ import scipp as sc
 from ess.reduce.live import raw
 
 from ..config import models
-from ..config.roi_names import get_roi_mapper
+from ..config.roi_names import ROIGeometry, get_roi_mapper
 from .detector_view_specs import DetectorViewParams
 from .roi_histogram import ROIHistogram
 from .workflow_factory import Workflow
@@ -90,14 +90,14 @@ class DetectorView(Workflow):
         """
         # Check for ROI configuration updates (auxiliary data)
         # Keys are 'roi_rectangle', 'roi_polygon', etc. from DetectorROIAuxSources
-        roi_keys = self._roi_mapper.readback_keys
-        for roi_key in roi_keys:
-            if roi_key in data:
-                roi_data_array = data[roi_key]
+        for geometry in self._roi_mapper.geometries:
+            if geometry.readback_key in data:
+                roi_data_array = data[geometry.readback_key]
                 rois = models.ROI.from_concatenated_data_array(roi_data_array)
-                self._update_rois(rois, roi_key)
+                self._update_rois(rois, geometry)
 
         # Process detector event data (exclude ROI keys)
+        roi_keys = self._roi_mapper.readback_keys
         detector_data = {k: v for k, v in data.items() if k not in roi_keys}
         if len(detector_data) == 0:
             # No detector data to process (e.g., empty dict or only rois)
@@ -158,8 +158,7 @@ class DetectorView(Workflow):
         # Publish ROI readbacks for each geometry type that was updated.
         # Each geometry type gets its own readback stream.
         for geometry in self._roi_mapper.geometries:
-            geometry_key = f"roi_{geometry.geometry_type}"
-            if geometry_key not in self._updated_geometries:
+            if geometry.readback_key not in self._updated_geometries:
                 continue
 
             # Extract ROI models for this geometry type
@@ -169,17 +168,11 @@ class DetectorView(Workflow):
                 if idx in geometry.index_range
             }
 
-            # Get the appropriate ROI class for serialization
-            if geometry.geometry_type == "rectangle":
-                roi_class = models.RectangleROI
-            elif geometry.geometry_type == "polygon":
-                roi_class = models.PolygonROI
-            else:
-                continue
-
             # Convert to concatenated DataArray with roi_index coordinate
-            concatenated_rois = roi_class.to_concatenated_data_array(roi_models)
-            roi_result[geometry.readback_key] = concatenated_rois
+            roi_class = geometry.roi_class
+            roi_result[geometry.readback_key] = roi_class.to_concatenated_data_array(
+                roi_models
+            )
 
         # Clear updated geometries after publishing
         self._updated_geometries.clear()
@@ -209,7 +202,7 @@ class DetectorView(Workflow):
         self._counts_total = 0
         self._counts_in_toa_range = 0
 
-    def _update_rois(self, rois: dict[int, models.ROI], geometry_key: str) -> None:
+    def _update_rois(self, rois: dict[int, models.ROI], geometry: ROIGeometry) -> None:
         """
         Update ROI configuration for a specific geometry type.
 
@@ -222,23 +215,10 @@ class DetectorView(Workflow):
         ----------
         rois:
             Dictionary mapping ROI index to ROI model for the geometry type.
-        geometry_key:
-            The geometry key ('roi_rectangle' or 'roi_polygon') identifying which
-            geometry type is being updated.
+        geometry:
+            The ROI geometry configuration identifying which geometry type
+            is being updated.
         """
-        # Determine the index range for this geometry type
-        geometry_type = geometry_key.removeprefix('roi_')  # 'rectangle' or 'polygon'
-        geometry = next(
-            (
-                g
-                for g in self._roi_mapper.geometries
-                if g.geometry_type == geometry_type
-            ),
-            None,
-        )
-        if geometry is None:
-            return
-
         index_range = geometry.index_range
 
         # Get current and previous indices for THIS geometry type only
@@ -258,7 +238,7 @@ class DetectorView(Workflow):
                     break
 
         if rois_changed:
-            self._updated_geometries.add(geometry_key)
+            self._updated_geometries.add(geometry.readback_key)
             # Clear only ROIs of this geometry type
             for idx in list(self._rois.keys()):
                 if idx in index_range:

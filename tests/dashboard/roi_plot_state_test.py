@@ -76,7 +76,8 @@ def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
     rect_request_pipe = hv.streams.Pipe(data=[])
     rect_readback_pipe = boxes_pipe
 
-    # Polygon pipes (None for tests that don't need polygons)
+    # Polygon streams and pipes
+    poly_stream = hv.streams.PolyDraw()
     poly_request_pipe = hv.streams.Pipe(data=[])
     poly_readback_pipe = hv.streams.Pipe(data=[])
 
@@ -86,7 +87,7 @@ def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
         box_stream=box_stream,
         rect_request_pipe=rect_request_pipe,
         rect_readback_pipe=rect_readback_pipe,
-        poly_stream=None,
+        poly_stream=poly_stream,
         poly_request_pipe=poly_request_pipe,
         poly_readback_pipe=poly_readback_pipe,
         roi_state_stream=roi_state_stream,
@@ -109,6 +110,7 @@ class TestROIPlotState:
 
         rect_readback_pipe = hv.streams.Pipe(data=[])
         rect_request_pipe = hv.streams.Pipe(data=[])
+        poly_stream = hv.streams.PolyDraw()
         poly_readback_pipe = hv.streams.Pipe(data=[])
         poly_request_pipe = hv.streams.Pipe(data=[])
         box_stream = hv.streams.BoxEdit()
@@ -127,7 +129,7 @@ class TestROIPlotState:
             box_stream=box_stream,
             rect_request_pipe=rect_request_pipe,
             rect_readback_pipe=rect_readback_pipe,
-            poly_stream=None,
+            poly_stream=poly_stream,
             poly_request_pipe=poly_request_pipe,
             poly_readback_pipe=poly_readback_pipe,
             roi_state_stream=roi_state_stream,
@@ -342,6 +344,7 @@ class TestROIPlotState:
 
         rect_readback_pipe = hv.streams.Pipe(data=[])
         rect_request_pipe = hv.streams.Pipe(data=[])
+        poly_stream = hv.streams.PolyDraw()
         poly_readback_pipe = hv.streams.Pipe(data=[])
         poly_request_pipe = hv.streams.Pipe(data=[])
         box_stream = hv.streams.BoxEdit()
@@ -360,7 +363,7 @@ class TestROIPlotState:
             box_stream=box_stream,
             rect_request_pipe=rect_request_pipe,
             rect_readback_pipe=rect_readback_pipe,
-            poly_stream=None,
+            poly_stream=poly_stream,
             poly_request_pipe=poly_request_pipe,
             poly_readback_pipe=poly_readback_pipe,
             roi_state_stream=roi_state_stream,
@@ -395,11 +398,12 @@ class TestROIPlotState:
         class FailingPublisher:
             """Publisher that raises an error."""
 
-            def publish(self, job_id, rois, roi_class):
+            def publish(self, job_id, rois, geometry):
                 raise RuntimeError("Test error")
 
         rect_readback_pipe = hv.streams.Pipe(data=[])
         rect_request_pipe = hv.streams.Pipe(data=[])
+        poly_stream = hv.streams.PolyDraw()
         poly_readback_pipe = hv.streams.Pipe(data=[])
         poly_request_pipe = hv.streams.Pipe(data=[])
         box_stream = hv.streams.BoxEdit()
@@ -419,7 +423,7 @@ class TestROIPlotState:
             box_stream=box_stream,
             rect_request_pipe=rect_request_pipe,
             rect_readback_pipe=rect_readback_pipe,
-            poly_stream=None,
+            poly_stream=poly_stream,
             poly_request_pipe=poly_request_pipe,
             poly_readback_pipe=poly_readback_pipe,
             roi_state_stream=roi_state_stream,

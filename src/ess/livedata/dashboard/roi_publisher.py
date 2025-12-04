@@ -5,17 +5,11 @@
 import logging
 
 from ..config.models import PolygonROI, RectangleROI
+from ..config.roi_names import ROIGeometry
 from ..config.workflow_spec import JobId
 from ..core.message import Message, MessageSink, StreamId, StreamKind
 
 ROIs = dict[int, RectangleROI] | dict[int, PolygonROI]
-ROIClass = type[RectangleROI] | type[PolygonROI]
-
-# Map ROI class to stream key suffix
-_READBACK_KEYS: dict[ROIClass, str] = {
-    RectangleROI: "roi_rectangle",
-    PolygonROI: "roi_polygon",
-}
 
 
 class ROIPublisher:
@@ -41,7 +35,7 @@ class ROIPublisher:
         self,
         job_id: JobId,
         rois: ROIs,
-        roi_class: ROIClass,
+        geometry: ROIGeometry,
     ) -> None:
         """
         Publish ROIs to Kafka.
@@ -52,33 +46,46 @@ class ROIPublisher:
             The full job identifier (source_name and job_number).
         rois:
             Dictionary mapping ROI index to ROI. Empty dict clears all.
-        roi_class:
-            The ROI class (RectangleROI or PolygonROI).
+        geometry:
+            The ROI geometry configuration.
         """
-        readback_key = _READBACK_KEYS[roi_class]
-        stream_name = f"{job_id}/{readback_key}"
+        stream_name = f"{job_id}/{geometry.readback_key}"
         stream_id = StreamId(kind=StreamKind.LIVEDATA_ROI, name=stream_name)
 
-        data_array = roi_class.to_concatenated_data_array(rois)
+        data_array = geometry.roi_class.to_concatenated_data_array(rois)
 
         msg = Message(value=data_array, stream=stream_id)
         self._sink.publish_messages([msg])
+
+        if rois:
+            self._logger.debug(
+                "Published %d %s ROI(s) for job %s",
+                len(rois),
+                geometry.geometry_type,
+                job_id,
+            )
+        else:
+            self._logger.debug(
+                "Published empty %s ROI update (cleared all) for job %s",
+                geometry.geometry_type,
+                job_id,
+            )
 
 
 class FakeROIPublisher:
     """Fake ROI publisher for testing."""
 
     def __init__(self):
-        self.published: list[tuple[JobId, ROIs, ROIClass]] = []
+        self.published: list[tuple[JobId, ROIs, ROIGeometry]] = []
 
     def publish(
         self,
         job_id: JobId,
         rois: ROIs,
-        roi_class: ROIClass,
+        geometry: ROIGeometry,
     ) -> None:
         """Record published ROIs."""
-        self.published.append((job_id, rois, roi_class))
+        self.published.append((job_id, rois, geometry))
 
     def reset(self) -> None:
         """Clear all recorded publishes."""

@@ -5,10 +5,14 @@ import uuid
 import scipp as sc
 
 from ess.livedata.config.models import Interval, RectangleROI
+from ess.livedata.config.roi_names import ROIGeometry
 from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.message import StreamKind
 from ess.livedata.dashboard.roi_publisher import FakeROIPublisher, ROIPublisher
 from ess.livedata.fakes import FakeMessageSink
+
+# Geometry fixtures for tests
+RECT_GEOMETRY = ROIGeometry(geometry_type="rectangle", num_rois=4, index_offset=0)
 
 
 def test_roi_publisher_publishes_single_roi():
@@ -20,7 +24,7 @@ def test_roi_publisher_publishes_single_roi():
         y=Interval(min=2.0, max=6.0, unit=None),
     )
 
-    publisher.publish(job_id, rois={0: roi}, roi_class=RectangleROI)
+    publisher.publish(job_id, rois={0: roi}, geometry=RECT_GEOMETRY)
 
     assert len(sink.messages) == 1
     msg = sink.messages[0]
@@ -49,7 +53,7 @@ def test_roi_publisher_publishes_multiple_rois():
         ),
     }
 
-    publisher.publish(job_id, rois=rois, roi_class=RectangleROI)
+    publisher.publish(job_id, rois=rois, geometry=RECT_GEOMETRY)
 
     assert len(sink.messages) == 1
     msg = sink.messages[0]
@@ -69,7 +73,7 @@ def test_roi_publisher_publishes_empty_to_clear():
     publisher = ROIPublisher(sink=sink)
     job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
 
-    publisher.publish(job_id, rois={}, roi_class=RectangleROI)
+    publisher.publish(job_id, rois={}, geometry=RECT_GEOMETRY)
 
     assert len(sink.messages) == 1
     msg = sink.messages[0]
@@ -91,7 +95,7 @@ def test_roi_publisher_serializes_to_dataarray():
         ),
     }
 
-    publisher.publish(job_id, rois=rois, roi_class=RectangleROI)
+    publisher.publish(job_id, rois=rois, geometry=RECT_GEOMETRY)
 
     msg = sink.messages[0]
     da = msg.value
@@ -110,10 +114,10 @@ def test_fake_roi_publisher_records_publishes():
         ),
     }
 
-    publisher.publish(job_id, rois=rois, roi_class=RectangleROI)
+    publisher.publish(job_id, rois=rois, geometry=RECT_GEOMETRY)
 
     assert len(publisher.published) == 1
-    assert publisher.published[0] == (job_id, rois, RectangleROI)
+    assert publisher.published[0] == (job_id, rois, RECT_GEOMETRY)
 
 
 def test_fake_roi_publisher_reset():
@@ -126,7 +130,7 @@ def test_fake_roi_publisher_reset():
         ),
     }
 
-    publisher.publish(job_id, rois=rois, roi_class=RectangleROI)
+    publisher.publish(job_id, rois=rois, geometry=RECT_GEOMETRY)
     publisher.reset()
 
     assert len(publisher.published) == 0
@@ -161,8 +165,8 @@ def test_roi_publisher_isolates_streams_per_detector_in_multi_detector_workflow(
     }
 
     # Publish ROIs for both detectors
-    publisher.publish(job_id_mantle, rois=rois_mantle, roi_class=RectangleROI)
-    publisher.publish(job_id_high_res, rois=rois_high_res, roi_class=RectangleROI)
+    publisher.publish(job_id_mantle, rois=rois_mantle, geometry=RECT_GEOMETRY)
+    publisher.publish(job_id_high_res, rois=rois_high_res, geometry=RECT_GEOMETRY)
 
     assert len(sink.messages) == 2
 

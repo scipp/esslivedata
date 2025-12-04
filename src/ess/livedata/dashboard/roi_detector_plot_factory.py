@@ -496,7 +496,7 @@ class ROIPlotState:
     rect_readback_pipe:
         HoloViews Pipe stream for programmatically updating readback rectangles.
     poly_stream:
-        HoloViews PolyDraw stream for polygon ROIs. None if polygons disabled.
+        HoloViews PolyDraw stream for polygon ROIs.
     poly_request_pipe:
         HoloViews Pipe stream for programmatically updating request polygons.
     poly_readback_pipe:
@@ -525,9 +525,9 @@ class ROIPlotState:
         box_stream: hv.streams.BoxEdit,
         rect_request_pipe: hv.streams.Pipe,
         rect_readback_pipe: hv.streams.Pipe,
-        poly_stream: hv.streams.PolyDraw | None,
-        poly_request_pipe: hv.streams.Pipe | None,
-        poly_readback_pipe: hv.streams.Pipe | None,
+        poly_stream: hv.streams.PolyDraw,
+        poly_request_pipe: hv.streams.Pipe,
+        poly_readback_pipe: hv.streams.Pipe,
         roi_state_stream: hv.streams.Stream,
         x_unit: str | None,
         y_unit: str | None,
@@ -558,21 +558,18 @@ class ROIPlotState:
         )
 
         poly_index_offset = self._get_polygon_index_offset()
-        self._poly_handler: GeometryHandler | None = None
-        if poly_stream is not None and poly_request_pipe and poly_readback_pipe:
-            self._poly_handler = GeometryHandler(
-                converter=PolygonConverter(),
-                edit_stream=poly_stream,
-                request_pipe=poly_request_pipe,
-                readback_pipe=poly_readback_pipe,
-                index_offset=poly_index_offset,
-                initial_rois=initial_poly_rois,
-            )
+        self._poly_handler = GeometryHandler(
+            converter=PolygonConverter(),
+            edit_stream=poly_stream,
+            request_pipe=poly_request_pipe,
+            readback_pipe=poly_readback_pipe,
+            index_offset=poly_index_offset,
+            initial_rois=initial_poly_rois,
+        )
 
         # Attach callbacks AFTER initializing state
         self._rect_handler.edit_stream.param.watch(self.on_box_change, "data")
-        if self._poly_handler is not None:
-            self._poly_handler.edit_stream.param.watch(self.on_poly_change, "data")
+        self._poly_handler.edit_stream.param.watch(self.on_poly_change, "data")
 
         # Initialize roi_state_stream with the current active ROI indices
         self.roi_state_stream.event(active_rois=self._active_roi_indices)
@@ -583,17 +580,15 @@ class ROIPlotState:
         return self._rect_handler.edit_stream
 
     @property
-    def poly_stream(self) -> hv.streams.PolyDraw | None:
+    def poly_stream(self) -> hv.streams.PolyDraw:
         """PolyDraw stream for polygon ROIs."""
-        return self._poly_handler.edit_stream if self._poly_handler else None
+        return self._poly_handler.edit_stream
 
     @property
     def _active_roi_indices(self) -> set[int]:
         """Combined indices of active ROIs from both geometry types (readback)."""
         rect_indices = self._rect_handler.active_indices
-        poly_indices = (
-            self._poly_handler.active_indices if self._poly_handler else set()
-        )
+        poly_indices = self._poly_handler.active_indices
         return rect_indices | poly_indices
 
     def _compute_index_to_color(self) -> dict[int, str]:
@@ -625,12 +620,11 @@ class ROIPlotState:
         )
         self._rect_handler.readback_pipe.send(rect_hv_data)
 
-        # Update polygon readback visuals if enabled
-        if self._poly_handler is not None:
-            poly_hv_data = self._poly_handler.to_hv_data(
-                self._poly_handler.readback_rois, index_to_color
-            )
-            self._poly_handler.readback_pipe.send(poly_hv_data)
+        # Update polygon readback visuals
+        poly_hv_data = self._poly_handler.to_hv_data(
+            self._poly_handler.readback_rois, index_to_color
+        )
+        self._poly_handler.readback_pipe.send(poly_hv_data)
 
     def _get_polygon_index_offset(self) -> int:
         """Get the index offset for polygon ROIs from the mapper."""
@@ -645,10 +639,15 @@ class ROIPlotState:
         if not self._roi_publisher:
             return
 
+        geometry = self._roi_mapper.geometry_for_type(handler.geometry_type)
+        if geometry is None:
+            self._logger.warning("Unknown geometry type: %s", handler.geometry_type)
+            return
+
         self._roi_publisher.publish(
             self.result_key.job_id,
             handler.request_rois,
-            handler.roi_type,
+            geometry,
         )
         self._logger.info(
             "Published %d %s ROI(s) for job %s",
@@ -774,8 +773,7 @@ class ROIPlotState:
 
     def on_poly_change(self, event) -> None:
         """Handle PolyDraw data changes from UI."""
-        if self._poly_handler is not None:
-            self._on_stream_change(self._poly_handler, event)
+        self._on_stream_change(self._poly_handler, event)
 
     def on_backend_rect_update(self, backend_rois: dict[int, RectangleROI]) -> None:
         """Handle rectangle ROI updates from the backend stream."""
@@ -783,8 +781,7 @@ class ROIPlotState:
 
     def on_backend_poly_update(self, backend_rois: dict[int, PolygonROI]) -> None:
         """Handle polygon ROI updates from the backend stream."""
-        if self._poly_handler is not None:
-            self._on_backend_update(self._poly_handler, backend_rois)
+        self._on_backend_update(self._poly_handler, backend_rois)
 
     def is_roi_active(self, key: ResultKey) -> bool:
         """

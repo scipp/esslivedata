@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from .models import PolygonROI, RectangleROI
+
 ROIGeometryType = Literal["rectangle", "polygon"]
 
 
@@ -42,6 +44,15 @@ class ROIGeometry:
     def index_range(self) -> range:
         """Range of ROI indices for this geometry."""
         return range(self.index_offset, self.index_offset + self.num_rois)
+
+    @property
+    def roi_class(self) -> type[RectangleROI] | type[PolygonROI]:
+        """ROI model class for this geometry type."""
+        if self.geometry_type == "rectangle":
+            return RectangleROI
+        elif self.geometry_type == "polygon":
+            return PolygonROI
+        raise ValueError(f"Unknown geometry type: {self.geometry_type}")
 
 
 class ROIStreamMapper:
@@ -130,6 +141,25 @@ class ROIStreamMapper:
         """
         for geom in self._geometries:
             if index in geom.index_range:
+                return geom
+        return None
+
+    def geometry_for_type(self, geometry_type: ROIGeometryType) -> ROIGeometry | None:
+        """
+        Find geometry configuration by type.
+
+        Parameters
+        ----------
+        geometry_type:
+            The geometry type to look up ('rectangle' or 'polygon').
+
+        Returns
+        -------
+        :
+            The geometry configuration, or None if not found.
+        """
+        for geom in self._geometries:
+            if geom.geometry_type == geometry_type:
                 return geom
         return None
 
