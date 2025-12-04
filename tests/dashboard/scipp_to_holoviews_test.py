@@ -566,3 +566,95 @@ class TestToHoloviews:
         curve_data = result.data
         np.testing.assert_array_equal(curve_data['x'], [0, 1, 2])  # dummy coords
         np.testing.assert_array_equal(curve_data['values'], [10, 20, 30])
+
+    def test_2d_single_row_returns_image(self):
+        """hv.Image with 1xN data requires explicit bounds computation."""
+        x_coord = sc.linspace('x', 0, 9, 10)
+        y_coord = sc.linspace('y', 0, 0, 1)
+        values = sc.arange('x', 10.0).fold(dim='x', sizes={'y': 1, 'x': 10})
+        data = sc.DataArray(data=values, coords={'x': x_coord, 'y': y_coord})
+
+        result = scipp_to_holoviews.to_holoviews(data)
+
+        assert isinstance(result, hv.Image)
+        # When using bounds, data is a raw array not a dict
+        np.testing.assert_array_equal(result.data.flatten(), np.arange(10))
+
+    def test_2d_single_column_returns_image(self):
+        """hv.Image with Nx1 data requires explicit bounds computation."""
+        x_coord = sc.linspace('x', 0, 0, 1)
+        y_coord = sc.linspace('y', 0, 7, 8)
+        values = sc.arange('y', 8.0).fold(dim='y', sizes={'y': 8, 'x': 1})
+        data = sc.DataArray(data=values, coords={'x': x_coord, 'y': y_coord})
+
+        result = scipp_to_holoviews.to_holoviews(data)
+
+        assert isinstance(result, hv.Image)
+        # When using bounds, data is a raw array not a dict
+        np.testing.assert_array_equal(result.data.flatten(), np.arange(8))
+
+    def test_2d_single_element_returns_image(self):
+        """hv.Image with 1x1 data requires explicit bounds computation."""
+        x_coord = sc.linspace('x', 0, 0, 1)
+        y_coord = sc.linspace('y', 0, 0, 1)
+        values = sc.array(dims=['y', 'x'], values=[[42.0]])
+        data = sc.DataArray(data=values, coords={'x': x_coord, 'y': y_coord})
+
+        result = scipp_to_holoviews.to_holoviews(data)
+
+        assert isinstance(result, hv.Image)
+        # When using bounds, data is a raw array not a dict
+        np.testing.assert_array_equal(result.data, [[42.0]])
+
+    def test_2d_single_row_no_coords_returns_image(self):
+        """hv.Image with 1xN data works with dummy coords and bounds."""
+        values = sc.arange('x', 10.0).fold(dim='x', sizes={'y': 1, 'x': 10})
+        data = sc.DataArray(data=values)
+
+        result = scipp_to_holoviews.to_holoviews(data)
+
+        assert isinstance(result, hv.Image)
+        # When using bounds, data is a raw array not a dict
+        np.testing.assert_array_equal(result.data.flatten(), np.arange(10))
+
+    def test_2d_single_row_image_renders_to_bokeh(self):
+        """Verify that 1xN Image can be rendered to Bokeh."""
+        from holoviews.plotting.bokeh import BokehRenderer
+
+        values = sc.arange('x', 10.0).fold(dim='x', sizes={'y': 1, 'x': 10})
+        data = sc.DataArray(data=values)
+
+        result = scipp_to_holoviews.to_holoviews(data)
+        assert isinstance(result, hv.Image)
+
+        renderer = BokehRenderer.instance()
+        bokeh_plot = renderer.get_plot(result)
+        assert bokeh_plot is not None
+
+    def test_2d_single_column_image_renders_to_bokeh(self):
+        """Verify that Nx1 Image can be rendered to Bokeh."""
+        from holoviews.plotting.bokeh import BokehRenderer
+
+        values = sc.arange('y', 8.0).fold(dim='y', sizes={'y': 8, 'x': 1})
+        data = sc.DataArray(data=values)
+
+        result = scipp_to_holoviews.to_holoviews(data)
+        assert isinstance(result, hv.Image)
+
+        renderer = BokehRenderer.instance()
+        bokeh_plot = renderer.get_plot(result)
+        assert bokeh_plot is not None
+
+    def test_2d_single_element_image_renders_to_bokeh(self):
+        """Verify that 1x1 Image can be rendered to Bokeh."""
+        from holoviews.plotting.bokeh import BokehRenderer
+
+        values = sc.array(dims=['y', 'x'], values=[[42.0]])
+        data = sc.DataArray(data=values)
+
+        result = scipp_to_holoviews.to_holoviews(data)
+        assert isinstance(result, hv.Image)
+
+        renderer = BokehRenderer.instance()
+        bokeh_plot = renderer.get_plot(result)
+        assert bokeh_plot is not None
