@@ -593,24 +593,23 @@ class ROIPlotState:
 
     def _compute_index_to_color(self) -> dict[int, str]:
         """
-        Compute color mapping based on global position in sorted active ROIs.
+        Compute color mapping based on ROI index value.
 
-        Colors are assigned by position in the sorted list of all active ROI
-        indices, ensuring consistent coloring across geometry types and matching
-        the order used by HoloViews overlay for spectrum curves.
+        Colors are assigned by ROI index (not position), providing stable color
+        identity. ROI 3 always has the same color regardless of which other ROIs
+        are active. This matches the coloring in Overlay1DPlotter for consistency
+        between detector overlay and spectrum plots.
         """
-        sorted_indices = sorted(self._active_roi_indices)
         return {
-            idx: self._colors[pos % len(self._colors)]
-            for pos, idx in enumerate(sorted_indices)
+            idx: self._colors[idx % len(self._colors)]
+            for idx in self._active_roi_indices
         }
 
     def _recolor_all_readbacks(self) -> None:
         """
-        Recolor all readback ROIs based on current global positions.
+        Recolor all readback ROIs based on their index values.
 
-        Called when active ROIs change to ensure colors are consistent
-        across geometry types and match the spectrum overlay order.
+        Called when active ROIs change to update visual colors.
         """
         index_to_color = self._compute_index_to_color()
 

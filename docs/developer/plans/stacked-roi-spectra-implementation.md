@@ -7,7 +7,7 @@ Replace the current approach of publishing individual ROI spectrum messages (`ro
 ## Implementation Phases
 
 1. **Phase 1** ✅ COMPLETE: Add new 2D stacked outputs (backend) - keep old individual outputs
-2. **Phase 2**: Implement new frontend plotter consuming 2D outputs
+2. **Phase 2** ✅ COMPLETE: Implement new frontend plotter consuming 2D outputs
 3. **Phase 3**: Remove old individual outputs and cleanup
 
 ---
@@ -20,21 +20,21 @@ Replace the current approach of publishing individual ROI spectrum messages (`ro
 
 New output fields added:
 
-- `roi_spectra_current`: 2D stacked array (`roi` × `time_of_arrival`) with `roi_index` and `time` coords
-- `roi_spectra_cumulative`: 2D stacked array with `roi_index` coord (no `time` coord)
+- `roi_spectra_current`: 2D stacked array (`roi` × `time_of_arrival`) with `roi` and `time` coords
+- `roi_spectra_cumulative`: 2D stacked array with `roi` coord (no `time` coord)
 - `roi_rectangle`: ROI geometry readback (now declared in output model)
 - `roi_polygon`: ROI geometry readback (now declared in output model)
 
 #### `DetectorView.finalize()` (`detector_view.py`)
 
 - Produces stacked outputs alongside existing individual outputs
-- ROIs stacked in sorted order by index (for consistent color mapping)
+- ROIs stacked in sorted order by index (for predictable iteration and legend ordering)
 - Empty case produces valid 2D array with shape `[0, n_toa_bins]`
 
 #### Key Implementation Details
 
 - **Dimension naming**: Uses `time_of_arrival` (matching existing `ROIHistogram` code)
-- **`roi_index` coordinate**: Uses `unit=None` (just an index, not a dimensionless quantity)
+- **`roi` coordinate**: Uses `unit=None` (just an index, not a dimensionless quantity)
 - **`time` coordinate**: Only on `roi_spectra_current`, not on cumulative
 - **ROI readback titles**: Must be `'rectangles'` and `'polygons'` to match DataArray names (see Known Issues below)
 
@@ -42,7 +42,7 @@ New output fields added:
 
 New test class `TestDetectorViewStackedROISpectra` in `detector_view_test.py` covering:
 - Correct 2D shape and dimensions
-- `roi_index` coordinate values and unit
+- `roi` coordinate values and unit
 - Sorted stacking order
 - Time coordinate presence
 - Cumulative accumulation
@@ -52,28 +52,61 @@ New test class `TestDetectorViewStackedROISpectra` in `detector_view_test.py` co
 
 ---
 
-## Phase 2: Frontend - New Stacked Spectrum Plotter
+## Phase 2: Frontend - New Stacked Spectrum Plotter ✅ COMPLETE
 
-Update `ROIDetectorPlotFactory` to consume the new stacked outputs instead of individual ROI keys.
+### Changes Made
 
-### Key Changes
+#### `Overlay1DPlotter` (`plots.py`)
 
-1. Subscribe to single `roi_spectra_current`/`roi_spectra_cumulative` key instead of 8 individual keys
-2. Iterate over `roi` dimension to extract individual spectra
-3. Color by array position (matches detector overlay color assignment)
-4. Use `roi_index` coordinate for legend labels
+A new generic plotter that slices 2D data along the first dimension and overlays as 1D curves:
 
-### Color Consistency
+- Takes 2D data with dims `[slice_dim, plot_dim]`
+- Iterates over the first dimension to extract individual spectra
+- Uses coordinate values from the first dimension for legend labels (e.g., `roi=0`, `roi=3`)
+- Colors assigned by coordinate value for stable identity
 
-Colors are assigned by **position along the `roi` dimension**, not by `roi_index` value:
+#### Plotter Registration (`plotting.py`)
 
-| Array Position | `roi_index` Value | Color |
-|----------------|-------------------|-------|
-| 0 | 0 | `colors[0]` |
-| 1 | 3 | `colors[1]` |
-| 2 | 5 | `colors[2]` |
+Registered as `overlay_1d` with:
+- `min_dims=2, max_dims=2`
+- `multiple_datasets=False`
+- Uses `PlotParams1d` (1D curve output, not 2D image)
 
-This naturally matches the detector overlay because both iterate in sorted index order.
+#### Color Consistency Fix (`roi_detector_plot_factory.py`)
+
+Updated `_compute_index_to_color()` to use index-based coloring:
+
+```python
+def _compute_index_to_color(self) -> dict[int, str]:
+    return {
+        idx: self._colors[idx % len(self._colors)]
+        for idx in self._active_roi_indices
+    }
+```
+
+This provides **stable color identity** - ROI 3 always has the same color regardless of which other ROIs are active, matching the `Overlay1DPlotter` coloring.
+
+#### Shared Helper (`plots.py`)
+
+Added `Plotter._convert_histogram_to_curve_data()` static method:
+- Converts bin-edge coordinates to midpoints for curve plotting
+- Histograms with many narrow bins show black outlines; curves display cleanly
+- Used by both `LinePlotter` and `Overlay1DPlotter`
+
+### Tests Added
+
+New test class `TestOverlay1DPlotter` in `plots_test.py` covering:
+- Overlay creation from 2D data
+- Correct number of curves per slice
+- Single slice returns single element (not overlay)
+- Empty first dimension handling
+- Labels using coordinate values
+- Colors assigned by coordinate value
+- Fallback to indices without coordinates
+- Rejection of non-2D data
+- Bokeh rendering
+- Registry compatibility checks
+- Bin-edge coordinates produce Curves (not Histograms)
 
 ---
 
@@ -83,7 +116,7 @@ Once Phase 2 is verified working:
 
 1. **Backend**: Remove individual ROI output generation from `finalize()`
 2. **`roi_names.py`**: Remove `current_key()`, `cumulative_key()`, `all_histogram_keys()` methods
-3. **Frontend**: Remove `_generate_spectrum_keys()` and individual key references
+3. **Frontend**: Remove spectrum overlay from `ROIDetectorPlotFactory` (now handled by standalone plotter)
 4. **Tests**: Update to remove individual output tests
 
 ### Breaking Changes (Phase 3 only)
@@ -115,7 +148,7 @@ The `roi_rectangle` and `roi_polygon` fields require their `title` to match the 
 | Phase | Breaking Changes | Backward Compatible |
 |-------|------------------|---------------------|
 | Phase 1 ✅ | None | Yes - old outputs still published |
-| Phase 2 | None | Yes - frontend switches to new outputs |
+| Phase 2 ✅ | None | Yes - new plotter available, old outputs still work |
 | Phase 3 | Yes | No - old outputs removed |
 
 Recommended deployment: Phase 1 + Phase 2 together, then Phase 3 as separate release.
