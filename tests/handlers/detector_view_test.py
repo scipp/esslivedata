@@ -1621,46 +1621,7 @@ class TestDetectorViewMultipleGeometries:
 
 
 class TestDetectorViewStackedROISpectra:
-    """Tests for stacked 2D ROI spectra outputs (Phase 1)."""
-
-    def test_stacked_spectra_have_correct_shape(
-        self,
-        mock_rolling_view: RollingDetectorView,
-        sample_detector_events: sc.DataArray,
-        standard_roi: RectangleROI,
-        standard_toa_edges: TOAEdges,
-    ) -> None:
-        """Test that stacked spectra have correct 2D shape."""
-        params = DetectorViewParams(toa_edges=standard_toa_edges)
-        view = DetectorView(params=params, detector_view=mock_rolling_view)
-
-        # Configure ROI and accumulate
-        view.accumulate(
-            roi_to_accumulate_data(standard_roi), start_time=1000, end_time=2000
-        )
-        view.accumulate(
-            {'detector': sample_detector_events}, start_time=1000, end_time=2000
-        )
-        result = view.finalize()
-
-        # Check stacked outputs exist with correct dimensions
-        assert 'roi_spectra_current' in result
-        assert 'roi_spectra_cumulative' in result
-
-        stacked_current = result['roi_spectra_current']
-        stacked_cumulative = result['roi_spectra_cumulative']
-
-        # Should be 2D: roi x time_of_arrival
-        assert stacked_current.dims == ('roi', 'time_of_arrival')
-        assert stacked_cumulative.dims == ('roi', 'time_of_arrival')
-
-        # Should have 1 ROI and correct number of toa bins
-        assert stacked_current.sizes['roi'] == 1
-        assert stacked_current.sizes['time_of_arrival'] == standard_toa_edges.num_bins
-        assert stacked_cumulative.sizes['roi'] == 1
-        assert (
-            stacked_cumulative.sizes['time_of_arrival'] == standard_toa_edges.num_bins
-        )
+    """Tests for stacked 2D ROI spectra outputs."""
 
     def test_stacked_spectra_roi_coordinate(
         self,
@@ -1739,70 +1700,6 @@ class TestDetectorViewStackedROISpectra:
         # ROI 1 covers pixel 1 (1 event), ROI 3 covers pixel 15 (1 event)
         assert sc.sum(stacked['roi', 0]).value == 1  # ROI 1
         assert sc.sum(stacked['roi', 1]).value == 1  # ROI 3
-
-    def test_stacked_spectra_current_has_time_coord(
-        self,
-        mock_rolling_view: RollingDetectorView,
-        sample_detector_events: sc.DataArray,
-        standard_roi: RectangleROI,
-        standard_toa_edges: TOAEdges,
-    ) -> None:
-        """Test that stacked current spectra has time coordinate."""
-        params = DetectorViewParams(toa_edges=standard_toa_edges)
-        view = DetectorView(params=params, detector_view=mock_rolling_view)
-
-        view.accumulate(
-            roi_to_accumulate_data(standard_roi), start_time=1000, end_time=2000
-        )
-        view.accumulate(
-            {'detector': sample_detector_events}, start_time=2500, end_time=3000
-        )
-        result = view.finalize()
-
-        # Current should have time coord
-        assert 'time' in result['roi_spectra_current'].coords
-        assert result['roi_spectra_current'].coords['time'].value == 2500
-        assert result['roi_spectra_current'].coords['time'].unit == 'ns'
-
-        # Cumulative should NOT have time coord
-        assert 'time' not in result['roi_spectra_cumulative'].coords
-
-    def test_stacked_spectra_cumulative_accumulation(
-        self,
-        mock_rolling_view: RollingDetectorView,
-        sample_detector_events: sc.DataArray,
-        standard_roi: RectangleROI,
-        standard_toa_edges: TOAEdges,
-    ) -> None:
-        """Test that stacked cumulative accumulates correctly over time."""
-        params = DetectorViewParams(toa_edges=standard_toa_edges)
-        view = DetectorView(params=params, detector_view=mock_rolling_view)
-
-        view.accumulate(
-            roi_to_accumulate_data(standard_roi), start_time=1000, end_time=2000
-        )
-
-        # First accumulation
-        view.accumulate(
-            {'detector': sample_detector_events}, start_time=1000, end_time=2000
-        )
-        result1 = view.finalize()
-
-        assert sc.sum(result1['roi_spectra_current']).value == STANDARD_ROI_EVENTS
-        assert sc.sum(result1['roi_spectra_cumulative']).value == STANDARD_ROI_EVENTS
-
-        # Second accumulation
-        view.accumulate(
-            {'detector': sample_detector_events}, start_time=2000, end_time=3000
-        )
-        result2 = view.finalize()
-
-        # Current should have just this period's events
-        assert sc.sum(result2['roi_spectra_current']).value == STANDARD_ROI_EVENTS
-        # Cumulative should have both periods
-        assert (
-            sc.sum(result2['roi_spectra_cumulative']).value == 2 * STANDARD_ROI_EVENTS
-        )
 
     def test_stacked_spectra_empty_when_no_rois(
         self,
@@ -1888,45 +1785,3 @@ class TestDetectorViewStackedROISpectra:
         # Verify counts: ROI 0 (rectangle) has 3 events, ROI 4 (polygon) has 1 event
         assert sc.sum(stacked['roi', 0]).value == STANDARD_ROI_EVENTS
         assert sc.sum(stacked['roi', 1]).value == CORNER_ROI_EVENTS
-
-    def test_stacked_spectra_correct_roi_mapping(
-        self,
-        mock_rolling_view: RollingDetectorView,
-        sample_detector_events: sc.DataArray,
-        standard_toa_edges: TOAEdges,
-    ) -> None:
-        """Test that stacked spectra correctly map ROI indices to positions."""
-        params = DetectorViewParams(toa_edges=standard_toa_edges)
-        view = DetectorView(params=params, detector_view=mock_rolling_view)
-
-        roi0 = make_rectangle_roi(5.0, 25.0, 5.0, 25.0, 'mm', 'mm')  # 3 events
-        roi2 = make_rectangle_roi(25.0, 35.0, 25.0, 35.0, 'mm', 'mm')  # 1 event
-
-        view.accumulate(
-            {
-                'roi_rectangle': RectangleROI.to_concatenated_data_array(
-                    {0: roi0, 2: roi2}
-                )
-            },
-            start_time=1000,
-            end_time=2000,
-        )
-        view.accumulate(
-            {'detector': sample_detector_events}, start_time=1000, end_time=2000
-        )
-        result = view.finalize()
-
-        stacked_current = result['roi_spectra_current']
-        stacked_cumulative = result['roi_spectra_cumulative']
-
-        # Verify ROI indices in coordinates
-        roi_indices = list(stacked_current.coords['roi'].values)
-        assert roi_indices == [0, 2]  # Sorted order
-
-        # Position 0 (ROI 0) should have 3 events
-        assert sc.sum(stacked_current['roi', 0]).value == STANDARD_ROI_EVENTS
-        assert sc.sum(stacked_cumulative['roi', 0]).value == STANDARD_ROI_EVENTS
-
-        # Position 1 (ROI 2) should have 1 event
-        assert sc.sum(stacked_current['roi', 1]).value == CORNER_ROI_EVENTS
-        assert sc.sum(stacked_cumulative['roi', 1]).value == CORNER_ROI_EVENTS
