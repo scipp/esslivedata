@@ -240,7 +240,7 @@ def serialize_detector_events_to_ev44(
 
 def serialize_area_detector_to_ad00(msg: Message[sc.DataArray]) -> bytes:
     """Serialize area detector data to ad00 format."""
-    data = msg.value.values
+    data = msg.value.values.astype(np.uint16)
     try:
         ad00 = area_detector_ad00.serialise_ad00(
             source_name=msg.stream.name,
