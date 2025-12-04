@@ -56,7 +56,7 @@ class GeometryConverter(Protocol):
         ...
 
     def to_hv_data(
-        self, rois: dict[int, ROIType], colors: list[str] | None
+        self, rois: dict[int, ROIType], index_to_color: dict[int, str] | None
     ) -> list[Any]:
         """Convert ROIs to HoloViews display format."""
         ...
@@ -134,7 +134,7 @@ class RectangleConverter:
         return rois
 
     def to_hv_data(
-        self, rois: dict[int, RectangleROI], colors: list[str] | None
+        self, rois: dict[int, RectangleROI], index_to_color: dict[int, str] | None
     ) -> list[tuple[float, ...]]:
         """
         Convert RectangleROI instances to HoloViews Rectangles format.
@@ -143,9 +143,9 @@ class RectangleConverter:
         ----------
         rois:
             Dictionary mapping ROI index to RectangleROI.
-        colors:
-            Optional list of colors to assign to rectangles based on ROI index.
-            If provided, each rectangle tuple will include the color as a fifth element.
+        index_to_color:
+            Optional mapping from ROI index to color string. If provided, each
+            rectangle tuple will include the color as a fifth element.
 
         Returns
         -------
@@ -164,9 +164,8 @@ class RectangleConverter:
                 float(roi.x.max),
                 float(roi.y.max),
             )
-            if colors is not None:
-                color = colors[idx % len(colors)]
-                rect_tuple = (*rect_tuple, color)
+            if index_to_color is not None and idx in index_to_color:
+                rect_tuple = (*rect_tuple, index_to_color[idx])
             rectangles.append(rect_tuple)
         return rectangles
 
@@ -256,7 +255,7 @@ class PolygonConverter:
         return rois
 
     def to_hv_data(
-        self, rois: dict[int, PolygonROI], colors: list[str] | None
+        self, rois: dict[int, PolygonROI], index_to_color: dict[int, str] | None
     ) -> list[dict[str, Any]]:
         """
         Convert PolygonROI instances to HoloViews Polygons format.
@@ -265,8 +264,8 @@ class PolygonConverter:
         ----------
         rois:
             Dictionary mapping ROI index to PolygonROI.
-        colors:
-            Optional list of colors to assign to polygons based on ROI index.
+        index_to_color:
+            Optional mapping from ROI index to color string.
 
         Returns
         -------
@@ -281,8 +280,8 @@ class PolygonConverter:
                 'x': [float(v) for v in roi.x],
                 'y': [float(v) for v in roi.y],
             }
-            if colors is not None:
-                poly_dict['color'] = colors[idx % len(colors)]
+            if index_to_color is not None and idx in index_to_color:
+                poly_dict['color'] = index_to_color[idx]
             polygons.append(poly_dict)
         return polygons
 
@@ -426,10 +425,10 @@ class GeometryHandler:
         )
 
     def to_hv_data(
-        self, rois: dict[int, ROIType], colors: list[str] | None
+        self, rois: dict[int, ROIType], index_to_color: dict[int, str] | None
     ) -> list[Any]:
         """Convert ROIs to HoloViews display format."""
-        return self._converter.to_hv_data(rois, colors)
+        return self._converter.to_hv_data(rois, index_to_color)
 
     def to_stream_data(self, rois: dict[int, ROIType]) -> dict[str, Any]:
         """Convert ROIs to edit stream data format."""
@@ -444,24 +443,23 @@ class GeometryHandler:
         """
         self._request_rois = rois
 
-    def update_request(
-        self, rois: dict[int, ROIType], colors: list[str] | None
-    ) -> None:
+    def update_request(self, rois: dict[int, ROIType]) -> None:
         """Update request state and send to request pipe.
 
         Use this for backend-initiated updates where we need to render
         the ROIs visually. For user edits, use update_request_state_only.
+        Request ROIs use neutral styling (no colors).
         """
         self._request_rois = rois
-        hv_data = self.to_hv_data(rois, colors)
+        hv_data = self.to_hv_data(rois, index_to_color=None)
         self.request_pipe.send(hv_data)
 
     def update_readback(
-        self, rois: dict[int, ROIType], colors: list[str] | None
+        self, rois: dict[int, ROIType], index_to_color: dict[int, str] | None
     ) -> None:
         """Update readback state and send to readback pipe."""
         self._readback_rois = rois
-        hv_data = self.to_hv_data(rois, colors)
+        hv_data = self.to_hv_data(rois, index_to_color)
         self.readback_pipe.send(hv_data)
 
     def sync_stream_from_rois(self, rois: dict[int, ROIType]) -> None:
@@ -598,6 +596,42 @@ class ROIPlotState:
         )
         return rect_indices | poly_indices
 
+    def _compute_index_to_color(self) -> dict[int, str]:
+        """
+        Compute color mapping based on global position in sorted active ROIs.
+
+        Colors are assigned by position in the sorted list of all active ROI
+        indices, ensuring consistent coloring across geometry types and matching
+        the order used by HoloViews overlay for spectrum curves.
+        """
+        sorted_indices = sorted(self._active_roi_indices)
+        return {
+            idx: self._colors[pos % len(self._colors)]
+            for pos, idx in enumerate(sorted_indices)
+        }
+
+    def _recolor_all_readbacks(self) -> None:
+        """
+        Recolor all readback ROIs based on current global positions.
+
+        Called when active ROIs change to ensure colors are consistent
+        across geometry types and match the spectrum overlay order.
+        """
+        index_to_color = self._compute_index_to_color()
+
+        # Update rectangle readback visuals
+        rect_hv_data = self._rect_handler.to_hv_data(
+            self._rect_handler.readback_rois, index_to_color
+        )
+        self._rect_handler.readback_pipe.send(rect_hv_data)
+
+        # Update polygon readback visuals if enabled
+        if self._poly_handler is not None:
+            poly_hv_data = self._poly_handler.to_hv_data(
+                self._poly_handler.readback_rois, index_to_color
+            )
+            self._poly_handler.readback_pipe.send(poly_hv_data)
+
     def _get_polygon_index_offset(self) -> int:
         """Get the index offset for polygon ROIs from the mapper."""
         poly_geom = next(
@@ -716,13 +750,16 @@ class ROIPlotState:
 
             # Update readback layer if changed (authoritative backend state)
             if readback_changed:
-                handler.update_readback(backend_rois, self._colors)
+                # Update state first (affects _active_roi_indices computation)
+                handler._readback_rois = backend_rois
+                # Recolor ALL readbacks based on new global positions
+                self._recolor_all_readbacks()
                 self.roi_state_stream.event(active_rois=self._active_roi_indices)
 
             # Sync request layer to match backend if needed
             # TODO: Backend sync is disabled - causes issues in multi-session case.
             if request_needs_sync:
-                handler.update_request(backend_rois, colors=None)
+                handler.update_request(backend_rois)
                 handler.sync_stream_from_rois(backend_rois)
 
             self._logger.info(
@@ -1217,6 +1254,21 @@ class ROIDetectorPlotFactory:
         )
 
         # Create filtering wrapper that filters spectrum data based on active ROIs
+        #
+        # LIMITATION: Spectrum curve colors may not match ROI shape colors.
+        # Shapes use position-based coloring (sorted by ROI index across all
+        # geometry types). HoloViews overlay assigns colors by "order of first
+        # appearance" and caches this, ignoring subsequent reordering.
+        #
+        # Root cause: Rectangles use indices 0-3, polygons use indices 4-7
+        # (fixed offset). Drawing rect→poly→rect gives indices 0,4,1 but
+        # overlay sees appearance order 0,4,1 and assigns colors 0,1,2.
+        # Shapes recolor to sorted positions (0→c0, 1→c1, 4→c2) but overlay
+        # keeps its cached assignment.
+        #
+        # Potential fix: Use contiguous indexing across geometry types (no
+        # offset), so drawing order matches index order. Requires backend
+        # changes to ROI stream naming and handler logic.
         def filtered_spectrum_plotter(
             data: dict[ResultKey, sc.DataArray], active_rois: set[int]
         ) -> hv.Overlay | hv.Layout | hv.Element:
