@@ -168,17 +168,17 @@ class DetectorView(Workflow):
 
         # Build stacked 2D outputs
         if sorted_indices:
-            roi_index_coord = sc.array(
+            roi_coord = sc.array(
                 dims=['roi'], values=sorted_indices, unit=None, dtype='int64'
             )
 
             roi_result['roi_spectra_current'] = sc.concat(
                 current_spectra, dim='roi'
-            ).assign_coords(roi_index=roi_index_coord, time=time_coord)
+            ).assign_coords(roi=roi_coord, time=time_coord)
 
             roi_result['roi_spectra_cumulative'] = sc.concat(
                 cumulative_spectra, dim='roi'
-            ).assign_coords(roi_index=roi_index_coord)
+            ).assign_coords(roi=roi_coord)
         else:
             # Empty arrays when no ROIs active
             roi_result['roi_spectra_current'] = sc.DataArray(
@@ -188,7 +188,7 @@ class DetectorView(Workflow):
                     unit='counts',
                 ),
                 coords={
-                    'roi_index': sc.array(dims=['roi'], values=[], unit=None),
+                    'roi': sc.array(dims=['roi'], values=[], unit=None),
                     'time_of_arrival': self._toa_edges,
                     'time': time_coord,
                 },
@@ -200,7 +200,7 @@ class DetectorView(Workflow):
                     unit='counts',
                 ),
                 coords={
-                    'roi_index': sc.array(dims=['roi'], values=[], unit=None),
+                    'roi': sc.array(dims=['roi'], values=[], unit=None),
                     'time_of_arrival': self._toa_edges,
                 },
             )

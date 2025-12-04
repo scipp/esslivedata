@@ -1636,13 +1636,13 @@ class TestDetectorViewStackedROISpectra:
             stacked_cumulative.sizes['time_of_arrival'] == standard_toa_edges.num_bins
         )
 
-    def test_stacked_spectra_roi_index_coordinate(
+    def test_stacked_spectra_roi_coordinate(
         self,
         mock_rolling_view: RollingDetectorView,
         sample_detector_events: sc.DataArray,
         standard_toa_edges: TOAEdges,
     ) -> None:
-        """Test that roi_index coordinate correctly identifies ROI indices."""
+        """Test that roi coordinate correctly identifies ROI indices."""
         params = DetectorViewParams(toa_edges=standard_toa_edges)
         view = DetectorView(params=params, detector_view=mock_rolling_view)
 
@@ -1666,13 +1666,13 @@ class TestDetectorViewStackedROISpectra:
 
         stacked = result['roi_spectra_current']
 
-        # roi_index coordinate should identify actual ROI indices
-        assert 'roi_index' in stacked.coords
-        roi_indices = stacked.coords['roi_index'].values
+        # roi coordinate should identify actual ROI indices
+        assert 'roi' in stacked.coords
+        roi_indices = stacked.coords['roi'].values
         assert list(roi_indices) == [0, 3]  # Sorted order
 
-        # roi_index should have no unit (just an index)
-        assert stacked.coords['roi_index'].unit is None
+        # roi should have no unit (just an index)
+        assert stacked.coords['roi'].unit is None
 
     def test_stacked_spectra_sorted_by_index(
         self,
@@ -1704,7 +1704,7 @@ class TestDetectorViewStackedROISpectra:
         result = view.finalize()
 
         stacked = result['roi_spectra_current']
-        roi_indices = list(stacked.coords['roi_index'].values)
+        roi_indices = list(stacked.coords['roi'].values)
 
         # Should be sorted: [1, 3] not [3, 1]
         assert roi_indices == [1, 3]
@@ -1812,9 +1812,9 @@ class TestDetectorViewStackedROISpectra:
         assert 'time_of_arrival' in stacked_current.coords
         assert 'time_of_arrival' in stacked_cumulative.coords
 
-        # Empty roi_index coordinate
-        assert 'roi_index' in stacked_current.coords
-        assert len(stacked_current.coords['roi_index'].values) == 0
+        # Empty roi coordinate
+        assert 'roi' in stacked_current.coords
+        assert len(stacked_current.coords['roi'].values) == 0
 
         # Current should still have time coord
         assert 'time' in stacked_current.coords
@@ -1856,7 +1856,7 @@ class TestDetectorViewStackedROISpectra:
         assert stacked.sizes['roi'] == 2
 
         # Indices should be sorted: [0, 4]
-        roi_indices = list(stacked.coords['roi_index'].values)
+        roi_indices = list(stacked.coords['roi'].values)
         assert roi_indices == [0, 4]
 
         # Verify counts: ROI 0 (rectangle) has 3 events, ROI 4 (polygon) has 1 event

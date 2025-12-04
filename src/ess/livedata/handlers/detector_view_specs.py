@@ -76,19 +76,19 @@ class DetectorViewOutputs(WorkflowOutputsBase):
     roi_spectra_current: sc.DataArray = pydantic.Field(
         title='ROI Spectra (Current)',
         description='Time-of-arrival spectra for active ROIs in current time window. '
-        'Stacked 2D array with roi_index coordinate identifying each ROI.',
+        'Stacked 2D array with roi coordinate containing ROI indices.',
         default_factory=lambda: sc.DataArray(
             sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
-            coords={'roi_index': sc.array(dims=['roi'], values=[], unit=None)},
+            coords={'roi': sc.array(dims=['roi'], values=[], unit=None)},
         ),
     )
     roi_spectra_cumulative: sc.DataArray = pydantic.Field(
         title='ROI Spectra (Cumulative)',
         description='Cumulative time-of-arrival spectra for active ROIs. '
-        'Stacked 2D array with roi_index coordinate identifying each ROI.',
+        'Stacked 2D array with roi coordinate containing ROI indices.',
         default_factory=lambda: sc.DataArray(
             sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
-            coords={'roi_index': sc.array(dims=['roi'], values=[], unit=None)},
+            coords={'roi': sc.array(dims=['roi'], values=[], unit=None)},
         ),
     )
 
