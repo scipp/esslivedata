@@ -10,7 +10,7 @@ correctly in the DetectorView workflow.
 import pytest
 import scipp as sc
 
-from ess.livedata.config.models import Interval, RectangleROI
+from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
 from ess.livedata.handlers.accumulators import GroupIntoPixels
 from ess.livedata.handlers.detector_view import (
     DetectorView,
@@ -1296,3 +1296,292 @@ class TestDetectorViewRatemeter:
 
         # Should only have events from after clear
         assert result['counts_total'].value == TOTAL_SAMPLE_EVENTS
+
+
+class TestDetectorViewPolygonROI:
+    """Tests for polygon ROI support in DetectorView."""
+
+    def test_polygon_roi_processes_correctly(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that polygon ROI is processed and produces histogram results."""
+        params = DetectorViewParams(
+            toa_edges=TOAEdges(start=0.0, stop=1000.0, num_bins=10, unit='ns')
+        )
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # Polygon covering center region: same area as standard rectangle ROI
+        polygon_roi = PolygonROI(
+            x=[5.0, 25.0, 25.0, 5.0],
+            y=[5.0, 5.0, 25.0, 25.0],
+            x_unit='mm',
+            y_unit='mm',
+        )
+
+        # Polygon uses index 4 (first polygon slot after 4 rectangles)
+        view.accumulate(
+            {
+                'roi_polygon': PolygonROI.to_concatenated_data_array({4: polygon_roi}),
+                'detector': sample_detector_events,
+            },
+            start_time=1000,
+            end_time=2000,
+        )
+
+        result = view.finalize()
+
+        # Should have detector view results
+        assert 'cumulative' in result
+        assert 'current' in result
+
+        # Should have polygon ROI results at index 4
+        assert 'roi_cumulative_4' in result
+        assert 'roi_current_4' in result
+
+        # Should publish polygon readback
+        assert 'roi_polygon' in result
+
+        # Should have expected events (same as rectangle: pixels 5, 6, 10)
+        assert sc.sum(result['roi_current_4']).value == STANDARD_ROI_EVENTS
+
+    def test_polygon_roi_readback_contains_correct_data(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that polygon ROI readback contains the polygon data."""
+        params = DetectorViewParams(
+            toa_edges=TOAEdges(start=0.0, stop=1000.0, num_bins=10, unit='ns')
+        )
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        polygon_roi = PolygonROI(
+            x=[5.0, 25.0, 25.0, 5.0],
+            y=[5.0, 5.0, 25.0, 25.0],
+            x_unit='mm',
+            y_unit='mm',
+        )
+
+        view.accumulate(
+            {
+                'roi_polygon': PolygonROI.to_concatenated_data_array({4: polygon_roi}),
+                'detector': sample_detector_events,
+            },
+            start_time=1000,
+            end_time=2000,
+        )
+
+        result = view.finalize()
+
+        # Verify readback can be deserialized back to ROI
+        readback = result['roi_polygon']
+        rois = PolygonROI.from_concatenated_data_array(readback)
+        assert 4 in rois
+        assert rois[4].x == polygon_roi.x
+        assert rois[4].y == polygon_roi.y
+
+    def test_polygon_roi_cumulative_accumulation(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that polygon ROI accumulates events across multiple periods."""
+        params = DetectorViewParams(
+            toa_edges=TOAEdges(start=0.0, stop=1000.0, num_bins=10, unit='ns')
+        )
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        polygon_roi = PolygonROI(
+            x=[5.0, 25.0, 25.0, 5.0],
+            y=[5.0, 5.0, 25.0, 25.0],
+            x_unit='mm',
+            y_unit='mm',
+        )
+
+        # First accumulation with ROI config
+        view.accumulate(
+            {
+                'roi_polygon': PolygonROI.to_concatenated_data_array({4: polygon_roi}),
+                'detector': sample_detector_events,
+            },
+            start_time=1000,
+            end_time=2000,
+        )
+        result1 = view.finalize()
+
+        assert sc.sum(result1['roi_current_4']).value == STANDARD_ROI_EVENTS
+        assert sc.sum(result1['roi_cumulative_4']).value == STANDARD_ROI_EVENTS
+
+        # Second accumulation without ROI config (should persist)
+        view.accumulate(
+            {'detector': sample_detector_events},
+            start_time=2000,
+            end_time=3000,
+        )
+        result2 = view.finalize()
+
+        assert sc.sum(result2['roi_current_4']).value == STANDARD_ROI_EVENTS
+        assert sc.sum(result2['roi_cumulative_4']).value == 2 * STANDARD_ROI_EVENTS
+        # Readback not published on unchanged ROI
+        assert 'roi_polygon' not in result2
+
+
+class TestDetectorViewMultipleGeometries:
+    """Tests for multiple ROI geometry types in DetectorView."""
+
+    def test_rectangle_and_polygon_independent(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that rectangle and polygon ROIs can coexist independently."""
+        params = DetectorViewParams(
+            toa_edges=TOAEdges(start=0.0, stop=1000.0, num_bins=10, unit='ns')
+        )
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # Create both rectangle and polygon ROIs
+        rect_roi = make_rectangle_roi(5.0, 25.0, 5.0, 25.0, 'mm', 'mm')
+        polygon_roi = PolygonROI(
+            x=[5.0, 25.0, 25.0, 5.0],
+            y=[5.0, 5.0, 25.0, 25.0],
+            x_unit='mm',
+            y_unit='mm',
+        )
+
+        # Send both geometry types together
+        view.accumulate(
+            {
+                'roi_rectangle': RectangleROI.to_concatenated_data_array({0: rect_roi}),
+                'roi_polygon': PolygonROI.to_concatenated_data_array({4: polygon_roi}),
+                'detector': sample_detector_events,
+            },
+            start_time=1000,
+            end_time=2000,
+        )
+
+        result = view.finalize()
+
+        # Both should produce results
+        assert 'roi_current_0' in result  # Rectangle at index 0
+        assert 'roi_current_4' in result  # Polygon at index 4
+
+        # Both should have same expected events (same shape)
+        assert sc.sum(result['roi_current_0']).value == STANDARD_ROI_EVENTS
+        assert sc.sum(result['roi_current_4']).value == STANDARD_ROI_EVENTS
+
+        # Both readbacks should be published
+        assert 'roi_rectangle' in result
+        assert 'roi_polygon' in result
+
+    def test_updating_polygon_does_not_affect_rectangle(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that updating polygon ROI does not reset rectangle ROI state."""
+        params = DetectorViewParams(
+            toa_edges=TOAEdges(start=0.0, stop=1000.0, num_bins=10, unit='ns')
+        )
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # Setup: create rectangle ROI and accumulate data
+        rect_roi = make_rectangle_roi(5.0, 25.0, 5.0, 25.0, 'mm', 'mm')
+        view.accumulate(
+            {
+                'roi_rectangle': RectangleROI.to_concatenated_data_array({0: rect_roi}),
+                'detector': sample_detector_events,
+            },
+            start_time=1000,
+            end_time=2000,
+        )
+        result1 = view.finalize()
+
+        rect_cumulative_after_first = sc.sum(result1['roi_cumulative_0']).value
+        assert rect_cumulative_after_first == STANDARD_ROI_EVENTS
+
+        # Now add a polygon ROI (rectangle should keep its state)
+        polygon_roi = PolygonROI(
+            x=[5.0, 25.0, 25.0, 5.0],
+            y=[5.0, 5.0, 25.0, 25.0],
+            x_unit='mm',
+            y_unit='mm',
+        )
+        view.accumulate(
+            {
+                'roi_polygon': PolygonROI.to_concatenated_data_array({4: polygon_roi}),
+                'detector': sample_detector_events,
+            },
+            start_time=2000,
+            end_time=3000,
+        )
+        result2 = view.finalize()
+
+        # Rectangle cumulative should have continued accumulating
+        rect_cumulative_after_second = sc.sum(result2['roi_cumulative_0']).value
+        assert rect_cumulative_after_second == 2 * STANDARD_ROI_EVENTS
+
+        # Polygon should have only first period
+        polygon_cumulative = sc.sum(result2['roi_cumulative_4']).value
+        assert polygon_cumulative == STANDARD_ROI_EVENTS
+
+        # Only polygon readback should be published (rectangle unchanged)
+        assert 'roi_polygon' in result2
+        assert 'roi_rectangle' not in result2
+
+    def test_updating_rectangle_does_not_affect_polygon(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that updating rectangle ROI does not reset polygon ROI state."""
+        params = DetectorViewParams(
+            toa_edges=TOAEdges(start=0.0, stop=1000.0, num_bins=10, unit='ns')
+        )
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # Setup: create polygon ROI and accumulate data
+        polygon_roi = PolygonROI(
+            x=[5.0, 25.0, 25.0, 5.0],
+            y=[5.0, 5.0, 25.0, 25.0],
+            x_unit='mm',
+            y_unit='mm',
+        )
+        view.accumulate(
+            {
+                'roi_polygon': PolygonROI.to_concatenated_data_array({4: polygon_roi}),
+                'detector': sample_detector_events,
+            },
+            start_time=1000,
+            end_time=2000,
+        )
+        result1 = view.finalize()
+
+        polygon_cumulative_after_first = sc.sum(result1['roi_cumulative_4']).value
+        assert polygon_cumulative_after_first == STANDARD_ROI_EVENTS
+
+        # Now add a rectangle ROI (polygon should keep its state)
+        rect_roi = make_rectangle_roi(5.0, 25.0, 5.0, 25.0, 'mm', 'mm')
+        view.accumulate(
+            {
+                'roi_rectangle': RectangleROI.to_concatenated_data_array({0: rect_roi}),
+                'detector': sample_detector_events,
+            },
+            start_time=2000,
+            end_time=3000,
+        )
+        result2 = view.finalize()
+
+        # Polygon cumulative should have continued accumulating
+        polygon_cumulative_after_second = sc.sum(result2['roi_cumulative_4']).value
+        assert polygon_cumulative_after_second == 2 * STANDARD_ROI_EVENTS
+
+        # Rectangle should have only first period
+        rect_cumulative = sc.sum(result2['roi_cumulative_0']).value
+        assert rect_cumulative == STANDARD_ROI_EVENTS
+
+        # Only rectangle readback should be published (polygon unchanged)
+        assert 'roi_rectangle' in result2
+        assert 'roi_polygon' not in result2

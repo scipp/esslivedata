@@ -191,13 +191,19 @@ class TestROIHistogram:
         )
         assert roi_histogram.model == polygon_roi
 
-    def test_polygon_roi_with_pixel_indices_is_supported(
-        self, detector_indices: sc.DataArray
+    def test_polygon_roi_with_pixel_indices_filters_correctly(
+        self, detector_indices: sc.DataArray, make_grouped_events
     ) -> None:
-        """Test that PolygonROI with pixel indices (no units) is supported."""
+        """Test that PolygonROI with pixel indices (no units) filters events correctly.
+
+        The 4x4 detector has indices 0-3 in both x and y dimensions.
+        A polygon with vertices covering x=[0.5, 2.5] and y=[0.5, 2.5]
+        should include the center 2x2 pixels (indices 5, 6, 9, 10).
+        """
+        # Polygon covering center region using pixel indices
         polygon_roi = PolygonROI(
-            x=[5.0, 25.0, 25.0, 5.0],
-            y=[5.0, 5.0, 25.0, 25.0],
+            x=[0.5, 2.5, 2.5, 0.5],
+            y=[0.5, 0.5, 2.5, 2.5],
             x_unit=None,
             y_unit=None,
         )
@@ -207,7 +213,87 @@ class TestROIHistogram:
         roi_histogram = ROIHistogram(
             toa_edges=toa_edges, roi_filter=roi_filter, model=polygon_roi
         )
-        assert roi_histogram.model == polygon_roi
+
+        # Events at pixels: 0 (0,0), 5 (1,1), 10 (2,2), 15 (3,3)
+        # Pixels 5 and 10 are inside the polygon, 0 and 15 are outside
+        grouped = make_grouped_events(
+            [0, 5, 10, 15],
+            [100, 200, 300, 400],
+        )
+        roi_histogram.add_data(grouped)
+        delta = roi_histogram.get_delta()
+
+        # Only 2 events should be counted (pixels 5 and 10)
+        assert sc.sum(delta).value == 2
+
+    def test_polygon_roi_filters_events_correctly(
+        self,
+        detector_indices: sc.DataArray,
+        make_grouped_events,
+    ) -> None:
+        """Test that PolygonROI filters events to only include those inside polygon."""
+        # Polygon covering center region: vertices at (5,5), (25,5), (25,25), (5,25) mm
+        # This should include pixels at (10,10), (20,10), (10,20), (20,20) mm
+        # which are pixel indices 5, 6, 9, 10
+        polygon_roi = PolygonROI(
+            x=[5.0, 25.0, 25.0, 5.0],
+            y=[5.0, 5.0, 25.0, 25.0],
+            x_unit='mm',
+            y_unit='mm',
+        )
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+        roi_filter = ROIFilter(detector_indices)
+
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=polygon_roi
+        )
+
+        # Events at pixels: 0 (0,0), 5 (10,10), 10 (20,20), 15 (30,30)
+        # Only pixels 5 and 10 are inside the polygon
+        grouped = make_grouped_events(
+            [0, 5, 10, 15],
+            [100, 200, 300, 400],
+        )
+        roi_histogram.add_data(grouped)
+        delta = roi_histogram.get_delta()
+
+        # Only 2 events should be counted (pixels 5 and 10)
+        assert sc.sum(delta).value == 2
+
+    def test_polygon_roi_cumulative_accumulation(
+        self,
+        detector_indices: sc.DataArray,
+        make_grouped_events,
+    ) -> None:
+        """Test that PolygonROI correctly accumulates events over multiple periods."""
+        polygon_roi = PolygonROI(
+            x=[5.0, 25.0, 25.0, 5.0],
+            y=[5.0, 5.0, 25.0, 25.0],
+            x_unit='mm',
+            y_unit='mm',
+        )
+        toa_edges = sc.linspace('time_of_arrival', 0, 1000, num=11, unit='ns')
+        roi_filter = ROIFilter(detector_indices)
+
+        roi_histogram = ROIHistogram(
+            toa_edges=toa_edges, roi_filter=roi_filter, model=polygon_roi
+        )
+
+        # First period: 2 events inside polygon (pixels 5, 6)
+        grouped1 = make_grouped_events([5, 6], [100, 200])
+        roi_histogram.add_data(grouped1)
+        delta1 = roi_histogram.get_delta()
+
+        assert sc.sum(delta1).value == 2
+        assert sc.sum(roi_histogram.cumulative).value == 2
+
+        # Second period: 2 more events inside polygon (pixels 9, 10)
+        grouped2 = make_grouped_events([9, 10], [300, 400])
+        roi_histogram.add_data(grouped2)
+        delta2 = roi_histogram.get_delta()
+
+        assert sc.sum(delta2).value == 2
+        assert sc.sum(roi_histogram.cumulative).value == 4
 
     def test_ellipse_roi_raises_value_error(
         self, detector_indices: sc.DataArray

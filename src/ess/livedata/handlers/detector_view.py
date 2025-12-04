@@ -90,7 +90,7 @@ class DetectorView(Workflow):
         """
         # Check for ROI configuration updates (auxiliary data)
         # Keys are 'roi_rectangle', 'roi_polygon', etc. from DetectorROIAuxSources
-        roi_keys = ('roi_rectangle', 'roi_polygon')
+        roi_keys = self._roi_mapper.readback_keys
         for roi_key in roi_keys:
             if roi_key in data:
                 roi_data_array = data[roi_key]
@@ -227,7 +227,7 @@ class DetectorView(Workflow):
             geometry type is being updated.
         """
         # Determine the index range for this geometry type
-        geometry_type = geometry_key.replace('roi_', '')  # 'rectangle' or 'polygon'
+        geometry_type = geometry_key.removeprefix('roi_')  # 'rectangle' or 'polygon'
         geometry = next(
             (
                 g
