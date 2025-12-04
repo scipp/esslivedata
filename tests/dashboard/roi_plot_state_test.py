@@ -142,7 +142,7 @@ class TestROIPlotState:
         box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
 
         # Verify the callback was triggered by checking published ROIs
-        assert len(fake_publisher.published_rectangles) == 1
+        assert len(fake_publisher.published) == 1
 
     def test_publishes_valid_roi_on_box_edit(
         self, roi_plot_state, box_stream, fake_publisher
@@ -152,8 +152,8 @@ class TestROIPlotState:
         box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
 
         # Assert publisher was called
-        assert len(fake_publisher.published_rectangles) == 1
-        job_id, rect_rois_dict = fake_publisher.published_rectangles[0]
+        assert len(fake_publisher.published) == 1
+        job_id, rect_rois_dict, _ = fake_publisher.published[0]
 
         # Verify job_id
         assert job_id == roi_plot_state.result_key.job_id
@@ -176,7 +176,7 @@ class TestROIPlotState:
         box_stream.event(data={'x0': [1.0], 'x1': [1.0], 'y0': [2.0], 'y1': [6.0]})
 
         # Assert nothing was published (empty ROIs dict)
-        assert len(fake_publisher.published_rectangles) == 0
+        assert len(fake_publisher.published) == 0
 
     def test_does_not_republish_unchanged_rois(
         self, roi_plot_state, box_stream, fake_publisher
@@ -186,12 +186,12 @@ class TestROIPlotState:
 
         # First edit
         box_stream.event(data=box_data)
-        assert len(fake_publisher.published_rectangles) == 1
+        assert len(fake_publisher.published) == 1
 
         # Second edit with same data
         box_stream.event(data=box_data)
         # Should still be 1 (not called again)
-        assert len(fake_publisher.published_rectangles) == 1
+        assert len(fake_publisher.published) == 1
 
     def test_publishes_when_roi_changes(
         self, roi_plot_state, box_stream, fake_publisher
@@ -199,12 +199,12 @@ class TestROIPlotState:
         """Test that changed ROIs trigger republishing."""
         # First edit
         box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
-        assert len(fake_publisher.published_rectangles) == 1
+        assert len(fake_publisher.published) == 1
 
         # Second edit with different data
         box_stream.event(data={'x0': [2.0], 'x1': [6.0], 'y0': [3.0], 'y1': [7.0]})
         # Should be called again
-        assert len(fake_publisher.published_rectangles) == 2
+        assert len(fake_publisher.published) == 2
 
     def test_handles_multiple_rois(self, roi_plot_state, box_stream, fake_publisher):
         """Test publishing multiple ROIs."""
@@ -218,8 +218,8 @@ class TestROIPlotState:
         )
 
         # Assert publisher was called
-        assert len(fake_publisher.published_rectangles) == 1
-        _, rect_rois_dict = fake_publisher.published_rectangles[0]
+        assert len(fake_publisher.published) == 1
+        _, rect_rois_dict, _ = fake_publisher.published[0]
 
         # Verify both ROIs
         assert len(rect_rois_dict) == 2
@@ -240,28 +240,28 @@ class TestROIPlotState:
         """Test handling of empty box data."""
         # First create some ROIs
         box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
-        assert len(fake_publisher.published_rectangles) == 1
+        assert len(fake_publisher.published) == 1
 
         # Now send empty data (clearing ROIs)
         box_stream.event(data={})
 
         # Should publish empty ROI dict (because it changed from non-empty to empty)
-        assert len(fake_publisher.published_rectangles) == 2
-        _, rect_rois_dict = fake_publisher.published_rectangles[1]
+        assert len(fake_publisher.published) == 2
+        _, rect_rois_dict, _ = fake_publisher.published[1]
         assert len(rect_rois_dict) == 0
 
     def test_handles_none_box_data(self, roi_plot_state, box_stream, fake_publisher):
         """Test handling of None box data."""
         # First create some ROIs
         box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
-        assert len(fake_publisher.published_rectangles) == 1
+        assert len(fake_publisher.published) == 1
 
         # Now send None data (clearing ROIs)
         box_stream.event(data=None)
 
         # Should publish empty ROI dict (because it changed from non-empty to empty)
-        assert len(fake_publisher.published_rectangles) == 2
-        _, rect_rois_dict = fake_publisher.published_rectangles[1]
+        assert len(fake_publisher.published) == 2
+        _, rect_rois_dict, _ = fake_publisher.published[1]
         assert len(rect_rois_dict) == 0
 
     def test_is_roi_active(self, roi_plot_state, box_stream, result_key):
@@ -334,7 +334,7 @@ class TestROIPlotState:
         box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
 
         # Should publish ROI
-        assert len(fake_publisher.published_rectangles) == 1
+        assert len(fake_publisher.published) == 1
 
     def test_no_publishing_when_publisher_is_none(self, result_key):
         """Test that ROI state works correctly when publisher is None."""
@@ -395,10 +395,7 @@ class TestROIPlotState:
         class FailingPublisher:
             """Publisher that raises an error."""
 
-            def publish_rectangles(self, job_id, rois):
-                raise RuntimeError("Test error")
-
-            def publish_polygons(self, job_id, rois):
+            def publish(self, job_id, rois, roi_class):
                 raise RuntimeError("Test error")
 
         rect_readback_pipe = hv.streams.Pipe(data=[])

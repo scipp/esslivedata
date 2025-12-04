@@ -318,8 +318,8 @@ def test_roi_detector_plot_publishes_roi_on_box_edit(
     box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
 
     # Check that ROI was published
-    assert len(fake_publisher.published_rectangles) == 1
-    published_job_id, rect_rois_dict = fake_publisher.published_rectangles[0]
+    assert len(fake_publisher.published) == 1
+    published_job_id, rect_rois_dict, _ = fake_publisher.published[0]
     assert published_job_id.job_number == job_number
     assert published_job_id.source_name == 'detector_data'
     assert len(rect_rois_dict) == 1
@@ -371,15 +371,15 @@ def test_roi_detector_plot_only_publishes_changed_rois(
 
     # First box edit
     box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
-    assert len(fake_publisher.published_rectangles) == 1
+    assert len(fake_publisher.published) == 1
 
     # Trigger same box again - should not publish duplicate
     box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
-    assert len(fake_publisher.published_rectangles) == 1  # Still 1
+    assert len(fake_publisher.published) == 1  # Still 1
 
     # Change the box - should publish
     box_stream.event(data={'x0': [2.0], 'x1': [6.0], 'y0': [3.0], 'y1': [7.0]})
-    assert len(fake_publisher.published_rectangles) == 2
+    assert len(fake_publisher.published) == 2
 
 
 def test_roi_detector_plot_without_publisher_does_not_crash(
@@ -733,8 +733,8 @@ def test_stale_readback_filtering(
     )
 
     # Verify ROI B was published and request state updated
-    assert len(roi_plot_factory._roi_publisher.published_rectangles) == 1
-    assert roi_plot_factory._roi_publisher.published_rectangles[0][1] == roi_b
+    assert len(roi_plot_factory._roi_publisher.published) == 1
+    assert roi_plot_factory._roi_publisher.published[0][1] == roi_b
     assert plot_state._rect_handler.request_rois == roi_b
 
     # Simulate user dragging to position C (rapid change)

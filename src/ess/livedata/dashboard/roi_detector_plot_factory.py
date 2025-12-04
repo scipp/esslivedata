@@ -645,16 +645,11 @@ class ROIPlotState:
         if not self._roi_publisher:
             return
 
-        if handler.geometry_type == "rectangle":
-            self._roi_publisher.publish_rectangles(
-                self.result_key.job_id,
-                handler.request_rois,
-            )
-        else:
-            self._roi_publisher.publish_polygons(
-                self.result_key.job_id,
-                handler.request_rois,
-            )
+        self._roi_publisher.publish(
+            self.result_key.job_id,
+            handler.request_rois,
+            handler.roi_type,
+        )
         self._logger.info(
             "Published %d %s ROI(s) for job %s",
             len(handler.request_rois),
