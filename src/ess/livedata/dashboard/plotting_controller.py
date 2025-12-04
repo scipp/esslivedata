@@ -241,20 +241,18 @@ class PlottingController:
             # pipe is dict[ResultKey, Pipe]
             pipes_dict = pipe
 
-            plot_components = []
-            for key, detector_pipe in pipes_dict.items():
-                # Create ROI detector components with isolated pipe
-                factory = self._roi_detector_plot_factory
-                components = factory.create_roi_detector_plot_components(
-                    detector_key=key, params=params, detector_pipe=detector_pipe
-                )
-                plot_components.append(components)
-
-            # Flatten detector and spectrum plots into a layout with 2 columns
             plots = []
-            for detector_with_boxes, roi_spectrum, _plot_state in plot_components:
-                plots.extend([detector_with_boxes, roi_spectrum])
-            return hv.Layout(plots).cols(2).opts(shared_axes=False)
+            for key, detector_pipe in pipes_dict.items():
+                # Create ROI detector plot with ROI overlays
+                factory = self._roi_detector_plot_factory
+                detector_with_rois, _plot_state = (
+                    factory.create_roi_detector_plot_components(
+                        detector_key=key, params=params, detector_pipe=detector_pipe
+                    )
+                )
+                plots.append(detector_with_rois)
+
+            return hv.Layout(plots).opts(shared_axes=False)
 
         plotter = plotter_registry.create_plotter(plot_name, params=params)
 

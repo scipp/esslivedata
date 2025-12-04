@@ -12,7 +12,6 @@ import logging
 import uuid
 
 import holoviews as hv
-import param
 import pytest
 
 from ess.livedata.config.models import Interval, RectangleROI
@@ -89,12 +88,6 @@ def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
     poly_request_pipe = hv.streams.Pipe(data=[])
     poly_readback_pipe = hv.streams.Pipe(data=[])
 
-    # Create ROI state stream for tracking active ROIs
-    class ROIStateStream(hv.streams.Stream):
-        active_rois = param.Parameter(default=set(), doc="Set of active ROI indices")
-
-    roi_state_stream = ROIStateStream()
-
     return ROIPlotState(
         result_key=result_key,
         box_stream=box_stream,
@@ -103,7 +96,6 @@ def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
         poly_stream=poly_stream,
         poly_request_pipe=poly_request_pipe,
         poly_readback_pipe=poly_readback_pipe,
-        roi_state_stream=roi_state_stream,
         x_unit='m',
         y_unit='m',
         roi_publisher=fake_publisher,

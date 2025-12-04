@@ -243,7 +243,7 @@ class TestROIDetectorTwoPhaseCreation:
         )
 
         assert isinstance(result, hv.Layout)
-        assert len(result) == 2  # detector + spectrum
+        assert len(result) == 1  # detector only (spectrum created separately)
 
     def test_create_plot_from_pipeline_roi_multiple_detectors(
         self,
@@ -296,8 +296,8 @@ class TestROIDetectorTwoPhaseCreation:
         )
 
         assert isinstance(result, hv.Layout)
-        # 2 detectors x 2 components (detector + spectrum) = 4
-        assert len(result) == 4
+        # 2 detectors (spectrum created separately)
+        assert len(result) == 2
 
     def test_create_plot_from_pipeline_roi_validates_params_type(
         self,
