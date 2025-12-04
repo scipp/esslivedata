@@ -278,7 +278,7 @@ scipp==25.11.0
     #   scippneutron
     #   scippnexus
     #   tof
-scippneutron==25.11.0
+scippneutron==25.11.1
     # via
     #   -r basetest.in
     #   essdiffraction

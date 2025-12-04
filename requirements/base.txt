@@ -103,7 +103,7 @@ scipp==25.11.0
     #   essreduce
     #   scippneutron
     #   scippnexus
-scippneutron==25.11.0
+scippneutron==25.11.1
     # via
     #   -r base.in
     #   essreduce

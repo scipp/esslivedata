@@ -37,7 +37,7 @@ dependencies = [
   "jinja2",
   "pydantic>=2",
   "scipp>=25.02.0",  # Improved performance of scipp.group
-  "scippneutron>=25.07.0",  # For DREAM unit conversion fixes
+  "scippneutron>=25.11.1",  # For DREAM unit conversion fixes
   "pooch",
 ]
 
