@@ -8,7 +8,7 @@ Replace the current approach of publishing individual ROI spectrum messages (`ro
 
 1. **Phase 1** ✅ COMPLETE: Add new 2D stacked outputs (backend) - keep old individual outputs
 2. **Phase 2** ✅ COMPLETE: Implement new frontend plotter consuming 2D outputs
-3. **Phase 3**: Remove old individual outputs and cleanup
+3. **Phase 3** ✅ COMPLETE: Remove old individual outputs and cleanup
 
 ---
 
@@ -110,19 +110,34 @@ New test class `TestOverlay1DPlotter` in `plots_test.py` covering:
 
 ---
 
-## Phase 3: Cleanup - Remove Old Individual Outputs
+## Phase 3: Cleanup - Remove Old Individual Outputs ✅ COMPLETE
 
-Once Phase 2 is verified working:
+### Changes Made
 
-1. **Backend**: Remove individual ROI output generation from `finalize()`
-2. **`roi_names.py`**: Remove `current_key()`, `cumulative_key()`, `all_histogram_keys()` methods
-3. **Frontend**: Remove spectrum overlay from `ROIDetectorPlotFactory` (now handled by standalone plotter)
-4. **Tests**: Update to remove individual output tests
+1. **Backend**: Removed individual ROI output generation from `DetectorView.finalize()`
+   - No longer produces `roi_current_N` and `roi_cumulative_N` keys
+   - Only stacked outputs (`roi_spectra_current`, `roi_spectra_cumulative`) are published
 
-### Breaking Changes (Phase 3 only)
+2. **`roi_names.py`**: Removed deprecated methods:
+   - `current_key()`
+   - `cumulative_key()`
+   - `all_current_keys()`
+   - `all_cumulative_keys()`
+   - `all_histogram_keys()`
+   - `parse_roi_index()`
+   - `_roi_index_pattern` regex
 
-- Output keys `roi_current_0`, `roi_cumulative_0`, etc. will no longer be published
-- External consumers must switch to `roi_spectra_current`/`roi_spectra_cumulative`
+3. **Frontend**: Spectrum overlay was already removed from `ROIDetectorPlotFactory` in Phase 2
+   (now handled by `Overlay1DPlotter`)
+
+4. **Tests**: Updated all tests to use stacked outputs:
+   - `roi_names_test.py`: Removed tests for deprecated methods
+   - `detector_view_test.py`: Updated helper functions and 40+ test assertions to use stacked outputs
+
+### Breaking Changes
+
+- Output keys `roi_current_0`, `roi_cumulative_0`, etc. are no longer published
+- External consumers must use `roi_spectra_current`/`roi_spectra_cumulative` instead
 
 ---
 
@@ -149,6 +164,6 @@ The `roi_rectangle` and `roi_polygon` fields require their `title` to match the 
 |-------|------------------|---------------------|
 | Phase 1 ✅ | None | Yes - old outputs still published |
 | Phase 2 ✅ | None | Yes - new plotter available, old outputs still work |
-| Phase 3 | Yes | No - old outputs removed |
+| Phase 3 ✅ | Yes | No - old outputs removed |
 
-Recommended deployment: Phase 1 + Phase 2 together, then Phase 3 as separate release.
+All phases complete. The stacked ROI spectra implementation is now the only output format.

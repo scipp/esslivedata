@@ -154,14 +154,6 @@ class DetectorView(Workflow):
             roi_state = self._rois[idx]
             roi_delta = roi_state.get_delta()
 
-            # Individual ROI outputs (kept for backward compatibility)
-            roi_result[self._roi_mapper.current_key(idx)] = roi_delta.assign_coords(
-                time=time_coord
-            )
-            roi_result[self._roi_mapper.cumulative_key(idx)] = (
-                roi_state.cumulative.copy()
-            )
-
             # Collect for stacking
             current_spectra.append(roi_delta)
             cumulative_spectra.append(roi_state.cumulative.copy())
