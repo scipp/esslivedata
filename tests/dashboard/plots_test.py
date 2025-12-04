@@ -1091,3 +1091,37 @@ class TestOverlay1DPlotter:
         # Should be Curve elements, not Histogram
         for elem in result:
             assert isinstance(elem, hv.Curve), f"Expected Curve, got {type(elem)}"
+
+    def test_sizing_opts_applied_to_curves(self, data_2d_with_roi_coord, data_key):
+        """Test that sizing options (aspect) are applied to individual curves."""
+        from ess.livedata.dashboard.plot_params import PlotAspect, PlotAspectType
+
+        # Create plotter with non-default aspect
+        params = PlotParams1d()
+        params.plot_aspect = PlotAspect(aspect_type=PlotAspectType.square)
+        plotter = plots.Overlay1DPlotter.from_params(params)
+
+        result = plotter.plot(data_2d_with_roi_coord, data_key)
+
+        # Check that sizing opts are applied to each curve
+        for curve in result:
+            opts = hv.Store.lookup_options('bokeh', curve, 'plot').kwargs
+            assert opts.get('aspect') == 'square'
+
+    def test_free_aspect_applies_responsive_only(
+        self, data_2d_with_roi_coord, data_key
+    ):
+        """Test that 'free' aspect applies responsive=True without aspect constraint."""
+        from ess.livedata.dashboard.plot_params import PlotAspect, PlotAspectType
+
+        params = PlotParams1d()
+        params.plot_aspect = PlotAspect(aspect_type=PlotAspectType.free)
+        plotter = plots.Overlay1DPlotter.from_params(params)
+
+        result = plotter.plot(data_2d_with_roi_coord, data_key)
+
+        # Check that responsive is set but no aspect constraint
+        for curve in result:
+            opts = hv.Store.lookup_options('bokeh', curve, 'plot').kwargs
+            assert opts.get('responsive') is True
+            assert 'aspect' not in opts or opts.get('aspect') is None

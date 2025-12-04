@@ -621,7 +621,9 @@ class Overlay1DPlotter(Plotter):
 
             # Label by coordinate value
             label = f"{slice_dim}={coord_val}"
-            curve = curve.relabel(label).opts(color=color, **self._base_opts)
+            curve = curve.relabel(label).opts(
+                color=color, **self._base_opts, **self._sizing_opts
+            )
             curves.append(curve)
 
         if len(curves) == 1:
