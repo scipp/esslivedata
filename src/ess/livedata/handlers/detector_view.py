@@ -144,15 +144,65 @@ class DetectorView(Workflow):
         view_result = dict(result * self._inv_weights if self._use_weights else result)
 
         roi_result = {}
-        for idx, roi_state in self._rois.items():
+
+        # Collect ROI spectra for stacking (sorted by index for color mapping)
+        sorted_indices = sorted(self._rois.keys())
+        current_spectra = []
+        cumulative_spectra = []
+
+        for idx in sorted_indices:
+            roi_state = self._rois[idx]
             roi_delta = roi_state.get_delta()
 
-            # Add time coord to ROI current result
+            # Individual ROI outputs (kept for backward compatibility)
             roi_result[self._roi_mapper.current_key(idx)] = roi_delta.assign_coords(
                 time=time_coord
             )
             roi_result[self._roi_mapper.cumulative_key(idx)] = (
                 roi_state.cumulative.copy()
+            )
+
+            # Collect for stacking
+            current_spectra.append(roi_delta)
+            cumulative_spectra.append(roi_state.cumulative.copy())
+
+        # Build stacked 2D outputs
+        if sorted_indices:
+            roi_index_coord = sc.array(
+                dims=['roi'], values=sorted_indices, unit=None, dtype='int64'
+            )
+
+            roi_result['roi_spectra_current'] = sc.concat(
+                current_spectra, dim='roi'
+            ).assign_coords(roi_index=roi_index_coord, time=time_coord)
+
+            roi_result['roi_spectra_cumulative'] = sc.concat(
+                cumulative_spectra, dim='roi'
+            ).assign_coords(roi_index=roi_index_coord)
+        else:
+            # Empty arrays when no ROIs active
+            roi_result['roi_spectra_current'] = sc.DataArray(
+                sc.zeros(
+                    dims=['roi', 'time_of_arrival'],
+                    shape=[0, len(self._toa_edges) - 1],
+                    unit='counts',
+                ),
+                coords={
+                    'roi_index': sc.array(dims=['roi'], values=[], unit=None),
+                    'time_of_arrival': self._toa_edges,
+                    'time': time_coord,
+                },
+            )
+            roi_result['roi_spectra_cumulative'] = sc.DataArray(
+                sc.zeros(
+                    dims=['roi', 'time_of_arrival'],
+                    shape=[0, len(self._toa_edges) - 1],
+                    unit='counts',
+                ),
+                coords={
+                    'roi_index': sc.array(dims=['roi'], values=[], unit=None),
+                    'time_of_arrival': self._toa_edges,
+                },
             )
 
         # Publish ROI readbacks for each geometry type that was updated.

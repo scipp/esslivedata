@@ -72,6 +72,43 @@ class DetectorViewOutputs(WorkflowOutputsBase):
         description='Number of detector events within the configured TOA range filter.',
     )
 
+    # Stacked ROI spectra outputs (2D: roi x time_of_arrival)
+    roi_spectra_current: sc.DataArray = pydantic.Field(
+        title='ROI Spectra (Current)',
+        description='Time-of-arrival spectra for active ROIs in current time window. '
+        'Stacked 2D array with roi_index coordinate identifying each ROI.',
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
+            coords={'roi_index': sc.array(dims=['roi'], values=[], unit=None)},
+        ),
+    )
+    roi_spectra_cumulative: sc.DataArray = pydantic.Field(
+        title='ROI Spectra (Cumulative)',
+        description='Cumulative time-of-arrival spectra for active ROIs. '
+        'Stacked 2D array with roi_index coordinate identifying each ROI.',
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
+            coords={'roi_index': sc.array(dims=['roi'], values=[], unit=None)},
+        ),
+    )
+
+    # ROI geometry readbacks
+    # NOTE: The title MUST match the DataArray.name produced by
+    # to_concatenated_data_array because job_manager.py overwrites DataArray.name
+    # with the field title. The ROI parser relies on the name to determine the
+    # ROI type. This coupling between title and serialization format is fragile
+    # and should be addressed in the future.
+    roi_rectangle: sc.DataArray = pydantic.Field(
+        title='rectangles',
+        description='Current rectangle ROI geometries confirmed by backend.',
+        default_factory=lambda: models.RectangleROI.to_concatenated_data_array({}),
+    )
+    roi_polygon: sc.DataArray = pydantic.Field(
+        title='polygons',
+        description='Current polygon ROI geometries confirmed by backend.',
+        default_factory=lambda: models.PolygonROI.to_concatenated_data_array({}),
+    )
+
 
 class DetectorROIAuxSources(AuxSourcesBase):
     """
