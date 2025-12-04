@@ -722,7 +722,7 @@ class ROIPlotState:
             # Sync request layer to match backend if needed
             # TODO: Backend sync is disabled - causes issues in multi-session case.
             if request_needs_sync:
-                handler.update_request(backend_rois, self._colors)
+                handler.update_request(backend_rois, colors=None)
                 handler.sync_stream_from_rois(backend_rois)
 
             self._logger.info(
@@ -1039,7 +1039,7 @@ class ROIDetectorPlotFactory:
             return hv.Rectangles(data, vdims=['color']).opts(color='color')
 
         def make_request_boxes(data: list):
-            return hv.Rectangles(data, vdims=['color']).opts(color='color')
+            return hv.Rectangles(data)
 
         rect_readback_dmap = hv.DynamicMap(
             make_readback_boxes, streams=[rect_readback_pipe]
@@ -1067,7 +1067,7 @@ class ROIDetectorPlotFactory:
         def make_request_polygons(data: list):
             if not data:
                 return hv.Polygons([])
-            return hv.Polygons(data, vdims=['color']).opts(color='color')
+            return hv.Polygons(data)
 
         poly_readback_dmap = hv.DynamicMap(
             make_readback_polygons, streams=[poly_readback_pipe]
@@ -1144,7 +1144,8 @@ class ROIDetectorPlotFactory:
             fill_alpha=0.3, line_width=2, line_dash='solid'
         )
         rect_request_styled = rect_request_dmap.opts(
-            fill_alpha=0.3,
+            color='gray',
+            fill_alpha=0,
             line_width=2,
             line_dash='dashed',
             # Bokeh bug: line_dash='dashed' doesn't render with WebGL backend
@@ -1154,7 +1155,8 @@ class ROIDetectorPlotFactory:
             fill_alpha=0.3, line_width=2, line_dash='solid'
         )
         poly_request_styled = poly_request_dmap.opts(
-            fill_alpha=0.3,
+            color='gray',
+            fill_alpha=0,
             line_width=2,
             line_dash='dashed',
             backend_opts={'plot.output_backend': 'canvas'},
