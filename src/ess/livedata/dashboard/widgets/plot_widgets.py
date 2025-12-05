@@ -155,10 +155,35 @@ def create_gear_button(on_gear_callback: Callable[[], None]) -> pn.widgets.Butto
     )
 
 
+def create_add_layer_button(
+    on_add_layer_callback: Callable[[], None],
+) -> pn.widgets.Button:
+    """
+    Create a styled button for adding a layer to a plot cell.
+
+    Parameters
+    ----------
+    on_add_layer_callback:
+        Callback function to invoke when the button is clicked.
+
+    Returns
+    -------
+    :
+        Panel Button widget styled as an add layer button.
+    """
+    return create_tool_button(
+        symbol='\u002b',  # Plus sign
+        button_color='#28a745',  # Green color for add action
+        hover_color='rgba(40, 167, 69, 0.1)',
+        on_click_callback=on_add_layer_callback,
+    )
+
+
 def create_cell_toolbar(
     *,
     on_gear_callback: Callable[[], None],
     on_close_callback: Callable[[], None],
+    on_add_layer_callback: Callable[[], None] | None = None,
     title: str | None = None,
     description: str | None = None,
 ) -> pn.Row:
@@ -175,6 +200,9 @@ def create_cell_toolbar(
         Callback function to invoke when the gear button is clicked.
     on_close_callback:
         Callback function to invoke when the close button is clicked.
+    on_add_layer_callback:
+        Optional callback for adding a layer. If provided, an add-layer
+        button is shown in the toolbar.
     title:
         Optional title text to display on the left side of the toolbar.
     description:
@@ -215,12 +243,17 @@ def create_cell_toolbar(
             )
             left_items.append(tooltip_icon)
 
+    # Build right content: optional add-layer button, gear, close
+    right_items: list = []
+    if on_add_layer_callback is not None:
+        right_items.append(create_add_layer_button(on_add_layer_callback))
+    right_items.extend([gear_button, close_button])
+
     margin = ButtonStyles.CELL_MARGIN
     return pn.Row(
         *left_items,
         pn.Spacer(sizing_mode='stretch_width'),
-        gear_button,
-        close_button,
+        *right_items,
         sizing_mode='stretch_width',
         height=ButtonStyles.TOOL_BUTTON_SIZE,
         margin=(margin, margin, 0, margin),

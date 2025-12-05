@@ -336,6 +336,68 @@ Once Phase 1 is validated in production, extend to interactive layers.
 6. **Enables new features**: Multi-spectrum, reference curves, annotations
 7. **Correct by construction**: Layer model produces working DynamicMap composition
 
+## Implementation Status
+
+### Phase 1 Complete
+
+Phase 1 has been fully implemented with UI integration.
+
+#### Core Infrastructure (`src/ess/livedata/dashboard/plot_composer.py`)
+
+**Data Sources:**
+- `DataSource` protocol defining the interface
+- `PipelineSource` - wraps workflow subscription (workflow_id, job_number, source_names)
+- `StaticSource` - fixed data provided directly (e.g., peak positions)
+
+**Layer Configuration:**
+- `LayerConfig` - frozen dataclass specifying name, element type, source, and params
+
+**Element Factories:**
+- `ElementFactory` base class for creating HoloViews elements
+- `VLinesFactory` - vertical lines for peak markers
+- `HLinesFactory` - horizontal lines for thresholds
+
+**PlotComposer:**
+- `add_pipeline_layer()` - adds layers with pipeline data sources
+- `add_static_layer()` - adds layers with static data
+- `remove_layer()` - removes layers by name
+- `update_static_layer()` - updates static layer data
+- `get_composition()` - returns composed DynamicMap via `*` operator
+- Proper handling of DynamicMap truthiness (explicit `is not None` checks)
+- Closure capture pattern for Panel session safety
+
+#### PlotCell Extension (`src/ess/livedata/dashboard/plot_orchestrator.py`)
+
+- `PlotCell` now has `additional_layers: list[PlotConfig]` field
+- Primary layer remains in `config` for backward compatibility
+- New methods: `add_layer()`, `remove_layer()`, `get_layer_count()`, `get_all_layers()`
+- Serialization/deserialization updated to persist additional layers
+- `_on_job_available()` routes to single-layer or multi-layer pipeline setup
+
+#### PlottingController Integration (`src/ess/livedata/dashboard/plotting_controller.py`)
+
+- `setup_multi_layer_pipeline()` - sets up pipelines for all layers, waits for all to be ready
+- `_compose_layers()` - composes multiple DynamicMaps via `*` operator
+- Each layer creates its own plotter and DynamicMap
+- Composed result wrapped in `hv.Layout` with `shared_axes=False`
+
+#### UI Integration (`src/ess/livedata/dashboard/widgets/`)
+
+**plot_widgets.py:**
+- `create_add_layer_button()` - green "+" button for adding layers
+
+**plot_grid_tabs.py:**
+- Add layer button shown on all plot cells (status and plot widgets)
+- `_on_add_layer()` handler shows config modal for new layer
+- Reuses existing `PlotConfigModal` for layer configuration
+
+#### Tests
+
+- `tests/dashboard/plot_composer_test.py` - 27 tests for core composition
+- All 671 existing dashboard tests continue to pass
+
+The existing `roi_detector` plotter continues to work unchanged until Phase 2.
+
 ## Open Questions
 
 1. **Layer ordering in UI**: Should users be able to reorder layers? Does visual order matter?

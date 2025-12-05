@@ -266,3 +266,116 @@ class PlottingController:
         # separate plots while preserving framewise autoscaling within overlays.
         # Setting shared_axes=False directly on DynamicMap breaks framewise.
         return hv.Layout([dmap]).opts(shared_axes=False)
+
+    def setup_multi_layer_pipeline(
+        self,
+        job_number: JobNumber,
+        layer_configs: list[tuple[WorkflowId, list[str], str | None, str, Any]],
+        on_all_layers_ready: Callable[[hv.DynamicMap | hv.Overlay], None],
+    ) -> None:
+        """
+        Set up data pipelines for multiple layers with callback when all are ready.
+
+        This sets up data subscribers for each layer. When all layers have received
+        data, the composed plot is created and the callback is invoked.
+
+        Parameters
+        ----------
+        job_number:
+            The job number for all layer subscriptions.
+        layer_configs:
+            List of layer configurations as tuples:
+            (workflow_id, source_names, output_name, plot_name, params)
+        on_all_layers_ready:
+            Callback invoked when all layers have data, receives composed plot.
+        """
+        if not layer_configs:
+            self._logger.warning("No layer configs provided for multi-layer pipeline")
+            return
+
+        # Track which layers are ready
+        layer_count = len(layer_configs)
+        ready_layers: dict[int, hv.streams.Pipe] = {}
+
+        def make_layer_callback(
+            layer_idx: int, plot_name: str, params: Any
+        ) -> Callable[[Any], None]:
+            """Create callback for individual layer readiness."""
+
+            def on_layer_ready(pipe: Any) -> None:
+                ready_layers[layer_idx] = pipe
+
+                if len(ready_layers) == layer_count:
+                    # All layers ready - compose and invoke callback
+                    composed = self._compose_layers(ready_layers, layer_configs)
+                    on_all_layers_ready(composed)
+
+            return on_layer_ready
+
+        # Set up pipeline for each layer
+        for idx, (
+            workflow_id,
+            source_names,
+            output_name,
+            plot_name,
+            params,
+        ) in enumerate(layer_configs):
+            self.setup_data_pipeline(
+                job_number=job_number,
+                workflow_id=workflow_id,
+                source_names=source_names,
+                output_name=output_name,
+                plot_name=plot_name,
+                params=params,
+                on_first_data=make_layer_callback(idx, plot_name, params),
+            )
+
+    def _compose_layers(
+        self,
+        pipes: dict[int, hv.streams.Pipe],
+        layer_configs: list[tuple[WorkflowId, list[str], str | None, str, Any]],
+    ) -> hv.DynamicMap | hv.Overlay:
+        """
+        Compose multiple layer pipes into a single overlay.
+
+        Parameters
+        ----------
+        pipes:
+            Dictionary mapping layer index to pipe with data.
+        layer_configs:
+            Layer configurations in same order as indices.
+
+        Returns
+        -------
+        :
+            Composed overlay of all layer DynamicMaps.
+        """
+        dmaps: list[hv.DynamicMap] = []
+
+        for idx, (
+            _workflow_id,
+            _source_names,
+            _output_name,
+            plot_name,
+            params,
+        ) in enumerate(layer_configs):
+            pipe = pipes[idx]
+
+            # Create plotter and DynamicMap for this layer
+            plotter = plotter_registry.create_plotter(plot_name, params=params)
+            plotter.initialize_from_data(pipe.data)
+
+            dmap = hv.DynamicMap(
+                plotter, streams=[pipe], kdims=plotter.kdims, cache_size=1
+            )
+            dmaps.append(dmap)
+
+        if len(dmaps) == 1:
+            return hv.Layout([dmaps[0]]).opts(shared_axes=False)
+
+        # Compose via * operator
+        composed = dmaps[0]
+        for dmap in dmaps[1:]:
+            composed = composed * dmap
+
+        return hv.Layout([composed]).opts(shared_axes=False)
