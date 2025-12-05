@@ -224,6 +224,23 @@ All services use `OrchestratingProcessor` for job-based processing. See [src/ess
 - Test files follow pattern `*_test.py`
 - Tests use `pytest` with `--import-mode=importlib`
 
+### Slow Tests
+
+Tests marked with `@pytest.mark.slow` are excluded by default when running `pytest` directly:
+
+```sh
+# Default: runs fast tests only (~25s)
+python -m pytest
+
+# Include slow tests (~85s total)
+python -m pytest -m "not integration"
+
+# Run only slow tests
+python -m pytest -m slow
+```
+
+Slow tests are automatically included when running via `tox` (CI). The slow marker is applied to tests taking >2s, primarily Bifrost and LOKI data reduction workflow tests.
+
 ## Code Style Conventions
 
 - **Formatting**: Enforced by `ruff` (no manual conventions)
