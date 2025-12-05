@@ -590,7 +590,7 @@ class Overlay1DPlotter(Plotter):
 
         Slices along the first dimension and creates a curve for each slice.
         """
-        del data_key, kwargs  # Unused
+        del kwargs  # Unused
         if data.ndim != 2:
             raise ValueError(f"Expected 2D data, got {data.ndim}D")
 
@@ -599,6 +599,9 @@ class Overlay1DPlotter(Plotter):
 
         if slice_size == 0:
             return hv.Curve([]).opts(**self._base_opts)
+
+        # Update autoscaler with full 2D data to establish global bounds
+        framewise = self._update_autoscaler_and_get_framewise(data, data_key)
 
         # Get coordinate values for labels and colors
         if slice_dim in data.coords:
@@ -622,10 +625,10 @@ class Overlay1DPlotter(Plotter):
             # Label by coordinate value
             label = f"{slice_dim}={coord_val}"
             curve = curve.relabel(label).opts(
-                color=color, **self._base_opts, **self._sizing_opts
+                color=color, framewise=framewise, **self._base_opts, **self._sizing_opts
             )
             curves.append(curve)
 
         if len(curves) == 1:
             return curves[0]
-        return hv.Overlay(curves)
+        return hv.Overlay(curves).opts(shared_axes=True)
