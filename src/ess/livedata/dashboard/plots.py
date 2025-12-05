@@ -97,7 +97,9 @@ class Plotter(ABC):
         }
 
     @staticmethod
-    def _convert_histogram_to_curve_data(data: sc.DataArray) -> sc.DataArray:
+    def _convert_bin_edges_to_midpoints(
+        data: sc.DataArray, dim: str | None = None
+    ) -> sc.DataArray:
         """
         Convert bin-edge coordinates to midpoints for curve plotting.
 
@@ -107,14 +109,17 @@ class Plotter(ABC):
         Parameters
         ----------
         data:
-            1D DataArray that may have bin-edge coordinates.
+            DataArray that may have bin-edge coordinates.
+        dim:
+            Dimension to convert. If None, uses the single dimension of 1D data.
 
         Returns
         -------
         :
             DataArray with midpoint coordinates if edges were present.
         """
-        dim = data.dim
+        if dim is None:
+            dim = data.dim
         if dim in data.coords and data.coords.is_edges(dim):
             return data.assign_coords({dim: sc.midpoints(data.coords[dim])})
         return data
@@ -269,7 +274,7 @@ class LinePlotter(Plotter):
 
     def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Curve:
         """Create a line plot from a scipp DataArray."""
-        da = self._convert_histogram_to_curve_data(data)
+        da = self._convert_bin_edges_to_midpoints(data)
         framewise = self._update_autoscaler_and_get_framewise(da, data_key)
 
         curve = to_holoviews(da)
@@ -609,13 +614,14 @@ class Overlay1DPlotter(Plotter):
         else:
             coord_values = np.arange(slice_size)
 
+        # Pre-convert bin-edge coords to midpoints (shared across all slices)
+        data = self._convert_bin_edges_to_midpoints(data, dim=data.dims[1])
+
         curves: list[hv.Element] = []
         for i in range(slice_size):
             slice_data = data[slice_dim, i]
             coord_val = coord_values[i]
 
-            # Convert to curve (handles bin-edge coords)
-            slice_data = self._convert_histogram_to_curve_data(slice_data)
             curve = to_holoviews(slice_data)
 
             # Assign color by coordinate value for stable identity

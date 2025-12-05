@@ -167,9 +167,7 @@ def convert_image_2d(data: sc.DataArray) -> hv.Image:
         )
     else:
         return hv.Image(
-            data=(x_coords, y_coords, data.values),
-            kdims=kdims,
-            vdims=vdims,
+            data=(x_coords, y_coords, data.values), kdims=kdims, vdims=vdims
         )
 
 
