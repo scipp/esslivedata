@@ -92,7 +92,7 @@ addopts = """
 --strict-markers
 --import-mode=importlib
 --benchmark-skip
--m "not integration"
+-m "not integration and not slow"
 -ra
 -v
 """
@@ -101,6 +101,7 @@ markers = [
   "integration: Integration tests requiring Kafka and running services",
   "instrument: Specify instrument name for parameterized tests",
   "services: Specify which services to use in integration_env fixture (monitor, detector, or reduction)",
+  "slow: Slow tests (>2s) excluded by default, run in CI via tox",
 ]
 filterwarnings = [
   "error",

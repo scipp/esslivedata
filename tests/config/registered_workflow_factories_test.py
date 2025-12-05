@@ -23,6 +23,21 @@ from ess.livedata.dashboard.workflow_configuration_adapter import (
 )
 
 
+def _is_slow_workflow(workflow_id):
+    """Check if a workflow is known to be slow (>2s)."""
+    # Bifrost data reduction workflows are slow due to complex spectroscopy setup
+    if (
+        workflow_id.instrument == 'bifrost'
+        and workflow_id.namespace == 'data_reduction'
+    ):
+        return True
+    # LOKI i_of_q workflows are slow due to SANS reduction complexity
+    if workflow_id.instrument == 'loki' and workflow_id.namespace == 'data_reduction':
+        if workflow_id.name.startswith('i_of_q'):
+            return True
+    return False
+
+
 def _collect_workflow_factories():
     """Collect workflows WITH factories loaded (slower).
 
@@ -34,12 +49,13 @@ def _collect_workflow_factories():
         _ = get_config(instrument_name)  # Register instrument
         instrument = instrument_registry[instrument_name]
         instrument.load_factories()
-        workflows.extend(
-            [
-                pytest.param(instrument_name, workflow_id, id=str(workflow_id))
-                for workflow_id in instrument.workflow_factory
-            ]
-        )
+        for workflow_id in instrument.workflow_factory:
+            marks = [pytest.mark.slow] if _is_slow_workflow(workflow_id) else []
+            workflows.append(
+                pytest.param(
+                    instrument_name, workflow_id, id=str(workflow_id), marks=marks
+                )
+            )
     return workflows
 
 
