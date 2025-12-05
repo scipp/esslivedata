@@ -303,14 +303,28 @@ The main change is organizational: ROI logic moves from a "special plotter" to i
 
 ## Migration Path
 
-1. **Create layer infrastructure**: `LayerConfig`, `DataSource`, `PlotComposer`
-2. **Adapt existing plotters**: Rename to `ElementFactory`, minimal changes
-3. **Implement data sources**: `PipelineSource`, `KafkaSource`, `InteractiveSource`
-4. **Implement interaction handling**: Extract from `ROIDetectorPlotFactory`
-5. **Update PlottingController**: Use `PlotComposer`, remove special cases
-6. **Evolve PlotCell**: Change from single `config` to `layers` list
-7. **Deprecate roi_detector**: Map to equivalent composition (image + ROI layers)
-8. **Update UI**: Layer management in plot settings
+The migration is split into two phases. Phase 1 validates the composition model with simpler use cases before tackling ROI complexity.
+
+### Phase 1: Multi-layer composition (no interaction)
+
+This phase delivers useful features (multi-workflow comparison, peak markers) while validating the core model.
+
+1. **Extend PlotCell**: Change from single `config: PlotConfig` to `layers: list[LayerConfig]`
+2. **Implement simple data sources**: `PipelineSource` (wraps existing workflow subscription) and `StaticSource` (fixed data like peak positions)
+3. **Create PlotComposer**: Handles DynamicMap composition for multi-layer cells
+4. **Update PlottingController**: Minimal changes to use composer for multi-layer cells; existing plotters remain as-is
+5. **Add UI for composition**: Multi-curve overlay (select workflows to compare) and peak marker layer (select from templates)
+
+At this point, existing `roi_detector` plotter continues to work unchanged.
+
+### Phase 2: Interactive layers and ROI
+
+Once Phase 1 is validated in production, extend to interactive layers.
+
+6. **Implement remaining data sources**: `KafkaSource` (ROI readback) and `InteractiveSource` (user-drawn shapes)
+7. **Add interaction handling**: Extract BoxEdit/PolyDraw logic from `ROIDetectorPlotFactory`
+8. **Deprecate roi_detector**: Map to equivalent composition (image layer + ROI layers)
+9. **Update UI**: Full layer management in plot settings
 
 ## Benefits
 
