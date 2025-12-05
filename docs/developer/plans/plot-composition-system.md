@@ -74,7 +74,6 @@ class PlotComposition:
 
     layers: list[PlotLayer]
     shared_axes: bool = True
-    # Future: axis configuration, layout options
 ```
 
 ### Data Sources
@@ -97,18 +96,12 @@ class PipelineSource(DataSource):
     result_keys: list[ResultKey]
     window: int | None = None  # Rolling window size
 
-    def get_result_keys(self) -> list[ResultKey]:
-        return self.result_keys
-
 
 @dataclass(frozen=True)
 class KafkaSource(DataSource):
     """Direct Kafka subscription (e.g., ROI readback)."""
 
-    result_keys: list[ResultKey]  # Keys for the readback data
-
-    def get_result_keys(self) -> list[ResultKey]:
-        return self.result_keys
+    result_keys: list[ResultKey]
 
 
 @dataclass(frozen=True)
@@ -116,10 +109,7 @@ class FileSource(DataSource):
     """Static data loaded from file."""
 
     path: str
-    format: str = "csv"  # csv, json, etc.
-
-    def get_result_keys(self) -> list[ResultKey]:
-        return []  # No ResultKeys, data is static
+    format: str = "csv"
 
 
 @dataclass(frozen=True)
@@ -128,9 +118,6 @@ class StaticSource(DataSource):
 
     data: Any  # e.g., [1.5, 2.3, 4.1] for VLine positions
 
-    def get_result_keys(self) -> list[ResultKey]:
-        return []
-
 
 @dataclass(frozen=True)
 class InteractiveSource(DataSource):
@@ -138,431 +125,38 @@ class InteractiveSource(DataSource):
 
     initial_data: Any = None
     coordinate_reference: str | None = None  # Layer name to get coordinate info from
-
-    def get_result_keys(self) -> list[ResultKey]:
-        return []
 ```
 
 ### Element Factories
 
 Element factories transform data into HoloViews elements. Two levels:
 
-```python
-class ElementFactory(Protocol):
-    """Simple factory: single data item → Element."""
+- **Simple factories**: Single data item → Element (e.g., rectangles, vlines)
+- **Multi-key factories**: Pipeline data with multiple ResultKeys → Element (existing Plotter classes)
 
-    def __call__(self, data: Any, **params) -> hv.Element:
-        ...
-
-
-class MultiKeyElementFactory(Protocol):
-    """Factory for pipeline data with multiple ResultKeys."""
-
-    def initialize(self, data: dict[ResultKey, sc.DataArray]) -> None:
-        """One-time setup from first data (dimensions, ranges, etc.)."""
-        ...
-
-    def __call__(self, data: dict[ResultKey, sc.DataArray]) -> hv.Element:
-        """Transform keyed data to element(s)."""
-        ...
-
-    @property
-    def kdims(self) -> list[hv.Dimension]:
-        """Key dimensions for widget integration."""
-        ...
-```
-
-Today's `Plotter` classes become `MultiKeyElementFactory` implementations. Simple elements (rectangles, vlines) use `ElementFactory`.
-
-```python
-# Simple element factories
-def rectangles_element(data: list[dict], **params) -> hv.Rectangles:
-    """Create Rectangles from list of {x0, y0, x1, y1} dicts."""
-    if not data:
-        return hv.Rectangles([])
-    df = pd.DataFrame(data)
-    return hv.Rectangles(df).opts(**params)
-
-
-def vlines_element(data: list[float], **params) -> hv.Overlay:
-    """Create vertical lines at given x positions."""
-    return hv.Overlay([hv.VLine(x).opts(**params) for x in data])
-
-
-# Multi-key factories (existing plotters, renamed)
-class ImageElementFactory:
-    """Creates Image elements from detector data."""
-    # ... existing ImagePlotter logic ...
-
-
-class CurveElementFactory:
-    """Creates Curve elements from 1D data."""
-    # ... existing LinesPlotter logic ...
-```
-
-### Element Registry
-
-```python
-class ElementRegistry:
-    """Registry of available element factories."""
-
-    def __init__(self):
-        self._simple: dict[str, ElementFactory] = {}
-        self._multi_key: dict[str, type[MultiKeyElementFactory]] = {}
-
-    def register_simple(self, name: str, factory: ElementFactory) -> None:
-        self._simple[name] = factory
-
-    def register_multi_key(
-        self, name: str, factory_class: type[MultiKeyElementFactory]
-    ) -> None:
-        self._multi_key[name] = factory_class
-
-    def get_simple(self, name: str) -> ElementFactory:
-        return self._simple[name]
-
-    def create_multi_key(
-        self, name: str, params: dict
-    ) -> MultiKeyElementFactory:
-        return self._multi_key[name](**params)
-
-    def is_multi_key(self, name: str) -> bool:
-        return name in self._multi_key
-
-
-# Default registry
-element_registry = ElementRegistry()
-element_registry.register_simple("rectangles", rectangles_element)
-element_registry.register_simple("polygons", polygons_element)
-element_registry.register_simple("vlines", vlines_element)
-element_registry.register_multi_key("image", ImageElementFactory)
-element_registry.register_multi_key("curve", CurveElementFactory)
-```
+Today's `Plotter` classes become `MultiKeyElementFactory` implementations with minimal changes.
 
 ### Plot Composer
 
-The composer creates composed plots from layer specifications:
+The `PlotComposer` is responsible for:
 
-```python
-class PlotComposer:
-    """Creates composed HoloViews plots from layer specifications."""
+1. Creating a `Pipe` and `DynamicMap` for each layer
+2. Setting up data subscriptions based on source type
+3. Attaching interactive streams (BoxEdit, PolyDraw) to appropriate layers
+4. Composing all layer DynamicMaps via the `*` operator
 
-    def __init__(
-        self,
-        stream_manager: StreamManager,
-        element_registry: ElementRegistry,
-        roi_publisher: ROIPublisher | None = None,
-        logger: logging.Logger | None = None,
-    ):
-        self._stream_manager = stream_manager
-        self._element_registry = element_registry
-        self._roi_publisher = roi_publisher
-        self._logger = logger or logging.getLogger(__name__)
+The composer maintains `LayerState` for each layer, tracking:
+- The layer specification
+- Runtime artifacts: pipe, dmap, interaction stream
+- Data source/generator references
 
-        # Track created resources for cleanup
-        self._layer_state: dict[str, LayerState] = {}
+## Key Implementation Insights
 
-    def compose(
-        self,
-        composition: PlotComposition,
-        on_first_data: Callable | None = None,
-    ) -> hv.DynamicMap:
-        """Create composed plot from specification.
+These insights emerged from prototyping and are critical for correct implementation:
 
-        Parameters
-        ----------
-        composition:
-            The plot composition specification.
-        on_first_data:
-            Callback when first data arrives (for UI initialization).
+### DynamicMap Composition Pattern
 
-        Returns
-        -------
-        :
-            Composed DynamicMap ready for display.
-        """
-        # Build coordinate info from data-bearing layers (for interactive layers)
-        coord_info = self._build_coordinate_info(composition)
-
-        # Create DynamicMap for each layer
-        dmaps: list[hv.DynamicMap] = []
-        for layer in composition.layers:
-            dmap = self._create_layer(layer, coord_info, on_first_data)
-            dmaps.append(dmap)
-            # Only first layer triggers on_first_data
-            on_first_data = None
-
-        # Compose all layers
-        # Order matters: first layer is "bottom", subsequent layers on top
-        result = dmaps[0]
-        for dmap in dmaps[1:]:
-            result = result * dmap
-
-        return result
-
-    def _create_layer(
-        self,
-        layer: PlotLayer,
-        coord_info: CoordinateInfo,
-        on_first_data: Callable | None,
-    ) -> hv.DynamicMap:
-        """Create DynamicMap for a single layer."""
-
-        # Create data pipe for this layer
-        pipe = self._create_pipe_for_source(layer.source, on_first_data)
-
-        # Get element factory
-        if self._element_registry.is_multi_key(layer.element):
-            factory = self._element_registry.create_multi_key(
-                layer.element, layer.params
-            )
-            element_fn = self._wrap_multi_key_factory(factory, pipe)
-            kdims = factory.kdims
-        else:
-            simple_factory = self._element_registry.get_simple(layer.element)
-            element_fn = lambda data, f=simple_factory, p=layer.params: f(data, **p)
-            kdims = []
-
-        # Create DynamicMap
-        dmap = hv.DynamicMap(element_fn, streams=[pipe], kdims=kdims)
-
-        # Attach interaction if specified
-        if layer.interaction:
-            self._attach_interaction(layer, dmap, pipe, coord_info)
-
-        # Track state for cleanup
-        self._layer_state[layer.name] = LayerState(pipe=pipe, dmap=dmap)
-
-        return dmap
-
-    def _create_pipe_for_source(
-        self,
-        source: DataSource,
-        on_first_data: Callable | None,
-    ) -> hv.streams.Pipe:
-        """Create appropriate Pipe for data source type."""
-
-        if isinstance(source, PipelineSource):
-            # Subscribe to pipeline via stream_manager
-            extractors = self._create_extractors(source)
-            return self._stream_manager.make_merging_stream(
-                extractors, on_first_data=on_first_data
-            )
-
-        elif isinstance(source, KafkaSource):
-            # Direct Kafka subscription for readback
-            return self._create_kafka_subscription(source)
-
-        elif isinstance(source, FileSource):
-            # Load file data once, create static pipe
-            data = self._load_file(source)
-            pipe = hv.streams.Pipe(data=data)
-            return pipe
-
-        elif isinstance(source, StaticSource):
-            # Static data, no updates
-            return hv.streams.Pipe(data=source.data)
-
-        elif isinstance(source, InteractiveSource):
-            # Empty pipe, will be populated by interaction stream
-            return hv.streams.Pipe(data=source.initial_data or [])
-
-        else:
-            raise ValueError(f"Unknown source type: {type(source)}")
-
-    def _attach_interaction(
-        self,
-        layer: PlotLayer,
-        dmap: hv.DynamicMap,
-        pipe: hv.streams.Pipe,
-        coord_info: CoordinateInfo,
-    ) -> None:
-        """Attach interactive editing stream to layer.
-
-        Critical: The interaction stream (BoxEdit, PolyDraw) must use the
-        DynamicMap as its source. This is required for both:
-        1. Click detection (HoloViews routes clicks to the source element)
-        2. Programmatic updates (Pipe updates flow through DynamicMap)
-        """
-        interaction = layer.interaction
-
-        if interaction.tool == "box_edit":
-            stream = hv.streams.BoxEdit(
-                source=dmap,
-                num_objects=interaction.max_objects,
-            )
-        elif interaction.tool == "poly_draw":
-            stream = hv.streams.PolyDraw(
-                source=dmap,
-                num_objects=interaction.max_objects,
-            )
-        else:
-            raise ValueError(f"Unknown interaction tool: {interaction.tool}")
-
-        # Subscribe to edits
-        def on_edit(**data):
-            # Update pipe to re-render
-            normalized = self._normalize_stream_data(data, interaction.tool)
-            pipe.send(normalized)
-
-            # Publish if configured
-            if interaction.publish_to and self._roi_publisher:
-                self._publish_edit(interaction, normalized, coord_info)
-
-        stream.add_subscriber(on_edit)
-
-        # Store stream reference
-        self._layer_state[layer.name].interaction_stream = stream
-```
-
-### Coordinate Information
-
-For ROI publishing, we need coordinate units from the data:
-
-```python
-@dataclass
-class CoordinateInfo:
-    """Coordinate system information for serialization."""
-
-    x_unit: str | None = None
-    y_unit: str | None = None
-    x_dim: str | None = None
-    y_dim: str | None = None
-
-
-class PlotComposer:
-    def _build_coordinate_info(
-        self, composition: PlotComposition
-    ) -> CoordinateInfo:
-        """Extract coordinate info from data-bearing layers.
-
-        Interactive layers may reference a specific layer for coordinates,
-        or we use the first multi-key layer (typically the image/base data).
-        """
-        # Find layers that interactive sources reference
-        references = {
-            layer.source.coordinate_reference
-            for layer in composition.layers
-            if isinstance(layer.source, InteractiveSource)
-            and layer.source.coordinate_reference
-        }
-
-        # Find first data-bearing layer (fallback)
-        for layer in composition.layers:
-            if isinstance(layer.source, (PipelineSource, KafkaSource)):
-                # This layer has data we can extract coords from
-                # Actual extraction happens when data arrives
-                return CoordinateInfo()  # Populated lazily
-
-        return CoordinateInfo()
-```
-
-### Multi-Detector Handling
-
-For multi-detector cases, layers can be expanded per ResultKey:
-
-```python
-@dataclass(frozen=True)
-class PlotLayer:
-    # ... existing fields ...
-    per_result_key: bool = False  # If True, create separate layer per key
-
-
-class PlotComposer:
-    def compose(self, composition: PlotComposition, ...) -> hv.DynamicMap:
-        # Expand layers marked as per_result_key
-        expanded_layers = []
-        for layer in composition.layers:
-            if layer.per_result_key and isinstance(layer.source, PipelineSource):
-                for key in layer.source.result_keys:
-                    expanded = PlotLayer(
-                        name=f"{layer.name}_{key.job_id.source_name}",
-                        element=layer.element,
-                        source=PipelineSource(result_keys=[key]),
-                        params=layer.params,
-                        interaction=layer.interaction,
-                    )
-                    expanded_layers.append(expanded)
-            else:
-                expanded_layers.append(layer)
-
-        # Continue with expanded layers...
-```
-
-Alternatively, for ROI editing across multiple detectors, each detector gets its own set of ROI layers:
-
-```python
-def create_roi_detector_composition(
-    detector_keys: list[ResultKey],
-    workflow_id: str,
-) -> PlotComposition:
-    """Create composition for ROI editing on multiple detectors."""
-    layers = []
-
-    # Image layer (handles multiple keys internally)
-    layers.append(PlotLayer(
-        name="detector_image",
-        element="image",
-        source=PipelineSource(result_keys=detector_keys),
-        params={"colorbar": True},
-    ))
-
-    # Per-detector ROI layers
-    for key in detector_keys:
-        source_name = key.job_id.source_name
-
-        # Rectangle readback (from backend)
-        layers.append(PlotLayer(
-            name=f"rect_readback_{source_name}",
-            element="rectangles",
-            source=KafkaSource(result_keys=[
-                key.model_copy(update={"output_name": "roi_rectangle"})
-            ]),
-            params={"line_color": "blue", "fill_alpha": 0.1},
-        ))
-
-        # Rectangle request (user interaction)
-        layers.append(PlotLayer(
-            name=f"rect_request_{source_name}",
-            element="rectangles",
-            source=InteractiveSource(coordinate_reference="detector_image"),
-            params={"line_color": "blue", "line_dash": "dashed", "fill_alpha": 0.0},
-            interaction=InteractionSpec(
-                tool="box_edit",
-                publish_to=f"{source_name}/roi_rectangle",
-                max_objects=4,
-            ),
-        ))
-
-        # Polygon readback
-        layers.append(PlotLayer(
-            name=f"poly_readback_{source_name}",
-            element="polygons",
-            source=KafkaSource(result_keys=[
-                key.model_copy(update={"output_name": "roi_polygon"})
-            ]),
-            params={"line_color": "green", "fill_alpha": 0.1},
-        ))
-
-        # Polygon request (user interaction)
-        layers.append(PlotLayer(
-            name=f"poly_request_{source_name}",
-            element="polygons",
-            source=InteractiveSource(coordinate_reference="detector_image"),
-            params={"line_color": "green", "line_dash": "dashed", "fill_alpha": 0.0},
-            interaction=InteractionSpec(
-                tool="poly_draw",
-                publish_to=f"{source_name}/roi_polygon",
-                max_objects=4,
-            ),
-        ))
-
-    return PlotComposition(layers=layers)
-```
-
-## DynamicMap Composition: Why It Works
-
-HoloViews has specific requirements for interactive streams to work correctly:
+Interactive streams (BoxEdit, PolyDraw) **must attach to the DynamicMap, not the element**:
 
 | Pattern | Works? | Issue |
 |---------|--------|-------|
@@ -570,44 +164,57 @@ HoloViews has specific requirements for interactive streams to work correctly:
 | `DynamicMap(Image) * Rectangles` | No | Programmatic updates don't work |
 | `DynamicMap(Image) * DynamicMap(Rectangles)` | **Yes** | Both work correctly |
 
-The layer model naturally produces the working pattern:
-- Each layer creates its own `DynamicMap`
-- Interactive streams attach to their layer's `DynamicMap` as `source`
-- Layers compose via `*` operator: `dmap1 * dmap2 * dmap3`
+The layer model naturally produces the working pattern: each layer creates its own DynamicMap, and layers compose via the `*` operator.
 
-This is the correct pattern, achieved without special-casing.
+### Tool Registration Varies by Stream Type
 
-## PlottingController Simplification
+- **BoxEdit/PolyDraw**: Automatically add their toolbar tool
+- **BoundsX/BoundsXY**: Require explicit tool registration via `.opts(tools=['xbox_select'])`
 
-The current `PlottingController` has special cases for `roi_detector`. With the layer model:
+This is a HoloViews quirk that must be handled per-stream-type.
+
+### Panel Session Closure Capture
+
+When creating callbacks for Panel applications, variables must be explicitly captured to avoid closure issues across sessions:
 
 ```python
-class PlottingController:
-    def __init__(
-        self,
-        job_service: JobService,
-        stream_manager: StreamManager,
-        plot_composer: PlotComposer,  # New
-        logger: logging.Logger | None = None,
-    ):
-        self._job_service = job_service
-        self._stream_manager = stream_manager
-        self._composer = plot_composer
-        self._logger = logger or logging.getLogger(__name__)
+# Correct: capture variables as default arguments
+def make_element(data, _factory=factory, _params=params):
+    return _factory(data, **_params)
 
-    def create_plot(
-        self,
-        composition: PlotComposition,
-        on_first_data: Callable | None = None,
-    ) -> hv.DynamicMap:
-        """Create plot from composition specification.
-
-        No special cases—all plot types use the same path.
-        """
-        return self._composer.compose(composition, on_first_data)
+# Incorrect: relies on closure (breaks across Panel sessions)
+def make_element(data):
+    return factory(data, **params)
 ```
 
-The `setup_data_pipeline` / `create_plot_from_pipeline` split can also be unified since the composer handles both subscription setup and plot creation.
+### DynamicMap Truthiness
+
+HoloViews `DynamicMap` evaluates to `False` when empty. Use explicit `is not None` checks:
+
+```python
+# Correct
+dmaps = [s.dmap for s in layers.values() if s.dmap is not None]
+
+# Incorrect (filters out empty but valid DynamicMaps)
+dmaps = [s.dmap for s in layers.values() if s.dmap]
+```
+
+### Single Update Callback with Batching
+
+Use one shared periodic callback for all dynamic layers, with `pn.io.hold()` for batched updates:
+
+```python
+def update_all_layers():
+    with pn.io.hold():
+        for layer in dynamic_layers:
+            layer.pipe.send(new_data)
+```
+
+This is more efficient than per-layer callbacks and reduces visual flicker.
+
+### Full Composition Rebuild is Acceptable
+
+Layer add/remove operations are rare (user-initiated). Rebuilding the entire composition on each change is simpler than incremental updates and performs well in practice.
 
 ## Configuration Format
 
@@ -693,7 +300,6 @@ layers:
       tool: box_edit
       publish_to: roi_rectangle
       max_objects: 4
-  # ... polygon layers ...
 ```
 
 ## Reusing Existing Code
