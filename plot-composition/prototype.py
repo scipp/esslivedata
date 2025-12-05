@@ -1,27 +1,45 @@
 """
-Plot composition prototype to validate the layer-based composition model.
+Plot Composition Prototype
+==========================
 
-This prototype demonstrates:
-1. DynamicMap Curves that update via periodic callbacks
-2. Dynamic addition of new Curve layers via button
-3. Static overlay addition (VLines for peak markers) via button
-4. Interactive stream overlays:
-   - BoundsX: Tracks viewport/selection bounds (no toolbar tool)
-   - BoxEdit: Interactive rectangle drawing (adds toolbar tool automatically)
-
-Key insight from ROIDetectorPlotFactory:
-- Each layer must be a separate DynamicMap
-- Interactive streams (BoxEdit, PolyDraw) must attach to the DynamicMap, not the element
-- Layers compose via * operator: dmap1 * dmap2 * dmap3
-- This pattern enables both programmatic updates (via Pipe) and user interaction
+A reference implementation validating the layer-based composition model for ESSlivedata.
 
 Run with: panel serve prototype.py --show
+
+What This Prototype Demonstrates
+--------------------------------
+1. Multiple DynamicMap layers composed via the * operator
+2. Dynamic layer addition/removal at runtime
+3. Periodic data updates to curve layers
+4. Static overlays (VLines for peak markers)
+5. Interactive streams (BoundsX, BoxEdit) attached to layers
+
+Key Learnings (see design doc for details)
+------------------------------------------
+1. DYNAMICMAP COMPOSITION: Each layer must be a separate DynamicMap. Interactive
+   streams (BoxEdit, PolyDraw) must attach to the DynamicMap, not the element.
+   Pattern: `DynamicMap(Curve) * DynamicMap(Rectangles)` - NOT
+   `DynamicMap(Curve * Rectangles)`
+
+2. TOOL REGISTRATION: BoxEdit/PolyDraw auto-add their toolbar tools.
+   BoundsX/BoundsXY do NOT - must explicitly add via `.opts(tools=['xbox_select'])`.
+
+3. CLOSURE CAPTURE: Panel sessions require explicit variable capture in callbacks.
+   Use `def fn(data, _var=var)` pattern, not bare closures.
+
+4. DYNAMICMAP TRUTHINESS: Empty DynamicMap evaluates to False.
+   Use `if dmap is not None`, not `if dmap`.
+
+5. SINGLE UPDATE CALLBACK: One shared periodic callback with `pn.io.hold()` is
+   more efficient than per-layer callbacks.
+
+6. FULL REBUILD OK: Rebuilding composition on layer add/remove is acceptable
+   since these operations are rare.
 """
 
 from __future__ import annotations
 
 import logging
-import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -36,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Data Sources
+# Data Model
 # =============================================================================
 
 
@@ -65,12 +83,11 @@ class DataGenerator:
         return CurveData(x=self.x, y=y, label=label)
 
     def set_amplitude(self, amplitude: float) -> None:
-        """Set amplitude for generated curves."""
         self._amplitude = amplitude
 
 
 # =============================================================================
-# Layer Model
+# Layer Specification
 # =============================================================================
 
 
@@ -79,24 +96,35 @@ class LayerSpec:
     """Specification for a single layer in a composed plot."""
 
     name: str
-    element_type: str  # "curve", "vlines", "bounds_selector"
+    element_type: str  # "curve", "vlines", "bounds_selector", "box_edit"
     params: dict = field(default_factory=dict)
     is_interactive: bool = False
 
 
 @dataclass
 class LayerState:
-    """Runtime state for a layer."""
+    """Runtime state for a layer.
+
+    This tracks all artifacts needed for a layer's lifecycle:
+    - spec: The immutable specification
+    - pipe: For pushing data updates
+    - dmap: The DynamicMap that renders this layer
+    - stream: For interactive layers (BoundsX, BoxEdit, etc.)
+    - data_generator: For layers with periodic updates
+    """
 
     spec: LayerSpec
     pipe: hv.streams.Pipe | None = None
     dmap: hv.DynamicMap | None = None
-    stream: hv.streams.Stream | None = None  # For interactive layers
+    stream: hv.streams.Stream | None = None
     data_generator: DataGenerator | None = None
 
 
 # =============================================================================
 # Element Factories
+#
+# These are simple functions that transform data into HoloViews elements.
+# In the real implementation, existing Plotter classes become element factories.
 # =============================================================================
 
 
@@ -114,8 +142,8 @@ def vlines_element(positions: list[float] | None, **params) -> hv.Overlay:
     return hv.Overlay([hv.VLine(x).opts(**params) for x in positions])
 
 
-def bounds_rectangles(data: list[tuple] | None, **params) -> hv.Rectangles:
-    """Create rectangles for bounds selection display."""
+def rectangles_element(data: list[tuple] | None, **params) -> hv.Rectangles:
+    """Create rectangles from list of (x0, y0, x1, y1) tuples."""
     if not data:
         return hv.Rectangles([])
     return hv.Rectangles(data).opts(**params)
@@ -123,6 +151,10 @@ def bounds_rectangles(data: list[tuple] | None, **params) -> hv.Rectangles:
 
 # =============================================================================
 # Plot Composer
+#
+# The composer manages layer lifecycle and composition. Each layer gets its own
+# Pipe (for data updates) and DynamicMap (for rendering). Interactive streams
+# attach to the DynamicMap, enabling both programmatic updates and user interaction.
 # =============================================================================
 
 
@@ -130,16 +162,15 @@ class PlotComposer:
     """
     Manages composition of multiple layers into a single plot.
 
-    Handles:
+    Responsibilities:
     - Layer lifecycle (creation, updates, removal)
     - Periodic data updates for dynamic layers
-    - Interactive stream setup (BoundsX)
+    - Interactive stream setup
     - Layer composition via overlay
     """
 
     def __init__(self, update_interval_ms: int = 500):
         self._layers: dict[str, LayerState] = {}
-        self._composition: hv.DynamicMap | None = None
         self._update_callback: pn.io.PeriodicCallback | None = None
         self._update_interval_ms = update_interval_ms
         self._on_composition_change: Callable[[], None] | None = None
@@ -153,8 +184,17 @@ class PlotComposer:
         """Set callback for bounds selection events."""
         self._bounds_callback = callback
 
+    # -------------------------------------------------------------------------
+    # Periodic Updates
+    # -------------------------------------------------------------------------
+
     def _update_all_dynamic_layers(self) -> None:
-        """Update all dynamic curve layers at once using pn.io.hold()."""
+        """Update all dynamic curve layers at once.
+
+        KEY INSIGHT: Use pn.io.hold() to batch all pipe updates into a single
+        render cycle. This reduces visual flicker and improves performance
+        compared to per-layer callbacks.
+        """
         with pn.io.hold():
             for name, state in self._layers.items():
                 if state.data_generator is not None and state.pipe is not None:
@@ -182,24 +222,17 @@ class PlotComposer:
             self._update_callback = None
             logger.info("Stopped periodic update callback (no dynamic layers)")
 
+    # -------------------------------------------------------------------------
+    # Layer Creation
+    # -------------------------------------------------------------------------
+
     def add_dynamic_curve_layer(
         self,
         name: str,
         generator: DataGenerator,
         **params,
     ) -> None:
-        """
-        Add a dynamic curve layer that updates periodically.
-
-        Parameters
-        ----------
-        name:
-            Unique layer identifier.
-        generator:
-            Data generator for this curve.
-        **params:
-            HoloViews opts for the Curve element.
-        """
+        """Add a dynamic curve layer that updates periodically."""
         if name in self._layers:
             logger.warning("Layer %s already exists, removing first", name)
             self.remove_layer(name)
@@ -207,7 +240,10 @@ class PlotComposer:
         spec = LayerSpec(name=name, element_type="curve", params=params)
         pipe = hv.streams.Pipe(data=None)
 
-        # Capture variables to avoid closure issues with Panel sessions
+        # KEY INSIGHT: Closure Capture
+        # Panel sessions can have issues with closures that reference outer
+        # variables. Capture variables explicitly as default arguments to
+        # ensure each session gets its own copy.
         _curve_element = curve_element
         _params = params
 
@@ -224,31 +260,18 @@ class PlotComposer:
         )
         self._layers[name] = state
 
-        # Initial data
+        # Send initial data
         initial_data = generator.generate(label=name)
         pipe.send(initial_data)
 
-        # Ensure the shared update callback is running
         self._ensure_update_callback()
-
         logger.info("Added dynamic curve layer: %s", name)
         self._notify_composition_change()
 
     def add_static_vlines_layer(
         self, name: str, positions: list[float], **params
     ) -> None:
-        """
-        Add a static vertical lines layer.
-
-        Parameters
-        ----------
-        name:
-            Unique layer identifier.
-        positions:
-            X positions for vertical lines.
-        **params:
-            HoloViews opts for VLine elements.
-        """
+        """Add a static vertical lines layer (e.g., peak markers)."""
         if name in self._layers:
             logger.warning("Layer %s already exists, removing first", name)
             self.remove_layer(name)
@@ -256,7 +279,7 @@ class PlotComposer:
         spec = LayerSpec(name=name, element_type="vlines", params=params)
         pipe = hv.streams.Pipe(data=positions)
 
-        # Capture variables to avoid closure issues with Panel sessions
+        # Closure capture pattern
         _vlines_element = vlines_element
         _params = params
 
@@ -272,20 +295,12 @@ class PlotComposer:
         self._notify_composition_change()
 
     def add_bounds_selector_layer(self, name: str, **params) -> None:
-        """
-        Add an interactive bounds selection layer (BoundsX).
+        """Add an interactive bounds selection layer (BoundsX).
 
-        This demonstrates the pattern from ROIDetectorPlotFactory:
-        - Create a Pipe for programmatic rectangle updates
-        - Create a DynamicMap wrapping Rectangles
-        - Attach BoundsX stream to the DynamicMap (not the element)
-
-        Parameters
-        ----------
-        name:
-            Unique layer identifier.
-        **params:
-            HoloViews opts for Rectangles elements.
+        KEY INSIGHT: Tool Registration
+        BoundsX does NOT automatically add its toolbar tool. We must explicitly
+        add it via .opts(tools=['xbox_select']). In contrast, BoxEdit and
+        PolyDraw DO auto-add their tools.
         """
         if name in self._layers:
             logger.warning("Layer %s already exists, removing first", name)
@@ -298,40 +313,38 @@ class PlotComposer:
             is_interactive=True,
         )
 
-        # Create pipe for programmatic updates
         pipe = hv.streams.Pipe(data=[])
 
-        # Capture variables explicitly to avoid closure issues with Panel sessions
-        _bounds_rectangles = bounds_rectangles
+        # Closure capture pattern
+        _rectangles_element = rectangles_element
         _params = params
 
-        def make_rectangles(data, _fn=_bounds_rectangles, _p=_params):
+        def make_rectangles(data, _fn=_rectangles_element, _p=_params):
             return _fn(data, **_p)
 
         dmap = hv.DynamicMap(make_rectangles, streams=[pipe])
 
-        # Add xbox_select tool to enable selection - BoundsX doesn't add it automatically
-        # The tool must be on the DynamicMap that BoundsX is attached to
-        dmap = dmap.opts(tools=['xbox_select'])
+        # KEY INSIGHT: BoundsX requires explicit tool registration
+        dmap = dmap.opts(tools=["xbox_select"])
 
-        # Create BoundsX stream attached to the DynamicMap
-        # This is the critical pattern: source must be the DynamicMap
+        # KEY INSIGHT: Interactive Stream Attachment
+        # The stream must attach to the DynamicMap (source=dmap), not to
+        # an element. This is required for both:
+        # 1. Click detection (HoloViews routes events to the source)
+        # 2. Programmatic updates (Pipe → DynamicMap → re-render)
         bounds_stream = hv.streams.BoundsX(source=dmap)
 
-        # Capture variables for closure
+        # Closure capture for subscriber
         _pipe = pipe
         _logger = logger
         _callback = self._bounds_callback
 
         def on_bounds_change(_pipe=_pipe, _logger=_logger, _cb=_callback, **kwargs):
-            """Handle bounds selection changes."""
             bounds = kwargs.get("boundsx")
             if bounds is not None:
                 x0, x1 = bounds
-                # Update the rectangles display
-                # BoundsX gives us x bounds, we need to create full rectangle
-                # Using fixed y range since we don't have BoundsXY
-                rect_data = [(x0, -2, x1, 2)]  # (x0, y0, x1, y1)
+                # Update rectangles display (fixed y range since BoundsX only gives x)
+                rect_data = [(x0, -2, x1, 2)]
                 _pipe.send(rect_data)
                 _logger.info("Bounds selected: x=[%.2f, %.2f]", x0, x1)
                 if _cb:
@@ -346,19 +359,10 @@ class PlotComposer:
         self._notify_composition_change()
 
     def add_box_edit_layer(self, name: str, num_objects: int = 4, **params) -> None:
-        """
-        Add an interactive BoxEdit layer for rectangle selection.
+        """Add an interactive BoxEdit layer for rectangle drawing.
 
-        Similar to ROIDetectorPlotFactory but simplified for the prototype.
-
-        Parameters
-        ----------
-        name:
-            Unique layer identifier.
-        num_objects:
-            Maximum number of rectangles allowed.
-        **params:
-            HoloViews opts for Rectangles elements.
+        KEY INSIGHT: BoxEdit auto-adds its toolbar tool, unlike BoundsX.
+        No explicit .opts(tools=[...]) needed.
         """
         if name in self._layers:
             logger.warning("Layer %s already exists, removing first", name)
@@ -368,27 +372,25 @@ class PlotComposer:
             name=name, element_type="box_edit", params=params, is_interactive=True
         )
 
-        # Create pipe for programmatic updates
         pipe = hv.streams.Pipe(data=[])
 
-        # Capture variables to avoid closure issues with Panel sessions
-        _bounds_rectangles = bounds_rectangles
+        # Closure capture pattern
+        _rectangles_element = rectangles_element
         _params = params
 
-        def make_rectangles(data, _fn=_bounds_rectangles, _p=_params):
+        def make_rectangles(data, _fn=_rectangles_element, _p=_params):
             return _fn(data, **_p)
 
         dmap = hv.DynamicMap(make_rectangles, streams=[pipe])
 
-        # Create BoxEdit stream attached to the DynamicMap
+        # KEY INSIGHT: BoxEdit attaches to DynamicMap and auto-adds its tool
         box_stream = hv.streams.BoxEdit(source=dmap, num_objects=num_objects, data={})
 
-        # Capture variables for closure
+        # Closure capture for watcher
         _pipe = pipe
         _logger = logger
 
         def on_box_change(data, _pipe=_pipe, _logger=_logger):
-            """Handle box edit changes."""
             if data is None:
                 return
             x0_list = data.get("x0", [])
@@ -408,6 +410,10 @@ class PlotComposer:
         logger.info("Added BoxEdit layer: %s", name)
         self._notify_composition_change()
 
+    # -------------------------------------------------------------------------
+    # Layer Removal and Composition
+    # -------------------------------------------------------------------------
+
     def remove_layer(self, name: str) -> None:
         """Remove a layer by name."""
         if name not in self._layers:
@@ -417,23 +423,24 @@ class PlotComposer:
         del self._layers[name]
         logger.info("Removed layer: %s", name)
 
-        # Stop the shared callback if no dynamic layers remain
         self._stop_update_callback_if_no_dynamic_layers()
-
         self._notify_composition_change()
 
     def get_composition(self) -> hv.DynamicMap | hv.Overlay:
-        """
-        Get the composed plot of all layers.
+        """Get the composed plot of all layers.
 
-        Returns an overlay of all layer DynamicMaps.
+        KEY INSIGHT: DynamicMap Composition
+        Each layer is a separate DynamicMap. We compose them via the * operator:
+        `dmap1 * dmap2 * dmap3`. This produces an Overlay where each layer can
+        update independently and interactive streams work correctly.
         """
         if not self._layers:
-            # Return empty curve if no layers
             return hv.DynamicMap(lambda: hv.Curve([]))
 
-        # Note: Use `is not None` check, not truthiness - HoloViews DynamicMap
-        # evaluates to False when empty, which would incorrectly filter out layers
+        # KEY INSIGHT: DynamicMap Truthiness
+        # HoloViews DynamicMap evaluates to False when empty. We must use
+        # explicit `is not None` check, not truthiness, or we'd incorrectly
+        # filter out valid but empty layers.
         dmaps = [
             state.dmap for state in self._layers.values() if state.dmap is not None
         ]
@@ -444,7 +451,7 @@ class PlotComposer:
         if len(dmaps) == 1:
             return dmaps[0]
 
-        # Compose all layers via overlay
+        # Compose via * operator - first layer is "bottom", subsequent on top
         result = dmaps[0]
         for dmap in dmaps[1:]:
             result = result * dmap
@@ -452,7 +459,7 @@ class PlotComposer:
         return result
 
     def _notify_composition_change(self) -> None:
-        """Notify that composition has changed."""
+        """Notify that composition has changed (layer added/removed)."""
         if self._on_composition_change:
             self._on_composition_change()
 
@@ -467,15 +474,7 @@ class PlotComposer:
 
 
 class CompositionDashboard:
-    """
-    Dashboard for testing plot composition.
-
-    Provides controls for:
-    - Adding dynamic curve layers
-    - Adding static VLine layers
-    - Adding interactive selection layers
-    - Viewing the composed plot
-    """
+    """Dashboard for testing plot composition."""
 
     def __init__(self):
         self._composer = PlotComposer()
@@ -483,11 +482,9 @@ class CompositionDashboard:
         self._vlines_counter = 0
         self._bounds_info = pn.pane.Markdown("No bounds selected")
 
-        # Setup composition change callback
         self._composer.set_composition_change_callback(self._update_plot_pane)
         self._composer.set_bounds_callback(self._on_bounds_selected)
 
-        # Create UI components
         self._create_controls()
         initial_composition = self._composer.get_composition().opts(
             responsive=True, min_height=400
@@ -498,7 +495,6 @@ class CompositionDashboard:
         )
 
     def _create_controls(self) -> None:
-        """Create control buttons."""
         self._add_curve_btn = pn.widgets.Button(
             name="Add Dynamic Curve", button_type="primary"
         )
@@ -528,15 +524,12 @@ class CompositionDashboard:
         self._layer_list = pn.pane.Markdown("Layers: (none)")
 
     def _on_add_curve(self, event) -> None:
-        """Add a new dynamic curve layer."""
         self._curve_counter += 1
         name = f"curve_{self._curve_counter}"
 
-        # Create generator with random amplitude
         generator = DataGenerator()
-        generator.set_amplitude(0.5 + random.random())
+        generator.set_amplitude(0.5 + np.random.random())
 
-        # Assign a color from the default cycle
         colors = hv.Cycle.default_cycles["default_colors"]
         color = colors[(self._curve_counter - 1) % len(colors)]
 
@@ -549,13 +542,11 @@ class CompositionDashboard:
         self._update_layer_list()
 
     def _on_add_vlines(self, event) -> None:
-        """Add a static VLines layer with random positions."""
         self._vlines_counter += 1
         name = f"peaks_{self._vlines_counter}"
 
-        # Generate random peak positions
-        n_peaks = random.randint(2, 5)
-        positions = sorted([random.uniform(1, 9) for _ in range(n_peaks)])
+        n_peaks = np.random.randint(2, 6)
+        positions = sorted([np.random.uniform(1, 9) for _ in range(n_peaks)])
 
         self._composer.add_static_vlines_layer(
             name=name,
@@ -567,7 +558,6 @@ class CompositionDashboard:
         self._update_layer_list()
 
     def _on_add_bounds(self, event) -> None:
-        """Add a BoundsX selector layer."""
         name = "bounds_selector"
         if name in self._composer.get_layer_names():
             logger.info("BoundsX selector already exists")
@@ -583,7 +573,6 @@ class CompositionDashboard:
         self._update_layer_list()
 
     def _on_add_boxedit(self, event) -> None:
-        """Add a BoxEdit layer."""
         name = "box_edit"
         if name in self._composer.get_layer_names():
             logger.info("BoxEdit layer already exists")
@@ -600,18 +589,15 @@ class CompositionDashboard:
         self._update_layer_list()
 
     def _on_remove_layer(self, event) -> None:
-        """Remove selected layer."""
         name = self._layer_select.value
         if name:
             self._composer.remove_layer(name)
             self._update_layer_list()
 
     def _on_bounds_selected(self, bounds: dict) -> None:
-        """Handle bounds selection."""
         self._bounds_info.object = f"Bounds: x=[{bounds['x0']:.2f}, {bounds['x1']:.2f}]"
 
     def _update_layer_list(self) -> None:
-        """Update layer list display."""
         layers = self._composer.get_layer_names()
         if layers:
             layer_str = "\n".join(f"- {name}" for name in layers)
@@ -622,26 +608,29 @@ class CompositionDashboard:
             self._layer_select.options = []
 
     def _update_plot_pane(self) -> None:
-        """Update plot pane with new composition."""
+        """Update plot pane with new composition.
+
+        Called when layers are added/removed. Full rebuild is acceptable
+        since layer changes are rare (user-initiated).
+        """
         composition = self._composer.get_composition()
-        # Apply responsive sizing to the composition
         self._plot_pane.object = composition.opts(responsive=True, min_height=400)
 
     def get_layout(self) -> pn.Column:
-        """Get the dashboard layout."""
         controls = pn.Column(
             "## Plot Composition Prototype",
             pn.pane.Markdown(
                 """
-                This prototype tests the layer-based composition model:
-                1. **Add Dynamic Curve**: Updating curves (periodic callback)
-                2. **Add Peak Markers**: Static vertical lines
-                3. **Add BoundsX Selector**: Tracks viewport bounds (no toolbar tool)
-                4. **Add BoxEdit Layer**: Interactive rectangles (**adds toolbar tool**)
+This prototype validates the layer-based composition model:
 
-                **Key insight**: Each layer is a separate `DynamicMap`. Interactive
-                streams (BoxEdit, PolyDraw) must attach to the DynamicMap, not the
-                element. This enables both programmatic updates and user interaction.
+1. **Add Dynamic Curve**: Periodic updates via Pipe
+2. **Add Peak Markers**: Static VLines overlay
+3. **Add BoundsX Selector**: Selection tracking (requires explicit tool)
+4. **Add BoxEdit Layer**: Interactive rectangles (auto-adds tool)
+
+**Key insight**: Each layer is a separate `DynamicMap`. Interactive
+streams attach to the DynamicMap, not the element, enabling both
+programmatic updates and user interaction.
                 """
             ),
             pn.Row(
@@ -689,6 +678,5 @@ def create_app():
 if __name__.startswith("bokeh"):
     pn.serve(create_app())
 else:
-    # For direct execution or testing
     app = create_app()
     app.servable()
