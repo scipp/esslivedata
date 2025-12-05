@@ -49,7 +49,7 @@ email-validator==2.3.0
     # via scippneutron
 essdiffraction==25.11.1
     # via -r basetest.in
-essreduce==25.11.4
+essreduce==25.12.0
     # via
     #   essdiffraction
     #   esssans
@@ -278,7 +278,7 @@ scipp==25.11.0
     #   scippneutron
     #   scippnexus
     #   tof
-scippneutron==25.11.0
+scippneutron==25.11.1
     # via
     #   -r basetest.in
     #   essdiffraction

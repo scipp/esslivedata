@@ -16,10 +16,9 @@ from ess.livedata.dashboard.plot_params import (
     PlotScaleParams2d,
 )
 from ess.livedata.dashboard.roi_detector_plot_factory import (
+    RectangleConverter,
     ROIDetectorPlotFactory,
     ROIPlotState,
-    boxes_to_rois,
-    rois_to_rectangles,
 )
 from ess.livedata.dashboard.stream_manager import StreamManager
 
@@ -319,13 +318,13 @@ def test_roi_detector_plot_publishes_roi_on_box_edit(
     box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
 
     # Check that ROI was published
-    assert len(fake_publisher.published_rois) == 1
-    published_job_id, rois_dict = fake_publisher.published_rois[0]
+    assert len(fake_publisher.published) == 1
+    published_job_id, rect_rois_dict, _ = fake_publisher.published[0]
     assert published_job_id.job_number == job_number
     assert published_job_id.source_name == 'detector_data'
-    assert len(rois_dict) == 1
-    assert 0 in rois_dict
-    roi = rois_dict[0]
+    assert len(rect_rois_dict) == 1
+    assert 0 in rect_rois_dict
+    roi = rect_rois_dict[0]
     assert roi.x.min == 1.0
     assert roi.x.max == 5.0
     assert roi.y.min == 2.0
@@ -372,15 +371,15 @@ def test_roi_detector_plot_only_publishes_changed_rois(
 
     # First box edit
     box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
-    assert len(fake_publisher.published_rois) == 1
+    assert len(fake_publisher.published) == 1
 
     # Trigger same box again - should not publish duplicate
     box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
-    assert len(fake_publisher.published_rois) == 1  # Still 1
+    assert len(fake_publisher.published) == 1  # Still 1
 
     # Change the box - should publish
     box_stream.event(data={'x0': [2.0], 'x1': [6.0], 'y0': [3.0], 'y1': [7.0]})
-    assert len(fake_publisher.published_rois) == 2
+    assert len(fake_publisher.published) == 2
 
 
 def test_roi_detector_plot_without_publisher_does_not_crash(
@@ -421,10 +420,11 @@ def test_roi_detector_plot_without_publisher_does_not_crash(
     assert plot_state is not None
 
 
-def test_boxes_to_rois_converts_single_box():
+def test_rectangle_converter_parse_stream_data_converts_single_box():
+    converter = RectangleConverter()
     box_data = {'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]}
 
-    rois = boxes_to_rois(box_data)
+    rois = converter.parse_stream_data(box_data, None, None)
 
     assert len(rois) == 1
     assert 0 in rois
@@ -437,7 +437,8 @@ def test_boxes_to_rois_converts_single_box():
     assert roi.y.unit is None
 
 
-def test_boxes_to_rois_converts_multiple_boxes():
+def test_rectangle_converter_parse_stream_data_converts_multiple_boxes():
+    converter = RectangleConverter()
     box_data = {
         'x0': [1.0, 10.0, 20.0],
         'x1': [5.0, 15.0, 25.0],
@@ -445,7 +446,7 @@ def test_boxes_to_rois_converts_multiple_boxes():
         'y1': [6.0, 16.0, 26.0],
     }
 
-    rois = boxes_to_rois(box_data)
+    rois = converter.parse_stream_data(box_data, None, None)
 
     assert len(rois) == 3
     assert rois[0].x.min == 1.0
@@ -453,11 +454,12 @@ def test_boxes_to_rois_converts_multiple_boxes():
     assert rois[2].x.min == 20.0
 
 
-def test_boxes_to_rois_handles_inverted_coordinates():
+def test_rectangle_converter_parse_stream_data_handles_inverted_coordinates():
+    converter = RectangleConverter()
     # BoxEdit can return boxes with x0 > x1 or y0 > y1
     box_data = {'x0': [5.0], 'x1': [1.0], 'y0': [6.0], 'y1': [2.0]}
 
-    rois = boxes_to_rois(box_data)
+    rois = converter.parse_stream_data(box_data, None, None)
 
     roi = rois[0]
     assert roi.x.min == 1.0
@@ -466,7 +468,8 @@ def test_boxes_to_rois_handles_inverted_coordinates():
     assert roi.y.max == 6.0
 
 
-def test_boxes_to_rois_skips_degenerate_boxes():
+def test_rectangle_converter_parse_stream_data_skips_degenerate_boxes():
+    converter = RectangleConverter()
     # Boxes with zero width or height should be skipped
     box_data = {
         'x0': [1.0, 5.0, 10.0],
@@ -475,31 +478,34 @@ def test_boxes_to_rois_skips_degenerate_boxes():
         'y1': [6.0, 10.0, 10.0],  # Third box has zero height
     }
 
-    rois = boxes_to_rois(box_data)
+    rois = converter.parse_stream_data(box_data, None, None)
 
     assert len(rois) == 1
     assert 0 in rois
     assert rois[0].x.min == 1.0
 
 
-def test_boxes_to_rois_empty_data():
-    assert boxes_to_rois({}) == {}
-    assert boxes_to_rois({'x0': []}) == {}
+def test_rectangle_converter_parse_stream_data_empty_data():
+    converter = RectangleConverter()
+    assert converter.parse_stream_data({}, None, None) == {}
+    assert converter.parse_stream_data({'x0': []}, None, None) == {}
 
 
-def test_boxes_to_rois_raises_on_inconsistent_lengths():
+def test_rectangle_converter_parse_stream_data_raises_on_inconsistent_lengths():
+    converter = RectangleConverter()
     box_data = {'x0': [1.0, 2.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]}
 
     with pytest.raises(
-        ValueError, match="zip\\(\\) argument .* is (shorter|longer) than argument"
+        ValueError, match=r"zip\(\) argument .* is (shorter|longer) than argument"
     ):
-        boxes_to_rois(box_data)
+        converter.parse_stream_data(box_data, None, None)
 
 
-def test_boxes_to_rois_with_units():
+def test_rectangle_converter_parse_stream_data_with_units():
+    converter = RectangleConverter()
     box_data = {'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]}
 
-    rois = boxes_to_rois(box_data, x_unit='m', y_unit='mm')
+    rois = converter.parse_stream_data(box_data, 'm', 'mm')
 
     assert len(rois) == 1
     roi = rois[0]
@@ -511,7 +517,8 @@ def test_boxes_to_rois_with_units():
     assert roi.y.unit == 'mm'
 
 
-def test_boxes_to_rois_preserves_units_across_multiple_boxes():
+def test_rectangle_converter_parse_stream_data_preserves_units_across_multiple_boxes():
+    converter = RectangleConverter()
     box_data = {
         'x0': [1.0, 10.0],
         'x1': [5.0, 15.0],
@@ -519,7 +526,7 @@ def test_boxes_to_rois_preserves_units_across_multiple_boxes():
         'y1': [6.0, 16.0],
     }
 
-    rois = boxes_to_rois(box_data, x_unit='angstrom', y_unit='angstrom')
+    rois = converter.parse_stream_data(box_data, 'angstrom', 'angstrom')
 
     assert len(rois) == 2
     assert rois[0].x.unit == 'angstrom'
@@ -528,7 +535,8 @@ def test_boxes_to_rois_preserves_units_across_multiple_boxes():
     assert rois[1].y.unit == 'angstrom'
 
 
-def test_rois_to_rectangles_converts_single_roi():
+def test_rectangle_converter_to_hv_data_converts_single_roi():
+    converter = RectangleConverter()
     rois = {
         0: RectangleROI(
             x=Interval(min=1.0, max=5.0, unit='m'),
@@ -536,20 +544,21 @@ def test_rois_to_rectangles_converts_single_roi():
         )
     }
 
-    rectangles = rois_to_rectangles(rois)
+    rectangles = converter.to_hv_data(rois, None)
 
     assert len(rectangles) == 1
     assert rectangles[0] == (1.0, 2.0, 5.0, 6.0)
 
 
-def test_rois_to_rectangles_converts_multiple_rois():
+def test_rectangle_converter_to_hv_data_converts_multiple_rois():
+    converter = RectangleConverter()
     rois = {
         0: RectangleROI(x=Interval(min=1.0, max=5.0), y=Interval(min=2.0, max=6.0)),
         1: RectangleROI(x=Interval(min=10.0, max=15.0), y=Interval(min=12.0, max=16.0)),
         2: RectangleROI(x=Interval(min=20.0, max=25.0), y=Interval(min=22.0, max=26.0)),
     }
 
-    rectangles = rois_to_rectangles(rois)
+    rectangles = converter.to_hv_data(rois, None)
 
     assert len(rectangles) == 3
     assert rectangles[0] == (1.0, 2.0, 5.0, 6.0)
@@ -557,18 +566,20 @@ def test_rois_to_rectangles_converts_multiple_rois():
     assert rectangles[2] == (20.0, 22.0, 25.0, 26.0)
 
 
-def test_rois_to_rectangles_empty():
-    assert rois_to_rectangles({}) == []
+def test_rectangle_converter_to_hv_data_empty():
+    converter = RectangleConverter()
+    assert converter.to_hv_data({}, None) == []
 
 
-def test_rois_to_rectangles_sorts_by_index():
+def test_rectangle_converter_to_hv_data_sorts_by_index():
+    converter = RectangleConverter()
     rois = {
         2: RectangleROI(x=Interval(min=20.0, max=25.0), y=Interval(min=22.0, max=26.0)),
         0: RectangleROI(x=Interval(min=1.0, max=5.0), y=Interval(min=2.0, max=6.0)),
         1: RectangleROI(x=Interval(min=10.0, max=15.0), y=Interval(min=12.0, max=16.0)),
     }
 
-    rectangles = rois_to_rectangles(rois)
+    rectangles = converter.to_hv_data(rois, None)
 
     # Should be in sorted order by index (0, 1, 2)
     assert rectangles[0] == (1.0, 2.0, 5.0, 6.0)
@@ -722,9 +733,9 @@ def test_stale_readback_filtering(
     )
 
     # Verify ROI B was published and request state updated
-    assert len(roi_plot_factory._roi_publisher.published_rois) == 1
-    assert roi_plot_factory._roi_publisher.published_rois[0][1] == roi_b
-    assert plot_state._request_rois == roi_b
+    assert len(roi_plot_factory._roi_publisher.published) == 1
+    assert roi_plot_factory._roi_publisher.published[0][1] == roi_b
+    assert plot_state._rect_handler.request_rois == roi_b
 
     # Simulate user dragging to position C (rapid change)
     roi_c = {
@@ -743,21 +754,21 @@ def test_stale_readback_filtering(
     )
 
     # Verify request state updated to ROI C
-    assert plot_state._request_rois == roi_c
+    assert plot_state._rect_handler.request_rois == roi_c
 
     # Backend updates with ROI B (backend is source of truth, may be behind)
-    plot_state.on_backend_roi_update(roi_b)
+    plot_state.on_backend_rect_update(roi_b)
 
     # Backend state wins - readback and request both show ROI B
-    assert plot_state._readback_rois == roi_b
-    assert plot_state._request_rois == roi_b
+    assert plot_state._rect_handler.readback_rois == roi_b
+    assert plot_state._rect_handler.request_rois == roi_b
 
     # Backend catches up with ROI C
-    plot_state.on_backend_roi_update(roi_c)
+    plot_state.on_backend_rect_update(roi_c)
 
     # Verify readback and request both show ROI C
-    assert plot_state._readback_rois == roi_c
-    assert plot_state._request_rois == roi_c
+    assert plot_state._rect_handler.readback_rois == roi_c
+    assert plot_state._rect_handler.request_rois == roi_c
 
 
 def test_backend_update_from_another_view(
@@ -814,7 +825,7 @@ def test_backend_update_from_another_view(
     )
 
     # Verify request state is ROI B
-    assert plot_state._request_rois == roi_b
+    assert plot_state._rect_handler.request_rois == roi_b
 
     # Backend update from View 2 (different ROI position D)
     roi_d = {
@@ -823,11 +834,11 @@ def test_backend_update_from_another_view(
             y=Interval(min=55, max=65, unit='dimensionless'),
         )
     }
-    plot_state.on_backend_roi_update(roi_d)
+    plot_state.on_backend_rect_update(roi_d)
 
     # Verify View 1 UI updated to ROI D (backend is source of truth)
-    assert plot_state._readback_rois == roi_d
-    assert plot_state._request_rois == roi_d
+    assert plot_state._rect_handler.readback_rois == roi_d
+    assert plot_state._rect_handler.request_rois == roi_d
 
 
 def test_two_plots_remove_last_roi_syncs_correctly(
@@ -862,8 +873,11 @@ def test_two_plots_remove_last_roi_syncs_correctly(
 
     # Create Plot A
     box_stream_A = hv.streams.BoxEdit()
-    request_pipe_A = hv.streams.Pipe(data=[])
-    readback_pipe_A = hv.streams.Pipe(data=[])
+    rect_request_pipe_A = hv.streams.Pipe(data=[])
+    rect_readback_pipe_A = hv.streams.Pipe(data=[])
+    poly_stream_A = hv.streams.PolyDraw()
+    poly_request_pipe_A = hv.streams.Pipe(data=[])
+    poly_readback_pipe_A = hv.streams.Pipe(data=[])
     default_colors = hv.Cycle.default_cycles["default_colors"]
 
     # Create ROI state stream for Plot A
@@ -875,8 +889,11 @@ def test_two_plots_remove_last_roi_syncs_correctly(
     plot_state_A = ROIPlotState(
         result_key=detector_key_A,
         box_stream=box_stream_A,
-        request_pipe=request_pipe_A,
-        readback_pipe=readback_pipe_A,
+        rect_request_pipe=rect_request_pipe_A,
+        rect_readback_pipe=rect_readback_pipe_A,
+        poly_stream=poly_stream_A,
+        poly_request_pipe=poly_request_pipe_A,
+        poly_readback_pipe=poly_readback_pipe_A,
         roi_state_stream=roi_state_stream_A,
         x_unit='dimensionless',
         y_unit='dimensionless',
@@ -887,8 +904,11 @@ def test_two_plots_remove_last_roi_syncs_correctly(
 
     # Create Plot B
     box_stream_B = hv.streams.BoxEdit()
-    request_pipe_B = hv.streams.Pipe(data=[])
-    readback_pipe_B = hv.streams.Pipe(data=[])
+    rect_request_pipe_B = hv.streams.Pipe(data=[])
+    rect_readback_pipe_B = hv.streams.Pipe(data=[])
+    poly_stream_B = hv.streams.PolyDraw()
+    poly_request_pipe_B = hv.streams.Pipe(data=[])
+    poly_readback_pipe_B = hv.streams.Pipe(data=[])
 
     # Create ROI state stream for Plot B
     class ROIStateStreamB(hv.streams.Stream):
@@ -899,8 +919,11 @@ def test_two_plots_remove_last_roi_syncs_correctly(
     plot_state_B = ROIPlotState(
         result_key=detector_key_B,
         box_stream=box_stream_B,
-        request_pipe=request_pipe_B,
-        readback_pipe=readback_pipe_B,
+        rect_request_pipe=rect_request_pipe_B,
+        rect_readback_pipe=rect_readback_pipe_B,
+        poly_stream=poly_stream_B,
+        poly_request_pipe=poly_request_pipe_B,
+        poly_readback_pipe=poly_readback_pipe_B,
         roi_state_stream=roi_state_stream_B,
         x_unit='dimensionless',
         y_unit='dimensionless',
@@ -930,14 +953,14 @@ def test_two_plots_remove_last_roi_syncs_correctly(
     )
 
     # Verify Plot A has 2 ROIs in request state
-    assert plot_state_A._request_rois == two_rois
+    assert plot_state_A._rect_handler.request_rois == two_rois
 
     # Simulate backend readback to Plot B
-    plot_state_B.on_backend_roi_update(two_rois)
+    plot_state_B.on_backend_rect_update(two_rois)
 
     # Verify Plot B received 2 ROIs in both readback and request states
-    assert plot_state_B._readback_rois == two_rois
-    assert plot_state_B._request_rois == two_rois
+    assert plot_state_B._rect_handler.readback_rois == two_rois
+    assert plot_state_B._rect_handler.request_rois == two_rois
     assert len(plot_state_B.box_stream.data['x0']) == 2
 
     # Step 2: User removes 1 ROI on Plot A (keep only ROI 0)
@@ -957,14 +980,14 @@ def test_two_plots_remove_last_roi_syncs_correctly(
     )
 
     # Verify Plot A has 1 ROI in request state
-    assert plot_state_A._request_rois == one_roi
+    assert plot_state_A._rect_handler.request_rois == one_roi
 
     # Simulate backend readback to Plot B
-    plot_state_B.on_backend_roi_update(one_roi)
+    plot_state_B.on_backend_rect_update(one_roi)
 
     # Verify Plot B updated to 1 ROI in both states
-    assert plot_state_B._readback_rois == one_roi
-    assert plot_state_B._request_rois == one_roi
+    assert plot_state_B._rect_handler.readback_rois == one_roi
+    assert plot_state_B._rect_handler.request_rois == one_roi
     assert len(plot_state_B.box_stream.data['x0']) == 1
 
     # Step 3: User removes last ROI on Plot A (BUG: should sync to Plot B)
@@ -974,17 +997,17 @@ def test_two_plots_remove_last_roi_syncs_correctly(
     plot_state_A.box_stream.event(data={})
 
     # Verify Plot A has 0 ROIs in request state
-    assert plot_state_A._request_rois == no_rois
+    assert plot_state_A._rect_handler.request_rois == no_rois
 
     # Simulate backend readback to Plot B
-    plot_state_B.on_backend_roi_update(no_rois)
+    plot_state_B.on_backend_rect_update(no_rois)
 
     # THIS IS WHERE THE BUG MIGHT BE: Plot B should update to 0 ROIs
     assert (
-        plot_state_B._readback_rois == no_rois
+        plot_state_B._rect_handler.readback_rois == no_rois
     ), "Plot B should have 0 ROIs in readback after Plot A removed last ROI"
     assert (
-        plot_state_B._request_rois == no_rois
+        plot_state_B._rect_handler.request_rois == no_rois
     ), "Plot B should have 0 ROIs in request after Plot A removed last ROI"
     assert (
         len(plot_state_B.box_stream.data['x0']) == 0
@@ -1025,8 +1048,11 @@ def test_two_plots_both_clear_rois_independently(
 
     # Create Plot A
     box_stream_A = hv.streams.BoxEdit()
-    request_pipe_A = hv.streams.Pipe(data=[])
-    readback_pipe_A = hv.streams.Pipe(data=[])
+    rect_request_pipe_A = hv.streams.Pipe(data=[])
+    rect_readback_pipe_A = hv.streams.Pipe(data=[])
+    poly_stream_A = hv.streams.PolyDraw()
+    poly_request_pipe_A = hv.streams.Pipe(data=[])
+    poly_readback_pipe_A = hv.streams.Pipe(data=[])
     default_colors = hv.Cycle.default_cycles["default_colors"]
 
     # Create ROI state stream for Plot A
@@ -1038,8 +1064,11 @@ def test_two_plots_both_clear_rois_independently(
     plot_state_A = ROIPlotState(
         result_key=detector_key_A,
         box_stream=box_stream_A,
-        request_pipe=request_pipe_A,
-        readback_pipe=readback_pipe_A,
+        rect_request_pipe=rect_request_pipe_A,
+        rect_readback_pipe=rect_readback_pipe_A,
+        poly_stream=poly_stream_A,
+        poly_request_pipe=poly_request_pipe_A,
+        poly_readback_pipe=poly_readback_pipe_A,
         roi_state_stream=roi_state_stream_A,
         x_unit='dimensionless',
         y_unit='dimensionless',
@@ -1050,8 +1079,11 @@ def test_two_plots_both_clear_rois_independently(
 
     # Create Plot B
     box_stream_B = hv.streams.BoxEdit()
-    request_pipe_B = hv.streams.Pipe(data=[])
-    readback_pipe_B = hv.streams.Pipe(data=[])
+    rect_request_pipe_B = hv.streams.Pipe(data=[])
+    rect_readback_pipe_B = hv.streams.Pipe(data=[])
+    poly_stream_B = hv.streams.PolyDraw()
+    poly_request_pipe_B = hv.streams.Pipe(data=[])
+    poly_readback_pipe_B = hv.streams.Pipe(data=[])
 
     # Create ROI state stream for Plot B
     class ROIStateStreamB(hv.streams.Stream):
@@ -1062,8 +1094,11 @@ def test_two_plots_both_clear_rois_independently(
     plot_state_B = ROIPlotState(
         result_key=detector_key_B,
         box_stream=box_stream_B,
-        request_pipe=request_pipe_B,
-        readback_pipe=readback_pipe_B,
+        rect_request_pipe=rect_request_pipe_B,
+        rect_readback_pipe=rect_readback_pipe_B,
+        poly_stream=poly_stream_B,
+        poly_request_pipe=poly_request_pipe_B,
+        poly_readback_pipe=poly_readback_pipe_B,
         roi_state_stream=roi_state_stream_B,
         x_unit='dimensionless',
         y_unit='dimensionless',
@@ -1093,18 +1128,18 @@ def test_two_plots_both_clear_rois_independently(
     )
 
     # Backend syncs to Plot B
-    plot_state_B.on_backend_roi_update(two_rois)
-    assert plot_state_B._readback_rois == two_rois
-    assert plot_state_B._request_rois == two_rois
+    plot_state_B.on_backend_rect_update(two_rois)
+    assert plot_state_B._rect_handler.readback_rois == two_rois
+    assert plot_state_B._rect_handler.request_rois == two_rois
 
     # Step 2: Plot B clears all ROIs (user interaction on Plot B)
     plot_state_B.box_stream.event(data={})
-    assert plot_state_B._request_rois == {}
+    assert plot_state_B._rect_handler.request_rois == {}
 
     # Backend syncs {} back to Plot A
-    plot_state_A.on_backend_roi_update({})
-    assert plot_state_A._readback_rois == {}
-    assert plot_state_A._request_rois == {}
+    plot_state_A.on_backend_rect_update({})
+    assert plot_state_A._rect_handler.readback_rois == {}
+    assert plot_state_A._rect_handler.request_rois == {}
 
     # Step 3: User re-draws ROIs on Plot A
     one_roi = {
@@ -1123,24 +1158,24 @@ def test_two_plots_both_clear_rois_independently(
     )
 
     # Backend syncs to Plot B
-    plot_state_B.on_backend_roi_update(one_roi)
-    assert plot_state_B._readback_rois == one_roi
-    assert plot_state_B._request_rois == one_roi
+    plot_state_B.on_backend_rect_update(one_roi)
+    assert plot_state_B._rect_handler.readback_rois == one_roi
+    assert plot_state_B._rect_handler.request_rois == one_roi
 
     # Step 4: Plot A removes last ROI again
     plot_state_A.box_stream.event(data={})
-    assert plot_state_A._request_rois == {}
+    assert plot_state_A._rect_handler.request_rois == {}
 
     # Backend should sync {} to Plot B
     # THIS IS THE CRITICAL TEST: Plot B might have {} in its old backlog
-    plot_state_B.on_backend_roi_update({})
+    plot_state_B.on_backend_rect_update({})
 
     # Plot B should update to {}
-    assert plot_state_B._readback_rois == {}, (
+    assert plot_state_B._rect_handler.readback_rois == {}, (
         "Plot B should have 0 ROIs in readback after Plot A removed last ROI "
         "(second time)"
     )
-    assert plot_state_B._request_rois == {}, (
+    assert plot_state_B._rect_handler.request_rois == {}, (
         "Plot B should have 0 ROIs in request after Plot A removed last ROI "
         "(second time)"
     )

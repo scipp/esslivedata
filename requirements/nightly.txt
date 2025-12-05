@@ -298,7 +298,7 @@ scipp==100.0.0.dev0
     #   scippneutron
     #   scippnexus
     #   tof
-scippneutron==25.11.0
+scippneutron==25.11.1
     # via
     #   essdiffraction
     #   essreduce

@@ -72,15 +72,24 @@ def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
 
     roi_state_stream = ROIStateStream()
 
-    # boxes_pipe is now used as readback_pipe; create separate request_pipe
-    request_pipe = hv.streams.Pipe(data=[])
+    # Create separate pipes for request and readback layers
+    rect_request_pipe = hv.streams.Pipe(data=[])
+    rect_readback_pipe = boxes_pipe
+
+    # Polygon streams and pipes
+    poly_stream = hv.streams.PolyDraw()
+    poly_request_pipe = hv.streams.Pipe(data=[])
+    poly_readback_pipe = hv.streams.Pipe(data=[])
 
     default_colors = hv.Cycle.default_cycles["default_colors"]
     return ROIPlotState(
         result_key=result_key,
         box_stream=box_stream,
-        request_pipe=request_pipe,
-        readback_pipe=boxes_pipe,
+        rect_request_pipe=rect_request_pipe,
+        rect_readback_pipe=rect_readback_pipe,
+        poly_stream=poly_stream,
+        poly_request_pipe=poly_request_pipe,
+        poly_readback_pipe=poly_readback_pipe,
         roi_state_stream=roi_state_stream,
         x_unit='m',
         y_unit='m',
@@ -99,8 +108,11 @@ class TestROIPlotState:
         """Test that ROIPlotState attaches callback to box_stream on init."""
         hv.extension('bokeh')
 
-        readback_pipe = hv.streams.Pipe(data=[])
-        request_pipe = hv.streams.Pipe(data=[])
+        rect_readback_pipe = hv.streams.Pipe(data=[])
+        rect_request_pipe = hv.streams.Pipe(data=[])
+        poly_stream = hv.streams.PolyDraw()
+        poly_readback_pipe = hv.streams.Pipe(data=[])
+        poly_request_pipe = hv.streams.Pipe(data=[])
         box_stream = hv.streams.BoxEdit()
         default_colors = hv.Cycle.default_cycles["default_colors"]
 
@@ -115,8 +127,11 @@ class TestROIPlotState:
         ROIPlotState(
             result_key=result_key,
             box_stream=box_stream,
-            request_pipe=request_pipe,
-            readback_pipe=readback_pipe,
+            rect_request_pipe=rect_request_pipe,
+            rect_readback_pipe=rect_readback_pipe,
+            poly_stream=poly_stream,
+            poly_request_pipe=poly_request_pipe,
+            poly_readback_pipe=poly_readback_pipe,
             roi_state_stream=roi_state_stream,
             x_unit='m',
             y_unit='m',
@@ -129,7 +144,7 @@ class TestROIPlotState:
         box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
 
         # Verify the callback was triggered by checking published ROIs
-        assert len(fake_publisher.published_rois) == 1
+        assert len(fake_publisher.published) == 1
 
     def test_publishes_valid_roi_on_box_edit(
         self, roi_plot_state, box_stream, fake_publisher
@@ -139,16 +154,16 @@ class TestROIPlotState:
         box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
 
         # Assert publisher was called
-        assert len(fake_publisher.published_rois) == 1
-        job_id, rois_dict = fake_publisher.published_rois[0]
+        assert len(fake_publisher.published) == 1
+        job_id, rect_rois_dict, _ = fake_publisher.published[0]
 
         # Verify job_id
         assert job_id == roi_plot_state.result_key.job_id
 
         # Verify ROI content
-        assert len(rois_dict) == 1
-        assert 0 in rois_dict
-        roi = rois_dict[0]
+        assert len(rect_rois_dict) == 1
+        assert 0 in rect_rois_dict
+        roi = rect_rois_dict[0]
         assert isinstance(roi, RectangleROI)
         assert roi.x.min == 1.0
         assert roi.x.max == 5.0
@@ -163,7 +178,7 @@ class TestROIPlotState:
         box_stream.event(data={'x0': [1.0], 'x1': [1.0], 'y0': [2.0], 'y1': [6.0]})
 
         # Assert nothing was published (empty ROIs dict)
-        assert len(fake_publisher.published_rois) == 0
+        assert len(fake_publisher.published) == 0
 
     def test_does_not_republish_unchanged_rois(
         self, roi_plot_state, box_stream, fake_publisher
@@ -173,12 +188,12 @@ class TestROIPlotState:
 
         # First edit
         box_stream.event(data=box_data)
-        assert len(fake_publisher.published_rois) == 1
+        assert len(fake_publisher.published) == 1
 
         # Second edit with same data
         box_stream.event(data=box_data)
         # Should still be 1 (not called again)
-        assert len(fake_publisher.published_rois) == 1
+        assert len(fake_publisher.published) == 1
 
     def test_publishes_when_roi_changes(
         self, roi_plot_state, box_stream, fake_publisher
@@ -186,12 +201,12 @@ class TestROIPlotState:
         """Test that changed ROIs trigger republishing."""
         # First edit
         box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
-        assert len(fake_publisher.published_rois) == 1
+        assert len(fake_publisher.published) == 1
 
         # Second edit with different data
         box_stream.event(data={'x0': [2.0], 'x1': [6.0], 'y0': [3.0], 'y1': [7.0]})
         # Should be called again
-        assert len(fake_publisher.published_rois) == 2
+        assert len(fake_publisher.published) == 2
 
     def test_handles_multiple_rois(self, roi_plot_state, box_stream, fake_publisher):
         """Test publishing multiple ROIs."""
@@ -205,21 +220,21 @@ class TestROIPlotState:
         )
 
         # Assert publisher was called
-        assert len(fake_publisher.published_rois) == 1
-        _, rois_dict = fake_publisher.published_rois[0]
+        assert len(fake_publisher.published) == 1
+        _, rect_rois_dict, _ = fake_publisher.published[0]
 
         # Verify both ROIs
-        assert len(rois_dict) == 2
-        assert 0 in rois_dict
-        assert 1 in rois_dict
+        assert len(rect_rois_dict) == 2
+        assert 0 in rect_rois_dict
+        assert 1 in rect_rois_dict
 
         # Verify first ROI
-        roi0 = rois_dict[0]
+        roi0 = rect_rois_dict[0]
         assert roi0.x.min == 1.0
         assert roi0.x.max == 5.0
 
         # Verify second ROI
-        roi1 = rois_dict[1]
+        roi1 = rect_rois_dict[1]
         assert roi1.x.min == 10.0
         assert roi1.x.max == 15.0
 
@@ -227,29 +242,29 @@ class TestROIPlotState:
         """Test handling of empty box data."""
         # First create some ROIs
         box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
-        assert len(fake_publisher.published_rois) == 1
+        assert len(fake_publisher.published) == 1
 
         # Now send empty data (clearing ROIs)
         box_stream.event(data={})
 
         # Should publish empty ROI dict (because it changed from non-empty to empty)
-        assert len(fake_publisher.published_rois) == 2
-        _, rois_dict = fake_publisher.published_rois[1]
-        assert len(rois_dict) == 0
+        assert len(fake_publisher.published) == 2
+        _, rect_rois_dict, _ = fake_publisher.published[1]
+        assert len(rect_rois_dict) == 0
 
     def test_handles_none_box_data(self, roi_plot_state, box_stream, fake_publisher):
         """Test handling of None box data."""
         # First create some ROIs
         box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
-        assert len(fake_publisher.published_rois) == 1
+        assert len(fake_publisher.published) == 1
 
         # Now send None data (clearing ROIs)
         box_stream.event(data=None)
 
         # Should publish empty ROI dict (because it changed from non-empty to empty)
-        assert len(fake_publisher.published_rois) == 2
-        _, rois_dict = fake_publisher.published_rois[1]
-        assert len(rois_dict) == 0
+        assert len(fake_publisher.published) == 2
+        _, rect_rois_dict, _ = fake_publisher.published[1]
+        assert len(rect_rois_dict) == 0
 
     def test_is_roi_active(self, roi_plot_state, box_stream, result_key):
         """Test is_roi_active method tracks backend ROI state correctly."""
@@ -262,7 +277,7 @@ class TestROIPlotState:
         # Add ROI at index 0 via user edit
         box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
         # Simulate backend readback
-        roi_plot_state.on_backend_roi_update(
+        roi_plot_state.on_backend_rect_update(
             {
                 0: RectangleROI(
                     x=Interval(min=1.0, max=5.0, unit='m'),
@@ -284,7 +299,7 @@ class TestROIPlotState:
                 'y1': [6.0, 25.0],
             }
         )
-        roi_plot_state.on_backend_roi_update(
+        roi_plot_state.on_backend_rect_update(
             {
                 0: RectangleROI(
                     x=Interval(min=1.0, max=5.0, unit='m'),
@@ -303,7 +318,7 @@ class TestROIPlotState:
 
         # Remove all ROIs
         box_stream.event(data={})
-        roi_plot_state.on_backend_roi_update({})
+        roi_plot_state.on_backend_rect_update({})
 
         # No ROIs should be active
         assert roi_plot_state.is_roi_active(roi_key_0) is False
@@ -321,14 +336,17 @@ class TestROIPlotState:
         box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
 
         # Should publish ROI
-        assert len(fake_publisher.published_rois) == 1
+        assert len(fake_publisher.published) == 1
 
     def test_no_publishing_when_publisher_is_none(self, result_key):
         """Test that ROI state works correctly when publisher is None."""
         hv.extension('bokeh')
 
-        readback_pipe = hv.streams.Pipe(data=[])
-        request_pipe = hv.streams.Pipe(data=[])
+        rect_readback_pipe = hv.streams.Pipe(data=[])
+        rect_request_pipe = hv.streams.Pipe(data=[])
+        poly_stream = hv.streams.PolyDraw()
+        poly_readback_pipe = hv.streams.Pipe(data=[])
+        poly_request_pipe = hv.streams.Pipe(data=[])
         box_stream = hv.streams.BoxEdit()
         default_colors = hv.Cycle.default_cycles["default_colors"]
 
@@ -343,8 +361,11 @@ class TestROIPlotState:
         state = ROIPlotState(
             result_key=result_key,
             box_stream=box_stream,
-            request_pipe=request_pipe,
-            readback_pipe=readback_pipe,
+            rect_request_pipe=rect_request_pipe,
+            rect_readback_pipe=rect_readback_pipe,
+            poly_stream=poly_stream,
+            poly_request_pipe=poly_request_pipe,
+            poly_readback_pipe=poly_readback_pipe,
             roi_state_stream=roi_state_stream,
             x_unit='m',
             y_unit='m',
@@ -357,7 +378,7 @@ class TestROIPlotState:
         box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
 
         # Simulate backend readback - should not crash
-        state.on_backend_roi_update(
+        state.on_backend_rect_update(
             {
                 0: RectangleROI(
                     x=Interval(min=1.0, max=5.0, unit='m'),
@@ -377,11 +398,14 @@ class TestROIPlotState:
         class FailingPublisher:
             """Publisher that raises an error."""
 
-            def publish_rois(self, job_id, rois):
+            def publish(self, job_id, rois, geometry):
                 raise RuntimeError("Test error")
 
-        readback_pipe = hv.streams.Pipe(data=[])
-        request_pipe = hv.streams.Pipe(data=[])
+        rect_readback_pipe = hv.streams.Pipe(data=[])
+        rect_request_pipe = hv.streams.Pipe(data=[])
+        poly_stream = hv.streams.PolyDraw()
+        poly_readback_pipe = hv.streams.Pipe(data=[])
+        poly_request_pipe = hv.streams.Pipe(data=[])
         box_stream = hv.streams.BoxEdit()
         failing_publisher = FailingPublisher()
         default_colors = hv.Cycle.default_cycles["default_colors"]
@@ -397,8 +421,11 @@ class TestROIPlotState:
         ROIPlotState(
             result_key=result_key,
             box_stream=box_stream,
-            request_pipe=request_pipe,
-            readback_pipe=readback_pipe,
+            rect_request_pipe=rect_request_pipe,
+            rect_readback_pipe=rect_readback_pipe,
+            poly_stream=poly_stream,
+            poly_request_pipe=poly_request_pipe,
+            poly_readback_pipe=poly_readback_pipe,
             roi_state_stream=roi_state_stream,
             x_unit='m',
             y_unit='m',
@@ -412,7 +439,8 @@ class TestROIPlotState:
 
         # Check error was logged
         assert len(caplog.records) == 1
-        assert "Failed to publish ROI update" in caplog.records[0].message
+        assert "Failed to publish" in caplog.records[0].message
+        assert "ROI update" in caplog.records[0].message
         assert "Test error" in caplog.records[0].message
 
     def test_logs_info_on_successful_publish(
@@ -425,4 +453,4 @@ class TestROIPlotState:
         # Check info was logged
         info_records = [r for r in caplog.records if r.levelno == logging.INFO]
         assert len(info_records) == 1
-        assert "Published 1 ROI(s)" in info_records[0].message
+        assert "Published 1 rectangle ROI(s)" in info_records[0].message
