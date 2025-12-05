@@ -39,6 +39,7 @@ def bifrost_workflow():
     return workflow, DetectorRegionCounts
 
 
+@pytest.mark.slow
 def test_workflow_produces_detector_with_consecutive_detector_number(bifrost_workflow):
     wf, _DetectorRegionCounts = bifrost_workflow
     da = wf.compute(EmptyDetector[SampleRun])
@@ -138,6 +139,7 @@ def _make_test_event_data(
     return nexus_data
 
 
+@pytest.mark.slow
 class TestDetectorRatemeter:
     """Tests for the detector ratemeter workflow."""
 
