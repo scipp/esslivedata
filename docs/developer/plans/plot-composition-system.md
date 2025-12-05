@@ -216,91 +216,64 @@ This is more efficient than per-layer callbacks and reduces visual flicker.
 
 Layer add/remove operations are rare (user-initiated). Rebuilding the entire composition on each change is simpler than incremental updates and performs well in practice.
 
-## Configuration Format
+## Integration with Existing Configuration
 
-Plot compositions can be specified in YAML:
+The layer model integrates with the existing `PlotConfig` / `GridSpec` configuration system.
 
-```yaml
-# Simple spectrum plot
-layers:
-  - name: spectrum
-    element: curve
-    source:
-      type: pipeline
-      result_keys:
-        - workflow_id: monitor_reduction
-          output_name: normalized_counts
+### Current PlotConfig
 
-# Spectrum with peak markers
-layers:
-  - name: spectrum
-    element: curve
-    source:
-      type: pipeline
-      result_keys:
-        - workflow_id: monitor_reduction
-          output_name: normalized_counts
-  - name: peaks
-    element: vlines
-    source:
-      type: file
-      path: config/known_peaks.csv
-    params:
-      color: red
-      line_dash: dashed
-
-# Two spectra comparison
-layers:
-  - name: measured
-    element: curve
-    source:
-      type: pipeline
-      result_keys:
-        - workflow_id: reduction
-          output_name: spectrum
-  - name: reference
-    element: curve
-    source:
-      type: pipeline
-      result_keys:
-        - workflow_id: reduction
-          output_name: reference_spectrum
-    params:
-      color: gray
-      alpha: 0.5
-
-# ROI detector (replaces special roi_detector plotter)
-layers:
-  - name: detector
-    element: image
-    source:
-      type: pipeline
-      result_keys:
-        - workflow_id: detector_reduction
-          output_name: detector_image
-  - name: rect_readback
-    element: rectangles
-    source:
-      type: kafka
-      result_keys:
-        - workflow_id: detector_reduction
-          output_name: roi_rectangle
-    params:
-      line_color: blue
-      fill_alpha: 0.1
-  - name: rect_request
-    element: rectangles
-    source:
-      type: interactive
-      coordinate_reference: detector
-    params:
-      line_color: blue
-      line_dash: dashed
-    interaction:
-      tool: box_edit
-      publish_to: roi_rectangle
-      max_objects: 4
+```python
+@dataclass
+class PlotConfig:
+    workflow_id: WorkflowId
+    source_names: list[str]
+    plot_name: str  # "image", "lines", "roi_detector"
+    params: pydantic.BaseModel
+    output_name: str = 'result'
 ```
+
+This is a **single-layer specification**: one pipeline data source, one element type.
+
+### Evolution: Symmetric Layer Model
+
+`PlotCell` evolves to hold a list of peer layers:
+
+```python
+@dataclass
+class PlotCell:
+    geometry: CellGeometry
+    layers: list[LayerConfig]  # All layers are peers
+```
+
+Where `LayerConfig` generalizes `PlotConfig` using the `DataSource` abstraction:
+
+```python
+@dataclass
+class LayerConfig:
+    name: str
+    element: str  # "image", "curve", "rectangles", "vlines"
+    source: DataSource  # PipelineSource, KafkaSource, StaticSource, InteractiveSource
+    params: dict
+    interaction: InteractionSpec | None = None
+```
+
+The current `PlotConfig` maps directly to a `LayerConfig` with a `PipelineSource`:
+
+```python
+# PlotConfig → LayerConfig conversion
+LayerConfig(
+    name=config.plot_name,
+    element=config.plot_name,  # "image", "lines", etc.
+    source=PipelineSource(
+        workflow_id=config.workflow_id,
+        source_names=config.source_names,
+        output_name=config.output_name,
+    ),
+    params=config.params,
+)
+```
+
+For backward compatibility, existing single-`PlotConfig` YAML converts to a single-element `layers` list. The exact migration strategy should be determined during implementation
 
 ## Reusing Existing Code
 
@@ -330,14 +303,14 @@ The main change is organizational: ROI logic moves from a "special plotter" to i
 
 ## Migration Path
 
-1. **Create layer infrastructure**: `PlotLayer`, `DataSource`, `PlotComposer`
+1. **Create layer infrastructure**: `LayerConfig`, `DataSource`, `PlotComposer`
 2. **Adapt existing plotters**: Rename to `ElementFactory`, minimal changes
 3. **Implement data sources**: `PipelineSource`, `KafkaSource`, `InteractiveSource`
 4. **Implement interaction handling**: Extract from `ROIDetectorPlotFactory`
 5. **Update PlottingController**: Use `PlotComposer`, remove special cases
-6. **Add configuration parsing**: YAML → `PlotComposition`
-7. **Deprecate roi_detector**: Map to equivalent composition
-8. **Update UI**: Composition builder instead of plotter selector
+6. **Evolve PlotCell**: Change from single `config` to `layers` list
+7. **Deprecate roi_detector**: Map to equivalent composition (image + ROI layers)
+8. **Update UI**: Layer management in plot settings
 
 ## Benefits
 
