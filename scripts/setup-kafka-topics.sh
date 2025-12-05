@@ -36,6 +36,16 @@ kafka-topics --create --bootstrap-server kafka:29092 \
   --config segment.ms=60000
 
 kafka-topics --create --bootstrap-server kafka:29092 \
+  --topic ${LIVEDATA_INSTRUMENT}_area_detector \
+  --config cleanup.policy=delete \
+  --config delete.retention.ms=60000 \
+  --config max.message.bytes=104857600 \
+  --config retention.bytes=10737418240 \
+  --config retention.ms=30000 \
+  --config segment.bytes=104857600 \
+  --config segment.ms=60000
+
+kafka-topics --create --bootstrap-server kafka:29092 \
   --topic ${LIVEDATA_INSTRUMENT}_beam_monitor \
   --config cleanup.policy=delete \
   --config delete.retention.ms=60000 \
