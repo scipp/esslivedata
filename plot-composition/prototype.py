@@ -137,10 +137,11 @@ class PlotComposer:
     - Layer composition via overlay
     """
 
-    def __init__(self):
+    def __init__(self, update_interval_ms: int = 500):
         self._layers: dict[str, LayerState] = {}
         self._composition: hv.DynamicMap | None = None
-        self._callbacks: list = []
+        self._update_callback: pn.io.PeriodicCallback | None = None
+        self._update_interval_ms = update_interval_ms
         self._on_composition_change: Callable[[], None] | None = None
         self._bounds_callback: Callable[[dict], None] | None = None
 
@@ -152,11 +153,39 @@ class PlotComposer:
         """Set callback for bounds selection events."""
         self._bounds_callback = callback
 
+    def _update_all_dynamic_layers(self) -> None:
+        """Update all dynamic curve layers at once using pn.io.hold()."""
+        with pn.io.hold():
+            for name, state in self._layers.items():
+                if state.data_generator is not None and state.pipe is not None:
+                    data = state.data_generator.generate(label=name)
+                    state.pipe.send(data)
+
+    def _ensure_update_callback(self) -> None:
+        """Start the single update callback if not already running."""
+        if self._update_callback is None:
+            self._update_callback = pn.state.add_periodic_callback(
+                self._update_all_dynamic_layers, period=self._update_interval_ms
+            )
+            logger.info(
+                "Started periodic update callback (interval=%dms)",
+                self._update_interval_ms,
+            )
+
+    def _stop_update_callback_if_no_dynamic_layers(self) -> None:
+        """Stop the update callback if no dynamic layers remain."""
+        has_dynamic = any(
+            state.data_generator is not None for state in self._layers.values()
+        )
+        if not has_dynamic and self._update_callback is not None:
+            self._update_callback.stop()
+            self._update_callback = None
+            logger.info("Stopped periodic update callback (no dynamic layers)")
+
     def add_dynamic_curve_layer(
         self,
         name: str,
         generator: DataGenerator,
-        update_interval_ms: int = 500,
         **params,
     ) -> None:
         """
@@ -168,8 +197,6 @@ class PlotComposer:
             Unique layer identifier.
         generator:
             Data generator for this curve.
-        update_interval_ms:
-            Update interval in milliseconds.
         **params:
             HoloViews opts for the Curve element.
         """
@@ -180,8 +207,12 @@ class PlotComposer:
         spec = LayerSpec(name=name, element_type="curve", params=params)
         pipe = hv.streams.Pipe(data=None)
 
-        def make_curve(data):
-            return curve_element(data, **params)
+        # Capture variables to avoid closure issues with Panel sessions
+        _curve_element = curve_element
+        _params = params
+
+        def make_curve(data, _fn=_curve_element, _p=_params):
+            return _fn(data, **_p)
 
         dmap = hv.DynamicMap(make_curve, streams=[pipe])
 
@@ -197,14 +228,8 @@ class PlotComposer:
         initial_data = generator.generate(label=name)
         pipe.send(initial_data)
 
-        # Setup periodic callback
-        def update():
-            if name in self._layers:
-                data = generator.generate(label=name)
-                pipe.send(data)
-
-        callback = pn.state.add_periodic_callback(update, period=update_interval_ms)
-        self._callbacks.append((name, callback))
+        # Ensure the shared update callback is running
+        self._ensure_update_callback()
 
         logger.info("Added dynamic curve layer: %s", name)
         self._notify_composition_change()
@@ -231,8 +256,12 @@ class PlotComposer:
         spec = LayerSpec(name=name, element_type="vlines", params=params)
         pipe = hv.streams.Pipe(data=positions)
 
-        def make_vlines(data):
-            return vlines_element(data, **params)
+        # Capture variables to avoid closure issues with Panel sessions
+        _vlines_element = vlines_element
+        _params = params
+
+        def make_vlines(data, _fn=_vlines_element, _p=_params):
+            return _fn(data, **_p)
 
         dmap = hv.DynamicMap(make_vlines, streams=[pipe])
 
@@ -272,16 +301,29 @@ class PlotComposer:
         # Create pipe for programmatic updates
         pipe = hv.streams.Pipe(data=[])
 
-        def make_rectangles(data):
-            return bounds_rectangles(data, **params)
+        # Capture variables explicitly to avoid closure issues with Panel sessions
+        _bounds_rectangles = bounds_rectangles
+        _params = params
+
+        def make_rectangles(data, _fn=_bounds_rectangles, _p=_params):
+            return _fn(data, **_p)
 
         dmap = hv.DynamicMap(make_rectangles, streams=[pipe])
+
+        # Add xbox_select tool to enable selection - BoundsX doesn't add it automatically
+        # The tool must be on the DynamicMap that BoundsX is attached to
+        dmap = dmap.opts(tools=['xbox_select'])
 
         # Create BoundsX stream attached to the DynamicMap
         # This is the critical pattern: source must be the DynamicMap
         bounds_stream = hv.streams.BoundsX(source=dmap)
 
-        def on_bounds_change(**kwargs):
+        # Capture variables for closure
+        _pipe = pipe
+        _logger = logger
+        _callback = self._bounds_callback
+
+        def on_bounds_change(_pipe=_pipe, _logger=_logger, _cb=_callback, **kwargs):
             """Handle bounds selection changes."""
             bounds = kwargs.get("boundsx")
             if bounds is not None:
@@ -290,10 +332,10 @@ class PlotComposer:
                 # BoundsX gives us x bounds, we need to create full rectangle
                 # Using fixed y range since we don't have BoundsXY
                 rect_data = [(x0, -2, x1, 2)]  # (x0, y0, x1, y1)
-                pipe.send(rect_data)
-                logger.info("Bounds selected: x=[%.2f, %.2f]", x0, x1)
-                if self._bounds_callback:
-                    self._bounds_callback({"x0": x0, "x1": x1})
+                _pipe.send(rect_data)
+                _logger.info("Bounds selected: x=[%.2f, %.2f]", x0, x1)
+                if _cb:
+                    _cb({"x0": x0, "x1": x1})
 
         bounds_stream.add_subscriber(on_bounds_change)
 
@@ -329,15 +371,23 @@ class PlotComposer:
         # Create pipe for programmatic updates
         pipe = hv.streams.Pipe(data=[])
 
-        def make_rectangles(data):
-            return bounds_rectangles(data, **params)
+        # Capture variables to avoid closure issues with Panel sessions
+        _bounds_rectangles = bounds_rectangles
+        _params = params
+
+        def make_rectangles(data, _fn=_bounds_rectangles, _p=_params):
+            return _fn(data, **_p)
 
         dmap = hv.DynamicMap(make_rectangles, streams=[pipe])
 
         # Create BoxEdit stream attached to the DynamicMap
         box_stream = hv.streams.BoxEdit(source=dmap, num_objects=num_objects, data={})
 
-        def on_box_change(data):
+        # Capture variables for closure
+        _pipe = pipe
+        _logger = logger
+
+        def on_box_change(data, _pipe=_pipe, _logger=_logger):
             """Handle box edit changes."""
             if data is None:
                 return
@@ -347,10 +397,10 @@ class PlotComposer:
             y1_list = data.get("y1", [])
 
             rect_data = list(zip(x0_list, y0_list, x1_list, y1_list, strict=True))
-            pipe.send(rect_data)
-            logger.info("BoxEdit: %d rectangles", len(rect_data))
+            _pipe.send(rect_data)
+            _logger.info("BoxEdit: %d rectangles", len(rect_data))
 
-        box_stream.param.watch(lambda event: on_box_change(event.new), "data")
+        box_stream.param.watch(lambda event, _fn=on_box_change: _fn(event.new), "data")
 
         state = LayerState(spec=spec, pipe=pipe, dmap=dmap, stream=box_stream)
         self._layers[name] = state
@@ -364,18 +414,12 @@ class PlotComposer:
             logger.warning("Layer %s not found", name)
             return
 
-        # Stop and remove periodic callback if exists
-        new_callbacks = []
-        for n, cb in self._callbacks:
-            if n == name:
-                cb.stop()
-                logger.debug("Stopped periodic callback for layer: %s", name)
-            else:
-                new_callbacks.append((n, cb))
-        self._callbacks = new_callbacks
-
         del self._layers[name]
         logger.info("Removed layer: %s", name)
+
+        # Stop the shared callback if no dynamic layers remain
+        self._stop_update_callback_if_no_dynamic_layers()
+
         self._notify_composition_change()
 
     def get_composition(self) -> hv.DynamicMap | hv.Overlay:
@@ -499,7 +543,6 @@ class CompositionDashboard:
         self._composer.add_dynamic_curve_layer(
             name=name,
             generator=generator,
-            update_interval_ms=500,
             color=color,
             line_width=2,
         )
