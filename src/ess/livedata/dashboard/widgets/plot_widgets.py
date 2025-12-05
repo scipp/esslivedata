@@ -165,6 +165,32 @@ def create_gear_button(on_gear_callback: Callable[[], None]) -> pn.widgets.Butto
     )
 
 
+def create_add_layer_button(
+    on_add_layer_callback: Callable[[], None],
+) -> pn.widgets.Button:
+    """
+    Create a styled button for adding a layer to a plot cell.
+
+    Parameters
+    ----------
+    on_add_layer_callback:
+        Callback function to invoke when the button is clicked.
+
+    Returns
+    -------
+    :
+        Panel Button widget styled as an add layer button.
+    """
+    return create_tool_button(
+        symbol='\u002b',  # Plus sign
+        # Position to the left of the gear button
+        right_offset=f'{2 * ButtonStyles.TOOL_BUTTON_SIZE + 15}px',
+        button_color='#28a745',  # Green color for add action
+        hover_color='rgba(40, 167, 69, 0.1)',
+        on_click_callback=on_add_layer_callback,
+    )
+
+
 def get_workflow_display_info(
     workflow_registry: Mapping[WorkflowId, WorkflowSpec],
     workflow_id: WorkflowId,

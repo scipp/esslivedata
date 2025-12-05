@@ -32,6 +32,7 @@ from .plot_config_modal import PlotConfigModal
 from .plot_grid import GridCellStyles, PlotGrid
 from .plot_grid_manager import PlotGridManager
 from .plot_widgets import (
+    create_add_layer_button,
     create_close_button,
     create_gear_button,
     get_workflow_display_info,
@@ -242,6 +243,25 @@ class PlotGridTabs:
         current_config = self._orchestrator.get_plot_config(cell_id)
         self._show_config_modal(on_success=on_success, initial_config=current_config)
 
+    def _on_add_layer(self, cell_id: CellId) -> None:
+        """
+        Handle add layer request from plus button.
+
+        Shows the PlotConfigModal to configure the new layer, then adds it
+        to the cell in the orchestrator on success.
+
+        Parameters
+        ----------
+        cell_id
+            ID of the cell to add a layer to.
+        """
+
+        def on_success(layer_config: PlotConfig) -> None:
+            """Handle successful layer configuration."""
+            self._orchestrator.add_layer(cell_id, layer_config)
+
+        self._show_config_modal(on_success=on_success)
+
     def _show_config_modal(
         self,
         *,
@@ -425,7 +445,14 @@ class PlotGridTabs:
 
         gear_button = create_gear_button(on_gear)
 
+        # Create add layer button
+        def on_add_layer() -> None:
+            self._on_add_layer(cell_id)
+
+        add_layer_button = create_add_layer_button(on_add_layer)
+
         status_widget = pn.Column(
+            add_layer_button,
             gear_button,
             close_button,
             pn.pane.Markdown(
@@ -482,6 +509,12 @@ class PlotGridTabs:
 
         gear_button = create_gear_button(on_gear)
 
+        # Create add layer button
+        def on_add_layer() -> None:
+            self._on_add_layer(cell_id)
+
+        add_layer_button = create_add_layer_button(on_add_layer)
+
         # Use .layout to preserve widgets for DynamicMaps with kdims.
         # When pn.pane.HoloViews wraps a DynamicMap with kdims, it generates
         # widgets. However, these widgets don't render when the pane is placed
@@ -493,6 +526,7 @@ class PlotGridTabs:
         plot_pane = plot_pane_wrapper.layout
 
         return pn.Column(
+            add_layer_button,
             gear_button,
             close_button,
             plot_pane,
