@@ -18,6 +18,7 @@ from .plots import (
     BarsPlotter,
     ImagePlotter,
     LinePlotter,
+    Overlay1DPlotter,
     Plotter,
     SlicerPlotter,
 )
@@ -277,6 +278,19 @@ plotter_registry.register_plotter(
         custom_validators=[_all_coords_evenly_spaced],
     ),
     factory=SlicerPlotter.from_params,
+)
+
+
+plotter_registry.register_plotter(
+    name='overlay_1d',
+    title='Overlay 1D',
+    description=(
+        'Slice 2D data along the first dimension and overlay as 1D curves. '
+        'Useful for visualizing multiple spectra from a single 2D array '
+        '(e.g., ROI spectra stacked along a roi dimension).'
+    ),
+    data_requirements=DataRequirements(min_dims=2, max_dims=2, multiple_datasets=False),
+    factory=Overlay1DPlotter.from_params,
 )
 
 

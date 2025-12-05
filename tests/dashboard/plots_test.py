@@ -13,6 +13,7 @@ from holoviews.plotting.bokeh import BokehRenderer
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.dashboard import plots
 from ess.livedata.dashboard.plot_params import (
+    PlotParams1d,
     PlotParams2d,
     PlotParams3d,
     PlotScale,
@@ -907,3 +908,220 @@ class TestBarsPlotter:
         """Test that bars can be rendered to Bokeh."""
         result = bars_plotter.plot(scalar_data, data_key)
         render_to_bokeh(result)
+
+
+class TestOverlay1DPlotter:
+    """Tests for Overlay1DPlotter with 2D data."""
+
+    @pytest.fixture
+    def overlay_plotter(self):
+        """Create an Overlay1DPlotter instance."""
+        return plots.Overlay1DPlotter.from_params(PlotParams1d())
+
+    @pytest.fixture
+    def data_2d_with_roi_coord(self):
+        """Create 2D data with roi coordinate (like stacked ROI spectra)."""
+        return sc.DataArray(
+            sc.array(
+                dims=['roi', 'toa'],
+                values=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
+                unit='counts',
+            ),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[0, 3, 5], unit=None),
+                'toa': sc.array(dims=['toa'], values=[10.0, 20.0, 30.0], unit='us'),
+            },
+        )
+
+    @pytest.fixture
+    def data_2d_no_first_coord(self):
+        """Create 2D data without coordinate for first dimension."""
+        return sc.DataArray(
+            sc.array(
+                dims=['row', 'col'],
+                values=[[1.0, 2.0], [3.0, 4.0]],
+                unit='counts',
+            ),
+            coords={
+                'col': sc.array(dims=['col'], values=[10.0, 20.0], unit='m'),
+            },
+        )
+
+    @pytest.fixture
+    def data_2d_empty_first_dim(self):
+        """Create 2D data with empty first dimension."""
+        return sc.DataArray(
+            sc.zeros(dims=['roi', 'toa'], shape=[0, 5], unit='counts'),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[], unit=None),
+                'toa': sc.linspace('toa', 0.0, 100.0, num=5, unit='us'),
+            },
+        )
+
+    def test_plot_creates_overlay(
+        self, overlay_plotter, data_2d_with_roi_coord, data_key
+    ):
+        """Test that Overlay1DPlotter creates hv.Overlay from 2D data."""
+        result = overlay_plotter.plot(data_2d_with_roi_coord, data_key)
+        assert isinstance(result, hv.Overlay)
+
+    def test_overlay_has_correct_number_of_curves(
+        self, overlay_plotter, data_2d_with_roi_coord, data_key
+    ):
+        """Test that overlay contains one curve per slice along first dim."""
+        result = overlay_plotter.plot(data_2d_with_roi_coord, data_key)
+        assert len(result) == 3  # 3 ROIs
+
+    def test_single_slice_returns_single_element(self, overlay_plotter, data_key):
+        """Test that single slice returns single element, not overlay."""
+        data = sc.DataArray(
+            sc.array(dims=['roi', 'toa'], values=[[1.0, 2.0, 3.0]], unit='counts'),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[2], unit=None),
+                'toa': sc.array(dims=['toa'], values=[10.0, 20.0, 30.0], unit='us'),
+            },
+        )
+        result = overlay_plotter.plot(data, data_key)
+        # Single curve, not wrapped in Overlay
+        assert isinstance(result, hv.Curve)
+
+    def test_empty_first_dim_returns_empty_curve(
+        self, overlay_plotter, data_2d_empty_first_dim, data_key
+    ):
+        """Test that empty first dimension returns empty curve."""
+        result = overlay_plotter.plot(data_2d_empty_first_dim, data_key)
+        assert isinstance(result, hv.Curve)
+
+    def test_curves_labeled_by_coord_value(
+        self, overlay_plotter, data_2d_with_roi_coord, data_key
+    ):
+        """Test that curves are labeled using coordinate values."""
+        result = overlay_plotter.plot(data_2d_with_roi_coord, data_key)
+        labels = [curve.label for curve in result]
+        assert 'roi=0' in labels
+        assert 'roi=3' in labels
+        assert 'roi=5' in labels
+
+    def test_colors_assigned_by_coord_value(
+        self, overlay_plotter, data_2d_with_roi_coord, data_key
+    ):
+        """Test that colors are assigned by coordinate value for stable identity."""
+        colors = hv.Cycle.default_cycles["default_colors"]
+        result = overlay_plotter.plot(data_2d_with_roi_coord, data_key)
+
+        # ROI 0 should get colors[0], ROI 3 -> colors[3], ROI 5 -> colors[5]
+        curve_colors = {}
+        for curve in result:
+            opts = hv.Store.lookup_options('bokeh', curve, 'style').kwargs
+            curve_colors[curve.label] = opts.get('color')
+
+        assert curve_colors['roi=0'] == colors[0]
+        assert curve_colors['roi=3'] == colors[3]
+        assert curve_colors['roi=5'] == colors[5]
+
+    def test_fallback_to_indices_without_coord(
+        self, overlay_plotter, data_2d_no_first_coord, data_key
+    ):
+        """Test that indices are used when first dim has no coordinate."""
+        result = overlay_plotter.plot(data_2d_no_first_coord, data_key)
+        labels = [curve.label for curve in result]
+        # Should use 0, 1 indices
+        assert 'row=0' in labels
+        assert 'row=1' in labels
+
+    def test_rejects_non_2d_data(self, overlay_plotter, data_key):
+        """Test that Overlay1DPlotter rejects non-2D data."""
+        data_1d = sc.DataArray(sc.array(dims=['x'], values=[1.0, 2.0, 3.0]))
+        with pytest.raises(ValueError, match="Expected 2D data"):
+            overlay_plotter.plot(data_1d, data_key)
+
+    def test_renders_to_bokeh(self, overlay_plotter, data_2d_with_roi_coord, data_key):
+        """Test that overlay can be rendered to Bokeh."""
+        result = overlay_plotter.plot(data_2d_with_roi_coord, data_key)
+        render_to_bokeh(result)
+
+    def test_registered_in_plotter_registry(self):
+        """Test that overlay_1d plotter is registered in the registry."""
+        from ess.livedata.dashboard.plotting import plotter_registry
+
+        assert 'overlay_1d' in plotter_registry
+        spec = plotter_registry.get_spec('overlay_1d')
+        assert spec.data_requirements.min_dims == 2
+        assert spec.data_requirements.max_dims == 2
+        assert spec.data_requirements.multiple_datasets is False
+
+    def test_compatible_with_2d_data(self, data_2d_with_roi_coord, data_key):
+        """Test that registry identifies overlay_1d as compatible with 2D data."""
+        from ess.livedata.dashboard.plotting import plotter_registry
+
+        data = {data_key: data_2d_with_roi_coord}
+        compatible = plotter_registry.get_compatible_plotters(data)
+        assert 'overlay_1d' in compatible
+
+    def test_not_compatible_with_multiple_datasets(
+        self, data_2d_with_roi_coord, data_key
+    ):
+        """Test that overlay_1d is not compatible with multiple datasets."""
+        from ess.livedata.dashboard.plotting import plotter_registry
+
+        key2 = ResultKey(
+            workflow_id=data_key.workflow_id,
+            job_id=JobId(source_name='source2', job_number=uuid.uuid4()),
+            output_name='result2',
+        )
+        data = {data_key: data_2d_with_roi_coord, key2: data_2d_with_roi_coord}
+        compatible = plotter_registry.get_compatible_plotters(data)
+        assert 'overlay_1d' not in compatible
+
+    def test_bin_edge_coords_produce_curves_not_histograms(
+        self, overlay_plotter, data_key
+    ):
+        """Test bin-edge coordinates are converted to midpoints for Curve output."""
+        # Create data with bin-edge coordinate (like TOA histograms)
+        toa_edges = sc.array(dims=['toa'], values=[0.0, 10.0, 20.0, 30.0], unit='us')
+        data = sc.DataArray(
+            sc.array(dims=['roi', 'toa'], values=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[0, 1], unit=None),
+                'toa': toa_edges,  # 4 edges for 3 bins
+            },
+        )
+        result = overlay_plotter.plot(data, data_key)
+
+        # Should be Curve elements, not Histogram
+        for elem in result:
+            assert isinstance(elem, hv.Curve), f"Expected Curve, got {type(elem)}"
+
+    def test_sizing_opts_applied_to_curves(self, data_2d_with_roi_coord, data_key):
+        """Test that sizing options (aspect) are applied to individual curves."""
+        from ess.livedata.dashboard.plot_params import PlotAspect, PlotAspectType
+
+        # Create plotter with non-default aspect
+        params = PlotParams1d()
+        params.plot_aspect = PlotAspect(aspect_type=PlotAspectType.square)
+        plotter = plots.Overlay1DPlotter.from_params(params)
+
+        result = plotter.plot(data_2d_with_roi_coord, data_key)
+
+        # Check that sizing opts are applied to each curve
+        for curve in result:
+            opts = hv.Store.lookup_options('bokeh', curve, 'plot').kwargs
+            assert opts.get('aspect') == 'square'
+
+    def test_free_aspect_applies_responsive_only(
+        self, data_2d_with_roi_coord, data_key
+    ):
+        """Test that 'free' aspect applies responsive=True without aspect constraint."""
+        from ess.livedata.dashboard.plot_params import PlotAspect, PlotAspectType
+
+        params = PlotParams1d()
+        params.plot_aspect = PlotAspect(aspect_type=PlotAspectType.free)
+        plotter = plots.Overlay1DPlotter.from_params(params)
+
+        result = plotter.plot(data_2d_with_roi_coord, data_key)
+
+        # Check that responsive is set but no aspect constraint
+        for curve in result:
+            opts = hv.Store.lookup_options('bokeh', curve, 'plot').kwargs
+            assert opts.get('responsive') is True
+            assert 'aspect' not in opts or opts.get('aspect') is None

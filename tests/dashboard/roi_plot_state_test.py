@@ -6,7 +6,6 @@ import logging
 import uuid
 
 import holoviews as hv
-import param
 import pytest
 
 from ess.livedata.config.models import Interval, RectangleROI
@@ -66,12 +65,6 @@ def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
     # Initialize holoviews extension to populate default color cycles
     hv.extension('bokeh')
 
-    # Create ROI state stream for tracking active ROIs
-    class ROIStateStream(hv.streams.Stream):
-        active_rois = param.Parameter(default=set(), doc="Set of active ROI indices")
-
-    roi_state_stream = ROIStateStream()
-
     # Create separate pipes for request and readback layers
     rect_request_pipe = hv.streams.Pipe(data=[])
     rect_readback_pipe = boxes_pipe
@@ -90,7 +83,6 @@ def roi_plot_state(result_key, box_stream, boxes_pipe, fake_publisher):
         poly_stream=poly_stream,
         poly_request_pipe=poly_request_pipe,
         poly_readback_pipe=poly_readback_pipe,
-        roi_state_stream=roi_state_stream,
         x_unit='m',
         y_unit='m',
         roi_publisher=fake_publisher,
@@ -116,14 +108,6 @@ class TestROIPlotState:
         box_stream = hv.streams.BoxEdit()
         default_colors = hv.Cycle.default_cycles["default_colors"]
 
-        # Create ROI state stream
-        class ROIStateStream(hv.streams.Stream):
-            active_rois = param.Parameter(
-                default=set(), doc="Set of active ROI indices"
-            )
-
-        roi_state_stream = ROIStateStream()
-
         ROIPlotState(
             result_key=result_key,
             box_stream=box_stream,
@@ -132,7 +116,6 @@ class TestROIPlotState:
             poly_stream=poly_stream,
             poly_request_pipe=poly_request_pipe,
             poly_readback_pipe=poly_readback_pipe,
-            roi_state_stream=roi_state_stream,
             x_unit='m',
             y_unit='m',
             roi_publisher=fake_publisher,
@@ -266,68 +249,6 @@ class TestROIPlotState:
         _, rect_rois_dict, _ = fake_publisher.published[1]
         assert len(rect_rois_dict) == 0
 
-    def test_is_roi_active(self, roi_plot_state, box_stream, result_key):
-        """Test is_roi_active method tracks backend ROI state correctly."""
-        # Initially no ROIs are active
-        roi_key_0 = result_key.model_copy(update={'output_name': 'roi_current_0'})
-        roi_key_1 = result_key.model_copy(update={'output_name': 'roi_current_1'})
-        assert roi_plot_state.is_roi_active(roi_key_0) is False
-        assert roi_plot_state.is_roi_active(roi_key_1) is False
-
-        # Add ROI at index 0 via user edit
-        box_stream.event(data={'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]})
-        # Simulate backend readback
-        roi_plot_state.on_backend_rect_update(
-            {
-                0: RectangleROI(
-                    x=Interval(min=1.0, max=5.0, unit='m'),
-                    y=Interval(min=2.0, max=6.0, unit='m'),
-                )
-            }
-        )
-
-        # ROI 0 should be active, ROI 1 should not
-        assert roi_plot_state.is_roi_active(roi_key_0) is True
-        assert roi_plot_state.is_roi_active(roi_key_1) is False
-
-        # Add second ROI
-        box_stream.event(
-            data={
-                'x0': [1.0, 10.0],
-                'x1': [5.0, 15.0],
-                'y0': [2.0, 20.0],
-                'y1': [6.0, 25.0],
-            }
-        )
-        roi_plot_state.on_backend_rect_update(
-            {
-                0: RectangleROI(
-                    x=Interval(min=1.0, max=5.0, unit='m'),
-                    y=Interval(min=2.0, max=6.0, unit='m'),
-                ),
-                1: RectangleROI(
-                    x=Interval(min=10.0, max=15.0, unit='m'),
-                    y=Interval(min=20.0, max=25.0, unit='m'),
-                ),
-            }
-        )
-
-        # Both ROIs should be active
-        assert roi_plot_state.is_roi_active(roi_key_0) is True
-        assert roi_plot_state.is_roi_active(roi_key_1) is True
-
-        # Remove all ROIs
-        box_stream.event(data={})
-        roi_plot_state.on_backend_rect_update({})
-
-        # No ROIs should be active
-        assert roi_plot_state.is_roi_active(roi_key_0) is False
-        assert roi_plot_state.is_roi_active(roi_key_1) is False
-
-        # Non-ROI key should never be considered active
-        non_roi_key = result_key.model_copy(update={'output_name': 'current'})
-        assert roi_plot_state.is_roi_active(non_roi_key) is False
-
     def test_handles_event_with_new_attribute(
         self, roi_plot_state, box_stream, fake_publisher
     ):
@@ -350,14 +271,6 @@ class TestROIPlotState:
         box_stream = hv.streams.BoxEdit()
         default_colors = hv.Cycle.default_cycles["default_colors"]
 
-        # Create ROI state stream
-        class ROIStateStream(hv.streams.Stream):
-            active_rois = param.Parameter(
-                default=set(), doc="Set of active ROI indices"
-            )
-
-        roi_state_stream = ROIStateStream()
-
         state = ROIPlotState(
             result_key=result_key,
             box_stream=box_stream,
@@ -366,7 +279,6 @@ class TestROIPlotState:
             poly_stream=poly_stream,
             poly_request_pipe=poly_request_pipe,
             poly_readback_pipe=poly_readback_pipe,
-            roi_state_stream=roi_state_stream,
             x_unit='m',
             y_unit='m',
             roi_publisher=None,  # No publisher
@@ -387,9 +299,8 @@ class TestROIPlotState:
             }
         )
 
-        # Verify ROI is tracked via public API
-        roi_key = result_key.model_copy(update={'output_name': 'roi_current_0'})
-        assert state.is_roi_active(roi_key) is True
+        # Verify ROI is tracked correctly
+        assert state._active_roi_indices == {0}
 
     def test_logs_error_on_publishing_failure(self, result_key, caplog):
         """Test that errors during publishing are logged."""
@@ -410,14 +321,6 @@ class TestROIPlotState:
         failing_publisher = FailingPublisher()
         default_colors = hv.Cycle.default_cycles["default_colors"]
 
-        # Create ROI state stream
-        class ROIStateStream(hv.streams.Stream):
-            active_rois = param.Parameter(
-                default=set(), doc="Set of active ROI indices"
-            )
-
-        roi_state_stream = ROIStateStream()
-
         ROIPlotState(
             result_key=result_key,
             box_stream=box_stream,
@@ -426,7 +329,6 @@ class TestROIPlotState:
             poly_stream=poly_stream,
             poly_request_pipe=poly_request_pipe,
             poly_readback_pipe=poly_readback_pipe,
-            roi_state_stream=roi_state_stream,
             x_unit='m',
             y_unit='m',
             roi_publisher=failing_publisher,

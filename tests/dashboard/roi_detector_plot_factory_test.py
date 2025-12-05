@@ -3,7 +3,6 @@
 import uuid
 
 import holoviews as hv
-import param
 import pytest
 import scipp as sc
 
@@ -88,15 +87,6 @@ def detector_data():
     return sc.DataArray(data, coords={'x': x, 'y': y})
 
 
-@pytest.fixture
-def spectrum_data():
-    """Create 1D ROI spectrum data."""
-    tof = sc.linspace('tof', 0.0, 100.0, num=50, unit='us')
-    return sc.DataArray(
-        sc.arange('tof', 50, dtype='float64', unit='counts'), coords={'tof': tof}
-    )
-
-
 def get_detector_pipe(
     data_service: DataService, detector_key: ResultKey
 ) -> hv.streams.Pipe:
@@ -139,55 +129,7 @@ def create_detector_pipe(
 
 
 class TestROIDetectorPlotFactory:
-    def test_create_roi_detector_plot_components_returns_detector_and_spectrum(
-        self,
-        roi_plot_factory,
-        data_service,
-        workflow_id,
-        job_number,
-        detector_data,
-        spectrum_data,
-        stream_manager,
-    ):
-        """Test create_roi_detector_plot_components returns detector and spectrum."""
-        # Create result keys for detector and spectrum
-        # Using 'current' as the output_name, which will look for 'roi_current'
-        detector_key = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(source_name='detector_data', job_number=job_number),
-            output_name='current',
-        )
-        spectrum_key = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(source_name='detector_data', job_number=job_number),
-            output_name='roi_current_0',
-        )
-
-        # Add data to data service
-        data_service[detector_key] = detector_data
-        data_service[spectrum_key] = spectrum_data
-
-        # Create detector pipe
-        detector_pipe = create_detector_pipe(data_service, detector_key)
-
-        # Create plot params
-        params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
-
-        # Create ROI detector plot components
-        detector_with_boxes, roi_spectrum, plot_state = (
-            roi_plot_factory.create_roi_detector_plot_components(
-                detector_key=detector_key,
-                params=params,
-                detector_pipe=detector_pipe,
-            )
-        )
-
-        # Should return detector and spectrum components
-        assert isinstance(detector_with_boxes, hv.Overlay | hv.DynamicMap)
-        assert isinstance(roi_spectrum, hv.DynamicMap)
-        assert plot_state is not None
-
-    def test_create_roi_detector_plot_components_with_only_detector(
+    def test_create_roi_detector_plot_components_returns_detector_with_rois(
         self,
         roi_plot_factory,
         data_service,
@@ -196,8 +138,7 @@ class TestROIDetectorPlotFactory:
         detector_data,
         stream_manager,
     ):
-        """Test ROI detector plot components with only detector data (no spectrum)."""
-        # Create result key for detector only (spectrum doesn't exist yet)
+        """Test detector with ROI overlays from create_roi_detector_plot_components."""
         detector_key = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='detector_data', job_number=job_number),
@@ -207,14 +148,14 @@ class TestROIDetectorPlotFactory:
         # Add data to data service
         data_service[detector_key] = detector_data
 
-        # Create plot params
         # Create detector pipe
         detector_pipe = create_detector_pipe(data_service, detector_key)
 
+        # Create plot params
         params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
         # Create ROI detector plot components
-        detector_with_boxes, roi_spectrum, plot_state = (
+        detector_with_rois, plot_state = (
             roi_plot_factory.create_roi_detector_plot_components(
                 detector_key=detector_key,
                 params=params,
@@ -222,9 +163,8 @@ class TestROIDetectorPlotFactory:
             )
         )
 
-        # Should create components even without spectrum data
-        assert isinstance(detector_with_boxes, hv.Overlay | hv.DynamicMap)
-        assert isinstance(roi_spectrum, hv.DynamicMap)
+        # Should return detector with ROI overlays and plot state
+        assert isinstance(detector_with_rois, hv.Overlay | hv.DynamicMap)
         assert plot_state is not None
 
     def test_create_roi_detector_plot_components_returns_valid_components(
@@ -234,25 +174,17 @@ class TestROIDetectorPlotFactory:
         workflow_id,
         job_number,
         detector_data,
-        spectrum_data,
         stream_manager,
     ):
         """Test that create_roi_detector_plot_components returns valid components."""
-        # Create result keys
         detector_key = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='detector_data', job_number=job_number),
             output_name='current',
         )
-        spectrum_key = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(source_name='detector_data', job_number=job_number),
-            output_name='roi_current_0',
-        )
 
         # Add data to data service
         data_service[detector_key] = detector_data
-        data_service[spectrum_key] = spectrum_data
 
         # Create detector pipe
         detector_pipe = create_detector_pipe(data_service, detector_key)
@@ -261,7 +193,7 @@ class TestROIDetectorPlotFactory:
         params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
         # Create components using public API
-        detector_dmap, roi_dmap, plot_state = (
+        detector_with_rois, plot_state = (
             roi_plot_factory.create_roi_detector_plot_components(
                 detector_key=detector_key,
                 params=params,
@@ -270,8 +202,7 @@ class TestROIDetectorPlotFactory:
         )
 
         # Verify components are returned correctly
-        assert isinstance(detector_dmap, hv.Overlay | hv.DynamicMap)
-        assert isinstance(roi_dmap, hv.DynamicMap)
+        assert isinstance(detector_with_rois, hv.Overlay | hv.DynamicMap)
         assert plot_state is not None
         assert isinstance(plot_state.box_stream, hv.streams.BoxEdit)
 
@@ -298,14 +229,13 @@ def test_roi_detector_plot_publishes_roi_on_box_edit(
     )
     data_service[detector_key] = detector_data
 
-    # Create plot params
     # Create detector pipe
     detector_pipe = create_detector_pipe(data_service, detector_key)
 
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
     # Create ROI detector plot components using public API
-    _detector_dmap, _roi_dmap, plot_state = (
+    _detector_with_rois, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
             params=params,
@@ -358,7 +288,7 @@ def test_roi_detector_plot_only_publishes_changed_rois(
     detector_pipe = create_detector_pipe(data_service, detector_key)
 
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
-    _detector_dmap, _roi_dmap, plot_state = (
+    _detector_with_rois, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
             params=params,
@@ -406,7 +336,7 @@ def test_roi_detector_plot_without_publisher_does_not_crash(
     detector_pipe = create_detector_pipe(data_service, detector_key)
 
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
-    detector_with_boxes, roi_spectrum, plot_state = (
+    detector_with_rois, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
             params=params,
@@ -415,8 +345,7 @@ def test_roi_detector_plot_without_publisher_does_not_crash(
     )
 
     # Should create components successfully
-    assert isinstance(detector_with_boxes, hv.Overlay | hv.DynamicMap)
-    assert isinstance(roi_spectrum, hv.DynamicMap)
+    assert isinstance(detector_with_rois, hv.Overlay | hv.DynamicMap)
     assert plot_state is not None
 
 
@@ -621,7 +550,7 @@ def test_create_roi_plot_with_initial_rois(
     detector_pipe = create_detector_pipe(data_service, detector_key)
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
-    _detector_with_boxes, _roi_dmap, plot_state = (
+    _detector_with_rois, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
             params=params,
@@ -666,7 +595,7 @@ def test_custom_max_roi_count(
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
     params.roi_options.max_roi_count = 5
 
-    _detector_with_boxes, _roi_dmap, plot_state = (
+    _detector_with_rois, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
             params=params,
@@ -708,7 +637,7 @@ def test_stale_readback_filtering(
 
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
-    _detector_with_boxes, _roi_dmap, plot_state = (
+    _detector_with_rois, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
             params=params,
@@ -800,7 +729,7 @@ def test_backend_update_from_another_view(
 
     params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
 
-    _detector_with_boxes, _roi_dmap, plot_state = (
+    _detector_with_rois, plot_state = (
         roi_plot_factory.create_roi_detector_plot_components(
             detector_key=detector_key,
             params=params,
@@ -880,12 +809,6 @@ def test_two_plots_remove_last_roi_syncs_correctly(
     poly_readback_pipe_A = hv.streams.Pipe(data=[])
     default_colors = hv.Cycle.default_cycles["default_colors"]
 
-    # Create ROI state stream for Plot A
-    class ROIStateStreamA(hv.streams.Stream):
-        active_rois = param.Parameter(default=set(), doc="Set of active ROI indices")
-
-    roi_state_stream_A = ROIStateStreamA()
-
     plot_state_A = ROIPlotState(
         result_key=detector_key_A,
         box_stream=box_stream_A,
@@ -894,7 +817,6 @@ def test_two_plots_remove_last_roi_syncs_correctly(
         poly_stream=poly_stream_A,
         poly_request_pipe=poly_request_pipe_A,
         poly_readback_pipe=poly_readback_pipe_A,
-        roi_state_stream=roi_state_stream_A,
         x_unit='dimensionless',
         y_unit='dimensionless',
         roi_publisher=fake_publisher,
@@ -910,12 +832,6 @@ def test_two_plots_remove_last_roi_syncs_correctly(
     poly_request_pipe_B = hv.streams.Pipe(data=[])
     poly_readback_pipe_B = hv.streams.Pipe(data=[])
 
-    # Create ROI state stream for Plot B
-    class ROIStateStreamB(hv.streams.Stream):
-        active_rois = param.Parameter(default=set(), doc="Set of active ROI indices")
-
-    roi_state_stream_B = ROIStateStreamB()
-
     plot_state_B = ROIPlotState(
         result_key=detector_key_B,
         box_stream=box_stream_B,
@@ -924,7 +840,6 @@ def test_two_plots_remove_last_roi_syncs_correctly(
         poly_stream=poly_stream_B,
         poly_request_pipe=poly_request_pipe_B,
         poly_readback_pipe=poly_readback_pipe_B,
-        roi_state_stream=roi_state_stream_B,
         x_unit='dimensionless',
         y_unit='dimensionless',
         roi_publisher=fake_publisher,
@@ -1055,12 +970,6 @@ def test_two_plots_both_clear_rois_independently(
     poly_readback_pipe_A = hv.streams.Pipe(data=[])
     default_colors = hv.Cycle.default_cycles["default_colors"]
 
-    # Create ROI state stream for Plot A
-    class ROIStateStreamA(hv.streams.Stream):
-        active_rois = param.Parameter(default=set(), doc="Set of active ROI indices")
-
-    roi_state_stream_A = ROIStateStreamA()
-
     plot_state_A = ROIPlotState(
         result_key=detector_key_A,
         box_stream=box_stream_A,
@@ -1069,7 +978,6 @@ def test_two_plots_both_clear_rois_independently(
         poly_stream=poly_stream_A,
         poly_request_pipe=poly_request_pipe_A,
         poly_readback_pipe=poly_readback_pipe_A,
-        roi_state_stream=roi_state_stream_A,
         x_unit='dimensionless',
         y_unit='dimensionless',
         roi_publisher=fake_publisher,
@@ -1085,12 +993,6 @@ def test_two_plots_both_clear_rois_independently(
     poly_request_pipe_B = hv.streams.Pipe(data=[])
     poly_readback_pipe_B = hv.streams.Pipe(data=[])
 
-    # Create ROI state stream for Plot B
-    class ROIStateStreamB(hv.streams.Stream):
-        active_rois = param.Parameter(default=set(), doc="Set of active ROI indices")
-
-    roi_state_stream_B = ROIStateStreamB()
-
     plot_state_B = ROIPlotState(
         result_key=detector_key_B,
         box_stream=box_stream_B,
@@ -1099,7 +1001,6 @@ def test_two_plots_both_clear_rois_independently(
         poly_stream=poly_stream_B,
         poly_request_pipe=poly_request_pipe_B,
         poly_readback_pipe=poly_readback_pipe_B,
-        roi_state_stream=roi_state_stream_B,
         x_unit='dimensionless',
         y_unit='dimensionless',
         roi_publisher=fake_publisher,

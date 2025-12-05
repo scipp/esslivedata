@@ -8,7 +8,6 @@ import logging
 from typing import Any, Protocol
 
 import holoviews as hv
-import param
 import scipp as sc
 
 from ess.livedata.config.models import ROI, Interval, PolygonROI, RectangleROI
@@ -20,12 +19,8 @@ from .data_subscriber import (
     MergingStreamAssembler,
 )
 from .extractors import LatestValueExtractor
-from .plot_params import (
-    LayoutParams,
-    PlotParamsROIDetector,
-    create_extractors_from_params,
-)
-from .plots import ImagePlotter, LinePlotter, PlotAspect, PlotAspectType
+from .plot_params import PlotParamsROIDetector
+from .plots import ImagePlotter
 from .roi_publisher import ROIPublisher
 from .stream_manager import StreamManager
 
@@ -501,8 +496,6 @@ class ROIPlotState:
         HoloViews Pipe stream for programmatically updating request polygons.
     poly_readback_pipe:
         HoloViews Pipe stream for programmatically updating readback polygons.
-    roi_state_stream:
-        HoloViews Stream for broadcasting active ROI indices to spectrum plot.
     x_unit:
         Unit for x coordinates.
     y_unit:
@@ -528,7 +521,6 @@ class ROIPlotState:
         poly_stream: hv.streams.PolyDraw,
         poly_request_pipe: hv.streams.Pipe,
         poly_readback_pipe: hv.streams.Pipe,
-        roi_state_stream: hv.streams.Stream,
         x_unit: str | None,
         y_unit: str | None,
         roi_publisher: ROIPublisher | None,
@@ -539,7 +531,6 @@ class ROIPlotState:
         roi_mapper=None,
     ) -> None:
         self.result_key = result_key
-        self.roi_state_stream = roi_state_stream
         self.x_unit = x_unit
         self.y_unit = y_unit
         self._roi_publisher = roi_publisher
@@ -571,9 +562,6 @@ class ROIPlotState:
         self._rect_handler.edit_stream.param.watch(self.on_box_change, "data")
         self._poly_handler.edit_stream.param.watch(self.on_poly_change, "data")
 
-        # Initialize roi_state_stream with the current active ROI indices
-        self.roi_state_stream.event(active_rois=self._active_roi_indices)
-
     @property
     def box_stream(self) -> hv.streams.BoxEdit:
         """BoxEdit stream for rectangle ROIs."""
@@ -593,24 +581,23 @@ class ROIPlotState:
 
     def _compute_index_to_color(self) -> dict[int, str]:
         """
-        Compute color mapping based on global position in sorted active ROIs.
+        Compute color mapping based on ROI index value.
 
-        Colors are assigned by position in the sorted list of all active ROI
-        indices, ensuring consistent coloring across geometry types and matching
-        the order used by HoloViews overlay for spectrum curves.
+        Colors are assigned by ROI index (not position), providing stable color
+        identity. ROI 3 always has the same color regardless of which other ROIs
+        are active. This matches the coloring in Overlay1DPlotter for consistency
+        between detector overlay and spectrum plots.
         """
-        sorted_indices = sorted(self._active_roi_indices)
         return {
-            idx: self._colors[pos % len(self._colors)]
-            for pos, idx in enumerate(sorted_indices)
+            idx: self._colors[idx % len(self._colors)]
+            for idx in self._active_roi_indices
         }
 
     def _recolor_all_readbacks(self) -> None:
         """
-        Recolor all readback ROIs based on current global positions.
+        Recolor all readback ROIs based on their index values.
 
-        Called when active ROIs change to ensure colors are consistent
-        across geometry types and match the spectrum overlay order.
+        Called when active ROIs change to update visual colors.
         """
         index_to_color = self._compute_index_to_color()
 
@@ -748,7 +735,6 @@ class ROIPlotState:
                 handler._readback_rois = backend_rois
                 # Recolor ALL readbacks based on new global positions
                 self._recolor_all_readbacks()
-                self.roi_state_stream.event(active_rois=self._active_roi_indices)
 
             # Sync request layer to match backend if needed
             # TODO: Backend sync is disabled - causes issues in multi-session case.
@@ -783,23 +769,6 @@ class ROIPlotState:
         """Handle polygon ROI updates from the backend stream."""
         self._on_backend_update(self._poly_handler, backend_rois)
 
-    def is_roi_active(self, key: ResultKey) -> bool:
-        """
-        Check if the ROI index for this key is currently active.
-
-        Parameters
-        ----------
-        key:
-            ResultKey to check.
-
-        Returns
-        -------
-        :
-            True if the ROI index is active, False otherwise.
-        """
-        roi_index = self._roi_mapper.parse_roi_index(key.output_name)
-        return roi_index is not None and roi_index in self._active_roi_indices
-
 
 class ROIDetectorPlotFactory:
     """
@@ -828,55 +797,6 @@ class ROIDetectorPlotFactory:
         self._roi_publisher = roi_publisher
         self._logger = logger or logging.getLogger(__name__)
         self._roi_mapper = get_roi_mapper()
-
-    def _parse_roi_index(self, output_name: str) -> int | None:
-        """
-        Extract ROI index from output name.
-
-        Parameters
-        ----------
-        output_name:
-            Output name in format 'roi_current_{index}' or 'roi_cumulative_{index}'.
-
-        Returns
-        -------
-        :
-            ROI index if parsing succeeds, None otherwise.
-        """
-        return self._roi_mapper.parse_roi_index(output_name)
-
-    def _generate_spectrum_keys(self, detector_key: ResultKey) -> list[ResultKey]:
-        """
-        Generate spectrum keys for ROI histogram outputs matching detector type.
-
-        Generates only current or cumulative histogram keys based on the detector's
-        output_name. If detector shows 'current', generates roi_current_*. If
-        detector shows 'cumulative', generates roi_cumulative_*.
-
-        Parameters
-        ----------
-        detector_key:
-            ResultKey identifying the detector output. Must have output_name set
-            to either 'current' or 'cumulative'.
-
-        Returns
-        -------
-        :
-            List of ResultKeys for ROI histogram outputs matching detector type.
-        """
-        # Determine which histogram type based on detector output_name
-        if detector_key.output_name == "current":
-            histogram_keys = self._roi_mapper.all_current_keys()
-        elif detector_key.output_name == "cumulative":
-            histogram_keys = self._roi_mapper.all_cumulative_keys()
-        else:
-            # Fallback for unexpected output_name - generate all keys
-            histogram_keys = self._roi_mapper.all_histogram_keys()
-
-        return [
-            detector_key.model_copy(update={"output_name": key})
-            for key in histogram_keys
-        ]
 
     @staticmethod
     def _extract_unit_for_dim(detector_data: sc.DataArray, dim: str) -> str | None:
@@ -981,14 +901,13 @@ class ROIDetectorPlotFactory:
         detector_key: ResultKey,
         params: PlotParamsROIDetector,
         detector_pipe: hv.streams.Pipe,
-    ) -> tuple[hv.DynamicMap, hv.DynamicMap, ROIPlotState]:
+    ) -> tuple[hv.DynamicMap, ROIPlotState]:
         """
-        Create ROI detector plot components without layout assembly.
+        Create ROI detector plot with interactive ROI overlays.
 
-        This is the testable public API that creates the individual components
-        for an ROI detector plot. It returns the detector DynamicMap, ROI spectrum
-        DynamicMap, and the plot state, allowing the caller to control layout
-        or access components for testing.
+        This is the testable public API that creates the detector image with
+        interactive ROI overlays (rectangles and polygons). Returns the detector
+        DynamicMap and the plot state.
 
         The plot_state is not stored internally - it's kept alive by references
         from the returned plot components (via callbacks and stream filters).
@@ -1010,13 +929,13 @@ class ROIDetectorPlotFactory:
         Returns
         -------
         :
-            Tuple of (detector_dmap, roi_dmap, plot_state).
+            Tuple of (detector_with_rois, plot_state).
         """
         if not isinstance(params, PlotParamsROIDetector):
             raise TypeError("roi_detector requires PlotParamsROIDetector")
 
         # Detector subscription is managed by the caller and passed via detector_pipe.
-        # This factory only creates spectrum and readback subscriptions.
+        # This factory creates readback subscriptions for bidirectional ROI sync.
 
         detector_plotter = ImagePlotter(
             value_margin_factor=0.1,
@@ -1120,19 +1039,9 @@ class ROIDetectorPlotFactory:
         x_unit = self._extract_unit_for_dim(detector_data, x_dim)
         y_unit = self._extract_unit_for_dim(detector_data, y_dim)
 
-        # Create stream for broadcasting active ROI indices to spectrum plot
-        # Use a custom Stream class to avoid parameter name clash with spectrum_pipe
-        class ROIStateStream(hv.streams.Stream):
-            active_rois = param.Parameter(
-                default=set(), doc="Set of active ROI indices"
-            )
-
-        roi_state_stream = ROIStateStream()
-
         # Create plot state (which will attach the watchers to streams)
         # Note: plot_state is kept alive by references from the returned plot:
         # - box_stream/poly_stream hold callback references
-        # - roi_state_stream is referenced by the spectrum plot DynamicMap
         # - readback pipes hold plot_state callback references
         plot_state = ROIPlotState(
             result_key=detector_key,
@@ -1142,7 +1051,6 @@ class ROIDetectorPlotFactory:
             poly_stream=poly_stream,
             poly_request_pipe=poly_request_pipe,
             poly_readback_pipe=poly_readback_pipe,
-            roi_state_stream=roi_state_stream,
             x_unit=x_unit,
             y_unit=y_unit,
             roi_publisher=self._roi_publisher,
@@ -1199,81 +1107,4 @@ class ROIDetectorPlotFactory:
             * poly_request_styled
         )
 
-        # Generate spectrum keys and create ROI spectrum plot
-        spectrum_keys = self._generate_spectrum_keys(detector_key)
-        roi_spectrum_dmap = self._create_roi_spectrum_plot(
-            spectrum_keys, roi_state_stream, params
-        )
-
-        return detector_with_rois, roi_spectrum_dmap, plot_state
-
-    def _create_roi_spectrum_plot(
-        self,
-        spectrum_keys: list[ResultKey],
-        roi_state_stream: hv.streams.Stream,
-        params: PlotParamsROIDetector,
-    ) -> hv.DynamicMap:
-        """
-        Create ROI spectrum plot that overlays all active ROI spectra.
-
-        Parameters
-        ----------
-        spectrum_keys:
-            List of ResultKeys for ROI spectrum outputs.
-        roi_state_stream:
-            Stream carrying active ROI indices (set[int]) via 'active_rois' parameter.
-        params:
-            The plotter parameters (PlotParamsROIDetector).
-
-        Returns
-        -------
-        :
-            DynamicMap for the ROI spectrum plot.
-        """
-        overlay_layout = LayoutParams(combine_mode="overlay")
-
-        # FIXME: Memory leak - subscribers registered via stream_manager are never
-        # unregistered. When this plot is closed, the subscriber remains in
-        # DataService._subscribers, preventing garbage collection of plot components.
-        extractors = create_extractors_from_params(spectrum_keys, params.window)
-        spectrum_pipe = self._stream_manager.make_merging_stream(extractors)
-
-        spectrum_plotter = LinePlotter(
-            value_margin_factor=0.1,
-            layout_params=overlay_layout,
-            aspect_params=PlotAspect(aspect_type=PlotAspectType.square),
-            scale_opts=params.plot_scale,
-        )
-
-        # Create filtering wrapper that filters spectrum data based on active ROIs
-        #
-        # LIMITATION: Spectrum curve colors may not match ROI shape colors.
-        # Shapes use position-based coloring (sorted by ROI index across all
-        # geometry types). HoloViews overlay assigns colors by "order of first
-        # appearance" and caches this, ignoring subsequent reordering.
-        #
-        # Root cause: Rectangles use indices 0-3, polygons use indices 4-7
-        # (fixed offset). Drawing rect→poly→rect gives indices 0,4,1 but
-        # overlay sees appearance order 0,4,1 and assigns colors 0,1,2.
-        # Shapes recolor to sorted positions (0→c0, 1→c1, 4→c2) but overlay
-        # keeps its cached assignment.
-        #
-        # Potential fix: Use contiguous indexing across geometry types (no
-        # offset), so drawing order matches index order. Requires backend
-        # changes to ROI stream naming and handler logic.
-        def filtered_spectrum_plotter(
-            data: dict[ResultKey, sc.DataArray], active_rois: set[int]
-        ) -> hv.Overlay | hv.Layout | hv.Element:
-            """Filter spectrum data to only include active ROIs."""
-            filtered_data = {
-                key: value
-                for key, value in data.items()
-                if self._roi_mapper.parse_roi_index(key.output_name) in active_rois
-            }
-            return spectrum_plotter(filtered_data)
-
-        return hv.DynamicMap(
-            filtered_spectrum_plotter,
-            streams=[spectrum_pipe, roi_state_stream],
-            cache_size=1,
-        ).opts(shared_axes=False, max_width=400)
+        return detector_with_rois, plot_state

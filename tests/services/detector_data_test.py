@@ -63,29 +63,29 @@ def test_can_configure_and_stop_detector_workflow(
 
     app.publish_events(size=2000, time=2)
     service.step()
-    # Each workflow call returns 4 results: cumulative, current,
-    # counts_total, counts_in_toa
-    assert len(sink.messages) == 4
+    # Each workflow call returns 6 results: cumulative, current,
+    # roi_spectra_current, roi_spectra_cumulative, counts_total, counts_in_toa
+    assert len(sink.messages) == 6
     assert sink.messages[0].value.nansum().value == 2000  # cumulative
     assert sink.messages[1].value.nansum().value == 2000  # current
     # No data -> no data published
     service.step()
-    assert len(sink.messages) == 4
+    assert len(sink.messages) == 6
 
     app.publish_events(size=3000, time=4)
     service.step()
-    assert len(sink.messages) == 8
-    assert sink.messages[4].value.nansum().value == 5000  # cumulative
-    assert sink.messages[5].value.nansum().value == 3000  # current
+    assert len(sink.messages) == 12
+    assert sink.messages[6].value.nansum().value == 5000  # cumulative
+    assert sink.messages[7].value.nansum().value == 3000  # current
 
     # More events but the same time
     app.publish_events(size=1000, time=4)
     # Later time
     app.publish_events(size=1000, time=5)
     service.step()
-    assert len(sink.messages) == 12
-    assert sink.messages[8].value.nansum().value == 7000  # cumulative
-    assert sink.messages[9].value.nansum().value == 2000  # current
+    assert len(sink.messages) == 18
+    assert sink.messages[12].value.nansum().value == 7000  # cumulative
+    assert sink.messages[13].value.nansum().value == 2000  # current
 
     # Stop workflow
     command = JobCommand(action=JobAction.stop)
@@ -96,7 +96,7 @@ def test_can_configure_and_stop_detector_workflow(
     service.step()
     app.publish_events(size=1000, time=20)
     service.step()
-    assert len(sink.messages) == 12
+    assert len(sink.messages) == 18
 
 
 def test_service_can_recover_after_bad_workflow_id_was_set(
@@ -137,7 +137,7 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     app.publish_events(size=1000, time=5)
     service.step()
     # Service recovered and started the workflow, get status and data
-    assert len(sink.messages) == 5  # status + 4 data messages
+    assert len(sink.messages) == 7  # status + 6 data messages
 
 
 def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
@@ -165,7 +165,9 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     # Add events and verify workflow is running
     app.publish_events(size=2000, time=2)
     service.step()
-    assert len(sink.messages) == 4  # cumulative, current, counts_total, counts_in_toa
+    # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
+    # counts_total, counts_in_toa
+    assert len(sink.messages) == 6
     assert sink.messages[0].value.values.sum() == 2000
 
     # Try to set an invalid workflow ID
@@ -179,8 +181,8 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     # Add more events and verify the original workflow is still running
     app.publish_events(size=3000, time=4)
     service.step()
-    assert len(sink.messages) == 8 + 1  # + 1 for the workflow status message
-    assert sink.messages[5].value.values.sum() == 5000  # cumulative (after status msg)
+    assert len(sink.messages) == 12 + 1  # + 1 for the workflow status message
+    assert sink.messages[7].value.values.sum() == 5000  # cumulative (after status msg)
 
 
 @pytest.fixture
@@ -217,7 +219,9 @@ def test_message_with_unknown_schema_is_ignored(
     app.publish_events(size=1000, time=1, reuse_events=True)
 
     app.step()
-    assert len(sink.messages) == 4  # cumulative, current, counts_total, counts_in_toa
+    # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
+    # counts_total, counts_in_toa
+    assert len(sink.messages) == 6
     assert sink.messages[0].value.values.sum() == 2000
 
     # Check log messages for exceptions
@@ -244,7 +248,9 @@ def test_message_that_cannot_be_decoded_is_ignored(
     app.publish_events(size=1000, time=1, reuse_events=True)
 
     app.step()
-    assert len(sink.messages) == 4  # cumulative, current, counts_total, counts_in_toa
+    # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
+    # counts_total, counts_in_toa
+    assert len(sink.messages) == 6
     assert sink.messages[0].value.values.sum() == 2000
 
     # Check log messages for exceptions

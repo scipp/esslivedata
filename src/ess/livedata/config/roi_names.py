@@ -7,7 +7,6 @@ This module provides centralized naming conventions for ROI-related streams,
 ensuring consistency between backend handlers and frontend components.
 """
 
-import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -71,7 +70,6 @@ class ROIStreamMapper:
     def __init__(self, geometries: list[ROIGeometry]):
         self._geometries = geometries
         self._total_rois = sum(g.num_rois for g in geometries)
-        self._roi_index_pattern = re.compile(r"^roi_(?:current|cumulative)_(\d+)$")
 
     @property
     def geometries(self) -> list[ROIGeometry]:
@@ -87,43 +85,6 @@ class ROIStreamMapper:
     def readback_keys(self) -> list[str]:
         """All readback stream keys."""
         return [g.readback_key for g in self._geometries]
-
-    def current_key(self, index: int) -> str:
-        """Generate ROI current histogram key."""
-        return f"roi_current_{index}"
-
-    def cumulative_key(self, index: int) -> str:
-        """Generate ROI cumulative histogram key."""
-        return f"roi_cumulative_{index}"
-
-    def all_current_keys(self) -> list[str]:
-        """Generate all current histogram keys across all geometries."""
-        return [self.current_key(i) for i in range(self._total_rois)]
-
-    def all_cumulative_keys(self) -> list[str]:
-        """Generate all cumulative histogram keys across all geometries."""
-        return [self.cumulative_key(i) for i in range(self._total_rois)]
-
-    def all_histogram_keys(self) -> list[str]:
-        """Generate all histogram keys (current + cumulative)."""
-        return self.all_current_keys() + self.all_cumulative_keys()
-
-    def parse_roi_index(self, key: str) -> int | None:
-        """
-        Extract ROI index from histogram key.
-
-        Parameters
-        ----------
-        key:
-            Key string like 'roi_current_0' or 'roi_cumulative_2'.
-
-        Returns
-        -------
-        :
-            The ROI index, or None if the key doesn't match the pattern.
-        """
-        match = self._roi_index_pattern.match(key)
-        return int(match.group(1)) if match else None
 
     def geometry_for_index(self, index: int) -> ROIGeometry | None:
         """

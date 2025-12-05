@@ -116,6 +116,26 @@ def _get_midpoints(data: sc.DataArray, dim: str) -> sc.Variable:
     return coord
 
 
+def _has_degenerate_dimension(data: sc.DataArray) -> bool:
+    """Check if any dimension has only one element."""
+    return any(size == 1 for size in data.shape)
+
+
+def _compute_coord_bounds(coord_values) -> tuple[float, float]:
+    """
+    Compute bounds (min, max) for coordinate values.
+
+    For single-element coordinates, creates artificial bounds around the value.
+    For multi-element coordinates, returns min and max of values.
+    """
+    if len(coord_values) == 1:
+        # Single element: create artificial bounds around the value
+        center = float(coord_values[0])
+        return center - 0.5, center + 0.5
+    else:
+        return float(coord_values.min()), float(coord_values.max())
+
+
 def convert_image_2d(data: sc.DataArray) -> hv.Image:
     """
     Convert a 2D scipp DataArray to a Holoviews Image.
@@ -130,15 +150,25 @@ def convert_image_2d(data: sc.DataArray) -> hv.Image:
     data = _ensure_coords(data)
     kdims = [coord_to_dimension(data.coords[dim]) for dim in reversed(data.dims)]
     vdims = [create_value_dimension(data)]
-    return hv.Image(
-        data=(
-            _get_midpoints(data, data.dims[1]).values,
-            _get_midpoints(data, data.dims[0]).values,
-            data.values,
-        ),
-        kdims=kdims,
-        vdims=vdims,
-    )
+
+    x_coords = _get_midpoints(data, data.dims[1]).values
+    y_coords = _get_midpoints(data, data.dims[0]).values
+
+    if _has_degenerate_dimension(data):
+        # hv.Image cannot compute bounds for single-element dimensions.
+        # We pass just the array and explicit bounds instead of coordinate tuples.
+        left, right = _compute_coord_bounds(x_coords)
+        bottom, top = _compute_coord_bounds(y_coords)
+        return hv.Image(
+            data=data.values,
+            bounds=(left, bottom, right, top),
+            kdims=kdims,
+            vdims=vdims,
+        )
+    else:
+        return hv.Image(
+            data=(x_coords, y_coords, data.values), kdims=kdims, vdims=vdims
+        )
 
 
 def _all_coords_evenly_spaced(data: sc.DataArray) -> bool:
@@ -147,6 +177,10 @@ def _all_coords_evenly_spaced(data: sc.DataArray) -> bool:
         coord = data.coords.get(dim)
         if coord is None:
             # Missing coordinates are treated as evenly spaced (dummy coords)
+            continue
+        # Single-element coordinates are trivially evenly spaced
+        # (sc.islinspace returns False for them)
+        if len(coord) == 1:
             continue
         if not sc.islinspace(coord):
             return False
