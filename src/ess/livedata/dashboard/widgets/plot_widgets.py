@@ -23,9 +23,6 @@ class ButtonStyles:
     # Dimensions
     CELL_MARGIN = 2
     TOOL_BUTTON_SIZE = 28
-    TOOL_BUTTON_TOP_OFFSET = '5px'
-    CLOSE_BUTTON_RIGHT_OFFSET = '5px'
-    TOOL_BUTTON_Z_INDEX = '1000'
 
     # Typography
     TOOL_BUTTON_FONT_SIZE = '20px'
@@ -73,7 +70,6 @@ def create_tool_button_stylesheet(button_color: str, hover_color: str) -> list[s
 
 def create_tool_button(
     symbol: str,
-    right_offset: str,
     button_color: str,
     hover_color: str,
     on_click_callback: Callable[[], None],
@@ -85,8 +81,6 @@ def create_tool_button(
     ----------
     symbol:
         Unicode symbol to display on the button.
-    right_offset:
-        CSS right offset for button positioning.
     button_color:
         Color for the button icon.
     hover_color:
@@ -105,13 +99,7 @@ def create_tool_button(
         height=ButtonStyles.TOOL_BUTTON_SIZE,
         button_type='light',
         sizing_mode='fixed',
-        margin=(ButtonStyles.CELL_MARGIN, ButtonStyles.CELL_MARGIN),
-        styles={
-            'position': 'absolute',
-            'top': ButtonStyles.TOOL_BUTTON_TOP_OFFSET,
-            'right': right_offset,
-            'z-index': ButtonStyles.TOOL_BUTTON_Z_INDEX,
-        },
+        margin=0,
         stylesheets=create_tool_button_stylesheet(button_color, hover_color),
     )
     button.on_click(lambda _: on_click_callback())
@@ -134,7 +122,6 @@ def create_close_button(on_close_callback: Callable[[], None]) -> pn.widgets.But
     """
     return create_tool_button(
         symbol='\u00d7',  # "X" multiplication sign
-        right_offset=ButtonStyles.CLOSE_BUTTON_RIGHT_OFFSET,
         button_color=ButtonStyles.DANGER_RED,
         hover_color='rgba(220, 53, 69, 0.1)',
         on_click_callback=on_close_callback,
@@ -157,11 +144,45 @@ def create_gear_button(on_gear_callback: Callable[[], None]) -> pn.widgets.Butto
     """
     return create_tool_button(
         symbol='\u2699',  # Gear symbol
-        # Position to the left of the close button
-        right_offset=f'{ButtonStyles.TOOL_BUTTON_SIZE + 10}px',
         button_color=ButtonStyles.PRIMARY_BLUE,
         hover_color='rgba(0, 123, 255, 0.1)',
         on_click_callback=on_gear_callback,
+    )
+
+
+def create_cell_toolbar(
+    on_gear_callback: Callable[[], None],
+    on_close_callback: Callable[[], None],
+) -> pn.Row:
+    """
+    Create a toolbar row containing gear and close buttons for plot cells.
+
+    The toolbar is positioned at the top-right of the cell using flexbox,
+    avoiding overlap with Bokeh's plot toolbar.
+
+    Parameters
+    ----------
+    on_gear_callback:
+        Callback function to invoke when the gear button is clicked.
+    on_close_callback:
+        Callback function to invoke when the close button is clicked.
+
+    Returns
+    -------
+    :
+        Panel Row widget containing the toolbar buttons.
+    """
+    gear_button = create_gear_button(on_gear_callback)
+    close_button = create_close_button(on_close_callback)
+
+    margin = ButtonStyles.CELL_MARGIN
+    return pn.Row(
+        pn.Spacer(sizing_mode='stretch_width'),
+        gear_button,
+        close_button,
+        sizing_mode='stretch_width',
+        height=ButtonStyles.TOOL_BUTTON_SIZE,
+        margin=(margin, margin, 0, margin),
     )
 
 

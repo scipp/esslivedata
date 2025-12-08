@@ -32,8 +32,7 @@ from .plot_config_modal import PlotConfigModal
 from .plot_grid import GridCellStyles, PlotGrid
 from .plot_grid_manager import PlotGridManager
 from .plot_widgets import (
-    create_close_button,
-    create_gear_button,
+    create_cell_toolbar,
     get_workflow_display_info,
 )
 
@@ -419,21 +418,19 @@ class PlotGridTabs:
 
         content = f"{title}\n\n" + "\n\n".join(info_lines)
 
-        # Create close button
+        # Create toolbar with gear and close buttons
         def on_close() -> None:
             self._orchestrator.remove_plot(cell_id)
 
-        close_button = create_close_button(on_close)
-
-        # Create gear button for reconfiguration
         def on_gear() -> None:
             self._on_reconfigure_plot(cell_id)
 
-        gear_button = create_gear_button(on_gear)
+        toolbar = create_cell_toolbar(
+            on_gear_callback=on_gear, on_close_callback=on_close
+        )
 
         status_widget = pn.Column(
-            gear_button,
-            close_button,
+            toolbar,
             pn.pane.Markdown(
                 content,
                 styles={
@@ -446,7 +443,6 @@ class PlotGridTabs:
             styles={
                 'background-color': bg_color,
                 'border': border,
-                'position': 'relative',
             },
             margin=GridCellStyles.CELL_MARGIN,
         )
@@ -476,17 +472,16 @@ class PlotGridTabs:
             Panel widget containing the plot.
         """
 
-        # Create close button
+        # Create toolbar with gear and close buttons
         def on_close() -> None:
             self._orchestrator.remove_plot(cell_id)
 
-        close_button = create_close_button(on_close)
-
-        # Create gear button for reconfiguration
         def on_gear() -> None:
             self._on_reconfigure_plot(cell_id)
 
-        gear_button = create_gear_button(on_gear)
+        toolbar = create_cell_toolbar(
+            on_gear_callback=on_gear, on_close_callback=on_close
+        )
 
         # Use .layout to preserve widgets for DynamicMaps with kdims.
         # When pn.pane.HoloViews wraps a DynamicMap with kdims, it generates
@@ -499,11 +494,9 @@ class PlotGridTabs:
         plot_pane = plot_pane_wrapper.layout
 
         return pn.Column(
-            gear_button,
-            close_button,
+            toolbar,
             plot_pane,
             sizing_mode='stretch_both',
-            styles={'position': 'relative'},
             margin=GridCellStyles.CELL_MARGIN,
         )
 
