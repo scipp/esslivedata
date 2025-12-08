@@ -81,7 +81,7 @@ class StretchMode(str, enum.Enum):
 
 class PlotAspect(pydantic.BaseModel):
     aspect_type: PlotAspectType = pydantic.Field(
-        default=PlotAspectType.square,
+        default=PlotAspectType.free,
         description="Aspect type for the plot.",
         title="Aspect Type",
     )
