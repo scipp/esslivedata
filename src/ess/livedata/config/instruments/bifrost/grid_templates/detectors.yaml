@@ -1,0 +1,64 @@
+# Detector views with rate meter
+title: Detectors
+description: Unified detector views (current and cumulative) with rate meter
+nrows: 3
+ncols: 3
+cells:
+- geometry:
+    row: 0
+    col: 0
+    row_span: 1
+    col_span: 3
+  config:
+    workflow_id: bifrost/detector_data/unified_detector_view/1
+    output_name: current
+    source_names:
+    - unified_detector
+    plot_name: image
+    params:
+      plot_aspect:
+        aspect_type: Free
+- geometry:
+    row: 1
+    col: 0
+    row_span: 1
+    col_span: 3
+  config:
+    workflow_id: bifrost/detector_data/unified_detector_view/1
+    output_name: cumulative
+    source_names:
+    - unified_detector
+    plot_name: image
+    params:
+      plot_aspect:
+        aspect_type: Free
+- geometry:
+    row: 2
+    col: 0
+    row_span: 1
+    col_span: 1
+  config:
+    workflow_id: bifrost/data_reduction/detector_ratemeter/1
+    output_name: detector_region_counts
+    source_names:
+    - unified_detector
+    plot_name: bars
+    params:
+      plot_aspect:
+        aspect_type: Free
+      orientation:
+        horizontal: true
+- geometry:
+    row: 2
+    col: 1
+    row_span: 1
+    col_span: 2
+  config:
+    workflow_id: bifrost/data_reduction/detector_ratemeter/1
+    output_name: detector_region_counts
+    source_names:
+    - unified_detector
+    plot_name: timeseries
+    params:
+      plot_aspect:
+        aspect_type: Free

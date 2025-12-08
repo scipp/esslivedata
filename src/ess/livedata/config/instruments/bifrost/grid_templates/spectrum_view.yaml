@@ -1,0 +1,20 @@
+# Full-screen spectrum view slicer
+title: Spectrum View
+description: Interactive spectrum view with slicing
+nrows: 3
+ncols: 3
+cells:
+- geometry:
+    row: 0
+    col: 0
+    row_span: 3
+    col_span: 3
+  config:
+    workflow_id: bifrost/data_reduction/spectrum_view/1
+    output_name: spectrum_view
+    source_names:
+    - unified_detector
+    plot_name: slicer
+    params:
+      plot_aspect:
+        aspect_type: Free
