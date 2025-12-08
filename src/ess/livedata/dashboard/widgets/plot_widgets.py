@@ -332,12 +332,24 @@ def get_plot_cell_display_info(
         workflow_registry, config.workflow_id, config.output_name
     )
 
-    # Build title: "Output Title (window info)"
+    # Build title: "Workflow → Output (source, window)"
+    # Using HTML entity for arrow since title is rendered in HTML pane
     window_info = _format_window_info(config.params)
-    if window_info:
-        title = f'{output_title} ({window_info})'
+
+    # Format source info: name if single, count if multiple
+    num_sources = len(config.source_names)
+    if num_sources == 1:
+        source_info = config.source_names[0]
     else:
-        title = output_title
+        source_info = f'{num_sources} sources'
+
+    # Combine source and window info in parentheses
+    detail_parts = [source_info]
+    if window_info:
+        detail_parts.append(window_info)
+    details = ', '.join(detail_parts)
+
+    title = f'{workflow_title} &rarr; {output_title} ({details})'
 
     # Build description for tooltip
     sources_str = ', '.join(config.source_names)
