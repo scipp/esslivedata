@@ -66,16 +66,43 @@ class LatestValueExtractor(UpdateExtractor):
         return data[self._concat_dim, -1] if self._concat_dim in data.dims else data
 
 
+def _ensure_datetime_coord(data: sc.DataArray, dim: str = 'time') -> sc.DataArray:
+    """
+    Convert int64 time coordinate to datetime64 for proper axis rendering.
+
+    Bokeh requires datetime64 dtype to render human-readable datetime axes.
+    Int64 nanoseconds are displayed as raw numbers (e.g., 1.733e18).
+    """
+    if dim not in data.coords:
+        return data
+    coord = data.coords[dim]
+    if coord.dtype == sc.DType.int64 and coord.unit in ('ns', 'us', 'ms', 's'):
+        datetime_coord = sc.epoch(unit=coord.unit) + coord
+        return data.assign_coords({dim: datetime_coord})
+    return data
+
+
 class FullHistoryExtractor(UpdateExtractor):
     """Extracts the complete buffer history."""
+
+    def __init__(self, concat_dim: str = 'time') -> None:
+        """
+        Initialize full history extractor.
+
+        Parameters
+        ----------
+        concat_dim:
+            The time dimension name.
+        """
+        self._concat_dim = concat_dim
 
     def get_required_timespan(self) -> float:
         """Return infinite timespan to indicate wanting all history."""
         return float('inf')
 
     def extract(self, data: sc.DataArray) -> Any:
-        """Extract all data from the buffer."""
-        return data
+        """Extract all data from the buffer, converting time to datetime64."""
+        return _ensure_datetime_coord(data, self._concat_dim)
 
 
 class WindowAggregatingExtractor(UpdateExtractor):
