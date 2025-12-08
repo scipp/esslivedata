@@ -4,6 +4,7 @@ import argparse
 
 import holoviews as hv
 import panel as pn
+from holoviews.plotting.bokeh.plot import LayoutPlot
 
 from ess.livedata import Service
 
@@ -15,6 +16,20 @@ from .widgets.reduction_widget import ReductionWidget
 
 pn.extension('holoviews', 'modal', notifications=True, template='material')
 hv.extension('bokeh')
+
+# Remove Bokeh logo from Layout toolbars by patching LayoutPlot.initialize_plot
+
+_original_layout_initialize = LayoutPlot.initialize_plot
+
+
+def _patched_layout_initialize(self, *args, **kwargs):
+    result = _original_layout_initialize(self, *args, **kwargs)
+    if hasattr(self, 'state') and hasattr(self.state, 'toolbar'):
+        self.state.toolbar.logo = None
+    return result
+
+
+LayoutPlot.initialize_plot = _patched_layout_initialize
 
 
 class ReductionApp(DashboardBase):

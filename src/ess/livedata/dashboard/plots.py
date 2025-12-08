@@ -27,11 +27,6 @@ from .plot_params import (
 from .scipp_to_holoviews import to_holoviews
 
 
-def remove_bokeh_logo(plot, element):
-    """Remove Bokeh logo from plots."""
-    plot.state.toolbar.logo = None
-
-
 class Plotter(ABC):
     """
     Base class for plots that support autoscaling.
@@ -193,11 +188,7 @@ class Plotter(ABC):
 
     def _apply_generic_options(self, plot_element: hv.Element) -> hv.Element:
         """Apply generic options like aspect ratio to a plot element."""
-        base_opts = {
-            'hooks': [remove_bokeh_logo],
-            **self._sizing_opts,
-        }
-        return plot_element.opts(**base_opts)
+        return plot_element.opts(**self._sizing_opts)
 
     def _update_autoscaler_and_get_framewise(
         self, data: sc.DataArray, data_key: ResultKey
