@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable, Mapping
 from typing import Any, Generic, Protocol, TypeVar
 
+import panel as pn
+
 from ess.livedata.config.workflow_spec import ResultKey
 from ess.livedata.dashboard.data_service import DataServiceSubscriber
 from ess.livedata.dashboard.extractors import UpdateExtractor
@@ -153,10 +155,18 @@ class DataSubscriber(DataServiceSubscriber[Key], Generic[Key, P]):
             # Subsequent triggers - send to existing pipe
             self._pipe.send(assembled_data)
 
-        # Invoke first-data callback when we have actual data for the first time
+        # Invoke first-data callback when we have actual data for the first time.
+        # IMPORTANT: We defer this callback to the next event loop iteration using
+        # pn.state.execute(). This breaks the synchronous callback chain that occurs
+        # when subscribing to a workflow that already has data, preventing UI blocking
+        # during plot creation. The chain would otherwise be:
+        #   subscribe_to_workflow() → on_job_available() → setup_data_pipeline()
+        #   → register_subscriber() → trigger() → on_first_data() → create_plot()
+        # All running synchronously before returning control to the event loop.
         if data and not self._first_data_callback_invoked and self._on_first_data:
-            self._on_first_data(self._pipe)
             self._first_data_callback_invoked = True
+            pipe = self._pipe  # Capture for lambda
+            pn.state.execute(lambda: self._on_first_data(pipe))
 
 
 class MergingStreamAssembler(StreamAssembler):
