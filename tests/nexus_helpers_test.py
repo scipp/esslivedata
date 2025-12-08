@@ -7,7 +7,14 @@ from pathlib import Path
 import h5py
 import pytest
 
-from ess.livedata.nexus_helpers import StreamInfo, _decode_attr, extract_stream_info
+from ess.livedata.nexus_helpers import (
+    StreamInfo,
+    _decode_attr,
+    extract_stream_info,
+    filter_f144_streams,
+    generate_f144_log_streams_code,
+    suggest_internal_name,
+)
 
 
 class TestDecodeAttr:
@@ -369,3 +376,196 @@ class TestStreamInfo:
         )
 
         assert info1 != info2
+
+    def test_units_default_is_empty_string(self) -> None:
+        info = StreamInfo(
+            group_path='entry/detector/events',
+            topic='detector_events',
+            source='detector_1',
+            nx_class='NXlog',
+            parent_nx_class='NXdetector',
+            writer_module='f144',
+        )
+        assert info.units == ''
+
+    def test_units_can_be_set(self) -> None:
+        info = StreamInfo(
+            group_path='entry/motor/value',
+            topic='motion',
+            source='motor_1',
+            nx_class='NXlog',
+            parent_nx_class='NXpositioner',
+            writer_module='f144',
+            units='degrees',
+        )
+        assert info.units == 'degrees'
+
+
+class TestSuggestInternalName:
+    def test_extracts_name_before_value(self) -> None:
+        info = StreamInfo(
+            group_path='entry/instrument/rotation_stage/value',
+            topic='motion',
+            source='motor_1',
+            nx_class='NXlog',
+            parent_nx_class='NXpositioner',
+            writer_module='f144',
+        )
+        assert suggest_internal_name(info) == 'rotation_stage'
+
+    def test_extracts_name_before_idle_flag(self) -> None:
+        info = StreamInfo(
+            group_path='entry/instrument/rotation_stage/idle_flag',
+            topic='motion',
+            source='motor_1',
+            nx_class='NXlog',
+            parent_nx_class='NXpositioner',
+            writer_module='f144',
+        )
+        assert suggest_internal_name(info) == 'rotation_stage'
+
+    def test_removes_r0_suffix(self) -> None:
+        info = StreamInfo(
+            group_path='entry/instrument/detector_tank_angle_r0/value',
+            topic='motion',
+            source='motor_1',
+            nx_class='NXlog',
+            parent_nx_class='NXpositioner',
+            writer_module='f144',
+        )
+        assert suggest_internal_name(info) == 'detector_tank_angle'
+
+    def test_removes_t0_suffix(self) -> None:
+        info = StreamInfo(
+            group_path='entry/instrument/sample_stage_t0/value',
+            topic='motion',
+            source='motor_1',
+            nx_class='NXlog',
+            parent_nx_class='NXpositioner',
+            writer_module='f144',
+        )
+        assert suggest_internal_name(info) == 'sample_stage'
+
+
+class TestFilterF144Streams:
+    @pytest.fixture
+    def mixed_streams(self) -> list[StreamInfo]:
+        return [
+            StreamInfo(
+                group_path='entry/detector/events',
+                topic='detector',
+                source='det_1',
+                nx_class='NXevent_data',
+                parent_nx_class='NXdetector',
+                writer_module='ev44',
+            ),
+            StreamInfo(
+                group_path='entry/motor/value',
+                topic='motion',
+                source='motor_1',
+                nx_class='NXlog',
+                parent_nx_class='NXpositioner',
+                writer_module='f144',
+                units='degrees',
+            ),
+            StreamInfo(
+                group_path='entry/chopper/rotation',
+                topic='choppers',
+                source='chopper_1',
+                nx_class='NXlog',
+                parent_nx_class='NXdisk_chopper',
+                writer_module='f144',
+                units='Hz',
+            ),
+        ]
+
+    def test_filters_to_f144_only(self, mixed_streams) -> None:
+        result = filter_f144_streams(mixed_streams)
+        assert len(result) == 2
+        assert all(info.writer_module == 'f144' for info in result)
+
+    def test_filters_by_topic(self, mixed_streams) -> None:
+        result = filter_f144_streams(mixed_streams, topic_filter='motion')
+        assert len(result) == 1
+        assert result[0].source == 'motor_1'
+
+    def test_excludes_by_pattern(self, mixed_streams) -> None:
+        result = filter_f144_streams(mixed_streams, exclude_patterns=['chopper'])
+        assert len(result) == 1
+        assert result[0].source == 'motor_1'
+
+
+class TestGenerateF144LogStreamsCode:
+    def test_generates_valid_python_dict(self) -> None:
+        infos = [
+            StreamInfo(
+                group_path='entry/motor/value',
+                topic='motion',
+                source='MOTOR:PV:RBV',
+                nx_class='NXlog',
+                parent_nx_class='NXpositioner',
+                writer_module='f144',
+                units='degrees',
+            ),
+        ]
+        code = generate_f144_log_streams_code(infos, topic='motion')
+        assert "f144_log_streams: dict[str, dict[str, str]] = {" in code
+        assert "'motor': {'source': 'MOTOR:PV:RBV', 'units': 'degrees'}" in code
+
+    def test_uses_dimensionless_for_empty_units(self) -> None:
+        infos = [
+            StreamInfo(
+                group_path='entry/switch/value',
+                topic='motion',
+                source='SWITCH:PV',
+                nx_class='NXlog',
+                parent_nx_class='NXpositioner',
+                writer_module='f144',
+                units='',
+            ),
+        ]
+        code = generate_f144_log_streams_code(infos, topic='motion')
+        assert "'units': 'dimensionless'" in code
+
+    def test_prefers_value_over_idle_flag(self) -> None:
+        infos = [
+            StreamInfo(
+                group_path='entry/motor/idle_flag',
+                topic='motion',
+                source='MOTOR:DMOV',
+                nx_class='NXlog',
+                parent_nx_class='NXpositioner',
+                writer_module='f144',
+                units='',
+            ),
+            StreamInfo(
+                group_path='entry/motor/value',
+                topic='motion',
+                source='MOTOR:RBV',
+                nx_class='NXlog',
+                parent_nx_class='NXpositioner',
+                writer_module='f144',
+                units='degrees',
+            ),
+        ]
+        code = generate_f144_log_streams_code(infos, topic='motion')
+        # Should use 'value' entry, not 'idle_flag'
+        assert 'MOTOR:RBV' in code
+        assert 'MOTOR:DMOV' not in code
+
+    def test_custom_variable_name(self) -> None:
+        infos = [
+            StreamInfo(
+                group_path='entry/motor/value',
+                topic='motion',
+                source='MOTOR:RBV',
+                nx_class='NXlog',
+                parent_nx_class='NXpositioner',
+                writer_module='f144',
+                units='deg',
+            ),
+        ]
+        code = generate_f144_log_streams_code(
+            infos, topic='motion', variable_name='my_streams'
+        )
+        assert 'my_streams: dict[str, dict[str, str]] = {' in code
