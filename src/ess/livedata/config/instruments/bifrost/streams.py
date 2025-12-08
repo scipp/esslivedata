@@ -12,7 +12,7 @@ from ess.livedata.config.env import StreamingEnv
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
 from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
-from .specs import monitors
+from .specs import f144_attribute_registry, monitors
 
 
 def _bifrost_generator() -> Generator[tuple[str, tuple[int, int]]]:
@@ -61,16 +61,40 @@ def _make_bifrost_detectors() -> StreamLUT:
     }
 
 
+# Mapping from Kafka source names to ESSlivedata-internal names for f144 log data.
+# Source names extracted from NeXus file stream info (writer_module='f144').
+_bifrost_log_source_mapping: dict[str, str] = {
+    'BIFRO-DtCar:MC-RotZ-01:Mtr.RBV': 'detector_rotation',
+    'BIFRO-SpRot:MC-RotZ-01:Mtr.RBV': 'sample_rotation',
+}
+
+
+def _make_bifrost_logs() -> StreamLUT:
+    """
+    Bifrost log data mapping.
+
+    Maps Kafka source names (EPICS PV names) to ESSlivedata-internal stream names.
+    Only sources registered in f144_attribute_registry are included.
+    """
+    return {
+        InputStreamKey(topic='bifrost_motion', source_name=source_name): internal_name
+        for source_name, internal_name in _bifrost_log_source_mapping.items()
+        if internal_name in f144_attribute_registry
+    }
+
+
 stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
         'bifrost',
         detector_names=list(detector_fakes),
         monitor_names=monitors,
+        log_names=list(f144_attribute_registry.keys()),
     ),
     StreamingEnv.PROD: StreamMapping(
         **make_common_stream_mapping_inputs(
             instrument='bifrost', monitor_names=monitors
         ),
         detectors=_make_bifrost_detectors(),
+        logs=_make_bifrost_logs(),
     ),
 }
