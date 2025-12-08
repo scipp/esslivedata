@@ -122,31 +122,33 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
 
     def _initialize_selections(self, initial_config: PlotConfig | None) -> None:
         """Initialize selections and bind handlers afterward to avoid cascades."""
-        if initial_config is not None:
-            # Edit mode: pre-select from config
-            self._selected_namespace = initial_config.workflow_id.namespace
-            self._namespace_buttons.value = initial_config.workflow_id.namespace
-            self._update_workflow_options()
-            self._selected_workflow_id = initial_config.workflow_id
-            self._workflow_buttons.value = initial_config.workflow_id
-            self._update_output_options()
-            self._selected_output = initial_config.output_name
-            self._output_buttons.value = initial_config.output_name
-        elif self._namespace_buttons.options:
-            # New mode: select first available option
-            namespace_value = next(iter(self._namespace_buttons.options.values()))
-            self._selected_namespace = namespace_value
-            self._namespace_buttons.value = namespace_value
-            self._update_workflow_options()
-            if self._workflow_buttons.options:
-                workflow_value = next(iter(self._workflow_buttons.options.values()))
-                self._selected_workflow_id = workflow_value
-                self._workflow_buttons.value = workflow_value
+        # Batch all widget updates to avoid multiple browser render cycles
+        with pn.io.hold():
+            if initial_config is not None:
+                # Edit mode: pre-select from config
+                self._selected_namespace = initial_config.workflow_id.namespace
+                self._namespace_buttons.value = initial_config.workflow_id.namespace
+                self._update_workflow_options()
+                self._selected_workflow_id = initial_config.workflow_id
+                self._workflow_buttons.value = initial_config.workflow_id
                 self._update_output_options()
-                if self._output_buttons.options:
-                    output_value = next(iter(self._output_buttons.options.values()))
-                    self._selected_output = output_value
-                    self._output_buttons.value = output_value
+                self._selected_output = initial_config.output_name
+                self._output_buttons.value = initial_config.output_name
+            elif self._namespace_buttons.options:
+                # New mode: select first available option
+                namespace_value = next(iter(self._namespace_buttons.options.values()))
+                self._selected_namespace = namespace_value
+                self._namespace_buttons.value = namespace_value
+                self._update_workflow_options()
+                if self._workflow_buttons.options:
+                    workflow_value = next(iter(self._workflow_buttons.options.values()))
+                    self._selected_workflow_id = workflow_value
+                    self._workflow_buttons.value = workflow_value
+                    self._update_output_options()
+                    if self._output_buttons.options:
+                        output_value = next(iter(self._output_buttons.options.values()))
+                        self._selected_output = output_value
+                        self._output_buttons.value = output_value
 
         # Bind handlers after initial values are set
         self._namespace_buttons.param.watch(self._on_namespace_change, 'value')
@@ -198,41 +200,45 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
 
     def _on_namespace_change(self, event) -> None:
         """Handle namespace selection change."""
-        if event.new is not None:
-            self._selected_namespace = event.new
-            self._selected_workflow_id = None
-            self._selected_output = None
-            self._update_workflow_options()
-            # Select first workflow and trigger output update
-            if self._workflow_buttons.options:
-                first_workflow = next(iter(self._workflow_buttons.options.values()))
-                self._selected_workflow_id = first_workflow
-                self._workflow_buttons.value = first_workflow
-                self._update_output_options()
-                if self._output_buttons.options:
-                    first_output = next(iter(self._output_buttons.options.values()))
-                    self._selected_output = first_output
-                    self._output_buttons.value = first_output
-        else:
-            self._selected_namespace = None
-            self._selected_workflow_id = None
-            self._selected_output = None
+        # Batch all cascading widget updates
+        with pn.io.hold():
+            if event.new is not None:
+                self._selected_namespace = event.new
+                self._selected_workflow_id = None
+                self._selected_output = None
+                self._update_workflow_options()
+                # Select first workflow and trigger output update
+                if self._workflow_buttons.options:
+                    first_workflow = next(iter(self._workflow_buttons.options.values()))
+                    self._selected_workflow_id = first_workflow
+                    self._workflow_buttons.value = first_workflow
+                    self._update_output_options()
+                    if self._output_buttons.options:
+                        first_output = next(iter(self._output_buttons.options.values()))
+                        self._selected_output = first_output
+                        self._output_buttons.value = first_output
+            else:
+                self._selected_namespace = None
+                self._selected_workflow_id = None
+                self._selected_output = None
         self._validate()
 
     def _on_workflow_change(self, event) -> None:
         """Handle workflow selection change."""
-        if event.new is not None:
-            self._selected_workflow_id = event.new
-            self._selected_output = None
-            self._update_output_options()
-            # Select first output
-            if self._output_buttons.options:
-                first_output = next(iter(self._output_buttons.options.values()))
-                self._selected_output = first_output
-                self._output_buttons.value = first_output
-        else:
-            self._selected_workflow_id = None
-            self._selected_output = None
+        # Batch cascading widget updates
+        with pn.io.hold():
+            if event.new is not None:
+                self._selected_workflow_id = event.new
+                self._selected_output = None
+                self._update_output_options()
+                # Select first output
+                if self._output_buttons.options:
+                    first_output = next(iter(self._output_buttons.options.values()))
+                    self._selected_output = first_output
+                    self._output_buttons.value = first_output
+            else:
+                self._selected_workflow_id = None
+                self._selected_output = None
         self._validate()
 
     def _on_output_change(self, event) -> None:

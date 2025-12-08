@@ -98,8 +98,14 @@ class PlotGridTabs:
         # Track grid widgets (insertion order determines tab position)
         self._grid_widgets: dict[GridId, PlotGrid] = {}
 
-        # Main tabs widget
-        self._tabs = pn.Tabs(sizing_mode='stretch_both')
+        # Main tabs widget.
+        # IMPORTANT: dynamic=True is critical for performance. Without it, Panel
+        # renders ALL tabs simultaneously, causing severe UI lag (3-5 seconds) when
+        # any tab content changes (e.g., updating grid preview). We even observe causes
+        # of near-total UI freezes when there are many active plots. With dynamic=True,
+        # only the visible tab is rendered; hidden tabs are rendered on-demand when
+        # selected. Downside: slight delay when switching to a tab.
+        self._tabs = pn.Tabs(sizing_mode='stretch_both', dynamic=True)
 
         # Modal container for plot configuration
         # IMPORTANT: Use height=0 to ensure the modal is in the component tree
@@ -331,11 +337,11 @@ class PlotGridTabs:
         # resulting in "glitched" rendering. Deferring to the next event loop
         # iteration allows Panel to process layout updates first.
         if plot is not None:
-            # Schedule insertion on next event loop iteration
-            pn.state.add_periodic_callback(
-                lambda g=cell.geometry: plot_grid.insert_widget_at(g, widget),
-                period=1,  # milliseconds
-                count=1,  # run once
+            # Schedule insertion on next event loop iteration using pn.state.execute
+            # This is more appropriate than add_periodic_callback for one-shot deferred
+            # execution and ensures proper thread safety for Bokeh model updates.
+            pn.state.execute(
+                lambda g=cell.geometry: plot_grid.insert_widget_at(g, widget)
             )
         else:
             # Status widgets can be inserted immediately

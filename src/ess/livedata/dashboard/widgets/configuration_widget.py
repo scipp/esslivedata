@@ -106,18 +106,20 @@ class ConfigurationWidget:
         self._model_widget = self._create_model_widget()
 
         # Replace widget in the column
-        widget_index = None
-        for i, item in enumerate(self._widget.objects):
-            if item is old_widget.widget:
-                widget_index = i
-                break
+        # Batch the widget replacement to avoid multiple render cycles
+        with pn.io.hold():
+            widget_index = None
+            for i, item in enumerate(self._widget.objects):
+                if item is old_widget.widget:
+                    widget_index = i
+                    break
 
-        if widget_index is not None:
-            self._widget.objects = [
-                *self._widget.objects[:widget_index],
-                self._model_widget.widget,
-                *self._widget.objects[widget_index + 1 :],
-            ]
+            if widget_index is not None:
+                self._widget.objects = [
+                    *self._widget.objects[:widget_index],
+                    self._model_widget.widget,
+                    *self._widget.objects[widget_index + 1 :],
+                ]
 
     def _create_widget(self) -> pn.Column:
         """Create the main configuration widget."""
