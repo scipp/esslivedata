@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 import numpy as np
 import scipp as sc
 from streaming_data_types import logdata_f144
 
+from ess.reduce import streaming
+
 from ..core.handler import Accumulator
 from .to_nxevent_data import DetectorEvents, MonitorEvents
+
+T = TypeVar('T')
 
 
 @dataclass
@@ -42,9 +46,12 @@ class NullAccumulator(Accumulator[Any, None]):
         pass
 
 
-class LatestValue(Accumulator[sc.DataArray, sc.DataArray]):
+class LatestValueHandler(Accumulator[sc.DataArray, sc.DataArray]):
     """
-    Accumulator that keeps only the latest value.
+    Handler-style accumulator that keeps only the latest value.
+
+    This implements the handler Accumulator protocol (add/get/clear) for use in
+    message handlers. For use with StreamProcessor workflows, use LatestValue instead.
 
     Unlike Cumulative, this does not add values together - it simply replaces
     the stored value with each new addition. Useful for configuration data like ROI
@@ -65,6 +72,37 @@ class LatestValue(Accumulator[sc.DataArray, sc.DataArray]):
 
     def clear(self) -> None:
         self._latest = None
+
+
+class LatestValue(streaming.Accumulator[T], Generic[T]):
+    """
+    Streaming accumulator that keeps only the latest value.
+
+    This implements the ess.reduce.streaming.Accumulator protocol (push/value/clear)
+    for use with StreamProcessor workflows. Unlike EternalAccumulator, this does not
+    accumulate values - it simply replaces the stored value with each new push.
+
+    Useful for scalar outputs like detector region counts where accumulation
+    doesn't make sense.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._value: T | None = None
+
+    def _do_push(self, value: T) -> None:
+        self._value = value
+
+    def _get_value(self) -> T:
+        # is_empty check is handled by the base class value property
+        return self._value  # type: ignore[return-value]
+
+    @property
+    def is_empty(self) -> bool:
+        return self._value is None
+
+    def clear(self) -> None:
+        self._value = None
 
 
 class _CumulativeAccumulationMixin:
