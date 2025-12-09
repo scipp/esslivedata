@@ -1,0 +1,31 @@
+# Workflow configs for screenshot testing.
+# Uses a fixed, well-known job_number so we can inject matching data.
+#
+# The job_number is a deterministic UUID derived from a constant string.
+# This same UUID must be used in the test data injection.
+
+# Panel 0 XY detector workflow
+dummy/detector_data/panel_0_xy/1:
+  source_names:
+    - panel_0
+  params: {}
+  aux_source_names: {}
+  current_job:
+    job_number: "00000000-0000-0000-0000-000000000001"
+    jobs:
+      panel_0:
+        params: {}
+        aux_source_names: {}
+
+# Area Panel XY detector workflow
+dummy/detector_data/area_panel_xy/1:
+  source_names:
+    - area_panel
+  params: {}
+  aux_source_names: {}
+  current_job:
+    job_number: "00000000-0000-0000-0000-000000000002"
+    jobs:
+      area_panel:
+        params: {}
+        aux_source_names: {}
