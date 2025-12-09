@@ -128,23 +128,24 @@ class PlotCell:
     The plots are placed in the given row and col of a :py:class:`PlotGrid`, spanning
     the given number of rows and columns.
 
-    A cell can have multiple layers (overlay layers on top of the primary layer).
-    The first layer (config) is the primary layer that determines the cell's
-    display title and primary data source. Additional layers are overlaid on top.
+    A cell can have multiple layers that are composed via overlay. All layers
+    are peers - the first layer is used for display purposes (title, sizing)
+    but has no special status otherwise.
 
     Parameters
     ----------
     geometry:
         Position and size of the cell in the grid.
-    config:
-        Configuration for the primary layer.
-    additional_layers:
-        Optional list of additional layer configurations to overlay.
+    layers:
+        List of layer configurations. Must have at least one layer.
     """
 
     geometry: CellGeometry
-    config: PlotConfig
-    additional_layers: list[PlotConfig] = field(default_factory=list)
+    layers: list[PlotConfig] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.layers:
+            raise ValueError("PlotCell must have at least one layer")
 
 
 @dataclass
@@ -322,8 +323,9 @@ class PlotOrchestrator:
         grid.cells[cell_id] = cell
         self._cell_to_grid[cell_id] = grid_id
 
-        # Subscribe to workflow
-        self._subscribe_and_setup(grid_id, cell_id, cell.config.workflow_id)
+        # Subscribe to workflow(s) - use first layer's workflow for job notifications
+        # All layers will set up their own data subscriptions in _on_job_available
+        self._subscribe_and_setup(grid_id, cell_id, cell.layers[0].workflow_id)
 
         return cell_id
 
@@ -363,7 +365,9 @@ class PlotOrchestrator:
 
     def get_plot_config(self, cell_id: CellId) -> PlotConfig:
         """
-        Get configuration for a plot.
+        Get configuration for the first layer of a plot.
+
+        For multi-layer cells, use get_all_layers() to get all configurations.
 
         Parameters
         ----------
@@ -373,10 +377,10 @@ class PlotOrchestrator:
         Returns
         -------
         :
-            The plot configuration.
+            The first layer's plot configuration.
         """
         grid_id = self._cell_to_grid[cell_id]
-        return self._grids[grid_id].cells[cell_id].config
+        return self._grids[grid_id].cells[cell_id].layers[0]
 
     def get_cell_state(
         self, cell_id: CellId
@@ -402,9 +406,11 @@ class PlotOrchestrator:
         state = self._cell_state.get(cell_id, CellState())
         return state.plot, state.error
 
-    def update_plot_config(self, cell_id: CellId, new_config: PlotConfig) -> None:
+    def update_plot_config(
+        self, cell_id: CellId, new_config: PlotConfig, layer_index: int = 0
+    ) -> None:
         """
-        Update plot configuration and resubscribe to workflow.
+        Update configuration for a specific layer and resubscribe to workflow.
 
         This resubscribes to the workflow.
         When the workflow is next committed, the plot will be recreated
@@ -415,26 +421,33 @@ class PlotOrchestrator:
         cell_id
             ID of the plot cell to update.
         new_config
-            New plot configuration.
+            New plot configuration for the layer.
+        layer_index
+            Index of the layer to update (default: 0, the first layer).
         """
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
+        if layer_index < 0 or layer_index >= len(cell.layers):
+            raise IndexError(
+                f"Layer index {layer_index} out of range (0-{len(cell.layers) - 1})"
+            )
+
         # Unsubscribe from old workflow notifications
         self._job_orchestrator.unsubscribe(self._cell_to_subscription[cell_id])
 
-        # Update configuration
-        cell.config = new_config
+        # Update configuration for the specified layer
+        cell.layers[layer_index] = new_config
 
         # Clear stored state since config changed (new plot will be created)
         self._cell_state.pop(cell_id, None)
 
-        # Re-subscribe to workflow
-        self._subscribe_and_setup(grid_id, cell_id, new_config.workflow_id)
+        # Re-subscribe to workflow (use first layer's workflow)
+        self._subscribe_and_setup(grid_id, cell_id, cell.layers[0].workflow_id)
 
     def add_layer(self, cell_id: CellId, layer_config: PlotConfig) -> None:
         """
-        Add an overlay layer to a plot cell.
+        Add a layer to a plot cell.
 
         The new layer is added on top of existing layers. The cell's plot
         will be recreated to include the new layer.
@@ -450,7 +463,7 @@ class PlotOrchestrator:
         cell = self._grids[grid_id].cells[cell_id]
 
         # Add the layer
-        cell.additional_layers.append(layer_config)
+        cell.layers.append(layer_config)
 
         # Unsubscribe from current workflow notifications
         self._job_orchestrator.unsubscribe(self._cell_to_subscription[cell_id])
@@ -459,26 +472,27 @@ class PlotOrchestrator:
         self._cell_state.pop(cell_id, None)
 
         # Re-subscribe to workflow (will recreate plot with all layers)
-        self._subscribe_and_setup(grid_id, cell_id, cell.config.workflow_id)
+        self._subscribe_and_setup(grid_id, cell_id, cell.layers[0].workflow_id)
 
         self._persist_to_store()
         self._logger.info(
             'Added layer to cell %s (now %d layers)',
             cell_id,
-            len(cell.additional_layers) + 1,
+            len(cell.layers),
         )
 
     def remove_layer(self, cell_id: CellId, layer_index: int) -> None:
         """
-        Remove an overlay layer from a plot cell.
+        Remove a layer from a plot cell.
+
+        If this removes the last layer, the entire cell is removed.
 
         Parameters
         ----------
         cell_id
             ID of the plot cell to remove the layer from.
         layer_index
-            Index of the layer to remove (0 = first additional layer).
-            Cannot remove the primary layer (config).
+            Index of the layer to remove.
 
         Raises
         ------
@@ -488,14 +502,21 @@ class PlotOrchestrator:
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
-        if layer_index < 0 or layer_index >= len(cell.additional_layers):
+        if layer_index < 0 or layer_index >= len(cell.layers):
             raise IndexError(
-                f"Layer index {layer_index} out of range "
-                f"(0-{len(cell.additional_layers) - 1})"
+                f"Layer index {layer_index} out of range (0-{len(cell.layers) - 1})"
             )
 
+        # If this is the last layer, remove the entire cell
+        if len(cell.layers) == 1:
+            self._logger.info(
+                'Removing last layer from cell %s, removing cell', cell_id
+            )
+            self.remove_plot(cell_id)
+            return
+
         # Remove the layer
-        cell.additional_layers.pop(layer_index)
+        cell.layers.pop(layer_index)
 
         # Unsubscribe from current workflow notifications
         self._job_orchestrator.unsubscribe(self._cell_to_subscription[cell_id])
@@ -503,15 +524,15 @@ class PlotOrchestrator:
         # Clear stored state (plot needs to be recreated)
         self._cell_state.pop(cell_id, None)
 
-        # Re-subscribe to workflow
-        self._subscribe_and_setup(grid_id, cell_id, cell.config.workflow_id)
+        # Re-subscribe to workflow (use first layer's workflow)
+        self._subscribe_and_setup(grid_id, cell_id, cell.layers[0].workflow_id)
 
         self._persist_to_store()
         self._logger.info(
             'Removed layer %d from cell %s (now %d layers)',
             layer_index,
             cell_id,
-            len(cell.additional_layers) + 1,
+            len(cell.layers),
         )
 
     def get_layer_count(self, cell_id: CellId) -> int:
@@ -526,11 +547,11 @@ class PlotOrchestrator:
         Returns
         -------
         :
-            Total number of layers (1 + number of additional layers).
+            Total number of layers.
         """
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
-        return 1 + len(cell.additional_layers)
+        return len(cell.layers)
 
     def get_all_layers(self, cell_id: CellId) -> list[PlotConfig]:
         """
@@ -544,11 +565,11 @@ class PlotOrchestrator:
         Returns
         -------
         :
-            List of all layer configurations, with the primary layer first.
+            List of all layer configurations.
         """
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
-        return [cell.config, *cell.additional_layers]
+        return list(cell.layers)
 
     def _subscribe_and_setup(
         self, grid_id: GridId, cell_id: CellId, workflow_id: WorkflowId
@@ -646,7 +667,7 @@ class PlotOrchestrator:
         cell = self._grids[grid_id].cells[cell_id]
 
         # Check if this is a multi-layer cell
-        has_multiple_layers = len(cell.additional_layers) > 0
+        has_multiple_layers = len(cell.layers) > 1
 
         if has_multiple_layers:
             # Multi-layer path: use composed pipeline
@@ -663,6 +684,7 @@ class PlotOrchestrator:
         job_number: JobNumber,
     ) -> None:
         """Set up data pipeline for a single-layer cell."""
+        layer = cell.layers[0]
 
         def on_data_arrived(pipe) -> None:
             """Create plot when first data arrives for the pipeline."""
@@ -674,8 +696,8 @@ class PlotOrchestrator:
             # Create the plot with the now-populated pipe
             try:
                 plot = self._plotting_controller.create_plot_from_pipeline(
-                    plot_name=cell.config.plot_name,
-                    params=cell.config.params,
+                    plot_name=layer.plot_name,
+                    params=layer.params,
                     pipe=pipe,
                 )
                 # Store the plot so late subscribers can access it
@@ -692,11 +714,11 @@ class PlotOrchestrator:
         try:
             self._plotting_controller.setup_data_pipeline(
                 job_number=job_number,
-                workflow_id=cell.config.workflow_id,
-                source_names=cell.config.source_names,
-                output_name=cell.config.output_name,
-                plot_name=cell.config.plot_name,
-                params=cell.config.params,
+                workflow_id=layer.workflow_id,
+                source_names=layer.source_names,
+                output_name=layer.output_name,
+                plot_name=layer.plot_name,
+                params=layer.params,
                 on_first_data=on_data_arrived,
             )
         except Exception:
@@ -746,25 +768,16 @@ class PlotOrchestrator:
                 self._cell_state[cell_id] = CellState(error=error_msg)
                 self._notify_cell_updated(grid_id, cell_id, cell, error=error_msg)
 
-        # Build layer configs list: primary + additional layers
+        # Build layer configs list from all layers
         layer_configs = [
             (
-                cell.config.workflow_id,
-                cell.config.source_names,
-                cell.config.output_name,
-                cell.config.plot_name,
-                cell.config.params,
-            ),
-            *(
-                (
-                    layer.workflow_id,
-                    layer.source_names,
-                    layer.output_name,
-                    layer.plot_name,
-                    layer.params,
-                )
-                for layer in cell.additional_layers
-            ),
+                layer.workflow_id,
+                layer.source_names,
+                layer.output_name,
+                layer.plot_name,
+                layer.params,
+            )
+            for layer in cell.layers
         ]
 
         try:
@@ -848,7 +861,7 @@ class PlotOrchestrator:
 
         return PlotConfig(
             workflow_id=WorkflowId.from_string(config_data['workflow_id']),
-            output_name=config_data.get('output_name'),
+            output_name=config_data.get('output_name', 'result'),
             source_names=config_data['source_names'],
             plot_name=plot_name,
             params=params,
@@ -861,23 +874,22 @@ class PlotOrchestrator:
         Use this to convert cells from templates or persisted configurations
         into typed objects that can be passed to :py:meth:`add_grid`.
 
+        Supports two formats:
+        - New format: 'layers' list containing all layer configs
+        - Legacy format: 'config' (primary) + optional 'additional_layers'
+
         Parameters
         ----------
         cell_data
-            Cell configuration dict with 'geometry' and 'config' keys.
-            The config must contain: workflow_id, source_names, plot_name.
-            Optional: output_name, params, additional_layers.
+            Cell configuration dict with 'geometry' and either 'layers' or 'config'.
+            Each layer config must contain: workflow_id, source_names, plot_name.
+            Optional per layer: output_name, params.
 
         Returns
         -------
         :
-            Parsed PlotCell, or None if the plotter is unknown (cell skipped).
+            Parsed PlotCell, or None if all plotters are unknown (cell skipped).
         """
-        # Parse primary layer config
-        config = self._parse_config_data(cell_data['config'])
-        if config is None:
-            return None
-
         geometry = CellGeometry(
             row=cell_data['geometry']['row'],
             col=cell_data['geometry']['col'],
@@ -885,16 +897,31 @@ class PlotOrchestrator:
             col_span=cell_data['geometry']['col_span'],
         )
 
-        # Parse additional layers (if present)
-        additional_layers: list[PlotConfig] = []
-        for layer_data in cell_data.get('additional_layers', []):
-            layer_config = self._parse_config_data(layer_data)
-            if layer_config is not None:
-                additional_layers.append(layer_config)
+        # Parse layers - support both new and legacy formats
+        layers: list[PlotConfig] = []
 
-        return PlotCell(
-            geometry=geometry, config=config, additional_layers=additional_layers
-        )
+        if 'layers' in cell_data:
+            # New format: all layers in a list
+            for layer_data in cell_data['layers']:
+                layer_config = self._parse_config_data(layer_data)
+                if layer_config is not None:
+                    layers.append(layer_config)
+        else:
+            # Legacy format: 'config' + optional 'additional_layers'
+            primary_config = self._parse_config_data(cell_data['config'])
+            if primary_config is not None:
+                layers.append(primary_config)
+
+            for layer_data in cell_data.get('additional_layers', []):
+                layer_config = self._parse_config_data(layer_data)
+                if layer_config is not None:
+                    layers.append(layer_config)
+
+        # Skip cell if no valid layers
+        if not layers:
+            return None
+
+        return PlotCell(geometry=geometry, layers=layers)
 
     def get_available_templates(self) -> list[GridSpec]:
         """
@@ -1012,10 +1039,7 @@ class PlotOrchestrator:
                             'row_span': cell.geometry.row_span,
                             'col_span': cell.geometry.col_span,
                         },
-                        'config': serialize_config(cell.config),
-                        'additional_layers': [
-                            serialize_config(layer) for layer in cell.additional_layers
-                        ],
+                        'layers': [serialize_config(layer) for layer in cell.layers],
                     }
                     for cell in grid.cells.values()
                 ],

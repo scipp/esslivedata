@@ -228,7 +228,7 @@ def plot_config(workflow_id):
 def plot_cell(plot_config):
     """Create a basic PlotCell."""
     geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-    return PlotCell(geometry=geometry, config=plot_config)
+    return PlotCell(geometry=geometry, layers=[plot_config])
 
 
 @pytest.fixture
@@ -352,11 +352,11 @@ class TestGridManagement:
 
         # Get grid and modify a cell's config (params is a Pydantic model)
         grid = plot_orchestrator.get_grid(grid_id)
-        grid.cells[cell_id].config.params.new_param = 'new_value'
+        grid.cells[cell_id].layers[0].params.new_param = 'new_value'
 
         # Verify internal state unchanged
         internal_grid = plot_orchestrator.get_grid(grid_id)
-        assert not hasattr(internal_grid.cells[cell_id].config.params, 'new_param')
+        assert not hasattr(internal_grid.cells[cell_id].layers[0].params, 'new_param')
         # Geometry is frozen and cannot be modified
         assert internal_grid.cells[cell_id].geometry.row == 0
 
@@ -388,11 +388,11 @@ class TestGridManagement:
 
         # Get all grids and modify a cell (params is a Pydantic model)
         all_grids = plot_orchestrator.get_all_grids()
-        all_grids[grid_id].cells[cell_id].config.params.new_param = 'new_value'
+        all_grids[grid_id].cells[cell_id].layers[0].params.new_param = 'new_value'
 
         # Verify internal state unchanged
         internal_grid = plot_orchestrator.get_grid(grid_id)
-        assert not hasattr(internal_grid.cells[cell_id].config.params, 'new_param')
+        assert not hasattr(internal_grid.cells[cell_id].layers[0].params, 'new_param')
         # Geometry is frozen and cannot be modified
         assert internal_grid.cells[cell_id].geometry.row == 0
 
@@ -461,23 +461,27 @@ class TestCellManagement:
 
         cell_1 = PlotCell(
             geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
-            config=PlotConfig(
-                workflow_id=workflow_id,
-                output_name='out1',
-                source_names=['src1'],
-                plot_name='plot1',
-                params=FakePlotParams(),
-            ),
+            layers=[
+                PlotConfig(
+                    workflow_id=workflow_id,
+                    output_name='out1',
+                    source_names=['src1'],
+                    plot_name='plot1',
+                    params=FakePlotParams(),
+                )
+            ],
         )
         cell_2 = PlotCell(
             geometry=CellGeometry(row=1, col=1, row_span=1, col_span=1),
-            config=PlotConfig(
-                workflow_id=workflow_id,
-                output_name='out2',
-                source_names=['src2'],
-                plot_name='plot2',
-                params=FakePlotParams(),
-            ),
+            layers=[
+                PlotConfig(
+                    workflow_id=workflow_id,
+                    output_name='out2',
+                    source_names=['src2'],
+                    plot_name='plot2',
+                    params=FakePlotParams(),
+                )
+            ],
         )
 
         cell_id_1 = plot_orchestrator.add_plot(grid_id, cell_1)
@@ -532,11 +536,11 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
         # Add data for ALL sources (plot requires both source1 and source2)
-        for source_name in plot_cell.config.source_names:
+        for source_name in plot_cell.layers[0].source_names:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell.config.output_name,
+                output_name=plot_cell.layers[0].output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -545,7 +549,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         calls = fake_plotting_controller.get_calls()
         # With two-phase creation, create_plot_from_pipeline is called (not create_plot)
         assert calls[0]['_from_pipeline'] is True
-        assert calls[0]['plot_name'] == plot_cell.config.plot_name
+        assert calls[0]['plot_name'] == plot_cell.layers[0].plot_name
 
     def test_workflow_commit_before_cell_added_creates_plot_when_cell_added(
         self,
@@ -572,11 +576,11 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        for source_name in plot_cell.config.source_names:
+        for source_name in plot_cell.layers[0].source_names:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell.config.output_name,
+                output_name=plot_cell.layers[0].output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -598,23 +602,27 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         # Add multiple cells with same workflow_id
         cell_1 = PlotCell(
             geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
-            config=PlotConfig(
-                workflow_id=workflow_id,
-                output_name='out1',
-                source_names=['src1'],
-                plot_name='plot1',
-                params=FakePlotParams(),
-            ),
+            layers=[
+                PlotConfig(
+                    workflow_id=workflow_id,
+                    output_name='out1',
+                    source_names=['src1'],
+                    plot_name='plot1',
+                    params=FakePlotParams(),
+                )
+            ],
         )
         cell_2 = PlotCell(
             geometry=CellGeometry(row=1, col=1, row_span=1, col_span=1),
-            config=PlotConfig(
-                workflow_id=workflow_id,
-                output_name='out2',
-                source_names=['src2'],
-                plot_name='plot2',
-                params=FakePlotParams(),
-            ),
+            layers=[
+                PlotConfig(
+                    workflow_id=workflow_id,
+                    output_name='out2',
+                    source_names=['src2'],
+                    plot_name='plot2',
+                    params=FakePlotParams(),
+                )
+            ],
         )
 
         plot_orchestrator.add_plot(grid_id, cell_1)
@@ -633,9 +641,9 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(
-                    source_name=cell.config.source_names[0], job_number=job_number
+                    source_name=cell.layers[0].source_names[0], job_number=job_number
                 ),
-                output_name=cell.config.output_name,
+                output_name=cell.layers[0].output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -804,11 +812,11 @@ class TestLifecycleEventNotifications:
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        for source_name in plot_cell.config.source_names:
+        for source_name in plot_cell.layers[0].source_names:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell.config.output_name,
+                output_name=plot_cell.layers[0].output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -850,11 +858,11 @@ class TestLifecycleEventNotifications:
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        for source_name in plot_cell.config.source_names:
+        for source_name in plot_cell.layers[0].source_names:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell.config.output_name,
+                output_name=plot_cell.layers[0].output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -986,11 +994,11 @@ class TestErrorHandling:
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        for source_name in plot_cell.config.source_names:
+        for source_name in plot_cell.layers[0].source_names:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell.config.output_name,
+                output_name=plot_cell.layers[0].output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -1069,13 +1077,15 @@ class TestCleanupAndResourceManagement:
         for i in range(3):
             cell = PlotCell(
                 geometry=CellGeometry(row=i, col=0, row_span=1, col_span=1),
-                config=PlotConfig(
-                    workflow_id=workflow_id,
-                    output_name=f'out{i}',
-                    source_names=[f'src{i}'],
-                    plot_name=f'plot{i}',
-                    params=FakePlotParams(),
-                ),
+                layers=[
+                    PlotConfig(
+                        workflow_id=workflow_id,
+                        output_name=f'out{i}',
+                        source_names=[f'src{i}'],
+                        plot_name=f'plot{i}',
+                        params=FakePlotParams(),
+                    )
+                ],
             )
             plot_orchestrator.add_plot(grid_id, cell)
 
@@ -1169,11 +1179,11 @@ class TestLateSubscriberPlotRetrieval:
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        for source_name in plot_cell.config.source_names:
+        for source_name in plot_cell.layers[0].source_names:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell.config.output_name,
+                output_name=plot_cell.layers[0].output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -1206,13 +1216,15 @@ class TestLateSubscriberPlotRetrieval:
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         plot_cell = PlotCell(
             geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
-            config=PlotConfig(
-                workflow_id=workflow_id,
-                output_name='test_output',
-                source_names=['source1'],
-                plot_name='test_plot',
-                params=FakePlotParams(),
-            ),
+            layers=[
+                PlotConfig(
+                    workflow_id=workflow_id,
+                    output_name='test_output',
+                    source_names=['source1'],
+                    plot_name='test_plot',
+                    params=FakePlotParams(),
+                )
+            ],
         )
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
@@ -1264,13 +1276,15 @@ class TestLateSubscriberPlotRetrieval:
         for i in range(3):
             plot_cell = PlotCell(
                 geometry=CellGeometry(row=i, col=0, row_span=1, col_span=1),
-                config=PlotConfig(
-                    workflow_id=workflow_id,
-                    output_name=f'output_{i}',
-                    source_names=[f'source_{i}'],
-                    plot_name=f'plot_{i}',
-                    params=FakePlotParams(),
-                ),
+                layers=[
+                    PlotConfig(
+                        workflow_id=workflow_id,
+                        output_name=f'output_{i}',
+                        source_names=[f'source_{i}'],
+                        plot_name=f'plot_{i}',
+                        params=FakePlotParams(),
+                    )
+                ],
             )
             cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
             cell_ids.append(cell_id)
@@ -1332,11 +1346,11 @@ class TestLateSubscriberPlotRetrieval:
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        for source_name in plot_cell.config.source_names:
+        for source_name in plot_cell.layers[0].source_names:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number1),
-                output_name=plot_cell.config.output_name,
+                output_name=plot_cell.layers[0].output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -1396,11 +1410,11 @@ class TestLateSubscriberPlotRetrieval:
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        for source_name in plot_cell.config.source_names:
+        for source_name in plot_cell.layers[0].source_names:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell.config.output_name,
+                output_name=plot_cell.layers[0].output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -1440,13 +1454,15 @@ class TestSourceNameFiltering:
         # Create a plot that wants data from source_A
         plot_cell = PlotCell(
             geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
-            config=PlotConfig(
-                workflow_id=workflow_id,
-                output_name='test_output',
-                source_names=['source_A'],  # Plot wants source_A
-                plot_name='test_plot',
-                params=FakePlotParams(),
-            ),
+            layers=[
+                PlotConfig(
+                    workflow_id=workflow_id,
+                    output_name='test_output',
+                    source_names=['source_A'],  # Plot wants source_A
+                    plot_name='test_plot',
+                    params=FakePlotParams(),
+                )
+            ],
         )
         plot_orchestrator.add_plot(grid_id, plot_cell)
 
@@ -1507,13 +1523,15 @@ class TestSourceNameFiltering:
         # Create a plot that wants data from BOTH source_A and source_B
         plot_cell = PlotCell(
             geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
-            config=PlotConfig(
-                workflow_id=workflow_id,
-                output_name='test_output',
-                source_names=['source_A', 'source_B'],  # Plot wants BOTH
-                plot_name='test_plot',
-                params=FakePlotParams(),
-            ),
+            layers=[
+                PlotConfig(
+                    workflow_id=workflow_id,
+                    output_name='test_output',
+                    source_names=['source_A', 'source_B'],  # Plot wants BOTH
+                    plot_name='test_plot',
+                    params=FakePlotParams(),
+                )
+            ],
         )
         plot_orchestrator.add_plot(grid_id, plot_cell)
 
@@ -1588,13 +1606,15 @@ class TestSourceNameFiltering:
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         plot_cell = PlotCell(
             geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
-            config=PlotConfig(
-                workflow_id=workflow_id,
-                output_name='test_output',
-                source_names=['source_A'],
-                plot_name='test_plot',
-                params=FakePlotParams(),
-            ),
+            layers=[
+                PlotConfig(
+                    workflow_id=workflow_id,
+                    output_name='test_output',
+                    source_names=['source_A'],
+                    plot_name='test_plot',
+                    params=FakePlotParams(),
+                )
+            ],
         )
         plot_orchestrator.add_plot(grid_id, plot_cell)
 
@@ -1638,13 +1658,15 @@ class TestSourceNameFiltering:
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         plot_cell = PlotCell(
             geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
-            config=PlotConfig(
-                workflow_id=workflow_id,
-                output_name='test_output',
-                source_names=['source_A'],  # Plot wants A, but only B exists
-                plot_name='test_plot',
-                params=FakePlotParams(),
-            ),
+            layers=[
+                PlotConfig(
+                    workflow_id=workflow_id,
+                    output_name='test_output',
+                    source_names=['source_A'],  # Plot wants A, but only B exists
+                    plot_name='test_plot',
+                    params=FakePlotParams(),
+                )
+            ],
         )
         plot_orchestrator.add_plot(grid_id, plot_cell)
 

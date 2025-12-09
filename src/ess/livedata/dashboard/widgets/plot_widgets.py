@@ -341,12 +341,12 @@ def _format_window_info(params) -> str:
     return f'{duration_str} window'
 
 
-def get_plot_cell_display_info(
+def _get_layer_display_info(
     config: PlotConfig,
     workflow_registry: Mapping[WorkflowId, WorkflowSpec],
 ) -> tuple[str, str]:
     """
-    Assemble title and description for a plot cell toolbar.
+    Assemble title and description for a single layer.
 
     Parameters
     ----------
@@ -397,3 +397,56 @@ def get_plot_cell_display_info(
     description = '\n'.join(description_parts)
 
     return title, description
+
+
+def get_plot_cell_display_info(
+    layers: list[PlotConfig],
+    workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+) -> tuple[str, str]:
+    """
+    Assemble title and description for a plot cell toolbar.
+
+    For cells with multiple layers, returns info for all layers
+    (one row per layer in the title).
+
+    Parameters
+    ----------
+    layers:
+        List of plot configurations for all layers in the cell.
+    workflow_registry:
+        Registry mapping workflow IDs to their specifications.
+
+    Returns
+    -------
+    :
+        Tuple of (title, description). Title shows one line per layer,
+        description is a longer string for tooltip.
+    """
+    if not layers:
+        return "No layers configured", ""
+
+    # Get display info for each layer
+    layer_infos = [
+        _get_layer_display_info(config, workflow_registry) for config in layers
+    ]
+
+    # Combine titles (one per line for multi-layer)
+    titles = [info[0] for info in layer_infos]
+    if len(titles) == 1:
+        combined_title = titles[0]
+    else:
+        # Number the layers for clarity
+        combined_title = '<br>'.join(
+            f'{i + 1}. {title}' for i, title in enumerate(titles)
+        )
+
+    # Combine descriptions
+    descriptions = [info[1] for info in layer_infos]
+    if len(descriptions) == 1:
+        combined_description = descriptions[0]
+    else:
+        combined_description = '\n\n'.join(
+            f'Layer {i + 1}:\n{desc}' for i, desc in enumerate(descriptions)
+        )
+
+    return combined_title, combined_description

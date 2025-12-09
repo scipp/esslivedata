@@ -223,7 +223,7 @@ class PlotGridTabs:
 
         def on_success(plot_config: PlotConfig) -> None:
             """Handle successful plot configuration."""
-            plot_cell = PlotCell(geometry=geometry, config=plot_config)
+            plot_cell = PlotCell(geometry=geometry, layers=[plot_config])
             self._orchestrator.add_plot(grid_id, plot_cell)
 
         self._show_config_modal(on_success=on_success)
@@ -409,24 +409,25 @@ class PlotGridTabs:
         :
             Panel widget showing status information.
         """
-        config = cell.config
-
-        # Get display info for toolbar
+        # Get display info for toolbar (shows all layers)
         toolbar_title, toolbar_description = get_plot_cell_display_info(
-            config, self._workflow_registry
+            cell.layers, self._workflow_registry
         )
 
-        # Get workflow and output display titles for body content
+        # Get workflow and output display titles for body content (first layer)
+        first_layer = cell.layers[0]
         workflow_title, output_title = get_workflow_display_info(
-            self._workflow_registry, config.workflow_id, config.output_name
+            self._workflow_registry, first_layer.workflow_id, first_layer.output_name
         )
 
         # Build title from workflow and output (most prominent)
         body_title = f"### {workflow_title} - {output_title}"
+        if len(cell.layers) > 1:
+            body_title += f" (+{len(cell.layers) - 1} layer(s))"
 
         # Build info section: sources first, then status
         info_lines = [
-            f"**Sources:** {', '.join(config.source_names)}",
+            f"**Sources:** {', '.join(first_layer.source_names)}",
         ]
 
         # Add status-specific line and determine styling
@@ -504,9 +505,9 @@ class PlotGridTabs:
             Panel widget containing the plot.
         """
 
-        # Get display info for toolbar
+        # Get display info for toolbar (shows all layers)
         title, description = get_plot_cell_display_info(
-            cell.config, self._workflow_registry
+            cell.layers, self._workflow_registry
         )
 
         # Create toolbar with title, description, and buttons
@@ -533,7 +534,7 @@ class PlotGridTabs:
         # in a Panel layout (Tabs, Column, etc.). The .layout property contains
         # both the plot and widgets, which renders correctly in layouts.
         # See: https://github.com/holoviz/panel/issues/5628
-        sizing_mode = _get_sizing_mode(cell.config)
+        sizing_mode = _get_sizing_mode(cell.layers[0])
         plot_pane_wrapper = pn.pane.HoloViews(plot, sizing_mode=sizing_mode)
         plot_pane = plot_pane_wrapper.layout
 
