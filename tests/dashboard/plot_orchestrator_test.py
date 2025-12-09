@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import uuid
 
+import holoviews as hv
 import pydantic
 import pytest
 
@@ -13,6 +14,8 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotGridConfig,
     PlotOrchestrator,
 )
+
+hv.extension('bokeh')
 
 
 class FakePlotParams(pydantic.BaseModel):
@@ -1687,3 +1690,82 @@ class TestSourceNameFiltering:
         assert (
             fake_plotting_controller.call_count() == 1
         ), "Plot should be created when correct source arrives"
+
+
+class TestStaticLayerTypes:
+    """Test static layer element factories."""
+
+    def test_vlines_factory_creates_overlay_with_correct_count(self):
+        """VLinesFactory should create an Overlay with one VLine per position."""
+        from ess.livedata.dashboard.plot_orchestrator import VLinesFactory
+
+        factory = VLinesFactory(color='red')
+        result = factory.create_element([1.0, 2.5, 4.0])
+
+        assert isinstance(result, hv.Overlay)
+        assert len(result) == 3
+        for element in result:
+            assert isinstance(element, hv.VLine)
+
+    def test_vlines_factory_empty_data_returns_empty_overlay(self):
+        """VLinesFactory with empty data should return empty Overlay."""
+        from ess.livedata.dashboard.plot_orchestrator import VLinesFactory
+
+        factory = VLinesFactory(color='red')
+        result = factory.create_element([])
+
+        assert isinstance(result, hv.Overlay)
+        assert len(result) == 0
+
+    def test_vlines_factory_none_data_returns_empty_overlay(self):
+        """VLinesFactory with None data should return empty Overlay."""
+        from ess.livedata.dashboard.plot_orchestrator import VLinesFactory
+
+        factory = VLinesFactory()
+        result = factory.create_element(None)
+
+        assert isinstance(result, hv.Overlay)
+        assert len(result) == 0
+
+    def test_hlines_factory_creates_overlay_with_correct_count(self):
+        """HLinesFactory should create an Overlay with one HLine per position."""
+        from ess.livedata.dashboard.plot_orchestrator import HLinesFactory
+
+        factory = HLinesFactory(color='green')
+        result = factory.create_element([0.5, 1.5])
+
+        assert isinstance(result, hv.Overlay)
+        assert len(result) == 2
+        for element in result:
+            assert isinstance(element, hv.HLine)
+
+
+class TestStaticLayerConfig:
+    """Test StaticLayerConfig and StaticSource types."""
+
+    def test_static_source_stores_data(self):
+        """StaticSource should store the provided data."""
+        from ess.livedata.dashboard.plot_orchestrator import StaticSource
+
+        data = [1.0, 2.0, 3.0]
+        source = StaticSource(data=data)
+        assert source.data == data
+
+    def test_static_layer_config_creation(self):
+        """StaticLayerConfig should store all fields correctly."""
+        from ess.livedata.dashboard.plot_orchestrator import (
+            StaticLayerConfig,
+            StaticSource,
+        )
+
+        config = StaticLayerConfig(
+            name='peaks',
+            element='vlines',
+            source=StaticSource(data=[1.0, 2.0]),
+            params={'color': 'red'},
+        )
+
+        assert config.name == 'peaks'
+        assert config.element == 'vlines'
+        assert config.source.data == [1.0, 2.0]
+        assert config.params == {'color': 'red'}

@@ -24,13 +24,15 @@ def _make_plot_cell(
     """Create a PlotCell with the given geometry."""
     return PlotCell(
         geometry=CellGeometry(row=row, col=col, row_span=row_span, col_span=col_span),
-        config=PlotConfig(
-            workflow_id=WorkflowId.from_string('test/ns/wf/1'),
-            output_name='output',
-            source_names=['source1'],
-            plot_name='lines',
-            params=EmptyParams(),
-        ),
+        layers=[
+            PlotConfig(
+                workflow_id=WorkflowId.from_string('test/ns/wf/1'),
+                output_name='output',
+                source_names=['source1'],
+                plot_name='lines',
+                params=EmptyParams(),
+            )
+        ],
     )
 
 
