@@ -261,6 +261,7 @@ xy_handle = register_detector_view_spec(
 
 # Mixed projections - different projection types per detector
 # Creates a unified "Detector Projection" workflow
+# source_names defaults to the dict keys
 projection_handle = register_detector_view_spec(
     instrument=instrument,
     projection={
@@ -268,11 +269,6 @@ projection_handle = register_detector_view_spec(
         'endcap_backward_detector': 'xy_plane',
         'endcap_forward_detector': 'xy_plane',
     },
-    source_names=[
-        'mantle_detector',
-        'endcap_backward_detector',
-        'endcap_forward_detector',
-    ],
 )
 ```
 

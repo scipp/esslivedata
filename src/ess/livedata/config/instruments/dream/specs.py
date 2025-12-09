@@ -38,15 +38,8 @@ instrument = Instrument(
 # Register instrument
 instrument_registry.register(instrument)
 
-# Detector names for projections (excluding sans_detector which has no geometry)
-_projection_detectors = [
-    'mantle_detector',
-    'endcap_backward_detector',
-    'endcap_forward_detector',
-    'high_resolution_detector',
-]
-
 # Mapping of detector names to their projection types
+# (excluding sans_detector which has no geometry)
 _projections: dict[str, str] = {
     'mantle_detector': 'cylinder_mantle_z',
     'endcap_backward_detector': 'xy_plane',
@@ -58,7 +51,6 @@ _projections: dict[str, str] = {
 projection_handle = register_detector_view_spec(
     instrument=instrument,
     projection=_projections,
-    source_names=_projection_detectors,
 )
 
 # Register logical view specs (mantle front layer and wire view)

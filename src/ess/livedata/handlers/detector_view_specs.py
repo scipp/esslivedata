@@ -149,7 +149,7 @@ def register_detector_view_spec(
     *,
     instrument: Instrument,
     projection: ProjectionType | dict[str, ProjectionType],
-    source_names: list[str],
+    source_names: list[str] | None = None,
 ) -> SpecHandle:
     """
     Register detector view specs for a given projection.
@@ -167,7 +167,8 @@ def register_detector_view_spec(
         is provided, this creates a unified "Detector Projection" workflow that
         uses different projections for different detector banks.
     source_names:
-        List of detector source names.
+        List of detector source names. Required when projection is a single type.
+        When projection is a dict, defaults to the dict keys if not specified.
 
     Returns
     -------
@@ -197,15 +198,12 @@ def register_detector_view_spec(
                 'endcap_backward_detector': 'xy_plane',
                 'endcap_forward_detector': 'xy_plane',
             },
-            source_names=[
-                'mantle_detector',
-                'endcap_backward_detector',
-                'endcap_forward_detector',
-            ],
         )
     """
     if isinstance(projection, dict):
         # Mixed projections - create unified "Detector Projection" workflow
+        if source_names is None:
+            source_names = list(projection.keys())
         name = "detector_projection"
         title = "Detector Projection"
         description = (
@@ -213,10 +211,14 @@ def register_detector_view_spec(
             "Uses the appropriate projection for each detector."
         )
     elif projection == "xy_plane":
+        if source_names is None:
+            raise ValueError("source_names is required when projection is a string")
         name = "detector_xy_projection"
         title = "Detector XY Projection"
         description = "Projection of a detector bank onto an XY-plane."
     elif projection == "cylinder_mantle_z":
+        if source_names is None:
+            raise ValueError("source_names is required when projection is a string")
         name = "detector_cylinder_mantle_z"
         title = "Detector Cylinder Mantle Z Projection"
         description = (
