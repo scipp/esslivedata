@@ -32,8 +32,8 @@ from .plot_config_modal import PlotConfigModal
 from .plot_grid import GridCellStyles, PlotGrid
 from .plot_grid_manager import PlotGridManager
 from .plot_widgets import (
-    create_close_button,
-    create_gear_button,
+    create_cell_toolbar,
+    get_plot_cell_display_info,
     get_workflow_display_info,
 )
 
@@ -392,13 +392,18 @@ class PlotGridTabs:
         """
         config = cell.config
 
-        # Get workflow and output display titles from registry
+        # Get display info for toolbar
+        toolbar_title, toolbar_description = get_plot_cell_display_info(
+            config, self._workflow_registry
+        )
+
+        # Get workflow and output display titles for body content
         workflow_title, output_title = get_workflow_display_info(
             self._workflow_registry, config.workflow_id, config.output_name
         )
 
         # Build title from workflow and output (most prominent)
-        title = f"### {workflow_title} - {output_title}"
+        body_title = f"### {workflow_title} - {output_title}"
 
         # Build info section: sources first, then status
         info_lines = [
@@ -417,23 +422,24 @@ class PlotGridTabs:
             bg_color = '#f8f9fa'
             border = '2px dashed #dee2e6'
 
-        content = f"{title}\n\n" + "\n\n".join(info_lines)
+        content = f"{body_title}\n\n" + "\n\n".join(info_lines)
 
-        # Create close button
+        # Create toolbar with title, description, and buttons
         def on_close() -> None:
             self._orchestrator.remove_plot(cell_id)
 
-        close_button = create_close_button(on_close)
-
-        # Create gear button for reconfiguration
         def on_gear() -> None:
             self._on_reconfigure_plot(cell_id)
 
-        gear_button = create_gear_button(on_gear)
+        toolbar = create_cell_toolbar(
+            on_gear_callback=on_gear,
+            on_close_callback=on_close,
+            title=toolbar_title,
+            description=toolbar_description,
+        )
 
         status_widget = pn.Column(
-            gear_button,
-            close_button,
+            toolbar,
             pn.pane.Markdown(
                 content,
                 styles={
@@ -446,7 +452,6 @@ class PlotGridTabs:
             styles={
                 'background-color': bg_color,
                 'border': border,
-                'position': 'relative',
             },
             margin=GridCellStyles.CELL_MARGIN,
         )
@@ -476,17 +481,24 @@ class PlotGridTabs:
             Panel widget containing the plot.
         """
 
-        # Create close button
+        # Get display info for toolbar
+        title, description = get_plot_cell_display_info(
+            cell.config, self._workflow_registry
+        )
+
+        # Create toolbar with title, description, and buttons
         def on_close() -> None:
             self._orchestrator.remove_plot(cell_id)
 
-        close_button = create_close_button(on_close)
-
-        # Create gear button for reconfiguration
         def on_gear() -> None:
             self._on_reconfigure_plot(cell_id)
 
-        gear_button = create_gear_button(on_gear)
+        toolbar = create_cell_toolbar(
+            on_gear_callback=on_gear,
+            on_close_callback=on_close,
+            title=title,
+            description=description,
+        )
 
         # Use .layout to preserve widgets for DynamicMaps with kdims.
         # When pn.pane.HoloViews wraps a DynamicMap with kdims, it generates
@@ -499,11 +511,9 @@ class PlotGridTabs:
         plot_pane = plot_pane_wrapper.layout
 
         return pn.Column(
-            gear_button,
-            close_button,
+            toolbar,
             plot_pane,
             sizing_mode='stretch_both',
-            styles={'position': 'relative'},
             margin=GridCellStyles.CELL_MARGIN,
         )
 
