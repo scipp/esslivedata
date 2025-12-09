@@ -295,6 +295,62 @@ class TestDetectorLogicalViewWithReduction:
         assert result.sizes == {'x': 4, 'y': 8}
 
 
+class TestDetectorProjectionMixedProjections:
+    """Tests for DetectorProjection with mixed projection types."""
+
+    def test_get_projection_with_single_projection_type(self) -> None:
+        """Test that single projection type is returned for all sources."""
+        from ess.livedata.handlers.detector_data_handler import DetectorProjection
+
+        instrument = FakeInstrument(sc.arange('pixel', 16, dtype='int64'))
+        projection = DetectorProjection(
+            instrument=instrument,
+            projection='xy_plane',
+            resolution={'detector1': {'x': 10, 'y': 10}},
+        )
+
+        assert projection._get_projection('detector1') == 'xy_plane'
+        assert projection._get_projection('detector2') == 'xy_plane'
+
+    def test_get_projection_with_dict_projection_type(self) -> None:
+        """Test that dict projection returns per-source projection types."""
+        from ess.livedata.handlers.detector_data_handler import DetectorProjection
+
+        instrument = FakeInstrument(sc.arange('pixel', 16, dtype='int64'))
+        projections = {
+            'mantle': 'cylinder_mantle_z',
+            'endcap': 'xy_plane',
+        }
+        projection = DetectorProjection(
+            instrument=instrument,
+            projection=projections,
+            resolution={
+                'mantle': {'arc_length': 10, 'z': 40},
+                'endcap': {'x': 10, 'y': 20},
+            },
+        )
+
+        assert projection._get_projection('mantle') == 'cylinder_mantle_z'
+        assert projection._get_projection('endcap') == 'xy_plane'
+
+    def test_get_projection_raises_for_unknown_source_with_dict(self) -> None:
+        """Test that accessing unknown source raises KeyError with dict projections."""
+        from ess.livedata.handlers.detector_data_handler import DetectorProjection
+
+        instrument = FakeInstrument(sc.arange('pixel', 16, dtype='int64'))
+        projections = {
+            'mantle': 'cylinder_mantle_z',
+        }
+        projection = DetectorProjection(
+            instrument=instrument,
+            projection=projections,
+            resolution={'mantle': {'arc_length': 10, 'z': 40}},
+        )
+
+        with pytest.raises(KeyError):
+            projection._get_projection('unknown_detector')
+
+
 class TestDetectorLogicalViewROISupport:
     """Tests for ROI support in DetectorLogicalView without reduction."""
 

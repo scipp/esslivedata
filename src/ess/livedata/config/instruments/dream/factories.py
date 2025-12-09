@@ -76,21 +76,16 @@ def setup_factories(instrument: Instrument) -> None:
         VanadiumRun,
     )
 
-    # We use the arc length instead of phi as it makes it easier to get a correct
-    # aspect ratio for the plot if both axes have the same unit.
-    _cylinder_projection = DetectorProjection(
-        instrument=instrument,
-        projection='cylinder_mantle_z',
-        pixel_noise=sc.scalar(4.0, unit='mm'),
-        resolution={'mantle_detector': {'arc_length': 10, 'z': 40}},
-        resolution_scale=8,
-    )
+    # Unified detector projection with per-detector projection types.
+    # We use the arc length instead of phi for mantle as it makes it easier to get
+    # a correct aspect ratio for the plot if both axes have the same unit.
     # Order in 'resolution' matters so plots have X as horizontal axis and Y vertical.
-    _xy_projection = DetectorProjection(
+    _detector_projection = DetectorProjection(
         instrument=instrument,
-        projection='xy_plane',
+        projection=specs._projections,
         pixel_noise=sc.scalar(4.0, unit='mm'),
         resolution={
+            'mantle_detector': {'arc_length': 10, 'z': 40},
             'endcap_backward_detector': {'y': 30, 'x': 20},
             'endcap_forward_detector': {'y': 20, 'x': 20},
             'high_resolution_detector': {'y': 20, 'x': 20},
@@ -98,9 +93,8 @@ def setup_factories(instrument: Instrument) -> None:
         resolution_scale=8,
     )
 
-    # Attach detector view factories using handles from specs
-    specs.cylinder_handle.attach_factory()(_cylinder_projection.make_view)
-    specs.xy_handle.attach_factory()(_xy_projection.make_view)
+    # Attach unified detector view factory
+    specs.projection_handle.attach_factory()(_detector_projection.make_view)
 
     # Create logical views for mantle detector
     _mantle_front_layer_view = DetectorLogicalView(
