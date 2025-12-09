@@ -253,6 +253,45 @@ class TestSlicerPlotter:
         # Uses base class autoscalers dict (initialized lazily)
         assert slicer_plotter.autoscalers == {}
 
+    def test_switching_slice_dimension_sets_framewise_true(self, data_3d, data_key):
+        """Test that switching slice dimension forces framewise=True for axis rescaling.
+
+        This is a regression test for issue #559: when switching which
+        dimension to slice along, the axis ranges must update to reflect
+        the new displayed dimensions.
+        """
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        params.plot_scale.color_scale = PlotScale.linear
+        plotter = plots.SlicerPlotter.from_params(params)
+        plotter.initialize_from_data({data_key: data_3d})
+
+        # First plot: slice along z
+        z_value = float(data_3d.coords['z'].values[0])
+        result1 = plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value)
+
+        # First call should have framewise=True (bounds were empty)
+        norm_opts1 = hv.Store.lookup_options('bokeh', result1, 'norm').kwargs
+        assert norm_opts1.get('framewise') is True
+
+        # Second plot: same dimension, different slice position
+        z_value2 = float(data_3d.coords['z'].values[2])
+        result2 = plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value2)
+
+        # Same dimension: framewise can be False (bounds didn't change)
+        norm_opts2 = hv.Store.lookup_options('bokeh', result2, 'norm').kwargs
+        assert norm_opts2.get('framewise') is False
+
+        # Third plot: switch to slice along y (different displayed dimensions!)
+        y_value = float(data_3d.coords['y'].values[0])
+        result3 = plotter.plot(data_3d, data_key, slice_dim='y', y_value=y_value)
+
+        # Dimension changed: framewise MUST be True to rescale axes
+        norm_opts3 = hv.Store.lookup_options('bokeh', result3, 'norm').kwargs
+        assert norm_opts3.get('framewise') is True, (
+            "framewise should be True when slice dimension changes to "
+            "force axis rescaling"
+        )
+
     def test_plot_slices_3d_data(self, slicer_plotter, data_3d, data_key):
         """Test that SlicerPlotter correctly slices 3D data."""
         slicer_plotter.initialize_from_data({data_key: data_3d})

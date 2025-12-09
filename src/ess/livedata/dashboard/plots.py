@@ -339,6 +339,7 @@ class SlicerPlotter(Plotter):
         self._scale_opts = scale_opts
         self._kdims: list[hv.Dimension] | None = None
         self._base_opts = self._make_2d_base_opts(scale_opts)
+        self._last_slice_dim: str | None = None
 
     @classmethod
     def from_params(cls, params: PlotParams3d):
@@ -473,9 +474,20 @@ class SlicerPlotter(Plotter):
         use_log_scale = self._scale_opts.color_scale == PlotScale.log
         plot_data = self._prepare_2d_image_data(sliced_data, use_log_scale)
 
+        # Detect if displayed dimensions changed (different slice_dim means
+        # different axes are shown). When this happens, force axis rescaling.
+        dim_changed = (
+            self._last_slice_dim is not None and self._last_slice_dim != slice_dim
+        )
+        self._last_slice_dim = slice_dim
+
         # Update autoscaler with full 3D data to establish global bounds.
         # This ensures consistent color scale and axis ranges across all slices.
         framewise = self._update_autoscaler_and_get_framewise(data, data_key)
+
+        # Force rescale if displayed dimensions changed
+        if dim_changed:
+            framewise = True
 
         # Create the image
         image = to_holoviews(plot_data)
