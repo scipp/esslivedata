@@ -37,27 +37,7 @@ python -m pytest --benchmark-only
 
 ### Code Quality
 
-```sh
-# Run all pre-commit checks (formatting, linting, static analysis)
-tox -e static
-
-# Run ruff linting (primary linting tool)
-ruff check .
-
-# Run ruff formatting
-ruff format .
-
-# Run pylint (not part of pre-commit or CI, but useful for code quality)
-python -m pylint src/ess/livedata
-# Disable all docstring warnings (shorter)
-python -m pylint --disable=C0114,C0115,C0116 src/ess/livedata
-# Run pylint on specific file
-python -m pylint src/ess/livedata/core/message.py
-```
-
-**Note**: The project primarily relies on `ruff` for linting.
-**Note**: `pylint` is not enforced in pre-commit hooks or CI, but is available in the devcontainer and can be helpful for identifying code quality issues. Current codebase scores ~8.85/10 with default configuration.
-**Note**:`mypy` type checking is neither run nor enforced in CI at this point - aim to minimize errors where practical.
+Use the `linter` agent for code quality checks. Tools: `ruff` (primary, enforced in CI), `pylint` (optional), `mypy` (optional, not enforced). Run `tox -e static` for all pre-commit checks.
 
 ### Documentation
 
