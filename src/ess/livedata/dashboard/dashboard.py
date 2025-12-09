@@ -3,6 +3,8 @@
 """Common functionality for implementing dashboards."""
 
 import logging
+import os
+import time
 from abc import ABC, abstractmethod
 from contextlib import ExitStack
 
@@ -18,6 +20,25 @@ from .transport import NullTransport, Transport
 
 # Global throttling for sliders, etc.
 pn.config.throttled = True
+
+# Profiling support: set LIVEDATA_PROFILE=1 to enable pyinstrument profiling
+_PROFILING_ENABLED = os.environ.get('LIVEDATA_PROFILE', '').lower() in (
+    '1',
+    'true',
+    'yes',
+)
+_profiler = None
+if _PROFILING_ENABLED:
+    try:
+        from pyinstrument import Profiler
+
+        _profiler = Profiler(async_mode='disabled')
+        print("Profiling enabled")
+    except ImportError:
+        logging.getLogger(__name__).warning(
+            "LIVEDATA_PROFILE is set but pyinstrument is not installed. "
+            "Install with: pip install pyinstrument"
+        )
 
 
 class DashboardBase(ServiceBase, ABC):
@@ -102,8 +123,30 @@ class DashboardBase(ServiceBase, ABC):
         # multiple lines in the same plot, or different plots updating in short
         # succession, which is visually distracting.
         # Furthermore, this improves performance by reducing the number of re-renders.
+        if _profiler is not None:
+            _profiler.start()
+
+        t0 = time.perf_counter()
         with pn.io.hold():
+            t1 = time.perf_counter()
             self._services.orchestrator.update()
+            t2 = time.perf_counter()
+        t3 = time.perf_counter()
+
+        if _profiler is not None:
+            _profiler.stop()
+
+        # Only log if there was actual work (avoid noise from idle cycles)
+        process_ms = (t2 - t1) * 1000
+        hold_exit_ms = (t3 - t2) * 1000
+        total_ms = (t3 - t0) * 1000
+        if total_ms > 1.0:
+            self._logger.info(
+                "Step timing: process=%.1fms, hold_exit=%.1fms, total=%.1fms",
+                process_ms,
+                hold_exit_ms,
+                total_ms,
+            )
 
     def get_dashboard_title(self) -> str:
         """Get the dashboard title. Override for custom titles."""
@@ -188,5 +231,15 @@ class DashboardBase(ServiceBase, ABC):
 
     def _stop_impl(self) -> None:
         """Clean shutdown of all components."""
+        self._write_profile_report()
         self._services.stop()
         self._exit_stack.__exit__(None, None, None)
+
+    def _write_profile_report(self) -> None:
+        """Write pyinstrument profile report to file on shutdown."""
+        if _profiler is None:
+            return
+        html_path = "profile_report.html"
+        with open(html_path, 'w') as f:
+            f.write(_profiler.output_html())
+        self._logger.info("Profile report written to %s", html_path)
