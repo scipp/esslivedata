@@ -66,11 +66,13 @@ class ROIHistogram:
             y, x = self._roi_filter._indices.dims
             intervals = roi.get_bounds(x_dim=x, y_dim=y)
             self._roi_filter.set_roi_from_intervals(sc.DataGroup(intervals))
+        elif isinstance(roi, models.PolygonROI):
+            y, x = self._roi_filter._indices.dims
+            polygon = _polygon_model_to_dict(roi, x_dim=x, y_dim=y)
+            self._roi_filter.set_roi_from_polygon(polygon)
         else:
             roi_type = type(roi).__name__
-            raise ValueError(
-                f"Only rectangle ROI is currently supported, got {roi_type}"
-            )
+            raise ValueError(f"Unsupported ROI type: {roi_type}")
 
     def add_data(self, data: sc.DataArray) -> None:
         """
@@ -132,3 +134,25 @@ class ROIHistogram:
         """Clear both chunks and cumulative data, preserving configuration."""
         self._chunks.clear()
         self._cumulative = None
+
+
+def _polygon_model_to_dict(
+    roi: models.PolygonROI, *, x_dim: str, y_dim: str
+) -> dict[str, sc.Variable | list[float]]:
+    """
+    Convert a PolygonROI model to the dict format expected by ROIFilter.
+
+    When unit is None (pixel indices), returns list[float] for index-based selection.
+    When unit is set (physical coords), returns sc.Variable for coord-based selection.
+    """
+    if roi.x_unit is None:
+        x_vertices: sc.Variable | list[float] = roi.x
+    else:
+        x_vertices = sc.array(dims=['vertex'], values=roi.x, unit=roi.x_unit)
+
+    if roi.y_unit is None:
+        y_vertices: sc.Variable | list[float] = roi.y
+    else:
+        y_vertices = sc.array(dims=['vertex'], values=roi.y, unit=roi.y_unit)
+
+    return {x_dim: x_vertices, y_dim: y_vertices}

@@ -33,11 +33,11 @@ dependencies = [
   "PyYAML",
   "confluent_kafka",
   "ess-streaming-data-types",
-  "essreduce>=25.11.4",
+  "essreduce>=25.12.0",
   "jinja2",
   "pydantic>=2",
   "scipp>=25.02.0",  # Improved performance of scipp.group
-  "scippneutron>=25.07.0",  # For DREAM unit conversion fixes
+  "scippneutron>=25.11.1",  # For DREAM unit conversion fixes
   "pooch",
 ]
 
@@ -92,7 +92,7 @@ addopts = """
 --strict-markers
 --import-mode=importlib
 --benchmark-skip
--m "not integration"
+-m "not integration and not slow"
 -ra
 -v
 """
@@ -101,6 +101,7 @@ markers = [
   "integration: Integration tests requiring Kafka and running services",
   "instrument: Specify instrument name for parameterized tests",
   "services: Specify which services to use in integration_env fixture (monitor, detector, or reduction)",
+  "slow: Slow tests (>2s) excluded by default, run in CI via tox",
 ]
 filterwarnings = [
   "error",

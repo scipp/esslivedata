@@ -34,6 +34,16 @@ class GridCellStyles:
     FONT_SIZE_LARGE = '24px'
 
 
+@dataclass
+class CellAppearance:
+    """Computed appearance properties for a grid cell."""
+
+    label: str
+    disabled: bool
+    styles: dict[str, str]
+    stylesheets: list[str]
+
+
 def _normalize_region(r1: int, c1: int, r2: int, c2: int) -> tuple[int, int, int, int]:
     """
     Normalize region coordinates to (row_start, col_start, row_end, col_end).
@@ -102,6 +112,81 @@ def _format_region_label(row_span: int, col_span: int) -> str:
     return f'Click for {row_span}x{col_span} plot'
 
 
+def _compute_cell_appearance(
+    highlighted: bool = False,
+    disabled: bool = False,
+    label: str | None = None,
+    large_font: bool = False,
+) -> CellAppearance:
+    """
+    Compute the appearance properties for a cell based on its state.
+
+    Parameters
+    ----------
+    highlighted:
+        Whether the cell is highlighted (first click selection).
+    disabled:
+        Whether the cell is disabled (would create invalid region).
+    label:
+        Custom label text. If None, uses default based on state.
+    large_font:
+        Whether to use large font (during selection process).
+
+    Returns
+    -------
+    :
+        CellAppearance with all computed styling properties.
+    """
+    border_color = (
+        GridCellStyles.PRIMARY_BLUE if highlighted else GridCellStyles.LIGHT_GRAY
+    )
+    border_width = (
+        GridCellStyles.CELL_BORDER_WIDTH_HIGHLIGHTED
+        if highlighted
+        else GridCellStyles.CELL_BORDER_WIDTH_NORMAL
+    )
+    border_style = 'dashed' if highlighted else 'solid'
+
+    if disabled:
+        background_color = GridCellStyles.LIGHT_RED
+        text_color = GridCellStyles.MUTED_GRAY
+    elif highlighted:
+        background_color = GridCellStyles.LIGHT_BLUE
+        text_color = GridCellStyles.MEDIUM_GRAY
+    else:
+        background_color = GridCellStyles.VERY_LIGHT_GRAY
+        text_color = GridCellStyles.MEDIUM_GRAY
+
+    if label is None:
+        label = '' if disabled else 'Click to add plot'
+
+    if large_font:
+        stylesheets = [
+            f"""
+            button {{
+                font-size: {GridCellStyles.FONT_SIZE_LARGE};
+                font-weight: bold;
+            }}
+            """
+        ]
+    else:
+        stylesheets = []
+
+    styles = {
+        'background-color': background_color,
+        'border': f'{border_width}px {border_style} {border_color}',
+        'color': text_color,
+        'min-height': f'{GridCellStyles.CELL_MIN_HEIGHT_PX}px',
+    }
+
+    return CellAppearance(
+        label=label,
+        disabled=disabled,
+        styles=styles,
+        stylesheets=stylesheets,
+    )
+
+
 class PlotGrid:
     """
     A grid widget for displaying multiple plots in a customizable layout.
@@ -136,6 +221,9 @@ class PlotGrid:
         self._first_click: tuple[int, int] | None = None
         self._highlighted_cell: pn.pane.HTML | None = None
 
+        # Button references for in-place updates (row, col) -> Button
+        self._cell_buttons: dict[tuple[int, int], pn.widgets.Button] = {}
+
         # Create the grid
         self._grid = pn.GridSpec(
             sizing_mode='stretch_both', name='PlotGrid', min_height=600
@@ -161,63 +249,30 @@ class PlotGrid:
         large_font: bool = False,
     ) -> pn.Column:
         """Create an empty cell with placeholder text and click handler."""
-        border_color = (
-            GridCellStyles.PRIMARY_BLUE if highlighted else GridCellStyles.LIGHT_GRAY
+        appearance = _compute_cell_appearance(
+            highlighted=highlighted,
+            disabled=disabled,
+            label=label,
+            large_font=large_font,
         )
-        border_width = (
-            GridCellStyles.CELL_BORDER_WIDTH_HIGHLIGHTED
-            if highlighted
-            else GridCellStyles.CELL_BORDER_WIDTH_NORMAL
-        )
-        border_style = 'dashed' if highlighted else 'solid'
-
-        if disabled:
-            background_color = GridCellStyles.LIGHT_RED
-            text_color = GridCellStyles.MUTED_GRAY
-        elif highlighted:
-            background_color = GridCellStyles.LIGHT_BLUE
-            text_color = GridCellStyles.MEDIUM_GRAY
-        else:
-            background_color = GridCellStyles.VERY_LIGHT_GRAY
-            text_color = GridCellStyles.MEDIUM_GRAY
-
-        # Determine button label
-        if label is None:
-            label = '' if disabled else 'Click to add plot'
-
-        # Font size - larger during selection process
-        # Use stylesheets to target the button element directly
-        if large_font:
-            stylesheets = [
-                f"""
-                button {{
-                    font-size: {GridCellStyles.FONT_SIZE_LARGE};
-                    font-weight: bold;
-                }}
-                """
-            ]
-        else:
-            stylesheets = []
 
         # Create a button that fills the cell
         button = pn.widgets.Button(
-            name=label,
+            name=appearance.label,
             sizing_mode='stretch_both',
             button_type='light',
-            disabled=disabled,
-            styles={
-                'background-color': background_color,
-                'border': f'{border_width}px {border_style} {border_color}',
-                'color': text_color,
-                'min-height': f'{GridCellStyles.CELL_MIN_HEIGHT_PX}px',
-            },
-            stylesheets=stylesheets,
+            disabled=appearance.disabled,
+            styles=appearance.styles,
+            stylesheets=appearance.stylesheets,
             margin=GridCellStyles.CELL_MARGIN,
         )
 
-        # Attach click handler (even if disabled, for consistency)
+        # Store reference for in-place updates
+        self._cell_buttons[(row, col)] = button
+
+        # Attach click handler - checks disabled state dynamically
         def on_click(_: Any) -> None:
-            if not disabled:
+            if not button.disabled:
                 self._on_cell_click(row, col)
 
         button.on_click(on_click)
@@ -279,27 +334,19 @@ class PlotGrid:
             for row in range(self._nrows):
                 for col in range(self._ncols):
                     if not self._is_cell_occupied(row, col):
-                        # Delete the old cell first to avoid overlap warnings
-                        try:
-                            del self._grid[row, col]
-                        except (KeyError, IndexError, TypeError):
-                            # Cell might not exist yet or grid state issue
-                            pass
-                        self._grid[row, col] = self._get_cell_for_state(row, col)
+                        self._update_cell_in_place(row, col)
 
-    def _get_cell_for_state(self, row: int, col: int) -> pn.Column:
-        """Get the appropriate cell widget based on current selection state."""
+    def _get_cell_appearance_for_state(self, row: int, col: int) -> CellAppearance:
+        """Compute the appearance for a cell based on current selection state."""
         if self._first_click is None:
             # No selection in progress
-            return self._create_empty_cell(row, col)
+            return _compute_cell_appearance()
 
         r1, c1 = self._first_click
 
         if row == r1 and col == c1:
             # This is the first clicked cell - highlight it
-            return self._create_empty_cell(
-                row,
-                col,
+            return _compute_cell_appearance(
                 highlighted=True,
                 label='Click again for 1x1 plot',
                 large_font=True,
@@ -313,7 +360,7 @@ class PlotGrid:
 
         if not is_valid:
             # Disable this cell
-            return self._create_empty_cell(row, col, disabled=True, large_font=True)
+            return _compute_cell_appearance(disabled=True, large_font=True)
 
         # Calculate dimensions and format label
         row_span, col_span = _calculate_region_span(
@@ -321,7 +368,21 @@ class PlotGrid:
         )
         label = _format_region_label(row_span, col_span)
 
-        return self._create_empty_cell(row, col, label=label, large_font=True)
+        return _compute_cell_appearance(label=label, large_font=True)
+
+    def _update_cell_in_place(self, row: int, col: int) -> None:
+        """Update an existing cell's appearance without recreating it."""
+        button = self._cell_buttons.get((row, col))
+        if button is None:
+            return
+
+        appearance = self._get_cell_appearance_for_state(row, col)
+
+        # Update button properties in-place
+        button.name = appearance.label
+        button.disabled = appearance.disabled
+        button.styles = appearance.styles
+        button.stylesheets = appearance.stylesheets
 
     def _clear_selection(self) -> None:
         """Clear the current selection state."""
@@ -335,6 +396,8 @@ class PlotGrid:
         """Delete all cells in the specified region from the grid."""
         for r in range(row, row + row_span):
             for c in range(col, col + col_span):
+                # Clean up button reference
+                self._cell_buttons.pop((r, c), None)
                 try:
                     del self._grid[r, c]
                 except (KeyError, IndexError, TypeError):

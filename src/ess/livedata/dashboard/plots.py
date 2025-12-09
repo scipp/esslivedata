@@ -27,11 +27,6 @@ from .plot_params import (
 from .scipp_to_holoviews import to_holoviews
 
 
-def remove_bokeh_logo(plot, element):
-    """Remove Bokeh logo from plots."""
-    plot.state.toolbar.logo = None
-
-
 class Plotter(ABC):
     """
     Base class for plots that support autoscaling.
@@ -95,6 +90,34 @@ class Plotter(ABC):
             'logy': scale_opts.y_scale == PlotScale.log,
             'logz': scale_opts.color_scale == PlotScale.log,
         }
+
+    @staticmethod
+    def _convert_bin_edges_to_midpoints(
+        data: sc.DataArray, dim: str | None = None
+    ) -> sc.DataArray:
+        """
+        Convert bin-edge coordinates to midpoints for curve plotting.
+
+        Histograms with many narrow bins don't display well - the black outlines
+        dominate. Converting to midpoint coordinates yields a Curve instead.
+
+        Parameters
+        ----------
+        data:
+            DataArray that may have bin-edge coordinates.
+        dim:
+            Dimension to convert. If None, uses the single dimension of 1D data.
+
+        Returns
+        -------
+        :
+            DataArray with midpoint coordinates if edges were present.
+        """
+        if dim is None:
+            dim = data.dim
+        if dim in data.coords and data.coords.is_edges(dim):
+            return data.assign_coords({dim: sc.midpoints(data.coords[dim])})
+        return data
 
     @staticmethod
     def _prepare_2d_image_data(data: sc.DataArray, use_log_scale: bool) -> sc.DataArray:
@@ -165,11 +188,7 @@ class Plotter(ABC):
 
     def _apply_generic_options(self, plot_element: hv.Element) -> hv.Element:
         """Apply generic options like aspect ratio to a plot element."""
-        base_opts = {
-            'hooks': [remove_bokeh_logo],
-            **self._sizing_opts,
-        }
-        return plot_element.opts(**base_opts)
+        return plot_element.opts(**self._sizing_opts)
 
     def _update_autoscaler_and_get_framewise(
         self, data: sc.DataArray, data_key: ResultKey
@@ -246,12 +265,7 @@ class LinePlotter(Plotter):
 
     def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Curve:
         """Create a line plot from a scipp DataArray."""
-        # TODO Currently we do not plot histograms or else we get a bar chart that is
-        # not looking great if we have many bins.
-        if data.dim in data.coords and data.coords.is_edges(data.dim):
-            da = data.assign_coords({data.dim: sc.midpoints(data.coords[data.dim])})
-        else:
-            da = data
+        da = self._convert_bin_edges_to_midpoints(data)
         framewise = self._update_autoscaler_and_get_framewise(da, data_key)
 
         curve = to_holoviews(da)
@@ -325,6 +339,7 @@ class SlicerPlotter(Plotter):
         self._scale_opts = scale_opts
         self._kdims: list[hv.Dimension] | None = None
         self._base_opts = self._make_2d_base_opts(scale_opts)
+        self._last_slice_dim: str | None = None
 
     @classmethod
     def from_params(cls, params: PlotParams3d):
@@ -459,9 +474,20 @@ class SlicerPlotter(Plotter):
         use_log_scale = self._scale_opts.color_scale == PlotScale.log
         plot_data = self._prepare_2d_image_data(sliced_data, use_log_scale)
 
+        # Detect if displayed dimensions changed (different slice_dim means
+        # different axes are shown). When this happens, force axis rescaling.
+        dim_changed = (
+            self._last_slice_dim is not None and self._last_slice_dim != slice_dim
+        )
+        self._last_slice_dim = slice_dim
+
         # Update autoscaler with full 3D data to establish global bounds.
         # This ensures consistent color scale and axis ranges across all slices.
         framewise = self._update_autoscaler_and_get_framewise(data, data_key)
+
+        # Force rescale if displayed dimensions changed
+        if dim_changed:
+            framewise = True
 
         # Create the image
         image = to_holoviews(plot_data)
@@ -516,3 +542,102 @@ class BarsPlotter(Plotter):
         else:
             opts['xrotation'] = 25
         return cast(hv.Bars, bars.opts(**opts))
+
+
+class Overlay1DPlotter(Plotter):
+    """
+    Plotter that slices 2D data along the first dimension and overlays as 1D curves.
+
+    Takes 2D data with dims [slice_dim, plot_dim] and creates an overlay of 1D curves,
+    one for each position along the first dimension. Useful for visualizing multiple
+    spectra (e.g., ROI spectra) from a single 2D array.
+
+    Colors are assigned by coordinate value (not position) when coordinates are
+    integer-like, providing stable color identity across updates.
+    """
+
+    def __init__(
+        self,
+        scale_opts: PlotScaleParams,
+        **kwargs,
+    ):
+        """
+        Initialize the overlay 1D plotter.
+
+        Parameters
+        ----------
+        scale_opts:
+            Scaling options for axes.
+        **kwargs:
+            Additional keyword arguments passed to the base class.
+        """
+        super().__init__(**kwargs)
+        self._base_opts = {
+            'logx': scale_opts.x_scale == PlotScale.log,
+            'logy': scale_opts.y_scale == PlotScale.log,
+        }
+        self._colors = hv.Cycle.default_cycles["default_colors"]
+
+    @classmethod
+    def from_params(cls, params: PlotParams1d):
+        """Create Overlay1DPlotter from PlotParams1d."""
+        from .plot_params import CombineMode
+
+        return cls(
+            value_margin_factor=0.1,
+            layout_params=LayoutParams(combine_mode=CombineMode.overlay),
+            aspect_params=params.plot_aspect,
+            scale_opts=params.plot_scale,
+        )
+
+    def plot(
+        self, data: sc.DataArray, data_key: ResultKey, **kwargs
+    ) -> hv.Overlay | hv.Element:
+        """
+        Create overlaid curves from a 2D DataArray.
+
+        Slices along the first dimension and creates a curve for each slice.
+        """
+        del kwargs  # Unused
+        if data.ndim != 2:
+            raise ValueError(f"Expected 2D data, got {data.ndim}D")
+
+        slice_dim = data.dims[0]
+        slice_size = data.sizes[slice_dim]
+
+        if slice_size == 0:
+            return hv.Curve([]).opts(**self._base_opts)
+
+        # Update autoscaler with full 2D data to establish global bounds
+        framewise = self._update_autoscaler_and_get_framewise(data, data_key)
+
+        # Get coordinate values for labels and colors
+        if slice_dim in data.coords:
+            coord_values = data.coords[slice_dim].values
+        else:
+            coord_values = np.arange(slice_size)
+
+        # Pre-convert bin-edge coords to midpoints (shared across all slices)
+        data = self._convert_bin_edges_to_midpoints(data, dim=data.dims[1])
+
+        curves: list[hv.Element] = []
+        for i in range(slice_size):
+            slice_data = data[slice_dim, i]
+            coord_val = coord_values[i]
+
+            curve = to_holoviews(slice_data)
+
+            # Assign color by coordinate value for stable identity
+            color_idx = int(coord_val) % len(self._colors)
+            color = self._colors[color_idx]
+
+            # Label by coordinate value
+            label = f"{slice_dim}={coord_val}"
+            curve = curve.relabel(label).opts(
+                color=color, framewise=framewise, **self._base_opts, **self._sizing_opts
+            )
+            curves.append(curve)
+
+        if len(curves) == 1:
+            return curves[0]
+        return hv.Overlay(curves).opts(shared_axes=True)

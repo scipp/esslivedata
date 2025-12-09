@@ -72,34 +72,56 @@ class DetectorViewOutputs(WorkflowOutputsBase):
         description='Number of detector events within the configured TOA range filter.',
     )
 
+    # Stacked ROI spectra outputs (2D: roi x time_of_arrival)
+    roi_spectra_current: sc.DataArray = pydantic.Field(
+        title='ROI Spectra (Current)',
+        description='Time-of-arrival spectra for active ROIs in current time window. '
+        'Stacked 2D array with roi coordinate containing ROI indices.',
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
+            coords={'roi': sc.array(dims=['roi'], values=[], unit=None)},
+        ),
+    )
+    roi_spectra_cumulative: sc.DataArray = pydantic.Field(
+        title='ROI Spectra (Cumulative)',
+        description='Cumulative time-of-arrival spectra for active ROIs. '
+        'Stacked 2D array with roi coordinate containing ROI indices.',
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
+            coords={'roi': sc.array(dims=['roi'], values=[], unit=None)},
+        ),
+    )
+
+    # ROI geometry readbacks
+    # NOTE: The title MUST match the DataArray.name produced by
+    # to_concatenated_data_array because job_manager.py overwrites DataArray.name
+    # with the field title. The ROI parser relies on the name to determine the
+    # ROI type. This coupling between title and serialization format is fragile
+    # and should be addressed in the future.
+    roi_rectangle: sc.DataArray = pydantic.Field(
+        title='rectangles',
+        description='Current rectangle ROI geometries confirmed by backend.',
+        default_factory=lambda: models.RectangleROI.to_concatenated_data_array({}),
+    )
+    roi_polygon: sc.DataArray = pydantic.Field(
+        title='polygons',
+        description='Current polygon ROI geometries confirmed by backend.',
+        default_factory=lambda: models.PolygonROI.to_concatenated_data_array({}),
+    )
+
 
 class DetectorROIAuxSources(AuxSourcesBase):
     """
     Auxiliary source model for ROI configuration in detector workflows.
 
-    Allows users to select between different ROI shapes (rectangle, polygon, ellipse).
-    The render() method prefixes stream names with the job number to create job-specific
-    ROI configuration streams, since each job instance needs its own ROI.
+    Subscribes to all supported ROI geometry streams (rectangle, polygon).
+    The render() method prefixes stream names with the job_id to create job-specific
+    ROI configuration streams, since each job instance needs its own ROIs.
     """
-
-    roi: Literal['rectangle', 'polygon', 'ellipse'] = pydantic.Field(
-        default='rectangle',
-        description='Shape to use for the region of interest (ROI).',
-    )
-
-    @pydantic.field_validator('roi')
-    @classmethod
-    def validate_roi_shape(cls, v: str) -> str:
-        """Validate that only rectangle is currently supported."""
-        if v != 'rectangle':
-            raise ValueError(
-                f"Currently only 'rectangle' ROI shape is supported, got '{v}'"
-            )
-        return v
 
     def render(self, job_id: JobId) -> dict[str, str]:
         """
-        Render ROI stream name with job-specific prefix.
+        Render ROI stream names with job-specific prefix.
 
         Parameters
         ----------
@@ -109,14 +131,15 @@ class DetectorROIAuxSources(AuxSourcesBase):
         Returns
         -------
         :
-            Mapping from field name 'roi' to job-specific stream name in the
-            format '{source_name}/{job_number}/roi_{shape}' (e.g.,
-            'mantle/abc-123/roi_rectangle'). The source_name ensures ROI
-            streams are unique per detector in multi-detector workflows where
-            the same job_number is shared across detectors.
+            Mapping from ROI geometry keys to job-specific stream names.
+            Keys are 'roi_rectangle', 'roi_polygon', etc.
+            Values are in the format '{source_name}/{job_number}/roi_{shape}'
+            (e.g., 'mantle/abc-123/roi_rectangle').
         """
-        base = self.model_dump(mode='json')
-        return {field: f"{job_id}/roi_{stream}" for field, stream in base.items()}
+        return {
+            'roi_rectangle': f"{job_id}/roi_rectangle",
+            'roi_polygon': f"{job_id}/roi_polygon",
+        }
 
 
 def register_detector_view_spec(

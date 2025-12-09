@@ -38,7 +38,14 @@ first_source_name = {
 }
 
 
-@pytest.mark.parametrize("instrument", ['bifrost', 'dummy', 'dream'])
+@pytest.mark.parametrize(
+    "instrument",
+    [
+        pytest.param('bifrost', marks=pytest.mark.slow),
+        'dummy',
+        'dream',
+    ],
+)
 def test_can_configure_and_stop_workflow_with_detector(
     instrument: str, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -103,7 +110,13 @@ def test_can_configure_and_stop_workflow_with_detector(
     assert len(sink.messages) == 3 * n_target
 
 
-@pytest.mark.parametrize("instrument", ['dream', 'loki'])
+@pytest.mark.parametrize(
+    "instrument",
+    [
+        'dream',
+        pytest.param('loki', marks=pytest.mark.slow),
+    ],
+)
 def test_can_configure_and_stop_workflow_with_detector_and_monitors(
     instrument: str, caplog: pytest.LogCaptureFixture
 ) -> None:

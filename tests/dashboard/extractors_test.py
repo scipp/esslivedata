@@ -130,6 +130,76 @@ class TestFullHistoryExtractor:
 
         assert sc.identical(result, data)
 
+    def test_extract_converts_int64_nanoseconds_to_datetime64(self):
+        """Int64 nanosecond timestamps are converted to datetime64 for plotting."""
+        extractor = FullHistoryExtractor()
+
+        # Create data with int64 ns timestamps (as might come from Kafka)
+        ns_epoch = int(1.733e18)  # ~Dec 2024
+        data = sc.DataArray(
+            sc.array(dims=['time'], values=[1.0, 2.0, 3.0], unit='K'),
+            coords={
+                'time': sc.array(
+                    dims=['time'],
+                    values=[ns_epoch, ns_epoch + int(1e9), ns_epoch + int(2e9)],
+                    unit='ns',
+                    dtype='int64',
+                ),
+            },
+        )
+
+        result = extractor.extract(data)
+
+        # Time coordinate should be converted to datetime64
+        assert result.coords['time'].dtype == sc.DType.datetime64
+        # Data values should be unchanged
+        assert sc.identical(result.data, data.data)
+
+    def test_extract_preserves_datetime64_time_coord(self):
+        """Datetime64 time coordinates pass through unchanged."""
+        extractor = FullHistoryExtractor()
+
+        # Create data with datetime64 time coordinate
+        epoch = sc.epoch(unit='ns')
+        ns_epoch = int(1.733e18)
+        time_coord = epoch + sc.array(
+            dims=['time'],
+            values=[ns_epoch, ns_epoch + int(1e9)],
+            unit='ns',
+            dtype='int64',
+        )
+        data = sc.DataArray(
+            sc.array(dims=['time'], values=[1.0, 2.0], unit='K'),
+            coords={'time': time_coord},
+        )
+
+        result = extractor.extract(data)
+
+        assert sc.identical(result, data)
+
+    def test_extract_with_custom_concat_dim(self):
+        """Test extraction with custom concat dimension name."""
+        extractor = FullHistoryExtractor(concat_dim='event')
+
+        # Create data with int64 ns timestamps on 'event' dimension
+        ns_epoch = int(1.733e18)
+        data = sc.DataArray(
+            sc.array(dims=['event'], values=[1.0, 2.0], unit='K'),
+            coords={
+                'event': sc.array(
+                    dims=['event'],
+                    values=[ns_epoch, ns_epoch + int(1e9)],
+                    unit='ns',
+                    dtype='int64',
+                ),
+            },
+        )
+
+        result = extractor.extract(data)
+
+        # Event coordinate should be converted to datetime64
+        assert result.coords['event'].dtype == sc.DType.datetime64
+
 
 class TestWindowAggregatingExtractor:
     """Tests for WindowAggregatingExtractor."""

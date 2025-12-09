@@ -223,12 +223,11 @@ class QMapOutputs(WorkflowOutputsBase):
 
 # Monitor names matching group names in Nexus files
 monitors = [
-    '007_frame_0',
     '090_frame_1',
     '097_frame_2',
     '110_frame_3',
     '111_psd0',
-    '113_psd1',
+    'bragg_peak_monitor',
 ]
 
 # Some example motions used for testing, probably not reflecting reality

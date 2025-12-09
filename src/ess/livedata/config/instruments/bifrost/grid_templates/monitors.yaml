@@ -1,0 +1,60 @@
+# Frame monitors overview
+title: Monitors
+description: Frame monitors with current, rolling window, and cumulative views
+nrows: 3
+ncols: 2
+cells:
+- geometry:
+    row: 0
+    col: 0
+    row_span: 1
+    col_span: 2
+  config:
+    workflow_id: bifrost/monitor_data/monitor_histogram/1
+    output_name: current
+    source_names:
+    - 090_frame_1
+    - 097_frame_2
+    - 110_frame_3
+    - 111_psd0
+    plot_name: lines
+    params:
+      plot_aspect:
+        aspect_type: Free
+- geometry:
+    row: 1
+    col: 0
+    row_span: 1
+    col_span: 2
+  config:
+    workflow_id: bifrost/monitor_data/monitor_histogram/1
+    output_name: current
+    source_names:
+    - 090_frame_1
+    - 097_frame_2
+    - 110_frame_3
+    - 111_psd0
+    plot_name: lines
+    params:
+      plot_aspect:
+        aspect_type: Free
+      window:
+        mode: window
+        window_duration_seconds: 30.0
+- geometry:
+    row: 2
+    col: 0
+    row_span: 1
+    col_span: 2
+  config:
+    workflow_id: bifrost/monitor_data/monitor_histogram/1
+    output_name: cumulative
+    source_names:
+    - 090_frame_1
+    - 097_frame_2
+    - 110_frame_3
+    - 111_psd0
+    plot_name: lines
+    params:
+      plot_aspect:
+        aspect_type: Free

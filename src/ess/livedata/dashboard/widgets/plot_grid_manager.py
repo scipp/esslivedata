@@ -65,6 +65,8 @@ class PlotGridManager:
         templates = orchestrator.get_available_templates()
         self._templates = {t.name: t for t in templates}
         self._selected_template = None
+        # Flag to suppress redundant preview updates during batch operations
+        self._suppress_preview_update = False
 
         # Template selector (only shown if templates available)
         template_options = [_NO_TEMPLATE, *self._templates.keys()]
@@ -299,27 +301,33 @@ class PlotGridManager:
 
     def _on_grid_size_changed(self, event) -> None:
         """Handle rows/cols input change."""
-        self._update_preview()
+        # Skip if we're in a batch operation that will update preview at the end
+        if not self._suppress_preview_update:
+            self._update_preview()
 
     def _on_template_selected(self, event) -> None:
         """Handle template selection change."""
         template_name = event.new
-        # Batch widget updates to reduce render cycles
-        with pn.io.hold():
-            if template_name == _NO_TEMPLATE:
-                self._reset_to_defaults()
-            else:
-                template = self._templates[template_name]
-                self._selected_template = template
-                # Populate widgets with template values
-                self._title_input.value = template.title
-                self._nrows_input.value = template.nrows
-                self._ncols_input.value = template.ncols
-                # Set minimum to prevent shrinking below what cells require
-                self._nrows_input.start = template.min_rows
-                self._ncols_input.start = template.min_cols
+        # Batch widget updates and suppress redundant preview updates
+        self._suppress_preview_update = True
+        try:
+            with pn.io.hold():
+                if template_name == _NO_TEMPLATE:
+                    self._reset_to_defaults()
+                else:
+                    template = self._templates[template_name]
+                    self._selected_template = template
+                    # Populate widgets with template values
+                    self._title_input.value = template.title
+                    self._nrows_input.value = template.nrows
+                    self._ncols_input.value = template.ncols
+                    # Set minimum to prevent shrinking below what cells require
+                    self._nrows_input.start = template.min_rows
+                    self._ncols_input.start = template.min_cols
 
-            self._update_preview()
+                self._update_preview()
+        finally:
+            self._suppress_preview_update = False
 
     def _on_add_grid(self, event) -> None:
         """Handle add grid button click."""
@@ -335,11 +343,15 @@ class PlotGridManager:
                 self._orchestrator.add_plot(grid_id, cell)
 
         # Reset inputs and template selection
-        # Batch widget updates to reduce render cycles
-        with pn.io.hold():
-            self._template_selector.value = _NO_TEMPLATE
-            self._reset_to_defaults()
-            self._update_preview()
+        # Batch widget updates and suppress redundant preview updates
+        self._suppress_preview_update = True
+        try:
+            with pn.io.hold():
+                self._template_selector.value = _NO_TEMPLATE
+                self._reset_to_defaults()
+                self._update_preview()
+        finally:
+            self._suppress_preview_update = False
 
     def _on_grid_created(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Handle grid creation from orchestrator."""

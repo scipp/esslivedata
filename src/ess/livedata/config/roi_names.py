@@ -7,9 +7,10 @@ This module provides centralized naming conventions for ROI-related streams,
 ensuring consistency between backend handlers and frontend components.
 """
 
-import re
 from dataclasses import dataclass
 from typing import Literal
+
+from .models import PolygonROI, RectangleROI
 
 ROIGeometryType = Literal["rectangle", "polygon"]
 
@@ -43,6 +44,15 @@ class ROIGeometry:
         """Range of ROI indices for this geometry."""
         return range(self.index_offset, self.index_offset + self.num_rois)
 
+    @property
+    def roi_class(self) -> type[RectangleROI] | type[PolygonROI]:
+        """ROI model class for this geometry type."""
+        if self.geometry_type == "rectangle":
+            return RectangleROI
+        elif self.geometry_type == "polygon":
+            return PolygonROI
+        raise ValueError(f"Unknown geometry type: {self.geometry_type}")
+
 
 class ROIStreamMapper:
     """
@@ -60,7 +70,6 @@ class ROIStreamMapper:
     def __init__(self, geometries: list[ROIGeometry]):
         self._geometries = geometries
         self._total_rois = sum(g.num_rois for g in geometries)
-        self._roi_index_pattern = re.compile(r"^roi_(?:current|cumulative)_(\d+)$")
 
     @property
     def geometries(self) -> list[ROIGeometry]:
@@ -76,43 +85,6 @@ class ROIStreamMapper:
     def readback_keys(self) -> list[str]:
         """All readback stream keys."""
         return [g.readback_key for g in self._geometries]
-
-    def current_key(self, index: int) -> str:
-        """Generate ROI current histogram key."""
-        return f"roi_current_{index}"
-
-    def cumulative_key(self, index: int) -> str:
-        """Generate ROI cumulative histogram key."""
-        return f"roi_cumulative_{index}"
-
-    def all_current_keys(self) -> list[str]:
-        """Generate all current histogram keys across all geometries."""
-        return [self.current_key(i) for i in range(self._total_rois)]
-
-    def all_cumulative_keys(self) -> list[str]:
-        """Generate all cumulative histogram keys across all geometries."""
-        return [self.cumulative_key(i) for i in range(self._total_rois)]
-
-    def all_histogram_keys(self) -> list[str]:
-        """Generate all histogram keys (current + cumulative)."""
-        return self.all_current_keys() + self.all_cumulative_keys()
-
-    def parse_roi_index(self, key: str) -> int | None:
-        """
-        Extract ROI index from histogram key.
-
-        Parameters
-        ----------
-        key:
-            Key string like 'roi_current_0' or 'roi_cumulative_2'.
-
-        Returns
-        -------
-        :
-            The ROI index, or None if the key doesn't match the pattern.
-        """
-        match = self._roi_index_pattern.match(key)
-        return int(match.group(1)) if match else None
 
     def geometry_for_index(self, index: int) -> ROIGeometry | None:
         """
@@ -133,10 +105,30 @@ class ROIStreamMapper:
                 return geom
         return None
 
+    def geometry_for_type(self, geometry_type: ROIGeometryType) -> ROIGeometry | None:
+        """
+        Find geometry configuration by type.
+
+        Parameters
+        ----------
+        geometry_type:
+            The geometry type to look up ('rectangle' or 'polygon').
+
+        Returns
+        -------
+        :
+            The geometry configuration, or None if not found.
+        """
+        for geom in self._geometries:
+            if geom.geometry_type == geometry_type:
+                return geom
+        return None
+
 
 # Default ROI configuration - single source of truth
 DEFAULT_ROI_GEOMETRIES = [
     ROIGeometry(geometry_type="rectangle", num_rois=4, index_offset=0),
+    ROIGeometry(geometry_type="polygon", num_rois=4, index_offset=4),
 ]
 
 

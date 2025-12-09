@@ -1,0 +1,62 @@
+# Bragg peak monitor histograms and time series
+title: Bragg Peak Monitor
+description: Bragg peak monitor counts, histograms, and time series
+nrows: 4
+ncols: 4
+cells:
+- geometry:
+    row: 0
+    col: 0
+    row_span: 2
+    col_span: 2
+  config:
+    workflow_id: bifrost/monitor_data/monitor_histogram/1
+    output_name: counts_in_toa_range
+    source_names:
+    - bragg_peak_monitor
+    plot_name: timeseries
+    params:
+      plot_aspect:
+        aspect_type: Free
+- geometry:
+    row: 0
+    col: 2
+    row_span: 2
+    col_span: 2
+  config:
+    workflow_id: bifrost/monitor_data/monitor_histogram/1
+    output_name: current
+    source_names:
+    - bragg_peak_monitor
+    plot_name: lines
+    params:
+      plot_aspect:
+        aspect_type: Free
+- geometry:
+    row: 2
+    col: 0
+    row_span: 2
+    col_span: 2
+  config:
+    workflow_id: bifrost/monitor_data/monitor_histogram/1
+    output_name: counts_total
+    source_names:
+    - bragg_peak_monitor
+    plot_name: timeseries
+    params:
+      plot_aspect:
+        aspect_type: Free
+- geometry:
+    row: 2
+    col: 2
+    row_span: 2
+    col_span: 2
+  config:
+    workflow_id: bifrost/monitor_data/monitor_histogram/1
+    output_name: cumulative
+    source_names:
+    - bragg_peak_monitor
+    plot_name: lines
+    params:
+      plot_aspect:
+        aspect_type: Free
