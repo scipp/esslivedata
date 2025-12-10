@@ -291,14 +291,7 @@ class PlotOrchestrator:
             # Unsubscribe all layers and clean up mappings
             for cell_id, cell in grid.cells.items():
                 for layer in cell.layers:
-                    layer_id = layer.layer_id
-                    if layer_id in self._layer_to_subscription:
-                        self._job_orchestrator.unsubscribe(
-                            self._layer_to_subscription[layer_id]
-                        )
-                        del self._layer_to_subscription[layer_id]
-                    self._layer_state.pop(layer_id, None)
-                    self._layer_to_cell.pop(layer_id, None)
+                    self._unsubscribe_and_cleanup_layer(layer.layer_id)
                 del self._cell_to_grid[cell_id]
 
             del self._grids[grid_id]
@@ -346,14 +339,7 @@ class PlotOrchestrator:
 
         # Unsubscribe all layers
         for layer in cell.layers:
-            layer_id = layer.layer_id
-            if layer_id in self._layer_to_subscription:
-                self._job_orchestrator.unsubscribe(
-                    self._layer_to_subscription[layer_id]
-                )
-                del self._layer_to_subscription[layer_id]
-            self._layer_state.pop(layer_id, None)
-            self._layer_to_cell.pop(layer_id, None)
+            self._unsubscribe_and_cleanup_layer(layer.layer_id)
 
         # Remove from grid and mapping
         del grid.cells[cell_id]
@@ -470,11 +456,7 @@ class PlotOrchestrator:
         cell.layers = [layer for layer in cell.layers if layer.layer_id != layer_id]
 
         # Unsubscribe and clean up layer state
-        if layer_id in self._layer_to_subscription:
-            self._job_orchestrator.unsubscribe(self._layer_to_subscription[layer_id])
-            del self._layer_to_subscription[layer_id]
-        self._layer_state.pop(layer_id, None)
-        del self._layer_to_cell[layer_id]
+        self._unsubscribe_and_cleanup_layer(layer_id)
 
         # If no layers left, remove the entire cell
         if not cell.layers:
@@ -516,16 +498,34 @@ class PlotOrchestrator:
         if updated_layer is None:
             raise KeyError(f'Layer {layer_id} not found in cell {cell_id}')
 
-        # Unsubscribe from old workflow notifications
-        if layer_id in self._layer_to_subscription:
-            self._job_orchestrator.unsubscribe(self._layer_to_subscription[layer_id])
-            del self._layer_to_subscription[layer_id]
-
-        # Clear layer state since config changed
-        self._layer_state.pop(layer_id, None)
+        # Unsubscribe from old workflow notifications and clear state
+        # (keep layer_to_cell mapping since layer is still in the cell)
+        self._unsubscribe_and_cleanup_layer(layer_id, remove_from_cell_mapping=False)
 
         # Re-subscribe to workflow
         self._subscribe_layer(grid_id, cell_id, updated_layer)
+
+    def _unsubscribe_and_cleanup_layer(
+        self, layer_id: LayerId, *, remove_from_cell_mapping: bool = True
+    ) -> None:
+        """
+        Unsubscribe a layer from workflow notifications and clean up state.
+
+        Parameters
+        ----------
+        layer_id
+            ID of the layer to unsubscribe and clean up.
+        remove_from_cell_mapping
+            If True, remove the layer from _layer_to_cell mapping.
+            Set to False when the layer is being updated (still in the cell),
+            True when removing the layer completely.
+        """
+        if layer_id in self._layer_to_subscription:
+            self._job_orchestrator.unsubscribe(self._layer_to_subscription[layer_id])
+            del self._layer_to_subscription[layer_id]
+        self._layer_state.pop(layer_id, None)
+        if remove_from_cell_mapping:
+            self._layer_to_cell.pop(layer_id, None)
 
     def _subscribe_layer(self, grid_id: GridId, cell_id: CellId, layer: Layer) -> None:
         """
