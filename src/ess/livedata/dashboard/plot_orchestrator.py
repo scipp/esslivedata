@@ -102,11 +102,10 @@ class LayerState:
     """
     Runtime state of a single layer within a plot cell.
 
-    Tracks the data pipeline and plot for one layer. Either plot or error
-    is set (mutually exclusive). Both None indicates layer is waiting for data.
+    Either plot or error is set (mutually exclusive).
+    Both None indicates layer is waiting for data.
     """
 
-    pipe: Any = None
     plot: hv.DynamicMap | hv.Layout | None = None
     error: str | None = None
 
@@ -635,7 +634,7 @@ class PlotOrchestrator:
                     pipe=pipe,
                 )
                 # Store layer state
-                self._layer_state[layer_id] = LayerState(pipe=pipe, plot=plot)
+                self._layer_state[layer_id] = LayerState(plot=plot)
 
                 # Compose and notify
                 layer_states, composed = self.get_cell_state(cell_id)
