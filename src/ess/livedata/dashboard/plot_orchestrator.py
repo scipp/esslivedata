@@ -289,10 +289,8 @@ class PlotOrchestrator:
             title = grid.title
 
             # Unsubscribe all layers and clean up mappings
-            for cell_id, cell in grid.cells.items():
-                for layer in cell.layers:
-                    self._unsubscribe_and_cleanup_layer(layer.layer_id)
-                del self._cell_to_grid[cell_id]
+            for cell_id, cell in list(grid.cells.items()):
+                self._remove_cell_and_cleanup(grid_id, cell_id, cell)
 
             del self._grids[grid_id]
             self._persist_to_store()
@@ -337,22 +335,9 @@ class PlotOrchestrator:
         grid = self._grids[grid_id]
         cell = grid.cells[cell_id]
 
-        # Unsubscribe all layers
-        for layer in cell.layers:
-            self._unsubscribe_and_cleanup_layer(layer.layer_id)
-
-        # Remove from grid and mapping
-        del grid.cells[cell_id]
-        del self._cell_to_grid[cell_id]
+        self._remove_cell_and_cleanup(grid_id, cell_id, cell)
 
         self._persist_to_store()
-        self._logger.info(
-            'Removed plot %s from grid %s at (%d,%d)',
-            cell_id,
-            grid_id,
-            cell.geometry.row,
-            cell.geometry.col,
-        )
         self._notify_cell_removed(grid_id, cell_id, cell)
 
     def get_layer_config(self, layer_id: LayerId) -> PlotConfig:
@@ -504,6 +489,30 @@ class PlotOrchestrator:
 
         # Re-subscribe to workflow
         self._subscribe_layer(grid_id, cell_id, updated_layer)
+
+    def _remove_cell_and_cleanup(
+        self, grid_id: GridId, cell_id: CellId, cell: PlotCell
+    ) -> None:
+        """
+        Remove a cell and unsubscribe all its layers.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid containing the cell.
+        cell_id
+            ID of the cell to remove.
+        cell
+            The cell object to remove.
+        """
+        # Unsubscribe all layers in the cell
+        for layer in cell.layers:
+            self._unsubscribe_and_cleanup_layer(layer.layer_id)
+
+        # Remove cell from grid and mapping
+        grid = self._grids[grid_id]
+        del grid.cells[cell_id]
+        del self._cell_to_grid[cell_id]
 
     def _unsubscribe_and_cleanup_layer(
         self, layer_id: LayerId, *, remove_from_cell_mapping: bool = True
