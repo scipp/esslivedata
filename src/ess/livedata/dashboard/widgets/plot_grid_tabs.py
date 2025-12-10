@@ -257,6 +257,25 @@ class PlotGridTabs:
         current_config = self._orchestrator.get_layer_config(layer_id)
         self._show_config_modal(on_success=on_success, initial_config=current_config)
 
+    def _on_add_layer(self, cell_id: CellId) -> None:
+        """
+        Handle add layer request from plus button.
+
+        Shows the PlotConfigModal to configure the new layer, then adds it
+        to the cell in the orchestrator on success.
+
+        Parameters
+        ----------
+        cell_id
+            ID of the cell to add the layer to.
+        """
+
+        def on_success(plot_config: PlotConfig) -> None:
+            """Handle successful layer configuration."""
+            self._orchestrator.add_layer(cell_id, plot_config)
+
+        self._show_config_modal(on_success=on_success)
+
     def _show_config_modal(
         self,
         *,
@@ -401,7 +420,7 @@ class PlotGridTabs:
             Panel widget with toolbars and content.
         """
         # Create toolbars for all layers
-        toolbars = self._create_layer_toolbars(cell, layer_states)
+        toolbars = self._create_layer_toolbars(cell_id, cell, layer_states)
 
         # Create content area (placeholder or plot)
         if plot is not None:
@@ -435,6 +454,7 @@ class PlotGridTabs:
 
     def _create_layer_toolbars(
         self,
+        cell_id: CellId,
         cell: PlotCell,
         layer_states: dict[LayerId, LayerState],
     ) -> list[pn.Row]:
@@ -443,6 +463,8 @@ class PlotGridTabs:
 
         Parameters
         ----------
+        cell_id
+            ID of the cell.
         cell
             Plot cell with layers.
         layer_states
@@ -470,7 +492,7 @@ class PlotGridTabs:
             elif state.dmap is None:
                 description = f"{description}\n\nStatus: Waiting for data..."
 
-            # Create callbacks that capture layer_id
+            # Create callbacks that capture layer_id / cell_id
             def make_close_callback(lid: LayerId) -> Callable[[], None]:
                 def on_close() -> None:
                     self._orchestrator.remove_layer(lid)
@@ -483,9 +505,16 @@ class PlotGridTabs:
 
                 return on_gear
 
+            def make_add_callback(cid: CellId) -> Callable[[], None]:
+                def on_add() -> None:
+                    self._on_add_layer(cid)
+
+                return on_add
+
             toolbar = create_cell_toolbar(
                 on_gear_callback=make_gear_callback(layer_id),
                 on_close_callback=make_close_callback(layer_id),
+                on_add_callback=make_add_callback(cell_id),
                 title=title,
                 description=description,
             )

@@ -155,10 +155,33 @@ def create_gear_button(on_gear_callback: Callable[[], None]) -> pn.widgets.Butto
     )
 
 
+def create_add_button(on_add_callback: Callable[[], None]) -> pn.widgets.Button:
+    """
+    Create a styled plus button for adding a new layer to a plot cell.
+
+    Parameters
+    ----------
+    on_add_callback:
+        Callback function to invoke when the button is clicked.
+
+    Returns
+    -------
+    :
+        Panel Button widget styled as an add button.
+    """
+    return create_tool_button(
+        symbol='+',
+        button_color='#28a745',  # Green
+        hover_color='rgba(40, 167, 69, 0.1)',
+        on_click_callback=on_add_callback,
+    )
+
+
 def create_cell_toolbar(
     *,
     on_gear_callback: Callable[[], None],
     on_close_callback: Callable[[], None],
+    on_add_callback: Callable[[], None] | None = None,
     title: str | None = None,
     description: str | None = None,
 ) -> pn.Row:
@@ -166,7 +189,7 @@ def create_cell_toolbar(
     Create a toolbar row containing title and buttons for plot cells.
 
     The toolbar displays an optional title on the left (with tooltip for
-    description) and gear/close buttons on the right, using flexbox layout
+    description) and gear/add/close buttons on the right, using flexbox layout
     to avoid overlap with Bokeh's plot toolbar.
 
     Parameters
@@ -175,6 +198,9 @@ def create_cell_toolbar(
         Callback function to invoke when the gear button is clicked.
     on_close_callback:
         Callback function to invoke when the close button is clicked.
+    on_add_callback:
+        Optional callback to invoke when the add button is clicked.
+        If None, the add button is not shown.
     title:
         Optional title text to display on the left side of the toolbar.
     description:
@@ -186,6 +212,7 @@ def create_cell_toolbar(
         Panel Row widget containing the toolbar.
     """
     gear_button = create_gear_button(on_gear_callback)
+    add_button = create_add_button(on_add_callback) if on_add_callback else None
     close_button = create_close_button(on_close_callback)
 
     # Build left content: title and optional tooltip icon
@@ -216,11 +243,15 @@ def create_cell_toolbar(
             left_items.append(tooltip_icon)
 
     margin = ButtonStyles.CELL_MARGIN
+    right_buttons = [gear_button]
+    if add_button is not None:
+        right_buttons.append(add_button)
+    right_buttons.append(close_button)
+
     return pn.Row(
         *left_items,
         pn.Spacer(sizing_mode='stretch_width'),
-        gear_button,
-        close_button,
+        *right_buttons,
         sizing_mode='stretch_width',
         height=ButtonStyles.TOOL_BUTTON_SIZE,
         margin=(margin, margin, 0, margin),

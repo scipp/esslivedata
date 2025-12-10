@@ -688,8 +688,8 @@ class PlotOrchestrator:
         Compose all ready layers in a cell into a single plot.
 
         For single-layer cells, returns the layer's plot directly (already an
-        hv.Layout from PlottingController). For multi-layer cells, composes
-        the plots via hv.Overlay.
+        hv.Layout from PlottingController). For multi-layer cells, extracts
+        the DynamicMaps and composes them via hv.Overlay.
 
         Parameters
         ----------
@@ -701,6 +701,8 @@ class PlotOrchestrator:
         :
             Composed plot, or None if no layers have data.
         """
+        import holoviews as hv
+
         plots = []
         for layer in cell.layers:
             state = self._layer_state.get(layer.layer_id)
@@ -714,12 +716,24 @@ class PlotOrchestrator:
             # Single layer: return its plot directly (already hv.Layout)
             return plots[0]
 
-        # Multiple layers: need to compose them
-        # Each plot is an hv.Layout - for now just return the first one
-        # TODO: Properly compose multiple layers via hv.Overlay
-        import holoviews as hv
+        # Multiple layers: extract DynamicMaps from Layouts and overlay them.
+        # PlottingController wraps each plot in hv.Layout([dmap]) for shared_axes
+        # handling. We need to extract the dmaps to overlay them properly.
+        dmaps = []
+        for plot in plots:
+            if isinstance(plot, hv.Layout):
+                # Extract all elements from the Layout
+                dmaps.extend(plot.values())
+            else:
+                dmaps.append(plot)
 
-        return hv.Layout(plots).opts(shared_axes=False)
+        # Compose via overlay
+        overlay = dmaps[0]
+        for dmap in dmaps[1:]:
+            overlay = overlay * dmap
+
+        # Wrap in Layout with shared_axes=False to preserve framewise autoscaling
+        return hv.Layout([overlay]).opts(shared_axes=False)
 
     def _validate_params(
         self, plot_name: str, params: dict[str, Any]
