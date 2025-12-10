@@ -69,3 +69,25 @@ def make_area_panel_data(shape: tuple[int, int] = (128, 128)) -> sc.DataArray:
             'y': sc.arange('y', 0.0, float(shape[0]), unit=None),
         },
     )
+
+
+@fixture_registry.register('dummy/data_reduction/monitor_timeseries/1')
+def make_monitor_timeseries_data(npoints: int = 100) -> sc.DataArray:
+    """Create test timeseries data for monitor1 with exponential decay pattern."""
+    # Create time points from 0 to 100 seconds
+    time = np.linspace(0, 100, npoints)
+
+    # Create exponential decay pattern: starts at 1000 counts, decays to ~100
+    counts = 900 * np.exp(-time / 30) + 100
+
+    # Add some realistic noise (Poisson-like)
+    rng = np.random.default_rng(42)
+    noise = rng.normal(0, np.sqrt(counts) * 0.05)
+    counts = counts + noise
+
+    return sc.DataArray(
+        sc.array(dims=['time'], values=counts, unit='counts'),
+        coords={
+            'time': sc.array(dims=['time'], values=time, unit='s'),
+        },
+    )

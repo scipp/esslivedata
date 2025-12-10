@@ -31,6 +31,7 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 # Configure logging
@@ -88,7 +89,7 @@ def capture_screenshots(
     port: int,
     output_dir: Path,
     width: int = 1200,
-    inject_data: callable | None = None,
+    inject_data: Callable[[int], dict] | None = None,
 ) -> list[Path]:
     """Capture screenshots of the dashboard using Playwright."""
     from playwright.sync_api import sync_playwright

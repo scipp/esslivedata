@@ -71,17 +71,32 @@ In `<instrument>/__init__.py`:
 
 ```python
 from screenshot_fixtures import fixture_registry
+import numpy as np
 import scipp as sc
 
+# Example: 2D image data (for plot_name: image)
 @fixture_registry.register('dummy/detector_data/my_workflow/1')
 def make_my_detector_data() -> sc.DataArray:
-    """Create test data for my_detector."""
-    # Return a DataArray with appropriate dims/coords for the plot type
+    """Create 2D test data for an image plot."""
+    data = np.random.default_rng(42).poisson(100, size=(64, 64)).astype(float)
     return sc.DataArray(
-        sc.array(dims=['y', 'x'], values=..., unit='counts'),
+        sc.array(dims=['y', 'x'], values=data, unit='counts'),
         coords={
             'x': sc.arange('x', 0.0, 64.0, unit=None),
             'y': sc.arange('y', 0.0, 64.0, unit=None),
+        },
+    )
+
+# Example: 1D timeseries data (for plot_name: line)
+@fixture_registry.register('dummy/data_reduction/my_timeseries/1')
+def make_my_timeseries_data() -> sc.DataArray:
+    """Create 1D test data for a line plot."""
+    time = np.linspace(0, 100, 100)
+    counts = 500 * np.exp(-time / 30) + 50
+    return sc.DataArray(
+        sc.array(dims=['time'], values=counts, unit='counts'),
+        coords={
+            'time': sc.array(dims=['time'], values=time, unit='s'),
         },
     )
 ```

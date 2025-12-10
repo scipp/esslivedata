@@ -29,3 +29,16 @@ dummy/detector_data/area_panel_xy/1:
       area_panel:
         params: {}
         aux_source_names: {}
+
+# Monitor timeseries workflow
+dummy/data_reduction/monitor_timeseries/1:
+  source_names:
+    - monitor1
+  params: {}
+  aux_source_names: {}
+  current_job:
+    job_number: "00000000-0000-0000-0000-000000000003"
+    jobs:
+      monitor1:
+        params: {}
+        aux_source_names: {}

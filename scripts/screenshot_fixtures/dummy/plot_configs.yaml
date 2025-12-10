@@ -58,3 +58,7 @@ plot_grids:
             x_scale: linear
             y_scale: linear
             color_scale: log
+  - title: Monitor Timeseries
+    nrows: 1
+    ncols: 1
+    cells: []
