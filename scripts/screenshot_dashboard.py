@@ -214,17 +214,24 @@ def main():
         # Give a moment for configs to load
         time.sleep(1)
 
-        # Import the data injection function from fixtures
-        # Data is injected INSIDE capture_screenshots after the browser connects
+        # Import fixture modules to register data generators
+        # The import triggers @fixture_registry.register decorators
         sys.path.insert(0, str(script_dir))
-        from screenshot_fixtures import inject_screenshot_data
+        import screenshot_fixtures.dummy  # noqa: F401
+        from screenshot_fixtures import inject_fixtures
+
+        # Create injection function bound to the instrument and fixtures_dir
+        def inject_data(port: int) -> dict:
+            return inject_fixtures(
+                port=port, fixtures_dir=fixtures_dir, instrument=args.instrument
+            )
 
         # Capture screenshots (data is injected after browser connects)
         screenshots = capture_screenshots(
             port=args.port,
             output_dir=args.output_dir,
             width=args.width,
-            inject_data=inject_screenshot_data,
+            inject_data=inject_data,
         )
 
         logger.info("Screenshots saved to %s", args.output_dir)

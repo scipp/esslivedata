@@ -3,105 +3,181 @@
 """
 Screenshot test fixtures for the HTTP transport.
 
-This module provides pre-configured workflows and test data for screenshot testing.
-The fixtures use well-known, fixed job_numbers so that injected data matches
-the persisted workflow configurations.
+This module provides a registry-based system for defining test data fixtures.
+Data generators are registered by workflow_id and output_name, and the system
+automatically matches them with workflow configurations to inject data.
 
 Usage:
-    from scripts.screenshot_fixtures import (
-        FIXTURES_DIR,
-        PANEL_0_JOB_NUMBER,
-        AREA_PANEL_JOB_NUMBER,
-        make_panel_0_data,
-        make_area_panel_data,
-        inject_screenshot_data,
-    )
+    # In your fixture module (e.g., dummy/__init__.py):
+    from scripts.screenshot_fixtures import fixture_registry
+
+    @fixture_registry.register('dummy/detector_data/panel_0_xy/1', output='current')
+    def make_panel_0_data() -> sc.DataArray:
+        return sc.DataArray(...)
+
+    # To inject all registered fixtures:
+    from scripts.screenshot_fixtures import inject_fixtures
+    inject_fixtures(port=5009, fixtures_dir=Path(...))
 """
+
+from __future__ import annotations
 
 import base64
 import json
+import logging
 import time
 import urllib.request
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-import numpy as np
-import scipp as sc
+import yaml
 from streaming_data_types import dataarray_da00
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.kafka.scipp_da00_compat import scipp_to_da00
 
+if TYPE_CHECKING:
+    import scipp as sc
+
+logger = logging.getLogger(__name__)
+
 # Directory containing the fixture config files
 FIXTURES_DIR = Path(__file__).parent
 
-# Well-known job numbers matching workflow_configs.yaml
-PANEL_0_JOB_NUMBER = UUID("00000000-0000-0000-0000-000000000001")
-AREA_PANEL_JOB_NUMBER = UUID("00000000-0000-0000-0000-000000000002")
-
-# Workflow IDs
-PANEL_0_WORKFLOW_ID = WorkflowId(
-    instrument='dummy', namespace='detector_data', name='panel_0_xy', version=1
-)
-AREA_PANEL_WORKFLOW_ID = WorkflowId(
-    instrument='dummy', namespace='detector_data', name='area_panel_xy', version=1
-)
+DataGenerator = Callable[[], 'sc.DataArray']
 
 
-def make_gaussian_blob(
-    shape: tuple[int, int] = (64, 64),
-    center: tuple[float, float] | None = None,
-    sigma: float | None = None,
-    amplitude: float = 500.0,
-    noise_level: float = 5.0,
-    seed: int = 42,
-) -> np.ndarray:
-    """Create a 2D Gaussian blob with Poisson noise."""
-    if center is None:
-        center = (shape[0] / 2, shape[1] / 2)
-    if sigma is None:
-        sigma = min(shape) / 6
+@dataclass
+class FixtureKey:
+    """Key for looking up a data generator in the registry."""
 
-    y, x = np.ogrid[: shape[0], : shape[1]]
-    blob = np.exp(-((y - center[0]) ** 2 + (x - center[1]) ** 2) / (2 * sigma**2))
-    rng = np.random.default_rng(seed)
-    noise = rng.poisson(lam=noise_level, size=shape)
-    return (blob * amplitude + noise).astype(np.float64)
+    workflow_id: str  # e.g., 'dummy/detector_data/panel_0_xy/1'
+    output_name: str = 'current'
+
+    def __hash__(self) -> int:
+        return hash((self.workflow_id, self.output_name))
 
 
-def make_panel_0_data(shape: tuple[int, int] = (64, 64)) -> sc.DataArray:
-    """Create test data for panel_0 detector."""
-    data = make_gaussian_blob(shape, center=(shape[0] * 0.4, shape[1] * 0.6), seed=42)
-    return sc.DataArray(
-        sc.array(dims=['y', 'x'], values=data, unit='counts'),
-        coords={
-            'x': sc.arange('x', 0.0, float(shape[1]), unit=None),
-            'y': sc.arange('y', 0.0, float(shape[0]), unit=None),
-        },
-    )
+@dataclass
+class FixtureRegistry:
+    """
+    Registry for screenshot data generators.
+
+    Data generators are functions that return sc.DataArray. They are registered
+    by workflow_id and output_name. When fixtures are injected, the registry
+    looks up the appropriate generator for each workflow/output combination.
+    """
+
+    _generators: dict[FixtureKey, DataGenerator] = field(default_factory=dict)
+
+    def register(
+        self, workflow_id: str, *, output: str = 'current'
+    ) -> Callable[[DataGenerator], DataGenerator]:
+        """
+        Decorator to register a data generator.
+
+        Parameters
+        ----------
+        workflow_id:
+            The workflow ID string, e.g., 'dummy/detector_data/panel_0_xy/1'
+        output:
+            The output name, e.g., 'current'. Defaults to 'current'.
+
+        Example
+        -------
+        @fixture_registry.register('dummy/detector_data/panel_0_xy/1')
+        def make_panel_0_data() -> sc.DataArray:
+            return sc.DataArray(...)
+        """
+        key = FixtureKey(workflow_id=workflow_id, output_name=output)
+
+        def decorator(func: DataGenerator) -> DataGenerator:
+            self._generators[key] = func
+            return func
+
+        return decorator
+
+    def get_generator(
+        self, workflow_id: str, output_name: str = 'current'
+    ) -> DataGenerator | None:
+        """Get a registered generator, or None if not found."""
+        key = FixtureKey(workflow_id=workflow_id, output_name=output_name)
+        return self._generators.get(key)
+
+    def clear(self) -> None:
+        """Clear all registered generators (useful for testing)."""
+        self._generators.clear()
 
 
-def make_area_panel_data(shape: tuple[int, int] = (128, 128)) -> sc.DataArray:
-    """Create test data for area_panel detector (larger with multiple blobs)."""
-    # Multiple overlapping blobs for a more interesting pattern
-    blob1 = make_gaussian_blob(
-        shape, center=(shape[0] * 0.3, shape[1] * 0.3), sigma=15, seed=42
-    )
-    blob2 = make_gaussian_blob(
-        shape, center=(shape[0] * 0.7, shape[1] * 0.6), sigma=20, seed=43
-    )
-    blob3 = make_gaussian_blob(
-        shape, center=(shape[0] * 0.5, shape[1] * 0.8), sigma=10, amplitude=300, seed=44
-    )
-    data = blob1 + blob2 + blob3
+# Global registry instance
+fixture_registry = FixtureRegistry()
 
-    return sc.DataArray(
-        sc.array(dims=['y', 'x'], values=data, unit='counts'),
-        coords={
-            'x': sc.arange('x', 0.0, float(shape[1]), unit=None),
-            'y': sc.arange('y', 0.0, float(shape[0]), unit=None),
-        },
-    )
+
+@dataclass
+class WorkflowFixtureInfo:
+    """Information extracted from workflow_configs.yaml for a single workflow."""
+
+    workflow_id: WorkflowId
+    job_number: UUID
+    source_names: list[str]
+
+
+def load_workflow_configs(
+    fixtures_dir: Path, instrument: str
+) -> list[WorkflowFixtureInfo]:
+    """
+    Load workflow configurations from YAML and extract fixture-relevant info.
+
+    Parameters
+    ----------
+    fixtures_dir:
+        Directory containing instrument subdirectories with config files.
+    instrument:
+        Instrument name (subdirectory name).
+
+    Returns
+    -------
+    :
+        List of workflow fixture info extracted from workflow_configs.yaml.
+    """
+    config_path = fixtures_dir / instrument / 'workflow_configs.yaml'
+    if not config_path.exists():
+        logger.warning("No workflow_configs.yaml found at %s", config_path)
+        return []
+
+    with open(config_path) as f:
+        configs = yaml.safe_load(f) or {}
+
+    results = []
+    for workflow_id_str, config in configs.items():
+        try:
+            workflow_id = WorkflowId.from_string(workflow_id_str)
+            current_job = config.get('current_job', {})
+            job_number_str = current_job.get('job_number')
+            if job_number_str is None:
+                logger.warning(
+                    "No job_number in current_job for %s, skipping", workflow_id_str
+                )
+                continue
+
+            # Get source_names from current_job.jobs keys (the actual running jobs)
+            jobs = current_job.get('jobs', {})
+            source_names = list(jobs.keys())
+
+            results.append(
+                WorkflowFixtureInfo(
+                    workflow_id=workflow_id,
+                    job_number=UUID(job_number_str),
+                    source_names=source_names,
+                )
+            )
+        except Exception as e:
+            logger.warning("Failed to parse workflow config %s: %s", workflow_id_str, e)
+
+    return results
 
 
 def serialize_to_da00(result_key: ResultKey, data: sc.DataArray) -> bytes:
@@ -127,35 +203,74 @@ def inject_data(port: int, payload: bytes) -> dict:
         return json.loads(response.read().decode('utf-8'))
 
 
-def inject_screenshot_data(port: int = 5009) -> dict[str, dict]:
+def inject_fixtures(
+    port: int = 5009,
+    fixtures_dir: Path = FIXTURES_DIR,
+    instrument: str = 'dummy',
+    registry: FixtureRegistry | None = None,
+) -> dict[str, dict]:
     """
-    Inject all test data for screenshot capture.
+    Inject all registered fixtures for the given instrument.
 
-    This injects data for both panel_0 and area_panel detectors using
-    the well-known job_numbers that match the fixture configs.
+    This function:
+    1. Loads workflow_configs.yaml to get job numbers and source names
+    2. For each workflow, looks up registered data generators
+    3. Generates data and injects it via the HTTP API
 
-    Returns dict mapping detector names to injection results.
+    Parameters
+    ----------
+    port:
+        Dashboard port number.
+    fixtures_dir:
+        Directory containing instrument subdirectories with config files.
+    instrument:
+        Instrument name.
+    registry:
+        Fixture registry to use. Defaults to the global fixture_registry.
+
+    Returns
+    -------
+    :
+        Dict mapping "{workflow_id}/{source_name}/{output}" to injection results.
     """
-    results = {}
+    if registry is None:
+        registry = fixture_registry
 
-    # Inject panel_0 data
-    panel_0_key = ResultKey(
-        workflow_id=PANEL_0_WORKFLOW_ID,
-        job_id=JobId(job_number=PANEL_0_JOB_NUMBER, source_name='panel_0'),
-        output_name='current',
-    )
-    panel_0_data = make_panel_0_data()
-    panel_0_payload = serialize_to_da00(panel_0_key, panel_0_data)
-    results['panel_0'] = inject_data(port, panel_0_payload)
+    workflow_infos = load_workflow_configs(fixtures_dir, instrument)
+    results: dict[str, dict] = {}
 
-    # Inject area_panel data
-    area_panel_key = ResultKey(
-        workflow_id=AREA_PANEL_WORKFLOW_ID,
-        job_id=JobId(job_number=AREA_PANEL_JOB_NUMBER, source_name='area_panel'),
-        output_name='current',
-    )
-    area_panel_data = make_area_panel_data()
-    area_panel_payload = serialize_to_da00(area_panel_key, area_panel_data)
-    results['area_panel'] = inject_data(port, area_panel_payload)
+    for info in workflow_infos:
+        workflow_id_str = str(info.workflow_id)
+
+        # For now, we only support 'current' output, but the system is extensible
+        output_name = 'current'
+        generator = registry.get_generator(workflow_id_str, output_name)
+
+        if generator is None:
+            logger.debug(
+                "No generator registered for %s/%s, skipping",
+                workflow_id_str,
+                output_name,
+            )
+            continue
+
+        # Generate data once, inject for each source_name
+        data = generator()
+
+        for source_name in info.source_names:
+            result_key = ResultKey(
+                workflow_id=info.workflow_id,
+                job_id=JobId(job_number=info.job_number, source_name=source_name),
+                output_name=output_name,
+            )
+            payload = serialize_to_da00(result_key, data)
+
+            key = f"{workflow_id_str}/{source_name}/{output_name}"
+            try:
+                results[key] = inject_data(port, payload)
+                logger.info("Injected data for %s", key)
+            except Exception as e:
+                logger.error("Failed to inject data for %s: %s", key, e)
+                results[key] = {'error': str(e)}
 
     return results
