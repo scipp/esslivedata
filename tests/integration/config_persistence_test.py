@@ -242,13 +242,22 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
     Note: UUIDs are regenerated on load as they are runtime identity handles.
     We verify content equality, not ID equality.
     """
+    from uuid import uuid4
+
     from ess.livedata.config.workflow_spec import WorkflowId
     from ess.livedata.dashboard.plot_orchestrator import (
         CellGeometry,
+        Layer,
+        LayerId,
         PlotCell,
         PlotConfig,
     )
     from ess.livedata.dashboard.plot_params import PlotParams1d, WindowMode
+
+    def make_plot_cell(geometry: CellGeometry, config: PlotConfig) -> PlotCell:
+        """Create PlotCell with single layer from config for test convenience."""
+        layer = Layer(layer_id=LayerId(uuid4()), config=config)
+        return PlotCell(geometry=geometry, layers=[layer])
 
     # Create first backend instance
     with DashboardBackend(
@@ -278,7 +287,7 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
             params=params1,
         )
         geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-        cell = PlotCell(geometry=geometry, config=plot_config)
+        cell = make_plot_cell(geometry=geometry, config=plot_config)
 
         # Find the grid by title to add cells
         grids1 = orchestrator1.get_all_grids()
@@ -297,7 +306,7 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
             params=params2,
         )
         geometry2 = CellGeometry(row=0, col=1, row_span=1, col_span=1)
-        cell2 = PlotCell(geometry=geometry2, config=plot_config2)
+        cell2 = make_plot_cell(geometry=geometry2, config=plot_config2)
 
         orchestrator1.add_plot(grid_id=grid_id, cell=cell2)
 
@@ -315,7 +324,7 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
             params=params3,
         )
         geometry3 = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-        cell3 = PlotCell(geometry=geometry3, config=plot_config3)
+        cell3 = make_plot_cell(geometry=geometry3, config=plot_config3)
 
         orchestrator1.add_plot(grid_id=grid_id2, cell=cell3)
 
@@ -360,19 +369,19 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         assert cell1_restored.geometry.col == 0
         assert cell1_restored.geometry.row_span == 1
         assert cell1_restored.geometry.col_span == 1
-        assert cell1_restored.config.workflow_id == workflow_id
-        assert cell1_restored.config.output_name == 'histogram'
-        assert cell1_restored.config.source_names == ['monitor1', 'monitor2']
-        assert cell1_restored.config.plot_name == 'lines'
+        assert cell1_restored.layers[0].config.workflow_id == workflow_id
+        assert cell1_restored.layers[0].config.output_name == 'histogram'
+        assert cell1_restored.layers[0].config.source_names == ['monitor1', 'monitor2']
+        assert cell1_restored.layers[0].config.plot_name == 'lines'
         # Params are validated and restored as model
-        assert cell1_restored.config.params == params1
+        assert cell1_restored.layers[0].config.params == params1
 
         # Verify second cell configuration
         assert cell2_restored.geometry.row == 0
         assert cell2_restored.geometry.col == 1
-        assert cell2_restored.config.output_name == 'spectrum'
-        assert cell2_restored.config.source_names == ['monitor1']
-        assert cell2_restored.config.params == params2
+        assert cell2_restored.layers[0].config.output_name == 'spectrum'
+        assert cell2_restored.layers[0].config.source_names == ['monitor1']
+        assert cell2_restored.layers[0].config.params == params2
 
         # Verify second grid configuration
         assert grid2_restored.title == 'Second Grid'
@@ -382,9 +391,9 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
 
         # Verify third cell configuration
         cell3_restored = next(iter(grid2_restored.cells.values()))
-        assert cell3_restored.config.output_name == 'output3'
-        assert cell3_restored.config.source_names == ['monitor2']
-        assert cell3_restored.config.params == params3
+        assert cell3_restored.layers[0].config.output_name == 'output3'
+        assert cell3_restored.layers[0].config.source_names == ['monitor2']
+        assert cell3_restored.layers[0].config.params == params3
 
 
 def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None:
@@ -395,9 +404,13 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
     Pydantic models are properly converted to strings during YAML serialization.
     Previously, enum instances caused serialization failures.
     """
+    from uuid import uuid4
+
     from ess.livedata.config.workflow_spec import WorkflowId
     from ess.livedata.dashboard.plot_orchestrator import (
         CellGeometry,
+        Layer,
+        LayerId,
         PlotCell,
         PlotConfig,
     )
@@ -407,6 +420,11 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
         PlotScale,
         WindowMode,
     )
+
+    def make_plot_cell(geometry: CellGeometry, config: PlotConfig) -> PlotCell:
+        """Create PlotCell with single layer from config for test convenience."""
+        layer = Layer(layer_id=LayerId(uuid4()), config=config)
+        return PlotCell(geometry=geometry, layers=[layer])
 
     # Create params with enum values (the problematic case)
     params_with_enums = PlotParams2d(
@@ -441,7 +459,7 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
             params=params_with_enums,
         )
         geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-        cell = PlotCell(geometry=geometry, config=plot_config)
+        cell = make_plot_cell(geometry=geometry, config=plot_config)
 
         # Find the grid by title to add the cell
         grids1 = orchestrator1.get_all_grids()
@@ -463,6 +481,6 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
         assert len(restored_grid.cells) == 1
 
         restored_cell = next(iter(restored_grid.cells.values()))
-        restored_params = restored_cell.config.params
+        restored_params = restored_cell.layers[0].config.params
         # Params are validated and restored as model, equal to original
         assert restored_params == params_with_enums

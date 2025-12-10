@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 SubscriptionId = NewType('SubscriptionId', UUID)
 GridId = NewType('GridId', UUID)
 CellId = NewType('CellId', UUID)
+LayerId = NewType('LayerId', UUID)
 
 
 class JobOrchestratorProtocol(Protocol):
@@ -97,21 +98,22 @@ class CellGeometry:
 
 
 @dataclass
-class CellState:
+class LayerState:
     """
-    State of a rendered plot cell.
+    Runtime state of a single layer within a plot cell.
 
-    Either plot or error is set (mutually exclusive).
-    Both None indicates cell is waiting for workflow data.
+    Tracks the data pipeline and plot for one layer. Either dmap or error
+    is set (mutually exclusive). Both None indicates layer is waiting for data.
     """
 
-    plot: hv.DynamicMap | hv.Layout | None = None
+    pipe: Any = None
+    dmap: hv.DynamicMap | hv.Layout | None = None
     error: str | None = None
 
 
 @dataclass
 class PlotConfig:
-    """Configuration for a single plot."""
+    """Configuration for a single plot layer."""
 
     workflow_id: WorkflowId
     source_names: list[str]
@@ -121,16 +123,25 @@ class PlotConfig:
 
 
 @dataclass
+class Layer:
+    """A layer within a plot cell, combining identity with configuration."""
+
+    layer_id: LayerId
+    config: PlotConfig
+
+
+@dataclass
 class PlotCell:
     """
-    Configuration for a plot cell (position, size, and what to plot).
+    Configuration for a plot cell (position, size, and layers to plot).
 
     The plots are placed in the given row and col of a :py:class:`PlotGrid`, spanning
-    the given number of rows and columns.
+    the given number of rows and columns. A cell can contain multiple layers that
+    are composed via hv.Overlay.
     """
 
     geometry: CellGeometry
-    config: PlotConfig
+    layers: list[Layer]
 
 
 @dataclass
@@ -157,8 +168,8 @@ class CellUpdatedCallback(Protocol):
         grid_id: GridId,
         cell_id: CellId,
         cell: PlotCell,
+        layer_states: dict[LayerId, LayerState],
         plot: Any = None,
-        error: str | None = None,
     ) -> None:
         """
         Handle cell update.
@@ -170,11 +181,12 @@ class CellUpdatedCallback(Protocol):
         cell_id
             ID of the cell being updated.
         cell
-            Plot cell configuration.
+            Plot cell configuration with all layers.
+        layer_states
+            Per-layer runtime state (pipe, dmap, error) for each layer in the cell.
         plot
-            The plot widget, or None if not yet available.
-        error
-            Error message if plot creation failed, or None.
+            The composed plot (hv.Overlay or hv.Layout), or None if no layers
+            have data yet.
         """
 
 
@@ -225,8 +237,12 @@ class PlotOrchestrator:
 
         self._grids: dict[GridId, PlotGridConfig] = {}
         self._cell_to_grid: dict[CellId, GridId] = {}
-        self._cell_to_subscription: dict[CellId, SubscriptionId] = {}
-        self._cell_state: dict[CellId, CellState] = {}
+        # Per-layer workflow subscriptions (layer -> subscription)
+        self._layer_to_subscription: dict[LayerId, SubscriptionId] = {}
+        # Per-layer runtime state (pipe, dmap, error)
+        self._layer_state: dict[LayerId, LayerState] = {}
+        # Reverse lookup: layer -> cell
+        self._layer_to_cell: dict[LayerId, CellId] = {}
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
 
         # Parse templates (requires plotter registry, so must be done here)
@@ -276,10 +292,17 @@ class PlotOrchestrator:
             grid = self._grids[grid_id]
             title = grid.title
 
-            # Unsubscribe all cells and clean up mappings
-            for cell_id in grid.cells.keys():
-                self._job_orchestrator.unsubscribe(self._cell_to_subscription[cell_id])
-                del self._cell_to_subscription[cell_id]
+            # Unsubscribe all layers and clean up mappings
+            for cell_id, cell in grid.cells.items():
+                for layer in cell.layers:
+                    layer_id = layer.layer_id
+                    if layer_id in self._layer_to_subscription:
+                        self._job_orchestrator.unsubscribe(
+                            self._layer_to_subscription[layer_id]
+                        )
+                        del self._layer_to_subscription[layer_id]
+                    self._layer_state.pop(layer_id, None)
+                    self._layer_to_cell.pop(layer_id, None)
                 del self._cell_to_grid[cell_id]
 
             del self._grids[grid_id]
@@ -289,14 +312,14 @@ class PlotOrchestrator:
 
     def add_plot(self, grid_id: GridId, cell: PlotCell) -> CellId:
         """
-        Add a plot configuration to a grid and subscribe to workflow availability.
+        Add a plot cell with layers to a grid and subscribe to workflow availability.
 
         Parameters
         ----------
         grid_id
             ID of the grid to add the plot to.
         cell
-            Plot cell configuration.
+            Plot cell configuration with layers.
 
         Returns
         -------
@@ -308,14 +331,16 @@ class PlotOrchestrator:
         grid.cells[cell_id] = cell
         self._cell_to_grid[cell_id] = grid_id
 
-        # Subscribe to workflow
-        self._subscribe_and_setup(grid_id, cell_id, cell.config.workflow_id)
+        # Subscribe each layer to its workflow
+        for layer in cell.layers:
+            self._layer_to_cell[layer.layer_id] = cell_id
+            self._subscribe_layer(grid_id, cell_id, layer)
 
         return cell_id
 
     def remove_plot(self, cell_id: CellId) -> None:
         """
-        Remove a plot by its unique ID.
+        Remove a plot cell (with all its layers) by its unique ID.
 
         Parameters
         ----------
@@ -326,12 +351,16 @@ class PlotOrchestrator:
         grid = self._grids[grid_id]
         cell = grid.cells[cell_id]
 
-        # Unsubscribe from workflow notifications
-        self._job_orchestrator.unsubscribe(self._cell_to_subscription[cell_id])
-        del self._cell_to_subscription[cell_id]
-
-        # Remove stored state
-        self._cell_state.pop(cell_id, None)
+        # Unsubscribe all layers
+        for layer in cell.layers:
+            layer_id = layer.layer_id
+            if layer_id in self._layer_to_subscription:
+                self._job_orchestrator.unsubscribe(
+                    self._layer_to_subscription[layer_id]
+                )
+                del self._layer_to_subscription[layer_id]
+            self._layer_state.pop(layer_id, None)
+            self._layer_to_cell.pop(layer_id, None)
 
         # Remove from grid and mapping
         del grid.cells[cell_id]
@@ -347,28 +376,33 @@ class PlotOrchestrator:
         )
         self._notify_cell_removed(grid_id, cell_id, cell)
 
-    def get_plot_config(self, cell_id: CellId) -> PlotConfig:
+    def get_layer_config(self, layer_id: LayerId) -> PlotConfig:
         """
-        Get configuration for a plot.
+        Get configuration for a layer.
 
         Parameters
         ----------
-        cell_id
-            ID of the plot cell.
+        layer_id
+            ID of the layer.
 
         Returns
         -------
         :
-            The plot configuration.
+            The layer's plot configuration.
         """
+        cell_id = self._layer_to_cell[layer_id]
         grid_id = self._cell_to_grid[cell_id]
-        return self._grids[grid_id].cells[cell_id].config
+        cell = self._grids[grid_id].cells[cell_id]
+        for layer in cell.layers:
+            if layer.layer_id == layer_id:
+                return layer.config
+        raise KeyError(f'Layer {layer_id} not found in cell {cell_id}')
 
     def get_cell_state(
         self, cell_id: CellId
-    ) -> tuple[hv.DynamicMap | hv.Layout | None, str | None]:
+    ) -> tuple[dict[LayerId, LayerState], hv.DynamicMap | hv.Layout | None]:
         """
-        Get the current plot and error state for a cell.
+        Get the current layer states and composed plot for a cell.
 
         This is used by UI components to retrieve the current state when
         initializing from existing cells (e.g., after page reload).
@@ -381,48 +415,128 @@ class PlotOrchestrator:
         Returns
         -------
         :
-            Tuple of (plot, error) where plot is the HoloViews object if
-            available (None otherwise), and error is the error message if
-            plot creation failed (None otherwise).
-        """
-        state = self._cell_state.get(cell_id, CellState())
-        return state.plot, state.error
-
-    def update_plot_config(self, cell_id: CellId, new_config: PlotConfig) -> None:
-        """
-        Update plot configuration and resubscribe to workflow.
-
-        This resubscribes to the workflow.
-        When the workflow is next committed, the plot will be recreated
-        with the new configuration.
-
-        Parameters
-        ----------
-        cell_id
-            ID of the plot cell to update.
-        new_config
-            New plot configuration.
+            Tuple of (layer_states, composed_plot) where layer_states is a dict
+            mapping LayerId to LayerState for each layer in the cell, and
+            composed_plot is the hv.Overlay if any layers have data (None otherwise).
         """
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
+        layer_states = {
+            layer.layer_id: self._layer_state.get(layer.layer_id, LayerState())
+            for layer in cell.layers
+        }
+
+        composed = self._compose_cell_plot(cell)
+        return layer_states, composed
+
+    def add_layer(self, cell_id: CellId, config: PlotConfig) -> LayerId:
+        """
+        Add a new layer to an existing cell.
+
+        Parameters
+        ----------
+        cell_id
+            ID of the cell to add the layer to.
+        config
+            Configuration for the new layer.
+
+        Returns
+        -------
+        :
+            ID of the added layer.
+        """
+        grid_id = self._cell_to_grid[cell_id]
+        cell = self._grids[grid_id].cells[cell_id]
+
+        layer_id = LayerId(uuid4())
+        layer = Layer(layer_id=layer_id, config=config)
+        cell.layers.append(layer)
+
+        self._layer_to_cell[layer_id] = cell_id
+        self._subscribe_layer(grid_id, cell_id, layer)
+
+        return layer_id
+
+    def remove_layer(self, layer_id: LayerId) -> None:
+        """
+        Remove a layer from its cell.
+
+        If this is the last layer in the cell, the entire cell is removed.
+
+        Parameters
+        ----------
+        layer_id
+            ID of the layer to remove.
+        """
+        cell_id = self._layer_to_cell[layer_id]
+        grid_id = self._cell_to_grid[cell_id]
+        cell = self._grids[grid_id].cells[cell_id]
+
+        # Find and remove the layer
+        cell.layers = [layer for layer in cell.layers if layer.layer_id != layer_id]
+
+        # Unsubscribe and clean up layer state
+        if layer_id in self._layer_to_subscription:
+            self._job_orchestrator.unsubscribe(self._layer_to_subscription[layer_id])
+            del self._layer_to_subscription[layer_id]
+        self._layer_state.pop(layer_id, None)
+        del self._layer_to_cell[layer_id]
+
+        # If no layers left, remove the entire cell
+        if not cell.layers:
+            self.remove_plot(cell_id)
+            return
+
+        self._persist_to_store()
+
+        # Notify with updated cell state
+        layer_states, composed = self.get_cell_state(cell_id)
+        self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
+
+    def update_layer_config(self, layer_id: LayerId, new_config: PlotConfig) -> None:
+        """
+        Update a layer's configuration and resubscribe to workflow.
+
+        When the workflow is next committed, the layer will be recreated
+        with the new configuration.
+
+        Parameters
+        ----------
+        layer_id
+            ID of the layer to update.
+        new_config
+            New plot configuration.
+        """
+        cell_id = self._layer_to_cell[layer_id]
+        grid_id = self._cell_to_grid[cell_id]
+        cell = self._grids[grid_id].cells[cell_id]
+
+        # Find and update the layer
+        updated_layer: Layer | None = None
+        for i, layer in enumerate(cell.layers):
+            if layer.layer_id == layer_id:
+                updated_layer = Layer(layer_id=layer_id, config=new_config)
+                cell.layers[i] = updated_layer
+                break
+
+        if updated_layer is None:
+            raise KeyError(f'Layer {layer_id} not found in cell {cell_id}')
+
         # Unsubscribe from old workflow notifications
-        self._job_orchestrator.unsubscribe(self._cell_to_subscription[cell_id])
+        if layer_id in self._layer_to_subscription:
+            self._job_orchestrator.unsubscribe(self._layer_to_subscription[layer_id])
+            del self._layer_to_subscription[layer_id]
 
-        # Update configuration
-        cell.config = new_config
-
-        # Clear stored state since config changed (new plot will be created)
-        self._cell_state.pop(cell_id, None)
+        # Clear layer state since config changed
+        self._layer_state.pop(layer_id, None)
 
         # Re-subscribe to workflow
-        self._subscribe_and_setup(grid_id, cell_id, new_config.workflow_id)
+        self._subscribe_layer(grid_id, cell_id, updated_layer)
 
-    def _subscribe_and_setup(
-        self, grid_id: GridId, cell_id: CellId, workflow_id: WorkflowId
-    ) -> None:
+    def _subscribe_layer(self, grid_id: GridId, cell_id: CellId, layer: Layer) -> None:
         """
-        Subscribe to workflow availability and set up initial notification.
+        Subscribe a layer to workflow availability and set up initial notification.
 
         This method handles two scenarios depending on workflow state:
 
@@ -430,52 +544,50 @@ class PlotOrchestrator:
 
         1. Subscribe to workflow (callback not invoked)
         2. Notify UI that cell is "waiting for workflow"
-        3. Later, when workflow is committed, callback fires -> _on_job_available
+        3. Later, when workflow is committed, callback fires -> _on_layer_job_available
 
         **Scenario B: Workflow already running**
 
         1. Subscribe to workflow (callback invoked immediately with job_number)
-        2. _on_job_available sets up data pipeline
-        3. If data exists: plot created immediately
+        2. _on_layer_job_available sets up data pipeline
+        3. If data exists: dmap created immediately
            If no data yet: notify UI "waiting for data"
-
-        In both scenarios, the UI receives exactly one notification from this method
-        or from _on_job_available, never both.
 
         Parameters
         ----------
         grid_id
             ID of the grid containing the cell.
         cell_id
-            ID of the cell to set up.
-        workflow_id
-            ID of the workflow to subscribe to.
+            ID of the cell containing the layer.
+        layer
+            The layer to subscribe.
         """
+        layer_id = layer.layer_id
 
         def on_workflow_available(job_number: JobNumber) -> None:
-            self._on_job_available(cell_id, job_number)
+            self._on_layer_job_available(layer_id, job_number)
 
         # Subscribe to workflow availability.
         # Returns whether callback was invoked immediately (workflow already running).
         subscription_id, was_invoked = self._job_orchestrator.subscribe_to_workflow(
-            workflow_id=workflow_id,
+            workflow_id=layer.config.workflow_id,
             callback=on_workflow_available,
         )
-        self._cell_to_subscription[cell_id] = subscription_id
+        self._layer_to_subscription[layer_id] = subscription_id
 
         # Scenario A: Workflow doesn't exist yet.
         # Notify UI that cell is waiting for workflow to be committed.
-        # When workflow starts, _on_job_available will handle the rest.
         if not was_invoked:
             cell = self._grids[grid_id].cells[cell_id]
-            self._notify_cell_updated(grid_id, cell_id, cell)
+            layer_states, composed = self.get_cell_state(cell_id)
+            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
 
         # Persist updated state
         self._persist_to_store()
 
-    def _on_job_available(self, cell_id: CellId, job_number: JobNumber) -> None:
+    def _on_layer_job_available(self, layer_id: LayerId, job_number: JobNumber) -> None:
         """
-        Handle workflow availability notification from JobOrchestrator.
+        Handle workflow availability notification for a layer.
 
         Called when a workflow job becomes available (either immediately during
         subscription if workflow was already running, or later when committed).
@@ -484,85 +596,130 @@ class PlotOrchestrator:
 
         1. Set up data pipeline with on_first_data callback
         2. If data already exists in DataService:
-           - on_first_data fires immediately -> plot created -> state stored
-           - No notification here (on_first_data already notified)
+           - on_first_data fires immediately -> dmap created -> state stored
+           - Compose and notify
         3. If no data yet:
-           - Notify UI that cell is "waiting for data"
-           - Later when data arrives, on_first_data fires -> plot created
-
-        **State tracking:**
-
-        - ``self._cell_state[cell_id]`` is set when plot is created or on error
-        - The check ``if cell_id not in self._cell_state`` prevents double
-          notification when on_first_data already ran synchronously
+           - Notify UI that layer is "waiting for data"
+           - Later when data arrives, on_first_data fires -> dmap created
 
         Parameters
         ----------
-        cell_id
-            ID of the plot cell to create plot for.
+        layer_id
+            ID of the layer to create plot for.
         job_number
             Job number for the workflow.
         """
-        # Defensive check: cell may have been removed before callback fires
-        if cell_id not in self._cell_to_grid:
+        # Defensive check: layer may have been removed before callback fires
+        if layer_id not in self._layer_to_cell:
             self._logger.warning(
-                'Ignoring workflow availability for removed cell_id=%s', cell_id
+                'Ignoring workflow availability for removed layer_id=%s', layer_id
             )
             return
 
+        cell_id = self._layer_to_cell[layer_id]
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
+        # Find the layer config
+        config = self.get_layer_config(layer_id)
+
         def on_data_arrived(pipe) -> None:
-            """Create plot when first data arrives for the pipeline."""
+            """Create dmap when first data arrives for the pipeline."""
             self._logger.debug(
-                'Data arrived for cell_id=%s, job_number=%s, creating plot',
-                cell_id,
+                'Data arrived for layer_id=%s, job_number=%s, creating dmap',
+                layer_id,
                 job_number,
             )
-            # Create the plot with the now-populated pipe
+            # Create the dmap with the now-populated pipe
             try:
-                plot = self._plotting_controller.create_plot_from_pipeline(
-                    plot_name=cell.config.plot_name,
-                    params=cell.config.params,
+                dmap = self._plotting_controller.create_plot_from_pipeline(
+                    plot_name=config.plot_name,
+                    params=config.params,
                     pipe=pipe,
                 )
-                # Store the plot so late subscribers can access it
-                self._cell_state[cell_id] = CellState(plot=plot)
-                self._notify_cell_updated(grid_id, cell_id, cell, plot=plot)
+                # Store layer state
+                self._layer_state[layer_id] = LayerState(pipe=pipe, dmap=dmap)
+
+                # Compose and notify
+                layer_states, composed = self.get_cell_state(cell_id)
+                self._notify_cell_updated(
+                    grid_id, cell_id, cell, layer_states, composed
+                )
             except Exception:
                 error_msg = traceback.format_exc()
-                self._logger.exception('Failed to create plot for cell_id=%s', cell_id)
-                # Store the error so late subscribers can see it
-                self._cell_state[cell_id] = CellState(error=error_msg)
-                self._notify_cell_updated(grid_id, cell_id, cell, error=error_msg)
+                self._logger.exception(
+                    'Failed to create plot for layer_id=%s', layer_id
+                )
+                self._layer_state[layer_id] = LayerState(error=error_msg)
+                layer_states, composed = self.get_cell_state(cell_id)
+                self._notify_cell_updated(
+                    grid_id, cell_id, cell, layer_states, composed
+                )
 
         # Set up data pipeline with callback
         try:
             self._plotting_controller.setup_data_pipeline(
                 job_number=job_number,
-                workflow_id=cell.config.workflow_id,
-                source_names=cell.config.source_names,
-                output_name=cell.config.output_name,
-                plot_name=cell.config.plot_name,
-                params=cell.config.params,
+                workflow_id=config.workflow_id,
+                source_names=config.source_names,
+                output_name=config.output_name,
+                plot_name=config.plot_name,
+                params=config.params,
                 on_first_data=on_data_arrived,
             )
         except Exception:
             error_msg = traceback.format_exc()
             self._logger.exception(
-                'Failed to set up data pipeline for cell_id=%s', cell_id
+                'Failed to set up data pipeline for layer_id=%s', layer_id
             )
-            self._cell_state[cell_id] = CellState(error=error_msg)
-            self._notify_cell_updated(grid_id, cell_id, cell, error=error_msg)
+            self._layer_state[layer_id] = LayerState(error=error_msg)
+            layer_states, composed = self.get_cell_state(cell_id)
+            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
             return
 
-        # Case 2: Workflow exists but data hasn't arrived yet
-        # Notify UI that cell is waiting for first data to arrive.
-        # When data arrives, on_data_arrived callback above will notify with the plot.
-        # (If data was already present, on_data_arrived ran and stored state)
-        if cell_id not in self._cell_state:
-            self._notify_cell_updated(grid_id, cell_id, cell)
+        # If data hasn't arrived yet (on_data_arrived not called synchronously),
+        # notify UI that layer is waiting for data
+        if layer_id not in self._layer_state:
+            layer_states, composed = self.get_cell_state(cell_id)
+            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
+
+    def _compose_cell_plot(self, cell: PlotCell) -> Any:
+        """
+        Compose all ready layers in a cell into a single plot.
+
+        For single-layer cells, returns the layer's plot directly (already an
+        hv.Layout from PlottingController). For multi-layer cells, composes
+        the plots via hv.Overlay.
+
+        Parameters
+        ----------
+        cell
+            The plot cell with layers to compose.
+
+        Returns
+        -------
+        :
+            Composed plot, or None if no layers have data.
+        """
+        plots = []
+        for layer in cell.layers:
+            state = self._layer_state.get(layer.layer_id)
+            if state is not None and state.dmap is not None:
+                plots.append(state.dmap)
+
+        if not plots:
+            return None
+
+        if len(plots) == 1:
+            # Single layer: return its plot directly (already hv.Layout)
+            return plots[0]
+
+        # Multiple layers: need to compose them
+        # Each plot is an hv.Layout - for now just return the first one
+        # TODO: Properly compose multiple layers via hv.Overlay
+        import holoviews as hv
+
+        return hv.Layout(plots).opts(shared_axes=False)
 
     def _validate_params(
         self, plot_name: str, params: dict[str, Any]
@@ -607,43 +764,83 @@ class PlotOrchestrator:
         Parse a raw cell dict into a typed PlotCell.
 
         Use this to convert cells from templates or persisted configurations
-        into typed objects that can be passed to :py:meth:`add_grid`.
+        into typed objects that can be passed to :py:meth:`add_plot`.
+
+        Supports two formats:
+        - Legacy format: 'geometry' + 'config' (single layer)
+        - New format: 'geometry' + 'layers' (multiple layers)
 
         Parameters
         ----------
         cell_data
-            Cell configuration dict with 'geometry' and 'config' keys.
-            The config must contain: workflow_id, source_names, plot_name.
+            Cell configuration dict with 'geometry' and either 'config' or 'layers'.
+            Each layer/config must contain: workflow_id, source_names, plot_name.
             Optional: output_name, params.
 
         Returns
         -------
         :
-            Parsed PlotCell, or None if the plotter is unknown (cell skipped).
+            Parsed PlotCell, or None if all plotters are unknown (cell skipped).
         """
-        config_data = cell_data['config']
-        plot_name = config_data['plot_name']
-
-        # Validate params, skipping cells with unknown plotters
-        params = self._validate_params(plot_name, config_data.get('params', {}))
-        if params is None:
-            return None
-
         geometry = CellGeometry(
             row=cell_data['geometry']['row'],
             col=cell_data['geometry']['col'],
             row_span=cell_data['geometry']['row_span'],
             col_span=cell_data['geometry']['col_span'],
         )
+
+        # Handle both legacy 'config' and new 'layers' format
+        if 'layers' in cell_data:
+            raw_layers = cell_data['layers']
+        elif 'config' in cell_data:
+            # Legacy format: wrap single config in list
+            raw_layers = [cell_data['config']]
+        else:
+            self._logger.warning('Cell has neither config nor layers, skipping')
+            return None
+
+        layers: list[Layer] = []
+        for layer_data in raw_layers:
+            layer = self._parse_raw_layer(layer_data)
+            if layer is not None:
+                layers.append(layer)
+
+        if not layers:
+            return None
+
+        return PlotCell(geometry=geometry, layers=layers)
+
+    def _parse_raw_layer(self, layer_data: dict[str, Any]) -> Layer | None:
+        """
+        Parse a raw layer dict into a typed Layer.
+
+        Parameters
+        ----------
+        layer_data
+            Layer configuration dict with: workflow_id, source_names, plot_name.
+            Optional: output_name, params.
+
+        Returns
+        -------
+        :
+            Parsed Layer with a new LayerId, or None if the plotter is unknown.
+        """
+        plot_name = layer_data['plot_name']
+
+        # Validate params, skipping layers with unknown plotters
+        params = self._validate_params(plot_name, layer_data.get('params', {}))
+        if params is None:
+            return None
+
         config = PlotConfig(
-            workflow_id=WorkflowId.from_string(config_data['workflow_id']),
-            output_name=config_data.get('output_name'),
-            source_names=config_data['source_names'],
+            workflow_id=WorkflowId.from_string(layer_data['workflow_id']),
+            output_name=layer_data.get('output_name', 'result'),
+            source_names=layer_data['source_names'],
             plot_name=plot_name,
             params=params,
         )
 
-        return PlotCell(geometry=geometry, config=config)
+        return Layer(layer_id=LayerId(uuid4()), config=config)
 
     def get_available_templates(self) -> list[GridSpec]:
         """
@@ -751,13 +948,16 @@ class PlotOrchestrator:
                             'row_span': cell.geometry.row_span,
                             'col_span': cell.geometry.col_span,
                         },
-                        'config': {
-                            'workflow_id': str(cell.config.workflow_id),
-                            'output_name': cell.config.output_name,
-                            'source_names': cell.config.source_names,
-                            'plot_name': cell.config.plot_name,
-                            'params': cell.config.params.model_dump(mode='json'),
-                        },
+                        'layers': [
+                            {
+                                'workflow_id': str(layer.config.workflow_id),
+                                'output_name': layer.config.output_name,
+                                'source_names': layer.config.source_names,
+                                'plot_name': layer.config.plot_name,
+                                'params': layer.config.params.model_dump(mode='json'),
+                            }
+                            for layer in cell.layers
+                        ],
                     }
                     for cell in grid.cells.values()
                 ],
@@ -916,8 +1116,8 @@ class PlotOrchestrator:
         grid_id: GridId,
         cell_id: CellId,
         cell: PlotCell,
+        layer_states: dict[LayerId, LayerState],
         plot: hv.DynamicMap | hv.Layout | None = None,
-        error: str | None = None,
     ) -> None:
         """Notify subscribers that a cell was added or updated."""
         for subscription in self._lifecycle_subscribers.values():
@@ -927,8 +1127,8 @@ class PlotOrchestrator:
                         grid_id=grid_id,
                         cell_id=cell_id,
                         cell=cell,
+                        layer_states=layer_states,
                         plot=plot,
-                        error=error,
                     )
                 except Exception:
                     self._logger.exception(

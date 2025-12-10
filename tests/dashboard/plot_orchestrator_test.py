@@ -8,6 +8,8 @@ import pytest
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
     GridId,
+    Layer,
+    LayerId,
     PlotCell,
     PlotConfig,
     PlotGridConfig,
@@ -19,6 +21,12 @@ class FakePlotParams(pydantic.BaseModel):
     """Flexible fake params model that accepts any fields."""
 
     model_config = pydantic.ConfigDict(extra='allow')
+
+
+def make_plot_cell(geometry: CellGeometry, config: PlotConfig) -> PlotCell:
+    """Helper to create a PlotCell with a single layer."""
+    layer = Layer(layer_id=LayerId(uuid.uuid4()), config=config)
+    return PlotCell(geometry=geometry, layers=[layer])
 
 
 class FakePlotterSpec:
@@ -226,9 +234,9 @@ def plot_config(workflow_id):
 
 @pytest.fixture
 def plot_cell(plot_config):
-    """Create a basic PlotCell."""
+    """Create a basic PlotCell with one layer."""
     geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-    return PlotCell(geometry=geometry, config=plot_config)
+    return make_plot_cell(geometry=geometry, config=plot_config)
 
 
 @pytest.fixture
@@ -350,13 +358,15 @@ class TestGridManagement:
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
-        # Get grid and modify a cell's config (params is a Pydantic model)
+        # Get grid and modify a cell's layer config (params is a Pydantic model)
         grid = plot_orchestrator.get_grid(grid_id)
-        grid.cells[cell_id].config.params.new_param = 'new_value'
+        grid.cells[cell_id].layers[0].config.params.new_param = 'new_value'
 
         # Verify internal state unchanged
         internal_grid = plot_orchestrator.get_grid(grid_id)
-        assert not hasattr(internal_grid.cells[cell_id].config.params, 'new_param')
+        assert not hasattr(
+            internal_grid.cells[cell_id].layers[0].config.params, 'new_param'
+        )
         # Geometry is frozen and cannot be modified
         assert internal_grid.cells[cell_id].geometry.row == 0
 
@@ -386,13 +396,17 @@ class TestGridManagement:
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
-        # Get all grids and modify a cell (params is a Pydantic model)
+        # Get all grids and modify a cell's layer (params is a Pydantic model)
         all_grids = plot_orchestrator.get_all_grids()
-        all_grids[grid_id].cells[cell_id].config.params.new_param = 'new_value'
+        all_grids[grid_id].cells[cell_id].layers[
+            0
+        ].config.params.new_param = 'new_value'
 
         # Verify internal state unchanged
         internal_grid = plot_orchestrator.get_grid(grid_id)
-        assert not hasattr(internal_grid.cells[cell_id].config.params, 'new_param')
+        assert not hasattr(
+            internal_grid.cells[cell_id].layers[0].config.params, 'new_param'
+        )
         # Geometry is frozen and cannot be modified
         assert internal_grid.cells[cell_id].geometry.row == 0
 
@@ -424,23 +438,31 @@ class TestCellManagement:
         grid = plot_orchestrator.get_grid(grid_id)
         assert cell_id not in grid.cells
 
-    def test_get_plot_config_returns_correct_config(
+    def test_get_layer_config_returns_correct_config(
         self, plot_orchestrator, plot_cell, plot_config
     ):
-        """Get plot config returns correct config."""
+        """Get layer config returns correct config."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
-        retrieved_config = plot_orchestrator.get_plot_config(cell_id)
+        # Get the layer_id from the cell
+        grid = plot_orchestrator.get_grid(grid_id)
+        layer_id = grid.cells[cell_id].layers[0].layer_id
+
+        retrieved_config = plot_orchestrator.get_layer_config(layer_id)
 
         assert retrieved_config == plot_config
 
-    def test_update_plot_config_changes_the_config(
+    def test_update_layer_config_changes_the_config(
         self, plot_orchestrator, plot_cell, plot_config, workflow_id
     ):
-        """Update plot config changes the config."""
+        """Update layer config changes the config."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Get the layer_id from the cell
+        grid = plot_orchestrator.get_grid(grid_id)
+        layer_id = grid.cells[cell_id].layers[0].layer_id
 
         new_config = PlotConfig(
             workflow_id=workflow_id,
@@ -449,9 +471,9 @@ class TestCellManagement:
             plot_name='new_plot',
             params=FakePlotParams(new_param='new_value'),
         )
-        plot_orchestrator.update_plot_config(cell_id, new_config)
+        plot_orchestrator.update_layer_config(layer_id, new_config)
 
-        retrieved_config = plot_orchestrator.get_plot_config(cell_id)
+        retrieved_config = plot_orchestrator.get_layer_config(layer_id)
         assert retrieved_config == new_config
         assert retrieved_config.output_name == 'new_output'
 
@@ -459,7 +481,7 @@ class TestCellManagement:
         """Add multiple cells to same grid."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
 
-        cell_1 = PlotCell(
+        cell_1 = make_plot_cell(
             geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
             config=PlotConfig(
                 workflow_id=workflow_id,
@@ -469,7 +491,7 @@ class TestCellManagement:
                 params=FakePlotParams(),
             ),
         )
-        cell_2 = PlotCell(
+        cell_2 = make_plot_cell(
             geometry=CellGeometry(row=1, col=1, row_span=1, col_span=1),
             config=PlotConfig(
                 workflow_id=workflow_id,
@@ -532,11 +554,11 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
         # Add data for ALL sources (plot requires both source1 and source2)
-        for source_name in plot_cell.config.source_names:
+        for source_name in plot_cell.layers[0].config.source_names:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell.config.output_name,
+                output_name=plot_cell.layers[0].config.output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -545,7 +567,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         calls = fake_plotting_controller.get_calls()
         # With two-phase creation, create_plot_from_pipeline is called (not create_plot)
         assert calls[0]['_from_pipeline'] is True
-        assert calls[0]['plot_name'] == plot_cell.config.plot_name
+        assert calls[0]['plot_name'] == plot_cell.layers[0].config.plot_name
 
     def test_workflow_commit_before_cell_added_creates_plot_when_cell_added(
         self,
@@ -572,11 +594,11 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        for source_name in plot_cell.config.source_names:
+        for source_name in plot_cell.layers[0].config.source_names:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell.config.output_name,
+                output_name=plot_cell.layers[0].config.output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -596,7 +618,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
 
         # Add multiple cells with same workflow_id
-        cell_1 = PlotCell(
+        cell_1 = make_plot_cell(
             geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
             config=PlotConfig(
                 workflow_id=workflow_id,
@@ -606,7 +628,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
                 params=FakePlotParams(),
             ),
         )
-        cell_2 = PlotCell(
+        cell_2 = make_plot_cell(
             geometry=CellGeometry(row=1, col=1, row_span=1, col_span=1),
             config=PlotConfig(
                 workflow_id=workflow_id,
@@ -633,9 +655,10 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(
-                    source_name=cell.config.source_names[0], job_number=job_number
+                    source_name=cell.layers[0].config.source_names[0],
+                    job_number=job_number,
                 ),
-                output_name=cell.config.output_name,
+                output_name=cell.layers[0].config.output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -685,6 +708,10 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
+        # Get layer_id for the cell
+        grid = plot_orchestrator.get_grid(grid_id)
+        layer_id = grid.cells[cell_id].layers[0].layer_id
+
         # Update to different workflow_id
         new_config = PlotConfig(
             workflow_id=workflow_id_2,
@@ -693,7 +720,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
             plot_name='new_plot',
             params=FakePlotParams(),
         )
-        plot_orchestrator.update_plot_config(cell_id, new_config)
+        plot_orchestrator.update_layer_config(layer_id, new_config)
 
         # Commit new workflow
         job_ids = commit_workflow_for_test(
@@ -770,10 +797,11 @@ class TestLifecycleEventNotifications:
             'cell_id',
             'cell',
             'plot',
-            'error',
+            'layer_states',
         }
-        # error should be None
-        assert call_kwargs['error'] is None
+        # layer_states should have no errors
+        for state in call_kwargs['layer_states'].values():
+            assert state.error is None
 
     def test_on_cell_updated_called_when_plot_created_with_plot_object(
         self,
@@ -804,11 +832,11 @@ class TestLifecycleEventNotifications:
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        for source_name in plot_cell.config.source_names:
+        for source_name in plot_cell.layers[0].config.source_names:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell.config.output_name,
+                output_name=plot_cell.layers[0].config.output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -819,7 +847,9 @@ class TestLifecycleEventNotifications:
         assert call_kwargs['cell_id'] == cell_id
         assert call_kwargs['cell'] == plot_cell
         assert call_kwargs['plot'] == fake_plotting_controller._plot_object
-        assert call_kwargs['error'] is None  # No error
+        # layer_states should have no errors
+        for state in call_kwargs['layer_states'].values():
+            assert state.error is None
 
     def test_on_cell_updated_called_when_plot_fails_with_error_message(
         self,
@@ -850,11 +880,11 @@ class TestLifecycleEventNotifications:
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        for source_name in plot_cell.config.source_names:
+        for source_name in plot_cell.layers[0].config.source_names:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell.config.output_name,
+                output_name=plot_cell.layers[0].config.output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
@@ -865,17 +895,24 @@ class TestLifecycleEventNotifications:
         assert call_kwargs['cell_id'] == cell_id
         assert call_kwargs['cell'] == plot_cell
         assert call_kwargs['plot'] is None  # No plot
-        assert 'Test error' in call_kwargs['error']  # Error message
+        # layer_states should have error
+        errors = [s.error for s in call_kwargs['layer_states'].values() if s.error]
+        assert len(errors) == 1
+        assert 'Test error' in errors[0]
 
-    def test_on_cell_updated_called_when_config_updated_no_plot_yet(
+    def test_on_cell_updated_called_when_layer_config_updated_no_plot_yet(
         self, plot_orchestrator, plot_cell, workflow_id
     ):
-        """on_cell_updated called when config updated (no plot yet)."""
+        """on_cell_updated called when layer config updated (no plot yet)."""
         callback = CallbackCapture()
         plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Get layer_id for the cell
+        grid = plot_orchestrator.get_grid(grid_id)
+        layer_id = grid.cells[cell_id].layers[0].layer_id
 
         # Update config
         new_config = PlotConfig(
@@ -885,7 +922,7 @@ class TestLifecycleEventNotifications:
             plot_name='new_plot',
             params=FakePlotParams(),
         )
-        plot_orchestrator.update_plot_config(cell_id, new_config)
+        plot_orchestrator.update_layer_config(layer_id, new_config)
 
         # Should have been called twice (add + update)
         assert callback.call_count == 2
@@ -986,18 +1023,21 @@ class TestErrorHandling:
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        for source_name in plot_cell.config.source_names:
+        for source_name in plot_cell.layers[0].config.source_names:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell.config.output_name,
+                output_name=plot_cell.layers[0].config.output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
         # Called 3x: add cell, commit (waiting), data arrival (error)
         assert callback.call_count == 3
         call_kwargs = callback.call_args[1]
-        assert 'Plot creation failed' in call_kwargs['error']
+        # layer_states should have error
+        errors = [s.error for s in call_kwargs['layer_states'].values() if s.error]
+        assert len(errors) == 1
+        assert 'Plot creation failed' in errors[0]
 
     def test_plotting_controller_raises_exception_orchestrator_remains_usable(
         self,
@@ -1067,7 +1107,7 @@ class TestCleanupAndResourceManagement:
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
 
         for i in range(3):
-            cell = PlotCell(
+            cell = make_plot_cell(
                 geometry=CellGeometry(row=i, col=0, row_span=1, col_span=1),
                 config=PlotConfig(
                     workflow_id=workflow_id,
@@ -1138,14 +1178,16 @@ class TestLateSubscriberPlotRetrieval:
     def test_get_cell_state_returns_none_for_cell_without_plot(
         self, plot_orchestrator, plot_cell
     ):
-        """get_cell_state should return (None, None) for cell without plot."""
+        """get_cell_state should return empty layer_states and None plot."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
 
         # Cell exists but workflow hasn't committed yet
-        plot, error = plot_orchestrator.get_cell_state(cell_id)
+        layer_states, plot = plot_orchestrator.get_cell_state(cell_id)
         assert plot is None
-        assert error is None
+        # All layers should have no errors
+        for state in layer_states.values():
+            assert state.error is None
 
     def test_get_cell_state_returns_plot_after_workflow_commits(
         self,
@@ -1169,19 +1211,21 @@ class TestLateSubscriberPlotRetrieval:
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        for source_name in plot_cell.config.source_names:
+        for source_name in plot_cell.layers[0].config.source_names:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell.config.output_name,
+                output_name=plot_cell.layers[0].config.output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
         # Now get_cell_state should return the plot
-        plot, error = plot_orchestrator.get_cell_state(cell_id)
+        layer_states, plot = plot_orchestrator.get_cell_state(cell_id)
         assert plot is not None
         assert isinstance(plot, FakePlot)
-        assert error is None
+        # All layers should have no errors
+        for state in layer_states.values():
+            assert state.error is None
 
     def test_get_cell_state_returns_error_when_plot_creation_fails(
         self,
@@ -1204,7 +1248,7 @@ class TestLateSubscriberPlotRetrieval:
         )
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        plot_cell = PlotCell(
+        plot_cell = make_plot_cell(
             geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
             config=PlotConfig(
                 workflow_id=workflow_id,
@@ -1232,10 +1276,12 @@ class TestLateSubscriberPlotRetrieval:
         )
         fake_data_service[result_key] = sc.scalar(1.0)
 
-        # get_cell_state should return error (full traceback)
-        plot, error = plot_orchestrator.get_cell_state(cell_id)
+        # get_cell_state should return error in layer_states
+        layer_states, plot = plot_orchestrator.get_cell_state(cell_id)
         assert plot is None
-        assert "Plot creation failed" in error
+        errors = [s.error for s in layer_states.values() if s.error]
+        assert len(errors) == 1
+        assert "Plot creation failed" in errors[0]
 
     def test_late_subscriber_can_retrieve_existing_plots_from_all_cells(
         self,
@@ -1262,7 +1308,7 @@ class TestLateSubscriberPlotRetrieval:
 
         cell_ids = []
         for i in range(3):
-            plot_cell = PlotCell(
+            plot_cell = make_plot_cell(
                 geometry=CellGeometry(row=i, col=0, row_span=1, col_span=1),
                 config=PlotConfig(
                     workflow_id=workflow_id,
@@ -1302,12 +1348,14 @@ class TestLateSubscriberPlotRetrieval:
 
         # Late subscriber retrieves plots for all cells via get_cell_state
         for cell_id in cell_ids:
-            plot, error = plot_orchestrator.get_cell_state(cell_id)
+            layer_states, plot = plot_orchestrator.get_cell_state(cell_id)
             assert plot is not None, f"Plot should exist for cell {cell_id}"
             assert isinstance(plot, FakePlot)
-            assert error is None
+            # All layers should have no errors
+            for state in layer_states.values():
+                assert state.error is None
 
-    def test_get_cell_state_updated_when_cell_config_updated_with_running_workflow(
+    def test_get_cell_state_updated_when_layer_config_updated_with_running_workflow(
         self,
         plot_orchestrator,
         plot_cell,
@@ -1318,10 +1366,15 @@ class TestLateSubscriberPlotRetrieval:
         fake_plotting_controller,
     ):
         """
-        When config is updated and workflow is running, plot is immediately recreated.
+        When layer config is updated and workflow is running, plot is recreated.
         """
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = plot_orchestrator.add_plot(grid_id, plot_cell)
+
+        # Get layer_id and config
+        grid = plot_orchestrator.get_grid(grid_id)
+        layer_id = grid.cells[cell_id].layers[0].layer_id
+        config = grid.cells[cell_id].layers[0].config
 
         # Commit workflow
         job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
@@ -1332,20 +1385,19 @@ class TestLateSubscriberPlotRetrieval:
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        for source_name in plot_cell.config.source_names:
+        for source_name in config.source_names:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number1),
-                output_name=plot_cell.config.output_name,
+                output_name=config.output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
-        # Verify plot exists
-        plot1, error = plot_orchestrator.get_cell_state(cell_id)
+        # Verify plot exists (get_cell_state now returns layer_states, plot)
+        layer_states, plot1 = plot_orchestrator.get_cell_state(cell_id)
         assert plot1 is not None
-        assert error is None
 
-        # Update config while workflow is still running
+        # Update layer config while workflow is still running
         new_config = PlotConfig(
             workflow_id=workflow_id,
             output_name='new_output',
@@ -1353,7 +1405,7 @@ class TestLateSubscriberPlotRetrieval:
             plot_name='new_plot',
             params=FakePlotParams(),
         )
-        plot_orchestrator.update_plot_config(cell_id, new_config)
+        plot_orchestrator.update_layer_config(layer_id, new_config)
 
         # Simulate data arrival for new config
         result_key2 = ResultKey(
@@ -1364,9 +1416,8 @@ class TestLateSubscriberPlotRetrieval:
         fake_data_service[result_key2] = sc.scalar(2.0)
 
         # Since workflow is still running, plot should be immediately recreated
-        plot2, error = plot_orchestrator.get_cell_state(cell_id)
+        layer_states2, plot2 = plot_orchestrator.get_cell_state(cell_id)
         assert plot2 is not None
-        assert error is None
 
         # Verify plot was recreated with new config
         assert fake_plotting_controller.call_count() == 2
@@ -1396,25 +1447,26 @@ class TestLateSubscriberPlotRetrieval:
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
-        for source_name in plot_cell.config.source_names:
+        for source_name in plot_cell.layers[0].config.source_names:
             result_key = ResultKey(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell.config.output_name,
+                output_name=plot_cell.layers[0].config.output_name,
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
         # Verify plot exists
-        plot, error = plot_orchestrator.get_cell_state(cell_id)
+        layer_states, plot = plot_orchestrator.get_cell_state(cell_id)
         assert plot is not None
 
         # Remove cell
         plot_orchestrator.remove_plot(cell_id)
 
-        # get_cell_state should now return None (cell doesn't exist)
-        plot, error = plot_orchestrator.get_cell_state(cell_id)
-        assert plot is None
-        assert error is None
+        # get_cell_state should raise KeyError since cell doesn't exist
+        import pytest
+
+        with pytest.raises(KeyError):
+            plot_orchestrator.get_cell_state(cell_id)
 
 
 class TestSourceNameFiltering:
@@ -1438,7 +1490,7 @@ class TestSourceNameFiltering:
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
 
         # Create a plot that wants data from source_A
-        plot_cell = PlotCell(
+        plot_cell = make_plot_cell(
             geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
             config=PlotConfig(
                 workflow_id=workflow_id,
@@ -1505,7 +1557,7 @@ class TestSourceNameFiltering:
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
 
         # Create a plot that wants data from BOTH source_A and source_B
-        plot_cell = PlotCell(
+        plot_cell = make_plot_cell(
             geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
             config=PlotConfig(
                 workflow_id=workflow_id,
@@ -1586,7 +1638,7 @@ class TestSourceNameFiltering:
 
         # NOW add the plot (late subscription)
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        plot_cell = PlotCell(
+        plot_cell = make_plot_cell(
             geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
             config=PlotConfig(
                 workflow_id=workflow_id,
@@ -1636,7 +1688,7 @@ class TestSourceNameFiltering:
 
         # NOW add the plot wanting source_A (late subscription)
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        plot_cell = PlotCell(
+        plot_cell = make_plot_cell(
             geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
             config=PlotConfig(
                 workflow_id=workflow_id,
