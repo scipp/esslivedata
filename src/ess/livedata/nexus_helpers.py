@@ -7,6 +7,7 @@ was streamed during acquisition.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -134,8 +135,6 @@ def suggest_internal_name(info: StreamInfo) -> str:
             if i > 0:
                 name = parts[i - 1]
                 # Remove common suffixes like '_r0', '_01' etc.
-                import re
-
                 name = re.sub(r'_[rt]\d+$', '', name)
                 return name
     # Fallback: use last non-value component
@@ -159,8 +158,6 @@ def filter_f144_streams(
     exclude_patterns:
         List of regex patterns to exclude from results (matched against group_path).
     """
-    import re
-
     exclude_patterns = exclude_patterns or []
     exclude_regexes = [re.compile(p) for p in exclude_patterns]
 
@@ -184,7 +181,7 @@ def generate_f144_log_streams_code(
 ) -> str:
     """Generate Python code for f144_log_streams dictionary.
 
-    The generated dictionary maps internal names to source and units info,
+    The generated dictionary maps internal names to source, units, and topic info,
     which can be used to derive both f144_attribute_registry and StreamLUT.
 
     Parameters
@@ -215,9 +212,11 @@ def generate_f144_log_streams_code(
     for name in sorted(by_name.keys()):
         info = by_name[name]
         units = info.units or 'dimensionless'
-        lines.append(
-            f"    '{name}': {{'source': '{info.source}', 'units': '{units}'}},"
+        entry = (
+            f"    '{name}': {{'source': '{info.source}', 'units': '{units}', "
+            f"'topic': '{topic}'}}"
         )
+        lines.append(f"{entry},")
 
     lines.append("}")
     return '\n'.join(lines)
