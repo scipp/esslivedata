@@ -102,12 +102,12 @@ class LayerState:
     """
     Runtime state of a single layer within a plot cell.
 
-    Tracks the data pipeline and plot for one layer. Either dmap or error
+    Tracks the data pipeline and plot for one layer. Either plot or error
     is set (mutually exclusive). Both None indicates layer is waiting for data.
     """
 
     pipe: Any = None
-    dmap: hv.DynamicMap | hv.Layout | None = None
+    plot: hv.DynamicMap | hv.Layout | None = None
     error: str | None = None
 
 
@@ -183,7 +183,7 @@ class CellUpdatedCallback(Protocol):
         cell
             Plot cell configuration with all layers.
         layer_states
-            Per-layer runtime state (pipe, dmap, error) for each layer in the cell.
+            Per-layer runtime state (pipe, plot, error) for each layer in the cell.
         plot
             The composed plot (hv.Overlay or hv.Layout), or None if no layers
             have data yet.
@@ -239,7 +239,7 @@ class PlotOrchestrator:
         self._cell_to_grid: dict[CellId, GridId] = {}
         # Per-layer workflow subscriptions (layer -> subscription)
         self._layer_to_subscription: dict[LayerId, SubscriptionId] = {}
-        # Per-layer runtime state (pipe, dmap, error)
+        # Per-layer runtime state (pipe, plot, error)
         self._layer_state: dict[LayerId, LayerState] = {}
         # Reverse lookup: layer -> cell
         self._layer_to_cell: dict[LayerId, CellId] = {}
@@ -547,7 +547,7 @@ class PlotOrchestrator:
 
         1. Subscribe to workflow (callback invoked immediately with job_number)
         2. _on_layer_job_available sets up data pipeline
-        3. If data exists: dmap created immediately
+        3. If data exists: plot created immediately
            If no data yet: notify UI "waiting for data"
 
         Parameters
@@ -593,11 +593,11 @@ class PlotOrchestrator:
 
         1. Set up data pipeline with on_first_data callback
         2. If data already exists in DataService:
-           - on_first_data fires immediately -> dmap created -> state stored
+           - on_first_data fires immediately -> plot created -> state stored
            - Compose and notify
         3. If no data yet:
            - Notify UI that layer is "waiting for data"
-           - Later when data arrives, on_first_data fires -> dmap created
+           - Later when data arrives, on_first_data fires -> plot created
 
         Parameters
         ----------
@@ -621,21 +621,21 @@ class PlotOrchestrator:
         config = self.get_layer_config(layer_id)
 
         def on_data_arrived(pipe) -> None:
-            """Create dmap when first data arrives for the pipeline."""
+            """Create plot when first data arrives for the pipeline."""
             self._logger.debug(
-                'Data arrived for layer_id=%s, job_number=%s, creating dmap',
+                'Data arrived for layer_id=%s, job_number=%s, creating plot',
                 layer_id,
                 job_number,
             )
-            # Create the dmap with the now-populated pipe
+            # Create the plot with the now-populated pipe
             try:
-                dmap = self._plotting_controller.create_plot_from_pipeline(
+                plot = self._plotting_controller.create_plot_from_pipeline(
                     plot_name=config.plot_name,
                     params=config.params,
                     pipe=pipe,
                 )
                 # Store layer state
-                self._layer_state[layer_id] = LayerState(pipe=pipe, dmap=dmap)
+                self._layer_state[layer_id] = LayerState(pipe=pipe, plot=plot)
 
                 # Compose and notify
                 layer_states, composed = self.get_cell_state(cell_id)
@@ -684,9 +684,8 @@ class PlotOrchestrator:
         """
         Compose all ready layers in a cell into a single plot.
 
-        For single-layer cells, returns the layer's plot directly (already an
-        hv.Layout from PlottingController). For multi-layer cells, extracts
-        the DynamicMaps and composes them via hv.Overlay.
+        For single-layer cells, returns the layer's plot directly. For multi-layer
+        cells, composes DynamicMaps via overlay.
 
         Parameters
         ----------
@@ -703,34 +702,28 @@ class PlotOrchestrator:
         plots = []
         for layer in cell.layers:
             state = self._layer_state.get(layer.layer_id)
-            if state is not None and state.dmap is not None:
-                plots.append(state.dmap)
+            if state is not None and state.plot is not None:
+                plots.append(state.plot)
 
         if not plots:
             return None
 
         if len(plots) == 1:
-            # Single layer: return its plot directly (already hv.Layout)
+            # Single layer: return as-is. May be DynamicMap or hv.Layout.
+            # hv.Layout is returned by roi_detector; this will be removed when
+            # roi_detector is migrated to the layer system.
             return plots[0]
 
-        # Multiple layers: extract DynamicMaps from Layouts and overlay them.
-        # PlottingController wraps each plot in hv.Layout([dmap]) for shared_axes
-        # handling. We need to extract the dmaps to overlay them properly.
-        dmaps = []
+        # Multiple layers: hv.Layout cannot be composed with other layers.
+        # TODO: Remove this check when roi_detector is migrated to the layer system.
         for plot in plots:
             if isinstance(plot, hv.Layout):
-                # Extract all elements from the Layout
-                dmaps.extend(plot.values())
-            else:
-                dmaps.append(plot)
+                raise TypeError(
+                    "Cannot compose multiple layers when one returns hv.Layout. "
+                    "Layout-wrapped plots (e.g., roi_detector) must be single-layer."
+                )
 
-        # Compose via overlay
-        overlay = dmaps[0]
-        for dmap in dmaps[1:]:
-            overlay = overlay * dmap
-
-        # Wrap in Layout with shared_axes=False to preserve framewise autoscaling
-        return hv.Layout([overlay]).opts(shared_axes=False)
+        return hv.Overlay(plots)
 
     def _validate_params(
         self, plot_name: str, params: dict[str, Any]

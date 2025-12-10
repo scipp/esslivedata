@@ -338,7 +338,7 @@ class PlotGridTabs:
         cell
             Plot cell configuration with all layers.
         layer_states
-            Per-layer runtime state (pipe, dmap, error) for each layer.
+            Per-layer runtime state (pipe, plot, error) for each layer.
         plot
             The composed plot (hv.Overlay), or None if no layers have data yet.
         """
@@ -486,7 +486,7 @@ class PlotGridTabs:
             # Add state info to description
             if state.error is not None:
                 description = f"{description}\n\nError: {state.error}"
-            elif state.dmap is None:
+            elif state.plot is None:
                 description = f"{description}\n\nStatus: Waiting for data..."
 
             # Create callbacks that capture layer_id / cell_id
@@ -552,7 +552,7 @@ class PlotGridTabs:
             if state.error is not None:
                 status = f"Error: {state.error[:100]}..."
                 text_color = '#dc3545'
-            elif state.dmap is not None:
+            elif state.plot is not None:
                 status = "Ready"
                 text_color = '#28a745'
             else:
