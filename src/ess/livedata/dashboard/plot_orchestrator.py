@@ -236,11 +236,8 @@ class PlotOrchestrator:
 
         self._grids: dict[GridId, PlotGridConfig] = {}
         self._cell_to_grid: dict[CellId, GridId] = {}
-        # Per-layer workflow subscriptions (layer -> subscription)
         self._layer_to_subscription: dict[LayerId, SubscriptionId] = {}
-        # Per-layer runtime state (pipe, plot, error)
         self._layer_state: dict[LayerId, LayerState] = {}
-        # Reverse lookup: layer -> cell
         self._layer_to_cell: dict[LayerId, CellId] = {}
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
 
