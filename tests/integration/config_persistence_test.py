@@ -13,6 +13,13 @@ from ess.livedata.parameter_models import Scale, TimeUnit, TOAEdges
 from tests.integration.backend import DashboardBackend
 
 
+def add_cell_with_layer(orchestrator, grid_id, geometry, config):
+    """Helper to add a cell with a single layer."""
+    cell_id = orchestrator.add_cell(grid_id, geometry)
+    orchestrator.add_layer(cell_id, config)
+    return cell_id
+
+
 @pytest.fixture
 def backend_with_null_transport() -> Generator[DashboardBackend, None, None]:
     """Create DashboardBackend with null transport (no Kafka required)."""
@@ -242,22 +249,12 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
     Note: UUIDs are regenerated on load as they are runtime identity handles.
     We verify content equality, not ID equality.
     """
-    from uuid import uuid4
-
     from ess.livedata.config.workflow_spec import WorkflowId
     from ess.livedata.dashboard.plot_orchestrator import (
         CellGeometry,
-        Layer,
-        LayerId,
-        PlotCell,
         PlotConfig,
     )
     from ess.livedata.dashboard.plot_params import PlotParams1d, WindowMode
-
-    def make_plot_cell(geometry: CellGeometry, config: PlotConfig) -> PlotCell:
-        """Create PlotCell with single layer from config for test convenience."""
-        layer = Layer(layer_id=LayerId(uuid4()), config=config)
-        return PlotCell(geometry=geometry, layers=[layer])
 
     # Create first backend instance
     with DashboardBackend(
@@ -287,12 +284,11 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
             params=params1,
         )
         geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-        cell = make_plot_cell(geometry=geometry, config=plot_config)
 
         # Find the grid by title to add cells
         grids1 = orchestrator1.get_all_grids()
         grid_id = next(gid for gid, g in grids1.items() if g.title == 'Test Grid')
-        orchestrator1.add_plot(grid_id=grid_id, cell=cell)
+        add_cell_with_layer(orchestrator1, grid_id, geometry, plot_config)
 
         # Add another cell in the same grid with different params
         params2 = PlotParams1d(
@@ -306,9 +302,8 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
             params=params2,
         )
         geometry2 = CellGeometry(row=0, col=1, row_span=1, col_span=1)
-        cell2 = make_plot_cell(geometry=geometry2, config=plot_config2)
 
-        orchestrator1.add_plot(grid_id=grid_id, cell=cell2)
+        add_cell_with_layer(orchestrator1, grid_id, geometry2, plot_config2)
 
         # Add a second grid with one cell using default params
         orchestrator1.add_grid(title='Second Grid', nrows=1, ncols=1)
@@ -324,9 +319,8 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
             params=params3,
         )
         geometry3 = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-        cell3 = make_plot_cell(geometry=geometry3, config=plot_config3)
 
-        orchestrator1.add_plot(grid_id=grid_id2, cell=cell3)
+        add_cell_with_layer(orchestrator1, grid_id2, geometry3, plot_config3)
 
         # Verify grids exist before shutdown
         all_grids1 = orchestrator1.get_all_grids()
@@ -404,14 +398,9 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
     Pydantic models are properly converted to strings during YAML serialization.
     Previously, enum instances caused serialization failures.
     """
-    from uuid import uuid4
-
     from ess.livedata.config.workflow_spec import WorkflowId
     from ess.livedata.dashboard.plot_orchestrator import (
         CellGeometry,
-        Layer,
-        LayerId,
-        PlotCell,
         PlotConfig,
     )
     from ess.livedata.dashboard.plot_params import (
@@ -420,11 +409,6 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
         PlotScale,
         WindowMode,
     )
-
-    def make_plot_cell(geometry: CellGeometry, config: PlotConfig) -> PlotCell:
-        """Create PlotCell with single layer from config for test convenience."""
-        layer = Layer(layer_id=LayerId(uuid4()), config=config)
-        return PlotCell(geometry=geometry, layers=[layer])
 
     # Create params with enum values (the problematic case)
     params_with_enums = PlotParams2d(
@@ -459,12 +443,11 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
             params=params_with_enums,
         )
         geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-        cell = make_plot_cell(geometry=geometry, config=plot_config)
 
         # Find the grid by title to add the cell
         grids1 = orchestrator1.get_all_grids()
         grid_id = next(gid for gid, g in grids1.items() if g.title == 'Enum Test Grid')
-        orchestrator1.add_plot(grid_id=grid_id, cell=cell)
+        add_cell_with_layer(orchestrator1, grid_id, geometry, plot_config)
 
     # Restart backend - this should not fail during deserialization
     with DashboardBackend(
@@ -493,14 +476,9 @@ def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
     This test verifies that cells with multiple layers are correctly serialized
     and deserialized across backend restarts.
     """
-    from uuid import uuid4
-
     from ess.livedata.config.workflow_spec import WorkflowId
     from ess.livedata.dashboard.plot_orchestrator import (
         CellGeometry,
-        Layer,
-        LayerId,
-        PlotCell,
         PlotConfig,
     )
     from ess.livedata.dashboard.plot_params import PlotParams1d, WindowMode
@@ -512,7 +490,7 @@ def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
         version=1,
     )
 
-    # Create two layers with different configurations
+    # Create two layer configurations
     params1 = PlotParams1d(
         window={'mode': WindowMode.window, 'window_duration_seconds': 5.0}
     )
@@ -523,7 +501,6 @@ def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
         plot_name='lines',
         params=params1,
     )
-    layer1 = Layer(layer_id=LayerId(uuid4()), config=config1)
 
     params2 = PlotParams1d(
         window={'mode': WindowMode.latest, 'window_duration_seconds': 10.0}
@@ -535,11 +512,8 @@ def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
         plot_name='lines',
         params=params2,
     )
-    layer2 = Layer(layer_id=LayerId(uuid4()), config=config2)
 
-    # Create cell with two layers
     geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-    multi_layer_cell = PlotCell(geometry=geometry, layers=[layer1, layer2])
 
     with DashboardBackend(
         instrument='dummy', dev=True, transport='none', config_dir=tmp_path
@@ -552,7 +526,11 @@ def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
         grid_id = next(
             gid for gid, g in grids1.items() if g.title == 'Multi-Layer Test'
         )
-        orchestrator1.add_plot(grid_id=grid_id, cell=multi_layer_cell)
+
+        # Create cell with two layers using add_cell + add_layer
+        cell_id = orchestrator1.add_cell(grid_id, geometry)
+        orchestrator1.add_layer(cell_id, config1)
+        orchestrator1.add_layer(cell_id, config2)
 
         # Verify cell has two layers before shutdown
         grid = orchestrator1.get_grid(grid_id)

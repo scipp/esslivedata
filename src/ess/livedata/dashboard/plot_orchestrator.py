@@ -310,35 +310,32 @@ class PlotOrchestrator:
             self._logger.info('Removed plot grid %s (%s)', grid_id, title)
             self._notify_grid_removed(grid_id)
 
-    def add_plot(self, grid_id: GridId, cell: PlotCell) -> CellId:
+    def add_cell(self, grid_id: GridId, geometry: CellGeometry) -> CellId:
         """
-        Add a plot cell with layers to a grid and subscribe to workflow availability.
+        Add an empty cell to a grid.
+
+        Use :py:meth:`add_layer` to add layers to the cell after creation.
 
         Parameters
         ----------
         grid_id
-            ID of the grid to add the plot to.
-        cell
-            Plot cell configuration with layers.
+            ID of the grid to add the cell to.
+        geometry
+            Cell geometry (position and size in the grid).
 
         Returns
         -------
         :
-            ID of the added plot cell.
+            ID of the added cell.
         """
         cell_id = CellId(uuid4())
+        cell = PlotCell(geometry=geometry, layers=[])
         grid = self._grids[grid_id]
         grid.cells[cell_id] = cell
         self._cell_to_grid[cell_id] = grid_id
-
-        # Subscribe each layer to its workflow
-        for layer in cell.layers:
-            self._layer_to_cell[layer.layer_id] = cell_id
-            self._subscribe_layer(grid_id, cell_id, layer)
-
         return cell_id
 
-    def remove_plot(self, cell_id: CellId) -> None:
+    def remove_cell(self, cell_id: CellId) -> None:
         """
         Remove a plot cell (with all its layers) by its unique ID.
 
@@ -485,7 +482,7 @@ class PlotOrchestrator:
 
         # If no layers left, remove the entire cell
         if not cell.layers:
-            self.remove_plot(cell_id)
+            self.remove_cell(cell_id)
             return
 
         self._persist_to_store()
@@ -778,7 +775,7 @@ class PlotOrchestrator:
         Parse a raw cell dict into a typed PlotCell.
 
         Use this to convert cells from templates or persisted configurations
-        into typed objects that can be passed to :py:meth:`add_plot`.
+        into typed objects that can be passed to :py:meth:`add_cell`.
 
         Supports two formats:
         - Legacy format: 'geometry' + 'config' (single layer)
@@ -998,7 +995,9 @@ class PlotOrchestrator:
             for spec in specs:
                 grid_id = self.add_grid(spec.title, spec.nrows, spec.ncols)
                 for cell in spec.cells:
-                    self.add_plot(grid_id, cell)
+                    cell_id = self.add_cell(grid_id, cell.geometry)
+                    for layer in cell.layers:
+                        self.add_layer(cell_id, layer.config)
 
             self._logger.info('Loaded %d plot grids from store', len(specs))
         except Exception:

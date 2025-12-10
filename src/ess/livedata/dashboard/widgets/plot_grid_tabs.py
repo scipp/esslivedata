@@ -21,7 +21,6 @@ from ..plot_orchestrator import (
     CellGeometry,
     CellId,
     GridId,
-    Layer,
     LayerId,
     LayerState,
     PlotCell,
@@ -227,13 +226,11 @@ class PlotGridTabs:
         geometry
             Cell geometry of the selected region.
         """
-        from uuid import uuid4
 
         def on_success(plot_config: PlotConfig) -> None:
             """Handle successful plot configuration."""
-            layer = Layer(layer_id=LayerId(uuid4()), config=plot_config)
-            plot_cell = PlotCell(geometry=geometry, layers=[layer])
-            self._orchestrator.add_plot(grid_id, plot_cell)
+            cell_id = self._orchestrator.add_cell(grid_id, geometry)
+            self._orchestrator.add_layer(cell_id, plot_config)
 
         self._show_config_modal(on_success=on_success)
 
