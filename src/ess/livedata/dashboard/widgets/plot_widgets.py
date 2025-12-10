@@ -200,7 +200,9 @@ def create_cell_toolbar(
         Callback function to invoke when the close button is clicked.
     on_add_callback:
         Optional callback to invoke when the add button is clicked.
-        If None, the add button is not shown.
+        If None, the add button is not shown. This allows the toolbar to be
+        used in contexts where adding layers doesn't make sense (e.g., read-only
+        views, cells with layer limits, or special cell types).
     title:
         Optional title text to display on the left side of the toolbar.
     description:
