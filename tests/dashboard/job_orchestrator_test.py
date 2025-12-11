@@ -1269,3 +1269,351 @@ class TestJobOrchestratorStop:
         # Should succeed and get new job number
         assert len(second_job_ids) == 1
         assert second_job_ids[0].job_number != first_job_ids[0].job_number
+
+
+class TestJobOrchestratorWidgetLifecycleSubscriptions:
+    """Test widget lifecycle subscription mechanism for cross-session sync."""
+
+    def test_subscribe_returns_subscription_id(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Subscribe returns a unique subscription ID."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        callbacks = WidgetLifecycleCallbacks()
+        subscription_id = orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        assert subscription_id is not None
+
+    def test_unsubscribe_removes_subscription(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Unsubscribe removes the subscription so callbacks are no longer invoked."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        events: list[str] = []
+        callbacks = WidgetLifecycleCallbacks(
+            on_staged_changed=lambda wid: events.append(f'staged:{wid}')
+        )
+        subscription_id = orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        # Stage config should notify
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0},
+            aux_source_names={},
+        )
+        assert len(events) == 1
+
+        # Unsubscribe
+        orchestrator.unsubscribe_from_widget_lifecycle(subscription_id)
+
+        # Stage again - should NOT notify
+        events.clear()
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_2",
+            params={"threshold": 60.0},
+            aux_source_names={},
+        )
+        assert len(events) == 0
+
+    def test_stage_config_notifies_subscribers(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """stage_config notifies on_staged_changed callback."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        events: list[WorkflowId] = []
+        callbacks = WidgetLifecycleCallbacks(
+            on_staged_changed=lambda wid: events.append(wid)
+        )
+        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        # Clear first (triggers notification)
+        orchestrator.clear_staged_configs(workflow_id)
+        events.clear()
+
+        # Stage config
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0},
+            aux_source_names={},
+        )
+
+        assert events == [workflow_id]
+
+    def test_clear_staged_configs_notifies_subscribers(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """clear_staged_configs notifies on_staged_changed callback."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        events: list[WorkflowId] = []
+        callbacks = WidgetLifecycleCallbacks(
+            on_staged_changed=lambda wid: events.append(wid)
+        )
+        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        # Clear staged configs
+        orchestrator.clear_staged_configs(workflow_id)
+
+        assert events == [workflow_id]
+
+    def test_commit_workflow_notifies_subscribers(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """commit_workflow notifies on_workflow_committed callback."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        events: list[WorkflowId] = []
+        callbacks = WidgetLifecycleCallbacks(
+            on_workflow_committed=lambda wid: events.append(wid)
+        )
+        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        # Commit workflow (uses default staged configs)
+        orchestrator.commit_workflow(workflow_id)
+
+        assert events == [workflow_id]
+
+    def test_stop_workflow_notifies_subscribers(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """stop_workflow notifies on_workflow_stopped callback."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        events: list[WorkflowId] = []
+        callbacks = WidgetLifecycleCallbacks(
+            on_workflow_stopped=lambda wid: events.append(wid)
+        )
+        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        # First commit to have something to stop
+        orchestrator.commit_workflow(workflow_id)
+        events.clear()
+
+        # Stop workflow
+        orchestrator.stop_workflow(workflow_id)
+
+        assert events == [workflow_id]
+
+    def test_stop_workflow_does_not_notify_if_nothing_to_stop(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """stop_workflow does not notify if there are no active jobs."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        events: list[WorkflowId] = []
+        callbacks = WidgetLifecycleCallbacks(
+            on_workflow_stopped=lambda wid: events.append(wid)
+        )
+        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        # Try to stop without committing first
+        orchestrator.stop_workflow(workflow_id)
+
+        # Should not notify since there was nothing to stop
+        assert events == []
+
+    def test_multiple_subscribers_all_notified(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Multiple subscribers all receive notifications."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        events_1: list[str] = []
+        events_2: list[str] = []
+
+        callbacks_1 = WidgetLifecycleCallbacks(
+            on_workflow_committed=lambda wid: events_1.append('committed')
+        )
+        callbacks_2 = WidgetLifecycleCallbacks(
+            on_workflow_committed=lambda wid: events_2.append('committed')
+        )
+
+        orchestrator.subscribe_to_widget_lifecycle(callbacks_1)
+        orchestrator.subscribe_to_widget_lifecycle(callbacks_2)
+
+        # Commit workflow
+        orchestrator.commit_workflow(workflow_id)
+
+        # Both subscribers should be notified
+        assert events_1 == ['committed']
+        assert events_2 == ['committed']
+
+    def test_callback_exception_does_not_affect_other_subscribers(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Exception in one callback does not prevent others from being called."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        events: list[str] = []
+
+        def failing_callback(wid):
+            raise RuntimeError("Test error")
+
+        def working_callback(wid):
+            events.append('success')
+
+        callbacks_1 = WidgetLifecycleCallbacks(on_workflow_committed=failing_callback)
+        callbacks_2 = WidgetLifecycleCallbacks(on_workflow_committed=working_callback)
+
+        orchestrator.subscribe_to_widget_lifecycle(callbacks_1)
+        orchestrator.subscribe_to_widget_lifecycle(callbacks_2)
+
+        # Commit workflow - first callback fails, second should still be called
+        orchestrator.commit_workflow(workflow_id)
+
+        assert events == ['success']
+
+    def test_none_callbacks_are_skipped(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Callbacks set to None are safely skipped without error."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Subscribe with only one callback set
+        events: list[str] = []
+        callbacks = WidgetLifecycleCallbacks(
+            on_staged_changed=None,
+            on_workflow_committed=lambda wid: events.append('committed'),
+            on_workflow_stopped=None,
+        )
+        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        # All these operations should complete without error
+        orchestrator.clear_staged_configs(workflow_id)
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0},
+            aux_source_names={},
+        )
+        orchestrator.commit_workflow(workflow_id)
+        orchestrator.stop_workflow(workflow_id)
+
+        # Only the commit callback was set
+        assert events == ['committed']

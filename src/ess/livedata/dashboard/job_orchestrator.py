@@ -38,6 +38,7 @@ from .workflow_config_service import WorkflowConfigService
 
 SourceName = str
 SubscriptionId = NewType('SubscriptionId', UUID)
+WidgetLifecycleSubscriptionId = NewType('WidgetLifecycleSubscriptionId', UUID)
 
 
 class JobConfig(BaseModel):
@@ -80,6 +81,19 @@ class WorkflowState:
     staged_jobs: dict[SourceName, JobConfig] = field(default_factory=dict)
 
 
+@dataclass
+class WidgetLifecycleCallbacks:
+    """Callbacks for widget lifecycle events from JobOrchestrator.
+
+    Widgets use this to stay synchronized across browser sessions.
+    All callbacks receive the workflow_id so widgets can filter relevant events.
+    """
+
+    on_staged_changed: Callable[[WorkflowId], None] | None = None
+    on_workflow_committed: Callable[[WorkflowId], None] | None = None
+    on_workflow_stopped: Callable[[WorkflowId], None] | None = None
+
+
 class JobOrchestrator:
     """Orchestrates workflow job lifecycle and state management."""
 
@@ -115,9 +129,14 @@ class JobOrchestrator:
         # Workflow state tracking
         self._workflows: dict[WorkflowId, WorkflowState] = {}
 
-        # Workflow subscription tracking
+        # Workflow subscription tracking (for PlotOrchestrator)
         self._subscriptions: dict[SubscriptionId, Callable[[JobNumber], None]] = {}
         self._workflow_subscriptions: dict[WorkflowId, set[SubscriptionId]] = {}
+
+        # Widget lifecycle subscription tracking (for cross-session widget sync)
+        self._widget_subscriptions: dict[
+            WidgetLifecycleSubscriptionId, WidgetLifecycleCallbacks
+        ] = {}
 
         # Load persisted configs
         self._load_configs_from_store()
@@ -215,6 +234,7 @@ class JobOrchestrator:
             The workflow to clear staged configs for.
         """
         self._workflows[workflow_id].staged_jobs.clear()
+        self._notify_staged_changed(workflow_id)
 
     def stage_config(
         self,
@@ -241,6 +261,7 @@ class JobOrchestrator:
         self._workflows[workflow_id].staged_jobs[source_name] = JobConfig(
             params=params.copy(), aux_source_names=aux_source_names.copy()
         )
+        self._notify_staged_changed(workflow_id)
 
     def commit_workflow(self, workflow_id: WorkflowId) -> list[JobId]:
         """
@@ -325,13 +346,16 @@ class JobOrchestrator:
         # Persist full state (staged configs + active jobs) to store
         self._persist_state_to_store(workflow_id)
 
-        # Notify subscribers immediately that job is active
+        # Notify PlotOrchestrator subscribers that job is active
         self._logger.info(
             'Workflow %s committed with job_number=%s, notifying subscribers',
             workflow_id,
             job_set.job_number,
         )
         self._notify_workflow_available(workflow_id, job_set.job_number)
+
+        # Notify widget lifecycle subscribers that workflow was committed
+        self._notify_workflow_committed(workflow_id)
 
         # Return JobIds for all created jobs
         return job_set.job_ids()
@@ -515,6 +539,9 @@ class JobOrchestrator:
         # Persist updated state
         self._persist_state_to_store(workflow_id)
 
+        # Notify widget lifecycle subscribers that workflow was stopped
+        self._notify_workflow_stopped(workflow_id)
+
         return True
 
     def _notify_workflow_available(
@@ -624,3 +651,89 @@ class JobOrchestrator:
                 'Attempted to unsubscribe from non-existent subscription %s',
                 subscription_id,
             )
+
+    # Widget lifecycle subscription API (for cross-session widget synchronization)
+
+    def subscribe_to_widget_lifecycle(
+        self, callbacks: WidgetLifecycleCallbacks
+    ) -> WidgetLifecycleSubscriptionId:
+        """
+        Subscribe to widget lifecycle events for cross-session synchronization.
+
+        Widgets use this to stay synchronized across browser sessions. When any
+        session triggers a state change (staging, commit, stop), all subscribed
+        widgets are notified so they can rebuild.
+
+        Parameters
+        ----------
+        callbacks
+            Callbacks to invoke on lifecycle events. Any callback can be None
+            if that event type is not needed.
+
+        Returns
+        -------
+        :
+            Subscription ID for unsubscribing later.
+        """
+        subscription_id = WidgetLifecycleSubscriptionId(uuid.uuid4())
+        self._widget_subscriptions[subscription_id] = callbacks
+        self._logger.debug('Added widget lifecycle subscription %s', subscription_id)
+        return subscription_id
+
+    def unsubscribe_from_widget_lifecycle(
+        self, subscription_id: WidgetLifecycleSubscriptionId
+    ) -> None:
+        """
+        Unsubscribe from widget lifecycle events.
+
+        Parameters
+        ----------
+        subscription_id
+            The subscription ID returned from subscribe_to_widget_lifecycle.
+        """
+        if subscription_id in self._widget_subscriptions:
+            del self._widget_subscriptions[subscription_id]
+            self._logger.debug(
+                'Removed widget lifecycle subscription %s', subscription_id
+            )
+        else:
+            self._logger.warning(
+                'Attempted to unsubscribe from non-existent widget subscription %s',
+                subscription_id,
+            )
+
+    def _notify_staged_changed(self, workflow_id: WorkflowId) -> None:
+        """Notify all widget subscribers that staging area changed."""
+        for subscription_id, callbacks in self._widget_subscriptions.items():
+            if callbacks.on_staged_changed is not None:
+                try:
+                    callbacks.on_staged_changed(workflow_id)
+                except Exception:
+                    self._logger.exception(
+                        'Error in on_staged_changed callback for subscription %s',
+                        subscription_id,
+                    )
+
+    def _notify_workflow_committed(self, workflow_id: WorkflowId) -> None:
+        """Notify all widget subscribers that a workflow was committed."""
+        for subscription_id, callbacks in self._widget_subscriptions.items():
+            if callbacks.on_workflow_committed is not None:
+                try:
+                    callbacks.on_workflow_committed(workflow_id)
+                except Exception:
+                    self._logger.exception(
+                        'Error in on_workflow_committed callback for subscription %s',
+                        subscription_id,
+                    )
+
+    def _notify_workflow_stopped(self, workflow_id: WorkflowId) -> None:
+        """Notify all widget subscribers that a workflow was stopped."""
+        for subscription_id, callbacks in self._widget_subscriptions.items():
+            if callbacks.on_workflow_stopped is not None:
+                try:
+                    callbacks.on_workflow_stopped(workflow_id)
+                except Exception:
+                    self._logger.exception(
+                        'Error in on_workflow_stopped callback for subscription %s',
+                        subscription_id,
+                    )

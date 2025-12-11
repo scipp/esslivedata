@@ -4,7 +4,7 @@
 
 **Phase 1 COMPLETE** - Cleanup and revert done. Widget now uses orchestrator directly.
 
-**Phase 2 TODO** - Add lifecycle subscriptions to JobOrchestrator for cross-session sync.
+**Phase 2 COMPLETE** - Lifecycle subscriptions added to JobOrchestrator for cross-session sync.
 
 ## Problem Summary
 
@@ -12,9 +12,9 @@ The `WorkflowStatusWidget` implementation in the `workflow-control-widget` branc
 
 ### Key Issues Identified
 
-1. **Widget updates itself directly** instead of reacting to orchestrator events
-   - Calls `_build_widget()` after operations (stop, commit, remove)
-   - Other sessions' widgets don't get notified of state changes
+1. ~~**Widget updates itself directly** instead of reacting to orchestrator events~~ **FIXED**
+   - ~~Calls `_build_widget()` after operations (stop, commit, remove)~~
+   - ~~Other sessions' widgets don't get notified of state changes~~
 
 2. ~~**Mixed dependencies** - widget uses both `WorkflowController` and `JobOrchestrator` inconsistently~~ **FIXED**
    - ~~Stop goes through controller~~
@@ -26,10 +26,10 @@ The `WorkflowStatusWidget` implementation in the `workflow-control-widget` branc
    - ~~New widget needs per-source staging without clearing others~~
    - ~~Added `stop_workflow()` as pointless pass-through~~
 
-4. **Missing notification mechanism** in JobOrchestrator (TODO)
-   - `commit_workflow()` notifies via `_notify_workflow_available()` (but for PlotOrchestrator, not widgets)
-   - `stop_workflow()` doesn't notify anyone
-   - No notification for staging changes
+4. ~~**Missing notification mechanism** in JobOrchestrator~~ **FIXED**
+   - ~~`commit_workflow()` notifies via `_notify_workflow_available()` (but for PlotOrchestrator, not widgets)~~
+   - ~~`stop_workflow()` doesn't notify anyone~~
+   - ~~No notification for staging changes~~
 
 ## Architecture Decisions
 
@@ -76,24 +76,24 @@ Reverted all changes from this branch to restore legacy-only behavior:
 - Removed `stop_workflow()` method
 - Reverted `create_workflow_adapter()` to use `start_callback` → `start_workflow()`
 
-### 2. Add Lifecycle Subscriptions to JobOrchestrator (TODO)
+### 2. Add Lifecycle Subscriptions to JobOrchestrator ✅ DONE
 
-Add a widget-facing subscription API:
-- `subscribe_to_widget_lifecycle()` - returns SubscriptionId
-- `unsubscribe_from_widget_lifecycle()` - cleanup
+Added a widget-facing subscription API:
+- `subscribe_to_widget_lifecycle(callbacks)` - returns WidgetLifecycleSubscriptionId
+- `unsubscribe_from_widget_lifecycle(subscription_id)` - cleanup
 
-Callbacks needed:
+Callbacks via `WidgetLifecycleCallbacks` dataclass:
 - `on_staged_changed(workflow_id)` - staging area modified
 - `on_workflow_committed(workflow_id)` - workflow started
 - `on_workflow_stopped(workflow_id)` - workflow stopped
 
-Methods that must notify:
+Methods that notify:
 - `stage_config()` → notify staged_changed
 - `clear_staged_configs()` → notify staged_changed
 - `commit_workflow()` → notify workflow_committed
 - `stop_workflow()` → notify workflow_stopped
 
-### 3. Update WorkflowStatusWidget ✅ DONE (partial)
+### 3. Update WorkflowStatusWidget ✅ DONE
 
 **Remove dependencies:** ✅
 - Removed `WorkflowController` parameter and usage
@@ -103,27 +103,28 @@ Methods that must notify:
 - `commit_workflow()` → already using orchestrator
 - Config queries → already using orchestrator
 
-**Subscribe to lifecycle events:** (TODO - waiting for step 2)
-- Subscribe in `__init__`
-- Rebuild widget on relevant callbacks
-- Unsubscribe on cleanup/shutdown
+**Subscribe to lifecycle events:** ✅
+- Subscribe in `__init__` via `subscribe_to_widget_lifecycle()`
+- Rebuild widget on relevant callbacks via `_on_lifecycle_event()`
+- Each widget filters events by workflow_id
 
-**Remove explicit rebuilds:** (TODO - waiting for step 2)
-- Currently `_build_widget()` calls remain with TODO comments
-- Will be removed once subscription callbacks are implemented
+**Remove explicit rebuilds:** ✅
+- Removed direct `_build_widget()` calls from event handlers
+- Widget rebuilds are now triggered via subscription callbacks
 
-### 4. Update WorkflowStatusListWidget ✅ DONE (partial)
+### 4. Update WorkflowStatusListWidget ✅ DONE
 
 - Removed `WorkflowController` parameter ✅
 - Pass orchestrator to child widgets ✅
-- May need to subscribe to lifecycle events to rebuild specific widgets (TODO)
+- Each child widget subscribes individually to lifecycle events ✅
 
-### 5. Update Config Modal Integration (TODO)
+### 5. Update Config Modal Integration ✅ NOT NEEDED
 
-Wherever `on_configure` callback is implemented (likely in reduction.py or dashboard setup):
-- Create adapter with callback that stages without clearing
-- Callback does Pydantic→dict conversion inline
-- Callback calls `orchestrator.stage_config()` for each selected source
+The config modal flow in reduction.py still works correctly:
+- Modal uses `WorkflowConfigurationAdapter` with `start_callback`
+- `start_callback` calls `WorkflowController.start_workflow()` which commits
+- `commit_workflow()` notifies all subscribed widgets automatically
+- The manual `rebuild_widget()` call in `on_success` is now redundant but harmless
 
 ### 6. Update Widget Creation Sites ✅ DONE
 
@@ -143,9 +144,17 @@ For backend-driven updates (JobStatus via Kafka):
 - Widget's `_on_status_update()` updates badge/timing
 - Full rebuild happens via orchestrator lifecycle subscriptions
 
-## Testing Considerations
+## Testing
 
-- Test that multiple widgets (simulating multiple sessions) stay synchronized
-- Test that staging one source group doesn't affect others
-- Test lifecycle subscription/unsubscription
-- Test that legacy widget still works via WorkflowController
+Tests added in `tests/dashboard/job_orchestrator_test.py`:
+- `TestJobOrchestratorWidgetLifecycleSubscriptions` class with 10 tests covering:
+  - Subscribe returns subscription ID
+  - Unsubscribe removes subscription
+  - `stage_config` notifies subscribers
+  - `clear_staged_configs` notifies subscribers
+  - `commit_workflow` notifies subscribers
+  - `stop_workflow` notifies subscribers
+  - `stop_workflow` does not notify if nothing to stop
+  - Multiple subscribers all notified
+  - Callback exception does not affect other subscribers
+  - None callbacks are skipped safely

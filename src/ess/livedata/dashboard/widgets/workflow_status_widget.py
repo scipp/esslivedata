@@ -25,7 +25,11 @@ from ess.livedata.core.job import JobState
 from .plot_widgets import ButtonStyles, create_tool_button
 
 if TYPE_CHECKING:
-    from ..job_orchestrator import JobConfig, JobOrchestrator
+    from ..job_orchestrator import (
+        JobConfig,
+        JobOrchestrator,
+        WidgetLifecycleSubscriptionId,
+    )
     from ..job_service import JobService
 
 
@@ -201,10 +205,19 @@ class WorkflowStatusWidget:
         # Subscribe to job status updates (for status badge / timing updates)
         self._job_service.register_job_status_update_subscriber(self._on_status_update)
 
-        # TODO: Subscribe to orchestrator lifecycle events for cross-session sync.
-        # When implemented, callbacks like on_staged_changed, on_workflow_committed,
-        # on_workflow_stopped should trigger _build_widget() instead of handlers
-        # calling it directly.
+        # Subscribe to orchestrator lifecycle events for cross-session sync.
+        # This ensures all browser sessions' widgets stay synchronized.
+        from ..job_orchestrator import WidgetLifecycleCallbacks
+
+        self._lifecycle_subscription: WidgetLifecycleSubscriptionId = (
+            orchestrator.subscribe_to_widget_lifecycle(
+                WidgetLifecycleCallbacks(
+                    on_staged_changed=self._on_lifecycle_event,
+                    on_workflow_committed=self._on_lifecycle_event,
+                    on_workflow_stopped=self._on_lifecycle_event,
+                )
+            )
+        )
 
         self._build_widget()
 
@@ -212,6 +225,16 @@ class WorkflowStatusWidget:
     def workflow_id(self) -> WorkflowId:
         """Get the workflow ID for this widget."""
         return self._workflow_id
+
+    def _on_lifecycle_event(self, workflow_id: WorkflowId) -> None:
+        """Handle orchestrator lifecycle events (staging change, commit, stop).
+
+        Only rebuilds if the event is for this widget's workflow.
+        This callback is shared for all lifecycle events since the response
+        is the same: rebuild the widget to reflect new state.
+        """
+        if workflow_id == self._workflow_id:
+            self._build_widget()
 
     def _build_widget(self) -> None:
         """Build or rebuild the entire widget."""
@@ -761,7 +784,9 @@ class WorkflowStatusWidget:
         """Handle remove button click - remove sources from staged config."""
         staged = self._orchestrator.get_staged_config(self._workflow_id)
 
-        # Remove the specified sources and re-stage the rest
+        # Remove the specified sources and re-stage the rest.
+        # Note: clear_staged_configs() and stage_config() both notify subscribers,
+        # so the widget will rebuild via _on_lifecycle_event callback.
         self._orchestrator.clear_staged_configs(self._workflow_id)
         for source_name, config in staged.items():
             if source_name not in source_names:
@@ -772,28 +797,26 @@ class WorkflowStatusWidget:
                     aux_source_names=config.aux_source_names,
                 )
 
-        # TODO: Remove this direct rebuild once orchestrator lifecycle subscriptions
-        # are implemented. The on_staged_changed callback should trigger rebuild.
-        self._build_widget()
-
     def _on_reset_click(self) -> None:
         """Handle reset button click."""
         # TODO: Implement reset via orchestrator/controller
         pass
 
     def _on_stop_click(self) -> None:
-        """Handle stop button click - stops the workflow."""
+        """Handle stop button click - stops the workflow.
+
+        The orchestrator notifies all widget subscribers via on_workflow_stopped,
+        which triggers _on_lifecycle_event to rebuild this widget.
+        """
         self._orchestrator.stop_workflow(self._workflow_id)
-        # TODO: Remove this direct rebuild once orchestrator lifecycle subscriptions
-        # are implemented. The on_workflow_stopped callback should trigger rebuild.
-        self._build_widget()
 
     def _on_commit_click(self) -> None:
-        """Handle commit button click."""
+        """Handle commit button click.
+
+        The orchestrator notifies all widget subscribers via on_workflow_committed,
+        which triggers _on_lifecycle_event to rebuild this widget.
+        """
         self._orchestrator.commit_workflow(self._workflow_id)
-        # TODO: Remove this direct rebuild once orchestrator lifecycle subscriptions
-        # are implemented. The on_workflow_committed callback should trigger rebuild.
-        self._build_widget()
 
     def _on_status_update(self) -> None:
         """Handle job status updates from JobService.
