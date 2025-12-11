@@ -13,6 +13,7 @@ from ess.livedata import ServiceBase
 
 from .config_store import ConfigStoreManager
 from .dashboard_services import DashboardServices
+from .http_transport import HttpTransport
 from .kafka_transport import DashboardKafkaTransport
 from .transport import NullTransport, Transport
 
@@ -38,11 +39,13 @@ class DashboardBase(ServiceBase, ABC):
         self._instrument = instrument
         self._port = port
         self._dev = dev
+        self._transport_type = transport
 
         self._exit_stack = ExitStack()
         self._exit_stack.__enter__()
 
         self._callback = None
+        self._transport = self._create_transport(transport)
 
         # Config store manager for file-backed persistent UI state (GUI dashboards)
         config_manager = ConfigStoreManager(instrument=instrument, store_type='file')
@@ -54,7 +57,7 @@ class DashboardBase(ServiceBase, ABC):
             exit_stack=self._exit_stack,
             logger=self._logger,
             pipe_factory=streams.Pipe,
-            transport=self._create_transport(transport),
+            transport=self._transport,
             config_manager=config_manager,
         )
 
@@ -70,7 +73,7 @@ class DashboardBase(ServiceBase, ABC):
         Parameters
         ----------
         transport:
-            Transport type ('kafka' or 'none')
+            Transport type ('kafka', 'none', or 'http')
 
         Returns
         -------
@@ -83,6 +86,8 @@ class DashboardBase(ServiceBase, ABC):
             )
         elif transport == 'none':
             return NullTransport()
+        elif transport == 'http':
+            return HttpTransport(instrument=self._instrument, logger=self._logger)
         else:
             raise ValueError(f"Unknown transport type: {transport}")
 
@@ -154,6 +159,35 @@ class DashboardBase(ServiceBase, ABC):
         self.start_periodic_updates()
         return template
 
+    def _get_extra_patterns(self) -> list:
+        """
+        Get extra Tornado URL patterns for the server.
+
+        Returns patterns for the HTTP data injection endpoint when using
+        HTTP transport.
+        """
+        if self._transport_type != 'http':
+            return []
+
+        from tornado.web import RequestHandler
+
+        # Capture transport reference for the handler
+        http_transport = self._transport
+
+        class DataInjectionHandler(RequestHandler):
+            """Tornado handler for POST /api/data endpoint."""
+
+            def set_default_headers(self):
+                self.set_header('Content-Type', 'application/json')
+
+            def post(self):
+                result = http_transport.handle_post_request(self.request.body)
+                if result.get('status') == 'error':
+                    self.set_status(400)
+                self.write(result)
+
+        return [(r'/api/data', DataInjectionHandler)]
+
     @property
     def server(self):
         """Get the Panel server for WSGI deployment."""
@@ -163,6 +197,7 @@ class DashboardBase(ServiceBase, ABC):
             show=False,
             autoreload=False,
             dev=self._dev,
+            extra_patterns=self._get_extra_patterns(),
         )
 
     def _start_impl(self) -> None:
@@ -181,6 +216,7 @@ class DashboardBase(ServiceBase, ABC):
                 show=False,
                 autoreload=True,
                 dev=self._dev,
+                extra_patterns=self._get_extra_patterns(),
             )
         except KeyboardInterrupt:
             self._logger.info("Keyboard interrupt received, shutting down...")
