@@ -226,6 +226,21 @@ class WorkflowStatusWidget:
         """Get the workflow ID for this widget."""
         return self._workflow_id
 
+    def cleanup(self) -> None:
+        """Clean up widget subscriptions when widget is destroyed.
+
+        Should be called when the widget is removed from the UI to prevent
+        memory leaks from lingering subscriptions.
+
+        Note: JobService subscription cleanup is not implemented because
+        JobService lacks an unregister mechanism. This is a pre-existing
+        limitation that affects all widgets using JobService.
+        """
+        # Unsubscribe from orchestrator lifecycle events
+        self._orchestrator.unsubscribe_from_widget_lifecycle(
+            self._lifecycle_subscription
+        )
+
     def _on_lifecycle_event(self, workflow_id: WorkflowId) -> None:
         """Handle orchestrator lifecycle events (staging change, commit, stop).
 

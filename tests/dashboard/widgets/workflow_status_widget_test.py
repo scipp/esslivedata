@@ -261,6 +261,40 @@ class TestWorkflowStatusWidget:
         workflow_status_widget._on_header_click(None)
         assert workflow_status_widget._expanded is True
 
+    def test_cleanup_unsubscribes_from_orchestrator(
+        self, workflow_status_widget, job_orchestrator, workflow_id
+    ):
+        """Test that cleanup() unsubscribes from orchestrator lifecycle events."""
+        # Get the subscription ID before cleanup
+        subscription_id = workflow_status_widget._lifecycle_subscription
+
+        # Clean up the widget
+        workflow_status_widget.cleanup()
+
+        # Verify the subscription was removed from orchestrator
+        assert subscription_id not in job_orchestrator._widget_subscriptions
+
+        # Verify that staging changes no longer trigger rebuilds
+        rebuild_count = 0
+        original_build = workflow_status_widget._build_widget
+
+        def counting_build():
+            nonlocal rebuild_count
+            rebuild_count += 1
+            original_build()
+
+        workflow_status_widget._build_widget = counting_build
+
+        # Stage a config - should not trigger rebuild after cleanup
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 50.0},
+            aux_source_names={},
+        )
+
+        assert rebuild_count == 0  # No rebuild because we unsubscribed
+
 
 class TestWorkflowStatusWidgetWithJobs:
     """Tests for WorkflowStatusWidget with active jobs."""
