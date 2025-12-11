@@ -40,7 +40,7 @@ class WorkflowWidgetStyles:
         'stopped': '#6c757d',  # Gray
         'error': '#dc3545',  # Red
         'warning': '#fd7e14',  # Orange
-        'scheduled': '#17a2b8',  # Blue - waiting for backend confirmation
+        'pending': '#17a2b8',  # Blue - command sent, waiting for backend response
         'paused': '#ffc107',  # Yellow
         'finishing': '#17a2b8',  # Blue
     }
@@ -602,7 +602,7 @@ class WorkflowStatusWidget:
 
         Status is determined by backend JobStatus messages as source of truth:
         - STOPPED: No job configured in orchestrator
-        - SCHEDULED: Job configured but no backend confirmation or stale heartbeat
+        - PENDING: Job configured but no backend confirmation or stale heartbeat
         - ACTIVE/ERROR/WARNING/PAUSED: Based on recent backend JobStatus
         """
         # Check job statuses from JobService
@@ -640,9 +640,9 @@ class WorkflowStatusWidget:
                         ):
                             worst_state = JobState.paused
 
-        # If orchestrator has job but no fresh backend status, job is SCHEDULED
+        # If orchestrator has job but no fresh backend status, job is PENDING
         if not has_fresh_backend_status:
-            return 'SCHEDULED', WorkflowWidgetStyles.STATUS_COLORS['scheduled']
+            return 'PENDING', WorkflowWidgetStyles.STATUS_COLORS['pending']
 
         status_text = worst_state.value.upper()
         status_color = WorkflowWidgetStyles.STATUS_COLORS.get(
@@ -656,7 +656,7 @@ class WorkflowStatusWidget:
 
         Returns:
         - Empty string if workflow is stopped
-        - "Waiting for backend..." if scheduled (no fresh backend status)
+        - "Waiting for backend..." if pending (no fresh backend status)
         - Start time and duration if active
         """
         from datetime import UTC, datetime
@@ -681,7 +681,7 @@ class WorkflowStatusWidget:
                             if earliest_start is None or start < earliest_start:
                                 earliest_start = start
 
-        # If no fresh backend status, job is scheduled (waiting for backend)
+        # If no fresh backend status, job is pending (waiting for backend)
         if not has_fresh_backend_status:
             return 'Waiting for backend...'
 

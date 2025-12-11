@@ -347,13 +347,13 @@ class TestWorkflowStatusWidgetWithJobs:
         status, _ = workflow_status_widget._get_workflow_status()
         assert status == 'ERROR'
 
-    def test_status_shows_scheduled_when_no_backend_status(
+    def test_status_shows_pending_when_no_backend_status(
         self,
         workflow_status_widget,
         workflow_id,
         job_orchestrator,
     ):
-        """Test that status shows SCHEDULED when job committed but no backend status."""
+        """Test that status shows PENDING when job committed but no backend status."""
         # Stage and commit to create active job
         job_orchestrator.stage_config(
             workflow_id,
@@ -365,15 +365,15 @@ class TestWorkflowStatusWidgetWithJobs:
 
         # Don't add any job status (simulating backend not running)
         status, _ = workflow_status_widget._get_workflow_status()
-        assert status == 'SCHEDULED'
+        assert status == 'PENDING'
 
-    def test_timing_shows_waiting_for_scheduled_job(
+    def test_timing_shows_waiting_for_pending_job(
         self,
         workflow_status_widget,
         workflow_id,
         job_orchestrator,
     ):
-        """Test that timing text shows 'Waiting for backend...' for scheduled job."""
+        """Test that timing text shows 'Waiting for backend...' for pending job."""
         # Stage and commit to create active job
         job_orchestrator.stage_config(
             workflow_id,
@@ -387,14 +387,14 @@ class TestWorkflowStatusWidgetWithJobs:
         timing = workflow_status_widget._get_timing_text()
         assert timing == 'Waiting for backend...'
 
-    def test_status_transitions_from_scheduled_to_active(
+    def test_status_transitions_from_pending_to_active(
         self,
         workflow_status_widget,
         job_service,
         workflow_id,
         job_orchestrator,
     ):
-        """Test status transitions from SCHEDULED to ACTIVE when backend responds."""
+        """Test status transitions from PENDING to ACTIVE when backend responds."""
         # Stage and commit to create active job
         job_orchestrator.stage_config(
             workflow_id,
@@ -404,9 +404,9 @@ class TestWorkflowStatusWidgetWithJobs:
         )
         job_ids = job_orchestrator.commit_workflow(workflow_id)
 
-        # Initially no backend status - should be SCHEDULED
+        # Initially no backend status - should be PENDING
         status, _ = workflow_status_widget._get_workflow_status()
-        assert status == 'SCHEDULED'
+        assert status == 'PENDING'
 
         # Backend starts and sends status - should become ACTIVE
         job_id = JobId(source_name='source1', job_number=job_ids[0].job_number)
@@ -421,15 +421,15 @@ class TestWorkflowStatusWidgetWithJobs:
         status, _ = workflow_status_widget._get_workflow_status()
         assert status == 'ACTIVE'
 
-    def test_stop_clears_to_stopped_not_scheduled(
+    def test_stop_clears_to_stopped_not_pending(
         self,
         workflow_status_widget,
         workflow_controller,
         workflow_id,
         job_orchestrator,
     ):
-        """Test that stop button clears to STOPPED, not SCHEDULED."""
-        # Stage and commit to create scheduled job
+        """Test that stop button clears to STOPPED, not PENDING."""
+        # Stage and commit to create pending job
         job_orchestrator.stage_config(
             workflow_id,
             source_name='source1',
@@ -438,25 +438,25 @@ class TestWorkflowStatusWidgetWithJobs:
         )
         job_orchestrator.commit_workflow(workflow_id)
 
-        # Should be SCHEDULED
+        # Should be PENDING
         status, _ = workflow_status_widget._get_workflow_status()
-        assert status == 'SCHEDULED'
+        assert status == 'PENDING'
 
         # Stop the workflow
         workflow_status_widget._on_stop_click()
 
-        # Should be STOPPED, not SCHEDULED
+        # Should be STOPPED, not PENDING
         status, _ = workflow_status_widget._get_workflow_status()
         assert status == 'STOPPED'
 
-    def test_status_becomes_scheduled_when_heartbeat_stale(
+    def test_status_becomes_pending_when_heartbeat_stale(
         self,
         workflow_status_widget,
         job_service,
         workflow_id,
         job_orchestrator,
     ):
-        """Test status transitions from ACTIVE to SCHEDULED when heartbeat stales."""
+        """Test status transitions from ACTIVE to PENDING when heartbeat stales."""
         import time
 
         # Use short timeout for testing (1 second)
@@ -488,9 +488,9 @@ class TestWorkflowStatusWidgetWithJobs:
         # Wait for heartbeat to become stale (> 1 second)
         time.sleep(1.1)
 
-        # Status should now be SCHEDULED (stale heartbeat)
+        # Status should now be PENDING (stale heartbeat)
         status, _ = workflow_status_widget._get_workflow_status()
-        assert status == 'SCHEDULED'
+        assert status == 'PENDING'
 
     def test_is_status_stale_returns_true_for_old_status(self, job_service):
         """Test that is_status_stale returns True for old status."""
