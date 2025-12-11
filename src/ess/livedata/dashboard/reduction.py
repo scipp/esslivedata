@@ -123,7 +123,6 @@ class ReductionApp(DashboardBase):
         workflow_status_widget = WorkflowStatusListWidget(
             orchestrator=self._services.job_orchestrator,
             job_service=self._services.job_service,
-            workflow_controller=self._services.workflow_controller,
             on_configure=on_configure_workflow,
         )
 

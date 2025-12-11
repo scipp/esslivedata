@@ -139,7 +139,7 @@ def workflow_controller(job_orchestrator, workflow_registry, fake_data_service):
 
 
 @pytest.fixture
-def workflow_status_widget(job_orchestrator, fake_job_service, workflow_controller):
+def workflow_status_widget(job_orchestrator, fake_job_service):
     """Create a WorkflowStatusListWidget for testing."""
 
     def on_configure(workflow_id, source_names):
@@ -148,7 +148,6 @@ def workflow_status_widget(job_orchestrator, fake_job_service, workflow_controll
     return WorkflowStatusListWidget(
         orchestrator=job_orchestrator,
         job_service=fake_job_service,
-        workflow_controller=workflow_controller,
         on_configure=on_configure,
     )
 
@@ -269,7 +268,6 @@ class TestGridTabManagement:
         fake_job_service,
         job_controller,
         job_orchestrator,
-        workflow_controller,
     ):
         """Test that multiple widgets sharing same orchestrator stay in sync."""
         # Create separate job status widgets for each instance
@@ -287,13 +285,11 @@ class TestGridTabManagement:
         workflow_status_widget1 = WorkflowStatusListWidget(
             orchestrator=job_orchestrator,
             job_service=fake_job_service,
-            workflow_controller=workflow_controller,
             on_configure=on_configure,
         )
         workflow_status_widget2 = WorkflowStatusListWidget(
             orchestrator=job_orchestrator,
             job_service=fake_job_service,
-            workflow_controller=workflow_controller,
             on_configure=on_configure,
         )
 

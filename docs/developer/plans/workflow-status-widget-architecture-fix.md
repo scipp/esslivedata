@@ -1,5 +1,11 @@
 # WorkflowStatusWidget Architecture Fix
 
+## Status
+
+**Phase 1 COMPLETE** - Cleanup and revert done. Widget now uses orchestrator directly.
+
+**Phase 2 TODO** - Add lifecycle subscriptions to JobOrchestrator for cross-session sync.
+
 ## Problem Summary
 
 The `WorkflowStatusWidget` implementation in the `workflow-control-widget` branch has architectural issues that break cross-session synchronization and mix concerns incorrectly.
@@ -10,17 +16,17 @@ The `WorkflowStatusWidget` implementation in the `workflow-control-widget` branc
    - Calls `_build_widget()` after operations (stop, commit, remove)
    - Other sessions' widgets don't get notified of state changes
 
-2. **Mixed dependencies** - widget uses both `WorkflowController` and `JobOrchestrator` inconsistently
-   - Stop goes through controller
-   - Commit goes directly to orchestrator
-   - Config manipulation goes directly to orchestrator
+2. ~~**Mixed dependencies** - widget uses both `WorkflowController` and `JobOrchestrator` inconsistently~~ **FIXED**
+   - ~~Stop goes through controller~~
+   - ~~Commit goes directly to orchestrator~~
+   - ~~Config manipulation goes directly to orchestrator~~
 
-3. **Wrong changes to WorkflowController**
-   - Added `stage_workflow()` with "clear all + stage all" behavior (legacy pattern)
-   - New widget needs per-source staging without clearing others
-   - Added `stop_workflow()` as pointless pass-through
+3. ~~**Wrong changes to WorkflowController**~~ **FIXED (reverted)**
+   - ~~Added `stage_workflow()` with "clear all + stage all" behavior (legacy pattern)~~
+   - ~~New widget needs per-source staging without clearing others~~
+   - ~~Added `stop_workflow()` as pointless pass-through~~
 
-4. **Missing notification mechanism** in JobOrchestrator
+4. **Missing notification mechanism** in JobOrchestrator (TODO)
    - `commit_workflow()` notifies via `_notify_workflow_available()` (but for PlotOrchestrator, not widgets)
    - `stop_workflow()` doesn't notify anyone
    - No notification for staging changes
@@ -63,14 +69,14 @@ The `on_configure` callback is passed into the widget from outside. Wherever thi
 
 ## Required Changes
 
-### 1. Revert workflow_controller.py
+### 1. Revert workflow_controller.py ✅ DONE
 
-Revert all changes from this branch to restore legacy-only behavior:
-- Remove `stage_workflow()` method
-- Remove `stop_workflow()` method
-- Revert `create_workflow_adapter()` to use `start_callback` → `start_workflow()`
+Reverted all changes from this branch to restore legacy-only behavior:
+- Removed `stage_workflow()` method
+- Removed `stop_workflow()` method
+- Reverted `create_workflow_adapter()` to use `start_callback` → `start_workflow()`
 
-### 2. Add Lifecycle Subscriptions to JobOrchestrator
+### 2. Add Lifecycle Subscriptions to JobOrchestrator (TODO)
 
 Add a widget-facing subscription API:
 - `subscribe_to_widget_lifecycle()` - returns SubscriptionId
@@ -87,44 +93,43 @@ Methods that must notify:
 - `commit_workflow()` → notify workflow_committed
 - `stop_workflow()` → notify workflow_stopped
 
-### 3. Update WorkflowStatusWidget
+### 3. Update WorkflowStatusWidget ✅ DONE (partial)
 
-**Remove dependencies:**
-- Remove `WorkflowController` parameter and usage
+**Remove dependencies:** ✅
+- Removed `WorkflowController` parameter and usage
 
-**Use JobOrchestrator directly:**
+**Use JobOrchestrator directly:** ✅
 - `stop_workflow()` → `orchestrator.stop_workflow()`
 - `commit_workflow()` → already using orchestrator
 - Config queries → already using orchestrator
 
-**Subscribe to lifecycle events:**
+**Subscribe to lifecycle events:** (TODO - waiting for step 2)
 - Subscribe in `__init__`
 - Rebuild widget on relevant callbacks
 - Unsubscribe on cleanup/shutdown
 
-**Remove explicit rebuilds:**
-- Remove `_build_widget()` calls from button handlers
-- Let subscription callbacks trigger rebuilds
+**Remove explicit rebuilds:** (TODO - waiting for step 2)
+- Currently `_build_widget()` calls remain with TODO comments
+- Will be removed once subscription callbacks are implemented
 
-### 4. Update WorkflowStatusListWidget
+### 4. Update WorkflowStatusListWidget ✅ DONE (partial)
 
-- Remove `WorkflowController` parameter
-- Pass orchestrator to child widgets
-- May need to subscribe to lifecycle events to rebuild specific widgets
+- Removed `WorkflowController` parameter ✅
+- Pass orchestrator to child widgets ✅
+- May need to subscribe to lifecycle events to rebuild specific widgets (TODO)
 
-### 5. Update Config Modal Integration
+### 5. Update Config Modal Integration (TODO)
 
 Wherever `on_configure` callback is implemented (likely in reduction.py or dashboard setup):
 - Create adapter with callback that stages without clearing
 - Callback does Pydantic→dict conversion inline
 - Callback calls `orchestrator.stage_config()` for each selected source
 
-### 6. Update Widget Creation Sites
+### 6. Update Widget Creation Sites ✅ DONE
 
-Update wherever WorkflowStatusWidget/ListWidget are instantiated:
-- Remove WorkflowController from constructor calls
-- Ensure orchestrator is passed
-- Update `on_configure` callback implementation
+Updated wherever WorkflowStatusWidget/ListWidget are instantiated:
+- Removed WorkflowController from constructor calls in `reduction.py`
+- Updated test fixtures in `workflow_status_widget_test.py` and `plot_grid_tabs_test.py`
 
 ## Cross-Session Synchronization
 

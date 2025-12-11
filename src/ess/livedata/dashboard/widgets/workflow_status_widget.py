@@ -27,7 +27,6 @@ from .plot_widgets import ButtonStyles, create_tool_button
 if TYPE_CHECKING:
     from ..job_orchestrator import JobConfig, JobOrchestrator
     from ..job_service import JobService
-    from ..workflow_controller import WorkflowController
 
 
 # UI styling constants
@@ -164,7 +163,6 @@ class WorkflowStatusWidget:
         workflow_spec: WorkflowSpec,
         orchestrator: JobOrchestrator,
         job_service: JobService,
-        workflow_controller: WorkflowController,
         on_configure: Callable[[WorkflowId, list[str]], None],
     ) -> None:
         """
@@ -180,8 +178,6 @@ class WorkflowStatusWidget:
             Job orchestrator for config staging and commit.
         job_service
             Service providing job status updates.
-        workflow_controller
-            Controller for workflow operations (start/stop).
         on_configure
             Callback when gear button is clicked.
             Called with (workflow_id, source_names_to_configure).
@@ -190,7 +186,6 @@ class WorkflowStatusWidget:
         self._workflow_spec = workflow_spec
         self._orchestrator = orchestrator
         self._job_service = job_service
-        self._workflow_controller = workflow_controller
         self._on_configure = on_configure
 
         self._expanded = True
@@ -203,8 +198,13 @@ class WorkflowStatusWidget:
         self._header: pn.Row | None = None
         self._body: pn.Column | None = None
 
-        # Subscribe to job status updates
+        # Subscribe to job status updates (for status badge / timing updates)
         self._job_service.register_job_status_update_subscriber(self._on_status_update)
+
+        # TODO: Subscribe to orchestrator lifecycle events for cross-session sync.
+        # When implemented, callbacks like on_staged_changed, on_workflow_committed,
+        # on_workflow_stopped should trigger _build_widget() instead of handlers
+        # calling it directly.
 
         self._build_widget()
 
@@ -772,6 +772,8 @@ class WorkflowStatusWidget:
                     aux_source_names=config.aux_source_names,
                 )
 
+        # TODO: Remove this direct rebuild once orchestrator lifecycle subscriptions
+        # are implemented. The on_staged_changed callback should trigger rebuild.
         self._build_widget()
 
     def _on_reset_click(self) -> None:
@@ -780,15 +782,17 @@ class WorkflowStatusWidget:
         pass
 
     def _on_stop_click(self) -> None:
-        """Handle stop button click - stops the workflow and updates UI."""
-        stopped = self._workflow_controller.stop_workflow(self._workflow_id)
-        if stopped:
-            # Rebuild widget to reflect stopped state
-            self._build_widget()
+        """Handle stop button click - stops the workflow."""
+        self._orchestrator.stop_workflow(self._workflow_id)
+        # TODO: Remove this direct rebuild once orchestrator lifecycle subscriptions
+        # are implemented. The on_workflow_stopped callback should trigger rebuild.
+        self._build_widget()
 
     def _on_commit_click(self) -> None:
         """Handle commit button click."""
         self._orchestrator.commit_workflow(self._workflow_id)
+        # TODO: Remove this direct rebuild once orchestrator lifecycle subscriptions
+        # are implemented. The on_workflow_committed callback should trigger rebuild.
         self._build_widget()
 
     def _on_status_update(self) -> None:
@@ -827,7 +831,6 @@ class WorkflowStatusListWidget:
         *,
         orchestrator: JobOrchestrator,
         job_service: JobService,
-        workflow_controller: WorkflowController,
         on_configure: Callable[[WorkflowId, list[str]], None],
     ) -> None:
         """
@@ -840,15 +843,12 @@ class WorkflowStatusListWidget:
             Provides the workflow registry.
         job_service
             Service providing job status updates.
-        workflow_controller
-            Controller for workflow operations.
         on_configure
             Callback when gear button is clicked on any workflow.
             Called with (workflow_id, source_names_to_configure).
         """
         self._orchestrator = orchestrator
         self._job_service = job_service
-        self._workflow_controller = workflow_controller
         self._on_configure = on_configure
 
         self._widgets: dict[WorkflowId, WorkflowStatusWidget] = {}
@@ -932,7 +932,6 @@ class WorkflowStatusListWidget:
                 workflow_spec=spec,
                 orchestrator=self._orchestrator,
                 job_service=self._job_service,
-                workflow_controller=self._workflow_controller,
                 on_configure=self._on_configure,
             )
             self._widgets[workflow_id] = widget

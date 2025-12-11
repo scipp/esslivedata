@@ -34,30 +34,12 @@ def configure_callback():
     return callback
 
 
-class FakeWorkflowController:
-    """Fake workflow controller for testing."""
-
-    def __init__(self, orchestrator):
-        self._orchestrator = orchestrator
-
-    def stop_workflow(self, workflow_id):
-        """Stop a workflow."""
-        return self._orchestrator.stop_workflow(workflow_id)
-
-
-@pytest.fixture
-def workflow_controller(job_orchestrator):
-    """Create a fake workflow controller."""
-    return FakeWorkflowController(job_orchestrator)
-
-
 @pytest.fixture
 def workflow_status_widget(
     workflow_id,
     workflow_spec,
     job_orchestrator,
     job_service,
-    workflow_controller,
     configure_callback,
 ):
     """Create a WorkflowStatusWidget for testing."""
@@ -66,7 +48,6 @@ def workflow_status_widget(
         workflow_spec=workflow_spec,
         orchestrator=job_orchestrator,
         job_service=job_service,
-        workflow_controller=workflow_controller,
         on_configure=configure_callback,
     )
 
@@ -424,7 +405,6 @@ class TestWorkflowStatusWidgetWithJobs:
     def test_stop_clears_to_stopped_not_pending(
         self,
         workflow_status_widget,
-        workflow_controller,
         workflow_id,
         job_orchestrator,
     ):
@@ -533,14 +513,12 @@ class TestWorkflowStatusListWidget:
         self,
         job_orchestrator,
         job_service,
-        workflow_controller,
         configure_callback,
     ):
         """Test that list widget creates a Panel widget."""
         list_widget = WorkflowStatusListWidget(
             orchestrator=job_orchestrator,
             job_service=job_service,
-            workflow_controller=workflow_controller,
             on_configure=configure_callback,
         )
         panel = list_widget.panel()
@@ -550,14 +528,12 @@ class TestWorkflowStatusListWidget:
         self,
         job_orchestrator,
         job_service,
-        workflow_controller,
         configure_callback,
     ):
         """Test that list widget creates one widget per workflow."""
         list_widget = WorkflowStatusListWidget(
             orchestrator=job_orchestrator,
             job_service=job_service,
-            workflow_controller=workflow_controller,
             on_configure=configure_callback,
         )
 
@@ -570,14 +546,12 @@ class TestWorkflowStatusListWidget:
         self,
         job_orchestrator,
         job_service,
-        workflow_controller,
         configure_callback,
     ):
         """Test that expand_all expands all workflow widgets."""
         list_widget = WorkflowStatusListWidget(
             orchestrator=job_orchestrator,
             job_service=job_service,
-            workflow_controller=workflow_controller,
             on_configure=configure_callback,
         )
 
@@ -597,14 +571,12 @@ class TestWorkflowStatusListWidget:
         self,
         job_orchestrator,
         job_service,
-        workflow_controller,
         configure_callback,
     ):
         """Test that collapse_all collapses all workflow widgets."""
         list_widget = WorkflowStatusListWidget(
             orchestrator=job_orchestrator,
             job_service=job_service,
-            workflow_controller=workflow_controller,
             on_configure=configure_callback,
         )
 
@@ -623,14 +595,12 @@ class TestWorkflowStatusListWidget:
         self,
         job_orchestrator,
         job_service,
-        workflow_controller,
         configure_callback,
     ):
         """Test that the panel contains expand/collapse all buttons."""
         list_widget = WorkflowStatusListWidget(
             orchestrator=job_orchestrator,
             job_service=job_service,
-            workflow_controller=workflow_controller,
             on_configure=configure_callback,
         )
 
