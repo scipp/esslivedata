@@ -8,7 +8,7 @@ from ess.livedata.config import instrument_registry
 from ess.livedata.config.instrument import Instrument
 from ess.livedata.config.instruments import available_instruments, get_config
 from ess.livedata.core.handler import StreamId
-from ess.livedata.handlers.accumulators import LatestValue
+from ess.livedata.handlers.accumulators import LatestValueHandler
 from ess.livedata.handlers.detector_data_handler import (
     DetectorHandlerFactory,
     DetectorLogicalView,
@@ -77,7 +77,7 @@ def test_factory_creates_latest_value_accumulator_for_roi_messages() -> None:
 
     # Should return a LatestValue accumulator
     assert preprocessor is not None
-    assert isinstance(preprocessor, LatestValue)
+    assert isinstance(preprocessor, LatestValueHandler)
 
 
 def test_factory_returns_none_for_unknown_stream_kinds() -> None:

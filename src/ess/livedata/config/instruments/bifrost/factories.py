@@ -48,7 +48,7 @@ def setup_factories(instrument: Instrument) -> None:
         CutAxis2,
         CutData,
     )
-    from ess.livedata.config.workflows import TimeseriesAccumulator
+    from ess.livedata.handlers.accumulators import LatestValue
     from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
     from ess.reduce.nexus.types import (
@@ -118,7 +118,7 @@ def setup_factories(instrument: Instrument) -> None:
             wf,
             dynamic_keys={'unified_detector': NeXusData[NXdetector, SampleRun]},
             target_keys={'detector_region_counts': DetectorRegionCounts},
-            accumulators={DetectorRegionCounts: TimeseriesAccumulator},
+            accumulators={DetectorRegionCounts: LatestValue},
         )
 
     # Q-map workflow factories

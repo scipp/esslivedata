@@ -11,6 +11,7 @@ from ess.livedata.handlers.accumulators import (
     Cumulative,
     GroupIntoPixels,
     LatestValue,
+    LatestValueHandler,
     LogData,
     MonitorEvents,
     NullAccumulator,
@@ -28,7 +29,9 @@ def test_LogData_from_f144() -> None:
     assert log_data.value == 42.0
 
 
-@pytest.mark.parametrize('accumulator_cls', [Cumulative, LatestValue, ToNXevent_data])
+@pytest.mark.parametrize(
+    'accumulator_cls', [Cumulative, LatestValueHandler, ToNXevent_data]
+)
 def test_accumulator_raises_if_get_before_add(
     accumulator_cls: type[Accumulator],
 ) -> None:
@@ -75,14 +78,16 @@ class TestNullAccumulator:
         # Should not raise any exceptions
 
 
-class TestLatestValue:
+class TestLatestValueHandler:
+    """Tests for LatestValueHandler (handler-style accumulator with add/get/clear)."""
+
     def test_get_before_add_raises_error(self) -> None:
-        accumulator = LatestValue()
+        accumulator = LatestValueHandler()
         with pytest.raises(ValueError, match="No data has been added"):
             accumulator.get()
 
     def test_keeps_latest_value_only(self) -> None:
-        accumulator = LatestValue()
+        accumulator = LatestValueHandler()
         da1 = sc.DataArray(
             sc.array(dims=['x'], values=[1.0], unit='m'),
             coords={'x': sc.array(dims=['x'], values=[0.0], unit='s')},
@@ -111,7 +116,7 @@ class TestLatestValue:
         assert sc.identical(result, da3)
 
     def test_stores_copy_not_reference(self) -> None:
-        accumulator = LatestValue()
+        accumulator = LatestValueHandler()
         da = sc.DataArray(
             sc.array(dims=['x'], values=[1.0], unit='m'),
             coords={'x': sc.array(dims=['x'], values=[0.0], unit='s')},
@@ -126,7 +131,7 @@ class TestLatestValue:
         assert result.values[0] == 1.0
 
     def test_clear(self) -> None:
-        accumulator = LatestValue()
+        accumulator = LatestValueHandler()
         da = sc.DataArray(
             sc.array(dims=['x'], values=[1.0], unit='m'),
             coords={'x': sc.array(dims=['x'], values=[0.0], unit='s')},
@@ -139,7 +144,7 @@ class TestLatestValue:
             accumulator.get()
 
     def test_timestamp_parameter_is_ignored(self) -> None:
-        accumulator = LatestValue()
+        accumulator = LatestValueHandler()
         da = sc.DataArray(
             sc.array(dims=['x'], values=[1.0], unit='m'),
             coords={'x': sc.array(dims=['x'], values=[0.0], unit='s')},
@@ -149,6 +154,42 @@ class TestLatestValue:
         accumulator.add(12345, da)
         result = accumulator.get()
         assert sc.identical(result, da)
+
+
+class TestLatestValue:
+    """Tests for LatestValue (streaming-style accumulator with push/value)."""
+
+    def test_value_before_push_raises_error(self) -> None:
+        accumulator: LatestValue[sc.DataArray] = LatestValue()
+        with pytest.raises(ValueError, match="Cannot get value from empty accumulator"):
+            _ = accumulator.value
+
+    def test_is_empty_before_push(self) -> None:
+        accumulator: LatestValue[sc.DataArray] = LatestValue()
+        assert accumulator.is_empty
+
+    def test_keeps_latest_value_only(self) -> None:
+        accumulator: LatestValue[sc.DataArray] = LatestValue()
+        da1 = sc.DataArray(sc.array(dims=['x'], values=[1.0], unit='m'))
+        da2 = sc.DataArray(sc.array(dims=['x'], values=[2.0], unit='m'))
+
+        accumulator.push(da1)
+        assert sc.identical(accumulator.value, da1)
+        assert not accumulator.is_empty
+
+        accumulator.push(da2)
+        assert sc.identical(accumulator.value, da2)
+
+    def test_clear(self) -> None:
+        accumulator: LatestValue[sc.DataArray] = LatestValue()
+        da = sc.DataArray(sc.array(dims=['x'], values=[1.0], unit='m'))
+
+        accumulator.push(da)
+        accumulator.clear()
+
+        assert accumulator.is_empty
+        with pytest.raises(ValueError, match="Cannot get value from empty accumulator"):
+            _ = accumulator.value
 
 
 class TestCumulative:
