@@ -811,6 +811,12 @@ class WorkflowStatusListWidget:
 
         return pn.Column(*workflow_widgets, sizing_mode='stretch_width', margin=(0, 10))
 
+    def rebuild_widget(self, workflow_id: WorkflowId) -> None:
+        """Rebuild a specific workflow widget after config changes."""
+        widget = self._widgets.get(workflow_id)
+        if widget is not None:
+            widget._build_widget()
+
     def panel(self) -> pn.Column:
         """Get the main panel for this widget."""
         return self._panel

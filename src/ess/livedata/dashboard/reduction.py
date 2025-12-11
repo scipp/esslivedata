@@ -89,6 +89,7 @@ class ReductionApp(DashboardBase):
         )
 
         # Create on_configure callback for workflow status widget
+        # Note: workflow_status_widget is referenced in closure but defined below
         def on_configure_workflow(workflow_id, source_names):
             """Handle gear button click from workflow status widget."""
             try:
@@ -103,10 +104,12 @@ class ReductionApp(DashboardBase):
                 # Create and show modal
                 def on_success():
                     self._cleanup_workflow_config_modal()
+                    # Rebuild the widget to reflect staged config changes
+                    workflow_status_widget.rebuild_widget(workflow_id)
 
                 modal = ConfigurationModal(
                     config=adapter,
-                    start_button_text="Update Configuration",
+                    start_button_text="Apply",
                     success_callback=on_success,
                 )
                 self._workflow_config_modal_container.clear()
@@ -116,7 +119,7 @@ class ReductionApp(DashboardBase):
                 self._logger.exception("Failed to create workflow configuration modal")
                 pn.state.notifications.error(f"Configuration error: {e}")
 
-        # Create workflow status widget
+        # Create workflow status widget with callback
         workflow_status_widget = WorkflowStatusListWidget(
             orchestrator=self._services.job_orchestrator,
             job_service=self._services.job_service,

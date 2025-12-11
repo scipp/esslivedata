@@ -80,6 +80,69 @@ class WorkflowController:
 
         self._data_service = data_service
 
+    def stage_workflow(
+        self,
+        workflow_id: WorkflowId,
+        source_names: list[str],
+        config: pydantic.BaseModel,
+        aux_source_names: pydantic.BaseModel | None = None,
+    ) -> None:
+        """Stage a workflow configuration without committing (starting) it.
+
+        This allows users to configure sources and review the changes
+        before committing via the widget's "Commit & Restart" button.
+
+        Parameters
+        ----------
+        workflow_id:
+            The workflow to configure
+        source_names:
+            List of source names to process
+        config:
+            Workflow configuration parameters
+        aux_source_names:
+            Optional auxiliary source names
+
+        Raises
+        ------
+        ValueError
+            If the workflow spec is not found.
+        """
+        self._logger.info(
+            'WorkflowController.stage_workflow: workflow_id=%s, sources=%s, '
+            'config=%s, aux_sources=%s',
+            workflow_id,
+            source_names,
+            config,
+            aux_source_names,
+        )
+
+        spec = self.get_workflow_spec(workflow_id)
+        if spec is None:
+            msg = f'Workflow spec for {workflow_id} not found'
+            self._logger.error('%s, cannot stage workflow', msg)
+            raise ValueError(msg)
+
+        # Clear existing staged configs and stage new ones
+        # This ensures only the requested sources are included in the staging area
+        self._orchestrator.clear_staged_configs(workflow_id)
+
+        # If no sources selected, leave staging area empty (user removed all sources)
+        if not source_names:
+            return
+
+        # Convert Pydantic models to dicts for orchestrator
+        params_dict = config.model_dump(mode='json')
+        aux_dict = aux_source_names.model_dump(mode='json') if aux_source_names else {}
+
+        for source_name in source_names:
+            self._orchestrator.stage_config(
+                workflow_id,
+                source_name=source_name,
+                params=params_dict,
+                aux_source_names=aux_dict,
+            )
+
     def start_workflow(
         self,
         workflow_id: WorkflowId,
@@ -169,17 +232,17 @@ class WorkflowController:
         # Handle regular workflows
         persistent_config = self.get_workflow_config(workflow_id)
 
-        def start_callback(
+        def stage_callback(
             selected_sources: list[str],
             parameter_values: pydantic.BaseModel,
             aux_source_names: pydantic.BaseModel | None = None,
         ) -> None:
-            """Bound callback to start this specific workflow."""
-            self.start_workflow(
+            """Bound callback to stage this specific workflow without committing."""
+            self.stage_workflow(
                 workflow_id, selected_sources, parameter_values, aux_source_names
             )
 
-        return WorkflowConfigurationAdapter(spec, persistent_config, start_callback)
+        return WorkflowConfigurationAdapter(spec, persistent_config, stage_callback)
 
     def get_workflow_titles(self) -> dict[WorkflowId, str]:
         """Get workflow IDs mapped to their titles, sorted by title."""
