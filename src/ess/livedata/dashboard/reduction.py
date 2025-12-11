@@ -104,8 +104,7 @@ class ReductionApp(DashboardBase):
                 # Create and show modal
                 def on_success():
                     self._cleanup_workflow_config_modal()
-                    # Rebuild the widget to reflect staged config changes
-                    workflow_status_widget.rebuild_widget(workflow_id)
+                    # Widget rebuilds automatically via orchestrator subscription
 
                 modal = ConfigurationModal(
                     config=adapter,
