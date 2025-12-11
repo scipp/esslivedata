@@ -565,3 +565,83 @@ class TestWorkflowStatusListWidget:
         assert len(list_widget._widgets) == len(workflow_registry)
         for workflow_id in workflow_registry:
             assert workflow_id in list_widget._widgets
+
+    def test_expand_all_expands_all_widgets(
+        self,
+        job_orchestrator,
+        job_service,
+        workflow_controller,
+        configure_callback,
+    ):
+        """Test that expand_all expands all workflow widgets."""
+        list_widget = WorkflowStatusListWidget(
+            orchestrator=job_orchestrator,
+            job_service=job_service,
+            workflow_controller=workflow_controller,
+            on_configure=configure_callback,
+        )
+
+        # First collapse all widgets
+        for widget in list_widget._widgets.values():
+            widget.set_expanded(False)
+            assert not widget._expanded
+
+        # Expand all
+        list_widget._expand_all()
+
+        # All widgets should be expanded
+        for widget in list_widget._widgets.values():
+            assert widget._expanded
+
+    def test_collapse_all_collapses_all_widgets(
+        self,
+        job_orchestrator,
+        job_service,
+        workflow_controller,
+        configure_callback,
+    ):
+        """Test that collapse_all collapses all workflow widgets."""
+        list_widget = WorkflowStatusListWidget(
+            orchestrator=job_orchestrator,
+            job_service=job_service,
+            workflow_controller=workflow_controller,
+            on_configure=configure_callback,
+        )
+
+        # All widgets start expanded by default
+        for widget in list_widget._widgets.values():
+            assert widget._expanded
+
+        # Collapse all
+        list_widget._collapse_all()
+
+        # All widgets should be collapsed
+        for widget in list_widget._widgets.values():
+            assert not widget._expanded
+
+    def test_header_row_contains_expand_collapse_buttons(
+        self,
+        job_orchestrator,
+        job_service,
+        workflow_controller,
+        configure_callback,
+    ):
+        """Test that the panel contains expand/collapse all buttons."""
+        list_widget = WorkflowStatusListWidget(
+            orchestrator=job_orchestrator,
+            job_service=job_service,
+            workflow_controller=workflow_controller,
+            on_configure=configure_callback,
+        )
+
+        panel = list_widget.panel()
+        # First element should be the header row
+        header_row = panel[0]
+        assert isinstance(header_row, pn.Row)
+
+        # Header row should contain the expand/collapse buttons
+        button_names = [
+            obj.name for obj in header_row if isinstance(obj, pn.widgets.Button)
+        ]
+        assert 'Expand all' in button_names
+        assert 'Collapse all' in button_names

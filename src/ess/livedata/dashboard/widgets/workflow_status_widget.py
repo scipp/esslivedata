@@ -729,6 +729,12 @@ class WorkflowStatusWidget:
         self._expanded = not self._expanded
         self._build_widget()
 
+    def set_expanded(self, expanded: bool) -> None:
+        """Set expand/collapse state programmatically."""
+        if self._expanded != expanded:
+            self._expanded = expanded
+            self._build_widget()
+
     def _on_gear_click(self, source_names: list[str]) -> None:
         """Handle gear button click."""
         self._on_configure(self._workflow_id, source_names)
@@ -830,6 +836,70 @@ class WorkflowStatusListWidget:
         self._widgets: dict[WorkflowId, WorkflowStatusWidget] = {}
         self._panel = self._create_panel()
 
+    def _create_header_row(self) -> pn.Row:
+        """Create the header row with expand/collapse all buttons."""
+        expand_all_btn = pn.widgets.Button(
+            name='Expand all',
+            button_type='light',
+            width=90,
+            height=28,
+            margin=(0, 4, 0, 0),
+            stylesheets=[
+                """
+                button {
+                    font-size: 12px !important;
+                    padding: 4px 8px !important;
+                    border: 1px solid #dee2e6 !important;
+                    border-radius: 4px !important;
+                }
+                button:hover {
+                    background-color: #e9ecef !important;
+                }
+                """
+            ],
+        )
+        expand_all_btn.on_click(lambda e: self._expand_all())
+
+        collapse_all_btn = pn.widgets.Button(
+            name='Collapse all',
+            button_type='light',
+            width=90,
+            height=28,
+            margin=0,
+            stylesheets=[
+                """
+                button {
+                    font-size: 12px !important;
+                    padding: 4px 8px !important;
+                    border: 1px solid #dee2e6 !important;
+                    border-radius: 4px !important;
+                }
+                button:hover {
+                    background-color: #e9ecef !important;
+                }
+                """
+            ],
+        )
+        collapse_all_btn.on_click(lambda e: self._collapse_all())
+
+        return pn.Row(
+            pn.Spacer(sizing_mode='stretch_width'),
+            expand_all_btn,
+            collapse_all_btn,
+            sizing_mode='stretch_width',
+            margin=(0, 0, 8, 0),
+        )
+
+    def _expand_all(self) -> None:
+        """Expand all workflow widgets."""
+        for widget in self._widgets.values():
+            widget.set_expanded(True)
+
+    def _collapse_all(self) -> None:
+        """Collapse all workflow widgets."""
+        for widget in self._widgets.values():
+            widget.set_expanded(False)
+
     def _create_panel(self) -> pn.Column:
         """Create the main panel with all workflow widgets."""
         workflow_widgets = []
@@ -848,8 +918,13 @@ class WorkflowStatusListWidget:
             self._widgets[workflow_id] = widget
             workflow_widgets.append(widget.panel())
 
+        header_row = self._create_header_row()
+
         return pn.Column(
-            *workflow_widgets, sizing_mode='stretch_width', margin=(10, 10)
+            header_row,
+            *workflow_widgets,
+            sizing_mode='stretch_width',
+            margin=(10, 10),
         )
 
     def rebuild_widget(self, workflow_id: WorkflowId) -> None:
