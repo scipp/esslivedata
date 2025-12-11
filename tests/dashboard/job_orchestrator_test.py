@@ -1045,3 +1045,227 @@ class TestJobOrchestratorCommit:
 
         # Config store should be unchanged for workflows with empty staged_jobs
         assert config_store == config_store_before
+
+
+class TestJobOrchestratorStop:
+    """Test stop_workflow functionality."""
+
+    def test_stop_workflow_sends_stop_commands_to_backend(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Verify stop_workflow sends stop commands for all active jobs."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        fake_sink = FakeMessageSink()
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=fake_sink),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Start a workflow
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={},
+        )
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_2",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={},
+        )
+        job_ids = orchestrator.commit_workflow(workflow_id)
+
+        # Clear sink to track stop commands
+        fake_sink.published_messages.clear()
+
+        # Stop the workflow
+        result = orchestrator.stop_workflow(workflow_id)
+
+        # Assert: stop commands sent for all jobs
+        assert result is True
+        sent_commands = get_sent_commands(fake_sink)
+        stop_commands = [
+            (key, value)
+            for key, value in sent_commands
+            if isinstance(value, JobCommand) and value.action == JobAction.stop
+        ]
+
+        assert len(stop_commands) == 2
+        stopped_job_ids = {cmd[1].job_id for cmd in stop_commands}
+        assert stopped_job_ids == set(job_ids)
+
+    def test_stop_workflow_clears_active_job_state(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Verify stop_workflow clears current job state."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Start a workflow
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={},
+        )
+        orchestrator.commit_workflow(workflow_id)
+
+        # Verify job is active
+        assert orchestrator.get_active_job_number(workflow_id) is not None
+
+        # Stop the workflow
+        orchestrator.stop_workflow(workflow_id)
+
+        # Verify job is no longer active
+        assert orchestrator.get_active_job_number(workflow_id) is None
+
+    def test_stop_workflow_returns_false_when_no_active_jobs(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Verify stop_workflow returns False when no active jobs."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Don't start any workflow - just try to stop
+        result = orchestrator.stop_workflow(workflow_id)
+
+        # Should return False
+        assert result is False
+
+    def test_stop_workflow_preserves_staged_config(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Verify stop_workflow preserves staged configuration for restart."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Clear defaults and stage only det_1
+        orchestrator.clear_staged_configs(workflow_id)
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={"monitor": "monitor_1"},
+        )
+        orchestrator.commit_workflow(workflow_id)
+
+        # Stop the workflow
+        orchestrator.stop_workflow(workflow_id)
+
+        # Verify staged config still exists
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert len(staged) == 1
+        assert staged["det_1"].params["threshold"] == 50.0
+        assert staged["det_1"].params["mode"] == "custom"
+        assert staged["det_1"].aux_source_names["monitor"] == "monitor_1"
+
+    def test_stop_workflow_persists_stopped_state(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Verify stop_workflow persists stopped state to config store."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        config_store: dict[str, dict] = {}
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=config_store,
+        )
+
+        # Start a workflow
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={},
+        )
+        job_ids = orchestrator.commit_workflow(workflow_id)
+
+        # Verify active job is in config store
+        assert 'current_job' in config_store[str(workflow_id)]
+
+        # Stop the workflow
+        orchestrator.stop_workflow(workflow_id)
+
+        # Verify current_job is removed from config store
+        assert 'current_job' not in config_store[str(workflow_id)]
+
+        # Verify previous_job is in config store
+        assert 'previous_job' in config_store[str(workflow_id)]
+        assert config_store[str(workflow_id)]['previous_job']['job_number'] == str(
+            job_ids[0].job_number
+        )
+
+    def test_stop_workflow_allows_immediate_restart(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Verify workflow can be restarted immediately after stopping."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Clear defaults and stage only det_1
+        orchestrator.clear_staged_configs(workflow_id)
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={},
+        )
+        first_job_ids = orchestrator.commit_workflow(workflow_id)
+
+        # Stop the workflow
+        orchestrator.stop_workflow(workflow_id)
+
+        # Restart with same config
+        second_job_ids = orchestrator.commit_workflow(workflow_id)
+
+        # Should succeed and get new job number
+        assert len(second_job_ids) == 1
+        assert second_job_ids[0].job_number != first_job_ids[0].job_number

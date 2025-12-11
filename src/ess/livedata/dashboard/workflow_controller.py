@@ -283,3 +283,22 @@ class WorkflowController:
             params=first_job_config.params,
             aux_source_names=first_job_config.aux_source_names,
         )
+
+    def stop_workflow(self, workflow_id: WorkflowId) -> bool:
+        """
+        Stop a running workflow.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to stop.
+
+        Returns
+        -------
+        :
+            True if workflow was stopped, False if not running.
+        """
+        self._logger.info(
+            'WorkflowController.stop_workflow: workflow_id=%s', workflow_id
+        )
+        return self._orchestrator.stop_workflow(workflow_id)

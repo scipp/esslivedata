@@ -468,6 +468,55 @@ class JobOrchestrator:
             return None
         return state.previous.job_number
 
+    def stop_workflow(self, workflow_id: WorkflowId) -> bool:
+        """
+        Stop all jobs for a workflow.
+
+        Sends stop commands to the backend and clears the local active job state.
+        The workflow configuration remains staged for future restarts.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to stop.
+
+        Returns
+        -------
+        :
+            True if jobs were stopped, False if no active jobs.
+        """
+        state = self._workflows[workflow_id]
+        if state.current is None:
+            self._logger.debug('No active jobs for workflow %s to stop', workflow_id)
+            return False
+
+        # Send stop commands to backend
+        commands = [
+            (
+                ConfigKey(key=JobCommand.key, source_name=str(job_id)),
+                JobCommand(job_id=job_id, action=JobAction.stop),
+            )
+            for job_id in state.current.job_ids()
+        ]
+        self._command_service.send_batch(commands)
+
+        job_number = state.current.job_number
+        self._logger.info(
+            'Stopped workflow %s (job_number=%s, %d jobs)',
+            workflow_id,
+            job_number,
+            len(state.current.jobs),
+        )
+
+        # Clear local state immediately (don't wait for backend confirmation)
+        state.previous = state.current
+        state.current = None
+
+        # Persist updated state
+        self._persist_state_to_store(workflow_id)
+
+        return True
+
     def _notify_workflow_available(
         self, workflow_id: WorkflowId, job_number: JobNumber
     ) -> None:

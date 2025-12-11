@@ -720,9 +720,11 @@ class WorkflowStatusWidget:
         pass
 
     def _on_stop_click(self) -> None:
-        """Handle stop button click."""
-        # TODO: Implement stop via orchestrator/controller
-        pass
+        """Handle stop button click - stops the workflow and updates UI."""
+        stopped = self._workflow_controller.stop_workflow(self._workflow_id)
+        if stopped:
+            # Rebuild widget to reflect stopped state
+            self._build_widget()
 
     def _on_commit_click(self) -> None:
         """Handle commit button click."""
