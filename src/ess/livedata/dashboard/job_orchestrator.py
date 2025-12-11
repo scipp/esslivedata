@@ -263,6 +263,38 @@ class JobOrchestrator:
         )
         self._notify_staged_changed(workflow_id)
 
+    def replace_staged_configs(
+        self,
+        workflow_id: WorkflowId,
+        *,
+        configs: dict[SourceName, JobConfig],
+    ) -> None:
+        """
+        Replace all staged configs with new configs in a single operation.
+
+        This is more efficient than clear + multiple stage_config calls because
+        it triggers only a single notification to subscribers, reducing UI rebuilds.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to configure.
+        configs
+            Dict mapping source names to their configs.
+        """
+        # Clear existing staged configs
+        self._workflows[workflow_id].staged_jobs.clear()
+
+        # Add all new configs (with copies to prevent external mutation)
+        for source_name, job_config in configs.items():
+            self._workflows[workflow_id].staged_jobs[source_name] = JobConfig(
+                params=job_config.params.copy(),
+                aux_source_names=job_config.aux_source_names.copy(),
+            )
+
+        # Single notification for the entire operation
+        self._notify_staged_changed(workflow_id)
+
     def commit_workflow(self, workflow_id: WorkflowId) -> list[JobId]:
         """
         Commit staged configs and start workflow.

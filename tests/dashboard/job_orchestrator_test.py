@@ -1617,3 +1617,125 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
 
         # Only the commit callback was set
         assert events == ['committed']
+
+    def test_replace_staged_configs_replaces_all_configs(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """replace_staged_configs replaces all staged configs in one operation."""
+        from ess.livedata.dashboard.job_orchestrator import JobConfig
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Stage some initial configs
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 100.0},
+            aux_source_names={},
+        )
+
+        # Replace with new configs
+        new_configs = {
+            "det_2": JobConfig(params={"threshold": 200.0}, aux_source_names={}),
+            "det_3": JobConfig(params={"threshold": 300.0}, aux_source_names={}),
+        }
+        orchestrator.replace_staged_configs(workflow_id, configs=new_configs)
+
+        # Old config should be gone, new configs present
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert "det_1" not in staged
+        assert "det_2" in staged
+        assert "det_3" in staged
+        assert staged["det_2"].params == {"threshold": 200.0}
+        assert staged["det_3"].params == {"threshold": 300.0}
+
+    def test_replace_staged_configs_triggers_single_notification(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """replace_staged_configs triggers only one notification for efficiency."""
+        from ess.livedata.dashboard.job_orchestrator import (
+            JobConfig,
+            WidgetLifecycleCallbacks,
+        )
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Subscribe and count notifications
+        notification_count = 0
+
+        def count_notification(wid):
+            nonlocal notification_count
+            notification_count += 1
+
+        callbacks = WidgetLifecycleCallbacks(on_staged_changed=count_notification)
+        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        # Clear the counter (initial subscription triggers notification)
+        notification_count = 0
+
+        # Replace with multiple configs - should trigger only ONE notification
+        new_configs = {
+            "det_1": JobConfig(params={"threshold": 100.0}, aux_source_names={}),
+            "det_2": JobConfig(params={"threshold": 200.0}, aux_source_names={}),
+            "det_3": JobConfig(params={"threshold": 300.0}, aux_source_names={}),
+        }
+        orchestrator.replace_staged_configs(workflow_id, configs=new_configs)
+
+        # Only one notification despite replacing 3 configs
+        assert notification_count == 1
+
+    def test_replace_staged_configs_copies_config_dicts(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """replace_staged_configs copies config dicts to prevent external mutation."""
+        from ess.livedata.dashboard.job_orchestrator import JobConfig
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Create configs with mutable dicts
+        params = {"threshold": 100.0}
+        aux = {"monitor": "mon_1"}
+        configs = {
+            "det_1": JobConfig(params=params, aux_source_names=aux),
+        }
+
+        orchestrator.replace_staged_configs(workflow_id, configs=configs)
+
+        # Mutate the original dicts
+        params["threshold"] = 999.0
+        aux["monitor"] = "mutated"
+
+        # Staged config should be unaffected (was copied)
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert staged["det_1"].params["threshold"] == 100.0
+        assert staged["det_1"].aux_source_names["monitor"] == "mon_1"

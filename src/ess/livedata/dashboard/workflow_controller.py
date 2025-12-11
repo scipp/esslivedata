@@ -21,7 +21,7 @@ from ess.livedata.config.workflow_spec import (
 from .configuration_adapter import ConfigurationState
 from .correlation_histogram import CorrelationHistogramController, make_workflow_spec
 from .data_service import DataService
-from .job_orchestrator import JobOrchestrator
+from .job_orchestrator import JobConfig, JobOrchestrator
 from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
 
@@ -129,21 +129,19 @@ class WorkflowController:
         if not source_names:
             return []
 
-        # Clear existing staged configs and stage new ones
-        # This ensures only the requested sources are included in the workflow
-        self._orchestrator.clear_staged_configs(workflow_id)
-
         # Convert Pydantic models to dicts for orchestrator
         params_dict = config.model_dump(mode='json')
         aux_dict = aux_source_names.model_dump(mode='json') if aux_source_names else {}
 
-        for source_name in source_names:
-            self._orchestrator.stage_config(
-                workflow_id,
-                source_name=source_name,
-                params=params_dict,
-                aux_source_names=aux_dict,
-            )
+        # Build configs for all sources
+        configs = {
+            source_name: JobConfig(params=params_dict, aux_source_names=aux_dict)
+            for source_name in source_names
+        }
+
+        # Replace staged configs in a single operation (more efficient than
+        # clear + multiple stage_config calls, reduces UI rebuilds)
+        self._orchestrator.replace_staged_configs(workflow_id, configs=configs)
 
         # Commit and start workflow
         return self._orchestrator.commit_workflow(workflow_id)
