@@ -196,9 +196,12 @@ class WorkflowStatusWidget:
         self._expanded = True
         self._panel: pn.Column | None = None
 
-        # References to updatable header elements (avoid full rebuild on status update)
+        # References to updatable elements (avoid full rebuild on status/expand update)
         self._status_badge: pn.pane.HTML | None = None
         self._timing_html: pn.pane.HTML | None = None
+        self._expand_btn: pn.widgets.Button | None = None
+        self._header: pn.Row | None = None
+        self._body: pn.Column | None = None
 
         # Subscribe to job status updates
         self._job_service.register_job_status_update_subscriber(self._on_status_update)
@@ -212,19 +215,17 @@ class WorkflowStatusWidget:
 
     def _build_widget(self) -> None:
         """Build or rebuild the entire widget."""
-        header = self._create_header()
-        body = self._create_body()
+        self._header = self._create_header()
+        self._body = self._create_body()
 
         # Apply collapsed state
-        body.visible = self._expanded
-
-        self._header = header
-        self._body = body
+        self._body.visible = self._expanded
+        self._update_header_border()
 
         if self._panel is None:
             self._panel = pn.Column(
-                header,
-                body,
+                self._header,
+                self._body,
                 styles={
                     'border': '1px solid #dee2e6',
                     'border-radius': '6px',
@@ -236,13 +237,13 @@ class WorkflowStatusWidget:
             )
         else:
             self._panel.clear()
-            self._panel.extend([header, body])
+            self._panel.extend([self._header, self._body])
 
     def _create_header(self) -> pn.Row:
         """Create the header row with expand button, title, status, and buttons."""
-        # Expand/collapse button
+        # Expand/collapse button (store reference for updates)
         indicator = '\u25bc' if self._expanded else '\u25b6'  # ▼ or ▶
-        expand_btn = pn.widgets.Button(
+        self._expand_btn = pn.widgets.Button(
             name=indicator,
             button_type='light',
             width=24,
@@ -264,7 +265,7 @@ class WorkflowStatusWidget:
                 """
             ],
         )
-        expand_btn.on_click(lambda e: self._on_header_click(e))
+        self._expand_btn.on_click(lambda e: self._on_header_click(e))
 
         # Workflow title
         title_html = pn.pane.HTML(
@@ -294,7 +295,7 @@ class WorkflowStatusWidget:
         action_buttons = self._create_header_buttons()
 
         header = pn.Row(
-            expand_btn,
+            self._expand_btn,
             title_html,
             pn.Spacer(width=12),
             self._status_badge,
@@ -306,13 +307,18 @@ class WorkflowStatusWidget:
             styles={
                 'background': '#f8f9fa',
                 'padding': '8px 12px',
-                'border-bottom': '1px solid #dee2e6' if self._expanded else 'none',
             },
             sizing_mode='stretch_width',
             align='center',
         )
 
         return header
+
+    def _update_header_border(self) -> None:
+        """Update header border based on expanded state."""
+        if self._header is not None:
+            border = '1px solid #dee2e6' if self._expanded else 'none'
+            self._header.styles = {**self._header.styles, 'border-bottom': border}
 
     def _create_header_buttons(self) -> pn.Row:
         """Create reset/stop buttons for header."""
@@ -726,14 +732,26 @@ class WorkflowStatusWidget:
 
     def _on_header_click(self, event) -> None:
         """Handle header click to toggle expand/collapse."""
-        self._expanded = not self._expanded
-        self._build_widget()
+        self.set_expanded(not self._expanded)
 
     def set_expanded(self, expanded: bool) -> None:
         """Set expand/collapse state programmatically."""
         if self._expanded != expanded:
             self._expanded = expanded
-            self._build_widget()
+            self._update_expand_state()
+
+    def _update_expand_state(self) -> None:
+        """Update UI elements for expand/collapse without full rebuild."""
+        # Update expand button indicator
+        if self._expand_btn is not None:
+            self._expand_btn.name = '\u25bc' if self._expanded else '\u25b6'
+
+        # Update body visibility
+        if self._body is not None:
+            self._body.visible = self._expanded
+
+        # Update header border
+        self._update_header_border()
 
     def _on_gear_click(self, source_names: list[str]) -> None:
         """Handle gear button click."""
@@ -892,13 +910,15 @@ class WorkflowStatusListWidget:
 
     def _expand_all(self) -> None:
         """Expand all workflow widgets."""
-        for widget in self._widgets.values():
-            widget.set_expanded(True)
+        with pn.io.hold():
+            for widget in self._widgets.values():
+                widget.set_expanded(True)
 
     def _collapse_all(self) -> None:
         """Collapse all workflow widgets."""
-        for widget in self._widgets.values():
-            widget.set_expanded(False)
+        with pn.io.hold():
+            for widget in self._widgets.values():
+                widget.set_expanded(False)
 
     def _create_panel(self) -> pn.Column:
         """Create the main panel with all workflow widgets."""
