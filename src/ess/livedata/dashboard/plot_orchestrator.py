@@ -728,6 +728,8 @@ class PlotOrchestrator:
                     "Layout-wrapped plots (e.g., roi_detector) must be single-layer."
                 )
 
+        # No change to shared_axes here. We prevent sharing between different cells
+        # using linked_axes=False in PlotGridTabs when wrapping in pn.pane.HoloViews.
         return hv.Overlay(plots)
 
     def _validate_params(

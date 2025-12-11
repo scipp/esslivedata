@@ -606,7 +606,30 @@ class PlotGridTabs:
         # in a Panel layout (Tabs, Column, etc.). The .layout property contains
         # both the plot and widgets, which renders correctly in layouts.
         # See: https://github.com/holoviz/panel/issues/5628
-        plot_pane_wrapper = pn.pane.HoloViews(plot, sizing_mode=sizing_mode)
+        #
+        # CRITICAL: Use linked_axes=False to prevent unintended axis linking (#607)
+        #
+        # Problem: By default, Panel's HoloViews pane links axes across different
+        # plots based on their axis labels (e.g., all plots with 'x' and 'y' axes
+        # get linked). For detector panels in different grid cells, this is unwanted:
+        # - Different detector panels have independent spatial coordinates
+        # - Zooming one panel shouldn't affect others
+        # - Each panel needs independent autoscaling
+        #
+        # Previous workarounds and why they failed:
+        # - shared_axes=False (HoloViews): Breaks framewise autoscaling and other
+        #   dynamic features that rely on shared axis infrastructure
+        # - Wrapping in hv.Layout: Prevents multi-layer composition with hv.Overlay,
+        #   which was needed for the layer system (#606)
+        #
+        # Solution: linked_axes=False on the Panel pane
+        # - Disables Panel's cross-plot axis linking while preserving all HoloViews
+        #   features (framewise options, autoscaling, dynamic updates)
+        # - Allows proper multi-layer composition via hv.Overlay
+        # - Each grid cell's plot remains independent
+        plot_pane_wrapper = pn.pane.HoloViews(
+            plot, sizing_mode=sizing_mode, linked_axes=False
+        )
         return plot_pane_wrapper.layout
 
     def shutdown(self) -> None:
