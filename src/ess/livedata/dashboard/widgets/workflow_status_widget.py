@@ -1,0 +1,816 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""
+Widget for displaying and controlling workflow status.
+
+Provides a collapsible card for each workflow showing:
+- Header with title, status badge, timing info, and action buttons
+- Staging area with config toolbars grouped by identical configurations
+- Output chips showing available workflow outputs
+- Commit button when staged config differs from active config
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, ClassVar
+
+import panel as pn
+
+from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
+from ess.livedata.core.job import JobState
+
+from .plot_widgets import ButtonStyles, create_tool_button
+
+if TYPE_CHECKING:
+    from ..job_orchestrator import JobConfig, JobOrchestrator
+    from ..job_service import JobService
+    from ..workflow_controller import WorkflowController
+
+
+# UI styling constants
+class WorkflowWidgetStyles:
+    """Styling constants for workflow status widget."""
+
+    # Colors (matching existing JobStatusWidget)
+    STATUS_COLORS: ClassVar[dict[str, str]] = {
+        'active': '#28a745',  # Green
+        'stopped': '#6c757d',  # Gray
+        'error': '#dc3545',  # Red
+        'warning': '#fd7e14',  # Orange
+        'scheduled': '#6c757d',  # Gray
+        'paused': '#ffc107',  # Yellow
+        'finishing': '#17a2b8',  # Blue
+    }
+    MODIFIED_BORDER_COLOR = '#ffc107'  # Yellow
+    UNCONFIGURED_BG = '#fff3cd'
+    UNCONFIGURED_BORDER = '#ffc107'
+    ERROR_BG = '#f8d7da'
+    ERROR_BORDER = '#f5c6cb'
+    ERROR_TEXT = '#721c24'
+
+    # Output chip colors
+    OUTPUT_CHIP_BG = '#e7f1ff'
+    OUTPUT_CHIP_BORDER = '#b6d4fe'
+    OUTPUT_CHIP_TEXT = '#0d6efd'
+
+    # Dimensions
+    HEADER_HEIGHT = 40
+    TOOLBAR_HEIGHT = 32
+
+
+@dataclass(frozen=True)
+class ConfigGroup:
+    """A group of sources sharing the same configuration."""
+
+    source_names: tuple[str, ...]
+    params: dict
+    aux_source_names: dict
+    is_modified: bool = False
+
+
+def _make_hashable_key(config_dict: dict) -> str:
+    """
+    Convert a config dict to a hashable key.
+
+    Uses JSON serialization with sorted keys to create a deterministic
+    string representation that handles nested dicts, lists, etc.
+    """
+    return json.dumps(config_dict, sort_keys=True)
+
+
+def _group_configs_by_equality(
+    staged: dict[str, JobConfig],
+    active: dict[str, JobConfig],
+) -> list[ConfigGroup]:
+    """
+    Group sources by config equality for display.
+
+    Sources with identical params and aux_source_names are grouped together.
+    """
+    if not staged:
+        return []
+
+    # Group by (params_key, aux_key) for hashability
+    groups: dict[tuple[str, str], list[str]] = {}
+    config_lookup: dict[tuple[str, str], tuple[dict, dict]] = {}
+
+    for source_name, job_config in staged.items():
+        # Create hashable key from config using JSON serialization
+        params_key = _make_hashable_key(job_config.params)
+        aux_key = _make_hashable_key(job_config.aux_source_names)
+        key = (params_key, aux_key)
+
+        if key not in groups:
+            groups[key] = []
+            config_lookup[key] = (job_config.params, job_config.aux_source_names)
+        groups[key].append(source_name)
+
+    # Convert to ConfigGroup objects
+    result = []
+    for key, source_names in groups.items():
+        params, aux_source_names = config_lookup[key]
+
+        # Check if this group is modified (differs from active config)
+        is_modified = False
+        for source_name in source_names:
+            active_config = active.get(source_name)
+            if active_config is None:
+                # Source not in active config - consider modified
+                is_modified = True
+                break
+            if (
+                active_config.params != params
+                or active_config.aux_source_names != aux_source_names
+            ):
+                is_modified = True
+                break
+
+        result.append(
+            ConfigGroup(
+                source_names=tuple(sorted(source_names)),
+                params=params,
+                aux_source_names=aux_source_names,
+                is_modified=is_modified,
+            )
+        )
+
+    # Sort by first source name for consistent ordering
+    return sorted(result, key=lambda g: g.source_names[0])
+
+
+def _get_unconfigured_sources(
+    all_sources: list[str], staged: dict[str, JobConfig]
+) -> list[str]:
+    """Get sources that are not yet configured."""
+    return sorted(set(all_sources) - set(staged.keys()))
+
+
+class WorkflowStatusWidget:
+    """
+    Widget displaying status and controls for a single workflow.
+
+    Shows a collapsible card with:
+    - Header: title, status, timing, reset/stop buttons
+    - Body: config toolbars, outputs, commit button
+    """
+
+    def __init__(
+        self,
+        *,
+        workflow_id: WorkflowId,
+        workflow_spec: WorkflowSpec,
+        orchestrator: JobOrchestrator,
+        job_service: JobService,
+        workflow_controller: WorkflowController,
+        on_configure: Callable[[WorkflowId, list[str]], None],
+    ) -> None:
+        """
+        Initialize workflow status widget.
+
+        Parameters
+        ----------
+        workflow_id
+            ID of the workflow this widget represents.
+        workflow_spec
+            Specification of the workflow.
+        orchestrator
+            Job orchestrator for config staging and commit.
+        job_service
+            Service providing job status updates.
+        workflow_controller
+            Controller for workflow operations (start/stop).
+        on_configure
+            Callback when gear button is clicked.
+            Called with (workflow_id, source_names_to_configure).
+        """
+        self._workflow_id = workflow_id
+        self._workflow_spec = workflow_spec
+        self._orchestrator = orchestrator
+        self._job_service = job_service
+        self._workflow_controller = workflow_controller
+        self._on_configure = on_configure
+
+        self._expanded = True
+        self._panel: pn.Column | None = None
+
+        # References to updatable header elements (avoid full rebuild on status update)
+        self._status_badge: pn.pane.HTML | None = None
+        self._timing_html: pn.pane.HTML | None = None
+
+        # Subscribe to job status updates
+        self._job_service.register_job_status_update_subscriber(self._on_status_update)
+
+        self._build_widget()
+
+    @property
+    def workflow_id(self) -> WorkflowId:
+        """Get the workflow ID for this widget."""
+        return self._workflow_id
+
+    def _build_widget(self) -> None:
+        """Build or rebuild the entire widget."""
+        header = self._create_header()
+        body = self._create_body()
+
+        # Apply collapsed state
+        body.visible = self._expanded
+
+        self._header = header
+        self._body = body
+
+        if self._panel is None:
+            self._panel = pn.Column(
+                header,
+                body,
+                styles={
+                    'border': '1px solid #dee2e6',
+                    'border-radius': '6px',
+                    'overflow': 'hidden',
+                    'background': 'white',
+                },
+                sizing_mode='stretch_width',
+                margin=(0, 0, 8, 0),
+            )
+        else:
+            self._panel.clear()
+            self._panel.extend([header, body])
+
+    def _create_header(self) -> pn.Row:
+        """Create the header row with expand button, title, status, and buttons."""
+        # Expand/collapse button
+        indicator = '\u25bc' if self._expanded else '\u25b6'  # ▼ or ▶
+        expand_btn = pn.widgets.Button(
+            name=indicator,
+            button_type='light',
+            width=24,
+            height=24,
+            margin=0,
+            stylesheets=[
+                """
+                button {
+                    background-color: transparent !important;
+                    border: none !important;
+                    padding: 0 !important;
+                    font-size: 12px !important;
+                    color: #6c757d !important;
+                    cursor: pointer !important;
+                }
+                button:hover {
+                    background-color: rgba(0, 0, 0, 0.05) !important;
+                }
+                """
+            ],
+        )
+        expand_btn.on_click(lambda e: self._on_header_click(e))
+
+        # Workflow title
+        title_html = pn.pane.HTML(
+            f'<span style="font-weight: 600; font-size: 14px; color: #212529;">'
+            f'{self._workflow_spec.title}</span>',
+            height=WorkflowWidgetStyles.HEADER_HEIGHT,
+            styles={'display': 'flex', 'align-items': 'center'},
+        )
+
+        # Status badge (store reference for updates)
+        status, status_color = self._get_workflow_status()
+        self._status_badge = pn.pane.HTML(
+            self._make_status_badge_html(status, status_color),
+            height=WorkflowWidgetStyles.HEADER_HEIGHT,
+            styles={'display': 'flex', 'align-items': 'center'},
+        )
+
+        # Timing info (store reference for updates)
+        timing_text = self._get_timing_text()
+        self._timing_html = pn.pane.HTML(
+            f'<span style="font-size: 12px; color: #6c757d;">{timing_text}</span>',
+            height=WorkflowWidgetStyles.HEADER_HEIGHT,
+            styles={'display': 'flex', 'align-items': 'center'},
+        )
+
+        # Action buttons (only show when workflow is active)
+        action_buttons = self._create_header_buttons()
+
+        header = pn.Row(
+            expand_btn,
+            title_html,
+            pn.Spacer(width=12),
+            self._status_badge,
+            pn.Spacer(width=12),
+            self._timing_html,
+            pn.Spacer(sizing_mode='stretch_width'),
+            action_buttons,
+            height=WorkflowWidgetStyles.HEADER_HEIGHT,
+            styles={
+                'background': '#f8f9fa',
+                'padding': '8px 12px',
+                'border-bottom': '1px solid #dee2e6' if self._expanded else 'none',
+            },
+            sizing_mode='stretch_width',
+            align='center',
+        )
+
+        return header
+
+    def _create_header_buttons(self) -> pn.Row:
+        """Create reset/stop buttons for header."""
+        buttons = []
+
+        # Only show buttons if workflow has active jobs
+        if self._orchestrator.get_active_job_number(self._workflow_id) is not None:
+            reset_btn = create_tool_button(
+                symbol='\u21bb',  # ↻
+                button_color='#6c757d',
+                hover_color='rgba(108, 117, 125, 0.1)',
+                on_click_callback=self._on_reset_click,
+            )
+            buttons.append(reset_btn)
+
+            stop_btn = create_tool_button(
+                symbol='\u25a0',  # ■ (black square)
+                button_color=ButtonStyles.DANGER_RED,
+                hover_color='rgba(220, 53, 69, 0.1)',
+                on_click_callback=self._on_stop_click,
+            )
+            buttons.append(stop_btn)
+
+        return pn.Row(*buttons, margin=0)
+
+    def _create_body(self) -> pn.Column:
+        """Create the collapsible body content."""
+        components = []
+
+        # Error message (if any)
+        error_html = self._get_error_html()
+        if error_html:
+            components.append(
+                pn.pane.HTML(
+                    error_html,
+                    sizing_mode='stretch_width',
+                    styles={
+                        'padding': '8px 12px',
+                        'background': WorkflowWidgetStyles.ERROR_BG,
+                        'border-bottom': (
+                            f'1px solid {WorkflowWidgetStyles.ERROR_BORDER}'
+                        ),
+                        'color': WorkflowWidgetStyles.ERROR_TEXT,
+                        'font-size': '12px',
+                    },
+                )
+            )
+
+        # Staging area with config toolbars
+        staging_area = self._create_staging_area()
+        components.append(staging_area)
+
+        # Outputs section
+        outputs_section = self._create_outputs_section()
+        components.append(outputs_section)
+
+        # Commit button row (only if there are staged changes)
+        commit_row = self._create_commit_row()
+        if commit_row is not None:
+            components.append(commit_row)
+
+        return pn.Column(*components, sizing_mode='stretch_width', margin=0)
+
+    def _create_staging_area(self) -> pn.Column:
+        """Create the staging area with config toolbars."""
+        staged = self._orchestrator.get_staged_config(self._workflow_id)
+        active = self._orchestrator.get_active_config(self._workflow_id)
+
+        config_groups = _group_configs_by_equality(staged, active)
+        unconfigured = _get_unconfigured_sources(
+            self._workflow_spec.source_names, staged
+        )
+
+        toolbars = []
+
+        # Create toolbar for each config group
+        for group in config_groups:
+            toolbar = self._create_config_toolbar(group, is_unconfigured=False)
+            toolbars.append(toolbar)
+
+        # Create toolbar for unconfigured sources (if any)
+        if unconfigured:
+            unconfigured_group = ConfigGroup(
+                source_names=tuple(unconfigured),
+                params={},
+                aux_source_names={},
+                is_modified=False,
+            )
+            toolbar = self._create_config_toolbar(
+                unconfigured_group, is_unconfigured=True
+            )
+            toolbars.append(toolbar)
+
+        # Determine label based on whether there are modifications
+        has_modifications = any(g.is_modified for g in config_groups) or bool(
+            unconfigured
+        )
+        label_text = 'Configuration (staged)' if has_modifications else 'Configuration'
+
+        label = pn.pane.HTML(
+            f'<span style="font-size: 11px; color: #6c757d; text-transform: uppercase; '
+            f'letter-spacing: 0.5px;">{label_text}</span>',
+            margin=(0, 0, 6, 0),
+        )
+
+        return pn.Column(
+            label,
+            *toolbars,
+            styles={'padding': '8px 12px', 'border-bottom': '1px solid #dee2e6'},
+            sizing_mode='stretch_width',
+            margin=0,
+        )
+
+    def _create_config_toolbar(
+        self, group: ConfigGroup, *, is_unconfigured: bool
+    ) -> pn.Row:
+        """Create a toolbar row for a config group."""
+        # Source tags
+        source_tags_html = ''.join(
+            f'<span style="display: inline-block; padding: 1px 6px; '
+            f'background: {"#fff3cd" if is_unconfigured else "#e9ecef"}; '
+            f'border-radius: 3px; margin-right: 4px; font-size: 11px;">'
+            f'{name}</span>'
+            for name in group.source_names
+        )
+
+        if is_unconfigured:
+            source_tags_html += (
+                '<span style="font-style: italic; color: #856404;">unconfigured</span>'
+            )
+
+        source_list = pn.pane.HTML(
+            f'<div style="font-size: 12px; color: #495057;">{source_tags_html}</div>',
+            sizing_mode='stretch_width',
+        )
+
+        # Buttons
+        gear_btn = create_tool_button(
+            symbol='\u2699',  # ⚙
+            button_color=ButtonStyles.PRIMARY_BLUE,
+            hover_color='rgba(0, 123, 255, 0.1)',
+            on_click_callback=lambda: self._on_gear_click(list(group.source_names)),
+        )
+
+        buttons = [gear_btn]
+
+        # Add remove button (not for unconfigured sources)
+        if not is_unconfigured:
+            remove_btn = create_tool_button(
+                symbol='\u00d7',  # multiplication sign (x)
+                button_color=ButtonStyles.DANGER_RED,
+                hover_color='rgba(220, 53, 69, 0.1)',
+                on_click_callback=lambda: self._on_remove_click(
+                    list(group.source_names)
+                ),
+            )
+            buttons.append(remove_btn)
+
+        # Toolbar styling
+        styles: dict[str, str] = {
+            'padding': '6px 8px',
+            'background': WorkflowWidgetStyles.UNCONFIGURED_BG
+            if is_unconfigured
+            else '#f8f9fa',
+            'border': (
+                '1px solid '
+                + (
+                    WorkflowWidgetStyles.UNCONFIGURED_BORDER
+                    if is_unconfigured
+                    else '#dee2e6'
+                )
+            ),
+            'border-radius': '4px',
+        }
+
+        # Add modified indicator
+        if group.is_modified and not is_unconfigured:
+            styles['border-left'] = (
+                f'3px solid {WorkflowWidgetStyles.MODIFIED_BORDER_COLOR}'
+            )
+
+        return pn.Row(
+            source_list,
+            pn.Row(*buttons, margin=0),
+            styles=styles,
+            sizing_mode='stretch_width',
+            margin=(0, 0, 4, 0),
+        )
+
+    def _create_outputs_section(self) -> pn.Column:
+        """Create the outputs section with chips."""
+        outputs = self._workflow_spec.outputs
+        if outputs is None:
+            return pn.Column(margin=0)
+
+        # Get output field names and titles
+        chips_html = ''
+        for field_name, field_info in outputs.model_fields.items():
+            title = field_info.title or field_name
+            chip_bg = WorkflowWidgetStyles.OUTPUT_CHIP_BG
+            chip_border = WorkflowWidgetStyles.OUTPUT_CHIP_BORDER
+            chip_text = WorkflowWidgetStyles.OUTPUT_CHIP_TEXT
+            chips_html += (
+                f'<span style="display: inline-flex; align-items: center; '
+                f'padding: 4px 10px; background: {chip_bg}; '
+                f'border: 1px solid {chip_border}; '
+                f'border-radius: 16px; font-size: 12px; '
+                f'color: {chip_text}; '
+                f'margin-right: 6px; margin-bottom: 6px;">{title}</span>'
+            )
+
+        label = pn.pane.HTML(
+            '<span style="font-size: 11px; color: #6c757d; text-transform: uppercase; '
+            'letter-spacing: 0.5px;">Outputs</span>',
+            margin=(0, 0, 6, 0),
+        )
+
+        chips = pn.pane.HTML(
+            f'<div style="display: flex; flex-wrap: wrap;">{chips_html}</div>',
+            sizing_mode='stretch_width',
+        )
+
+        return pn.Column(
+            label,
+            chips,
+            styles={'padding': '8px 12px'},
+            sizing_mode='stretch_width',
+            margin=0,
+        )
+
+    def _create_commit_row(self) -> pn.Row | None:
+        """Create commit button row if there are uncommitted changes."""
+        staged = self._orchestrator.get_staged_config(self._workflow_id)
+        active = self._orchestrator.get_active_config(self._workflow_id)
+
+        # Check if there are changes to commit
+        has_changes = False
+
+        # Check for unconfigured sources that are now configured
+        if staged and not active:
+            has_changes = True
+        elif staged:
+            # Check if any config differs from active
+            config_groups = _group_configs_by_equality(staged, active)
+            has_changes = any(g.is_modified for g in config_groups)
+
+            # Also check if source sets differ
+            if set(staged.keys()) != set(active.keys()):
+                has_changes = True
+
+        if not has_changes or not staged:
+            return None
+
+        # Determine button text
+        button_text = 'Commit & Restart' if active else 'Start'
+
+        commit_btn = pn.widgets.Button(
+            name=button_text,
+            button_type='primary',
+            margin=0,
+        )
+        commit_btn.on_click(lambda e: self._on_commit_click())
+
+        return pn.Row(
+            pn.Spacer(sizing_mode='stretch_width'),
+            commit_btn,
+            styles={
+                'padding': '8px 12px',
+                'background': '#f8f9fa',
+                'border-top': '1px solid #dee2e6',
+            },
+            sizing_mode='stretch_width',
+            margin=0,
+        )
+
+    def _make_status_badge_html(self, status: str, status_color: str) -> str:
+        """Generate HTML for the status badge."""
+        return (
+            f'<span style="padding: 2px 8px; border-radius: 3px; font-size: 11px; '
+            f'font-weight: bold; color: white; background: {status_color};">'
+            f'{status}</span>'
+        )
+
+    def _get_workflow_status(self) -> tuple[str, str]:
+        """Get workflow status text and color."""
+        # Check job statuses from JobService
+        active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
+
+        if active_job_number is None:
+            return 'STOPPED', WorkflowWidgetStyles.STATUS_COLORS['stopped']
+
+        # Find job statuses for this workflow
+        worst_state = JobState.active
+        for job_status in self._job_service.job_statuses.values():
+            if job_status.workflow_id == self._workflow_id:
+                if job_status.job_id.job_number == active_job_number:
+                    # Priority: error > warning > paused > active
+                    if job_status.state == JobState.error:
+                        worst_state = JobState.error
+                    elif (
+                        job_status.state == JobState.warning
+                        and worst_state != JobState.error
+                    ):
+                        worst_state = JobState.warning
+                    elif job_status.state == JobState.paused and worst_state not in (
+                        JobState.error,
+                        JobState.warning,
+                    ):
+                        worst_state = JobState.paused
+
+        status_text = worst_state.value.upper()
+        status_color = WorkflowWidgetStyles.STATUS_COLORS.get(
+            worst_state.value, WorkflowWidgetStyles.STATUS_COLORS['active']
+        )
+
+        return status_text, status_color
+
+    def _get_timing_text(self) -> str:
+        """Get timing information text."""
+        from datetime import UTC, datetime
+
+        active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
+
+        if active_job_number is None:
+            return ''
+
+        # Find earliest start time from job statuses
+        earliest_start = None
+        for job_status in self._job_service.job_statuses.values():
+            if job_status.workflow_id == self._workflow_id:
+                if job_status.job_id.job_number == active_job_number:
+                    start = job_status.start_time
+                    if start is not None:
+                        if earliest_start is None or start < earliest_start:
+                            earliest_start = start
+
+        if earliest_start is None:
+            return 'Starting...'
+
+        start_dt = datetime.fromtimestamp(earliest_start / 1e9, tz=UTC)
+        now = datetime.now(tz=UTC)
+        duration = now - start_dt
+        duration_secs = int(duration.total_seconds())
+
+        if duration_secs < 60:
+            duration_str = f'{duration_secs}s'
+        elif duration_secs < 3600:
+            mins = duration_secs // 60
+            secs = duration_secs % 60
+            duration_str = f'{mins}m {secs}s'
+        else:
+            hours = duration_secs // 3600
+            mins = (duration_secs % 3600) // 60
+            duration_str = f'{hours}h {mins}m'
+
+        return f'{start_dt.strftime("%H:%M:%S")} ({duration_str})'
+
+    def _get_error_html(self) -> str | None:
+        """Get error message HTML if any job has an error."""
+        active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
+
+        if active_job_number is None:
+            return None
+
+        for job_status in self._job_service.job_statuses.values():
+            if job_status.workflow_id == self._workflow_id:
+                if job_status.job_id.job_number == active_job_number:
+                    if job_status.error_message:
+                        # Show first line only
+                        first_line = job_status.error_message.split('\n')[0].strip()
+                        return f'Error: {first_line}'
+
+        return None
+
+    def _on_header_click(self, event) -> None:
+        """Handle header click to toggle expand/collapse."""
+        self._expanded = not self._expanded
+        self._build_widget()
+
+    def _on_gear_click(self, source_names: list[str]) -> None:
+        """Handle gear button click."""
+        self._on_configure(self._workflow_id, source_names)
+
+    def _on_remove_click(self, source_names: list[str]) -> None:
+        """Handle remove button click - remove sources from staged config."""
+        staged = self._orchestrator.get_staged_config(self._workflow_id)
+
+        # Remove the specified sources and re-stage the rest
+        self._orchestrator.clear_staged_configs(self._workflow_id)
+        for source_name, config in staged.items():
+            if source_name not in source_names:
+                self._orchestrator.stage_config(
+                    self._workflow_id,
+                    source_name=source_name,
+                    params=config.params,
+                    aux_source_names=config.aux_source_names,
+                )
+
+        self._build_widget()
+
+    def _on_reset_click(self) -> None:
+        """Handle reset button click."""
+        # TODO: Implement reset via orchestrator/controller
+        pass
+
+    def _on_stop_click(self) -> None:
+        """Handle stop button click."""
+        # TODO: Implement stop via orchestrator/controller
+        pass
+
+    def _on_commit_click(self) -> None:
+        """Handle commit button click."""
+        self._orchestrator.commit_workflow(self._workflow_id)
+        self._build_widget()
+
+    def _on_status_update(self) -> None:
+        """Handle job status updates from JobService.
+
+        Only updates the status badge and timing text to avoid flicker.
+        """
+        if self._status_badge is not None:
+            status, status_color = self._get_workflow_status()
+            self._status_badge.object = self._make_status_badge_html(
+                status, status_color
+            )
+
+        if self._timing_html is not None:
+            timing_text = self._get_timing_text()
+            self._timing_html.object = (
+                f'<span style="font-size: 12px; color: #6c757d;">{timing_text}</span>'
+            )
+
+    def panel(self) -> pn.Column:
+        """Get the panel layout for this widget."""
+        if self._panel is None:
+            self._build_widget()
+        return self._panel
+
+
+class WorkflowStatusListWidget:
+    """
+    Widget displaying a list of workflow status widgets.
+
+    Creates one WorkflowStatusWidget per workflow managed by the orchestrator.
+    """
+
+    def __init__(
+        self,
+        *,
+        orchestrator: JobOrchestrator,
+        job_service: JobService,
+        workflow_controller: WorkflowController,
+        on_configure: Callable[[WorkflowId, list[str]], None],
+    ) -> None:
+        """
+        Initialize workflow status list widget.
+
+        Parameters
+        ----------
+        orchestrator
+            Job orchestrator for config staging and commit.
+            Provides the workflow registry.
+        job_service
+            Service providing job status updates.
+        workflow_controller
+            Controller for workflow operations.
+        on_configure
+            Callback when gear button is clicked on any workflow.
+            Called with (workflow_id, source_names_to_configure).
+        """
+        self._orchestrator = orchestrator
+        self._job_service = job_service
+        self._workflow_controller = workflow_controller
+        self._on_configure = on_configure
+
+        self._widgets: dict[WorkflowId, WorkflowStatusWidget] = {}
+        self._panel = self._create_panel()
+
+    def _create_panel(self) -> pn.Column:
+        """Create the main panel with all workflow widgets."""
+        workflow_widgets = []
+        workflow_registry = self._orchestrator.get_workflow_registry()
+        for workflow_id, spec in sorted(
+            workflow_registry.items(), key=lambda x: x[1].title
+        ):
+            widget = WorkflowStatusWidget(
+                workflow_id=workflow_id,
+                workflow_spec=spec,
+                orchestrator=self._orchestrator,
+                job_service=self._job_service,
+                workflow_controller=self._workflow_controller,
+                on_configure=self._on_configure,
+            )
+            self._widgets[workflow_id] = widget
+            workflow_widgets.append(widget.panel())
+
+        return pn.Column(*workflow_widgets, sizing_mode='stretch_width', margin=(0, 10))
+
+    def panel(self) -> pn.Column:
+        """Get the main panel for this widget."""
+        return self._panel

@@ -33,7 +33,9 @@ class ButtonStyles:
     TOOL_BUTTON_FONT_SIZE = '20px'
 
 
-def create_tool_button_stylesheet(button_color: str, hover_color: str) -> list[str]:
+def create_tool_button_stylesheet(
+    button_color: str, hover_color: str, font_size: str | None = None
+) -> list[str]:
     """
     Create a stylesheet for tool buttons (close, gear, etc.).
 
@@ -43,12 +45,16 @@ def create_tool_button_stylesheet(button_color: str, hover_color: str) -> list[s
         Color for the button icon.
     hover_color:
         RGBA color for the hover background.
+    font_size:
+        Font size for the icon. If None, uses default from ButtonStyles.
 
     Returns
     -------
     :
         List containing the stylesheet string.
     """
+    if font_size is None:
+        font_size = ButtonStyles.TOOL_BUTTON_FONT_SIZE
     return [
         f"""
         button {{
@@ -56,7 +62,7 @@ def create_tool_button_stylesheet(button_color: str, hover_color: str) -> list[s
             border: none !important;
             color: {button_color} !important;
             font-weight: bold !important;
-            font-size: {ButtonStyles.TOOL_BUTTON_FONT_SIZE} !important;
+            font-size: {font_size} !important;
             padding: 0 !important;
             margin: 0 !important;
             line-height: 1 !important;

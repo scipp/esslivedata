@@ -438,6 +438,17 @@ class JobOrchestrator:
             return None
         return state.current.job_number
 
+    def get_workflow_registry(self) -> Mapping[WorkflowId, WorkflowSpec]:
+        """
+        Get the workflow registry containing all managed workflows.
+
+        Returns
+        -------
+        :
+            Mapping from workflow ID to workflow spec.
+        """
+        return self._workflow_registry
+
     def get_previous_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:
         """
         Get the job number of the previous job for a workflow.

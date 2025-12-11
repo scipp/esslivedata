@@ -68,8 +68,8 @@ class PlotGridTabs:
     """
     Tabbed widget for managing multiple plot grids.
 
-    Displays a "Manage" tab (always first) for adding/removing grids,
-    a "Jobs" tab for monitoring job status, followed by one tab per plot grid.
+    Displays static tabs for Jobs, Workflows, and Manage Plots,
+    followed by one tab per plot grid.
     Synchronizes with PlotOrchestrator via lifecycle subscriptions to support
     multiple linked instances.
 
@@ -84,6 +84,8 @@ class PlotGridTabs:
         Controller for determining available plotters from workflow specs.
     job_status_widget
         Widget for displaying job status information.
+    workflow_status_widget
+        Widget for displaying workflow status and controls.
     """
 
     def __init__(
@@ -92,6 +94,7 @@ class PlotGridTabs:
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         plotting_controller,
         job_status_widget,
+        workflow_status_widget,
     ) -> None:
         self._orchestrator = plot_orchestrator
         self._workflow_registry = dict(workflow_registry)
@@ -113,7 +116,8 @@ class PlotGridTabs:
             stylesheets=[
                 """
                 .bk-tab:nth-child(1),
-                .bk-tab:nth-child(2) {
+                .bk-tab:nth-child(2),
+                .bk-tab:nth-child(3) {
                     font-weight: bold;
                 }
                 .bk-tab {
@@ -160,7 +164,10 @@ class PlotGridTabs:
         # Add Jobs tab (always first)
         self._tabs.append(('Jobs', job_status_widget.panel()))
 
-        # Add Manage tab (always second)
+        # Add Workflows tab (always second)
+        self._tabs.append(('Workflows', workflow_status_widget.panel()))
+
+        # Add Manage tab (always third)
         self._grid_manager = PlotGridManager(
             orchestrator=plot_orchestrator,
             workflow_registry=workflow_registry,
