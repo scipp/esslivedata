@@ -37,13 +37,18 @@ def configure_callback():
 class FakeWorkflowController:
     """Fake workflow controller for testing."""
 
-    pass
+    def __init__(self, orchestrator):
+        self._orchestrator = orchestrator
+
+    def stop_workflow(self, workflow_id):
+        """Stop a workflow."""
+        return self._orchestrator.stop_workflow(workflow_id)
 
 
 @pytest.fixture
-def workflow_controller():
+def workflow_controller(job_orchestrator):
     """Create a fake workflow controller."""
-    return FakeWorkflowController()
+    return FakeWorkflowController(job_orchestrator)
 
 
 @pytest.fixture
@@ -341,6 +346,108 @@ class TestWorkflowStatusWidgetWithJobs:
 
         status, _ = workflow_status_widget._get_workflow_status()
         assert status == 'ERROR'
+
+    def test_status_shows_scheduled_when_no_backend_status(
+        self,
+        workflow_status_widget,
+        workflow_id,
+        job_orchestrator,
+    ):
+        """Test that status shows SCHEDULED when job committed but no backend status."""
+        # Stage and commit to create active job
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_orchestrator.commit_workflow(workflow_id)
+
+        # Don't add any job status (simulating backend not running)
+        status, _ = workflow_status_widget._get_workflow_status()
+        assert status == 'SCHEDULED'
+
+    def test_timing_shows_waiting_for_scheduled_job(
+        self,
+        workflow_status_widget,
+        workflow_id,
+        job_orchestrator,
+    ):
+        """Test that timing text shows 'Waiting for backend...' for scheduled job."""
+        # Stage and commit to create active job
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_orchestrator.commit_workflow(workflow_id)
+
+        # Don't add any job status (simulating backend not running)
+        timing = workflow_status_widget._get_timing_text()
+        assert timing == 'Waiting for backend...'
+
+    def test_status_transitions_from_scheduled_to_active(
+        self,
+        workflow_status_widget,
+        job_service,
+        workflow_id,
+        job_orchestrator,
+    ):
+        """Test status transitions from SCHEDULED to ACTIVE when backend responds."""
+        # Stage and commit to create active job
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
+
+        # Initially no backend status - should be SCHEDULED
+        status, _ = workflow_status_widget._get_workflow_status()
+        assert status == 'SCHEDULED'
+
+        # Backend starts and sends status - should become ACTIVE
+        job_id = JobId(source_name='source1', job_number=job_ids[0].job_number)
+        job_status = JobStatus(
+            job_id=job_id,
+            workflow_id=workflow_id,
+            state=JobState.active,
+            start_time=1000000000000,
+        )
+        job_service.status_updated(job_status)
+
+        status, _ = workflow_status_widget._get_workflow_status()
+        assert status == 'ACTIVE'
+
+    def test_stop_clears_to_stopped_not_scheduled(
+        self,
+        workflow_status_widget,
+        workflow_controller,
+        workflow_id,
+        job_orchestrator,
+    ):
+        """Test that stop button clears to STOPPED, not SCHEDULED."""
+        # Stage and commit to create scheduled job
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_orchestrator.commit_workflow(workflow_id)
+
+        # Should be SCHEDULED
+        status, _ = workflow_status_widget._get_workflow_status()
+        assert status == 'SCHEDULED'
+
+        # Stop the workflow
+        workflow_status_widget._on_stop_click()
+
+        # Should be STOPPED, not SCHEDULED
+        status, _ = workflow_status_widget._get_workflow_status()
+        assert status == 'STOPPED'
 
 
 class TestWorkflowStatusListWidget:

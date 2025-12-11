@@ -40,7 +40,7 @@ class WorkflowWidgetStyles:
         'stopped': '#6c757d',  # Gray
         'error': '#dc3545',  # Red
         'warning': '#fd7e14',  # Orange
-        'scheduled': '#6c757d',  # Gray
+        'scheduled': '#17a2b8',  # Blue - waiting for backend confirmation
         'paused': '#ffc107',  # Yellow
         'finishing': '#17a2b8',  # Blue
     }
@@ -598,18 +598,27 @@ class WorkflowStatusWidget:
         )
 
     def _get_workflow_status(self) -> tuple[str, str]:
-        """Get workflow status text and color."""
+        """Get workflow status text and color.
+
+        Status is determined by backend JobStatus messages as source of truth:
+        - STOPPED: No job configured in orchestrator
+        - SCHEDULED: Job configured but no backend confirmation yet
+        - ACTIVE/ERROR/WARNING/PAUSED: Based on backend JobStatus
+        """
         # Check job statuses from JobService
         active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
 
         if active_job_number is None:
             return 'STOPPED', WorkflowWidgetStyles.STATUS_COLORS['stopped']
 
-        # Find job statuses for this workflow
+        # Check if backend has confirmed this job (source of truth)
+        has_backend_status = False
         worst_state = JobState.active
+
         for job_status in self._job_service.job_statuses.values():
             if job_status.workflow_id == self._workflow_id:
                 if job_status.job_id.job_number == active_job_number:
+                    has_backend_status = True
                     # Priority: error > warning > paused > active
                     if job_status.state == JobState.error:
                         worst_state = JobState.error
@@ -624,6 +633,10 @@ class WorkflowStatusWidget:
                     ):
                         worst_state = JobState.paused
 
+        # If orchestrator has job but no backend status, job is SCHEDULED
+        if not has_backend_status:
+            return 'SCHEDULED', WorkflowWidgetStyles.STATUS_COLORS['scheduled']
+
         status_text = worst_state.value.upper()
         status_color = WorkflowWidgetStyles.STATUS_COLORS.get(
             worst_state.value, WorkflowWidgetStyles.STATUS_COLORS['active']
@@ -632,7 +645,13 @@ class WorkflowStatusWidget:
         return status_text, status_color
 
     def _get_timing_text(self) -> str:
-        """Get timing information text."""
+        """Get timing information text.
+
+        Returns:
+        - Empty string if workflow is stopped
+        - "Waiting for backend..." if scheduled (no backend confirmation)
+        - Start time and duration if active
+        """
         from datetime import UTC, datetime
 
         active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
@@ -642,14 +661,22 @@ class WorkflowStatusWidget:
 
         # Find earliest start time from job statuses
         earliest_start = None
+        has_backend_status = False
+
         for job_status in self._job_service.job_statuses.values():
             if job_status.workflow_id == self._workflow_id:
                 if job_status.job_id.job_number == active_job_number:
+                    has_backend_status = True
                     start = job_status.start_time
                     if start is not None:
                         if earliest_start is None or start < earliest_start:
                             earliest_start = start
 
+        # If no backend status, job is scheduled (waiting for backend)
+        if not has_backend_status:
+            return 'Waiting for backend...'
+
+        # If backend confirmed but no start_time yet, job is starting
         if earliest_start is None:
             return 'Starting...'
 
