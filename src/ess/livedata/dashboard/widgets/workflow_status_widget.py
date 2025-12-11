@@ -602,8 +602,8 @@ class WorkflowStatusWidget:
 
         Status is determined by backend JobStatus messages as source of truth:
         - STOPPED: No job configured in orchestrator
-        - SCHEDULED: Job configured but no backend confirmation yet
-        - ACTIVE/ERROR/WARNING/PAUSED: Based on backend JobStatus
+        - SCHEDULED: Job configured but no backend confirmation or stale heartbeat
+        - ACTIVE/ERROR/WARNING/PAUSED: Based on recent backend JobStatus
         """
         # Check job statuses from JobService
         active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
@@ -611,30 +611,37 @@ class WorkflowStatusWidget:
         if active_job_number is None:
             return 'STOPPED', WorkflowWidgetStyles.STATUS_COLORS['stopped']
 
-        # Check if backend has confirmed this job (source of truth)
-        has_backend_status = False
+        # Check if backend has confirmed this job with recent heartbeat
+        # (source of truth)
+        has_fresh_backend_status = False
         worst_state = JobState.active
 
         for job_status in self._job_service.job_statuses.values():
             if job_status.workflow_id == self._workflow_id:
                 if job_status.job_id.job_number == active_job_number:
-                    has_backend_status = True
-                    # Priority: error > warning > paused > active
-                    if job_status.state == JobState.error:
-                        worst_state = JobState.error
-                    elif (
-                        job_status.state == JobState.warning
-                        and worst_state != JobState.error
-                    ):
-                        worst_state = JobState.warning
-                    elif job_status.state == JobState.paused and worst_state not in (
-                        JobState.error,
-                        JobState.warning,
-                    ):
-                        worst_state = JobState.paused
+                    # Check if status is fresh (not stale)
+                    if not self._job_service.is_status_stale(job_status.job_id):
+                        has_fresh_backend_status = True
+                        # Priority: error > warning > paused > active
+                        if job_status.state == JobState.error:
+                            worst_state = JobState.error
+                        elif (
+                            job_status.state == JobState.warning
+                            and worst_state != JobState.error
+                        ):
+                            worst_state = JobState.warning
+                        elif (
+                            job_status.state == JobState.paused
+                            and worst_state
+                            not in (
+                                JobState.error,
+                                JobState.warning,
+                            )
+                        ):
+                            worst_state = JobState.paused
 
-        # If orchestrator has job but no backend status, job is SCHEDULED
-        if not has_backend_status:
+        # If orchestrator has job but no fresh backend status, job is SCHEDULED
+        if not has_fresh_backend_status:
             return 'SCHEDULED', WorkflowWidgetStyles.STATUS_COLORS['scheduled']
 
         status_text = worst_state.value.upper()
@@ -649,7 +656,7 @@ class WorkflowStatusWidget:
 
         Returns:
         - Empty string if workflow is stopped
-        - "Waiting for backend..." if scheduled (no backend confirmation)
+        - "Waiting for backend..." if scheduled (no fresh backend status)
         - Start time and duration if active
         """
         from datetime import UTC, datetime
@@ -659,21 +666,23 @@ class WorkflowStatusWidget:
         if active_job_number is None:
             return ''
 
-        # Find earliest start time from job statuses
+        # Find earliest start time from fresh job statuses
         earliest_start = None
-        has_backend_status = False
+        has_fresh_backend_status = False
 
         for job_status in self._job_service.job_statuses.values():
             if job_status.workflow_id == self._workflow_id:
                 if job_status.job_id.job_number == active_job_number:
-                    has_backend_status = True
-                    start = job_status.start_time
-                    if start is not None:
-                        if earliest_start is None or start < earliest_start:
-                            earliest_start = start
+                    # Check if status is fresh (not stale)
+                    if not self._job_service.is_status_stale(job_status.job_id):
+                        has_fresh_backend_status = True
+                        start = job_status.start_time
+                        if start is not None:
+                            if earliest_start is None or start < earliest_start:
+                                earliest_start = start
 
-        # If no backend status, job is scheduled (waiting for backend)
-        if not has_backend_status:
+        # If no fresh backend status, job is scheduled (waiting for backend)
+        if not has_fresh_backend_status:
             return 'Waiting for backend...'
 
         # If backend confirmed but no start_time yet, job is starting
