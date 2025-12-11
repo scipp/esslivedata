@@ -329,7 +329,8 @@ class WorkflowStatusWidget:
             buttons.append(reset_btn)
 
             stop_btn = create_tool_button(
-                symbol='\u25a0',  # ■ (black square)
+                # u25a0 has a better size, but alignment issues, using 25fc for now
+                symbol='\u25fc',  # black square
                 button_color=ButtonStyles.DANGER_RED,
                 hover_color='rgba(220, 53, 69, 0.1)',
                 on_click_callback=self._on_stop_click,
@@ -809,7 +810,9 @@ class WorkflowStatusListWidget:
             self._widgets[workflow_id] = widget
             workflow_widgets.append(widget.panel())
 
-        return pn.Column(*workflow_widgets, sizing_mode='stretch_width', margin=(0, 10))
+        return pn.Column(
+            *workflow_widgets, sizing_mode='stretch_width', margin=(10, 10)
+        )
 
     def rebuild_widget(self, workflow_id: WorkflowId) -> None:
         """Rebuild a specific workflow widget after config changes."""
