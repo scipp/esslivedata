@@ -147,7 +147,6 @@ def workflow_controller(
 
     controller = WorkflowController(
         job_orchestrator=job_orchestrator,
-        workflow_registry=workflow_registry,
     )
     return WorkflowControllerFixture(
         controller=controller,
@@ -291,7 +290,6 @@ class TestWorkflowController:
 
         controller = WorkflowController(
             job_orchestrator=job_orchestrator,
-            workflow_registry=registry,
         )
 
         # Start both workflows
@@ -491,8 +489,8 @@ class TestWorkflowController:
         }
         assert stopped_job_sources == set(source_names)
 
-        # Verify stop and start are in same batch
+        # Verify stop and start are sent (executor sends them as separate batches)
         batch_calls = get_batch_calls(workflow_controller.fake_message_sink)
-        assert len(batch_calls) == 1
-        # Total batch size = stop commands + start commands
-        assert batch_calls[0] == len(source_names) * 2
+        assert len(batch_calls) == 2  # stop batch + start batch
+        assert batch_calls[0] == len(source_names)  # stop commands
+        assert batch_calls[1] == len(source_names)  # start commands
