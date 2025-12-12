@@ -7,6 +7,7 @@ was streamed during acquisition.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,6 +32,8 @@ class StreamInfo:
         NeXus class of the parent group (e.g., 'NXdetector', 'NXdisk_chopper').
     writer_module:
         FileWriter module used to write this data (e.g., 'ev44', 'f144', 'tdct').
+    units:
+        Units string from the 'units' attribute, if present.
     """
 
     group_path: str
@@ -39,6 +42,7 @@ class StreamInfo:
     nx_class: str
     parent_nx_class: str
     writer_module: str
+    units: str = ''
 
 
 def _decode_attr(value) -> str:
@@ -89,6 +93,12 @@ def extract_stream_info(file_path: str | Path | h5py.File) -> list[StreamInfo]:
         if node.parent is not None and 'NX_class' in node.parent.attrs:
             parent_nx_class = _decode_attr(node.parent.attrs['NX_class'])
 
+        # Try to get units from 'value' dataset within the group (common for f144)
+        units = ''
+        if 'value' in node and isinstance(node['value'], h5py.Dataset):
+            if 'units' in node['value'].attrs:
+                units = _decode_attr(node['value'].attrs['units'])
+
         stream_infos.append(
             StreamInfo(
                 group_path=name,
@@ -97,6 +107,7 @@ def extract_stream_info(file_path: str | Path | h5py.File) -> list[StreamInfo]:
                 nx_class=nx_class,
                 parent_nx_class=parent_nx_class,
                 writer_module=writer_module,
+                units=units,
             )
         )
 
@@ -110,19 +121,166 @@ def extract_stream_info(file_path: str | Path | h5py.File) -> list[StreamInfo]:
     return stream_infos
 
 
+def suggest_internal_name(info: StreamInfo) -> str:
+    """Suggest an internal name based on the group path.
+
+    Uses the parent group name (last path component before 'value', 'idle_flag', etc.)
+    as the basis for the internal name.
+    """
+    parts = info.group_path.split('/')
+    # For paths like '.../rotation_stage/value', use 'rotation_stage'
+    for i, part in enumerate(parts):
+        if part in ('value', 'idle_flag', 'target_value'):
+            if i > 0:
+                return parts[i - 1]
+    # Fallback: use last non-value component
+    return parts[-2] if len(parts) >= 2 else parts[-1]
+
+
+def filter_f144_streams(
+    infos: list[StreamInfo],
+    *,
+    topic_filter: str | None = None,
+    exclude_patterns: list[str] | None = None,
+) -> list[StreamInfo]:
+    """Filter stream infos to only f144 writer module entries.
+
+    Parameters
+    ----------
+    infos:
+        List of StreamInfo objects to filter.
+    topic_filter:
+        If provided, only include streams from this topic.
+    exclude_patterns:
+        List of regex patterns to exclude from results (matched against group_path).
+    """
+    exclude_patterns = exclude_patterns or []
+    exclude_regexes = [re.compile(p) for p in exclude_patterns]
+
+    result = []
+    for info in infos:
+        if info.writer_module != 'f144':
+            continue
+        if topic_filter and info.topic != topic_filter:
+            continue
+        if any(regex.search(info.group_path) for regex in exclude_regexes):
+            continue
+        result.append(info)
+    return result
+
+
+def generate_f144_log_streams_code(
+    infos: list[StreamInfo],
+    *,
+    topic: str,
+    variable_name: str = 'f144_log_streams',
+) -> str:
+    """Generate Python code for f144_log_streams dictionary.
+
+    The generated dictionary maps internal names to source, units, and topic info,
+    which can be used to derive both f144_attribute_registry and StreamLUT.
+
+    Parameters
+    ----------
+    infos:
+        List of StreamInfo objects (should be pre-filtered to f144 only).
+    topic:
+        The Kafka topic these streams come from.
+    variable_name:
+        Name for the generated variable.
+    """
+    # Group by suggested internal name, preferring 'value' entries
+    by_name: dict[str, StreamInfo] = {}
+    for info in infos:
+        if info.topic != topic:
+            continue
+        name = suggest_internal_name(info)
+        # Prefer 'value' entries over 'idle_flag' or 'target_value'
+        if name not in by_name or info.group_path.endswith('/value'):
+            by_name[name] = info
+
+    lines = [
+        "# Generated from NeXus file - review and adjust names as needed",
+        f"# Topic: {topic}",
+        f"{variable_name}: dict[str, dict[str, str]] = {{",
+    ]
+
+    for name in sorted(by_name.keys()):
+        info = by_name[name]
+        units = info.units or 'dimensionless'
+        entry = (
+            f"    '{name}': {{'source': '{info.source}', 'units': '{units}', "
+            f"'topic': '{topic}'}}"
+        )
+        lines.append(f"{entry},")
+
+    lines.append("}")
+    return '\n'.join(lines)
+
+
 if __name__ == '__main__':
-    # Example usage
+    import argparse
     import sys
 
-    if len(sys.argv) < 2:
-        sys.stderr.write(
-            "Usage: python -m ess.livedata.nexus_helpers <nexus_file.hdf>\n"
+    parser = argparse.ArgumentParser(
+        description='Extract streaming metadata from NeXus files',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # List all streaming groups
+  python -m ess.livedata.nexus_helpers file.hdf
+
+  # List only f144 streams
+  python -m ess.livedata.nexus_helpers file.hdf --f144
+
+  # Generate code for motion topic
+  python -m ess.livedata.nexus_helpers file.hdf --generate --topic bifrost_motion
+
+  # Filter by topic and exclude choppers
+  python -m ess.livedata.nexus_helpers file.hdf --f144 --topic bifrost_motion \\
+      --exclude "Chopper"
+""",
+    )
+    parser.add_argument('nexus_file', help='Path to NeXus/HDF5 file')
+    parser.add_argument(
+        '--f144', action='store_true', help='Only show f144 (log data) streams'
+    )
+    parser.add_argument('--topic', help='Filter by Kafka topic')
+    parser.add_argument(
+        '--exclude',
+        action='append',
+        default=[],
+        help='Regex pattern to exclude (can be used multiple times)',
+    )
+    parser.add_argument(
+        '--generate',
+        action='store_true',
+        help='Generate Python code for f144_log_streams dict',
+    )
+    parser.add_argument(
+        '--var-name',
+        default='f144_log_streams',
+        help='Variable name for generated code (default: f144_log_streams)',
+    )
+
+    args = parser.parse_args()
+
+    infos = extract_stream_info(args.nexus_file)
+
+    if args.f144 or args.generate:
+        infos = filter_f144_streams(
+            infos, topic_filter=args.topic, exclude_patterns=args.exclude
         )
-        sys.exit(1)
 
-    file_path = sys.argv[1]
-    infos = extract_stream_info(file_path)
-
-    sys.stdout.write(f"Found {len(infos)} streaming data groups\n\n")
-    for info in infos:
-        sys.stdout.write(f"{info}\n")
+    if args.generate:
+        if not args.topic:
+            sys.stderr.write("Error: --generate requires --topic\n")
+            sys.exit(1)
+        code = generate_f144_log_streams_code(
+            infos, topic=args.topic, variable_name=args.var_name
+        )
+        sys.stdout.write(code + '\n')
+    else:
+        sys.stdout.write(f"Found {len(infos)} streaming data groups\n\n")
+        for info in infos:
+            sys.stdout.write(f"{info}\n")

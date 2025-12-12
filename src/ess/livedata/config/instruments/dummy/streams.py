@@ -6,6 +6,7 @@ from ess.livedata.config.env import StreamingEnv
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
 from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
+from .specs import instrument
 
 detector_fakes = {'panel_0': (1, 128**2)}
 
@@ -34,6 +35,7 @@ stream_mapping = {
         'dummy',
         detector_names=list(detector_fakes),
         area_detector_names=list(area_detector_fakes),
+        log_names=list(instrument.f144_attribute_registry.keys()),
     ),
     StreamingEnv.PROD: StreamMapping(
         **make_common_stream_mapping_inputs(instrument='dummy'),

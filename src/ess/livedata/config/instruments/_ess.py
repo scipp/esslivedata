@@ -40,6 +40,12 @@ def _make_dev_area_detectors(
     }
 
 
+def _make_dev_logs(*, instrument: str, log_names: list[str]) -> StreamLUT:
+    """Create log stream mapping for dev mode where source_name equals internal name."""
+    topic = f'{instrument}_motion'
+    return {InputStreamKey(topic=topic, source_name=name): name for name in log_names}
+
+
 def _make_dev_beam_monitors(
     instrument: str, monitor_names: list[str] | None = None
 ) -> StreamLUT:
@@ -80,9 +86,8 @@ def make_dev_stream_mapping(
     detector_names: list[str],
     area_detector_names: list[str] | None = None,
     monitor_names: list[str] | None = None,
+    log_names: list[str] | None = None,
 ) -> StreamMapping:
-    motion_topic = f'{instrument}_motion'
-    log_topics = {motion_topic}
     area_detectors = (
         _make_dev_area_detectors(
             instrument=instrument, area_detectors=area_detector_names
@@ -90,12 +95,17 @@ def make_dev_stream_mapping(
         if area_detector_names
         else {}
     )
+    logs = (
+        _make_dev_logs(instrument=instrument, log_names=log_names)
+        if log_names
+        else None
+    )
     return StreamMapping(
         instrument=instrument,
         detectors=_make_dev_detectors(instrument=instrument, detectors=detector_names),
         monitors=_make_dev_beam_monitors(instrument, monitor_names=monitor_names),
         area_detectors=area_detectors,
-        log_topics=log_topics,
+        logs=logs,
         **_make_livedata_topics(instrument),
     )
 
@@ -106,6 +116,5 @@ def make_common_stream_mapping_inputs(
     return {
         'instrument': instrument,
         'monitors': _make_cbm_monitors(instrument, monitor_names=monitor_names),
-        'log_topics': None,
         **_make_livedata_topics(instrument),
     }
