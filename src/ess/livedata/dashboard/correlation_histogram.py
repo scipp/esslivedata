@@ -5,8 +5,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from enum import StrEnum
-from typing import Any
+from typing import Any, TypeVar
 
+import numpy as np
 import pydantic
 import scipp as sc
 
@@ -69,6 +70,41 @@ class CorrelationHistogramOutputs(WorkflowOutputsBase):
     histogram: sc.DataArray = pydantic.Field(
         title='Correlation Histogram',
         description='Histogram correlating selected timeseries.',
+    )
+
+
+Model = TypeVar('Model', bound=CorrelationHistogramParams)
+
+
+def _make_edges_field(name: str, coord: sc.DataArray) -> Any:
+    """Create a pydantic Field for EdgesWithUnit with defaults from timeseries data."""
+    unit = str(coord.unit)
+    low = coord.nanmin().value
+    high = np.nextafter(coord.nanmax().value, np.inf)
+    return _make_edges_field_from_values(name, unit=unit, start=low, stop=high)
+
+
+def _make_edges_field_from_values(
+    name: str,
+    *,
+    unit: str | None,
+    start: float | None,
+    stop: float | None,
+) -> Any:
+    """Create a pydantic Field for EdgesWithUnit with explicit values.
+
+    If unit/start/stop are None, no default is provided and the user must fill them in.
+    """
+    if unit is not None and start is not None and stop is not None:
+        return pydantic.Field(
+            default=EdgesWithUnit(start=start, stop=stop, num_bins=50, unit=unit),
+            title=f"{name} bins",
+            description=f"Define the bin edges for histogramming in {name}.",
+        )
+    # No defaults available - field will require user input
+    return pydantic.Field(
+        title=f"{name} bins",
+        description=f"Define the bin edges for histogramming in {name}.",
     )
 
 
@@ -396,19 +432,48 @@ def _sanitize_for_id(name: str) -> str:
 class CorrelationHistogram1dTemplateConfig(pydantic.BaseModel):
     """Configuration for creating a 1D correlation histogram workflow instance."""
 
-    axis_source: str = pydantic.Field(
+    x_param: str = pydantic.Field(
         description="The timeseries to correlate against (X axis)"
+    )
+    # Optional fields populated from data when available (for UI flow)
+    # or specified directly (for config file / programmatic setup)
+    x_unit: str | None = pydantic.Field(
+        default=None, description="Unit for the X axis edges"
+    )
+    x_start: float | None = pydantic.Field(
+        default=None, description="Start value for X axis range"
+    )
+    x_stop: float | None = pydantic.Field(
+        default=None, description="Stop value for X axis range"
     )
 
 
 class CorrelationHistogram2dTemplateConfig(pydantic.BaseModel):
     """Configuration for creating a 2D correlation histogram workflow instance."""
 
-    axis_x_source: str = pydantic.Field(
+    x_param: str = pydantic.Field(
         description="The timeseries to correlate against (X axis)"
     )
-    axis_y_source: str = pydantic.Field(
+    x_unit: str | None = pydantic.Field(
+        default=None, description="Unit for the X axis edges"
+    )
+    x_start: float | None = pydantic.Field(
+        default=None, description="Start value for X axis range"
+    )
+    x_stop: float | None = pydantic.Field(
+        default=None, description="Stop value for X axis range"
+    )
+    y_param: str = pydantic.Field(
         description="The timeseries to correlate against (Y axis)"
+    )
+    y_unit: str | None = pydantic.Field(
+        default=None, description="Unit for the Y axis edges"
+    )
+    y_start: float | None = pydantic.Field(
+        default=None, description="Start value for Y axis range"
+    )
+    y_stop: float | None = pydantic.Field(
+        default=None, description="Stop value for Y axis range"
     )
 
 
@@ -466,6 +531,10 @@ class CorrelationHistogramTemplateBase(ABC):
     def _get_axis_names_from_dict(self, config: dict) -> list[str]:
         """Extract axis source names from config dict."""
 
+    @abstractmethod
+    def _create_dynamic_model_class(self, config: dict) -> type[Model]:
+        """Create dynamic parameter model class with bin edge fields from config."""
+
     def _get_axis_names(self, config: pydantic.BaseModel | dict) -> list[str]:
         """Extract axis source names from config (model or dict)."""
         if isinstance(config, dict):
@@ -504,13 +573,30 @@ class CorrelationHistogramTemplateBase(ABC):
         Get a simple Pydantic model for configuration without enum validation.
 
         Used for template instantiation where axis names are provided directly
-        without requiring timeseries to exist yet.
+        without requiring timeseries to exist yet. Includes optional unit/start/stop
+        fields for each axis.
         """
         fields: dict[str, Any] = {}
         for field_name in self._axis_field_names:
+            # Extract axis prefix (e.g., 'x' from 'x_param')
+            prefix = field_name.split('_')[0]
+            # Required: axis source name
             fields[field_name] = (
                 str,
                 pydantic.Field(description=f"Axis source name for {field_name}"),
+            )
+            # Optional: unit and range for this axis
+            fields[f'{prefix}_unit'] = (
+                str | None,
+                pydantic.Field(default=None, description=f"Unit for {prefix} axis"),
+            )
+            fields[f'{prefix}_start'] = (
+                float | None,
+                pydantic.Field(default=None, description=f"Start for {prefix} axis"),
+            )
+            fields[f'{prefix}_stop'] = (
+                float | None,
+                pydantic.Field(default=None, description=f"Stop for {prefix} axis"),
             )
         return pydantic.create_model(  # type: ignore[call-overload]
             'RawConfig', **fields
@@ -542,12 +628,18 @@ class CorrelationHistogramTemplateBase(ABC):
         The axis is baked into the workflow identity. Source names are left empty
         as they are determined dynamically at job start time from available
         timeseries (excluding the selected axis).
+
+        The params model is dynamically created with unit and range defaults from
+        the config. Use `enrich_config_from_data` to populate these before calling
+        this method if you want defaults derived from timeseries data.
         """
         axis_names = self._get_axis_names(config)
         workflow_id = self.make_instance_id(config)
         title = self.make_instance_title(config)
 
-        params = {1: CorrelationHistogram1dParams, 2: CorrelationHistogram2dParams}
+        # Create dynamic params from config values (unit/start/stop)
+        config_dict = config if isinstance(config, dict) else config.model_dump()
+        dynamic_params = self._create_dynamic_model_class(config_dict)
 
         return WorkflowSpec(
             instrument=workflow_id.instrument,
@@ -561,9 +653,34 @@ class CorrelationHistogramTemplateBase(ABC):
             # Source names are determined dynamically at job start time
             source_names=[],
             aux_sources=None,  # Axis is now part of identity, not aux_sources
-            params=params[self.ndim],
+            params=dynamic_params,
             outputs=CorrelationHistogramOutputs,
         )
+
+    @abstractmethod
+    def enrich_config_from_data(self, config: dict) -> dict:
+        """
+        Populate config with unit and range values from timeseries data.
+
+        Call this before `create_workflow_spec` when you want defaults derived
+        from actual data. The enriched config should be persisted so that
+        the workflow can be recreated without data being available.
+
+        Parameters
+        ----------
+        config:
+            Basic config with axis names (e.g., {'x_param': 'temperature'})
+
+        Returns
+        -------
+        :
+            Enriched config with unit/start/stop values added.
+
+        Raises
+        ------
+        KeyError:
+            If the specified axis timeseries is not available in DataService.
+        """
 
     def get_axis_keys(self, config: pydantic.BaseModel | dict) -> list[ResultKey]:
         """Get the ResultKeys for the selected axis sources."""
@@ -623,6 +740,34 @@ class CorrelationHistogram1dTemplate(CorrelationHistogramTemplateBase):
     def _get_axis_names_from_dict(self, config: dict) -> list[str]:
         return [config['x_param']]
 
+    def _create_dynamic_model_class(
+        self, config: dict
+    ) -> type[CorrelationHistogram1dParams]:
+        """Create dynamic parameter model class with bin edge fields from config."""
+        x_field = _make_edges_field_from_values(
+            config['x_param'],
+            unit=config.get('x_unit'),
+            start=config.get('x_start'),
+            stop=config.get('x_stop'),
+        )
+
+        class Configured1dParams(CorrelationHistogram1dParams):
+            x_edges: EdgesWithUnit = x_field
+
+        return Configured1dParams
+
+    def enrich_config_from_data(self, config: dict) -> dict:
+        """Populate config with unit and range values from timeseries data."""
+        axis_keys = self.get_axis_keys(config)
+        x_data = self._controller.get_data(axis_keys[0])
+
+        return {
+            **config,
+            'x_unit': str(x_data.unit),
+            'x_start': float(x_data.nanmin().value),
+            'x_stop': float(np.nextafter(x_data.nanmax().value, np.inf)),
+        }
+
 
 class CorrelationHistogram2dTemplate(CorrelationHistogramTemplateBase):
     """Template for creating 2D correlation histogram workflow instances."""
@@ -645,3 +790,42 @@ class CorrelationHistogram2dTemplate(CorrelationHistogramTemplateBase):
 
     def _get_axis_names_from_dict(self, config: dict) -> list[str]:
         return [config['x_param'], config['y_param']]
+
+    def _create_dynamic_model_class(
+        self, config: dict
+    ) -> type[CorrelationHistogram2dParams]:
+        """Create dynamic parameter model class with bin edge fields from config."""
+        x_field = _make_edges_field_from_values(
+            config['x_param'],
+            unit=config.get('x_unit'),
+            start=config.get('x_start'),
+            stop=config.get('x_stop'),
+        )
+        y_field = _make_edges_field_from_values(
+            config['y_param'],
+            unit=config.get('y_unit'),
+            start=config.get('y_start'),
+            stop=config.get('y_stop'),
+        )
+
+        class Configured2dParams(CorrelationHistogram2dParams):
+            x_edges: EdgesWithUnit = x_field
+            y_edges: EdgesWithUnit = y_field
+
+        return Configured2dParams
+
+    def enrich_config_from_data(self, config: dict) -> dict:
+        """Populate config with unit and range values from timeseries data."""
+        axis_keys = self.get_axis_keys(config)
+        x_data = self._controller.get_data(axis_keys[0])
+        y_data = self._controller.get_data(axis_keys[1])
+
+        return {
+            **config,
+            'x_unit': str(x_data.unit),
+            'x_start': float(x_data.nanmin().value),
+            'x_stop': float(np.nextafter(x_data.nanmax().value, np.inf)),
+            'y_unit': str(y_data.unit),
+            'y_start': float(y_data.nanmin().value),
+            'y_stop': float(np.nextafter(y_data.nanmax().value, np.inf)),
+        }

@@ -202,15 +202,31 @@ class DashboardServices:
             return
 
         # Register 1D correlation histograms for each Bifrost timeseries
+        # Config includes unit/start/stop so templates can be loaded without data
         bifrost_timeseries = [
-            'sample_temperature',
-            'detector_rotation',
-            'sample_rotation',
+            {
+                'x_param': 'sample_temperature',
+                'x_unit': 'K',
+                'x_start': 0,
+                'x_stop': 500,
+            },
+            {
+                'x_param': 'detector_rotation',
+                'x_unit': 'deg',
+                'x_start': 0,
+                'x_stop': 360,
+            },
+            {
+                'x_param': 'sample_rotation',
+                'x_unit': 'deg',
+                'x_start': 0,
+                'x_stop': 360,
+            },
         ]
 
-        for axis_name in bifrost_timeseries:
+        for config in bifrost_timeseries:
             workflow_id = self.job_orchestrator.register_from_template(
-                'correlation_histogram_1d', {'x_param': axis_name}
+                'correlation_histogram_1d', config
             )
             if workflow_id is not None:
                 self._logger.info(
