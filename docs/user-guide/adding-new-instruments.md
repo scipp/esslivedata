@@ -252,24 +252,32 @@ For detectors with complex 3D geometries, use helper functions to register proje
 ```python
 from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
 
-# XY plane projection (e.g., for endcap detectors)
+# Single projection for all detectors
 xy_handle = register_detector_view_spec(
     instrument=instrument,
     projection='xy_plane',
-    source_names=['endcap_backward_detector', 'endcap_forward_detector'],
+    source_names=['detector_0', 'detector_1'],
 )
 
-# Cylindrical projection (e.g., for mantle detectors)
-cylinder_handle = register_detector_view_spec(
+# Mixed projections - different projection types per detector
+# Creates a unified "Detector Projection" workflow
+# source_names defaults to the dict keys
+projection_handle = register_detector_view_spec(
     instrument=instrument,
-    projection='cylinder_mantle_z',
-    source_names=['mantle_detector'],
+    projection={
+        'mantle_detector': 'cylinder_mantle_z',
+        'endcap_backward_detector': 'xy_plane',
+        'endcap_forward_detector': 'xy_plane',
+    },
 )
 ```
 
 Available projections:
 - `xy_plane`: 2D projection onto XY plane
 - `cylinder_mantle_z`: Cylindrical projection (for detectors like DREAM's mantle)
+
+When using a dict for `projection`, each detector can use a different projection type,
+but they will all appear under a single "Detector Projection" workflow in the UI.
 
 Geometric projections are towards the sample position (assumed at the origin).
 For more details see [ess.reduce.live.raw](https://scipp.github.io/essreduce/generated/modules/ess.reduce.live.raw.html).

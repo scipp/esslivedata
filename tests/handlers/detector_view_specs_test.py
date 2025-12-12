@@ -57,6 +57,70 @@ class TestRegisterDetectorViewSpecs:
         assert xy_id in instrument.workflow_factory
         assert cylinder_id in instrument.workflow_factory
 
+    def test_register_mixed_projections_as_dict(self):
+        """Test registering mixed projections with a dict mapping sources to types."""
+        from ess.livedata.handlers.detector_view_specs import (
+            register_detector_view_spec,
+        )
+
+        instrument = Instrument(name="test_instrument")
+        projections = {
+            "mantle_detector": "cylinder_mantle_z",
+            "endcap_detector": "xy_plane",
+        }
+
+        handle = register_detector_view_spec(
+            instrument=instrument,
+            projection=projections,
+        )
+
+        assert isinstance(handle, SpecHandle)
+
+        # Verify spec is registered with unified name
+        spec_id = handle.workflow_id
+        assert spec_id in instrument.workflow_factory
+
+        spec = instrument.workflow_factory[spec_id]
+        assert spec.name == "detector_projection"
+        assert spec.title == "Detector Projection"
+        # source_names should be derived from dict keys
+        assert set(spec.source_names) == {"mantle_detector", "endcap_detector"}
+
+    def test_mixed_projections_spec_includes_roi_support(self):
+        """Test that mixed projection spec includes ROI aux sources."""
+        from ess.livedata.handlers.detector_view_specs import (
+            DetectorROIAuxSources,
+            register_detector_view_spec,
+        )
+
+        instrument = Instrument(name="test_instrument")
+        projections = {
+            "detector1": "xy_plane",
+            "detector2": "cylinder_mantle_z",
+        }
+
+        handle = register_detector_view_spec(
+            instrument=instrument,
+            projection=projections,
+        )
+
+        spec = instrument.workflow_factory[handle.workflow_id]
+        assert spec.aux_sources is DetectorROIAuxSources
+
+    def test_single_projection_requires_source_names(self):
+        """Test that source_names is required when projection is a string."""
+        from ess.livedata.handlers.detector_view_specs import (
+            register_detector_view_spec,
+        )
+
+        instrument = Instrument(name="test_instrument")
+
+        with pytest.raises(ValueError, match="source_names is required"):
+            register_detector_view_spec(
+                instrument=instrument,
+                projection="xy_plane",
+            )
+
     def test_specs_registered_in_workflow_factory(self):
         """Test that spec is actually registered in the workflow factory."""
         from ess.livedata.handlers.detector_view_specs import (

@@ -42,7 +42,7 @@ jobs:
     environment: release
     permissions:
       id-token: write
-    if: github.event_name == 'release' && github.event.action == 'published'
+    if: false # Do not upload to PyPI
     steps:
       - uses: actions/download-artifact@v4
       - uses: pypa/gh-action-pypi-publish@v1.12.4
@@ -50,6 +50,7 @@ jobs:
   docs:
     needs: [upload_pypi]
     uses: ./.github/workflows/docs.yml
+    if: always() # Ensure docs are built even if upload_pypi is skipped
     with:
       publish: ${{ github.event_name == 'release' && github.event.action == 'published' }}
     secrets: inherit

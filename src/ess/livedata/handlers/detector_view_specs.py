@@ -142,11 +142,14 @@ class DetectorROIAuxSources(AuxSourcesBase):
         }
 
 
+ProjectionType = Literal["xy_plane", "cylinder_mantle_z"]
+
+
 def register_detector_view_spec(
     *,
     instrument: Instrument,
-    projection: Literal["xy_plane", "cylinder_mantle_z"],
-    source_names: list[str],
+    projection: ProjectionType | dict[str, ProjectionType],
+    source_names: list[str] | None = None,
 ) -> SpecHandle:
     """
     Register detector view specs for a given projection.
@@ -159,20 +162,63 @@ def register_detector_view_spec(
     instrument:
         Instrument to register specs with.
     projection:
-        Projection type to register specs for.
+        Projection type(s) to register. Either a single projection type applied to
+        all sources, or a dict mapping source names to projection types. When a dict
+        is provided, this creates a unified "Detector Projection" workflow that
+        uses different projections for different detector banks.
     source_names:
-        List of detector source names.
+        List of detector source names. Required when projection is a single type.
+        When projection is a dict, defaults to the dict keys if not specified.
 
     Returns
     -------
     :
         A SpecHandle.
+
+    Example
+    -------
+    Single projection for all detectors:
+
+    .. code-block:: python
+
+        handle = register_detector_view_spec(
+            instrument=instrument,
+            projection='xy_plane',
+            source_names=['detector_0', 'detector_1'],
+        )
+
+    Mixed projections (unified workflow):
+
+    .. code-block:: python
+
+        handle = register_detector_view_spec(
+            instrument=instrument,
+            projection={
+                'mantle_detector': 'cylinder_mantle_z',
+                'endcap_backward_detector': 'xy_plane',
+                'endcap_forward_detector': 'xy_plane',
+            },
+        )
     """
-    if projection == "xy_plane":
+    if isinstance(projection, dict):
+        # Mixed projections - create unified "Detector Projection" workflow
+        if source_names is None:
+            source_names = list(projection.keys())
+        name = "detector_projection"
+        title = "Detector Projection"
+        description = (
+            "Projection of detector banks onto 2D planes. "
+            "Uses the appropriate projection for each detector."
+        )
+    elif projection == "xy_plane":
+        if source_names is None:
+            raise ValueError("source_names is required when projection is a string")
         name = "detector_xy_projection"
         title = "Detector XY Projection"
         description = "Projection of a detector bank onto an XY-plane."
     elif projection == "cylinder_mantle_z":
+        if source_names is None:
+            raise ValueError("source_names is required when projection is a string")
         name = "detector_cylinder_mantle_z"
         title = "Detector Cylinder Mantle Z Projection"
         description = (

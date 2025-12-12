@@ -107,7 +107,26 @@ class PlotGridTabs:
         # of near-total UI freezes when there are many active plots. With dynamic=True,
         # only the visible tab is rendered; hidden tabs are rendered on-demand when
         # selected. Downside: slight delay when switching to a tab.
-        self._tabs = pn.Tabs(sizing_mode='stretch_both', dynamic=True)
+        self._tabs = pn.Tabs(
+            sizing_mode='stretch_both',
+            dynamic=True,
+            stylesheets=[
+                """
+                .bk-tab:nth-child(1),
+                .bk-tab:nth-child(2) {
+                    font-weight: bold;
+                }
+                .bk-tab {
+                    border-bottom: 1px solid #2c5aa0 !important;
+                }
+                .bk-tab.bk-active {
+                    background-color: #e8f4f8 !important;
+                    border: 1px solid #2c5aa0 !important;
+                    border-bottom: none !important;
+                }
+                """
+            ],
+        )
 
         # Modal container for plot configuration
         # IMPORTANT: Use height=0 to ensure the modal is in the component tree
