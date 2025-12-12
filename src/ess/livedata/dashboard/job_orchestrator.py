@@ -7,16 +7,16 @@ Coordinates workflow execution across multiple sources, handling:
 - Configuration staging and commit (two-phase workflow start)
 - Job number generation and JobSet lifecycle
 - Job transitions and cleanup
+- Dynamic workflow registration from templates
 """
 
 from __future__ import annotations
 
 import logging
-import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import NewType
-from uuid import UUID
+from typing import TYPE_CHECKING, NewType
+from uuid import UUID, uuid4
 
 import pydantic
 from pydantic import BaseModel, Field
@@ -30,14 +30,21 @@ from ess.livedata.config.workflow_spec import (
     WorkflowId,
     WorkflowSpec,
 )
+from ess.livedata.config.workflow_template import TemplateInstance, WorkflowTemplate
 from ess.livedata.core.job_manager import JobAction, JobCommand
 
 from .command_service import CommandService
 from .config_store import ConfigStore
 from .workflow_config_service import WorkflowConfigService
 
+if TYPE_CHECKING:
+    pass
+
 SourceName = str
 SubscriptionId = NewType('SubscriptionId', UUID)
+
+# Key used to store template instances in config store
+_TEMPLATE_INSTANCES_KEY = '_template_instances'
 
 
 class JobConfig(BaseModel):
@@ -54,7 +61,7 @@ class JobSet(BaseModel):
     JobId can be reconstructed as JobId(source_name, job_number).
     """
 
-    job_number: JobNumber = Field(default_factory=uuid.uuid4)
+    job_number: JobNumber = Field(default_factory=uuid4)
     jobs: dict[SourceName, JobConfig] = Field(default_factory=dict)
 
     def job_ids(self) -> list[JobId]:
@@ -80,6 +87,242 @@ class WorkflowState:
     staged_jobs: dict[SourceName, JobConfig] = field(default_factory=dict)
 
 
+class WorkflowRegistryManager:
+    """
+    Manages a combined view of static and dynamically-created workflow specs.
+
+    Static workflows come from the instrument's workflow factory. Dynamic workflows
+    are created from templates (e.g., correlation histograms) and are persisted
+    to the config store for restoration across sessions.
+    """
+
+    def __init__(
+        self,
+        static_registry: Mapping[WorkflowId, WorkflowSpec],
+        config_store: ConfigStore | None,
+        templates: Sequence[WorkflowTemplate],
+        logger: logging.Logger,
+    ) -> None:
+        """
+        Initialize the registry manager.
+
+        Parameters
+        ----------
+        static_registry:
+            Registry of static workflows from instrument configuration.
+        config_store:
+            Optional store for persisting template instances.
+        templates:
+            Available workflow templates for creating dynamic workflows.
+        logger:
+            Logger instance for logging.
+        """
+        self._static_registry = dict(static_registry)
+        self._config_store = config_store
+        self._templates = {t.name: t for t in templates}
+        self._logger = logger
+
+        # Dynamic workflows created from templates
+        self._dynamic_registry: dict[WorkflowId, WorkflowSpec] = {}
+        # Track which workflows came from which template instance
+        self._template_instances: dict[WorkflowId, TemplateInstance] = {}
+
+        # Load persisted template instances
+        self._load_template_instances()
+
+    def _load_template_instances(self) -> None:
+        """Recreate dynamic specs from persisted template instances."""
+        if self._config_store is None:
+            return
+
+        instances_data = self._config_store.get(_TEMPLATE_INSTANCES_KEY)
+        if not instances_data:
+            return
+
+        for workflow_id_str, instance_data in instances_data.items():
+            try:
+                instance = TemplateInstance.model_validate(instance_data)
+                template = self._templates.get(instance.template_name)
+                if template is None:
+                    self._logger.warning(
+                        'Template %s not found for persisted instance %s, skipping',
+                        instance.template_name,
+                        workflow_id_str,
+                    )
+                    continue
+
+                # Recreate the configuration model and spec
+                config_model = template.get_configuration_model()
+                if config_model is None:
+                    self._logger.warning(
+                        'Template %s cannot create config model, skipping %s',
+                        instance.template_name,
+                        workflow_id_str,
+                    )
+                    continue
+
+                config = config_model.model_validate(instance.config)
+                spec = template.create_workflow_spec(config)
+                workflow_id = spec.get_id()
+
+                self._dynamic_registry[workflow_id] = spec
+                self._template_instances[workflow_id] = instance
+                self._logger.info(
+                    'Restored template instance %s from %s',
+                    workflow_id,
+                    instance.template_name,
+                )
+            except Exception as e:
+                self._logger.warning(
+                    'Failed to restore template instance %s: %s',
+                    workflow_id_str,
+                    e,
+                )
+
+    def _persist_template_instances(self) -> None:
+        """Persist template instances to config store."""
+        if self._config_store is None:
+            return
+
+        instances_data = {
+            str(wid): instance.model_dump(mode='json')
+            for wid, instance in self._template_instances.items()
+        }
+        self._config_store[_TEMPLATE_INSTANCES_KEY] = instances_data
+
+    def register_from_template(
+        self, template_name: str, config: dict
+    ) -> WorkflowId | None:
+        """
+        Create and register a workflow spec from a template.
+
+        Parameters
+        ----------
+        template_name:
+            Name of the template to use.
+        config:
+            Configuration dict for the template.
+
+        Returns
+        -------
+        :
+            The WorkflowId of the created workflow, or None if registration failed.
+        """
+        template = self._templates.get(template_name)
+        if template is None:
+            self._logger.error('Template %s not found', template_name)
+            return None
+
+        config_model = template.get_configuration_model()
+        if config_model is None:
+            self._logger.error(
+                'Template %s cannot create config model (not enough data?)',
+                template_name,
+            )
+            return None
+
+        try:
+            validated_config = config_model.model_validate(config)
+        except pydantic.ValidationError as e:
+            self._logger.error('Invalid config for template %s: %s', template_name, e)
+            return None
+
+        spec = template.create_workflow_spec(validated_config)
+        workflow_id = spec.get_id()
+
+        # Check if already registered
+        if (
+            workflow_id in self._static_registry
+            or workflow_id in self._dynamic_registry
+        ):
+            self._logger.warning(
+                'Workflow %s already registered, not overwriting', workflow_id
+            )
+            return workflow_id
+
+        self._dynamic_registry[workflow_id] = spec
+        self._template_instances[workflow_id] = TemplateInstance(
+            template_name=template_name,
+            config=config,
+        )
+        self._persist_template_instances()
+
+        self._logger.info(
+            'Registered workflow %s from template %s', workflow_id, template_name
+        )
+        return workflow_id
+
+    def unregister(self, workflow_id: WorkflowId) -> bool:
+        """
+        Remove a template-created workflow.
+
+        Parameters
+        ----------
+        workflow_id:
+            The workflow to remove.
+
+        Returns
+        -------
+        :
+            True if the workflow was removed, False if it was a static workflow
+            or not found.
+        """
+        if workflow_id in self._static_registry:
+            self._logger.warning('Cannot unregister static workflow %s', workflow_id)
+            return False
+
+        if workflow_id not in self._dynamic_registry:
+            self._logger.warning(
+                'Workflow %s not found in dynamic registry', workflow_id
+            )
+            return False
+
+        del self._dynamic_registry[workflow_id]
+        del self._template_instances[workflow_id]
+        self._persist_template_instances()
+
+        self._logger.info('Unregistered dynamic workflow %s', workflow_id)
+        return True
+
+    def get_registry(self) -> Mapping[WorkflowId, WorkflowSpec]:
+        """
+        Get combined view of static + dynamic workflows.
+
+        Returns
+        -------
+        :
+            Combined registry of all workflows.
+        """
+        return {**self._static_registry, **self._dynamic_registry}
+
+    def is_template_instance(self, workflow_id: WorkflowId) -> bool:
+        """
+        Check if a workflow was created from a template.
+
+        Parameters
+        ----------
+        workflow_id:
+            The workflow to check.
+
+        Returns
+        -------
+        :
+            True if the workflow was created from a template.
+        """
+        return workflow_id in self._template_instances
+
+    def get_templates(self) -> Mapping[str, WorkflowTemplate]:
+        """
+        Get available templates.
+
+        Returns
+        -------
+        :
+            Mapping from template name to template instance.
+        """
+        return dict(self._templates)
+
+
 class JobOrchestrator:
     """Orchestrates workflow job lifecycle and state management."""
 
@@ -90,6 +333,7 @@ class JobOrchestrator:
         workflow_config_service: WorkflowConfigService,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         config_store: ConfigStore | None = None,
+        templates: Sequence[WorkflowTemplate] | None = None,
     ) -> None:
         """
         Initialize the job orchestrator.
@@ -105,12 +349,21 @@ class JobOrchestrator:
         config_store
             Optional store for persisting workflow configurations across sessions.
             Orchestrator loads configs on init and persists on commit.
+        templates
+            Optional sequence of workflow templates for dynamic workflow creation.
         """
         self._command_service = command_service
         self._workflow_config_service = workflow_config_service
-        self._workflow_registry = workflow_registry
         self._config_store = config_store
         self._logger = logging.getLogger(__name__)
+
+        # Initialize registry manager for combined static + dynamic workflows
+        self._registry_manager = WorkflowRegistryManager(
+            static_registry=workflow_registry,
+            config_store=config_store,
+            templates=templates or [],
+            logger=self._logger,
+        )
 
         # Workflow state tracking
         self._workflows: dict[WorkflowId, WorkflowState] = {}
@@ -122,9 +375,14 @@ class JobOrchestrator:
         # Load persisted configs
         self._load_configs_from_store()
 
+    @property
+    def workflow_registry(self) -> Mapping[WorkflowId, WorkflowSpec]:
+        """Get the combined workflow registry (static + dynamic)."""
+        return self._registry_manager.get_registry()
+
     def _load_configs_from_store(self) -> None:
         """Initialize all workflows with either loaded configs or defaults from spec."""
-        for workflow_id, spec in self._workflow_registry.items():
+        for workflow_id, spec in self.workflow_registry.items():
             # Try to load persisted config directly as dict
             config_data = None
             if self._config_store is not None:
@@ -512,7 +770,7 @@ class JobOrchestrator:
             callback_invoked_immediately is True if the workflow was already
             running and the callback was invoked synchronously during this call.
         """
-        subscription_id = SubscriptionId(uuid.uuid4())
+        subscription_id = SubscriptionId(uuid4())
         self._subscriptions[subscription_id] = callback
         callback_invoked = False
 
@@ -564,3 +822,135 @@ class JobOrchestrator:
                 'Attempted to unsubscribe from non-existent subscription %s',
                 subscription_id,
             )
+
+    # =========================================================================
+    # Template-related methods
+    # =========================================================================
+
+    def get_templates(self) -> Mapping[str, WorkflowTemplate]:
+        """
+        Get available workflow templates.
+
+        Returns
+        -------
+        :
+            Mapping from template name to template instance.
+        """
+        return self._registry_manager.get_templates()
+
+    def register_from_template(
+        self, template_name: str, config: dict
+    ) -> WorkflowId | None:
+        """
+        Create and register a workflow spec from a template.
+
+        After registration, the workflow state is initialized and the workflow
+        becomes available for job orchestration.
+
+        Parameters
+        ----------
+        template_name:
+            Name of the template to use.
+        config:
+            Configuration dict for the template.
+
+        Returns
+        -------
+        :
+            The WorkflowId of the created workflow, or None if registration failed.
+        """
+        workflow_id = self._registry_manager.register_from_template(
+            template_name, config
+        )
+        if workflow_id is None:
+            return None
+
+        # Initialize workflow state for the new workflow
+        spec = self.workflow_registry.get(workflow_id)
+        if spec is not None:
+            self._init_workflow_state(workflow_id, spec)
+
+        return workflow_id
+
+    def _init_workflow_state(self, workflow_id: WorkflowId, spec: WorkflowSpec) -> None:
+        """Initialize workflow state for a single workflow."""
+        params = {}
+        if spec.params is not None:
+            try:
+                params = spec.params().model_dump(mode='json')
+            except pydantic.ValidationError:
+                self._workflows[workflow_id] = WorkflowState()
+                self._logger.debug(
+                    'Initialized workflow %s (params cannot be instantiated)',
+                    workflow_id,
+                )
+                return
+
+        aux_source_names = {}
+        if spec.aux_sources is not None:
+            aux_source_names = spec.aux_sources().model_dump(mode='json')
+
+        state = WorkflowState()
+        if params:
+            for source_name in spec.source_names:
+                state.staged_jobs[source_name] = JobConfig(
+                    params=params.copy(),
+                    aux_source_names=aux_source_names.copy(),
+                )
+
+        self._workflows[workflow_id] = state
+        self._logger.debug(
+            'Initialized workflow %s with %d sources',
+            workflow_id,
+            len(spec.source_names),
+        )
+
+    def unregister_workflow(self, workflow_id: WorkflowId) -> bool:
+        """
+        Remove a template-created workflow.
+
+        This will also clean up any workflow state and subscriptions.
+        Static workflows cannot be unregistered.
+
+        Parameters
+        ----------
+        workflow_id:
+            The workflow to remove.
+
+        Returns
+        -------
+        :
+            True if the workflow was removed, False if it was a static workflow
+            or not found.
+        """
+        if not self._registry_manager.unregister(workflow_id):
+            return False
+
+        # Clean up workflow state
+        if workflow_id in self._workflows:
+            del self._workflows[workflow_id]
+
+        # Clean up subscriptions for this workflow
+        if workflow_id in self._workflow_subscriptions:
+            for sub_id in list(self._workflow_subscriptions[workflow_id]):
+                if sub_id in self._subscriptions:
+                    del self._subscriptions[sub_id]
+            del self._workflow_subscriptions[workflow_id]
+
+        return True
+
+    def is_template_instance(self, workflow_id: WorkflowId) -> bool:
+        """
+        Check if a workflow was created from a template.
+
+        Parameters
+        ----------
+        workflow_id:
+            The workflow to check.
+
+        Returns
+        -------
+        :
+            True if the workflow was created from a template.
+        """
+        return self._registry_manager.is_template_instance(workflow_id)

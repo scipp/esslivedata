@@ -16,6 +16,7 @@ from ess.livedata.config.workflow_spec import (
     JobId,
     JobNumber,
     ResultKey,
+    WorkflowId,
     WorkflowOutputsBase,
     WorkflowSpec,
 )
@@ -520,3 +521,239 @@ class CorrelationHistogrammer:
         if self._normalize:
             return dependent.bin(**self._edges).bins.mean()
         return dependent.hist(**self._edges)
+
+
+# =============================================================================
+# WorkflowTemplate implementations for correlation histograms
+# =============================================================================
+
+
+def _format_result_key_brief(key: ResultKey) -> str:
+    """Make a brief representation of a ResultKey."""
+    if key.output_name is None:
+        return f"{key.job_id.source_name}"
+    output = key.output_name.split('.')[-1]
+    return f"{key.job_id.source_name}: {output}"
+
+
+def _format_result_key_full(key: ResultKey) -> str:
+    """Make a full representation of a ResultKey, fallback if brief not unique."""
+    return f"{key.workflow_id}/{key.job_id}/{key.output_name or 'default'}"
+
+
+def _make_unique_source_name_mapping(
+    keys: list[ResultKey],
+) -> dict[str, ResultKey]:
+    """Create unique display name to ResultKey mapping."""
+    mapping = {_format_result_key_brief(key): key for key in keys}
+    if len(mapping) != len(keys):
+        mapping = {_format_result_key_full(key): key for key in keys}
+    return mapping
+
+
+def _sanitize_for_id(name: str) -> str:
+    """Convert a display name to a valid workflow ID component."""
+    return name.lower().replace(' ', '_').replace(':', '_').replace('/', '_')
+
+
+class CorrelationHistogram1dTemplateConfig(pydantic.BaseModel):
+    """Configuration for creating a 1D correlation histogram workflow instance."""
+
+    axis_source: str = pydantic.Field(
+        description="The timeseries to correlate against (X axis)"
+    )
+
+
+class CorrelationHistogram2dTemplateConfig(pydantic.BaseModel):
+    """Configuration for creating a 2D correlation histogram workflow instance."""
+
+    axis_x_source: str = pydantic.Field(
+        description="The timeseries to correlate against (X axis)"
+    )
+    axis_y_source: str = pydantic.Field(
+        description="The timeseries to correlate against (Y axis)"
+    )
+
+
+class CorrelationHistogramTemplateBase(ABC):
+    """
+    Base class for correlation histogram workflow templates.
+
+    Templates create WorkflowSpec instances where the correlation axis is baked
+    into the workflow identity rather than being a runtime parameter. This allows
+    "Temperature Correlation Histogram" and "Pressure Correlation Histogram" to
+    be tracked as independent workflows.
+    """
+
+    def __init__(
+        self,
+        get_timeseries: Callable[[], list[ResultKey]],
+    ) -> None:
+        """
+        Initialize the template.
+
+        Parameters
+        ----------
+        get_timeseries:
+            Callback to get available timeseries (typically from DataService).
+        """
+        self._get_timeseries = get_timeseries
+        self._cached_config_model: type[pydantic.BaseModel] | None = None
+        self._source_name_to_key: dict[str, ResultKey] | None = None
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Template identifier."""
+
+    @property
+    @abstractmethod
+    def title(self) -> str:
+        """Human-readable title for the template."""
+
+    @property
+    @abstractmethod
+    def ndim(self) -> int:
+        """Dimensionality of the correlation histogram (1 or 2)."""
+
+    @property
+    @abstractmethod
+    def _axis_field_names(self) -> list[str]:
+        """Field names for axis sources in the config model."""
+
+    @abstractmethod
+    def _get_axis_names(self, config: pydantic.BaseModel) -> list[str]:
+        """Extract axis source names from config."""
+
+    def _refresh_source_mapping(self) -> None:
+        """Refresh the source name to ResultKey mapping."""
+        timeseries = self._get_timeseries()
+        self._source_name_to_key = _make_unique_source_name_mapping(timeseries)
+
+    def get_source_name_to_key(self) -> dict[str, ResultKey]:
+        """Get the current source name to ResultKey mapping."""
+        if self._source_name_to_key is None:
+            self._refresh_source_mapping()
+        return self._source_name_to_key or {}
+
+    def get_configuration_model(self) -> type[pydantic.BaseModel] | None:
+        """
+        Get the Pydantic model for template configuration.
+
+        Returns None if not enough timeseries are available.
+        """
+        self._refresh_source_mapping()
+        source_names = list(self.get_source_name_to_key().keys())
+
+        if len(source_names) < self.ndim:
+            return None
+
+        # Dynamically create model with StrEnum for axis selection
+        return _create_dynamic_aux_sources_model(self._axis_field_names, source_names)
+
+    def make_instance_id(self, config: pydantic.BaseModel) -> WorkflowId:
+        """Generate unique WorkflowId for this instance."""
+        axis_names = self._get_axis_names(config)
+        sanitized = '_'.join(_sanitize_for_id(name) for name in axis_names)
+        return WorkflowId(
+            instrument='frontend',
+            namespace='correlation',
+            name=f'{sanitized}_histogram_{self.ndim}d',
+            version=1,
+        )
+
+    def make_instance_title(self, config: pydantic.BaseModel) -> str:
+        """Generate human-readable title for this instance."""
+        axis_names = self._get_axis_names(config)
+        if self.ndim == 1:
+            return f'{axis_names[0]} Correlation Histogram'
+        else:
+            return f'{axis_names[0]} vs {axis_names[1]} Correlation Histogram'
+
+    def create_workflow_spec(self, config: pydantic.BaseModel) -> WorkflowSpec:
+        """
+        Create a WorkflowSpec from the template configuration.
+
+        The axis is baked into the workflow identity. Source names are populated
+        with available timeseries for correlation.
+        """
+        # Get available sources (excluding the selected axes)
+        axis_names = set(self._get_axis_names(config))
+        source_names = [
+            name
+            for name in self.get_source_name_to_key().keys()
+            if name not in axis_names
+        ]
+
+        workflow_id = self.make_instance_id(config)
+        title = self.make_instance_title(config)
+
+        params = {1: CorrelationHistogram1dParams, 2: CorrelationHistogram2dParams}
+
+        return WorkflowSpec(
+            instrument=workflow_id.instrument,
+            namespace=workflow_id.namespace,
+            name=workflow_id.name,
+            version=workflow_id.version,
+            title=title,
+            description=(
+                f'{self.ndim}D correlation histogram against {", ".join(axis_names)}'
+            ),
+            source_names=source_names,
+            aux_sources=None,  # Axis is now part of identity, not aux_sources
+            params=params[self.ndim],
+            outputs=CorrelationHistogramOutputs,
+        )
+
+    def get_axis_keys(self, config: pydantic.BaseModel) -> list[ResultKey]:
+        """Get the ResultKeys for the selected axis sources."""
+        axis_names = self._get_axis_names(config)
+        mapping = self.get_source_name_to_key()
+        return [mapping[name] for name in axis_names]
+
+
+class CorrelationHistogram1dTemplate(CorrelationHistogramTemplateBase):
+    """Template for creating 1D correlation histogram workflow instances."""
+
+    @property
+    def name(self) -> str:
+        return 'correlation_histogram_1d'
+
+    @property
+    def title(self) -> str:
+        return '1D Correlation Histogram'
+
+    @property
+    def ndim(self) -> int:
+        return 1
+
+    @property
+    def _axis_field_names(self) -> list[str]:
+        return ['x_param']
+
+    def _get_axis_names(self, config: pydantic.BaseModel) -> list[str]:
+        return [config.model_dump()['x_param']]
+
+
+class CorrelationHistogram2dTemplate(CorrelationHistogramTemplateBase):
+    """Template for creating 2D correlation histogram workflow instances."""
+
+    @property
+    def name(self) -> str:
+        return 'correlation_histogram_2d'
+
+    @property
+    def title(self) -> str:
+        return '2D Correlation Histogram'
+
+    @property
+    def ndim(self) -> int:
+        return 2
+
+    @property
+    def _axis_field_names(self) -> list[str]:
+        return ['x_param', 'y_param']
+
+    def _get_axis_names(self, config: pydantic.BaseModel) -> list[str]:
+        dump = config.model_dump()
+        return [dump['x_param'], dump['y_param']]

@@ -16,7 +16,11 @@ from ess.livedata.config.workflow_spec import ResultKey
 
 from .command_service import CommandService
 from .config_store import ConfigStoreManager
-from .correlation_histogram import CorrelationHistogramController
+from .correlation_histogram import (
+    CorrelationHistogram1dTemplate,
+    CorrelationHistogram2dTemplate,
+    CorrelationHistogramController,
+)
 from .data_service import DataService
 from .job_controller import JobController
 from .job_orchestrator import JobOrchestrator
@@ -164,11 +168,24 @@ class DashboardServices:
         self.processor_factory = instrument_registry[self._instrument].workflow_factory
 
         self.correlation_controller = CorrelationHistogramController(self.data_service)
+
+        # Create workflow templates for dynamic workflow creation
+        # Templates use correlation controller's timeseries getter for axis options
+        templates = [
+            CorrelationHistogram1dTemplate(
+                get_timeseries=self.correlation_controller.get_timeseries
+            ),
+            CorrelationHistogram2dTemplate(
+                get_timeseries=self.correlation_controller.get_timeseries
+            ),
+        ]
+
         self.job_orchestrator = JobOrchestrator(
             command_service=self.command_service,
             workflow_config_service=self.workflow_config_service,
             workflow_registry=self.processor_factory,
             config_store=self.workflow_config_store,
+            templates=templates,
         )
         self.workflow_controller = WorkflowController(
             job_orchestrator=self.job_orchestrator,
