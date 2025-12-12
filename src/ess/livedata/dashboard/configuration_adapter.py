@@ -158,16 +158,22 @@ class ConfigurationAdapter(ABC, Generic[Model]):
 
         Default implementation filters persisted source names to only include
         currently available sources. If no valid persisted sources remain,
-        defaults to all available sources.
+        defaults to all available sources only if there are 5 or fewer.
+
+        For better UX, when there are more than 5 sources available, returns
+        an empty list to avoid overwhelming the user with a large initial selection
+        (unless there's existing config with valid selections).
         """
-        if not self._config_state:
-            return self.source_names
-        filtered = [
-            name
-            for name in self._config_state.source_names
-            if name in self.source_names
-        ]
-        return filtered if filtered else self.source_names
+        if self._config_state:
+            filtered = [
+                name
+                for name in self._config_state.source_names
+                if name in self.source_names
+            ]
+            if filtered:
+                return filtered
+        # No config or no valid sources: return empty list if too many
+        return [] if len(self.source_names) > 5 else self.source_names
 
     @property
     def initial_parameter_values(self) -> dict[str, Any]:
