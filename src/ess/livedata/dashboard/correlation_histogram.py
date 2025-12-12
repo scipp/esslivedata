@@ -553,12 +553,11 @@ _: type[JobExecutor] = CorrelationHistogramExecutor  # type: ignore[type-abstrac
 # =============================================================================
 
 
-def _format_result_key_brief(key: ResultKey) -> str:
-    """Make a brief representation of a ResultKey."""
+def _format_result_key(key: ResultKey) -> str:
+    """Format a ResultKey as 'source_name: output_name' for display and lookup."""
     if key.output_name is None:
         return f"{key.job_id.source_name}"
-    output = key.output_name.split('.')[-1]
-    return f"{key.job_id.source_name}: {output}"
+    return f"{key.job_id.source_name}: {key.output_name}"
 
 
 def _format_result_key_full(key: ResultKey) -> str:
@@ -570,7 +569,7 @@ def _make_unique_source_name_mapping(
     keys: list[ResultKey],
 ) -> dict[str, ResultKey]:
     """Create unique display name to ResultKey mapping."""
-    mapping = {_format_result_key_brief(key): key for key in keys}
+    mapping = {_format_result_key(key): key for key in keys}
     if len(mapping) != len(keys):
         mapping = {_format_result_key_full(key): key for key in keys}
     return mapping
@@ -811,17 +810,9 @@ class CorrelationHistogramTemplateBase(ABC):
         source_names: list[str] = []
         if workflow_registry is not None:
             timeseries = find_timeseries_outputs(workflow_registry)
-            # Format as "source_name: output_title" for display
-            for wf_id, source_name, output_name in timeseries:
-                spec = workflow_registry.get(wf_id)
-                if spec is not None and spec.outputs is not None:
-                    field_info = spec.outputs.model_fields.get(output_name)
-                    output_title = (
-                        field_info.title
-                        if field_info and field_info.title
-                        else output_name
-                    )
-                    source_names.append(f'{source_name}: {output_title}')
+            # Format as "source_name: output_name" to match _format_result_key()
+            for _wf_id, source_name, output_name in timeseries:
+                source_names.append(f'{source_name}: {output_name}')
 
         return WorkflowSpec(
             instrument=workflow_id.instrument,
