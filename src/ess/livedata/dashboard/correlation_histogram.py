@@ -580,54 +580,6 @@ def _sanitize_for_id(name: str) -> str:
     return name.lower().replace(' ', '_').replace(':', '_').replace('/', '_')
 
 
-class CorrelationHistogram1dTemplateConfig(pydantic.BaseModel):
-    """Configuration for creating a 1D correlation histogram workflow instance."""
-
-    x_axis: TimeseriesReference = pydantic.Field(
-        description="Reference to the timeseries to correlate against (X axis)"
-    )
-    # Optional fields populated from data when available (for UI flow)
-    # or specified directly (for config file / programmatic setup)
-    x_unit: str | None = pydantic.Field(
-        default=None, description="Unit for the X axis edges"
-    )
-    x_start: float | None = pydantic.Field(
-        default=None, description="Start value for X axis range"
-    )
-    x_stop: float | None = pydantic.Field(
-        default=None, description="Stop value for X axis range"
-    )
-
-
-class CorrelationHistogram2dTemplateConfig(pydantic.BaseModel):
-    """Configuration for creating a 2D correlation histogram workflow instance."""
-
-    x_axis: TimeseriesReference = pydantic.Field(
-        description="Reference to the timeseries to correlate against (X axis)"
-    )
-    x_unit: str | None = pydantic.Field(
-        default=None, description="Unit for the X axis edges"
-    )
-    x_start: float | None = pydantic.Field(
-        default=None, description="Start value for X axis range"
-    )
-    x_stop: float | None = pydantic.Field(
-        default=None, description="Stop value for X axis range"
-    )
-    y_axis: TimeseriesReference = pydantic.Field(
-        description="Reference to the timeseries to correlate against (Y axis)"
-    )
-    y_unit: str | None = pydantic.Field(
-        default=None, description="Unit for the Y axis edges"
-    )
-    y_start: float | None = pydantic.Field(
-        default=None, description="Start value for Y axis range"
-    )
-    y_stop: float | None = pydantic.Field(
-        default=None, description="Stop value for Y axis range"
-    )
-
-
 class CorrelationHistogramTemplateBase(ABC):
     """
     Base class for correlation histogram workflow templates.
