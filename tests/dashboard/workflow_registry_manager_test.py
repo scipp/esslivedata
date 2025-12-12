@@ -21,7 +21,7 @@ from ess.livedata.dashboard.correlation_histogram import (
     CorrelationHistogram1dTemplate,
     TimeseriesReference,
 )
-from ess.livedata.dashboard.job_orchestrator import WorkflowRegistryManager
+from ess.livedata.dashboard.workflow_registry_manager import WorkflowRegistryManager
 
 
 def make_config_with_ref(key: ResultKey) -> dict:
