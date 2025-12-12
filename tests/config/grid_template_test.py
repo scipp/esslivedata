@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+from uuid import uuid4
+
 import pydantic
 import pytest
 
@@ -7,6 +9,8 @@ from ess.livedata.config.grid_template import GridSpec, load_raw_grid_templates
 from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
+    Layer,
+    LayerId,
     PlotCell,
     PlotConfig,
 )
@@ -22,15 +26,17 @@ def _make_plot_cell(
     row: int, col: int, row_span: int = 1, col_span: int = 1
 ) -> PlotCell:
     """Create a PlotCell with the given geometry."""
+    config = PlotConfig(
+        workflow_id=WorkflowId.from_string('test/ns/wf/1'),
+        output_name='output',
+        source_names=['source1'],
+        plot_name='lines',
+        params=EmptyParams(),
+    )
+    layer = Layer(layer_id=LayerId(uuid4()), config=config)
     return PlotCell(
         geometry=CellGeometry(row=row, col=col, row_span=row_span, col_span=col_span),
-        config=PlotConfig(
-            workflow_id=WorkflowId.from_string('test/ns/wf/1'),
-            output_name='output',
-            source_names=['source1'],
-            plot_name='lines',
-            params=EmptyParams(),
-        ),
+        layers=[layer],
     )
 
 

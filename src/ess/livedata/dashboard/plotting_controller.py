@@ -236,7 +236,8 @@ class PlottingController:
             A HoloViews DynamicMap that updates with streaming data.
             For roi_detector, returns a Layout with separate DynamicMaps.
         """
-        # Special case for roi_detector: receives dict of pipes (one per detector)
+        # Special case for roi_detector: receives dict of pipes (one per detector).
+        # TODO: Remove when roi_detector is migrated to the layer system.
         if plot_name == 'roi_detector':
             # pipe is dict[ResultKey, Pipe]
             pipes_dict = pipe
@@ -262,7 +263,6 @@ class PlottingController:
         # Create DynamicMap with kdims (None if plotter doesn't use them)
         dmap = hv.DynamicMap(plotter, streams=[pipe], kdims=plotter.kdims, cache_size=1)
 
-        # Wrap in Layout with shared_axes=False to prevent axis linking between
-        # separate plots while preserving framewise autoscaling within overlays.
-        # Setting shared_axes=False directly on DynamicMap breaks framewise.
-        return hv.Layout([dmap]).opts(shared_axes=False)
+        # Return DynamicMap directly without Layout wrapping.
+        # This preserves the plotter's framewise settings when layers are overlaid.
+        return dmap

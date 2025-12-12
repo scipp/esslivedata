@@ -21,6 +21,8 @@ from ..plot_orchestrator import (
     CellGeometry,
     CellId,
     GridId,
+    LayerId,
+    LayerState,
     PlotCell,
     PlotConfig,
     PlotGridConfig,
@@ -197,11 +199,15 @@ class PlotGridTabs:
 
         # Populate with existing cells (important for late subscribers / new sessions)
         for cell_id, cell in grid_config.cells.items():
-            # Get current plot/error state from orchestrator
+            # Get current layer states and composed plot from orchestrator
             # This ensures late subscribers (new sessions) see existing plots
-            plot, error = self._orchestrator.get_cell_state(cell_id)
+            layer_states, plot = self._orchestrator.get_cell_state(cell_id)
             self._on_cell_updated(
-                grid_id=grid_id, cell_id=cell_id, cell=cell, plot=plot, error=error
+                grid_id=grid_id,
+                cell_id=cell_id,
+                cell=cell,
+                layer_states=layer_states,
+                plot=plot,
             )
 
     def _remove_grid_tab(self, grid_id: GridId) -> None:
@@ -242,30 +248,49 @@ class PlotGridTabs:
 
         def on_success(plot_config: PlotConfig) -> None:
             """Handle successful plot configuration."""
-            plot_cell = PlotCell(geometry=geometry, config=plot_config)
-            self._orchestrator.add_plot(grid_id, plot_cell)
+            cell_id = self._orchestrator.add_cell(grid_id, geometry)
+            self._orchestrator.add_layer(cell_id, plot_config)
 
         self._show_config_modal(on_success=on_success)
 
-    def _on_reconfigure_plot(self, cell_id: CellId) -> None:
+    def _on_reconfigure_layer(self, layer_id: LayerId) -> None:
         """
-        Handle plot reconfiguration request from gear button.
+        Handle layer reconfiguration request from gear button.
 
         Shows the PlotConfigModal with existing configuration, then updates
-        the plot in the orchestrator on success.
+        the layer in the orchestrator on success.
+
+        Parameters
+        ----------
+        layer_id
+            ID of the layer to reconfigure.
+        """
+
+        def on_success(plot_config: PlotConfig) -> None:
+            """Handle successful layer reconfiguration."""
+            self._orchestrator.update_layer_config(layer_id, plot_config)
+
+        current_config = self._orchestrator.get_layer_config(layer_id)
+        self._show_config_modal(on_success=on_success, initial_config=current_config)
+
+    def _on_add_layer(self, cell_id: CellId) -> None:
+        """
+        Handle add layer request from plus button.
+
+        Shows the PlotConfigModal to configure the new layer, then adds it
+        to the cell in the orchestrator on success.
 
         Parameters
         ----------
         cell_id
-            ID of the cell to reconfigure.
+            ID of the cell to add the layer to.
         """
 
         def on_success(plot_config: PlotConfig) -> None:
-            """Handle successful plot reconfiguration."""
-            self._orchestrator.update_plot_config(cell_id, plot_config)
+            """Handle successful layer configuration."""
+            self._orchestrator.add_layer(cell_id, plot_config)
 
-        current_config = self._orchestrator.get_plot_config(cell_id)
-        self._show_config_modal(on_success=on_success, initial_config=current_config)
+        self._show_config_modal(on_success=on_success)
 
     def _show_config_modal(
         self,
@@ -314,14 +339,14 @@ class PlotGridTabs:
         grid_id: GridId,
         cell_id: CellId,
         cell: PlotCell,
+        layer_states: dict[LayerId, LayerState],
         plot: Any = None,
-        error: str | None = None,
     ) -> None:
         """
         Handle cell update from orchestrator.
 
-        Creates appropriate widget (placeholder, plot, or error) and inserts
-        it into the grid at the specified position.
+        Creates a cell widget with per-layer toolbars and either a placeholder
+        or the composed plot, then inserts it into the grid.
 
         Parameters
         ----------
@@ -330,23 +355,18 @@ class PlotGridTabs:
         cell_id
             ID of the cell being updated.
         cell
-            Plot cell configuration.
+            Plot cell configuration with all layers.
+        layer_states
+            Per-layer runtime state (pipe, plot, error) for each layer.
         plot
-            The plot widget (HoloViews DynamicMap), or None if not yet available.
-        error
-            Error message if plot creation failed, or None.
+            The composed plot (hv.Overlay), or None if no layers have data yet.
         """
         plot_grid = self._grid_widgets.get(grid_id)
         if plot_grid is None:
             return
 
-        # Create appropriate widget based on what's available
-        if plot is not None:
-            # Show actual plot
-            widget = self._create_plot_widget(cell_id, cell, plot)
-        else:
-            # Show status widget (either waiting for data or error)
-            widget = self._create_status_widget(cell_id, cell, error=error)
+        # Create widget with toolbars and content
+        widget = self._create_cell_widget(cell_id, cell, layer_states, plot)
 
         # Defer insertion for plots to allow Panel to update layout sizing.
         # When a workflow is already running with data, subscribing triggers
@@ -386,138 +406,218 @@ class PlotGridTabs:
         # Remove widget at explicit position
         plot_grid.remove_widget_at(geometry)
 
-    def _create_status_widget(
-        self, cell_id: CellId, cell: PlotCell, error: str | None = None
-    ) -> pn.Column:
-        """
-        Create a status widget for a cell without a plot.
-
-        Shows either a placeholder (waiting for data) or an error message,
-        depending on whether an error occurred during plot creation.
-
-        Parameters
-        ----------
-        cell_id
-            ID of the cell.
-        cell
-            Plot cell configuration.
-        error
-            Error message if plot creation failed, or None for placeholder.
-
-        Returns
-        -------
-        :
-            Panel widget showing status information.
-        """
-        config = cell.config
-
-        # Get display info for toolbar
-        toolbar_title, toolbar_description = get_plot_cell_display_info(
-            config, self._workflow_registry
-        )
-
-        # Get workflow and output display titles for body content
-        workflow_title, output_title = get_workflow_display_info(
-            self._workflow_registry, config.workflow_id, config.output_name
-        )
-
-        # Build title from workflow and output (most prominent)
-        body_title = f"### {workflow_title} - {output_title}"
-
-        # Build info section: sources first, then status
-        info_lines = [
-            f"**Sources:** {', '.join(config.source_names)}",
-        ]
-
-        # Add status-specific line and determine styling
-        if error is not None:
-            info_lines.append(f"**Error:** {error}")
-            text_color = '#dc3545'
-            bg_color = '#ffe6e6'
-            border = '2px solid #dc3545'
-        else:
-            info_lines.append("**Status:** Waiting for data...")
-            text_color = '#6c757d'
-            bg_color = '#f8f9fa'
-            border = '2px dashed #dee2e6'
-
-        content = f"{body_title}\n\n" + "\n\n".join(info_lines)
-
-        # Create toolbar with title, description, and buttons
-        def on_close() -> None:
-            self._orchestrator.remove_plot(cell_id)
-
-        def on_gear() -> None:
-            self._on_reconfigure_plot(cell_id)
-
-        toolbar = create_cell_toolbar(
-            on_gear_callback=on_gear,
-            on_close_callback=on_close,
-            title=toolbar_title,
-            description=toolbar_description,
-        )
-
-        status_widget = pn.Column(
-            toolbar,
-            pn.pane.Markdown(
-                content,
-                styles={
-                    'text-align': 'left',
-                    'color': text_color,
-                    'padding': '20px',
-                },
-            ),
-            sizing_mode='stretch_both',
-            styles={
-                'background-color': bg_color,
-                'border': border,
-            },
-            margin=GridCellStyles.CELL_MARGIN,
-        )
-        return status_widget
-
-    def _create_plot_widget(
+    def _create_cell_widget(
         self,
         cell_id: CellId,
         cell: PlotCell,
-        plot: hv.DynamicMap | hv.Layout,
+        layer_states: dict[LayerId, LayerState],
+        plot: hv.DynamicMap | hv.Layout | None,
     ) -> pn.Column:
         """
-        Create a widget containing the actual plot.
+        Create a cell widget with per-layer toolbars and content area.
+
+        The widget has a stable toolbar section (one toolbar per layer) and
+        a content area that shows either a placeholder or the composed plot.
 
         Parameters
         ----------
         cell_id
             ID of the cell.
         cell
-            Plot cell configuration.
+            Plot cell configuration with all layers.
+        layer_states
+            Per-layer runtime state for each layer.
         plot
-            HoloViews plot object.
+            The composed plot, or None if no layers have data yet.
 
         Returns
         -------
         :
-            Panel widget containing the plot.
+            Panel widget with toolbars and content.
         """
+        # Create toolbars for all layers
+        toolbars = self._create_layer_toolbars(cell_id, cell, layer_states)
 
-        # Get display info for toolbar
-        title, description = get_plot_cell_display_info(
-            cell.config, self._workflow_registry
+        # Create content area (placeholder or plot)
+        if plot is not None:
+            content = self._create_plot_content(cell, plot)
+            border = None
+            bg_color = None
+        else:
+            content = self._create_placeholder_content(cell, layer_states)
+            # Check if any layer has an error
+            has_error = any(state.error is not None for state in layer_states.values())
+            if has_error:
+                bg_color = '#ffe6e6'
+                border = '2px solid #dc3545'
+            else:
+                bg_color = '#f8f9fa'
+                border = '2px dashed #dee2e6'
+
+        styles = {}
+        if bg_color:
+            styles['background-color'] = bg_color
+        if border:
+            styles['border'] = border
+
+        return pn.Column(
+            *toolbars,
+            content,
+            sizing_mode='stretch_both',
+            styles=styles,
+            margin=GridCellStyles.CELL_MARGIN,
         )
 
-        # Create toolbar with title, description, and buttons
-        def on_close() -> None:
-            self._orchestrator.remove_plot(cell_id)
+    def _create_layer_toolbars(
+        self,
+        cell_id: CellId,
+        cell: PlotCell,
+        layer_states: dict[LayerId, LayerState],
+    ) -> list[pn.Row]:
+        """
+        Create toolbars for all layers in a cell.
 
-        def on_gear() -> None:
-            self._on_reconfigure_plot(cell_id)
+        Parameters
+        ----------
+        cell_id
+            ID of the cell.
+        cell
+            Plot cell with layers.
+        layer_states
+            Per-layer runtime state.
 
-        toolbar = create_cell_toolbar(
-            on_gear_callback=on_gear,
-            on_close_callback=on_close,
-            title=title,
-            description=description,
+        Returns
+        -------
+        :
+            List of toolbar widgets, one per layer.
+        """
+        toolbars = []
+        for layer in cell.layers:
+            layer_id = layer.layer_id
+            config = layer.config
+            state = layer_states.get(layer_id, LayerState())
+
+            # Get display info for this layer
+            title, description = get_plot_cell_display_info(
+                config, self._workflow_registry
+            )
+
+            # Add state info to description
+            if state.error is not None:
+                description = f"{description}\n\nError: {state.error}"
+            elif state.plot is None:
+                description = f"{description}\n\nStatus: Waiting for data..."
+
+            # Create callbacks that capture layer_id / cell_id
+            def make_close_callback(lid: LayerId) -> Callable[[], None]:
+                def on_close() -> None:
+                    self._orchestrator.remove_layer(lid)
+
+                return on_close
+
+            def make_gear_callback(lid: LayerId) -> Callable[[], None]:
+                def on_gear() -> None:
+                    self._on_reconfigure_layer(lid)
+
+                return on_gear
+
+            def make_add_callback(cid: CellId) -> Callable[[], None]:
+                def on_add() -> None:
+                    self._on_add_layer(cid)
+
+                return on_add
+
+            toolbar = create_cell_toolbar(
+                on_gear_callback=make_gear_callback(layer_id),
+                on_close_callback=make_close_callback(layer_id),
+                on_add_callback=make_add_callback(cell_id),
+                title=title,
+                description=description,
+            )
+            toolbars.append(toolbar)
+
+        return toolbars
+
+    def _create_placeholder_content(
+        self,
+        cell: PlotCell,
+        layer_states: dict[LayerId, LayerState],
+    ) -> pn.pane.Markdown:
+        """
+        Create placeholder content showing layer status.
+
+        Parameters
+        ----------
+        cell
+            Plot cell with layers.
+        layer_states
+            Per-layer runtime state.
+
+        Returns
+        -------
+        :
+            Markdown pane showing status for all layers.
+        """
+        # Build status info for each layer
+        status_lines = []
+        for layer in cell.layers:
+            config = layer.config
+            state = layer_states.get(layer.layer_id, LayerState())
+
+            workflow_title, output_title = get_workflow_display_info(
+                self._workflow_registry, config.workflow_id, config.output_name
+            )
+
+            if state.error is not None:
+                status = f"Error: {state.error[:100]}..."
+                text_color = '#dc3545'
+            elif state.plot is not None:
+                status = "Ready"
+                text_color = '#28a745'
+            else:
+                status = "Waiting for data..."
+                text_color = '#6c757d'
+
+            status_lines.append(
+                f"**{workflow_title} → {output_title}**: "
+                f"<span style='color: {text_color}'>{status}</span>"
+            )
+
+        content = "\n\n".join(status_lines)
+
+        return pn.pane.Markdown(
+            content,
+            styles={
+                'text-align': 'left',
+                'padding': '20px',
+            },
         )
+
+    def _create_plot_content(
+        self,
+        cell: PlotCell,
+        plot: hv.DynamicMap | hv.Layout,
+    ) -> pn.pane.HoloViews:
+        """
+        Create plot content widget.
+
+        Parameters
+        ----------
+        cell
+            Plot cell with layers.
+        plot
+            The composed plot.
+
+        Returns
+        -------
+        :
+            HoloViews pane containing the plot.
+        """
+        # Use sizing mode from first layer (they should be consistent for overlay)
+        if cell.layers:
+            sizing_mode = _get_sizing_mode(cell.layers[0].config)
+        else:
+            sizing_mode = 'stretch_both'
 
         # Use .layout to preserve widgets for DynamicMaps with kdims.
         # When pn.pane.HoloViews wraps a DynamicMap with kdims, it generates
@@ -525,16 +625,31 @@ class PlotGridTabs:
         # in a Panel layout (Tabs, Column, etc.). The .layout property contains
         # both the plot and widgets, which renders correctly in layouts.
         # See: https://github.com/holoviz/panel/issues/5628
-        sizing_mode = _get_sizing_mode(cell.config)
-        plot_pane_wrapper = pn.pane.HoloViews(plot, sizing_mode=sizing_mode)
-        plot_pane = plot_pane_wrapper.layout
-
-        return pn.Column(
-            toolbar,
-            plot_pane,
-            sizing_mode='stretch_both',
-            margin=GridCellStyles.CELL_MARGIN,
+        #
+        # CRITICAL: Use linked_axes=False to prevent unintended axis linking (#607)
+        #
+        # Problem: By default, Panel's HoloViews pane links axes across different
+        # plots based on their axis labels (e.g., all plots with 'x' and 'y' axes
+        # get linked). For detector panels in different grid cells, this is unwanted:
+        # - Different detector panels have independent spatial coordinates
+        # - Zooming one panel shouldn't affect others
+        # - Each panel needs independent autoscaling
+        #
+        # Previous workarounds and why they failed:
+        # - shared_axes=False (HoloViews): Breaks framewise autoscaling and other
+        #   dynamic features that rely on shared axis infrastructure
+        # - Wrapping in hv.Layout: Prevents multi-layer composition with hv.Overlay,
+        #   which was needed for the layer system (#606)
+        #
+        # Solution: linked_axes=False on the Panel pane
+        # - Disables Panel's cross-plot axis linking while preserving all HoloViews
+        #   features (framewise options, autoscaling, dynamic updates)
+        # - Allows proper multi-layer composition via hv.Overlay
+        # - Each grid cell's plot remains independent
+        plot_pane_wrapper = pn.pane.HoloViews(
+            plot, sizing_mode=sizing_mode, linked_axes=False
         )
+        return plot_pane_wrapper.layout
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events and shutdown manager."""

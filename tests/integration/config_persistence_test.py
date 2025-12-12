@@ -13,6 +13,13 @@ from ess.livedata.parameter_models import Scale, TimeUnit, TOAEdges
 from tests.integration.backend import DashboardBackend
 
 
+def add_cell_with_layer(orchestrator, grid_id, geometry, config):
+    """Helper to add a cell with a single layer."""
+    cell_id = orchestrator.add_cell(grid_id, geometry)
+    orchestrator.add_layer(cell_id, config)
+    return cell_id
+
+
 @pytest.fixture
 def backend_with_null_transport() -> Generator[DashboardBackend, None, None]:
     """Create DashboardBackend with null transport (no Kafka required)."""
@@ -245,7 +252,6 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
     from ess.livedata.config.workflow_spec import WorkflowId
     from ess.livedata.dashboard.plot_orchestrator import (
         CellGeometry,
-        PlotCell,
         PlotConfig,
     )
     from ess.livedata.dashboard.plot_params import PlotParams1d, WindowMode
@@ -278,12 +284,11 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
             params=params1,
         )
         geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-        cell = PlotCell(geometry=geometry, config=plot_config)
 
         # Find the grid by title to add cells
         grids1 = orchestrator1.get_all_grids()
         grid_id = next(gid for gid, g in grids1.items() if g.title == 'Test Grid')
-        orchestrator1.add_plot(grid_id=grid_id, cell=cell)
+        add_cell_with_layer(orchestrator1, grid_id, geometry, plot_config)
 
         # Add another cell in the same grid with different params
         params2 = PlotParams1d(
@@ -297,9 +302,8 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
             params=params2,
         )
         geometry2 = CellGeometry(row=0, col=1, row_span=1, col_span=1)
-        cell2 = PlotCell(geometry=geometry2, config=plot_config2)
 
-        orchestrator1.add_plot(grid_id=grid_id, cell=cell2)
+        add_cell_with_layer(orchestrator1, grid_id, geometry2, plot_config2)
 
         # Add a second grid with one cell using default params
         orchestrator1.add_grid(title='Second Grid', nrows=1, ncols=1)
@@ -315,9 +319,8 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
             params=params3,
         )
         geometry3 = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-        cell3 = PlotCell(geometry=geometry3, config=plot_config3)
 
-        orchestrator1.add_plot(grid_id=grid_id2, cell=cell3)
+        add_cell_with_layer(orchestrator1, grid_id2, geometry3, plot_config3)
 
         # Verify grids exist before shutdown
         all_grids1 = orchestrator1.get_all_grids()
@@ -360,19 +363,19 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
         assert cell1_restored.geometry.col == 0
         assert cell1_restored.geometry.row_span == 1
         assert cell1_restored.geometry.col_span == 1
-        assert cell1_restored.config.workflow_id == workflow_id
-        assert cell1_restored.config.output_name == 'histogram'
-        assert cell1_restored.config.source_names == ['monitor1', 'monitor2']
-        assert cell1_restored.config.plot_name == 'lines'
+        assert cell1_restored.layers[0].config.workflow_id == workflow_id
+        assert cell1_restored.layers[0].config.output_name == 'histogram'
+        assert cell1_restored.layers[0].config.source_names == ['monitor1', 'monitor2']
+        assert cell1_restored.layers[0].config.plot_name == 'lines'
         # Params are validated and restored as model
-        assert cell1_restored.config.params == params1
+        assert cell1_restored.layers[0].config.params == params1
 
         # Verify second cell configuration
         assert cell2_restored.geometry.row == 0
         assert cell2_restored.geometry.col == 1
-        assert cell2_restored.config.output_name == 'spectrum'
-        assert cell2_restored.config.source_names == ['monitor1']
-        assert cell2_restored.config.params == params2
+        assert cell2_restored.layers[0].config.output_name == 'spectrum'
+        assert cell2_restored.layers[0].config.source_names == ['monitor1']
+        assert cell2_restored.layers[0].config.params == params2
 
         # Verify second grid configuration
         assert grid2_restored.title == 'Second Grid'
@@ -382,9 +385,9 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
 
         # Verify third cell configuration
         cell3_restored = next(iter(grid2_restored.cells.values()))
-        assert cell3_restored.config.output_name == 'output3'
-        assert cell3_restored.config.source_names == ['monitor2']
-        assert cell3_restored.config.params == params3
+        assert cell3_restored.layers[0].config.output_name == 'output3'
+        assert cell3_restored.layers[0].config.source_names == ['monitor2']
+        assert cell3_restored.layers[0].config.params == params3
 
 
 def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None:
@@ -398,7 +401,6 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
     from ess.livedata.config.workflow_spec import WorkflowId
     from ess.livedata.dashboard.plot_orchestrator import (
         CellGeometry,
-        PlotCell,
         PlotConfig,
     )
     from ess.livedata.dashboard.plot_params import (
@@ -441,12 +443,11 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
             params=params_with_enums,
         )
         geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-        cell = PlotCell(geometry=geometry, config=plot_config)
 
         # Find the grid by title to add the cell
         grids1 = orchestrator1.get_all_grids()
         grid_id = next(gid for gid, g in grids1.items() if g.title == 'Enum Test Grid')
-        orchestrator1.add_plot(grid_id=grid_id, cell=cell)
+        add_cell_with_layer(orchestrator1, grid_id, geometry, plot_config)
 
     # Restart backend - this should not fail during deserialization
     with DashboardBackend(
@@ -463,6 +464,107 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
         assert len(restored_grid.cells) == 1
 
         restored_cell = next(iter(restored_grid.cells.values()))
-        restored_params = restored_cell.config.params
+        restored_params = restored_cell.layers[0].config.params
         # Params are validated and restored as model, equal to original
         assert restored_params == params_with_enums
+
+
+def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
+    """
+    Test that PlotOrchestrator correctly persists cells with multiple layers.
+
+    This test verifies that cells with multiple layers are correctly serialized
+    and deserialized across backend restarts.
+    """
+    from ess.livedata.config.workflow_spec import WorkflowId
+    from ess.livedata.dashboard.plot_orchestrator import (
+        CellGeometry,
+        PlotConfig,
+    )
+    from ess.livedata.dashboard.plot_params import PlotParams1d, WindowMode
+
+    workflow_id = WorkflowId(
+        instrument='dummy',
+        namespace='monitor_data',
+        name='monitor_histogram',
+        version=1,
+    )
+
+    # Create two layer configurations
+    params1 = PlotParams1d(
+        window={'mode': WindowMode.window, 'window_duration_seconds': 5.0}
+    )
+    config1 = PlotConfig(
+        workflow_id=workflow_id,
+        output_name='histogram',
+        source_names=['monitor1'],
+        plot_name='lines',
+        params=params1,
+    )
+
+    params2 = PlotParams1d(
+        window={'mode': WindowMode.latest, 'window_duration_seconds': 10.0}
+    )
+    config2 = PlotConfig(
+        workflow_id=workflow_id,
+        output_name='spectrum',
+        source_names=['monitor2'],
+        plot_name='lines',
+        params=params2,
+    )
+
+    geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+
+    with DashboardBackend(
+        instrument='dummy', dev=True, transport='none', config_dir=tmp_path
+    ) as backend1:
+        orchestrator1 = backend1.plot_orchestrator
+
+        orchestrator1.add_grid(title='Multi-Layer Test', nrows=1, ncols=1)
+
+        grids1 = orchestrator1.get_all_grids()
+        grid_id = next(
+            gid for gid, g in grids1.items() if g.title == 'Multi-Layer Test'
+        )
+
+        # Create cell with two layers using add_cell + add_layer
+        cell_id = orchestrator1.add_cell(grid_id, geometry)
+        orchestrator1.add_layer(cell_id, config1)
+        orchestrator1.add_layer(cell_id, config2)
+
+        # Verify cell has two layers before shutdown
+        grid = orchestrator1.get_grid(grid_id)
+        cell = next(iter(grid.cells.values()))
+        assert len(cell.layers) == 2
+
+    # Restart backend and verify layers are restored
+    with DashboardBackend(
+        instrument='dummy', dev=True, transport='none', config_dir=tmp_path
+    ) as backend2:
+        orchestrator2 = backend2.plot_orchestrator
+
+        all_grids = orchestrator2.get_all_grids()
+        assert len(all_grids) == 1
+
+        restored_grid = next(iter(all_grids.values()))
+        assert restored_grid.title == 'Multi-Layer Test'
+        assert len(restored_grid.cells) == 1
+
+        restored_cell = next(iter(restored_grid.cells.values()))
+
+        # Verify both layers were restored
+        assert (
+            len(restored_cell.layers) == 2
+        ), f"Expected 2 layers, got {len(restored_cell.layers)}"
+
+        # Verify layer configs (order should be preserved)
+        restored_layer1 = restored_cell.layers[0]
+        restored_layer2 = restored_cell.layers[1]
+
+        assert restored_layer1.config.output_name == 'histogram'
+        assert restored_layer1.config.source_names == ['monitor1']
+        assert restored_layer1.config.params == params1
+
+        assert restored_layer2.config.output_name == 'spectrum'
+        assert restored_layer2.config.source_names == ['monitor2']
+        assert restored_layer2.config.params == params2

@@ -340,7 +340,9 @@ class PlotGridManager:
         # Add template cells if a template is selected
         if self._selected_template:
             for cell in self._selected_template.cells:
-                self._orchestrator.add_plot(grid_id, cell)
+                cell_id = self._orchestrator.add_cell(grid_id, cell.geometry)
+                for layer in cell.layers:
+                    self._orchestrator.add_layer(cell_id, layer.config)
 
         # Reset inputs and template selection
         # Batch widget updates and suppress redundant preview updates
