@@ -125,18 +125,14 @@ def suggest_internal_name(info: StreamInfo) -> str:
     """Suggest an internal name based on the group path.
 
     Uses the parent group name (last path component before 'value', 'idle_flag', etc.)
-    as the basis for the internal name, converting to snake_case.
+    as the basis for the internal name.
     """
     parts = info.group_path.split('/')
     # For paths like '.../rotation_stage/value', use 'rotation_stage'
-    # For paths like '.../detector_tank_angle_r0/value', use 'detector_tank_angle'
     for i, part in enumerate(parts):
         if part in ('value', 'idle_flag', 'target_value'):
             if i > 0:
-                name = parts[i - 1]
-                # Remove common suffixes like '_r0', '_01' etc.
-                name = re.sub(r'_[rt]\d+$', '', name)
-                return name
+                return parts[i - 1]
     # Fallback: use last non-value component
     return parts[-2] if len(parts) >= 2 else parts[-1]
 

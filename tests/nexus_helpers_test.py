@@ -424,7 +424,7 @@ class TestSuggestInternalName:
         )
         assert suggest_internal_name(info) == 'rotation_stage'
 
-    def test_removes_r0_suffix(self) -> None:
+    def test_preserves_r0_suffix(self) -> None:
         info = StreamInfo(
             group_path='entry/instrument/detector_tank_angle_r0/value',
             topic='motion',
@@ -433,9 +433,9 @@ class TestSuggestInternalName:
             parent_nx_class='NXpositioner',
             writer_module='f144',
         )
-        assert suggest_internal_name(info) == 'detector_tank_angle'
+        assert suggest_internal_name(info) == 'detector_tank_angle_r0'
 
-    def test_removes_t0_suffix(self) -> None:
+    def test_preserves_t0_suffix(self) -> None:
         info = StreamInfo(
             group_path='entry/instrument/sample_stage_t0/value',
             topic='motion',
@@ -444,7 +444,7 @@ class TestSuggestInternalName:
             parent_nx_class='NXpositioner',
             writer_module='f144',
         )
-        assert suggest_internal_name(info) == 'sample_stage'
+        assert suggest_internal_name(info) == 'sample_stage_t0'
 
 
 class TestFilterF144Streams:
