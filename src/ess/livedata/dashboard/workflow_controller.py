@@ -21,10 +21,7 @@ from ess.livedata.config.workflow_spec import (
 from .configuration_adapter import ConfigurationState
 from .data_service import DataService
 from .job_orchestrator import JobOrchestrator
-from .workflow_configuration_adapter import (
-    TemplateWorkflowConfigurationAdapter,
-    WorkflowConfigurationAdapter,
-)
+from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
 
 class WorkflowController:
@@ -143,7 +140,6 @@ class WorkflowController:
 
     def create_workflow_adapter(self, workflow_id: WorkflowId):
         """Create a workflow configuration adapter for the given workflow ID."""
-
         spec = self.get_workflow_spec(workflow_id)
         if spec is None:
             raise ValueError(f'Workflow {workflow_id} not found')
@@ -158,13 +154,6 @@ class WorkflowController:
             """Bound callback to start this specific workflow."""
             self.start_workflow(
                 workflow_id, selected_sources, parameter_values, aux_source_names
-            )
-
-        # Use template adapter for template-based workflows (dynamic source names)
-        template = self._orchestrator.get_template_for_workflow(workflow_id)
-        if template is not None:
-            return TemplateWorkflowConfigurationAdapter(
-                spec, template, persistent_config, start_callback
             )
 
         return WorkflowConfigurationAdapter(spec, persistent_config, start_callback)

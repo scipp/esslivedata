@@ -106,6 +106,10 @@ class DetectorRatemeterOutputs(WorkflowOutputsBase):
     """Outputs for detector ratemeter workflow."""
 
     detector_region_counts: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.scalar(0, unit='counts'),
+            coords={'time': sc.scalar(0, unit='ns')},
+        ),
         title='Detector Region Counts',
         description='Total counts for the selected arc and pixel range.',
     )

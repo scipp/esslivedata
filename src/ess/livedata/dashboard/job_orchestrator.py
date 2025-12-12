@@ -208,7 +208,9 @@ class WorkflowRegistryManager:
                 # Use raw config model - doesn't require timeseries to exist
                 config_model = template.get_raw_configuration_model()
                 config = config_model.model_validate(instance.config)
-                spec = template.create_workflow_spec(config)
+                # Pass combined registry so template can query available outputs
+                combined_registry = self.get_registry()
+                spec = template.create_workflow_spec(config, combined_registry)
                 workflow_id = spec.get_id()
 
                 self._dynamic_registry[workflow_id] = spec
@@ -273,7 +275,9 @@ class WorkflowRegistryManager:
             self._logger.error('Invalid config for template %s: %s', template_name, e)
             return None
 
-        spec = template.create_workflow_spec(validated_config)
+        # Pass combined registry so template can query available outputs
+        combined_registry = self.get_registry()
+        spec = template.create_workflow_spec(validated_config, combined_registry)
         workflow_id = spec.get_id()
 
         # Check if already registered

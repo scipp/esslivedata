@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from enum import StrEnum
 from typing import Any, NewType, TypeVar
 from uuid import UUID, uuid4
@@ -19,6 +19,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowId,
     WorkflowOutputsBase,
     WorkflowSpec,
+    find_timeseries_outputs,
 )
 from ess.livedata.config.workflow_template import JobExecutor, WorkflowSubscriber
 from ess.livedata.dashboard.job_orchestrator import JobConfig
@@ -783,13 +784,16 @@ class CorrelationHistogramTemplateBase(ABC):
         else:
             return f'{axis_names[0]} vs {axis_names[1]} Correlation Histogram'
 
-    def create_workflow_spec(self, config: pydantic.BaseModel | dict) -> WorkflowSpec:
+    def create_workflow_spec(
+        self,
+        config: pydantic.BaseModel | dict,
+        workflow_registry: Mapping[WorkflowId, WorkflowSpec] | None = None,
+    ) -> WorkflowSpec:
         """
         Create a WorkflowSpec from the template configuration.
 
-        The axis is baked into the workflow identity. Source names are left empty
-        as they are determined dynamically at job start time from available
-        timeseries (excluding the selected axis).
+        The axis is baked into the workflow identity. Source names are populated
+        from the workflow registry by finding all timeseries outputs.
 
         The params model is dynamically created with unit and range defaults from
         the config. Use `enrich_config_from_data` to populate these before calling
@@ -803,6 +807,22 @@ class CorrelationHistogramTemplateBase(ABC):
         config_dict = config if isinstance(config, dict) else config.model_dump()
         dynamic_params = self._create_dynamic_model_class(config_dict)
 
+        # Get source names from workflow registry by finding all timeseries outputs
+        source_names: list[str] = []
+        if workflow_registry is not None:
+            timeseries = find_timeseries_outputs(workflow_registry)
+            # Format as "source_name: output_title" for display
+            for wf_id, source_name, output_name in timeseries:
+                spec = workflow_registry.get(wf_id)
+                if spec is not None and spec.outputs is not None:
+                    field_info = spec.outputs.model_fields.get(output_name)
+                    output_title = (
+                        field_info.title
+                        if field_info and field_info.title
+                        else output_name
+                    )
+                    source_names.append(f'{source_name}: {output_title}')
+
         return WorkflowSpec(
             instrument=workflow_id.instrument,
             namespace=workflow_id.namespace,
@@ -812,8 +832,7 @@ class CorrelationHistogramTemplateBase(ABC):
             description=(
                 f'{self.ndim}D correlation histogram against {", ".join(axis_names)}'
             ),
-            # Source names are determined dynamically at job start time
-            source_names=[],
+            source_names=source_names,
             aux_sources=None,  # Axis is now part of identity, not aux_sources
             params=dynamic_params,
             outputs=CorrelationHistogramOutputs,

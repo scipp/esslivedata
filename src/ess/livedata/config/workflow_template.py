@@ -16,7 +16,7 @@ Example:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, NewType, Protocol, runtime_checkable
 from uuid import UUID
 
@@ -196,7 +196,11 @@ class WorkflowTemplate(Protocol):
         """
         ...
 
-    def create_workflow_spec(self, config: BaseModel | dict) -> WorkflowSpec:
+    def create_workflow_spec(
+        self,
+        config: BaseModel | dict,
+        workflow_registry: Mapping[WorkflowId, WorkflowSpec] | None = None,
+    ) -> WorkflowSpec:
         """
         Create a WorkflowSpec from the template configuration.
 
@@ -207,6 +211,10 @@ class WorkflowTemplate(Protocol):
         ----------
         config:
             Configuration as a Pydantic model or dict.
+        workflow_registry:
+            Optional registry of existing workflow specs. Templates can use this
+            to query available outputs (e.g., to find timeseries for correlation
+            histograms). If not provided, template-specific defaults apply.
 
         Returns
         -------

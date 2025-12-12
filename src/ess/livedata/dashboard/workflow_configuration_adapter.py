@@ -7,7 +7,6 @@ from collections.abc import Callable
 import pydantic
 
 from ess.livedata.config.workflow_spec import WorkflowSpec
-from ess.livedata.config.workflow_template import WorkflowTemplate
 
 from .configuration_adapter import ConfigurationAdapter, ConfigurationState
 
@@ -62,42 +61,3 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         self._start_callback(
             selected_sources, parameter_values, self._cached_aux_sources
         )
-
-
-class TemplateWorkflowConfigurationAdapter(WorkflowConfigurationAdapter):
-    """Adapter for template-based workflows that get source names dynamically."""
-
-    def __init__(
-        self,
-        spec: WorkflowSpec,
-        template: WorkflowTemplate,
-        config_state: ConfigurationState | None,
-        start_callback: Callable[
-            [list[str], pydantic.BaseModel, pydantic.BaseModel | None], None
-        ],
-    ) -> None:
-        """Initialize adapter with workflow spec, template, config, and callback."""
-        super().__init__(spec, config_state, start_callback)
-        self._template = template
-
-    @property
-    def source_names(self) -> list[str]:
-        """Get available source names from the template."""
-        return self._template.get_available_source_names()
-
-    @property
-    def initial_source_names(self) -> list[str]:
-        """Get initially selected source names, default to empty if many available."""
-        if self._config_state:
-            # Filter persisted sources to only include currently available ones
-            filtered = [
-                name
-                for name in self._config_state.source_names
-                if name in self.source_names
-            ]
-            if filtered:
-                return filtered
-        # Default to empty if more than 5 sources, otherwise select all
-        if len(self.source_names) > 5:
-            return []
-        return self.source_names
