@@ -799,18 +799,19 @@ class WorkflowStatusWidget:
         """Handle remove button click - remove sources from staged config."""
         staged = self._orchestrator.get_staged_config(self._workflow_id)
 
-        # Remove the specified sources and re-stage the rest.
-        # Note: clear_staged_configs() and stage_config() both notify subscribers,
-        # so the widget will rebuild via _on_lifecycle_event callback.
-        self._orchestrator.clear_staged_configs(self._workflow_id)
-        for source_name, config in staged.items():
-            if source_name not in source_names:
-                self._orchestrator.stage_config(
-                    self._workflow_id,
-                    source_name=source_name,
-                    params=config.params,
-                    aux_source_names=config.aux_source_names,
-                )
+        # Remove the specified sources and re-stage the rest in a transaction.
+        # Transaction ensures only a single notification is sent, so the widget
+        # rebuilds once via _on_lifecycle_event callback.
+        with self._orchestrator.staging_transaction(self._workflow_id):
+            self._orchestrator.clear_staged_configs(self._workflow_id)
+            for source_name, config in staged.items():
+                if source_name not in source_names:
+                    self._orchestrator.stage_config(
+                        self._workflow_id,
+                        source_name=source_name,
+                        params=config.params,
+                        aux_source_names=config.aux_source_names,
+                    )
 
     def _on_reset_click(self) -> None:
         """Handle reset button click."""

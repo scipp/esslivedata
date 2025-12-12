@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import NewType
 from uuid import UUID
@@ -138,6 +139,10 @@ class JobOrchestrator:
             WidgetLifecycleSubscriptionId, WidgetLifecycleCallbacks
         ] = {}
 
+        # Transaction state for batching staging operations
+        self._transaction_workflow: WorkflowId | None = None
+        self._transaction_depth: int = 0
+
         # Load persisted configs
         self._load_configs_from_store()
 
@@ -224,6 +229,90 @@ class JobOrchestrator:
             # Future subscribers are notified via subscribe_to_workflow(), which
             # checks for existing active jobs and notifies immediately.
 
+    @contextmanager
+    def staging_transaction(self, workflow_id: WorkflowId):
+        """
+        Context manager for batching staging operations.
+
+        All staging operations (clear_staged_configs, stage_config) within the
+        context will trigger only a single notification when the context exits.
+        This prevents N+1 UI rebuild issues when performing multiple staging
+        operations together.
+
+        Transactions can be nested - only the outermost transaction triggers
+        the notification on exit.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to perform staging operations on.
+
+        Yields
+        ------
+        None
+
+        Raises
+        ------
+        ValueError
+            If attempting to nest transactions for different workflows.
+
+        Examples
+        --------
+        Replace all staged configs in one operation:
+
+            with orchestrator.staging_transaction(workflow_id):
+                orchestrator.clear_staged_configs(workflow_id)
+                for source in sources:
+                    orchestrator.stage_config(workflow_id, source, ...)
+            # Single notification sent here
+
+        Remove specific sources:
+
+            with orchestrator.staging_transaction(workflow_id):
+                staged = orchestrator.get_staged_config(workflow_id)
+                orchestrator.clear_staged_configs(workflow_id)
+                for source, config in staged.items():
+                    if source not in to_remove:
+                        orchestrator.stage_config(workflow_id, source, ...)
+            # Single notification sent here
+        """
+        # Enter transaction
+        if self._transaction_workflow is None:
+            self._transaction_workflow = workflow_id
+        elif self._transaction_workflow != workflow_id:
+            msg = (
+                f'Cannot nest transactions for different workflows: '
+                f'current={self._transaction_workflow}, new={workflow_id}'
+            )
+            raise ValueError(msg)
+
+        self._transaction_depth += 1
+        self._logger.debug(
+            'Entering staging transaction for workflow %s (depth=%d)',
+            workflow_id,
+            self._transaction_depth,
+        )
+
+        try:
+            yield
+        finally:
+            # Exit transaction
+            self._transaction_depth -= 1
+            self._logger.debug(
+                'Exiting staging transaction for workflow %s (depth=%d)',
+                workflow_id,
+                self._transaction_depth,
+            )
+
+            if self._transaction_depth == 0:
+                # Outermost transaction exiting - send notification
+                self._logger.debug(
+                    'Transaction complete for workflow %s, notifying subscribers',
+                    workflow_id,
+                )
+                self._transaction_workflow = None
+                self._notify_staged_changed(workflow_id)
+
     def clear_staged_configs(self, workflow_id: WorkflowId) -> None:
         """
         Clear all staged configs for a workflow.
@@ -261,38 +350,6 @@ class JobOrchestrator:
         self._workflows[workflow_id].staged_jobs[source_name] = JobConfig(
             params=params.copy(), aux_source_names=aux_source_names.copy()
         )
-        self._notify_staged_changed(workflow_id)
-
-    def replace_staged_configs(
-        self,
-        workflow_id: WorkflowId,
-        *,
-        configs: dict[SourceName, JobConfig],
-    ) -> None:
-        """
-        Replace all staged configs with new configs in a single operation.
-
-        This is more efficient than clear + multiple stage_config calls because
-        it triggers only a single notification to subscribers, reducing UI rebuilds.
-
-        Parameters
-        ----------
-        workflow_id
-            The workflow to configure.
-        configs
-            Dict mapping source names to their configs.
-        """
-        # Clear existing staged configs
-        self._workflows[workflow_id].staged_jobs.clear()
-
-        # Add all new configs (with copies to prevent external mutation)
-        for source_name, job_config in configs.items():
-            self._workflows[workflow_id].staged_jobs[source_name] = JobConfig(
-                params=job_config.params.copy(),
-                aux_source_names=job_config.aux_source_names.copy(),
-            )
-
-        # Single notification for the entire operation
         self._notify_staged_changed(workflow_id)
 
     def commit_workflow(self, workflow_id: WorkflowId) -> list[JobId]:
@@ -735,7 +792,21 @@ class JobOrchestrator:
             )
 
     def _notify_staged_changed(self, workflow_id: WorkflowId) -> None:
-        """Notify all widget subscribers that staging area changed."""
+        """Notify all widget subscribers that staging area changed.
+
+        Notifications are deferred if currently in a staging transaction.
+        The transaction context manager will call this on exit.
+        """
+        # Skip notification if we're in a transaction - it will be sent on exit
+        if self._transaction_workflow is not None:
+            self._logger.debug(
+                'Deferring staged_changed notification for workflow %s '
+                '(in transaction, depth=%d)',
+                workflow_id,
+                self._transaction_depth,
+            )
+            return
+
         for subscription_id, callbacks in self._widget_subscriptions.items():
             if callbacks.on_staged_changed is not None:
                 try:

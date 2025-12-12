@@ -21,7 +21,7 @@ from ess.livedata.config.workflow_spec import (
 from .configuration_adapter import ConfigurationState
 from .correlation_histogram import CorrelationHistogramController, make_workflow_spec
 from .data_service import DataService
-from .job_orchestrator import JobConfig, JobOrchestrator
+from .job_orchestrator import JobOrchestrator
 from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
 
@@ -133,15 +133,16 @@ class WorkflowController:
         params_dict = config.model_dump(mode='json')
         aux_dict = aux_source_names.model_dump(mode='json') if aux_source_names else {}
 
-        # Build configs for all sources
-        configs = {
-            source_name: JobConfig(params=params_dict, aux_source_names=aux_dict)
-            for source_name in source_names
-        }
-
-        # Replace staged configs in a single operation (more efficient than
-        # clear + multiple stage_config calls, reduces UI rebuilds)
-        self._orchestrator.replace_staged_configs(workflow_id, configs=configs)
+        # Replace all staged configs in a transaction (single notification)
+        with self._orchestrator.staging_transaction(workflow_id):
+            self._orchestrator.clear_staged_configs(workflow_id)
+            for source_name in source_names:
+                self._orchestrator.stage_config(
+                    workflow_id,
+                    source_name=source_name,
+                    params=params_dict,
+                    aux_source_names=aux_dict,
+                )
 
         # Commit and start workflow
         return self._orchestrator.commit_workflow(workflow_id)
