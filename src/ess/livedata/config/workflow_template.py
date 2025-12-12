@@ -219,3 +219,18 @@ class WorkflowTemplate(Protocol):
             default backend executor.
         """
         ...
+
+    def get_available_source_names(self) -> list[str]:
+        """
+        Get available source names for the workflow configuration UI.
+
+        Returns the list of source names that can be selected when configuring
+        a workflow instance. For correlation histograms, this is the list of
+        available timeseries that can be correlated.
+
+        Returns
+        -------
+        :
+            List of source names available for selection.
+        """
+        ...

@@ -552,6 +552,10 @@ class CorrelationHistogramTemplateBase(ABC):
             self._refresh_source_mapping()
         return self._source_name_to_key or {}
 
+    def get_available_source_names(self) -> list[str]:
+        """Get available source names for the workflow configuration UI."""
+        return list(self.get_source_name_to_key().keys())
+
     def get_configuration_model(self) -> type[pydantic.BaseModel] | None:
         """
         Get the Pydantic model for UI configuration with enum validation.
@@ -686,7 +690,20 @@ class CorrelationHistogramTemplateBase(ABC):
         """Get the ResultKeys for the selected axis sources."""
         axis_names = self._get_axis_names(config)
         mapping = self.get_source_name_to_key()
-        return [mapping[name] for name in axis_names]
+        result = []
+        for name in axis_names:
+            if name in mapping:
+                # Direct match (display name)
+                result.append(mapping[name])
+            else:
+                # Try matching by source_name (raw config value)
+                for key in mapping.values():
+                    if key.job_id.source_name == name:
+                        result.append(key)
+                        break
+                else:
+                    raise KeyError(f"Axis '{name}' not found in available timeseries")
+        return result
 
     def create_job_executor(
         self, config: pydantic.BaseModel | dict

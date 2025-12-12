@@ -657,12 +657,13 @@ class JobOrchestrator:
                 template_instance.template_name
             )
             if template is not None:
-                config_model = template.get_configuration_model()
-                if config_model is not None:
-                    config = config_model.model_validate(template_instance.config)
-                    executor = template.create_job_executor(config)
-                    if executor is not None:
-                        return executor
+                # Use raw config model - stored config has raw values,
+                # not enum display names
+                config_model = template.get_raw_configuration_model()
+                config = config_model.model_validate(template_instance.config)
+                executor = template.create_job_executor(config)
+                if executor is not None:
+                    return executor
 
         # Default: backend execution via CommandService
         return BackendJobExecutor(self._command_service, workflow_id)
@@ -1027,3 +1028,26 @@ class JobOrchestrator:
             True if the workflow was created from a template.
         """
         return self._registry_manager.is_template_instance(workflow_id)
+
+    def get_template_for_workflow(
+        self, workflow_id: WorkflowId
+    ) -> WorkflowTemplate | None:
+        """
+        Get the template that created a workflow.
+
+        Parameters
+        ----------
+        workflow_id:
+            The workflow to look up.
+
+        Returns
+        -------
+        :
+            The WorkflowTemplate if the workflow was created from a template,
+            None otherwise.
+        """
+        template_instance = self._registry_manager.get_template_instance(workflow_id)
+        if template_instance is None:
+            return None
+        templates = self._registry_manager.get_templates()
+        return templates.get(template_instance.template_name)
