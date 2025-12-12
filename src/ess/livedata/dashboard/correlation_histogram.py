@@ -20,6 +20,8 @@ from ess.livedata.config.workflow_spec import (
     WorkflowOutputsBase,
     WorkflowSpec,
 )
+from ess.livedata.config.workflow_template import JobExecutor
+from ess.livedata.dashboard.job_orchestrator import JobConfig
 from ess.livedata.parameter_models import EdgesModel, make_edges
 
 from .configuration_adapter import ConfigurationAdapter
@@ -523,6 +525,129 @@ class CorrelationHistogrammer:
         return dependent.hist(**self._edges)
 
 
+class CorrelationHistogramExecutor:
+    """
+    Executor for correlation histogram workflows.
+
+    This executor handles frontend-only execution of correlation histograms
+    by creating processors that subscribe to DataService updates.
+    """
+
+    def __init__(
+        self,
+        controller: CorrelationHistogramController,
+        axis_keys: list[ResultKey],
+        source_name_to_key: dict[str, ResultKey],
+        workflow_id: WorkflowId,
+        ndim: int,
+    ) -> None:
+        """
+        Initialize the executor.
+
+        Parameters
+        ----------
+        controller:
+            Controller for data access and processor registration.
+        axis_keys:
+            ResultKeys for the correlation axes (e.g., temperature timeseries).
+        source_name_to_key:
+            Mapping from display names to ResultKeys for data sources.
+        workflow_id:
+            WorkflowId for creating result keys.
+        ndim:
+            Dimensionality (1 or 2) for determining param model.
+        """
+        self._controller = controller
+        self._axis_keys = axis_keys
+        self._source_name_to_key = source_name_to_key
+        self._workflow_id = workflow_id
+        self._ndim = ndim
+
+    def start_jobs(
+        self,
+        staged_jobs: dict[str, JobConfig],
+        job_number: JobNumber,
+    ) -> None:
+        """Start correlation histogram jobs for all staged sources."""
+        # Parse edges from params
+        edges = self._parse_edges(staged_jobs)
+
+        # Get normalization setting from first job's params
+        first_config = next(iter(staged_jobs.values()))
+        normalize = first_config.params.get('normalization', {}).get(
+            'per_second', False
+        )
+
+        # Get axis data
+        axes = {key: self._controller.get_data(key) for key in self._axis_keys}
+
+        for source_name in staged_jobs:
+            data_key = self._source_name_to_key.get(source_name)
+            if data_key is None:
+                continue
+
+            data_value = self._controller.get_data(data_key)
+
+            processor = CorrelationHistogramProcessor(
+                data_key=data_key,
+                coord_keys=self._axis_keys,
+                edges_params=edges,
+                normalize=normalize,
+                result_callback=self._create_result_callback(data_key, job_number),
+            )
+            self._controller.add_correlation_processor(
+                processor, {data_key: data_value, **axes}
+            )
+
+    def stop_jobs(self, job_ids: list[JobId]) -> None:
+        """
+        Stop running correlation histogram jobs.
+
+        Note: Currently correlation histogram processors cannot be individually
+        stopped - they continue running until the dashboard is closed. This is
+        a known limitation that would require tracking subscriptions in
+        CorrelationHistogramController.
+        """
+        # TODO: Implement proper cleanup by tracking DataService subscriptions
+        # in CorrelationHistogramController and unregistering them here.
+        pass
+
+    def _parse_edges(self, staged_jobs: dict[str, JobConfig]) -> list[EdgesWithUnit]:
+        """Parse edge parameters from staged job config."""
+        # All jobs share the same params, so use the first one
+        first_config = next(iter(staged_jobs.values()))
+        params = first_config.params
+
+        edges = []
+        if 'x_edges' in params:
+            edges.append(EdgesWithUnit.model_validate(params['x_edges']))
+        if 'y_edges' in params and self._ndim == 2:
+            edges.append(EdgesWithUnit.model_validate(params['y_edges']))
+
+        return edges
+
+    def _create_result_callback(
+        self, data_key: ResultKey, job_number: JobNumber
+    ) -> Callable[[sc.DataArray], None]:
+        """Create callback for handling histogram results."""
+        result_key = ResultKey(
+            workflow_id=self._workflow_id,
+            job_id=JobId(
+                source_name=data_key.job_id.source_name, job_number=job_number
+            ),
+            output_name='histogram',
+        )
+
+        def callback(result: sc.DataArray) -> None:
+            self._controller.set_data(result_key, result)
+
+        return callback
+
+
+# Verify CorrelationHistogramExecutor implements JobExecutor protocol
+_: type[JobExecutor] = CorrelationHistogramExecutor  # type: ignore[type-abstract]
+
+
 # =============================================================================
 # WorkflowTemplate implementations for correlation histograms
 # =============================================================================
@@ -587,19 +712,23 @@ class CorrelationHistogramTemplateBase(ABC):
 
     def __init__(
         self,
-        get_timeseries: Callable[[], list[ResultKey]],
+        controller: CorrelationHistogramController,
     ) -> None:
         """
         Initialize the template.
 
         Parameters
         ----------
-        get_timeseries:
-            Callback to get available timeseries (typically from DataService).
+        controller:
+            Controller for data access and processor registration.
         """
-        self._get_timeseries = get_timeseries
+        self._controller = controller
         self._cached_config_model: type[pydantic.BaseModel] | None = None
         self._source_name_to_key: dict[str, ResultKey] | None = None
+
+    def _get_timeseries(self) -> list[ResultKey]:
+        """Get available timeseries from the controller."""
+        return self._controller.get_timeseries()
 
     @property
     @abstractmethod
@@ -622,8 +751,14 @@ class CorrelationHistogramTemplateBase(ABC):
         """Field names for axis sources in the config model."""
 
     @abstractmethod
-    def _get_axis_names(self, config: pydantic.BaseModel) -> list[str]:
-        """Extract axis source names from config."""
+    def _get_axis_names_from_dict(self, config: dict) -> list[str]:
+        """Extract axis source names from config dict."""
+
+    def _get_axis_names(self, config: pydantic.BaseModel | dict) -> list[str]:
+        """Extract axis source names from config (model or dict)."""
+        if isinstance(config, dict):
+            return self._get_axis_names_from_dict(config)
+        return self._get_axis_names_from_dict(config.model_dump())
 
     def _refresh_source_mapping(self) -> None:
         """Refresh the source name to ResultKey mapping."""
@@ -638,9 +773,10 @@ class CorrelationHistogramTemplateBase(ABC):
 
     def get_configuration_model(self) -> type[pydantic.BaseModel] | None:
         """
-        Get the Pydantic model for template configuration.
+        Get the Pydantic model for UI configuration with enum validation.
 
-        Returns None if not enough timeseries are available.
+        Returns None if not enough timeseries are available. This is used by UI
+        widgets to present a dropdown of available timeseries.
         """
         self._refresh_source_mapping()
         source_names = list(self.get_source_name_to_key().keys())
@@ -651,7 +787,24 @@ class CorrelationHistogramTemplateBase(ABC):
         # Dynamically create model with StrEnum for axis selection
         return _create_dynamic_aux_sources_model(self._axis_field_names, source_names)
 
-    def make_instance_id(self, config: pydantic.BaseModel) -> WorkflowId:
+    def get_raw_configuration_model(self) -> type[pydantic.BaseModel]:
+        """
+        Get a simple Pydantic model for configuration without enum validation.
+
+        Used for template instantiation where axis names are provided directly
+        without requiring timeseries to exist yet.
+        """
+        fields: dict[str, Any] = {}
+        for field_name in self._axis_field_names:
+            fields[field_name] = (
+                str,
+                pydantic.Field(description=f"Axis source name for {field_name}"),
+            )
+        return pydantic.create_model(  # type: ignore[call-overload]
+            'RawConfig', **fields
+        )
+
+    def make_instance_id(self, config: pydantic.BaseModel | dict) -> WorkflowId:
         """Generate unique WorkflowId for this instance."""
         axis_names = self._get_axis_names(config)
         sanitized = '_'.join(_sanitize_for_id(name) for name in axis_names)
@@ -662,7 +815,7 @@ class CorrelationHistogramTemplateBase(ABC):
             version=1,
         )
 
-    def make_instance_title(self, config: pydantic.BaseModel) -> str:
+    def make_instance_title(self, config: pydantic.BaseModel | dict) -> str:
         """Generate human-readable title for this instance."""
         axis_names = self._get_axis_names(config)
         if self.ndim == 1:
@@ -670,21 +823,15 @@ class CorrelationHistogramTemplateBase(ABC):
         else:
             return f'{axis_names[0]} vs {axis_names[1]} Correlation Histogram'
 
-    def create_workflow_spec(self, config: pydantic.BaseModel) -> WorkflowSpec:
+    def create_workflow_spec(self, config: pydantic.BaseModel | dict) -> WorkflowSpec:
         """
         Create a WorkflowSpec from the template configuration.
 
-        The axis is baked into the workflow identity. Source names are populated
-        with available timeseries for correlation.
+        The axis is baked into the workflow identity. Source names are left empty
+        as they are determined dynamically at job start time from available
+        timeseries (excluding the selected axis).
         """
-        # Get available sources (excluding the selected axes)
-        axis_names = set(self._get_axis_names(config))
-        source_names = [
-            name
-            for name in self.get_source_name_to_key().keys()
-            if name not in axis_names
-        ]
-
+        axis_names = self._get_axis_names(config)
         workflow_id = self.make_instance_id(config)
         title = self.make_instance_title(config)
 
@@ -699,17 +846,47 @@ class CorrelationHistogramTemplateBase(ABC):
             description=(
                 f'{self.ndim}D correlation histogram against {", ".join(axis_names)}'
             ),
-            source_names=source_names,
+            # Source names are determined dynamically at job start time
+            source_names=[],
             aux_sources=None,  # Axis is now part of identity, not aux_sources
             params=params[self.ndim],
             outputs=CorrelationHistogramOutputs,
         )
 
-    def get_axis_keys(self, config: pydantic.BaseModel) -> list[ResultKey]:
+    def get_axis_keys(self, config: pydantic.BaseModel | dict) -> list[ResultKey]:
         """Get the ResultKeys for the selected axis sources."""
         axis_names = self._get_axis_names(config)
         mapping = self.get_source_name_to_key()
         return [mapping[name] for name in axis_names]
+
+    def create_job_executor(
+        self, config: pydantic.BaseModel | dict
+    ) -> CorrelationHistogramExecutor:
+        """
+        Create an executor for correlation histogram workflows.
+
+        Returns a CorrelationHistogramExecutor that handles frontend execution
+        by creating processors that subscribe to DataService updates.
+
+        Parameters
+        ----------
+        config:
+            Template configuration containing axis selection.
+
+        Returns
+        -------
+        :
+            Executor for this workflow instance.
+        """
+        axis_keys = self.get_axis_keys(config)
+        workflow_id = self.make_instance_id(config)
+        return CorrelationHistogramExecutor(
+            controller=self._controller,
+            axis_keys=axis_keys,
+            source_name_to_key=self.get_source_name_to_key(),
+            workflow_id=workflow_id,
+            ndim=self.ndim,
+        )
 
 
 class CorrelationHistogram1dTemplate(CorrelationHistogramTemplateBase):
@@ -731,8 +908,8 @@ class CorrelationHistogram1dTemplate(CorrelationHistogramTemplateBase):
     def _axis_field_names(self) -> list[str]:
         return ['x_param']
 
-    def _get_axis_names(self, config: pydantic.BaseModel) -> list[str]:
-        return [config.model_dump()['x_param']]
+    def _get_axis_names_from_dict(self, config: dict) -> list[str]:
+        return [config['x_param']]
 
 
 class CorrelationHistogram2dTemplate(CorrelationHistogramTemplateBase):
@@ -754,6 +931,5 @@ class CorrelationHistogram2dTemplate(CorrelationHistogramTemplateBase):
     def _axis_field_names(self) -> list[str]:
         return ['x_param', 'y_param']
 
-    def _get_axis_names(self, config: pydantic.BaseModel) -> list[str]:
-        dump = config.model_dump()
-        return [dump['x_param'], dump['y_param']]
+    def _get_axis_names_from_dict(self, config: dict) -> list[str]:
+        return [config['x_param'], config['y_param']]

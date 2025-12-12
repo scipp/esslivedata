@@ -60,6 +60,16 @@ def static_registry():
     return {spec1.get_id(): spec1, spec2.get_id(): spec2}
 
 
+class FakeCorrelationHistogramController:
+    """Fake controller for testing templates."""
+
+    def __init__(self, timeseries_keys: list[ResultKey]) -> None:
+        self._timeseries_keys = timeseries_keys
+
+    def get_timeseries(self) -> list[ResultKey]:
+        return self._timeseries_keys
+
+
 @pytest.fixture
 def timeseries_keys():
     return [
@@ -70,9 +80,8 @@ def timeseries_keys():
 
 @pytest.fixture
 def template(timeseries_keys):
-    return CorrelationHistogram1dTemplate(
-        get_timeseries=lambda: timeseries_keys,
-    )
+    controller = FakeCorrelationHistogramController(timeseries_keys)
+    return CorrelationHistogram1dTemplate(controller=controller)
 
 
 @pytest.fixture
@@ -172,7 +181,7 @@ class TestWorkflowRegistryManagerTemplateRegistration:
 
         assert workflow_id is None
 
-    def test_register_from_template_returns_none_for_invalid_config(
+    def test_register_from_template_returns_none_for_missing_fields(
         self, static_registry, template, logger
     ):
         manager = WorkflowRegistryManager(
@@ -182,12 +191,29 @@ class TestWorkflowRegistryManagerTemplateRegistration:
             logger=logger,
         )
 
-        # Invalid config (wrong value not in the enum)
-        workflow_id = manager.register_from_template(
-            template.name, {'x_param': 'nonexistent_timeseries'}
-        )
+        # Invalid config - missing required 'x_param' field
+        workflow_id = manager.register_from_template(template.name, {})
 
         assert workflow_id is None
+
+    def test_register_from_template_accepts_any_axis_name(
+        self, static_registry, template, logger
+    ):
+        """Registration should work with any axis name, even if not in current data."""
+        manager = WorkflowRegistryManager(
+            static_registry=static_registry,
+            config_store=None,
+            templates=[template],
+            logger=logger,
+        )
+
+        # Should succeed - enum validation is for UI, not registration
+        workflow_id = manager.register_from_template(
+            template.name, {'x_param': 'future_timeseries'}
+        )
+
+        assert workflow_id is not None
+        assert workflow_id in manager.get_registry()
 
     def test_register_same_config_twice_returns_existing_id(
         self, static_registry, template, logger

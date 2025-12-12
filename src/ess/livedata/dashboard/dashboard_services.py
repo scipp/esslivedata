@@ -170,14 +170,10 @@ class DashboardServices:
         self.correlation_controller = CorrelationHistogramController(self.data_service)
 
         # Create workflow templates for dynamic workflow creation
-        # Templates use correlation controller's timeseries getter for axis options
+        # Templates use the correlation controller for data access and execution
         templates = [
-            CorrelationHistogram1dTemplate(
-                get_timeseries=self.correlation_controller.get_timeseries
-            ),
-            CorrelationHistogram2dTemplate(
-                get_timeseries=self.correlation_controller.get_timeseries
-            ),
+            CorrelationHistogram1dTemplate(controller=self.correlation_controller),
+            CorrelationHistogram2dTemplate(controller=self.correlation_controller),
         ]
 
         self.job_orchestrator = JobOrchestrator(
@@ -189,7 +185,34 @@ class DashboardServices:
         )
         self.workflow_controller = WorkflowController(
             job_orchestrator=self.job_orchestrator,
-            workflow_registry=self.processor_factory,
             data_service=self.data_service,
-            correlation_histogram_controller=self.correlation_controller,
         )
+
+        # Register hard-coded correlation histogram instances for testing
+        self._register_test_correlation_histograms()
+
+    def _register_test_correlation_histograms(self) -> None:
+        """Register hard-coded correlation histogram templates for testing.
+
+        This registers correlation histogram workflow instances for Bifrost
+        timeseries to allow testing the template system before a UI for
+        template instantiation exists.
+        """
+        if self._instrument != 'bifrost':
+            return
+
+        # Register 1D correlation histograms for each Bifrost timeseries
+        bifrost_timeseries = [
+            'sample_temperature',
+            'detector_rotation',
+            'sample_rotation',
+        ]
+
+        for axis_name in bifrost_timeseries:
+            workflow_id = self.job_orchestrator.register_from_template(
+                'correlation_histogram_1d', {'x_param': axis_name}
+            )
+            if workflow_id is not None:
+                self._logger.info(
+                    'Registered test correlation histogram: %s', workflow_id
+                )

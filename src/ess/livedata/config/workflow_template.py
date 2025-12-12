@@ -16,11 +16,14 @@ Example:
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
-from .workflow_spec import WorkflowId, WorkflowSpec
+from .workflow_spec import JobId, JobNumber, WorkflowId, WorkflowSpec
+
+if TYPE_CHECKING:
+    from ess.livedata.dashboard.job_orchestrator import JobConfig
 
 
 class TemplateInstance(BaseModel):
@@ -32,6 +35,46 @@ class TemplateInstance(BaseModel):
 
     template_name: str
     config: dict  # Serialized template configuration
+
+
+@runtime_checkable
+class JobExecutor(Protocol):
+    """
+    Handles job lifecycle for workflow execution.
+
+    Implementations handle starting and stopping jobs. Backend workflows use
+    an executor that sends commands via CommandService to Kafka. Frontend
+    workflows (like correlation histograms) use executors that run computations
+    directly in the dashboard process via DataService subscriptions.
+    """
+
+    def start_jobs(
+        self,
+        staged_jobs: dict[str, JobConfig],
+        job_number: JobNumber,
+    ) -> None:
+        """
+        Start jobs for all staged sources.
+
+        Parameters
+        ----------
+        staged_jobs:
+            Mapping from source name to job configuration.
+        job_number:
+            Shared job number for all jobs in this batch.
+        """
+        ...
+
+    def stop_jobs(self, job_ids: list[JobId]) -> None:
+        """
+        Stop running jobs.
+
+        Parameters
+        ----------
+        job_ids:
+            List of job IDs to stop.
+        """
+        ...
 
 
 @runtime_checkable
@@ -69,21 +112,37 @@ class WorkflowTemplate(Protocol):
 
     def get_configuration_model(self) -> type[BaseModel] | None:
         """
-        Get the Pydantic model for template configuration.
+        Get the Pydantic model for UI configuration with enum validation.
 
         Returns None if the template cannot be configured (e.g., missing data).
         The model defines what the user selects when creating an instance from
-        this template (e.g., correlation axis selection).
+        this template (e.g., correlation axis selection), typically with enum
+        fields for available choices.
 
         Returns
         -------
         :
             Pydantic model class for template configuration, or None if the
-            template is not yet ready to create instances.
+            template is not yet ready to create instances (e.g., no data available).
         """
         ...
 
-    def create_workflow_spec(self, config: BaseModel) -> WorkflowSpec:
+    def get_raw_configuration_model(self) -> type[BaseModel]:
+        """
+        Get a simple Pydantic model for configuration without enum validation.
+
+        Used for template instantiation where config values are provided directly
+        without requiring underlying data to exist yet. This allows templates to
+        be instantiated and persisted before data is available.
+
+        Returns
+        -------
+        :
+            Pydantic model class with basic type validation (e.g., strings).
+        """
+        ...
+
+    def create_workflow_spec(self, config: BaseModel | dict) -> WorkflowSpec:
         """
         Create a WorkflowSpec from the template configuration.
 
@@ -93,7 +152,7 @@ class WorkflowTemplate(Protocol):
         Parameters
         ----------
         config:
-            Instance of the model returned by get_configuration_model().
+            Configuration as a Pydantic model or dict.
 
         Returns
         -------
@@ -102,7 +161,7 @@ class WorkflowTemplate(Protocol):
         """
         ...
 
-    def make_instance_id(self, config: BaseModel) -> WorkflowId:
+    def make_instance_id(self, config: BaseModel | dict) -> WorkflowId:
         """
         Generate unique WorkflowId for this instance.
 
@@ -112,7 +171,7 @@ class WorkflowTemplate(Protocol):
         Parameters
         ----------
         config:
-            Instance of the model returned by get_configuration_model().
+            Configuration as a Pydantic model or dict.
 
         Returns
         -------
@@ -121,7 +180,7 @@ class WorkflowTemplate(Protocol):
         """
         ...
 
-    def make_instance_title(self, config: BaseModel) -> str:
+    def make_instance_title(self, config: BaseModel | dict) -> str:
         """
         Generate human-readable title for this instance.
 
@@ -130,11 +189,33 @@ class WorkflowTemplate(Protocol):
         Parameters
         ----------
         config:
-            Instance of the model returned by get_configuration_model().
+            Configuration as a Pydantic model or dict.
 
         Returns
         -------
         :
             Human-readable title like 'Temperature Correlation Histogram'.
+        """
+        ...
+
+    def create_job_executor(self, config: BaseModel | dict) -> JobExecutor | None:
+        """
+        Create an executor for this workflow type.
+
+        Templates can provide custom executors for workflows that need special
+        execution handling (e.g., frontend-only workflows like correlation
+        histograms). Return None to use the default backend executor that sends
+        commands via CommandService.
+
+        Parameters
+        ----------
+        config:
+            Configuration as a Pydantic model or dict.
+
+        Returns
+        -------
+        :
+            Custom JobExecutor for frontend execution, or None to use the
+            default backend executor.
         """
         ...

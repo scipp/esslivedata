@@ -14,6 +14,16 @@ from ess.livedata.dashboard.correlation_histogram import (
 )
 
 
+class FakeCorrelationHistogramController:
+    """Fake controller for testing templates."""
+
+    def __init__(self, timeseries_keys: list[ResultKey]) -> None:
+        self._timeseries_keys = timeseries_keys
+
+    def get_timeseries(self) -> list[ResultKey]:
+        return self._timeseries_keys
+
+
 def make_result_key(source_name: str, output_name: str = 'value') -> ResultKey:
     """Helper to create ResultKey for testing."""
     return ResultKey(
@@ -58,9 +68,8 @@ class TestCorrelationHistogram1dTemplate:
 
     @pytest.fixture
     def template(self, timeseries_keys):
-        return CorrelationHistogram1dTemplate(
-            get_timeseries=lambda: timeseries_keys,
-        )
+        controller = FakeCorrelationHistogramController(timeseries_keys)
+        return CorrelationHistogram1dTemplate(controller=controller)
 
     def test_implements_workflow_template_protocol(self, template):
         assert isinstance(template, WorkflowTemplate)
@@ -81,7 +90,8 @@ class TestCorrelationHistogram1dTemplate:
         assert 'x_param' in config_model.model_fields
 
     def test_get_configuration_model_returns_none_when_no_timeseries(self):
-        template = CorrelationHistogram1dTemplate(get_timeseries=lambda: [])
+        controller = FakeCorrelationHistogramController([])
+        template = CorrelationHistogram1dTemplate(controller=controller)
         assert template.get_configuration_model() is None
 
     def test_make_instance_id(self, template):
@@ -116,10 +126,8 @@ class TestCorrelationHistogram1dTemplate:
         assert spec.instrument == 'frontend'
         assert spec.namespace == 'correlation'
         assert spec.aux_sources is None  # Axis is baked into identity
-        # Source names should exclude the axis
-        assert source_names[0] not in spec.source_names
-        # Other timeseries should be available as sources
-        assert len(spec.source_names) == len(timeseries_keys) - 1
+        # Source names are empty - determined dynamically at job start time
+        assert spec.source_names == []
 
     def test_get_axis_keys(self, template, timeseries_keys):
         config_model = template.get_configuration_model()
@@ -144,9 +152,8 @@ class TestCorrelationHistogram2dTemplate:
 
     @pytest.fixture
     def template(self, timeseries_keys):
-        return CorrelationHistogram2dTemplate(
-            get_timeseries=lambda: timeseries_keys,
-        )
+        controller = FakeCorrelationHistogramController(timeseries_keys)
+        return CorrelationHistogram2dTemplate(controller=controller)
 
     def test_implements_workflow_template_protocol(self, template):
         assert isinstance(template, WorkflowTemplate)
@@ -169,9 +176,10 @@ class TestCorrelationHistogram2dTemplate:
 
     def test_get_configuration_model_returns_none_when_insufficient_timeseries(self):
         # Need at least 2 timeseries for 2D
-        template = CorrelationHistogram2dTemplate(
-            get_timeseries=lambda: [make_result_key('temperature')]
+        controller = FakeCorrelationHistogramController(
+            [make_result_key('temperature')]
         )
+        template = CorrelationHistogram2dTemplate(controller=controller)
         assert template.get_configuration_model() is None
 
     def test_make_instance_id_includes_both_axes(self, template):
@@ -193,19 +201,18 @@ class TestCorrelationHistogram2dTemplate:
         assert 'vs' in title
         assert 'Correlation Histogram' in title
 
-    def test_create_workflow_spec_excludes_both_axes_from_sources(
-        self, template, timeseries_keys
-    ):
+    def test_create_workflow_spec(self, template, timeseries_keys):
         config_model = template.get_configuration_model()
         source_names = list(template.get_source_name_to_key().keys())
         config = config_model(x_param=source_names[0], y_param=source_names[1])
 
         spec = template.create_workflow_spec(config)
 
-        # Both axes should be excluded from sources
-        assert source_names[0] not in spec.source_names
-        assert source_names[1] not in spec.source_names
-        assert len(spec.source_names) == len(timeseries_keys) - 2
+        assert spec.instrument == 'frontend'
+        assert spec.namespace == 'correlation'
+        assert spec.aux_sources is None  # Axes are baked into identity
+        # Source names are empty - determined dynamically at job start time
+        assert spec.source_names == []
 
     def test_get_axis_keys_returns_both_axes(self, template, timeseries_keys):
         config_model = template.get_configuration_model()

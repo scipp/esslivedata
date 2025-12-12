@@ -30,7 +30,11 @@ from ess.livedata.config.workflow_spec import (
     WorkflowId,
     WorkflowSpec,
 )
-from ess.livedata.config.workflow_template import TemplateInstance, WorkflowTemplate
+from ess.livedata.config.workflow_template import (
+    JobExecutor,
+    TemplateInstance,
+    WorkflowTemplate,
+)
 from ess.livedata.core.job_manager import JobAction, JobCommand
 
 from .command_service import CommandService
@@ -85,6 +89,56 @@ class WorkflowState:
     current: JobSet | None = None
     previous: JobSet | None = None
     staged_jobs: dict[SourceName, JobConfig] = field(default_factory=dict)
+
+
+class BackendJobExecutor:
+    """
+    Default executor that sends workflow commands via CommandService.
+
+    This executor is used for regular backend workflows that run in separate
+    services and communicate via Kafka.
+    """
+
+    def __init__(
+        self, command_service: CommandService, workflow_id: WorkflowId
+    ) -> None:
+        self._command_service = command_service
+        self._workflow_id = workflow_id
+
+    def start_jobs(
+        self,
+        staged_jobs: dict[SourceName, JobConfig],
+        job_number: JobNumber,
+    ) -> None:
+        """Start jobs by sending workflow configs to backend services."""
+        commands: list[tuple[ConfigKey, WorkflowConfig]] = []
+        for source_name, job_config in staged_jobs.items():
+            workflow_config = WorkflowConfig.from_params(
+                workflow_id=self._workflow_id,
+                params=job_config.params,
+                aux_source_names=job_config.aux_source_names,
+                job_number=job_number,
+            )
+            key = keys.WORKFLOW_CONFIG.create_key(source_name=source_name)
+            commands.append((key, workflow_config))
+        self._command_service.send_batch(commands)
+
+    def stop_jobs(self, job_ids: list[JobId]) -> None:
+        """Stop jobs by sending stop commands to backend services."""
+        if not job_ids:
+            return
+        commands: list[tuple[ConfigKey, JobCommand]] = [
+            (
+                ConfigKey(key=JobCommand.key, source_name=str(job_id)),
+                JobCommand(job_id=job_id, action=JobAction.stop),
+            )
+            for job_id in job_ids
+        ]
+        self._command_service.send_batch(commands)
+
+
+# Verify BackendJobExecutor implements JobExecutor protocol
+_: type[JobExecutor] = BackendJobExecutor  # type: ignore[type-abstract]
 
 
 class WorkflowRegistryManager:
@@ -151,16 +205,8 @@ class WorkflowRegistryManager:
                     )
                     continue
 
-                # Recreate the configuration model and spec
-                config_model = template.get_configuration_model()
-                if config_model is None:
-                    self._logger.warning(
-                        'Template %s cannot create config model, skipping %s',
-                        instance.template_name,
-                        workflow_id_str,
-                    )
-                    continue
-
+                # Use raw config model - doesn't require timeseries to exist
+                config_model = template.get_raw_configuration_model()
                 config = config_model.model_validate(instance.config)
                 spec = template.create_workflow_spec(config)
                 workflow_id = spec.get_id()
@@ -196,12 +242,17 @@ class WorkflowRegistryManager:
         """
         Create and register a workflow spec from a template.
 
+        Template instantiation does not require timeseries data to exist. The
+        config is validated with basic type checking (strings for axis names),
+        not against available timeseries. Enum validation against available
+        timeseries is done by UI widgets, not here.
+
         Parameters
         ----------
         template_name:
             Name of the template to use.
         config:
-            Configuration dict for the template.
+            Configuration dict for the template (e.g., {'x_param': 'temperature'}).
 
         Returns
         -------
@@ -213,13 +264,8 @@ class WorkflowRegistryManager:
             self._logger.error('Template %s not found', template_name)
             return None
 
-        config_model = template.get_configuration_model()
-        if config_model is None:
-            self._logger.error(
-                'Template %s cannot create config model (not enough data?)',
-                template_name,
-            )
-            return None
+        # Use raw config model for basic validation (no enum check against data)
+        config_model = template.get_raw_configuration_model()
 
         try:
             validated_config = config_model.model_validate(config)
@@ -321,6 +367,23 @@ class WorkflowRegistryManager:
             Mapping from template name to template instance.
         """
         return dict(self._templates)
+
+    def get_template_instance(self, workflow_id: WorkflowId) -> TemplateInstance | None:
+        """
+        Get the template instance info for a dynamically created workflow.
+
+        Parameters
+        ----------
+        workflow_id:
+            The workflow to look up.
+
+        Returns
+        -------
+        :
+            TemplateInstance if the workflow was created from a template,
+            None otherwise.
+        """
+        return self._template_instances.get(workflow_id)
 
 
 class JobOrchestrator:
@@ -527,8 +590,8 @@ class JobOrchestrator:
         # Create new JobSet with auto-generated job number
         job_set = JobSet(jobs=state.staged_jobs.copy())
 
-        # Prepare all commands (stop old jobs + start new workflow) in single batch
-        commands = []
+        # Get executor for this workflow type
+        executor = self._get_job_executor(workflow_id)
 
         # Stop old jobs if any
         if state.current is not None:
@@ -537,38 +600,15 @@ class JobOrchestrator:
                 workflow_id,
                 state.current.job_number,
             )
-            # Create stop commands for all old jobs
-            commands.extend(
-                (
-                    ConfigKey(key=JobCommand.key, source_name=str(job_id)),
-                    JobCommand(job_id=job_id, action=JobAction.stop),
-                )
-                for job_id in state.current.job_ids()
-            )
-            self._logger.debug(
-                'Will stop %d old jobs in batch', len(state.current.jobs)
-            )
+            executor.stop_jobs(state.current.job_ids())
+            self._logger.debug('Stopped %d old jobs', len(state.current.jobs))
             # Move current to previous for cleanup once stop commands succeed.
             # Related to #445: Future improvements may wait for stop command
             # success responses before removing old job data.
             state.previous = state.current
 
-        # Send workflow configs to all staged sources
-        # Note: Currently all jobs use same params, but aux_source_names may differ
-        for source_name, job_config in state.staged_jobs.items():
-            # We are currently using a single command to mean "configure and start".
-            # See #445 for plans on splitting this, in line with the interface of the
-            # orchestrator interface.
-            workflow_config = WorkflowConfig.from_params(
-                workflow_id=workflow_id,
-                params=job_config.params,
-                aux_source_names=job_config.aux_source_names,
-                job_number=job_set.job_number,
-            )
-            key = keys.WORKFLOW_CONFIG.create_key(source_name=source_name)
-            commands.append((key, workflow_config))
-
-        self._command_service.send_batch(commands)
+        # Start new jobs
+        executor.start_jobs(state.staged_jobs, job_set.job_number)
 
         self._logger.info(
             'Started workflow %s with job_number %s on sources %s',
@@ -593,6 +633,39 @@ class JobOrchestrator:
 
         # Return JobIds for all created jobs
         return job_set.job_ids()
+
+    def _get_job_executor(self, workflow_id: WorkflowId) -> JobExecutor:
+        """
+        Get the job executor for a workflow.
+
+        Template-created workflows may provide custom executors for frontend
+        execution. Regular backend workflows use BackendJobExecutor.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to get an executor for.
+
+        Returns
+        -------
+        :
+            JobExecutor for this workflow type.
+        """
+        template_instance = self._registry_manager.get_template_instance(workflow_id)
+        if template_instance is not None:
+            template = self._registry_manager.get_templates().get(
+                template_instance.template_name
+            )
+            if template is not None:
+                config_model = template.get_configuration_model()
+                if config_model is not None:
+                    config = config_model.model_validate(template_instance.config)
+                    executor = template.create_job_executor(config)
+                    if executor is not None:
+                        return executor
+
+        # Default: backend execution via CommandService
+        return BackendJobExecutor(self._command_service, workflow_id)
 
     def _persist_state_to_store(self, workflow_id: WorkflowId) -> None:
         """Persist full workflow state (config + active jobs) to config store.
