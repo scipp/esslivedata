@@ -5,7 +5,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from enum import StrEnum
-from typing import Any, TypeVar
+from typing import Any, NewType, TypeVar
+from uuid import UUID, uuid4
 
 import numpy as np
 import pydantic
@@ -19,12 +20,49 @@ from ess.livedata.config.workflow_spec import (
     WorkflowOutputsBase,
     WorkflowSpec,
 )
-from ess.livedata.config.workflow_template import JobExecutor
+from ess.livedata.config.workflow_template import JobExecutor, WorkflowSubscriber
 from ess.livedata.dashboard.job_orchestrator import JobConfig
 from ess.livedata.parameter_models import EdgesModel, make_edges
 
-from .data_service import DataService
+from .data_service import DataService, SubscriptionId
 from .data_subscriber import DataSubscriber, MergingStreamAssembler
+
+
+class TimeseriesReference(pydantic.BaseModel):
+    """
+    Stable reference to a timeseries workflow output.
+
+    Unlike ResultKey, this reference does not contain a JobNumber which is
+    runtime-dependent. This allows correlation histogram configurations to be
+    persisted and restored across workflow restarts.
+
+    The JobNumber is resolved at runtime via subscription to the JobOrchestrator.
+    """
+
+    workflow_id: WorkflowId
+    source_name: str
+    output_name: str
+
+    @classmethod
+    def from_result_key(cls, key: ResultKey) -> TimeseriesReference:
+        """Extract stable reference from a ResultKey."""
+        return cls(
+            workflow_id=key.workflow_id,
+            source_name=key.job_id.source_name,
+            output_name=key.output_name or '',
+        )
+
+    def to_result_key(self, job_number: JobNumber) -> ResultKey:
+        """Resolve to full ResultKey given a job number."""
+        return ResultKey(
+            workflow_id=self.workflow_id,
+            job_id=JobId(source_name=self.source_name, job_number=job_number),
+            output_name=self.output_name if self.output_name else None,
+        )
+
+
+# Unique identifier for processors within the controller
+ProcessorId = NewType('ProcessorId', UUID)
 
 
 class EdgesWithUnit(EdgesModel):
@@ -149,9 +187,18 @@ def _create_dynamic_aux_sources_model(
 
 
 class CorrelationHistogramController:
+    """
+    Manages correlation histogram processors and their DataService subscriptions.
+
+    Processors are tracked by ProcessorId, allowing them to be added and removed
+    during workflow restarts.
+    """
+
     def __init__(self, data_service: DataService[ResultKey, sc.DataArray]) -> None:
         self._data_service = data_service
-        self._processors: list[CorrelationHistogramProcessor] = []
+        self._processors: dict[
+            ProcessorId, tuple[CorrelationHistogramProcessor, SubscriptionId]
+        ] = {}
 
     def get_data(self, key: ResultKey) -> sc.DataArray:
         """Get data for a given key."""
@@ -163,20 +210,27 @@ class CorrelationHistogramController:
 
     def add_correlation_processor(
         self,
+        processor_id: ProcessorId,
         processor: CorrelationHistogramProcessor,
         items: dict[ResultKey, sc.DataArray],
     ) -> None:
-        """Add a correlation histogram processor with DataService subscription."""
-        from .extractors import FullHistoryExtractor
+        """
+        Add a correlation histogram processor with DataService subscription.
 
-        self._processors.append(processor)
+        Parameters
+        ----------
+        processor_id:
+            Unique identifier for tracking this processor.
+        processor:
+            The processor to add.
+        items:
+            Initial data items for the processor.
+        """
+        from .extractors import FullHistoryExtractor
 
         # Create subscriber that merges data and sends to processor.
         # Use FullHistoryExtractor to get complete timeseries history needed for
         # correlation histogram computation.
-        # TODO We should update the plotter to operate more efficiently by simply
-        # subscribing to the changes. This will likely require a new extractor type as
-        # well as changes in the plotter, so we defer this for now.
         assembler = MergingStreamAssembler(set(items))
         extractors = {key: FullHistoryExtractor() for key in items}
 
@@ -186,7 +240,23 @@ class CorrelationHistogramController:
             return processor
 
         subscriber = DataSubscriber(assembler, processor_pipe_factory, extractors)
-        self._data_service.register_subscriber(subscriber)
+        subscription_id = self._data_service.register_subscriber(subscriber)
+
+        # Track processor with its subscription ID
+        self._processors[processor_id] = (processor, subscription_id)
+
+    def remove_processor(self, processor_id: ProcessorId) -> None:
+        """
+        Remove a processor and unregister its DataService subscription.
+
+        Parameters
+        ----------
+        processor_id:
+            The processor ID to remove.
+        """
+        if processor_id in self._processors:
+            _, subscription_id = self._processors.pop(processor_id)
+            self._data_service.unregister_subscriber(subscription_id)
 
     def get_timeseries(self) -> list[ResultKey]:
         return [key for key, da in self._data_service.items() if _is_timeseries(da)]
@@ -279,15 +349,22 @@ class CorrelationHistogramExecutor:
 
     This executor handles frontend-only execution of correlation histograms
     by creating processors that subscribe to DataService updates.
+
+    The executor subscribes to timeseries workflows and resolves
+    TimeseriesReferences to ResultKeys when the timeseries workflows
+    become available. When a timeseries workflow restarts (new JobNumber),
+    the executor tears down existing processors and recreates them with
+    the new ResultKeys.
     """
 
     def __init__(
         self,
         controller: CorrelationHistogramController,
-        axis_keys: list[ResultKey],
+        axis_refs: list[TimeseriesReference],
         source_name_to_key: dict[str, ResultKey],
         workflow_id: WorkflowId,
         ndim: int,
+        workflow_subscriber: WorkflowSubscriber,
     ) -> None:
         """
         Initialize the executor.
@@ -296,69 +373,143 @@ class CorrelationHistogramExecutor:
         ----------
         controller:
             Controller for data access and processor registration.
-        axis_keys:
-            ResultKeys for the correlation axes (e.g., temperature timeseries).
+        axis_refs:
+            Stable references to the correlation axis timeseries.
         source_name_to_key:
             Mapping from display names to ResultKeys for data sources.
         workflow_id:
             WorkflowId for creating result keys.
         ndim:
             Dimensionality (1 or 2) for determining param model.
+        workflow_subscriber:
+            Subscriber for workflow availability notifications.
         """
         self._controller = controller
-        self._axis_keys = axis_keys
+        self._axis_refs = axis_refs
         self._source_name_to_key = source_name_to_key
         self._workflow_id = workflow_id
         self._ndim = ndim
+        self._workflow_subscriber = workflow_subscriber
+
+        # Runtime state
+        self._workflow_subscriptions: dict[WorkflowId, SubscriptionId] = {}
+        self._active_job_numbers: dict[WorkflowId, JobNumber] = {}
+        self._active_processors: set[ProcessorId] = set()
+        self._staged_jobs: dict[str, JobConfig] | None = None
+        self._correlation_job_number: JobNumber | None = None
 
     def start_jobs(
         self,
         staged_jobs: dict[str, JobConfig],
         job_number: JobNumber,
     ) -> None:
-        """Start correlation histogram jobs for all staged sources."""
+        """
+        Start correlation histogram jobs.
+
+        Subscribes to the timeseries workflows for each axis. Processors are
+        created when all required timeseries workflows are available.
+        """
+        self._staged_jobs = staged_jobs
+        self._correlation_job_number = job_number
+
+        # Subscribe to each unique timeseries workflow
+        for ref in self._axis_refs:
+            if ref.workflow_id not in self._workflow_subscriptions:
+                sub_id, _invoked = self._workflow_subscriber.subscribe_to_workflow(
+                    ref.workflow_id,
+                    lambda jn, wid=ref.workflow_id: self._on_timeseries_available(
+                        wid, jn
+                    ),
+                )
+                self._workflow_subscriptions[ref.workflow_id] = sub_id
+
+    def _on_timeseries_available(
+        self, workflow_id: WorkflowId, job_number: JobNumber
+    ) -> None:
+        """
+        Called when a timeseries workflow becomes available or restarts.
+
+        If this is a restart (not first availability), tears down existing
+        processors and recreates them with the new JobNumber.
+        """
+        old_job_number = self._active_job_numbers.get(workflow_id)
+        self._active_job_numbers[workflow_id] = job_number
+
+        # If this is a restart (not first availability), tear down and rebuild
+        if old_job_number is not None:
+            self._teardown_processors()
+
+        # Check if all required workflows are now available
+        if self._all_axes_available():
+            self._create_processors()
+
+    def _all_axes_available(self) -> bool:
+        """Check if all axis timeseries workflows have reported availability."""
+        required = {ref.workflow_id for ref in self._axis_refs}
+        return required <= set(self._active_job_numbers.keys())
+
+    def _create_processors(self) -> None:
+        """Create processors for all staged jobs using current axis ResultKeys."""
+        if self._staged_jobs is None or self._correlation_job_number is None:
+            return
+
+        # Resolve axis references to current ResultKeys
+        axis_keys = [
+            ref.to_result_key(self._active_job_numbers[ref.workflow_id])
+            for ref in self._axis_refs
+        ]
+
         # Parse edges from params
-        edges = self._parse_edges(staged_jobs)
+        edges = self._parse_edges(self._staged_jobs)
 
         # Get normalization setting from first job's params
-        first_config = next(iter(staged_jobs.values()))
+        first_config = next(iter(self._staged_jobs.values()))
         normalize = first_config.params.get('normalization', {}).get(
             'per_second', False
         )
 
         # Get axis data
-        axes = {key: self._controller.get_data(key) for key in self._axis_keys}
+        axes = {key: self._controller.get_data(key) for key in axis_keys}
 
-        for source_name in staged_jobs:
+        for source_name in self._staged_jobs:
             data_key = self._source_name_to_key.get(source_name)
             if data_key is None:
                 continue
 
             data_value = self._controller.get_data(data_key)
 
+            # Generate unique processor ID
+            processor_id = ProcessorId(uuid4())
+
             processor = CorrelationHistogramProcessor(
                 data_key=data_key,
-                coord_keys=self._axis_keys,
+                coord_keys=axis_keys,
                 edges_params=edges,
                 normalize=normalize,
-                result_callback=self._create_result_callback(data_key, job_number),
+                result_callback=self._create_result_callback(
+                    data_key, self._correlation_job_number
+                ),
             )
             self._controller.add_correlation_processor(
-                processor, {data_key: data_value, **axes}
+                processor_id, processor, {data_key: data_value, **axes}
             )
+            self._active_processors.add(processor_id)
+
+    def _teardown_processors(self) -> None:
+        """Remove all active processors."""
+        for processor_id in list(self._active_processors):
+            self._controller.remove_processor(processor_id)
+        self._active_processors.clear()
 
     def stop_jobs(self, job_ids: list[JobId]) -> None:
-        """
-        Stop running correlation histogram jobs.
-
-        Note: Currently correlation histogram processors cannot be individually
-        stopped - they continue running until the dashboard is closed. This is
-        a known limitation that would require tracking subscriptions in
-        CorrelationHistogramController.
-        """
-        # TODO: Implement proper cleanup by tracking DataService subscriptions
-        # in CorrelationHistogramController and unregistering them here.
-        pass
+        """Stop all processors and unsubscribe from timeseries workflows."""
+        self._teardown_processors()
+        for sub_id in self._workflow_subscriptions.values():
+            self._workflow_subscriber.unsubscribe(sub_id)
+        self._workflow_subscriptions.clear()
+        self._active_job_numbers.clear()
+        self._staged_jobs = None
+        self._correlation_job_number = None
 
     def _parse_edges(self, staged_jobs: dict[str, JobConfig]) -> list[EdgesWithUnit]:
         """Parse edge parameters from staged job config."""
@@ -432,8 +583,8 @@ def _sanitize_for_id(name: str) -> str:
 class CorrelationHistogram1dTemplateConfig(pydantic.BaseModel):
     """Configuration for creating a 1D correlation histogram workflow instance."""
 
-    x_param: str = pydantic.Field(
-        description="The timeseries to correlate against (X axis)"
+    x_axis: TimeseriesReference = pydantic.Field(
+        description="Reference to the timeseries to correlate against (X axis)"
     )
     # Optional fields populated from data when available (for UI flow)
     # or specified directly (for config file / programmatic setup)
@@ -451,8 +602,8 @@ class CorrelationHistogram1dTemplateConfig(pydantic.BaseModel):
 class CorrelationHistogram2dTemplateConfig(pydantic.BaseModel):
     """Configuration for creating a 2D correlation histogram workflow instance."""
 
-    x_param: str = pydantic.Field(
-        description="The timeseries to correlate against (X axis)"
+    x_axis: TimeseriesReference = pydantic.Field(
+        description="Reference to the timeseries to correlate against (X axis)"
     )
     x_unit: str | None = pydantic.Field(
         default=None, description="Unit for the X axis edges"
@@ -463,8 +614,8 @@ class CorrelationHistogram2dTemplateConfig(pydantic.BaseModel):
     x_stop: float | None = pydantic.Field(
         default=None, description="Stop value for X axis range"
     )
-    y_param: str = pydantic.Field(
-        description="The timeseries to correlate against (Y axis)"
+    y_axis: TimeseriesReference = pydantic.Field(
+        description="Reference to the timeseries to correlate against (Y axis)"
     )
     y_unit: str | None = pydantic.Field(
         default=None, description="Unit for the Y axis edges"
@@ -552,6 +703,13 @@ class CorrelationHistogramTemplateBase(ABC):
             self._refresh_source_mapping()
         return self._source_name_to_key or {}
 
+    def get_source_name_to_reference(self) -> dict[str, TimeseriesReference]:
+        """Get mapping from display name to stable TimeseriesReference."""
+        return {
+            name: TimeseriesReference.from_result_key(key)
+            for name, key in self.get_source_name_to_key().items()
+        }
+
     def get_available_source_names(self) -> list[str]:
         """Get available source names for the workflow configuration UI."""
         return list(self.get_source_name_to_key().keys())
@@ -576,18 +734,18 @@ class CorrelationHistogramTemplateBase(ABC):
         """
         Get a simple Pydantic model for configuration without enum validation.
 
-        Used for template instantiation where axis names are provided directly
-        without requiring timeseries to exist yet. Includes optional unit/start/stop
-        fields for each axis.
+        Used for template instantiation where TimeseriesReference is provided
+        directly without requiring timeseries to exist yet. Includes optional
+        unit/start/stop fields for each axis.
         """
         fields: dict[str, Any] = {}
         for field_name in self._axis_field_names:
-            # Extract axis prefix (e.g., 'x' from 'x_param')
+            # Extract axis prefix (e.g., 'x' from 'x_axis')
             prefix = field_name.split('_')[0]
-            # Required: axis source name
+            # Required: axis reference
             fields[field_name] = (
-                str,
-                pydantic.Field(description=f"Axis source name for {field_name}"),
+                TimeseriesReference,
+                pydantic.Field(description=f"Timeseries reference for {field_name}"),
             )
             # Optional: unit and range for this axis
             fields[f'{prefix}_unit'] = (
@@ -686,27 +844,29 @@ class CorrelationHistogramTemplateBase(ABC):
             If the specified axis timeseries is not available in DataService.
         """
 
-    def get_axis_keys(self, config: pydantic.BaseModel | dict) -> list[ResultKey]:
-        """Get the ResultKeys for the selected axis sources."""
-        axis_names = self._get_axis_names(config)
-        mapping = self.get_source_name_to_key()
-        result = []
-        for name in axis_names:
-            if name in mapping:
-                # Direct match (display name)
-                result.append(mapping[name])
-            else:
-                # Try matching by source_name (raw config value)
-                for key in mapping.values():
-                    if key.job_id.source_name == name:
-                        result.append(key)
-                        break
-                else:
-                    raise KeyError(f"Axis '{name}' not found in available timeseries")
-        return result
+    @abstractmethod
+    def get_axis_refs(
+        self, config: pydantic.BaseModel | dict
+    ) -> list[TimeseriesReference]:
+        """
+        Get the TimeseriesReferences for the selected axis sources.
+
+        Parameters
+        ----------
+        config:
+            Configuration containing axis selections (either as TimeseriesReference
+            objects or dict representations).
+
+        Returns
+        -------
+        :
+            List of TimeseriesReference objects for all axes in this template.
+        """
 
     def create_job_executor(
-        self, config: pydantic.BaseModel | dict
+        self,
+        config: pydantic.BaseModel | dict,
+        workflow_subscriber: WorkflowSubscriber | None = None,
     ) -> CorrelationHistogramExecutor:
         """
         Create an executor for correlation histogram workflows.
@@ -718,20 +878,33 @@ class CorrelationHistogramTemplateBase(ABC):
         ----------
         config:
             Template configuration containing axis selection.
+        workflow_subscriber:
+            Subscriber for workflow availability notifications. Required for
+            resolving TimeseriesReferences to ResultKeys at runtime.
 
         Returns
         -------
         :
             Executor for this workflow instance.
+
+        Raises
+        ------
+        ValueError
+            If workflow_subscriber is not provided.
         """
-        axis_keys = self.get_axis_keys(config)
+        if workflow_subscriber is None:
+            msg = "CorrelationHistogramTemplate requires workflow_subscriber"
+            raise ValueError(msg)
+
+        axis_refs = self.get_axis_refs(config)
         workflow_id = self.make_instance_id(config)
         return CorrelationHistogramExecutor(
             controller=self._controller,
-            axis_keys=axis_keys,
+            axis_refs=axis_refs,
             source_name_to_key=self.get_source_name_to_key(),
             workflow_id=workflow_id,
             ndim=self.ndim,
+            workflow_subscriber=workflow_subscriber,
         )
 
 
@@ -752,17 +925,51 @@ class CorrelationHistogram1dTemplate(CorrelationHistogramTemplateBase):
 
     @property
     def _axis_field_names(self) -> list[str]:
-        return ['x_param']
+        return ['x_axis']
 
     def _get_axis_names_from_dict(self, config: dict) -> list[str]:
-        return [config['x_param']]
+        x_axis = config['x_axis']
+        # Handle dict (from serialization), TimeseriesReference instances,
+        # or string (display name from UI model)
+        if isinstance(x_axis, dict):
+            return [x_axis['source_name']]
+        elif isinstance(x_axis, str):
+            # Display name from UI - extract the source_name part if it follows
+            # the "source_name: output_name" format, otherwise use as-is
+            return [x_axis.split(':')[0].strip()]
+        return [x_axis.source_name]
+
+    def get_axis_refs(
+        self, config: pydantic.BaseModel | dict
+    ) -> list[TimeseriesReference]:
+        """Get the TimeseriesReferences for the X axis."""
+        config_dict = config if isinstance(config, dict) else config.model_dump()
+        x_axis = config_dict['x_axis']
+        if isinstance(x_axis, dict):
+            return [TimeseriesReference.model_validate(x_axis)]
+        elif isinstance(x_axis, str):
+            # Display name from UI - look up the reference
+            ref_mapping = self.get_source_name_to_reference()
+            if x_axis in ref_mapping:
+                return [ref_mapping[x_axis]]
+            raise KeyError(f"Unknown axis display name: {x_axis}")
+        return [x_axis]
 
     def _create_dynamic_model_class(
         self, config: dict
     ) -> type[CorrelationHistogram1dParams]:
         """Create dynamic parameter model class with bin edge fields from config."""
+        # Get axis name - handles dict, TimeseriesReference, or string
+        x_axis = config['x_axis']
+        if isinstance(x_axis, dict):
+            x_name = x_axis['source_name']
+        elif isinstance(x_axis, str):
+            x_name = x_axis.split(':')[0].strip()
+        else:
+            x_name = x_axis.source_name
+
         x_field = _make_edges_field_from_values(
-            config['x_param'],
+            x_name,
             unit=config.get('x_unit'),
             start=config.get('x_start'),
             stop=config.get('x_stop'),
@@ -775,8 +982,11 @@ class CorrelationHistogram1dTemplate(CorrelationHistogramTemplateBase):
 
     def enrich_config_from_data(self, config: dict) -> dict:
         """Populate config with unit and range values from timeseries data."""
-        axis_keys = self.get_axis_keys(config)
-        x_data = self._controller.get_data(axis_keys[0])
+        axis_refs = self.get_axis_refs(config)
+        # Resolve TimeseriesReference to ResultKey using current mapping
+        mapping = self.get_source_name_to_key()
+        x_key = self._resolve_ref_to_key(axis_refs[0], mapping)
+        x_data = self._controller.get_data(x_key)
 
         return {
             **config,
@@ -784,6 +994,20 @@ class CorrelationHistogram1dTemplate(CorrelationHistogramTemplateBase):
             'x_start': float(x_data.nanmin().value),
             'x_stop': float(np.nextafter(x_data.nanmax().value, np.inf)),
         }
+
+    def _resolve_ref_to_key(
+        self, ref: TimeseriesReference, mapping: dict[str, ResultKey]
+    ) -> ResultKey:
+        """Resolve TimeseriesReference to ResultKey using current timeseries mapping."""
+        for key in mapping.values():
+            if (
+                key.workflow_id == ref.workflow_id
+                and key.job_id.source_name == ref.source_name
+                and (key.output_name or '') == ref.output_name
+            ):
+                return key
+        msg = f"Cannot resolve TimeseriesReference {ref} to current timeseries"
+        raise KeyError(msg)
 
 
 class CorrelationHistogram2dTemplate(CorrelationHistogramTemplateBase):
@@ -803,23 +1027,72 @@ class CorrelationHistogram2dTemplate(CorrelationHistogramTemplateBase):
 
     @property
     def _axis_field_names(self) -> list[str]:
-        return ['x_param', 'y_param']
+        return ['x_axis', 'y_axis']
 
     def _get_axis_names_from_dict(self, config: dict) -> list[str]:
-        return [config['x_param'], config['y_param']]
+        result = []
+        for axis_field in ('x_axis', 'y_axis'):
+            axis = config[axis_field]
+            # Handle dict (from serialization), TimeseriesReference instances,
+            # or string (display name from UI model)
+            if isinstance(axis, dict):
+                result.append(axis['source_name'])
+            elif isinstance(axis, str):
+                # Display name from UI - extract the source_name part if it follows
+                # the "source_name: output_name" format, otherwise use as-is
+                result.append(axis.split(':')[0].strip())
+            else:
+                result.append(axis.source_name)
+        return result
+
+    def get_axis_refs(
+        self, config: pydantic.BaseModel | dict
+    ) -> list[TimeseriesReference]:
+        """Get the TimeseriesReferences for X and Y axes."""
+        config_dict = config if isinstance(config, dict) else config.model_dump()
+        ref_mapping = None  # Lazy load if needed
+        refs = []
+        for field in ('x_axis', 'y_axis'):
+            axis = config_dict[field]
+            if isinstance(axis, dict):
+                refs.append(TimeseriesReference.model_validate(axis))
+            elif isinstance(axis, str):
+                # Display name from UI - look up the reference
+                if ref_mapping is None:
+                    ref_mapping = self.get_source_name_to_reference()
+                if axis in ref_mapping:
+                    refs.append(ref_mapping[axis])
+                else:
+                    raise KeyError(f"Unknown axis display name: {axis}")
+            else:
+                refs.append(axis)
+        return refs
 
     def _create_dynamic_model_class(
         self, config: dict
     ) -> type[CorrelationHistogram2dParams]:
         """Create dynamic parameter model class with bin edge fields from config."""
+
+        def get_axis_name(axis_value) -> str:
+            """Get axis name - handles dict, TimeseriesReference, or string."""
+            if isinstance(axis_value, dict):
+                return axis_value['source_name']
+            elif isinstance(axis_value, str):
+                return axis_value.split(':')[0].strip()
+            else:
+                return axis_value.source_name
+
+        x_name = get_axis_name(config['x_axis'])
+        y_name = get_axis_name(config['y_axis'])
+
         x_field = _make_edges_field_from_values(
-            config['x_param'],
+            x_name,
             unit=config.get('x_unit'),
             start=config.get('x_start'),
             stop=config.get('x_stop'),
         )
         y_field = _make_edges_field_from_values(
-            config['y_param'],
+            y_name,
             unit=config.get('y_unit'),
             start=config.get('y_start'),
             stop=config.get('y_stop'),
@@ -833,9 +1106,13 @@ class CorrelationHistogram2dTemplate(CorrelationHistogramTemplateBase):
 
     def enrich_config_from_data(self, config: dict) -> dict:
         """Populate config with unit and range values from timeseries data."""
-        axis_keys = self.get_axis_keys(config)
-        x_data = self._controller.get_data(axis_keys[0])
-        y_data = self._controller.get_data(axis_keys[1])
+        axis_refs = self.get_axis_refs(config)
+        # Resolve TimeseriesReferences to ResultKeys using current mapping
+        mapping = self.get_source_name_to_key()
+        x_key = self._resolve_ref_to_key(axis_refs[0], mapping)
+        y_key = self._resolve_ref_to_key(axis_refs[1], mapping)
+        x_data = self._controller.get_data(x_key)
+        y_data = self._controller.get_data(y_key)
 
         return {
             **config,
@@ -846,3 +1123,17 @@ class CorrelationHistogram2dTemplate(CorrelationHistogramTemplateBase):
             'y_start': float(y_data.nanmin().value),
             'y_stop': float(np.nextafter(y_data.nanmax().value, np.inf)),
         }
+
+    def _resolve_ref_to_key(
+        self, ref: TimeseriesReference, mapping: dict[str, ResultKey]
+    ) -> ResultKey:
+        """Resolve TimeseriesReference to ResultKey using current timeseries mapping."""
+        for key in mapping.values():
+            if (
+                key.workflow_id == ref.workflow_id
+                and key.job_id.source_name == ref.source_name
+                and (key.output_name or '') == ref.output_name
+            ):
+                return key
+        msg = f"Cannot resolve TimeseriesReference {ref} to current timeseries"
+        raise KeyError(msg)

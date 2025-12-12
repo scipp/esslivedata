@@ -39,12 +39,12 @@ class TestTemplateInstance:
     def test_template_instance_serialization(self):
         instance = TemplateInstance(
             template_name='correlation_histogram_1d',
-            config={'x_param': 'temperature'},
+            config={'x_axis': 'temperature'},
         )
         serialized = instance.model_dump(mode='json')
 
         assert serialized['template_name'] == 'correlation_histogram_1d'
-        assert serialized['config'] == {'x_param': 'temperature'}
+        assert serialized['config'] == {'x_axis': 'temperature'}
 
     def test_template_instance_roundtrip(self):
         original = TemplateInstance(
@@ -87,7 +87,7 @@ class TestCorrelationHistogram1dTemplate:
         config_model = template.get_configuration_model()
 
         assert config_model is not None
-        assert 'x_param' in config_model.model_fields
+        assert 'x_axis' in config_model.model_fields
 
     def test_get_configuration_model_returns_none_when_no_timeseries(self):
         controller = FakeCorrelationHistogramController([])
@@ -98,7 +98,7 @@ class TestCorrelationHistogram1dTemplate:
         config_model = template.get_configuration_model()
         # Use the formatted name from the template's source mapping
         source_names = list(template.get_source_name_to_key().keys())
-        config = config_model(x_param=source_names[0])  # e.g., 'temperature: value'
+        config = config_model(x_axis=source_names[0])  # e.g., 'temperature: value'
 
         workflow_id = template.make_instance_id(config)
 
@@ -110,7 +110,7 @@ class TestCorrelationHistogram1dTemplate:
     def test_make_instance_title(self, template):
         config_model = template.get_configuration_model()
         source_names = list(template.get_source_name_to_key().keys())
-        config = config_model(x_param=source_names[0])
+        config = config_model(x_axis=source_names[0])
 
         title = template.make_instance_title(config)
 
@@ -119,7 +119,7 @@ class TestCorrelationHistogram1dTemplate:
     def test_create_workflow_spec(self, template, timeseries_keys):
         config_model = template.get_configuration_model()
         source_names = list(template.get_source_name_to_key().keys())
-        config = config_model(x_param=source_names[0])
+        config = config_model(x_axis=source_names[0])
 
         spec = template.create_workflow_spec(config)
 
@@ -129,16 +129,24 @@ class TestCorrelationHistogram1dTemplate:
         # Source names are empty - determined dynamically at job start time
         assert spec.source_names == []
 
-    def test_get_axis_keys(self, template, timeseries_keys):
+    def test_get_axis_refs(self, template, timeseries_keys):
         config_model = template.get_configuration_model()
         source_names = list(template.get_source_name_to_key().keys())
-        config = config_model(x_param=source_names[0])
+        config = config_model(x_axis=source_names[0])
 
-        axis_keys = template.get_axis_keys(config)
+        axis_refs = template.get_axis_refs(config)
 
-        assert len(axis_keys) == 1
-        # The axis key should be in the original timeseries_keys
-        assert axis_keys[0] in timeseries_keys
+        assert len(axis_refs) == 1
+        # The axis ref should match one of the original timeseries_keys
+        ref = axis_refs[0]
+        matching_keys = [
+            k
+            for k in timeseries_keys
+            if k.workflow_id == ref.workflow_id
+            and k.job_id.source_name == ref.source_name
+            and (k.output_name or '') == ref.output_name
+        ]
+        assert len(matching_keys) == 1
 
 
 class TestCorrelationHistogram2dTemplate:
@@ -171,8 +179,8 @@ class TestCorrelationHistogram2dTemplate:
         config_model = template.get_configuration_model()
 
         assert config_model is not None
-        assert 'x_param' in config_model.model_fields
-        assert 'y_param' in config_model.model_fields
+        assert 'x_axis' in config_model.model_fields
+        assert 'y_axis' in config_model.model_fields
 
     def test_get_configuration_model_returns_none_when_insufficient_timeseries(self):
         # Need at least 2 timeseries for 2D
@@ -185,7 +193,7 @@ class TestCorrelationHistogram2dTemplate:
     def test_make_instance_id_includes_both_axes(self, template):
         config_model = template.get_configuration_model()
         source_names = list(template.get_source_name_to_key().keys())
-        config = config_model(x_param=source_names[0], y_param=source_names[1])
+        config = config_model(x_axis=source_names[0], y_axis=source_names[1])
 
         workflow_id = template.make_instance_id(config)
 
@@ -194,7 +202,7 @@ class TestCorrelationHistogram2dTemplate:
     def test_make_instance_title_includes_both_axes(self, template):
         config_model = template.get_configuration_model()
         source_names = list(template.get_source_name_to_key().keys())
-        config = config_model(x_param=source_names[0], y_param=source_names[1])
+        config = config_model(x_axis=source_names[0], y_axis=source_names[1])
 
         title = template.make_instance_title(config)
 
@@ -204,7 +212,7 @@ class TestCorrelationHistogram2dTemplate:
     def test_create_workflow_spec(self, template, timeseries_keys):
         config_model = template.get_configuration_model()
         source_names = list(template.get_source_name_to_key().keys())
-        config = config_model(x_param=source_names[0], y_param=source_names[1])
+        config = config_model(x_axis=source_names[0], y_axis=source_names[1])
 
         spec = template.create_workflow_spec(config)
 
@@ -214,14 +222,21 @@ class TestCorrelationHistogram2dTemplate:
         # Source names are empty - determined dynamically at job start time
         assert spec.source_names == []
 
-    def test_get_axis_keys_returns_both_axes(self, template, timeseries_keys):
+    def test_get_axis_refs_returns_both_axes(self, template, timeseries_keys):
         config_model = template.get_configuration_model()
         source_names = list(template.get_source_name_to_key().keys())
-        config = config_model(x_param=source_names[0], y_param=source_names[1])
+        config = config_model(x_axis=source_names[0], y_axis=source_names[1])
 
-        axis_keys = template.get_axis_keys(config)
+        axis_refs = template.get_axis_refs(config)
 
-        assert len(axis_keys) == 2
-        # Both axis keys should be in the original timeseries_keys
-        for key in axis_keys:
-            assert key in timeseries_keys
+        assert len(axis_refs) == 2
+        # Both axis refs should match original timeseries_keys
+        for ref in axis_refs:
+            matching_keys = [
+                k
+                for k in timeseries_keys
+                if k.workflow_id == ref.workflow_id
+                and k.job_id.source_name == ref.source_name
+                and (k.output_name or '') == ref.output_name
+            ]
+            assert len(matching_keys) == 1

@@ -5,13 +5,16 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Hashable, Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, NewType, TypeVar
+from uuid import UUID, uuid4
 
 from .extractors import LatestValueExtractor, UpdateExtractor
 from .temporal_buffer_manager import TemporalBufferManager
 
 K = TypeVar('K', bound=Hashable)
 V = TypeVar('V')
+
+SubscriptionId = NewType('SubscriptionId', UUID)
 
 
 class DataServiceSubscriber(ABC, Generic[K]):
@@ -68,7 +71,7 @@ class DataService(MutableMapping[K, V]):
             buffer_manager = TemporalBufferManager()
         self._buffer_manager = buffer_manager
         self._default_extractor = LatestValueExtractor()
-        self._subscribers: list[DataServiceSubscriber[K]] = []
+        self._subscribers: dict[SubscriptionId, DataServiceSubscriber[K]] = {}
         self._pending_updates: set[K] = set()
         self._transaction_depth = 0
 
@@ -108,7 +111,7 @@ class DataService(MutableMapping[K, V]):
         """
         extractors = []
 
-        for subscriber in self._subscribers:
+        for subscriber in self._subscribers.values():
             subscriber_extractors = subscriber.extractors
             if key in subscriber_extractors:
                 extractor = subscriber_extractors[key]
@@ -141,7 +144,9 @@ class DataService(MutableMapping[K, V]):
 
         return subscriber_data
 
-    def register_subscriber(self, subscriber: DataServiceSubscriber[K]) -> None:
+    def register_subscriber(
+        self, subscriber: DataServiceSubscriber[K]
+    ) -> SubscriptionId:
         """
         Register a subscriber for updates with extractor-based data access.
 
@@ -151,8 +156,14 @@ class DataService(MutableMapping[K, V]):
         ----------
         subscriber:
             The subscriber to register.
+
+        Returns
+        -------
+        :
+            A subscription ID that can be used to unregister the subscriber.
         """
-        self._subscribers.append(subscriber)
+        subscription_id = SubscriptionId(uuid4())
+        self._subscribers[subscription_id] = subscriber
 
         # Add extractors for keys this subscriber needs
         for key in subscriber.keys:
@@ -163,6 +174,19 @@ class DataService(MutableMapping[K, V]):
         # Trigger immediately with existing data using subscriber's extractors
         existing_data = self._build_subscriber_data(subscriber)
         subscriber.trigger(existing_data)
+        return subscription_id
+
+    def unregister_subscriber(self, subscription_id: SubscriptionId) -> None:
+        """
+        Unregister a subscriber from receiving updates.
+
+        Parameters
+        ----------
+        subscription_id:
+            The subscription ID returned from register_subscriber.
+        """
+        if subscription_id in self._subscribers:
+            del self._subscribers[subscription_id]
 
     def _notify_subscribers(self, updated_keys: set[K]) -> None:
         """
@@ -173,7 +197,7 @@ class DataService(MutableMapping[K, V]):
         updated_keys
             The set of data keys that were updated.
         """
-        for subscriber in self._subscribers:
+        for subscriber in self._subscribers.values():
             if updated_keys & subscriber.keys:
                 subscriber_data = self._build_subscriber_data(subscriber)
                 subscriber.trigger(subscriber_data)

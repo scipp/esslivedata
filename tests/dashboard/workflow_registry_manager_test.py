@@ -19,8 +19,15 @@ from ess.livedata.config.workflow_spec import (
 from ess.livedata.dashboard.config_store import InMemoryConfigStore
 from ess.livedata.dashboard.correlation_histogram import (
     CorrelationHistogram1dTemplate,
+    TimeseriesReference,
 )
 from ess.livedata.dashboard.job_orchestrator import WorkflowRegistryManager
+
+
+def make_config_with_ref(key: ResultKey) -> dict:
+    """Create a config dict with TimeseriesReference from a ResultKey."""
+    ref = TimeseriesReference.from_result_key(key)
+    return {'x_axis': ref.model_dump(mode='json')}
 
 
 class SimpleOutputs(WorkflowOutputsBase):
@@ -146,7 +153,7 @@ class TestWorkflowRegistryManagerBasics:
 
 class TestWorkflowRegistryManagerTemplateRegistration:
     def test_register_from_template_creates_workflow(
-        self, static_registry, template, logger
+        self, static_registry, template, timeseries_keys, logger
     ):
         manager = WorkflowRegistryManager(
             static_registry=static_registry,
@@ -154,19 +161,17 @@ class TestWorkflowRegistryManagerTemplateRegistration:
             templates=[template],
             logger=logger,
         )
-        # Get the formatted source name from the template
-        source_names = list(template.get_source_name_to_key().keys())
+        # Create config with TimeseriesReference
+        config = make_config_with_ref(timeseries_keys[0])
 
-        workflow_id = manager.register_from_template(
-            template.name, {'x_param': source_names[0]}
-        )
+        workflow_id = manager.register_from_template(template.name, config)
 
         assert workflow_id is not None
         assert workflow_id in manager.get_registry()
         assert manager.is_template_instance(workflow_id)
 
     def test_register_from_template_returns_none_for_unknown_template(
-        self, static_registry, logger
+        self, static_registry, timeseries_keys, logger
     ):
         manager = WorkflowRegistryManager(
             static_registry=static_registry,
@@ -175,9 +180,9 @@ class TestWorkflowRegistryManagerTemplateRegistration:
             logger=logger,
         )
 
-        workflow_id = manager.register_from_template(
-            'nonexistent_template', {'x_param': 'temperature'}
-        )
+        # Config doesn't matter since template doesn't exist
+        config = make_config_with_ref(timeseries_keys[0])
+        workflow_id = manager.register_from_template('nonexistent_template', config)
 
         assert workflow_id is None
 
@@ -191,7 +196,7 @@ class TestWorkflowRegistryManagerTemplateRegistration:
             logger=logger,
         )
 
-        # Invalid config - missing required 'x_param' field
+        # Invalid config - missing required 'x_axis' field
         workflow_id = manager.register_from_template(template.name, {})
 
         assert workflow_id is None
@@ -199,7 +204,7 @@ class TestWorkflowRegistryManagerTemplateRegistration:
     def test_register_from_template_accepts_any_axis_name(
         self, static_registry, template, logger
     ):
-        """Registration should work with any axis name, even if not in current data."""
+        """Registration works with any TimeseriesReference in current data."""
         manager = WorkflowRegistryManager(
             static_registry=static_registry,
             config_store=None,
@@ -207,16 +212,24 @@ class TestWorkflowRegistryManagerTemplateRegistration:
             logger=logger,
         )
 
-        # Should succeed - enum validation is for UI, not registration
-        workflow_id = manager.register_from_template(
-            template.name, {'x_param': 'future_timeseries'}
+        # Create a fake TimeseriesReference for a non-existent timeseries
+        fake_ref = TimeseriesReference(
+            workflow_id=WorkflowId(
+                instrument='future', namespace='data', name='sensor', version=1
+            ),
+            source_name='future_timeseries',
+            output_name='value',
         )
+        config = {'x_axis': fake_ref.model_dump(mode='json')}
+
+        # Should succeed - enum validation is for UI, not registration
+        workflow_id = manager.register_from_template(template.name, config)
 
         assert workflow_id is not None
         assert workflow_id in manager.get_registry()
 
     def test_register_same_config_twice_returns_existing_id(
-        self, static_registry, template, logger
+        self, static_registry, template, timeseries_keys, logger
     ):
         manager = WorkflowRegistryManager(
             static_registry=static_registry,
@@ -224,14 +237,10 @@ class TestWorkflowRegistryManagerTemplateRegistration:
             templates=[template],
             logger=logger,
         )
-        source_names = list(template.get_source_name_to_key().keys())
+        config = make_config_with_ref(timeseries_keys[0])
 
-        workflow_id1 = manager.register_from_template(
-            template.name, {'x_param': source_names[0]}
-        )
-        workflow_id2 = manager.register_from_template(
-            template.name, {'x_param': source_names[0]}
-        )
+        workflow_id1 = manager.register_from_template(template.name, config)
+        workflow_id2 = manager.register_from_template(template.name, config)
 
         assert workflow_id1 == workflow_id2
         # Should only have one dynamic workflow
@@ -241,7 +250,7 @@ class TestWorkflowRegistryManagerTemplateRegistration:
 
 class TestWorkflowRegistryManagerUnregistration:
     def test_unregister_removes_template_instance(
-        self, static_registry, template, logger
+        self, static_registry, template, timeseries_keys, logger
     ):
         manager = WorkflowRegistryManager(
             static_registry=static_registry,
@@ -249,10 +258,8 @@ class TestWorkflowRegistryManagerUnregistration:
             templates=[template],
             logger=logger,
         )
-        source_names = list(template.get_source_name_to_key().keys())
-        workflow_id = manager.register_from_template(
-            template.name, {'x_param': source_names[0]}
-        )
+        config = make_config_with_ref(timeseries_keys[0])
+        workflow_id = manager.register_from_template(template.name, config)
 
         result = manager.unregister(workflow_id)
 
@@ -297,7 +304,7 @@ class TestWorkflowRegistryManagerUnregistration:
 
 class TestWorkflowRegistryManagerPersistence:
     def test_persists_template_instances_on_register(
-        self, static_registry, template, logger
+        self, static_registry, template, timeseries_keys, logger
     ):
         config_store = InMemoryConfigStore()
         manager = WorkflowRegistryManager(
@@ -306,9 +313,9 @@ class TestWorkflowRegistryManagerPersistence:
             templates=[template],
             logger=logger,
         )
-        source_names = list(template.get_source_name_to_key().keys())
+        config = make_config_with_ref(timeseries_keys[0])
 
-        manager.register_from_template(template.name, {'x_param': source_names[0]})
+        manager.register_from_template(template.name, config)
 
         # Check that template instances were persisted
         instances_data = config_store.get('_template_instances')
@@ -316,7 +323,7 @@ class TestWorkflowRegistryManagerPersistence:
         assert len(instances_data) == 1
 
     def test_removes_from_persistence_on_unregister(
-        self, static_registry, template, logger
+        self, static_registry, template, timeseries_keys, logger
     ):
         config_store = InMemoryConfigStore()
         manager = WorkflowRegistryManager(
@@ -325,10 +332,8 @@ class TestWorkflowRegistryManagerPersistence:
             templates=[template],
             logger=logger,
         )
-        source_names = list(template.get_source_name_to_key().keys())
-        workflow_id = manager.register_from_template(
-            template.name, {'x_param': source_names[0]}
-        )
+        config = make_config_with_ref(timeseries_keys[0])
+        workflow_id = manager.register_from_template(template.name, config)
 
         manager.unregister(workflow_id)
 
@@ -336,7 +341,7 @@ class TestWorkflowRegistryManagerPersistence:
         assert instances_data == {}
 
     def test_restores_template_instances_on_init(
-        self, static_registry, template, logger
+        self, static_registry, template, timeseries_keys, logger
     ):
         config_store = InMemoryConfigStore()
 
@@ -347,10 +352,8 @@ class TestWorkflowRegistryManagerPersistence:
             templates=[template],
             logger=logger,
         )
-        source_names = list(template.get_source_name_to_key().keys())
-        workflow_id = manager1.register_from_template(
-            template.name, {'x_param': source_names[0]}
-        )
+        config = make_config_with_ref(timeseries_keys[0])
+        workflow_id = manager1.register_from_template(template.name, config)
 
         # Second manager should restore the workflow on init
         manager2 = WorkflowRegistryManager(

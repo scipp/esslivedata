@@ -661,7 +661,11 @@ class JobOrchestrator:
                 # not enum display names
                 config_model = template.get_raw_configuration_model()
                 config = config_model.model_validate(template_instance.config)
-                executor = template.create_job_executor(config)
+                # Pass self as workflow_subscriber for templates that need to
+                # subscribe to dependent workflows (e.g., correlation histograms)
+                executor = template.create_job_executor(
+                    config, workflow_subscriber=self
+                )
                 if executor is not None:
                     return executor
 

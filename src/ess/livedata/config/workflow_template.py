@@ -16,7 +16,9 @@ Example:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, NewType, Protocol, runtime_checkable
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -24,6 +26,58 @@ from .workflow_spec import JobId, JobNumber, WorkflowId, WorkflowSpec
 
 if TYPE_CHECKING:
     from ess.livedata.dashboard.job_orchestrator import JobConfig
+
+SubscriptionId = NewType('SubscriptionId', UUID)
+
+
+@runtime_checkable
+class WorkflowSubscriber(Protocol):
+    """
+    Protocol for subscribing to workflow job availability notifications.
+
+    This protocol allows components to be notified when a workflow's job
+    becomes available (after commit). This is used by frontend executors
+    like CorrelationHistogramExecutor to resolve stable TimeseriesReferences
+    to full ResultKeys when the timeseries workflow becomes available.
+    """
+
+    def subscribe_to_workflow(
+        self, workflow_id: WorkflowId, callback: Callable[[JobNumber], None]
+    ) -> tuple[SubscriptionId, bool]:
+        """
+        Subscribe to workflow job availability notifications.
+
+        The callback will be called with the job_number when:
+        1. A workflow is committed (immediately after commit)
+        2. Immediately if subscribing and workflow already has an active job
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to subscribe to.
+        callback
+            Called with job_number when a job becomes active.
+
+        Returns
+        -------
+        :
+            Tuple of (subscription_id, callback_invoked_immediately).
+            subscription_id can be used to unsubscribe.
+            callback_invoked_immediately is True if the workflow was already
+            running and the callback was invoked synchronously during this call.
+        """
+        ...
+
+    def unsubscribe(self, subscription_id: SubscriptionId) -> None:
+        """
+        Unsubscribe from workflow availability notifications.
+
+        Parameters
+        ----------
+        subscription_id
+            The subscription ID returned from subscribe_to_workflow.
+        """
+        ...
 
 
 class TemplateInstance(BaseModel):
@@ -198,7 +252,11 @@ class WorkflowTemplate(Protocol):
         """
         ...
 
-    def create_job_executor(self, config: BaseModel | dict) -> JobExecutor | None:
+    def create_job_executor(
+        self,
+        config: BaseModel | dict,
+        workflow_subscriber: WorkflowSubscriber | None = None,
+    ) -> JobExecutor | None:
         """
         Create an executor for this workflow type.
 
@@ -211,6 +269,10 @@ class WorkflowTemplate(Protocol):
         ----------
         config:
             Configuration as a Pydantic model or dict.
+        workflow_subscriber:
+            Optional subscriber for workflow availability notifications. Used by
+            executors that need to resolve runtime-dependent values (e.g., JobNumber)
+            when dependent workflows become available.
 
         Returns
         -------

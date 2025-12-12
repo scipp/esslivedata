@@ -11,6 +11,7 @@ from ess.livedata.dashboard.correlation_histogram import (
     CorrelationHistogramController,
     CorrelationHistogramProcessor,
     EdgesWithUnit,
+    ProcessorId,
 )
 from ess.livedata.dashboard.data_service import DataService
 
@@ -171,7 +172,8 @@ class TestCorrelationHistogramController:
             data_key: data_service[data_key],
             coord_key: data_service[coord_key],
         }
-        controller.add_correlation_processor(processor, items)
+        processor_id = ProcessorId(uuid.uuid4())
+        controller.add_correlation_processor(processor_id, processor, items)
 
         # Processor triggered immediately with existing data (1 point each)
         assert len(received_data) == 1, "Processor should be triggered on registration"
@@ -251,7 +253,8 @@ class TestCorrelationHistogramController:
             data_key: data_service[data_key],
             coord_key: data_service[coord_key],
         }
-        controller.add_correlation_processor(processor, items)
+        processor_id = ProcessorId(uuid.uuid4())
+        controller.add_correlation_processor(processor_id, processor, items)
 
         # Processor should have been triggered immediately with existing data
         assert len(received_data) == 1, "Processor should be triggered on registration"

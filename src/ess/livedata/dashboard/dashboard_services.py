@@ -12,7 +12,7 @@ import scipp as sc
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.grid_template import load_raw_grid_templates
 from ess.livedata.config.instruments import get_config
-from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.config.workflow_spec import ResultKey, WorkflowId
 
 from .command_service import CommandService
 from .config_store import ConfigStoreManager
@@ -20,6 +20,7 @@ from .correlation_histogram import (
     CorrelationHistogram1dTemplate,
     CorrelationHistogram2dTemplate,
     CorrelationHistogramController,
+    TimeseriesReference,
 )
 from .data_service import DataService
 from .job_controller import JobController
@@ -201,23 +202,43 @@ class DashboardServices:
         if self._instrument != 'bifrost':
             return
 
+        # Timeseries workflow ID for Bifrost logdata timeseries
+        timeseries_workflow_id = WorkflowId(
+            instrument='bifrost',
+            namespace='timeseries',
+            name='logdata',
+            version=1,
+        )
+
         # Register 1D correlation histograms for each Bifrost timeseries
-        # Config includes unit/start/stop so templates can be loaded without data
+        # Config includes TimeseriesReference plus unit/start/stop for bin edges
         bifrost_timeseries = [
             {
-                'x_param': 'sample_temperature',
+                'x_axis': TimeseriesReference(
+                    workflow_id=timeseries_workflow_id,
+                    source_name='sample_temperature',
+                    output_name='delta',
+                ).model_dump(mode='json'),
                 'x_unit': 'K',
                 'x_start': 0,
                 'x_stop': 500,
             },
             {
-                'x_param': 'detector_rotation',
+                'x_axis': TimeseriesReference(
+                    workflow_id=timeseries_workflow_id,
+                    source_name='detector_rotation',
+                    output_name='delta',
+                ).model_dump(mode='json'),
                 'x_unit': 'deg',
                 'x_start': 0,
                 'x_stop': 360,
             },
             {
-                'x_param': 'sample_rotation',
+                'x_axis': TimeseriesReference(
+                    workflow_id=timeseries_workflow_id,
+                    source_name='sample_rotation',
+                    output_name='delta',
+                ).model_dump(mode='json'),
                 'x_unit': 'deg',
                 'x_start': 0,
                 'x_stop': 360,
