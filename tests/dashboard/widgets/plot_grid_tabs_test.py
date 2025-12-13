@@ -141,14 +141,9 @@ def workflow_controller(job_orchestrator, workflow_registry, fake_data_service):
 @pytest.fixture
 def workflow_status_widget(job_orchestrator, fake_job_service):
     """Create a WorkflowStatusListWidget for testing."""
-
-    def on_configure(workflow_id, source_names):
-        pass  # No-op for testing
-
     return WorkflowStatusListWidget(
         orchestrator=job_orchestrator,
         job_service=fake_job_service,
-        on_configure=on_configure,
     )
 
 
@@ -279,18 +274,13 @@ class TestGridTabManagement:
         )
 
         # Create separate workflow status widgets for each instance
-        def on_configure(workflow_id, source_names):
-            pass
-
         workflow_status_widget1 = WorkflowStatusListWidget(
             orchestrator=job_orchestrator,
             job_service=fake_job_service,
-            on_configure=on_configure,
         )
         workflow_status_widget2 = WorkflowStatusListWidget(
             orchestrator=job_orchestrator,
             job_service=fake_job_service,
-            on_configure=on_configure,
         )
 
         widget1 = PlotGridTabs(

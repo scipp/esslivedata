@@ -13,7 +13,6 @@ Provides a collapsible card for each workflow showing:
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
@@ -22,6 +21,7 @@ import panel as pn
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 from ess.livedata.core.job import JobState
 
+from .configuration_widget import ConfigurationModal
 from .plot_widgets import ButtonStyles, create_tool_button
 
 if TYPE_CHECKING:
@@ -167,7 +167,6 @@ class WorkflowStatusWidget:
         workflow_spec: WorkflowSpec,
         orchestrator: JobOrchestrator,
         job_service: JobService,
-        on_configure: Callable[[WorkflowId, list[str]], None],
     ) -> None:
         """
         Initialize workflow status widget.
@@ -182,18 +181,18 @@ class WorkflowStatusWidget:
             Job orchestrator for config staging and commit.
         job_service
             Service providing job status updates.
-        on_configure
-            Callback when gear button is clicked.
-            Called with (workflow_id, source_names_to_configure).
         """
         self._workflow_id = workflow_id
         self._workflow_spec = workflow_spec
         self._orchestrator = orchestrator
         self._job_service = job_service
-        self._on_configure = on_configure
 
         self._expanded = True
         self._panel: pn.Column | None = None
+
+        # Modal container - zero height so it doesn't affect layout, but provides
+        # a place in the component tree for the modal to attach to.
+        self._modal_container = pn.Row(height=0, sizing_mode='stretch_width')
 
         # References to updatable elements (avoid full rebuild on status/expand update)
         self._status_badge: pn.pane.HTML | None = None
@@ -264,6 +263,7 @@ class WorkflowStatusWidget:
             self._panel = pn.Column(
                 self._header,
                 self._body,
+                self._modal_container,
                 styles={
                     'border': '1px solid #dee2e6',
                     'border-radius': '6px',
@@ -275,7 +275,7 @@ class WorkflowStatusWidget:
             )
         else:
             self._panel.clear()
-            self._panel.extend([self._header, self._body])
+            self._panel.extend([self._header, self._body, self._modal_container])
 
     def _create_header(self) -> pn.Row:
         """Create the header row with expand button, title, status, and buttons."""
@@ -792,8 +792,33 @@ class WorkflowStatusWidget:
         self._update_header_border()
 
     def _on_gear_click(self, source_names: list[str]) -> None:
-        """Handle gear button click."""
-        self._on_configure(self._workflow_id, source_names)
+        """Handle gear button click - show configuration modal."""
+        try:
+            adapter = self._orchestrator.create_workflow_adapter(self._workflow_id)
+            if hasattr(adapter, 'set_selected_sources'):
+                adapter.set_selected_sources(source_names)
+
+            modal = ConfigurationModal(
+                config=adapter,
+                start_button_text="Apply",
+                success_callback=self._cleanup_modal,
+            )
+
+            # Add modal to container so it renders, then show
+            self._modal_container.clear()
+            self._modal_container.append(modal.modal)
+            modal.show()
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "Failed to create workflow configuration modal"
+            )
+            pn.state.notifications.error("Failed to open configuration")
+
+    def _cleanup_modal(self) -> None:
+        """Clean up modal after completion."""
+        self._modal_container.clear()
 
     def _on_remove_click(self, source_names: list[str]) -> None:
         """Handle remove button click - remove sources from staged config."""
@@ -870,7 +895,6 @@ class WorkflowStatusListWidget:
         *,
         orchestrator: JobOrchestrator,
         job_service: JobService,
-        on_configure: Callable[[WorkflowId, list[str]], None],
     ) -> None:
         """
         Initialize workflow status list widget.
@@ -882,13 +906,9 @@ class WorkflowStatusListWidget:
             Provides the workflow registry.
         job_service
             Service providing job status updates.
-        on_configure
-            Callback when gear button is clicked on any workflow.
-            Called with (workflow_id, source_names_to_configure).
         """
         self._orchestrator = orchestrator
         self._job_service = job_service
-        self._on_configure = on_configure
 
         self._widgets: dict[WorkflowId, WorkflowStatusWidget] = {}
         self._panel = self._create_panel()
@@ -971,7 +991,6 @@ class WorkflowStatusListWidget:
                 workflow_spec=spec,
                 orchestrator=self._orchestrator,
                 job_service=self._job_service,
-                on_configure=self._on_configure,
             )
             self._widgets[workflow_id] = widget
             workflow_widgets.append(widget.panel())
