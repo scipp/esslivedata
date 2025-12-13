@@ -13,6 +13,7 @@ from .widgets.job_status_widget import JobStatusListWidget
 from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
 from .widgets.reduction_widget import ReductionWidget
+from .widgets.workflow_status_widget import WorkflowStatusListWidget
 
 pn.extension('holoviews', 'modal', notifications=True, template='material')
 hv.extension('bokeh')
@@ -78,13 +79,16 @@ class ReductionApp(DashboardBase):
 
     def create_main_content(self) -> pn.viewable.Viewable:
         """Create the main content area with plot grid tabs."""
-        # Create job status widget
         job_status_widget = JobStatusListWidget(
             job_service=self._services.job_service,
             job_controller=self._services.job_controller,
         )
 
-        # Create UI widget connected to shared orchestrator
+        workflow_status_widget = WorkflowStatusListWidget(
+            orchestrator=self._services.job_orchestrator,
+            job_service=self._services.job_service,
+        )
+
         plot_grid_tabs = PlotGridTabs(
             plot_orchestrator=self._services.plot_orchestrator,
             # Temporary hack, will likely get this from JobOrchestrator, or make
@@ -92,6 +96,7 @@ class ReductionApp(DashboardBase):
             workflow_registry=self._services.workflow_controller._workflow_registry,
             plotting_controller=self._services.plotting_controller,
             job_status_widget=job_status_widget,
+            workflow_status_widget=workflow_status_widget,
         )
 
         return plot_grid_tabs.panel

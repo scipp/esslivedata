@@ -129,21 +129,20 @@ class WorkflowController:
         if not source_names:
             return []
 
-        # Clear existing staged configs and stage new ones
-        # This ensures only the requested sources are included in the workflow
-        self._orchestrator.clear_staged_configs(workflow_id)
-
         # Convert Pydantic models to dicts for orchestrator
         params_dict = config.model_dump(mode='json')
         aux_dict = aux_source_names.model_dump(mode='json') if aux_source_names else {}
 
-        for source_name in source_names:
-            self._orchestrator.stage_config(
-                workflow_id,
-                source_name=source_name,
-                params=params_dict,
-                aux_source_names=aux_dict,
-            )
+        # Replace all staged configs in a transaction (single notification)
+        with self._orchestrator.staging_transaction(workflow_id):
+            self._orchestrator.clear_staged_configs(workflow_id)
+            for source_name in source_names:
+                self._orchestrator.stage_config(
+                    workflow_id,
+                    source_name=source_name,
+                    params=params_dict,
+                    aux_source_names=aux_dict,
+                )
 
         # Commit and start workflow
         return self._orchestrator.commit_workflow(workflow_id)
