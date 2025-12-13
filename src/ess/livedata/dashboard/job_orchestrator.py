@@ -255,26 +255,6 @@ class JobOrchestrator:
         ------
         ValueError
             If attempting to nest transactions for different workflows.
-
-        Examples
-        --------
-        Replace all staged configs in one operation:
-
-            with orchestrator.staging_transaction(workflow_id):
-                orchestrator.clear_staged_configs(workflow_id)
-                for source in sources:
-                    orchestrator.stage_config(workflow_id, source, ...)
-            # Single notification sent here
-
-        Remove specific sources:
-
-            with orchestrator.staging_transaction(workflow_id):
-                staged = orchestrator.get_staged_config(workflow_id)
-                orchestrator.clear_staged_configs(workflow_id)
-                for source, config in staged.items():
-                    if source not in to_remove:
-                        orchestrator.stage_config(workflow_id, source, ...)
-            # Single notification sent here
         """
         # Enter transaction
         if self._transaction_workflow is None:
@@ -287,29 +267,14 @@ class JobOrchestrator:
             raise ValueError(msg)
 
         self._transaction_depth += 1
-        self._logger.debug(
-            'Entering staging transaction for workflow %s (depth=%d)',
-            workflow_id,
-            self._transaction_depth,
-        )
 
         try:
             yield
         finally:
             # Exit transaction
             self._transaction_depth -= 1
-            self._logger.debug(
-                'Exiting staging transaction for workflow %s (depth=%d)',
-                workflow_id,
-                self._transaction_depth,
-            )
-
             if self._transaction_depth == 0:
                 # Outermost transaction exiting - send notification
-                self._logger.debug(
-                    'Transaction complete for workflow %s, notifying subscribers',
-                    workflow_id,
-                )
                 self._transaction_workflow = None
                 self._notify_staged_changed(workflow_id)
 
@@ -741,8 +706,6 @@ class JobOrchestrator:
                 subscription_id,
             )
 
-    # Widget lifecycle subscription API (for cross-session widget synchronization)
-
     def subscribe_to_widget_lifecycle(
         self, callbacks: WidgetLifecycleCallbacks
     ) -> WidgetLifecycleSubscriptionId:
@@ -797,14 +760,7 @@ class JobOrchestrator:
         Notifications are deferred if currently in a staging transaction.
         The transaction context manager will call this on exit.
         """
-        # Skip notification if we're in a transaction - it will be sent on exit
         if self._transaction_workflow is not None:
-            self._logger.debug(
-                'Deferring staged_changed notification for workflow %s '
-                '(in transaction, depth=%d)',
-                workflow_id,
-                self._transaction_depth,
-            )
             return
 
         for subscription_id, callbacks in self._widget_subscriptions.items():
