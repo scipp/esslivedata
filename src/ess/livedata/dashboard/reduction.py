@@ -99,10 +99,7 @@ class ReductionApp(DashboardBase):
             workflow_status_widget=workflow_status_widget,
         )
 
-        return pn.Column(
-            plot_grid_tabs.panel,
-            sizing_mode='stretch_both',
-        )
+        return plot_grid_tabs.panel
 
 
 def get_arg_parser() -> argparse.ArgumentParser:
