@@ -10,8 +10,14 @@ from pydantic import BaseModel, Field
 Model = TypeVar('Model')
 
 
-class JobConfigState(BaseModel):
-    """Per-source configuration state."""
+class ConfigurationState(BaseModel):
+    """
+    Persisted state for a single source's configuration.
+
+    This model captures a source's configuration choices (params, aux sources)
+    that should be restored when reopening the dashboard. Used as reference
+    configuration when creating adapters for configuration widgets.
+    """
 
     params: dict[str, Any] = Field(
         default_factory=dict,
@@ -25,65 +31,32 @@ class JobConfigState(BaseModel):
     )
 
 
-class ConfigurationState(BaseModel):
-    """
-    Persisted state for ConfigurationAdapter implementations.
-
-    This model captures the user's configuration choices (sources, params,
-    aux sources) that should be restored when reopening the dashboard.
-    Used by both workflow and plotter configurations.
-
-    Each source has its own configuration (params and aux_source_names),
-    allowing different sources to be configured independently.
-    """
-
-    jobs: dict[str, JobConfigState] = Field(
-        default_factory=dict,
-        description="Per-source configuration, keyed by source name",
-    )
-
-    @property
-    def source_names(self) -> list[str]:
-        """Get source names from jobs dict keys."""
-        return list(self.jobs.keys())
-
-
 class ConfigurationAdapter(ABC, Generic[Model]):
     """
     Abstract adapter for providing configuration data to generic widgets.
 
-    Subclasses should call `super().__init__(config_state=...)` to provide
-    persistent configuration that will be used by the default implementations
-    of `initial_source_names`, `initial_aux_source_names`, and
-    `initial_parameter_values`.
+    Subclasses should call `super().__init__(...)` to provide persistent
+    configuration state and initial source selection.
     """
 
-    def __init__(self, config_state: ConfigurationState | None = None) -> None:
+    def __init__(
+        self,
+        config_state: ConfigurationState | None = None,
+        initial_source_names: list[str] | None = None,
+    ) -> None:
         """
         Initialize the configuration adapter.
 
         Parameters
         ----------
         config_state
-            Persistent configuration state to restore, or None for default values.
+            Reference configuration state (from a single source) to use for
+            initial parameter values and aux source names. None for defaults.
+        initial_source_names
+            Source names to pre-select in the UI. None to select all available.
         """
         self._config_state = config_state
-        self._selected_sources: list[str] | None = None
-
-    def set_selected_sources(self, source_names: list[str]) -> None:
-        """
-        Scope the adapter to a subset of sources.
-
-        When set, `initial_source_names` will return only these sources (filtered
-        to available sources), and `initial_parameter_values`/`initial_aux_source_names`
-        will be taken from the first of these sources.
-
-        Parameters
-        ----------
-        source_names
-            Source names to scope to.
-        """
-        self._selected_sources = source_names
+        self._initial_source_names = initial_source_names
 
     @property
     @abstractmethod
@@ -106,42 +79,25 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         """
         return None
 
-    def _get_reference_job_config(self) -> JobConfigState | None:
-        """Get the job config to use as reference for params/aux_sources.
-
-        Returns the config for the first selected source (if scoped) or
-        the first source in the config state.
-        """
-        if not self._config_state or not self._config_state.jobs:
-            return None
-
-        # If scoped to specific sources, use first scoped source that exists
-        if self._selected_sources:
-            for source in self._selected_sources:
-                if source in self._config_state.jobs:
-                    return self._config_state.jobs[source]
-
-        # Otherwise use first available source
-        return next(iter(self._config_state.jobs.values()))
-
     @property
     def initial_aux_source_names(self) -> dict[str, str]:
         """
         Initially selected auxiliary source names.
 
         Returns a mapping from field name (as defined in aux_sources model) to
-        the selected stream name. Default implementation filters persisted aux
-        sources to only include valid field names from the current aux_sources model.
+        the selected stream name. Filters persisted aux sources to only include
+        valid field names from the current aux_sources model.
         """
         if not self.aux_sources:
             return {}
-        job_config = self._get_reference_job_config()
-        if not job_config:
+        if self._config_state is None:
             return {}
         # Filter to only include valid field names
         valid_fields = set(self.aux_sources.model_fields.keys())
         return {
-            k: v for k, v in job_config.aux_source_names.items() if k in valid_fields
+            k: v
+            for k, v in self._config_state.aux_source_names.items()
+            if k in valid_fields
         }
 
     def set_aux_sources(self, aux_source_names: BaseModel | None) -> type[Model] | None:
@@ -185,51 +141,38 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         """
         Initially selected source names.
 
-        If scoped via set_selected_sources, returns only those sources (filtered
-        to available sources). Otherwise, returns persisted source names filtered
-        to available sources. Falls back to all available sources if no valid
-        persisted sources remain.
+        Returns the pre-configured source names (filtered to available sources),
+        or all available sources if none were specified.
         """
-        available = set(self.source_names)
-
-        # If scoped to specific sources, return those (filtered to available)
-        if self._selected_sources:
-            filtered = [s for s in self._selected_sources if s in available]
+        if self._initial_source_names is not None:
+            available = set(self.source_names)
+            filtered = [s for s in self._initial_source_names if s in available]
             return filtered if filtered else self.source_names
-
-        # Otherwise use persisted sources from config state
-        if not self._config_state:
-            return self.source_names
-        filtered = [
-            name for name in self._config_state.source_names if name in available
-        ]
-        return filtered if filtered else self.source_names
+        return self.source_names
 
     @property
     def initial_parameter_values(self) -> dict[str, Any]:
         """
         Initial parameter values.
 
-        Returns persisted parameter values from the reference job config (first
-        selected source if scoped, otherwise first source in config state).
+        Returns persisted parameter values from the reference configuration.
 
         If stored params have no field overlap with the current model (indicating
         complete incompatibility, e.g., from a different workflow version), returns
         empty dict to fall back to defaults rather than propagating invalid data.
         """
-        job_config = self._get_reference_job_config()
-        if not job_config:
+        if self._config_state is None:
             return {}
 
         # Check compatibility with current model
         model_class = self.model_class()
         if model_class is None:
             # No model defined, return params as-is
-            return job_config.params
+            return self._config_state.params
 
         # Check if stored params have ANY overlap with current model fields
         # If no field names match, the config is from an incompatible version
-        stored_keys = set(job_config.params.keys())
+        stored_keys = set(self._config_state.params.keys())
         model_fields = set(model_class.model_fields.keys())
 
         if stored_keys and not stored_keys.intersection(model_fields):
@@ -238,7 +181,7 @@ class ConfigurationAdapter(ABC, Generic[Model]):
 
         # Partial or full compatibility: let Pydantic handle defaults/validation
         # Note: Pydantic ignores extra fields and uses defaults for missing ones
-        return job_config.params
+        return self._config_state.params
 
     @abstractmethod
     def start_action(

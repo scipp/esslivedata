@@ -18,7 +18,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
 )
 
-from .configuration_adapter import ConfigurationState, JobConfigState
+from .configuration_adapter import ConfigurationState
 from .correlation_histogram import CorrelationHistogramController, make_workflow_spec
 from .data_service import DataService
 from .job_orchestrator import JobOrchestrator
@@ -168,6 +168,12 @@ class WorkflowController:
         # Handle regular workflows
         persistent_config = self.get_workflow_config(workflow_id)
 
+        # Determine initial source names from staged config if available
+        initial_source_names = None
+        staged_jobs = self._orchestrator.get_staged_config(workflow_id)
+        if staged_jobs:
+            initial_source_names = list(staged_jobs.keys())
+
         def start_callback(
             selected_sources: list[str],
             parameter_values: pydantic.BaseModel,
@@ -178,7 +184,9 @@ class WorkflowController:
                 workflow_id, selected_sources, parameter_values, aux_source_names
             )
 
-        return WorkflowConfigurationAdapter(spec, persistent_config, start_callback)
+        return WorkflowConfigurationAdapter(
+            spec, persistent_config, start_callback, initial_source_names
+        )
 
     def get_workflow_titles(self) -> dict[WorkflowId, str]:
         """Get workflow IDs mapped to their titles, sorted by title."""
@@ -199,7 +207,11 @@ class WorkflowController:
         return self._workflow_registry.get(workflow_id)
 
     def get_workflow_config(self, workflow_id: WorkflowId) -> ConfigurationState | None:
-        """Load saved workflow configuration."""
+        """Load saved workflow configuration.
+
+        Returns the reference configuration (from first staged source) for the
+        given workflow. This is primarily used for adapter initialization.
+        """
         try:
             staged_jobs = self._orchestrator.get_staged_config(workflow_id)
         except KeyError:
@@ -209,12 +221,9 @@ class WorkflowController:
         if not staged_jobs:
             return None
 
+        # Return config from first staged source as reference
+        first_job = next(iter(staged_jobs.values()))
         return ConfigurationState(
-            jobs={
-                source_name: JobConfigState(
-                    params=job_config.params,
-                    aux_source_names=job_config.aux_source_names,
-                )
-                for source_name, job_config in staged_jobs.items()
-            }
+            params=first_job.params,
+            aux_source_names=first_job.aux_source_names,
         )

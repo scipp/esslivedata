@@ -13,7 +13,6 @@ from ess.livedata.config.workflow_spec import (
 )
 from ess.livedata.core.message import COMMANDS_STREAM_ID
 from ess.livedata.dashboard.command_service import CommandService
-from ess.livedata.dashboard.configuration_adapter import ConfigurationState
 from ess.livedata.dashboard.workflow_controller import WorkflowController
 from ess.livedata.fakes import FakeMessageSink
 from ess.livedata.handlers.config_handler import ConfigUpdate
@@ -198,11 +197,10 @@ class TestWorkflowController:
         # Assert - check ConfigStore instead of service
         persistent_config_data = workflow_controller.config_store.get(str(workflow_id))
         assert persistent_config_data is not None
-        persistent_config = ConfigurationState.model_validate(persistent_config_data)
-        assert persistent_config.source_names == source_names
+        assert set(persistent_config_data['jobs'].keys()) == set(source_names)
         # With per-source config, each source has its own params
         for source in source_names:
-            assert persistent_config.jobs[source].params == {
+            assert persistent_config_data['jobs'][source]['params'] == {
                 "threshold": 200.0,
                 "mode": "fast",
             }
@@ -306,17 +304,18 @@ class TestWorkflowController:
         # Assert - check ConfigStore instead of service
         config_1_data = config_store.get(str(workflow_id_1))
         assert config_1_data is not None
-        config_1 = ConfigurationState.model_validate(config_1_data)
-        assert config_1.source_names == sources_1
+        assert set(config_1_data['jobs'].keys()) == set(sources_1)
         for source in sources_1:
-            assert config_1.jobs[source].params == {"threshold": 100.0, "mode": "fast"}
+            assert config_1_data['jobs'][source]['params'] == {
+                "threshold": 100.0,
+                "mode": "fast",
+            }
 
         config_2_data = config_store.get(str(workflow_id_2))
         assert config_2_data is not None
-        config_2 = ConfigurationState.model_validate(config_2_data)
-        assert config_2.source_names == sources_2
+        assert set(config_2_data['jobs'].keys()) == set(sources_2)
         for source in sources_2:
-            assert config_2.jobs[source].params == {
+            assert config_2_data['jobs'][source]['params'] == {
                 "threshold": 200.0,
                 "mode": "accurate",
             }
@@ -344,12 +343,11 @@ class TestWorkflowController:
         # Assert - check ConfigStore instead of service
         workflow_config_data = workflow_controller.config_store.get(str(workflow_id))
         assert workflow_config_data is not None
-        workflow_config = ConfigurationState.model_validate(workflow_config_data)
 
         # Should have the updated values
-        assert workflow_config.source_names == updated_sources
+        assert set(workflow_config_data['jobs'].keys()) == set(updated_sources)
         for source in updated_sources:
-            assert workflow_config.jobs[source].params == {
+            assert workflow_config_data['jobs'][source]['params'] == {
                 "threshold": 300.0,
                 "mode": "accurate",
             }
@@ -394,17 +392,15 @@ class TestWorkflowController:
         # Start workflow to create persistent config
         workflow_controller.controller.start_workflow(workflow_id, source_names, config)
 
-        # Act
+        # Act - get_workflow_config returns reference config (single source)
         result = workflow_controller.controller.get_workflow_config(workflow_id)
 
-        # Assert
+        # Assert - returns reference config from first staged source
         assert result is not None
-        assert result.source_names == source_names
-        for source in source_names:
-            assert result.jobs[source].params == {
-                "threshold": 150.0,
-                "mode": "accurate",
-            }
+        assert result.params == {
+            "threshold": 150.0,
+            "mode": "accurate",
+        }
 
     def test_get_workflow_config_returns_none_for_nonexistent(
         self,

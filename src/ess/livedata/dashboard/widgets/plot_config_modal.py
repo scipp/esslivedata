@@ -673,26 +673,28 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             self._show_error(f'Error getting plot spec: {e}')
             return
 
-        # Create config_state from initial_config if in edit mode
+        # Create config_state and initial_source_names from initial_config
+        # if in edit mode
         config_state = None
+        initial_source_names = None
         if self._initial_config is not None:
-            # Import ConfigurationState here to avoid circular imports
             from ess.livedata.dashboard.configuration_adapter import ConfigurationState
 
             config_state = ConfigurationState(
-                source_names=self._initial_config.source_names,
                 params=(
                     self._initial_config.params.model_dump(mode='json')
                     if isinstance(self._initial_config.params, pydantic.BaseModel)
                     else self._initial_config.params
                 ),
             )
+            initial_source_names = self._initial_config.source_names
 
         config_adapter = PlotConfigurationAdapter(
             plot_spec=plot_spec,
             source_names=workflow_spec.source_names,
             success_callback=self._on_config_collected,
             config_state=config_state,
+            initial_source_names=initial_source_names,
         )
 
         self._config_panel = ConfigurationPanel(config=config_adapter)

@@ -35,7 +35,7 @@ from ess.livedata.core.job_manager import JobAction, JobCommand
 
 from .command_service import CommandService
 from .config_store import ConfigStore
-from .configuration_adapter import ConfigurationState, JobConfigState
+from .configuration_adapter import ConfigurationState
 from .workflow_config_service import WorkflowConfigService
 from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
@@ -537,7 +537,9 @@ class JobOrchestrator:
         return self._workflow_registry
 
     def create_workflow_adapter(
-        self, workflow_id: WorkflowId
+        self,
+        workflow_id: WorkflowId,
+        selected_sources: list[str] | None = None,
     ) -> WorkflowConfigurationAdapter:
         """
         Create a workflow configuration adapter for the given workflow ID.
@@ -549,6 +551,10 @@ class JobOrchestrator:
         ----------
         workflow_id
             The workflow to create an adapter for.
+        selected_sources
+            Optional list of source names to scope the adapter to. If provided,
+            the adapter will use the first selected source's config as reference
+            and pre-select these sources in the UI.
 
         Returns
         -------
@@ -562,8 +568,15 @@ class JobOrchestrator:
         """
         spec = self._workflow_registry[workflow_id]
 
-        # Convert staged config to ConfigurationState for the adapter
-        config_state = self._get_config_state(workflow_id)
+        # Get reference config from first selected source (or first staged)
+        config_state = self._get_reference_config(workflow_id, selected_sources)
+
+        # Determine initial source names: explicit selection > staged sources > all
+        initial_source_names = selected_sources
+        if initial_source_names is None:
+            staged_jobs = self.get_staged_config(workflow_id)
+            if staged_jobs:
+                initial_source_names = list(staged_jobs.keys())
 
         def start_callback(
             selected_sources: list[str],
@@ -591,22 +604,52 @@ class JobOrchestrator:
 
             self.commit_workflow(workflow_id)
 
-        return WorkflowConfigurationAdapter(spec, config_state, start_callback)
+        return WorkflowConfigurationAdapter(
+            spec,
+            config_state,
+            start_callback,
+            initial_source_names=initial_source_names,
+        )
 
-    def _get_config_state(self, workflow_id: WorkflowId) -> ConfigurationState | None:
-        """Convert staged jobs to ConfigurationState for adapter initialization."""
+    def _get_reference_config(
+        self,
+        workflow_id: WorkflowId,
+        selected_sources: list[str] | None = None,
+    ) -> ConfigurationState | None:
+        """Get reference config for adapter initialization.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to get config for.
+        selected_sources
+            Optional list of source names. If provided, returns config from
+            the first selected source that has a staged config.
+
+        Returns
+        -------
+        :
+            ConfigurationState from the reference source, or None if no staged configs.
+        """
         staged_jobs = self.get_staged_config(workflow_id)
         if not staged_jobs:
             return None
 
+        # Pick reference: first selected source with config, or first staged
+        if selected_sources:
+            for source in selected_sources:
+                if source in staged_jobs:
+                    job = staged_jobs[source]
+                    return ConfigurationState(
+                        params=job.params,
+                        aux_source_names=job.aux_source_names,
+                    )
+
+        # Fallback to first staged
+        first_job = next(iter(staged_jobs.values()))
         return ConfigurationState(
-            jobs={
-                source_name: JobConfigState(
-                    params=job_config.params,
-                    aux_source_names=job_config.aux_source_names,
-                )
-                for source_name, job_config in staged_jobs.items()
-            }
+            params=first_job.params,
+            aux_source_names=first_job.aux_source_names,
         )
 
     def get_previous_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:

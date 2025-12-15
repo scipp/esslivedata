@@ -21,10 +21,6 @@ from ess.livedata.core.job_manager import JobAction, JobCommand
 from ess.livedata.core.message import COMMANDS_STREAM_ID
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.config_store import FileBackedConfigStore
-from ess.livedata.dashboard.configuration_adapter import (
-    ConfigurationState,
-    JobConfigState,
-)
 from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
 from ess.livedata.fakes import FakeMessageSink
 from ess.livedata.handlers.config_handler import ConfigUpdate
@@ -307,16 +303,16 @@ class TestJobOrchestratorInitialization:
         workflow_id = workflow_with_params.get_id()
         registry = {workflow_id: workflow_with_params}
 
-        # Setup config store with persisted config
+        # Setup config store with persisted config (raw dict format)
         config_store = {
-            str(workflow_id): ConfigurationState(
-                jobs={
-                    "det_1": JobConfigState(
-                        params={"threshold": 50.0, "mode": "custom"},
-                        aux_source_names={},
-                    )
+            str(workflow_id): {
+                "jobs": {
+                    "det_1": {
+                        "params": {"threshold": 50.0, "mode": "custom"},
+                        "aux_source_names": {},
+                    }
                 }
-            ).model_dump()
+            }
         }
 
         orchestrator = JobOrchestrator(
@@ -379,14 +375,14 @@ class TestJobOrchestratorInitialization:
         registry = {workflow_id: workflow_with_params_and_aux}
 
         config_store = {
-            str(workflow_id): ConfigurationState(
-                jobs={
-                    "det_1": JobConfigState(
-                        params={"threshold": 75.0, "mode": "special"},
-                        aux_source_names={"monitor": "monitor_2"},
-                    )
+            str(workflow_id): {
+                "jobs": {
+                    "det_1": {
+                        "params": {"threshold": 75.0, "mode": "special"},
+                        "aux_source_names": {"monitor": "monitor_2"},
+                    }
                 }
-            ).model_dump()
+            }
         }
 
         orchestrator = JobOrchestrator(
@@ -683,18 +679,18 @@ class TestJobOrchestratorMutationSafety:
 
         # Config store with multiple sources (each with their own params)
         config_store = {
-            str(workflow_id): ConfigurationState(
-                jobs={
-                    "det_1": JobConfigState(
-                        params={"threshold": 50.0, "mode": "custom"},
-                        aux_source_names={"monitor": "monitor_1"},
-                    ),
-                    "det_2": JobConfigState(
-                        params={"threshold": 50.0, "mode": "custom"},
-                        aux_source_names={"monitor": "monitor_1"},
-                    ),
+            str(workflow_id): {
+                "jobs": {
+                    "det_1": {
+                        "params": {"threshold": 50.0, "mode": "custom"},
+                        "aux_source_names": {"monitor": "monitor_1"},
+                    },
+                    "det_2": {
+                        "params": {"threshold": 50.0, "mode": "custom"},
+                        "aux_source_names": {"monitor": "monitor_1"},
+                    },
                 }
-            ).model_dump()
+            }
         }
 
         orchestrator = JobOrchestrator(
@@ -1867,8 +1863,9 @@ class TestWorkflowAdapterIndependentSourceConfiguration:
         )
 
         # Create adapter scoped to det_2 and configure it
-        adapter = orchestrator.create_workflow_adapter(workflow_id)
-        adapter.set_selected_sources(["det_2"])
+        adapter = orchestrator.create_workflow_adapter(
+            workflow_id, selected_sources=["det_2"]
+        )
 
         # Simulate user clicking "Apply" with different params for det_2
         adapter.start_action(
@@ -1912,8 +1909,9 @@ class TestWorkflowAdapterIndependentSourceConfiguration:
         )
 
         # Create adapter scoped to det_1 and update it
-        adapter = orchestrator.create_workflow_adapter(workflow_id)
-        adapter.set_selected_sources(["det_1"])
+        adapter = orchestrator.create_workflow_adapter(
+            workflow_id, selected_sources=["det_1"]
+        )
 
         adapter.start_action(
             selected_sources=["det_1"],

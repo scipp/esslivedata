@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Unit tests for ConfigurationAdapter and per-source configuration."""
+"""Unit tests for ConfigurationAdapter."""
 
 import pydantic
 
 from ess.livedata.dashboard.configuration_adapter import (
     ConfigurationAdapter,
     ConfigurationState,
-    JobConfigState,
 )
 
 
@@ -25,8 +24,11 @@ class ConcreteAdapter(ConfigurationAdapter[SimpleParams]):
         self,
         available_sources: list[str],
         config_state: ConfigurationState | None = None,
+        initial_source_names: list[str] | None = None,
     ) -> None:
-        super().__init__(config_state=config_state)
+        super().__init__(
+            config_state=config_state, initial_source_names=initial_source_names
+        )
         self._available_sources = available_sources
 
     @property
@@ -57,133 +59,109 @@ class TestConfigurationStateSchema:
 
     def test_empty_state(self) -> None:
         state = ConfigurationState()
-        assert state.jobs == {}
-        assert state.source_names == []
+        assert state.params == {}
+        assert state.aux_source_names == {}
 
-    def test_state_with_jobs(self) -> None:
+    def test_state_with_params(self) -> None:
         state = ConfigurationState(
-            jobs={
-                'source1': JobConfigState(
-                    params={'value': 1},
-                    aux_source_names={'aux': 'stream1'},
-                ),
-                'source2': JobConfigState(
-                    params={'value': 2},
-                    aux_source_names={'aux': 'stream2'},
-                ),
-            }
+            params={'value': 42, 'name': 'test'},
+            aux_source_names={'monitor': 'mon1'},
         )
-        assert state.source_names == ['source1', 'source2']
-        assert state.jobs['source1'].params == {'value': 1}
-        assert state.jobs['source2'].params == {'value': 2}
+        assert state.params == {'value': 42, 'name': 'test'}
+        assert state.aux_source_names == {'monitor': 'mon1'}
 
     def test_state_serialization_roundtrip(self) -> None:
         state = ConfigurationState(
-            jobs={
-                'source1': JobConfigState(
-                    params={'value': 42, 'name': 'test'},
-                    aux_source_names={'monitor': 'mon1'},
-                ),
-            }
+            params={'value': 42, 'name': 'test'},
+            aux_source_names={'monitor': 'mon1'},
         )
         dumped = state.model_dump()
         restored = ConfigurationState.model_validate(dumped)
         assert restored == state
 
 
-class TestSetSelectedSources:
-    """Tests for the set_selected_sources functionality."""
+class TestInitialSourceNames:
+    """Tests for initial_source_names behavior."""
 
-    def test_initial_source_names_without_scoping(self) -> None:
-        """Without scoping, returns all persisted sources."""
-        state = ConfigurationState(
-            jobs={
-                'source1': JobConfigState(params={'value': 1}),
-                'source2': JobConfigState(params={'value': 2}),
-                'source3': JobConfigState(params={'value': 3}),
-            }
-        )
+    def test_no_initial_source_names_returns_all_available(self) -> None:
+        """Without initial_source_names, returns all available sources."""
         adapter = ConcreteAdapter(
             available_sources=['source1', 'source2', 'source3'],
-            config_state=state,
         )
         assert adapter.initial_source_names == ['source1', 'source2', 'source3']
 
-    def test_initial_source_names_with_scoping(self) -> None:
-        """When scoped, returns only the scoped sources."""
-        state = ConfigurationState(
-            jobs={
-                'source1': JobConfigState(params={'value': 1}),
-                'source2': JobConfigState(params={'value': 2}),
-                'source3': JobConfigState(params={'value': 3}),
-            }
-        )
+    def test_initial_source_names_respected(self) -> None:
+        """Initial source names are returned as-is when all are available."""
         adapter = ConcreteAdapter(
             available_sources=['source1', 'source2', 'source3'],
-            config_state=state,
+            initial_source_names=['source2', 'source3'],
         )
-        adapter.set_selected_sources(['source2', 'source3'])
         assert adapter.initial_source_names == ['source2', 'source3']
 
-    def test_scoped_sources_filtered_to_available(self) -> None:
-        """Scoped sources are filtered to available sources."""
-        state = ConfigurationState(
-            jobs={
-                'source1': JobConfigState(params={'value': 1}),
-            }
-        )
+    def test_initial_source_names_filtered_to_available(self) -> None:
+        """Initial source names are filtered to available sources."""
         adapter = ConcreteAdapter(
             available_sources=['source1', 'source2'],
-            config_state=state,
+            initial_source_names=['source1', 'nonexistent'],
         )
-        # Scope to source that exists and one that doesn't
-        adapter.set_selected_sources(['source1', 'nonexistent'])
         assert adapter.initial_source_names == ['source1']
 
-    def test_parameter_values_from_scoped_source(self) -> None:
-        """Parameters come from the first scoped source's config."""
-        state = ConfigurationState(
-            jobs={
-                'source1': JobConfigState(params={'value': 1, 'name': 'first'}),
-                'source2': JobConfigState(params={'value': 2, 'name': 'second'}),
-                'source3': JobConfigState(params={'value': 3, 'name': 'third'}),
-            }
-        )
+    def test_initial_source_names_fallback_when_all_unavailable(self) -> None:
+        """Falls back to all available when initial sources don't exist."""
         adapter = ConcreteAdapter(
-            available_sources=['source1', 'source2', 'source3'],
+            available_sources=['source1', 'source2'],
+            initial_source_names=['nonexistent1', 'nonexistent2'],
+        )
+        assert adapter.initial_source_names == ['source1', 'source2']
+
+
+class TestInitialParameterValues:
+    """Tests for initial_parameter_values behavior."""
+
+    def test_no_config_state_returns_empty_dict(self) -> None:
+        """Without config_state, returns empty dict for defaults."""
+        adapter = ConcreteAdapter(available_sources=['source1'])
+        assert adapter.initial_parameter_values == {}
+
+    def test_params_from_config_state(self) -> None:
+        """Parameters come from config_state."""
+        state = ConfigurationState(params={'value': 42, 'name': 'test'})
+        adapter = ConcreteAdapter(
+            available_sources=['source1'],
             config_state=state,
         )
+        assert adapter.initial_parameter_values == {'value': 42, 'name': 'test'}
 
-        # Without scoping, get params from first source in config
-        assert adapter.initial_parameter_values == {'value': 1, 'name': 'first'}
-
-        # Scope to source2 and source3
-        adapter.set_selected_sources(['source2', 'source3'])
-
-        # Params should now come from source2 (first scoped source)
-        assert adapter.initial_parameter_values == {'value': 2, 'name': 'second'}
-
-    def test_parameter_values_fallback_when_scoped_source_not_in_state(self) -> None:
-        """When scoped sources aren't in state, falls back to first available."""
+    def test_incompatible_params_fall_back_to_defaults(self) -> None:
+        """Params with no field overlap trigger fallback to defaults."""
         state = ConfigurationState(
-            jobs={
-                'source1': JobConfigState(params={'value': 1, 'name': 'first'}),
-            }
+            params={'completely_unknown_field': 'value'},
         )
         adapter = ConcreteAdapter(
-            available_sources=['source1', 'source2', 'source3'],
+            available_sources=['source1'],
             config_state=state,
         )
+        # Should return empty dict, triggering Pydantic defaults
+        assert adapter.initial_parameter_values == {}
 
-        # Scope to source that has no config
-        adapter.set_selected_sources(['source2'])
+    def test_partial_params_returned_for_pydantic_validation(self) -> None:
+        """Params with partial overlap are returned for Pydantic to handle."""
+        state = ConfigurationState(
+            params={'value': 99, 'unknown_field': 'ignored'},
+        )
+        adapter = ConcreteAdapter(
+            available_sources=['source1'],
+            config_state=state,
+        )
+        # Return all params - Pydantic will ignore extra fields and use defaults
+        assert adapter.initial_parameter_values == {
+            'value': 99,
+            'unknown_field': 'ignored',
+        }
 
-        # Should fall back to first source in config state
-        assert adapter.initial_parameter_values == {'value': 1, 'name': 'first'}
 
-
-class TestAuxSourceNamesWithScoping:
-    """Tests for aux_source_names with per-source configuration."""
+class TestAuxSourceNames:
+    """Tests for aux_source_names behavior."""
 
     class AdapterWithAuxSources(ConcreteAdapter):
         """Adapter with auxiliary sources defined."""
@@ -196,85 +174,47 @@ class TestAuxSourceNamesWithScoping:
         def aux_sources(self) -> type[pydantic.BaseModel]:
             return self.AuxSourcesModel
 
-    def test_aux_source_names_from_scoped_source(self) -> None:
-        """Aux source names come from the first scoped source's config."""
+    def test_no_aux_sources_returns_empty(self) -> None:
+        """Adapter without aux_sources returns empty dict."""
+        adapter = ConcreteAdapter(available_sources=['source1'])
+        assert adapter.initial_aux_source_names == {}
+
+    def test_aux_source_names_from_config_state(self) -> None:
+        """Aux source names come from config_state."""
         state = ConfigurationState(
-            jobs={
-                'source1': JobConfigState(
-                    params={},
-                    aux_source_names={'monitor': 'mon1', 'detector': 'det1'},
-                ),
-                'source2': JobConfigState(
-                    params={},
-                    aux_source_names={'monitor': 'mon2', 'detector': 'det2'},
-                ),
-            }
+            params={},
+            aux_source_names={'monitor': 'mon1', 'detector': 'det1'},
         )
         adapter = self.AdapterWithAuxSources(
-            available_sources=['source1', 'source2'],
+            available_sources=['source1'],
             config_state=state,
         )
-
-        # Without scoping
         assert adapter.initial_aux_source_names == {
             'monitor': 'mon1',
             'detector': 'det1',
         }
 
-        # Scope to source2
-        adapter.set_selected_sources(['source2'])
-        assert adapter.initial_aux_source_names == {
-            'monitor': 'mon2',
-            'detector': 'det2',
-        }
-
-
-class TestBackwardCompatibility:
-    """Tests for handling edge cases in configuration state."""
-
-    def test_empty_config_state_uses_all_available_sources(self) -> None:
-        """Empty config state defaults to all available sources."""
-        adapter = ConcreteAdapter(
-            available_sources=['source1', 'source2'],
-            config_state=None,
-        )
-        assert adapter.initial_source_names == ['source1', 'source2']
-
-    def test_empty_jobs_uses_all_available_sources(self) -> None:
-        """Empty jobs dict defaults to all available sources."""
-        adapter = ConcreteAdapter(
-            available_sources=['source1', 'source2'],
-            config_state=ConfigurationState(jobs={}),
-        )
-        assert adapter.initial_source_names == ['source1', 'source2']
-
-    def test_sources_filtered_to_available(self) -> None:
-        """Persisted sources not in available list are filtered out."""
+    def test_aux_source_names_filtered_to_valid_fields(self) -> None:
+        """Aux source names are filtered to valid model fields."""
         state = ConfigurationState(
-            jobs={
-                'source1': JobConfigState(params={}),
-                'removed_source': JobConfigState(params={}),
-            }
+            params={},
+            aux_source_names={
+                'monitor': 'mon1',
+                'detector': 'det1',
+                'invalid_field': 'ignored',
+            },
         )
-        adapter = ConcreteAdapter(
-            available_sources=['source1', 'source2'],
-            config_state=state,
-        )
-        # 'removed_source' should be filtered out
-        assert adapter.initial_source_names == ['source1']
-
-    def test_incompatible_params_fall_back_to_defaults(self) -> None:
-        """Params with no field overlap trigger fallback to defaults."""
-        state = ConfigurationState(
-            jobs={
-                'source1': JobConfigState(
-                    params={'completely_unknown_field': 'value'},
-                ),
-            }
-        )
-        adapter = ConcreteAdapter(
+        adapter = self.AdapterWithAuxSources(
             available_sources=['source1'],
             config_state=state,
         )
-        # Should return empty dict, triggering Pydantic defaults
-        assert adapter.initial_parameter_values == {}
+        # 'invalid_field' should be filtered out
+        assert adapter.initial_aux_source_names == {
+            'monitor': 'mon1',
+            'detector': 'det1',
+        }
+
+    def test_no_config_state_returns_empty(self) -> None:
+        """Without config_state, returns empty dict."""
+        adapter = self.AdapterWithAuxSources(available_sources=['source1'])
+        assert adapter.initial_aux_source_names == {}
