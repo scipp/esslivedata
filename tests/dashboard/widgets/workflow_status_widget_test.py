@@ -597,8 +597,9 @@ class TestWorkflowStatusListWidget:
             job_service=job_service,
         )
 
-        # All widgets start expanded by default
+        # Widgets start collapsed by default, so first expand them
         for widget in list_widget._widgets.values():
+            widget.set_expanded(True)
             assert widget._expanded
 
         # Collapse all
