@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import argparse
+from pathlib import Path
 
 import holoviews as hv
 import panel as pn
@@ -13,6 +14,8 @@ from .widgets.job_status_widget import JobStatusListWidget
 from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
 from .widgets.reduction_widget import ReductionWidget
+
+ANNOUNCEMENTS_FILE = Path(__file__).parent / 'announcements.md'
 
 pn.extension('holoviews', 'modal', notifications=True, template='material')
 hv.extension('bokeh')
@@ -53,6 +56,23 @@ class ReductionApp(DashboardBase):
         )
         self._logger.info("Reduction dashboard initialized")
 
+    def _create_announcements_pane(self) -> pn.pane.Markdown:
+        """Create a Markdown pane that periodically reloads from file."""
+
+        def read_announcements() -> str:
+            try:
+                return ANNOUNCEMENTS_FILE.read_text()
+            except FileNotFoundError:
+                return "*No announcements file found.*"
+
+        pane = pn.pane.Markdown(read_announcements(), sizing_mode='stretch_width')
+
+        def refresh():
+            pane.object = read_announcements()
+
+        pn.state.add_periodic_callback(refresh, period=30_000)  # 30 seconds
+        return pane
+
     def create_sidebar_content(self) -> pn.viewable.Viewable:
         """Create the sidebar content with workflow controls."""
         # Create reduction widget (per-session)
@@ -72,7 +92,13 @@ class ReductionApp(DashboardBase):
 
         return pn.Column(
             *dev_content,
+            self._create_announcements_pane(),
+            pn.layout.Divider(),
             pn.pane.Markdown("## Data Reduction"),
+            pn.pane.Markdown(
+                "**Starting workflows here is legacy, prefer using the *Workflows* "
+                "tab.**"
+            ),
             reduction_widget.widget,
         )
 
