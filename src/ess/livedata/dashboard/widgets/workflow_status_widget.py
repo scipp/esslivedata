@@ -5,9 +5,11 @@ Widget for displaying and controlling workflow status.
 
 Provides a collapsible card for each workflow showing:
 - Header with title, status badge, timing info, and action buttons
-- Staging area with config toolbars grouped by identical configurations
-- Output chips showing available workflow outputs
-- Commit button when staged config differs from active config
+- Body (when expanded):
+  - Workflow description (if present)
+  - Staging area with config toolbars grouped by identical configurations
+  - Output chips showing available workflow outputs
+  - Commit button when staged config differs from active config
 """
 
 from __future__ import annotations
@@ -157,7 +159,7 @@ class WorkflowStatusWidget:
 
     Shows a collapsible card with:
     - Header: title, status, timing, reset/stop buttons
-    - Body: config toolbars, outputs, commit button
+    - Body: description (if present), config toolbars, outputs, commit button
     """
 
     def __init__(
@@ -394,6 +396,7 @@ class WorkflowStatusWidget:
                 pn.pane.HTML(
                     error_html,
                     sizing_mode='stretch_width',
+                    margin=0,
                     styles={
                         'padding': '8px 12px',
                         'background': WorkflowWidgetStyles.ERROR_BG,
@@ -402,6 +405,23 @@ class WorkflowStatusWidget:
                         ),
                         'color': WorkflowWidgetStyles.ERROR_TEXT,
                         'font-size': '12px',
+                    },
+                )
+            )
+
+        # Workflow description (if present)
+        if self._workflow_spec.description:
+            components.append(
+                pn.pane.HTML(
+                    f'<div style="font-size: 12px; color: #6c757d; '
+                    f'font-style: italic; line-height: 1.4;">'
+                    f'{self._workflow_spec.description}</div>',
+                    sizing_mode='stretch_width',
+                    margin=0,
+                    styles={
+                        'padding': '8px 12px',
+                        'background': '#ffffff',
+                        'border-bottom': '1px solid #dee2e6',
                     },
                 )
             )
