@@ -570,21 +570,24 @@ class JobOrchestrator:
             parameter_values,
             aux_source_names=None,
         ) -> None:
-            """Stage configs and commit the workflow."""
+            """Stage configs for selected sources and commit the workflow.
+
+            Only updates the selected sources, preserving configs for other
+            sources that may have been configured independently.
+            """
             params_dict = parameter_values.model_dump(mode='json')
             aux_dict = (
                 aux_source_names.model_dump(mode='json') if aux_source_names else {}
             )
 
-            with self.staging_transaction(workflow_id):
-                self.clear_staged_configs(workflow_id)
-                for source_name in selected_sources:
-                    self.stage_config(
-                        workflow_id,
-                        source_name=source_name,
-                        params=params_dict,
-                        aux_source_names=aux_dict,
-                    )
+            # Update only the selected sources, preserving other staged configs
+            for source_name in selected_sources:
+                self.stage_config(
+                    workflow_id,
+                    source_name=source_name,
+                    params=params_dict,
+                    aux_source_names=aux_dict,
+                )
 
             self.commit_workflow(workflow_id)
 

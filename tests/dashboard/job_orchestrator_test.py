@@ -1837,3 +1837,90 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
             with pytest.raises(ValueError, match="Cannot nest transactions"):
                 with orchestrator.staging_transaction(workflow_id_2):
                     pass
+
+
+class TestWorkflowAdapterIndependentSourceConfiguration:
+    """Test that workflow adapter preserves independently configured sources."""
+
+    def test_adapter_start_action_preserves_other_sources(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Configuring one source should not affect other sources' configs."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Stage initial config for det_1 with specific params
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 100.0, "mode": "fast"},
+            aux_source_names={},
+        )
+
+        # Create adapter scoped to det_2 and configure it
+        adapter = orchestrator.create_workflow_adapter(workflow_id)
+        adapter.set_selected_sources(["det_2"])
+
+        # Simulate user clicking "Apply" with different params for det_2
+        adapter.start_action(
+            selected_sources=["det_2"],
+            parameter_values=WorkflowParams(threshold=200.0, mode="slow"),
+        )
+
+        # Verify det_1's config is preserved
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert "det_1" in staged
+        assert staged["det_1"].params["threshold"] == 100.0
+        assert staged["det_1"].params["mode"] == "fast"
+
+        # Verify det_2 has new config
+        assert "det_2" in staged
+        assert staged["det_2"].params["threshold"] == 200.0
+        assert staged["det_2"].params["mode"] == "slow"
+
+    def test_adapter_start_action_updates_existing_source(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Updating an already-configured source should update its config."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Stage initial config for det_1
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 100.0, "mode": "fast"},
+            aux_source_names={},
+        )
+
+        # Create adapter scoped to det_1 and update it
+        adapter = orchestrator.create_workflow_adapter(workflow_id)
+        adapter.set_selected_sources(["det_1"])
+
+        adapter.start_action(
+            selected_sources=["det_1"],
+            parameter_values=WorkflowParams(threshold=999.0, mode="updated"),
+        )
+
+        # Verify det_1's config is updated
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert staged["det_1"].params["threshold"] == 999.0
+        assert staged["det_1"].params["mode"] == "updated"
