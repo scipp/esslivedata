@@ -41,6 +41,29 @@ Material._resources = {
     },
 }
 
+# CSS fix for hamburger menu icon (replaces Material Icons font dependency)
+_MENU_ICON_CSS = """
+/* Replace Material Icons menu icon with CSS hamburger */
+.mdc-top-app-bar__navigation-icon.material-icons {
+    font-size: 0;  /* Hide "menu" text */
+    position: relative;
+    width: 48px;
+    height: 48px;
+}
+.mdc-top-app-bar__navigation-icon.material-icons::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 24px;
+    height: 2px;
+    background: currentColor;
+    box-shadow: 0 -8px 0 currentColor, 0 8px 0 currentColor;
+}
+"""
+pn.config.raw_css.append(_MENU_ICON_CSS)
+
 ANNOUNCEMENTS_URL = (
     'https://public.esss.dk/groups/scipp/esslivedata/_static/announcements.md'
 )
