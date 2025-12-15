@@ -21,7 +21,10 @@ from ess.livedata.core.job_manager import JobAction, JobCommand
 from ess.livedata.core.message import COMMANDS_STREAM_ID
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.config_store import FileBackedConfigStore
-from ess.livedata.dashboard.configuration_adapter import ConfigurationState
+from ess.livedata.dashboard.configuration_adapter import (
+    ConfigurationState,
+    JobConfigState,
+)
 from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
 from ess.livedata.fakes import FakeMessageSink
 from ess.livedata.handlers.config_handler import ConfigUpdate
@@ -307,9 +310,12 @@ class TestJobOrchestratorInitialization:
         # Setup config store with persisted config
         config_store = {
             str(workflow_id): ConfigurationState(
-                source_names=["det_1"],  # Only one source
-                params={"threshold": 50.0, "mode": "custom"},
-                aux_source_names={},
+                jobs={
+                    "det_1": JobConfigState(
+                        params={"threshold": 50.0, "mode": "custom"},
+                        aux_source_names={},
+                    )
+                }
             ).model_dump()
         }
 
@@ -340,9 +346,12 @@ class TestJobOrchestratorInitialization:
         # Setup config store with invalid param types
         config_store = {
             str(workflow_id): {
-                "source_names": ["det_1"],
-                "params": {"threshold": "not_a_float"},  # Invalid type
-                "aux_source_names": {},
+                "jobs": {
+                    "det_1": {
+                        "params": {"threshold": "not_a_float"},  # Invalid type
+                        "aux_source_names": {},
+                    }
+                }
             }
         }
 
@@ -371,9 +380,12 @@ class TestJobOrchestratorInitialization:
 
         config_store = {
             str(workflow_id): ConfigurationState(
-                source_names=["det_1"],
-                params={"threshold": 75.0, "mode": "special"},
-                aux_source_names={"monitor": "monitor_2"},
+                jobs={
+                    "det_1": JobConfigState(
+                        params={"threshold": 75.0, "mode": "special"},
+                        aux_source_names={"monitor": "monitor_2"},
+                    )
+                }
             ).model_dump()
         }
 
@@ -513,7 +525,11 @@ class TestJobOrchestratorInitialization:
         assert workflow_key in saved_data
 
         # Verify enum was serialized as string value, not enum object
-        saved_params = saved_data[workflow_key]['params']
+        # With per-source config, params are nested under jobs/source_name
+        jobs = saved_data[workflow_key]['jobs']
+        assert len(jobs) > 0
+        first_source_config = next(iter(jobs.values()))
+        saved_params = first_source_config['params']
         assert 'choice' in saved_params
         assert saved_params['choice'] == 'option_a'  # String value, not enum
         assert isinstance(saved_params['choice'], str)
@@ -665,12 +681,19 @@ class TestJobOrchestratorMutationSafety:
         workflow_id = workflow_with_params.get_id()
         registry = {workflow_id: workflow_with_params}
 
-        # Config store with multiple sources
+        # Config store with multiple sources (each with their own params)
         config_store = {
             str(workflow_id): ConfigurationState(
-                source_names=["det_1", "det_2"],
-                params={"threshold": 50.0, "mode": "custom"},
-                aux_source_names={"monitor": "monitor_1"},
+                jobs={
+                    "det_1": JobConfigState(
+                        params={"threshold": 50.0, "mode": "custom"},
+                        aux_source_names={"monitor": "monitor_1"},
+                    ),
+                    "det_2": JobConfigState(
+                        params={"threshold": 50.0, "mode": "custom"},
+                        aux_source_names={"monitor": "monitor_1"},
+                    ),
+                }
             ).model_dump()
         }
 

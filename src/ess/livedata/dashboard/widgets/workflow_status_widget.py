@@ -815,8 +815,7 @@ class WorkflowStatusWidget:
         """Handle gear button click - show configuration modal."""
         try:
             adapter = self._orchestrator.create_workflow_adapter(self._workflow_id)
-            if hasattr(adapter, 'set_selected_sources'):
-                adapter.set_selected_sources(source_names)
+            adapter.set_selected_sources(source_names)
 
             modal = ConfigurationModal(
                 config=adapter,

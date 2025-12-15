@@ -7,7 +7,10 @@ from collections.abc import Generator
 import pytest
 
 from ess.livedata.config.workflow_spec import WorkflowId
-from ess.livedata.dashboard.configuration_adapter import ConfigurationState
+from ess.livedata.dashboard.configuration_adapter import (
+    ConfigurationState,
+    JobConfigState,
+)
 from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
 from ess.livedata.parameter_models import Scale, TimeUnit, TOAEdges
 from tests.integration.backend import DashboardBackend
@@ -77,7 +80,9 @@ def test_workflow_params_stored_and_retrieved_via_config_store(
     )
     assert stored_config is not None, "Config should be stored in config store"
     assert stored_config.source_names == source_names
-    assert stored_config.params == custom_params.model_dump()
+    # Each source has its own config with the same params
+    for source in source_names:
+        assert stored_config.jobs[source].params == custom_params.model_dump()
 
     # Create adapter and verify it retrieves correct params from config store
     adapter = backend_with_null_transport.workflow_controller.create_workflow_adapter(
@@ -111,10 +116,12 @@ def test_adapter_filters_removed_sources(tmp_path) -> None:
     config_store = config_manager.get_store('workflow_configs')
 
     source_names = ['monitor1', 'monitor2', 'motion1']
+    default_params = MonitorDataParams().model_dump()
     legacy_config = ConfigurationState(
-        source_names=source_names,
-        aux_source_names={},
-        params=MonitorDataParams().model_dump(),
+        jobs={
+            name: JobConfigState(params=default_params, aux_source_names={})
+            for name in source_names
+        }
     )
     config_store[str(workflow_id)] = legacy_config.model_dump()
 
@@ -207,13 +214,17 @@ def test_incompatible_config_falls_back_to_defaults(tmp_path) -> None:
     config_store = config_manager.get_store('workflow_configs')
 
     incompatible_config = ConfigurationState(
-        source_names=['monitor1'],
-        aux_source_names={},
-        params={
-            'old_field_that_no_longer_exists': 42,
-            'another_invalid_field': 'invalid_value',
-            # Completely wrong structure - not matching current MonitorDataParams
-        },
+        jobs={
+            'monitor1': JobConfigState(
+                params={
+                    'old_field_that_no_longer_exists': 42,
+                    'another_invalid_field': 'invalid_value',
+                    # Completely wrong structure - not matching
+                    # current MonitorDataParams
+                },
+                aux_source_names={},
+            )
+        }
     )
     config_store[str(workflow_id)] = incompatible_config.model_dump()
 

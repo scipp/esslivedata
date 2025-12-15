@@ -200,7 +200,12 @@ class TestWorkflowController:
         assert persistent_config_data is not None
         persistent_config = ConfigurationState.model_validate(persistent_config_data)
         assert persistent_config.source_names == source_names
-        assert persistent_config.params == {"threshold": 200.0, "mode": "fast"}
+        # With per-source config, each source has its own params
+        for source in source_names:
+            assert persistent_config.jobs[source].params == {
+                "threshold": 200.0,
+                "mode": "fast",
+            }
 
     def test_start_workflow_with_empty_config(
         self,
@@ -303,13 +308,18 @@ class TestWorkflowController:
         assert config_1_data is not None
         config_1 = ConfigurationState.model_validate(config_1_data)
         assert config_1.source_names == sources_1
-        assert config_1.params == {"threshold": 100.0, "mode": "fast"}
+        for source in sources_1:
+            assert config_1.jobs[source].params == {"threshold": 100.0, "mode": "fast"}
 
         config_2_data = config_store.get(str(workflow_id_2))
         assert config_2_data is not None
         config_2 = ConfigurationState.model_validate(config_2_data)
         assert config_2.source_names == sources_2
-        assert config_2.params == {"threshold": 200.0, "mode": "accurate"}
+        for source in sources_2:
+            assert config_2.jobs[source].params == {
+                "threshold": 200.0,
+                "mode": "accurate",
+            }
 
     def test_persistent_config_replaces_existing_workflow(
         self,
@@ -338,7 +348,11 @@ class TestWorkflowController:
 
         # Should have the updated values
         assert workflow_config.source_names == updated_sources
-        assert workflow_config.params == {"threshold": 300.0, "mode": "accurate"}
+        for source in updated_sources:
+            assert workflow_config.jobs[source].params == {
+                "threshold": 300.0,
+                "mode": "accurate",
+            }
 
     def test_get_workflow_spec_returns_correct_spec(
         self,
@@ -386,7 +400,11 @@ class TestWorkflowController:
         # Assert
         assert result is not None
         assert result.source_names == source_names
-        assert result.params == {"threshold": 150.0, "mode": "accurate"}
+        for source in source_names:
+            assert result.jobs[source].params == {
+                "threshold": 150.0,
+                "mode": "accurate",
+            }
 
     def test_get_workflow_config_returns_none_for_nonexistent(
         self,

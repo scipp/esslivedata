@@ -35,7 +35,7 @@ from ess.livedata.core.job_manager import JobAction, JobCommand
 
 from .command_service import CommandService
 from .config_store import ConfigStore
-from .configuration_adapter import ConfigurationState
+from .configuration_adapter import ConfigurationState, JobConfigState
 from .workflow_config_service import WorkflowConfigService
 from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
@@ -156,16 +156,25 @@ class JobOrchestrator:
             if self._config_store is not None:
                 config_data = self._config_store.get(str(workflow_id))
 
-            # Get params/aux_source_names/source_names as dicts
-            if config_data and config_data.get('params'):
-                # Use loaded config (already dicts)
-                params = config_data['params']
-                aux_source_names = config_data.get('aux_source_names', {})
-                source_names = config_data.get('source_names', [])
+            state = WorkflowState()
+            available_sources = set(spec.source_names)
+
+            # Load per-source configs from 'jobs' dict (new schema)
+            if config_data and config_data.get('jobs'):
+                jobs_data = config_data['jobs']
+                loaded_count = 0
+                for source_name, job_data in jobs_data.items():
+                    # Filter to sources that exist in the spec
+                    if source_name in available_sources:
+                        state.staged_jobs[source_name] = JobConfig(
+                            params=job_data.get('params', {}),
+                            aux_source_names=job_data.get('aux_source_names', {}),
+                        )
+                        loaded_count += 1
                 self._logger.info(
                     'Loaded config for workflow %s from store: %d sources',
                     workflow_id,
-                    len(source_names),
+                    loaded_count,
                 )
             else:
                 # Use defaults from spec, converting to dicts
@@ -187,21 +196,17 @@ class JobOrchestrator:
                 if spec.aux_sources is not None:
                     aux_source_names = spec.aux_sources().model_dump(mode='json')
 
-                source_names = spec.source_names
+                if params:
+                    for source_name in spec.source_names:
+                        state.staged_jobs[source_name] = JobConfig(
+                            params=params.copy(),
+                            aux_source_names=aux_source_names.copy(),
+                        )
                 self._logger.debug(
                     'Initialized workflow %s with defaults: %d sources',
                     workflow_id,
-                    len(source_names),
+                    len(spec.source_names),
                 )
-
-            # Initialize staged_jobs with dict-based configs
-            state = WorkflowState()
-            if params:
-                for source_name in source_names:
-                    state.staged_jobs[source_name] = JobConfig(
-                        params=params.copy(),
-                        aux_source_names=aux_source_names.copy(),
-                    )
 
             # Restore active job state if present
             if config_data:
@@ -429,14 +434,16 @@ class JobOrchestrator:
             return
 
         # Build config dict from staged_jobs if present
-        config_dict = {}
+        config_dict: dict = {}
         if state.staged_jobs:
-            source_names = list(state.staged_jobs.keys())
-            first_job_config = next(iter(state.staged_jobs.values()))
             config_dict = {
-                'source_names': source_names,
-                'params': first_job_config.params,
-                'aux_source_names': first_job_config.aux_source_names,
+                'jobs': {
+                    source_name: {
+                        'params': job_config.params,
+                        'aux_source_names': job_config.aux_source_names,
+                    }
+                    for source_name, job_config in state.staged_jobs.items()
+                }
             }
 
         # Add active job state
@@ -589,13 +596,14 @@ class JobOrchestrator:
         if not staged_jobs:
             return None
 
-        source_names = list(staged_jobs.keys())
-        first_job_config = next(iter(staged_jobs.values()))
-
         return ConfigurationState(
-            source_names=source_names,
-            params=first_job_config.params,
-            aux_source_names=first_job_config.aux_source_names,
+            jobs={
+                source_name: JobConfigState(
+                    params=job_config.params,
+                    aux_source_names=job_config.aux_source_names,
+                )
+                for source_name, job_config in staged_jobs.items()
+            }
         )
 
     def get_previous_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:

@@ -18,7 +18,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
 )
 
-from .configuration_adapter import ConfigurationState
+from .configuration_adapter import ConfigurationState, JobConfigState
 from .correlation_histogram import CorrelationHistogramController, make_workflow_spec
 from .data_service import DataService
 from .job_orchestrator import JobOrchestrator
@@ -209,13 +209,12 @@ class WorkflowController:
         if not staged_jobs:
             return None
 
-        # Convert JobOrchestrator's staged_jobs back to ConfigurationState
-        # (see ConfigurationState schema note about expansion/contraction)
-        source_names = list(staged_jobs.keys())
-        first_job_config = next(iter(staged_jobs.values()))
-
         return ConfigurationState(
-            source_names=source_names,
-            params=first_job_config.params,
-            aux_source_names=first_job_config.aux_source_names,
+            jobs={
+                source_name: JobConfigState(
+                    params=job_config.params,
+                    aux_source_names=job_config.aux_source_names,
+                )
+                for source_name, job_config in staged_jobs.items()
+            }
         )
