@@ -230,11 +230,137 @@ monitors = [
     'bragg_peak_monitor',
 ]
 
-# Some example motions used for testing, probably not reflecting reality
+# Combined f144 log stream configuration.
+# Maps internal name -> {source: Kafka source name, units: unit string, topic: topic}
+# Generated using: python -m ess.livedata.nexus_helpers <file> --generate --topic <t>
+f144_log_streams: dict[str, dict[str, str]] = {
+    # Motion streams (topic: bifrost_motion)
+    'attenuator_1': {
+        'source': 'BIFRO-AttChg:MC-Pne-01:ShtAuxBits07',
+        'units': 'dimensionless',
+        'topic': 'bifrost_motion',
+    },
+    'attenuator_2': {
+        'source': 'BIFRO-AttChg:MC-Pne-02:ShtAuxBits07',
+        'units': 'dimensionless',
+        'topic': 'bifrost_motion',
+    },
+    'attenuator_3': {
+        'source': 'BIFRO-AttChg:MC-Pne-03:ShtAuxBits07',
+        'units': 'dimensionless',
+        'topic': 'bifrost_motion',
+    },
+    'detector_rotation': {
+        'source': 'BIFRO-DtCar:MC-RotZ-01:Mtr.RBV',
+        'units': 'deg',
+        'topic': 'bifrost_motion',
+    },
+    'get_lost_tube': {
+        'source': 'BIFRO-InBm:MC-Pne-01:ShtAuxBits07',
+        'units': 'dimensionless',
+        'topic': 'bifrost_motion',
+    },
+    'goniometer_x': {
+        'source': 'BIFRO-SpGon:MC-RotX-01:Mtr.RBV',
+        'units': 'deg',
+        'topic': 'bifrost_motion',
+    },
+    'goniometer_y': {
+        'source': 'BIFRO-SpGon:MC-RotY-01:Mtr.RBV',
+        'units': 'deg',
+        'topic': 'bifrost_motion',
+    },
+    'sample_rotation': {
+        'source': 'BIFRO-SpRot:MC-RotZ-01:Mtr.RBV',
+        'units': 'deg',
+        'topic': 'bifrost_motion',
+    },
+    'slit_bottom': {
+        'source': 'BIFRO-SpSl1:MC-SlZm-01:PzMtr.RBV',
+        'units': 'mm',
+        'topic': 'bifrost_motion',
+    },
+    'slit_left': {
+        'source': 'BIFRO-SpSl1:MC-SlYp-01:PzMtr.RBV',
+        'units': 'mm',
+        'topic': 'bifrost_motion',
+    },
+    'slit_right': {
+        'source': 'BIFRO-SpSl1:MC-SlYm-01:PzMtr.RBV',
+        'units': 'mm',
+        'topic': 'bifrost_motion',
+    },
+    'slit_top': {
+        'source': 'BIFRO-SpSl1:MC-SlZp-01:PzMtr.RBV',
+        'units': 'mm',
+        'topic': 'bifrost_motion',
+    },
+    'slit_position': {
+        'source': 'BIFRO-SpSl1:MC-LinX-01:PzMtr-PosReadback',
+        'units': 'mm',
+        'topic': 'bifrost_motion',
+    },
+    # Sample environment streams (topic: bifrost_sample_env)
+    'heater_1': {
+        'source': 'YMIR-SEE:SE-LS336-004:HTR1',
+        'units': 'W',
+        'topic': 'bifrost_sample_env',
+    },
+    'heater_2': {
+        'source': 'YMIR-SEE:SE-LS336-004:HTR2',
+        'units': 'W',
+        'topic': 'bifrost_sample_env',
+    },
+    'temperature_0': {
+        'source': 'YMIR-SEE:SE-LS336-004:KRDG0',
+        'units': 'K',
+        'topic': 'bifrost_sample_env',
+    },
+    'temperature_1': {
+        'source': 'YMIR-SEE:SE-LS336-004:KRDG1',
+        'units': 'K',
+        'topic': 'bifrost_sample_env',
+    },
+    'temperature_2': {
+        'source': 'YMIR-SEE:SE-LS336-004:KRDG2',
+        'units': 'K',
+        'topic': 'bifrost_sample_env',
+    },
+    'temperature_3': {
+        'source': 'YMIR-SEE:SE-LS336-004:KRDG3',
+        'units': 'K',
+        'topic': 'bifrost_sample_env',
+    },
+    'temperature_setpoint': {
+        'source': 'YMIR-SEE:SE-LS336-004:SETP_S1',
+        'units': 'K',
+        'topic': 'bifrost_sample_env',
+    },
+    'sensor_0': {
+        'source': 'YMIR-SEE:SE-LS336-004:SRDG0',
+        'units': 'V',
+        'topic': 'bifrost_sample_env',
+    },
+    'sensor_1': {
+        'source': 'YMIR-SEE:SE-LS336-004:SRDG1',
+        'units': 'V',
+        'topic': 'bifrost_sample_env',
+    },
+    'sensor_2': {
+        'source': 'YMIR-SEE:SE-LS336-004:SRDG2',
+        'units': 'V',
+        'topic': 'bifrost_sample_env',
+    },
+    'sensor_3': {
+        'source': 'YMIR-SEE:SE-LS336-004:SRDG3',
+        'units': 'V',
+        'topic': 'bifrost_sample_env',
+    },
+}
+
+# Derived from f144_log_streams for use by the Instrument
 f144_attribute_registry = {
-    'detector_rotation': {'units': 'deg'},
-    'sample_rotation': {'units': 'deg'},
-    'sample_temperature': {'units': 'K'},
+    name: {'units': info['units']} for name, info in f144_log_streams.items()
 }
 
 # Create instrument
