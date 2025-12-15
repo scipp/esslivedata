@@ -912,6 +912,7 @@ class WorkflowStatusListWidget:
 
         self._widgets: dict[WorkflowId, WorkflowStatusWidget] = {}
         self._panel = self._create_panel()
+        self._collapse_all()
 
     def _create_header_row(self) -> pn.Row:
         """Create the header row with expand/collapse all buttons."""
