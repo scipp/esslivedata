@@ -252,8 +252,9 @@ class PlotGridManager:
             if row_end > nrows or col_end > ncols:
                 continue  # Cell doesn't fit, skip it
 
-            # Look up workflow title from registry
-            config = cell.config
+            # Look up workflow title from the first layer's config
+            first_layer = cell.layers[0]
+            config = first_layer.config
             workflow_title, _ = get_workflow_display_info(
                 self._workflow_registry, config.workflow_id, config.output_name
             )
@@ -263,12 +264,14 @@ class PlotGridManager:
                 workflow_title = workflow_title[:17] + '...'
 
             output_name = config.output_name or ''
+            layer_count = len(cell.layers)
 
             color = _CELL_COLORS[i % len(_CELL_COLORS)]
 
+            layer_info = f' (+{layer_count - 1})' if layer_count > 1 else ''
             label_html = (
                 f'<div style="font-size: 10px; font-weight: 500;">'
-                f'{workflow_title}</div>'
+                f'{workflow_title}{layer_info}</div>'
                 f'<div style="font-size: 9px; color: #666;">{output_name}</div>'
             )
             grid[row_start:row_end, col_start:col_end] = pn.pane.HTML(
