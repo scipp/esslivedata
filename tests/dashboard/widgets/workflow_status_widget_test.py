@@ -286,6 +286,66 @@ class TestWorkflowStatusWidget:
 
         assert rebuild_count == 0  # No rebuild because we unsubscribed
 
+    def test_header_shows_play_button_when_stopped_with_staged_configs(
+        self, workflow_status_widget, job_orchestrator, workflow_id
+    ):
+        """Test that play button is shown when stopped and has staged configs."""
+        # Stage a config but don't commit (workflow is stopped)
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+
+        # Rebuild widget to pick up staged config
+        workflow_status_widget._build_widget()
+
+        # Check header buttons
+        header_buttons = workflow_status_widget._create_header_buttons()
+        button_names = [
+            obj.name for obj in header_buttons if isinstance(obj, pn.widgets.Button)
+        ]
+        assert '\u25b6' in button_names  # ▶ play button
+
+    def test_header_does_not_show_play_button_when_no_staged_configs(
+        self, workflow_status_widget, job_orchestrator, workflow_id
+    ):
+        """Test that play button is not shown when there are no staged configs."""
+        # Clear any staged configs (fixture may have default configs)
+        job_orchestrator.clear_staged_configs(workflow_id)
+        workflow_status_widget._build_widget()
+
+        header_buttons = workflow_status_widget._create_header_buttons()
+        button_names = [
+            obj.name for obj in header_buttons if isinstance(obj, pn.widgets.Button)
+        ]
+        assert '\u25b6' not in button_names  # No play button
+
+    def test_header_shows_stop_button_instead_of_play_when_running(
+        self, workflow_status_widget, job_orchestrator, workflow_id
+    ):
+        """Test that stop button is shown instead of play when workflow is running."""
+        # Stage and commit to start the workflow
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_orchestrator.commit_workflow(workflow_id)
+
+        # Rebuild widget
+        workflow_status_widget._build_widget()
+
+        # Check header buttons
+        header_buttons = workflow_status_widget._create_header_buttons()
+        button_names = [
+            obj.name for obj in header_buttons if isinstance(obj, pn.widgets.Button)
+        ]
+        assert '\u25b6' not in button_names  # No play button
+        assert '\u25fc' in button_names  # Stop button (black square)
+
 
 class TestWorkflowStatusWidgetWithJobs:
     """Tests for WorkflowStatusWidget with active jobs."""

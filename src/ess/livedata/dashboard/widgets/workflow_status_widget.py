@@ -362,11 +362,13 @@ class WorkflowStatusWidget:
             self._header.styles = {**self._header.styles, 'border-bottom': border}
 
     def _create_header_buttons(self) -> pn.Row:
-        """Create reset/stop buttons for header."""
+        """Create action buttons for header (play, reset, stop)."""
         buttons = []
 
-        # Only show buttons if workflow has active jobs
-        if self._orchestrator.get_active_job_number(self._workflow_id) is not None:
+        active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
+
+        if active_job_number is not None:
+            # Workflow is running - show reset and stop buttons
             reset_btn = create_tool_button(
                 symbol='\u21bb',  # ↻
                 button_color='#6c757d',
@@ -383,6 +385,17 @@ class WorkflowStatusWidget:
                 on_click_callback=self._on_stop_click,
             )
             buttons.append(stop_btn)
+        else:
+            # Workflow is stopped - show play button if there are staged configs
+            staged = self._orchestrator.get_staged_config(self._workflow_id)
+            if staged:
+                play_btn = create_tool_button(
+                    symbol='\u25b6',  # ▶
+                    button_color=WorkflowWidgetStyles.STATUS_COLORS['active'],
+                    hover_color='rgba(40, 167, 69, 0.1)',
+                    on_click_callback=self._on_commit_click,
+                )
+                buttons.append(play_btn)
 
         return pn.Row(*buttons, margin=0)
 
