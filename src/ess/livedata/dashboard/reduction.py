@@ -8,6 +8,7 @@ from urllib.request import urlopen
 import holoviews as hv
 import panel as pn
 from holoviews.plotting.bokeh.plot import LayoutPlot
+from panel.theme.material import Material
 
 from ess.livedata import Service
 
@@ -17,6 +18,25 @@ from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
 from .widgets.reduction_widget import ReductionWidget
 from .widgets.workflow_status_widget import WorkflowStatusListWidget
+
+# Remove external Google Fonts dependencies from MaterialTemplate.
+# This allows the dashboard to work in firewalled environments without internet access.
+# Text will fall back to system fonts (sans-serif).
+Material._resources = {
+    'css': {
+        'material': (
+            f"{pn.config.npm_cdn}"
+            "/material-components-web@7.0.0/dist/material-components-web.min.css"
+        )
+    },
+    'font': {},  # Removed: Google Fonts (Roboto, Material Icons)
+    'js': {
+        'material': (
+            f"{pn.config.npm_cdn}"
+            "/material-components-web@7.0.0/dist/material-components-web.min.js"
+        )
+    },
+}
 
 ANNOUNCEMENTS_URL = (
     'https://public.esss.dk/groups/scipp/esslivedata/_static/announcements.md'
