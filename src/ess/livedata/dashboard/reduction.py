@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import argparse
+import urllib.request
+from urllib.error import URLError
+from urllib.request import urlopen
 
 import holoviews as hv
 import panel as pn
@@ -14,6 +17,10 @@ from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
 from .widgets.reduction_widget import ReductionWidget
 from .widgets.workflow_status_widget import WorkflowStatusListWidget
+
+ANNOUNCEMENTS_URL = (
+    'https://public.esss.dk/groups/scipp/esslivedata/_static/announcements.md'
+)
 
 pn.extension('holoviews', 'modal', notifications=True, template='material')
 hv.extension('bokeh')
@@ -54,6 +61,26 @@ class ReductionApp(DashboardBase):
         )
         self._logger.info("Reduction dashboard initialized")
 
+    def _create_announcements_pane(self) -> pn.pane.Markdown:
+        """Create a Markdown pane that periodically reloads from URL."""
+
+        def read_announcements() -> str:
+            try:
+                req = urllib.request.Request(ANNOUNCEMENTS_URL)  # noqa: S310
+                with urlopen(req, timeout=10) as response:  # noqa: S310
+                    return response.read().decode('utf-8')
+            except (URLError, TimeoutError) as e:
+                self._logger.warning("Failed to fetch announcements: %s", e)
+                return "*Unable to load announcements.*"
+
+        pane = pn.pane.Markdown(read_announcements(), sizing_mode='stretch_width')
+
+        def refresh():
+            pane.object = read_announcements()
+
+        pn.state.add_periodic_callback(refresh, period=300_000)  # 5 minutes
+        return pane
+
     def create_sidebar_content(self) -> pn.viewable.Viewable:
         """Create the sidebar content with workflow controls."""
         # Create reduction widget (per-session)
@@ -73,7 +100,13 @@ class ReductionApp(DashboardBase):
 
         return pn.Column(
             *dev_content,
+            self._create_announcements_pane(),
+            pn.layout.Divider(),
             pn.pane.Markdown("## Data Reduction"),
+            pn.pane.Markdown(
+                "**Starting workflows here is legacy, prefer using the *Workflows* "
+                "tab.**"
+            ),
             reduction_widget.widget,
         )
 
