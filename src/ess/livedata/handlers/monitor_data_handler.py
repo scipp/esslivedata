@@ -78,7 +78,9 @@ class MonitorStreamProcessor(Workflow):
         else:
             if raw.dim != self._edges.dim:
                 raw = raw.rename({raw.dim: self._edges.dim})
-            coord = raw.coords.get(self._edges.dim).to(unit=self._edges.unit)
+            coord = raw.coords.get(self._edges.dim).to(
+                unit=self._edges.unit, dtype=self._edges.dtype
+            )
             hist = raw.assign_coords({self._edges.dim: coord}).rebin(
                 {self._edges.dim: self._edges}
             )
