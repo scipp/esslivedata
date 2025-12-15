@@ -362,11 +362,26 @@ class WorkflowStatusWidget:
             self._header.styles = {**self._header.styles, 'border-bottom': border}
 
     def _create_header_buttons(self) -> pn.Row:
-        """Create reset/stop buttons for header."""
+        """Create action buttons for header (play, reset, stop)."""
         buttons = []
 
-        # Only show buttons if workflow has active jobs
-        if self._orchestrator.get_active_job_number(self._workflow_id) is not None:
+        active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
+
+        # Check if there are changes to commit (same logic as _create_commit_row)
+        has_changes = self._has_uncommitted_changes()
+
+        # Show play button if there are uncommitted changes
+        if has_changes:
+            play_btn = create_tool_button(
+                symbol='\u25b6',  # ▶
+                button_color=WorkflowWidgetStyles.STATUS_COLORS['active'],
+                hover_color='rgba(40, 167, 69, 0.1)',
+                on_click_callback=self._on_commit_click,
+            )
+            buttons.append(play_btn)
+
+        # Show reset and stop buttons if workflow is running
+        if active_job_number is not None:
             reset_btn = create_tool_button(
                 symbol='\u21bb',  # ↻
                 button_color='#6c757d',
@@ -385,6 +400,25 @@ class WorkflowStatusWidget:
             buttons.append(stop_btn)
 
         return pn.Row(*buttons, margin=0)
+
+    def _has_uncommitted_changes(self) -> bool:
+        """Check if there are staged changes that differ from active config."""
+        staged = self._orchestrator.get_staged_config(self._workflow_id)
+        if not staged:
+            return False
+
+        active = self._orchestrator.get_active_config(self._workflow_id)
+        if not active:
+            # Staged configs but no active - has changes
+            return True
+
+        # Check if any config differs from active
+        config_groups = _group_configs_by_equality(staged, active)
+        if any(g.is_modified for g in config_groups):
+            return True
+
+        # Check if source sets differ
+        return set(staged.keys()) != set(active.keys())
 
     def _create_body(self) -> pn.Column:
         """Create the collapsible body content."""
@@ -816,7 +850,7 @@ class WorkflowStatusWidget:
         """Handle gear button click - show configuration modal."""
         try:
             adapter = self._orchestrator.create_workflow_adapter(
-                self._workflow_id, selected_sources=source_names
+                self._workflow_id, selected_sources=source_names, commit=False
             )
 
             modal = ConfigurationModal(

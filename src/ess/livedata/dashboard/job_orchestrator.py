@@ -540,6 +540,8 @@ class JobOrchestrator:
         self,
         workflow_id: WorkflowId,
         selected_sources: list[str] | None = None,
+        *,
+        commit: bool = True,
     ) -> WorkflowConfigurationAdapter:
         """
         Create a workflow configuration adapter for the given workflow ID.
@@ -555,6 +557,10 @@ class JobOrchestrator:
             Optional list of source names to scope the adapter to. If provided,
             the adapter will use the first selected source's config as reference
             and pre-select these sources in the UI.
+        commit
+            If True (default), the adapter's start_action will stage configs AND
+            commit the workflow. If False, it will only stage configs without
+            committing, allowing the user to review staged changes before committing.
 
         Returns
         -------
@@ -602,7 +608,8 @@ class JobOrchestrator:
                     aux_source_names=aux_dict,
                 )
 
-            self.commit_workflow(workflow_id)
+            if commit:
+                self.commit_workflow(workflow_id)
 
         return WorkflowConfigurationAdapter(
             spec,
