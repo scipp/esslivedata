@@ -254,30 +254,31 @@ class WorkflowStatusWidget:
 
     def _build_widget(self) -> None:
         """Build or rebuild the entire widget."""
-        self._header = self._create_header()
-        self._body = self._create_body()
+        with pn.io.hold():
+            self._header = self._create_header()
+            self._body = self._create_body()
 
-        # Apply collapsed state
-        self._body.visible = self._expanded
-        self._update_header_border()
+            # Apply collapsed state
+            self._body.visible = self._expanded
+            self._update_header_border()
 
-        if self._panel is None:
-            self._panel = pn.Column(
-                self._header,
-                self._body,
-                self._modal_container,
-                styles={
-                    'border': '1px solid #dee2e6',
-                    'border-radius': '6px',
-                    'overflow': 'hidden',
-                    'background': 'white',
-                },
-                sizing_mode='stretch_width',
-                margin=(0, 0, 8, 0),
-            )
-        else:
-            self._panel.clear()
-            self._panel.extend([self._header, self._body, self._modal_container])
+            if self._panel is None:
+                self._panel = pn.Column(
+                    self._header,
+                    self._body,
+                    self._modal_container,
+                    styles={
+                        'border': '1px solid #dee2e6',
+                        'border-radius': '6px',
+                        'overflow': 'hidden',
+                        'background': 'white',
+                    },
+                    sizing_mode='stretch_width',
+                    margin=(0, 0, 8, 0),
+                )
+            else:
+                self._panel.clear()
+                self._panel.extend([self._header, self._body, self._modal_container])
 
     def _create_header(self) -> pn.Row:
         """Create the header row with expand button, title, status, and buttons."""
