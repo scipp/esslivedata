@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import NewType
 from uuid import UUID
@@ -34,10 +35,13 @@ from ess.livedata.core.job_manager import JobAction, JobCommand
 
 from .command_service import CommandService
 from .config_store import ConfigStore
+from .configuration_adapter import ConfigurationState
 from .workflow_config_service import WorkflowConfigService
+from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
 SourceName = str
 SubscriptionId = NewType('SubscriptionId', UUID)
+WidgetLifecycleSubscriptionId = NewType('WidgetLifecycleSubscriptionId', UUID)
 
 
 class JobConfig(BaseModel):
@@ -80,6 +84,19 @@ class WorkflowState:
     staged_jobs: dict[SourceName, JobConfig] = field(default_factory=dict)
 
 
+@dataclass
+class WidgetLifecycleCallbacks:
+    """Callbacks for widget lifecycle events from JobOrchestrator.
+
+    Widgets use this to stay synchronized across browser sessions.
+    All callbacks receive the workflow_id so widgets can filter relevant events.
+    """
+
+    on_staged_changed: Callable[[WorkflowId], None] | None = None
+    on_workflow_committed: Callable[[WorkflowId], None] | None = None
+    on_workflow_stopped: Callable[[WorkflowId], None] | None = None
+
+
 class JobOrchestrator:
     """Orchestrates workflow job lifecycle and state management."""
 
@@ -115,9 +132,18 @@ class JobOrchestrator:
         # Workflow state tracking
         self._workflows: dict[WorkflowId, WorkflowState] = {}
 
-        # Workflow subscription tracking
+        # Workflow subscription tracking (for PlotOrchestrator)
         self._subscriptions: dict[SubscriptionId, Callable[[JobNumber], None]] = {}
         self._workflow_subscriptions: dict[WorkflowId, set[SubscriptionId]] = {}
+
+        # Widget lifecycle subscription tracking (for cross-session widget sync)
+        self._widget_subscriptions: dict[
+            WidgetLifecycleSubscriptionId, WidgetLifecycleCallbacks
+        ] = {}
+
+        # Transaction state for batching staging operations
+        self._transaction_workflow: WorkflowId | None = None
+        self._transaction_depth: int = 0
 
         # Load persisted configs
         self._load_configs_from_store()
@@ -130,16 +156,25 @@ class JobOrchestrator:
             if self._config_store is not None:
                 config_data = self._config_store.get(str(workflow_id))
 
-            # Get params/aux_source_names/source_names as dicts
-            if config_data and config_data.get('params'):
-                # Use loaded config (already dicts)
-                params = config_data['params']
-                aux_source_names = config_data.get('aux_source_names', {})
-                source_names = config_data.get('source_names', [])
+            state = WorkflowState()
+            available_sources = set(spec.source_names)
+
+            # Load per-source configs from 'jobs' dict (new schema)
+            if config_data and config_data.get('jobs'):
+                jobs_data = config_data['jobs']
+                loaded_count = 0
+                for source_name, job_data in jobs_data.items():
+                    # Filter to sources that exist in the spec
+                    if source_name in available_sources:
+                        state.staged_jobs[source_name] = JobConfig(
+                            params=job_data.get('params', {}),
+                            aux_source_names=job_data.get('aux_source_names', {}),
+                        )
+                        loaded_count += 1
                 self._logger.info(
                     'Loaded config for workflow %s from store: %d sources',
                     workflow_id,
-                    len(source_names),
+                    loaded_count,
                 )
             else:
                 # Use defaults from spec, converting to dicts
@@ -161,21 +196,17 @@ class JobOrchestrator:
                 if spec.aux_sources is not None:
                     aux_source_names = spec.aux_sources().model_dump(mode='json')
 
-                source_names = spec.source_names
+                if params:
+                    for source_name in spec.source_names:
+                        state.staged_jobs[source_name] = JobConfig(
+                            params=params.copy(),
+                            aux_source_names=aux_source_names.copy(),
+                        )
                 self._logger.debug(
                     'Initialized workflow %s with defaults: %d sources',
                     workflow_id,
-                    len(source_names),
+                    len(spec.source_names),
                 )
-
-            # Initialize staged_jobs with dict-based configs
-            state = WorkflowState()
-            if params:
-                for source_name in source_names:
-                    state.staged_jobs[source_name] = JobConfig(
-                        params=params.copy(),
-                        aux_source_names=aux_source_names.copy(),
-                    )
 
             # Restore active job state if present
             if config_data:
@@ -205,6 +236,55 @@ class JobOrchestrator:
             # Future subscribers are notified via subscribe_to_workflow(), which
             # checks for existing active jobs and notifies immediately.
 
+    @contextmanager
+    def staging_transaction(self, workflow_id: WorkflowId):
+        """
+        Context manager for batching staging operations.
+
+        All staging operations (clear_staged_configs, stage_config) within the
+        context will trigger only a single notification when the context exits.
+        This prevents N+1 UI rebuild issues when performing multiple staging
+        operations together.
+
+        Transactions can be nested - only the outermost transaction triggers
+        the notification on exit.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to perform staging operations on.
+
+        Yields
+        ------
+        None
+
+        Raises
+        ------
+        ValueError
+            If attempting to nest transactions for different workflows.
+        """
+        # Enter transaction
+        if self._transaction_workflow is None:
+            self._transaction_workflow = workflow_id
+        elif self._transaction_workflow != workflow_id:
+            msg = (
+                f'Cannot nest transactions for different workflows: '
+                f'current={self._transaction_workflow}, new={workflow_id}'
+            )
+            raise ValueError(msg)
+
+        self._transaction_depth += 1
+
+        try:
+            yield
+        finally:
+            # Exit transaction
+            self._transaction_depth -= 1
+            if self._transaction_depth == 0:
+                # Outermost transaction exiting - send notification
+                self._transaction_workflow = None
+                self._notify_staged_changed(workflow_id)
+
     def clear_staged_configs(self, workflow_id: WorkflowId) -> None:
         """
         Clear all staged configs for a workflow.
@@ -215,6 +295,7 @@ class JobOrchestrator:
             The workflow to clear staged configs for.
         """
         self._workflows[workflow_id].staged_jobs.clear()
+        self._notify_staged_changed(workflow_id)
 
     def stage_config(
         self,
@@ -241,6 +322,7 @@ class JobOrchestrator:
         self._workflows[workflow_id].staged_jobs[source_name] = JobConfig(
             params=params.copy(), aux_source_names=aux_source_names.copy()
         )
+        self._notify_staged_changed(workflow_id)
 
     def commit_workflow(self, workflow_id: WorkflowId) -> list[JobId]:
         """
@@ -325,13 +407,16 @@ class JobOrchestrator:
         # Persist full state (staged configs + active jobs) to store
         self._persist_state_to_store(workflow_id)
 
-        # Notify subscribers immediately that job is active
+        # Notify PlotOrchestrator subscribers that job is active
         self._logger.info(
             'Workflow %s committed with job_number=%s, notifying subscribers',
             workflow_id,
             job_set.job_number,
         )
         self._notify_workflow_available(workflow_id, job_set.job_number)
+
+        # Notify widget lifecycle subscribers that workflow was committed
+        self._notify_workflow_committed(workflow_id)
 
         # Return JobIds for all created jobs
         return job_set.job_ids()
@@ -349,14 +434,16 @@ class JobOrchestrator:
             return
 
         # Build config dict from staged_jobs if present
-        config_dict = {}
+        config_dict: dict = {}
         if state.staged_jobs:
-            source_names = list(state.staged_jobs.keys())
-            first_job_config = next(iter(state.staged_jobs.values()))
             config_dict = {
-                'source_names': source_names,
-                'params': first_job_config.params,
-                'aux_source_names': first_job_config.aux_source_names,
+                'jobs': {
+                    source_name: {
+                        'params': job_config.params,
+                        'aux_source_names': job_config.aux_source_names,
+                    }
+                    for source_name, job_config in state.staged_jobs.items()
+                }
             }
 
         # Add active job state
@@ -438,6 +525,133 @@ class JobOrchestrator:
             return None
         return state.current.job_number
 
+    def get_workflow_registry(self) -> Mapping[WorkflowId, WorkflowSpec]:
+        """
+        Get the workflow registry containing all managed workflows.
+
+        Returns
+        -------
+        :
+            Mapping from workflow ID to workflow spec.
+        """
+        return self._workflow_registry
+
+    def create_workflow_adapter(
+        self,
+        workflow_id: WorkflowId,
+        selected_sources: list[str] | None = None,
+    ) -> WorkflowConfigurationAdapter:
+        """
+        Create a workflow configuration adapter for the given workflow ID.
+
+        The adapter provides the interface for configuration widgets to display
+        workflow parameters and start the workflow.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to create an adapter for.
+        selected_sources
+            Optional list of source names to scope the adapter to. If provided,
+            the adapter will use the first selected source's config as reference
+            and pre-select these sources in the UI.
+
+        Returns
+        -------
+        :
+            Configuration adapter for the workflow.
+
+        Raises
+        ------
+        KeyError
+            If the workflow ID is not in the registry.
+        """
+        spec = self._workflow_registry[workflow_id]
+
+        # Get reference config from first selected source (or first staged)
+        config_state = self._get_reference_config(workflow_id, selected_sources)
+
+        # Determine initial source names: explicit selection > staged sources > all
+        initial_source_names = selected_sources
+        if initial_source_names is None:
+            staged_jobs = self.get_staged_config(workflow_id)
+            if staged_jobs:
+                initial_source_names = list(staged_jobs.keys())
+
+        def start_callback(
+            selected_sources: list[str],
+            parameter_values,
+            aux_source_names=None,
+        ) -> None:
+            """Stage configs for selected sources and commit the workflow.
+
+            Only updates the selected sources, preserving configs for other
+            sources that may have been configured independently.
+            """
+            params_dict = parameter_values.model_dump(mode='json')
+            aux_dict = (
+                aux_source_names.model_dump(mode='json') if aux_source_names else {}
+            )
+
+            # Update only the selected sources, preserving other staged configs
+            for source_name in selected_sources:
+                self.stage_config(
+                    workflow_id,
+                    source_name=source_name,
+                    params=params_dict,
+                    aux_source_names=aux_dict,
+                )
+
+            self.commit_workflow(workflow_id)
+
+        return WorkflowConfigurationAdapter(
+            spec,
+            config_state,
+            start_callback,
+            initial_source_names=initial_source_names,
+        )
+
+    def _get_reference_config(
+        self,
+        workflow_id: WorkflowId,
+        selected_sources: list[str] | None = None,
+    ) -> ConfigurationState | None:
+        """Get reference config for adapter initialization.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to get config for.
+        selected_sources
+            Optional list of source names. If provided, returns config from
+            the first selected source that has a staged config.
+
+        Returns
+        -------
+        :
+            ConfigurationState from the reference source, or None if no staged configs.
+        """
+        staged_jobs = self.get_staged_config(workflow_id)
+        if not staged_jobs:
+            return None
+
+        # Pick reference: first selected source with config, or first staged
+        if selected_sources:
+            for source in selected_sources:
+                if source in staged_jobs:
+                    job = staged_jobs[source]
+                    return ConfigurationState(
+                        params=job.params,
+                        aux_source_names=job.aux_source_names,
+                    )
+
+        # Fallback to first staged
+        first_job = next(iter(staged_jobs.values()))
+        return ConfigurationState(
+            params=first_job.params,
+            aux_source_names=first_job.aux_source_names,
+        )
+
     def get_previous_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:
         """
         Get the job number of the previous job for a workflow.
@@ -456,6 +670,58 @@ class JobOrchestrator:
         if state is None or state.previous is None:
             return None
         return state.previous.job_number
+
+    def stop_workflow(self, workflow_id: WorkflowId) -> bool:
+        """
+        Stop all jobs for a workflow.
+
+        Sends stop commands to the backend and clears the local active job state.
+        The workflow configuration remains staged for future restarts.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to stop.
+
+        Returns
+        -------
+        :
+            True if jobs were stopped, False if no active jobs.
+        """
+        state = self._workflows[workflow_id]
+        if state.current is None:
+            self._logger.debug('No active jobs for workflow %s to stop', workflow_id)
+            return False
+
+        # Send stop commands to backend
+        commands = [
+            (
+                ConfigKey(key=JobCommand.key, source_name=str(job_id)),
+                JobCommand(job_id=job_id, action=JobAction.stop),
+            )
+            for job_id in state.current.job_ids()
+        ]
+        self._command_service.send_batch(commands)
+
+        job_number = state.current.job_number
+        self._logger.info(
+            'Stopped workflow %s (job_number=%s, %d jobs)',
+            workflow_id,
+            job_number,
+            len(state.current.jobs),
+        )
+
+        # Clear local state immediately (don't wait for backend confirmation)
+        state.previous = state.current
+        state.current = None
+
+        # Persist updated state
+        self._persist_state_to_store(workflow_id)
+
+        # Notify widget lifecycle subscribers that workflow was stopped
+        self._notify_workflow_stopped(workflow_id)
+
+        return True
 
     def _notify_workflow_available(
         self, workflow_id: WorkflowId, job_number: JobNumber
@@ -564,3 +830,94 @@ class JobOrchestrator:
                 'Attempted to unsubscribe from non-existent subscription %s',
                 subscription_id,
             )
+
+    def subscribe_to_widget_lifecycle(
+        self, callbacks: WidgetLifecycleCallbacks
+    ) -> WidgetLifecycleSubscriptionId:
+        """
+        Subscribe to widget lifecycle events for cross-session synchronization.
+
+        Widgets use this to stay synchronized across browser sessions. When any
+        session triggers a state change (staging, commit, stop), all subscribed
+        widgets are notified so they can rebuild.
+
+        Parameters
+        ----------
+        callbacks
+            Callbacks to invoke on lifecycle events. Any callback can be None
+            if that event type is not needed.
+
+        Returns
+        -------
+        :
+            Subscription ID for unsubscribing later.
+        """
+        subscription_id = WidgetLifecycleSubscriptionId(uuid.uuid4())
+        self._widget_subscriptions[subscription_id] = callbacks
+        self._logger.debug('Added widget lifecycle subscription %s', subscription_id)
+        return subscription_id
+
+    def unsubscribe_from_widget_lifecycle(
+        self, subscription_id: WidgetLifecycleSubscriptionId
+    ) -> None:
+        """
+        Unsubscribe from widget lifecycle events.
+
+        Parameters
+        ----------
+        subscription_id
+            The subscription ID returned from subscribe_to_widget_lifecycle.
+        """
+        if subscription_id in self._widget_subscriptions:
+            del self._widget_subscriptions[subscription_id]
+            self._logger.debug(
+                'Removed widget lifecycle subscription %s', subscription_id
+            )
+        else:
+            self._logger.warning(
+                'Attempted to unsubscribe from non-existent widget subscription %s',
+                subscription_id,
+            )
+
+    def _notify_staged_changed(self, workflow_id: WorkflowId) -> None:
+        """Notify all widget subscribers that staging area changed.
+
+        Notifications are deferred if currently in a staging transaction.
+        The transaction context manager will call this on exit.
+        """
+        if self._transaction_workflow is not None:
+            return
+
+        for subscription_id, callbacks in self._widget_subscriptions.items():
+            if callbacks.on_staged_changed is not None:
+                try:
+                    callbacks.on_staged_changed(workflow_id)
+                except Exception:
+                    self._logger.exception(
+                        'Error in on_staged_changed callback for subscription %s',
+                        subscription_id,
+                    )
+
+    def _notify_workflow_committed(self, workflow_id: WorkflowId) -> None:
+        """Notify all widget subscribers that a workflow was committed."""
+        for subscription_id, callbacks in self._widget_subscriptions.items():
+            if callbacks.on_workflow_committed is not None:
+                try:
+                    callbacks.on_workflow_committed(workflow_id)
+                except Exception:
+                    self._logger.exception(
+                        'Error in on_workflow_committed callback for subscription %s',
+                        subscription_id,
+                    )
+
+    def _notify_workflow_stopped(self, workflow_id: WorkflowId) -> None:
+        """Notify all widget subscribers that a workflow was stopped."""
+        for subscription_id, callbacks in self._widget_subscriptions.items():
+            if callbacks.on_workflow_stopped is not None:
+                try:
+                    callbacks.on_workflow_stopped(workflow_id)
+                except Exception:
+                    self._logger.exception(
+                        'Error in on_workflow_stopped callback for subscription %s',
+                        subscription_id,
+                    )

@@ -12,33 +12,16 @@ Model = TypeVar('Model')
 
 class ConfigurationState(BaseModel):
     """
-    Persisted state for ConfigurationAdapter implementations.
+    Persisted state for a single source's configuration.
 
-    This model captures the user's configuration choices (sources, params,
-    aux sources) that should be restored when reopening the dashboard.
-    Used by both workflow and plotter configurations.
-
-    Schema Limitation
-    -----------------
-    This schema currently assumes all sources share the same `params` configuration,
-    with only `aux_source_names` varying per source. In reality, JobOrchestrator's
-    internal state (`staged_jobs`) allows different params per source via
-    `dict[SourceName, JobConfig]`.
-
-    For now, we expand on load: the single `params` dict is applied to all sources
-    in `source_names`, and `aux_source_names` is expanded per-source as needed.
-    This works because the current UI (WorkflowController.start_workflow) stages
-    the same params for all sources in a single operation.
-
-    Future work: If we support per-source params in the UI (e.g., "stage source1
-    with configA, stage source2 with configB"), this schema should be extended to:
-    `jobs: dict[str, JobConfigState]` where `JobConfigState` contains both params
-    and aux_source_names per source.
+    This model captures a source's configuration choices (params, aux sources)
+    that should be restored when reopening the dashboard. Used as reference
+    configuration when creating adapters for configuration widgets.
     """
 
-    source_names: list[str] = Field(
-        default_factory=list,
-        description="Selected source names for this workflow or plotter",
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Parameters for the workflow, as JSON-serialized Pydantic model",
     )
     aux_source_names: dict[str, str] = Field(
         default_factory=dict,
@@ -46,32 +29,34 @@ class ConfigurationState(BaseModel):
             "Selected auxiliary source names as field name to stream name mapping"
         ),
     )
-    params: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Parameters for the workflow, as JSON-serialized Pydantic model",
-    )
 
 
 class ConfigurationAdapter(ABC, Generic[Model]):
     """
     Abstract adapter for providing configuration data to generic widgets.
 
-    Subclasses should call `super().__init__(config_state=...)` to provide
-    persistent configuration that will be used by the default implementations
-    of `initial_source_names`, `initial_aux_source_names`, and
-    `initial_parameter_values`.
+    Subclasses should call `super().__init__(...)` to provide persistent
+    configuration state and initial source selection.
     """
 
-    def __init__(self, config_state: ConfigurationState | None = None) -> None:
+    def __init__(
+        self,
+        config_state: ConfigurationState | None = None,
+        initial_source_names: list[str] | None = None,
+    ) -> None:
         """
         Initialize the configuration adapter.
 
         Parameters
         ----------
         config_state
-            Persistent configuration state to restore, or None for default values.
+            Reference configuration state (from a single source) to use for
+            initial parameter values and aux source names. None for defaults.
+        initial_source_names
+            Source names to pre-select in the UI. None to select all available.
         """
         self._config_state = config_state
+        self._initial_source_names = initial_source_names
 
     @property
     @abstractmethod
@@ -100,12 +85,12 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         Initially selected auxiliary source names.
 
         Returns a mapping from field name (as defined in aux_sources model) to
-        the selected stream name. Default implementation filters persisted aux
-        sources to only include valid field names from the current aux_sources model.
+        the selected stream name. Filters persisted aux sources to only include
+        valid field names from the current aux_sources model.
         """
-        if not self._config_state:
-            return {}
         if not self.aux_sources:
+            return {}
+        if self._config_state is None:
             return {}
         # Filter to only include valid field names
         valid_fields = set(self.aux_sources.model_fields.keys())
@@ -156,33 +141,27 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         """
         Initially selected source names.
 
-        Default implementation filters persisted source names to only include
-        currently available sources. If no valid persisted sources remain,
-        defaults to all available sources.
+        Returns the pre-configured source names (filtered to available sources),
+        or all available sources if none were specified.
         """
-        if not self._config_state:
-            return self.source_names
-        filtered = [
-            name
-            for name in self._config_state.source_names
-            if name in self.source_names
-        ]
-        return filtered if filtered else self.source_names
+        if self._initial_source_names is not None:
+            available = set(self.source_names)
+            filtered = [s for s in self._initial_source_names if s in available]
+            return filtered if filtered else self.source_names
+        return self.source_names
 
     @property
     def initial_parameter_values(self) -> dict[str, Any]:
         """
         Initial parameter values.
 
-        Default implementation returns persisted parameter values if available
-        and compatible with the current model, otherwise returns empty dict to
-        trigger default values.
+        Returns persisted parameter values from the reference configuration.
 
         If stored params have no field overlap with the current model (indicating
         complete incompatibility, e.g., from a different workflow version), returns
         empty dict to fall back to defaults rather than propagating invalid data.
         """
-        if not self._config_state:
+        if self._config_state is None:
             return {}
 
         # Check compatibility with current model

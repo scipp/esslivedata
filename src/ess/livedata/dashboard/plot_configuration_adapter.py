@@ -31,6 +31,7 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         source_names: list[str],
         success_callback,
         config_state: ConfigurationState | None = None,
+        initial_source_names: list[str] | None = None,
     ):
         """
         Initialize plot configuration adapter.
@@ -44,9 +45,13 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         success_callback:
             Called with (selected_sources, params) when configuration is complete.
         config_state:
-            Optional persistent configuration state to restore.
+            Optional reference configuration state (from a single source) to restore.
+        initial_source_names:
+            Source names to pre-select in the UI. None to select all available.
         """
-        super().__init__(config_state=config_state)
+        super().__init__(
+            config_state=config_state, initial_source_names=initial_source_names
+        )
         self._plot_spec = plot_spec
         self._source_names = source_names
         self._success_callback = success_callback

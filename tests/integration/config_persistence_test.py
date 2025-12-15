@@ -7,7 +7,6 @@ from collections.abc import Generator
 import pytest
 
 from ess.livedata.config.workflow_spec import WorkflowId
-from ess.livedata.dashboard.configuration_adapter import ConfigurationState
 from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
 from ess.livedata.parameter_models import Scale, TimeUnit, TOAEdges
 from tests.integration.backend import DashboardBackend
@@ -71,13 +70,22 @@ def test_workflow_params_stored_and_retrieved_via_config_store(
 
     assert len(job_ids) == 2, f"Expected 2 jobs, got {len(job_ids)}"
 
-    # Verify params are stored in config store
-    stored_config = backend_with_null_transport.workflow_controller.get_workflow_config(
+    # Verify params are stored via orchestrator's staged config
+    staged_config = backend_with_null_transport.job_orchestrator.get_staged_config(
         workflow_id
     )
-    assert stored_config is not None, "Config should be stored in config store"
-    assert stored_config.source_names == source_names
-    assert stored_config.params == custom_params.model_dump()
+    assert staged_config is not None, "Config should be stored"
+    assert set(staged_config.keys()) == set(source_names)
+    # Each source has its own config with the same params
+    for source in source_names:
+        assert staged_config[source].params == custom_params.model_dump()
+
+    # get_workflow_config returns reference config (single source)
+    ref_config = backend_with_null_transport.workflow_controller.get_workflow_config(
+        workflow_id
+    )
+    assert ref_config is not None
+    assert ref_config.params == custom_params.model_dump()
 
     # Create adapter and verify it retrieves correct params from config store
     adapter = backend_with_null_transport.workflow_controller.create_workflow_adapter(
@@ -111,12 +119,15 @@ def test_adapter_filters_removed_sources(tmp_path) -> None:
     config_store = config_manager.get_store('workflow_configs')
 
     source_names = ['monitor1', 'monitor2', 'motion1']
-    legacy_config = ConfigurationState(
-        source_names=source_names,
-        aux_source_names={},
-        params=MonitorDataParams().model_dump(),
-    )
-    config_store[str(workflow_id)] = legacy_config.model_dump()
+    default_params = MonitorDataParams().model_dump()
+    # Raw dict format for persisted config
+    legacy_config = {
+        'jobs': {
+            name: {'params': default_params, 'aux_source_names': {}}
+            for name in source_names
+        }
+    }
+    config_store[str(workflow_id)] = legacy_config
 
     # Now create backend with the same config dir - orchestrator loads legacy config
     with DashboardBackend(
@@ -206,16 +217,21 @@ def test_incompatible_config_falls_back_to_defaults(tmp_path) -> None:
     config_manager = ConfigStoreManager(instrument='dummy', config_dir=tmp_path)
     config_store = config_manager.get_store('workflow_configs')
 
-    incompatible_config = ConfigurationState(
-        source_names=['monitor1'],
-        aux_source_names={},
-        params={
-            'old_field_that_no_longer_exists': 42,
-            'another_invalid_field': 'invalid_value',
-            # Completely wrong structure - not matching current MonitorDataParams
-        },
-    )
-    config_store[str(workflow_id)] = incompatible_config.model_dump()
+    # Raw dict format for persisted config with incompatible params
+    incompatible_config = {
+        'jobs': {
+            'monitor1': {
+                'params': {
+                    'old_field_that_no_longer_exists': 42,
+                    'another_invalid_field': 'invalid_value',
+                    # Completely wrong structure - not matching
+                    # current MonitorDataParams
+                },
+                'aux_source_names': {},
+            }
+        }
+    }
+    config_store[str(workflow_id)] = incompatible_config
 
     # Now create backend with the same config dir
     with DashboardBackend(

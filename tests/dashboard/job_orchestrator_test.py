@@ -21,7 +21,6 @@ from ess.livedata.core.job_manager import JobAction, JobCommand
 from ess.livedata.core.message import COMMANDS_STREAM_ID
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.config_store import FileBackedConfigStore
-from ess.livedata.dashboard.configuration_adapter import ConfigurationState
 from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
 from ess.livedata.fakes import FakeMessageSink
 from ess.livedata.handlers.config_handler import ConfigUpdate
@@ -304,13 +303,16 @@ class TestJobOrchestratorInitialization:
         workflow_id = workflow_with_params.get_id()
         registry = {workflow_id: workflow_with_params}
 
-        # Setup config store with persisted config
+        # Setup config store with persisted config (raw dict format)
         config_store = {
-            str(workflow_id): ConfigurationState(
-                source_names=["det_1"],  # Only one source
-                params={"threshold": 50.0, "mode": "custom"},
-                aux_source_names={},
-            ).model_dump()
+            str(workflow_id): {
+                "jobs": {
+                    "det_1": {
+                        "params": {"threshold": 50.0, "mode": "custom"},
+                        "aux_source_names": {},
+                    }
+                }
+            }
         }
 
         orchestrator = JobOrchestrator(
@@ -340,9 +342,12 @@ class TestJobOrchestratorInitialization:
         # Setup config store with invalid param types
         config_store = {
             str(workflow_id): {
-                "source_names": ["det_1"],
-                "params": {"threshold": "not_a_float"},  # Invalid type
-                "aux_source_names": {},
+                "jobs": {
+                    "det_1": {
+                        "params": {"threshold": "not_a_float"},  # Invalid type
+                        "aux_source_names": {},
+                    }
+                }
             }
         }
 
@@ -370,11 +375,14 @@ class TestJobOrchestratorInitialization:
         registry = {workflow_id: workflow_with_params_and_aux}
 
         config_store = {
-            str(workflow_id): ConfigurationState(
-                source_names=["det_1"],
-                params={"threshold": 75.0, "mode": "special"},
-                aux_source_names={"monitor": "monitor_2"},
-            ).model_dump()
+            str(workflow_id): {
+                "jobs": {
+                    "det_1": {
+                        "params": {"threshold": 75.0, "mode": "special"},
+                        "aux_source_names": {"monitor": "monitor_2"},
+                    }
+                }
+            }
         }
 
         orchestrator = JobOrchestrator(
@@ -513,7 +521,11 @@ class TestJobOrchestratorInitialization:
         assert workflow_key in saved_data
 
         # Verify enum was serialized as string value, not enum object
-        saved_params = saved_data[workflow_key]['params']
+        # With per-source config, params are nested under jobs/source_name
+        jobs = saved_data[workflow_key]['jobs']
+        assert len(jobs) > 0
+        first_source_config = next(iter(jobs.values()))
+        saved_params = first_source_config['params']
         assert 'choice' in saved_params
         assert saved_params['choice'] == 'option_a'  # String value, not enum
         assert isinstance(saved_params['choice'], str)
@@ -665,13 +677,20 @@ class TestJobOrchestratorMutationSafety:
         workflow_id = workflow_with_params.get_id()
         registry = {workflow_id: workflow_with_params}
 
-        # Config store with multiple sources
+        # Config store with multiple sources (each with their own params)
         config_store = {
-            str(workflow_id): ConfigurationState(
-                source_names=["det_1", "det_2"],
-                params={"threshold": 50.0, "mode": "custom"},
-                aux_source_names={"monitor": "monitor_1"},
-            ).model_dump()
+            str(workflow_id): {
+                "jobs": {
+                    "det_1": {
+                        "params": {"threshold": 50.0, "mode": "custom"},
+                        "aux_source_names": {"monitor": "monitor_1"},
+                    },
+                    "det_2": {
+                        "params": {"threshold": 50.0, "mode": "custom"},
+                        "aux_source_names": {"monitor": "monitor_1"},
+                    },
+                }
+            }
         }
 
         orchestrator = JobOrchestrator(
@@ -1045,3 +1064,861 @@ class TestJobOrchestratorCommit:
 
         # Config store should be unchanged for workflows with empty staged_jobs
         assert config_store == config_store_before
+
+
+class TestJobOrchestratorStop:
+    """Test stop_workflow functionality."""
+
+    def test_stop_workflow_sends_stop_commands_to_backend(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Verify stop_workflow sends stop commands for all active jobs."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        fake_sink = FakeMessageSink()
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=fake_sink),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Start a workflow
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={},
+        )
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_2",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={},
+        )
+        job_ids = orchestrator.commit_workflow(workflow_id)
+
+        # Clear sink to track stop commands
+        fake_sink.published_messages.clear()
+
+        # Stop the workflow
+        result = orchestrator.stop_workflow(workflow_id)
+
+        # Assert: stop commands sent for all jobs
+        assert result is True
+        sent_commands = get_sent_commands(fake_sink)
+        stop_commands = [
+            (key, value)
+            for key, value in sent_commands
+            if isinstance(value, JobCommand) and value.action == JobAction.stop
+        ]
+
+        assert len(stop_commands) == 2
+        stopped_job_ids = {cmd[1].job_id for cmd in stop_commands}
+        assert stopped_job_ids == set(job_ids)
+
+    def test_stop_workflow_clears_active_job_state(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Verify stop_workflow clears current job state."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Start a workflow
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={},
+        )
+        orchestrator.commit_workflow(workflow_id)
+
+        # Verify job is active
+        assert orchestrator.get_active_job_number(workflow_id) is not None
+
+        # Stop the workflow
+        orchestrator.stop_workflow(workflow_id)
+
+        # Verify job is no longer active
+        assert orchestrator.get_active_job_number(workflow_id) is None
+
+    def test_stop_workflow_returns_false_when_no_active_jobs(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Verify stop_workflow returns False when no active jobs."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Don't start any workflow - just try to stop
+        result = orchestrator.stop_workflow(workflow_id)
+
+        # Should return False
+        assert result is False
+
+    def test_stop_workflow_preserves_staged_config(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Verify stop_workflow preserves staged configuration for restart."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Clear defaults and stage only det_1
+        orchestrator.clear_staged_configs(workflow_id)
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={"monitor": "monitor_1"},
+        )
+        orchestrator.commit_workflow(workflow_id)
+
+        # Stop the workflow
+        orchestrator.stop_workflow(workflow_id)
+
+        # Verify staged config still exists
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert len(staged) == 1
+        assert staged["det_1"].params["threshold"] == 50.0
+        assert staged["det_1"].params["mode"] == "custom"
+        assert staged["det_1"].aux_source_names["monitor"] == "monitor_1"
+
+    def test_stop_workflow_persists_stopped_state(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Verify stop_workflow persists stopped state to config store."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        config_store: dict[str, dict] = {}
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=config_store,
+        )
+
+        # Start a workflow
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={},
+        )
+        job_ids = orchestrator.commit_workflow(workflow_id)
+
+        # Verify active job is in config store
+        assert 'current_job' in config_store[str(workflow_id)]
+
+        # Stop the workflow
+        orchestrator.stop_workflow(workflow_id)
+
+        # Verify current_job is removed from config store
+        assert 'current_job' not in config_store[str(workflow_id)]
+
+        # Verify previous_job is in config store
+        assert 'previous_job' in config_store[str(workflow_id)]
+        assert config_store[str(workflow_id)]['previous_job']['job_number'] == str(
+            job_ids[0].job_number
+        )
+
+    def test_stop_workflow_allows_immediate_restart(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Verify workflow can be restarted immediately after stopping."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Clear defaults and stage only det_1
+        orchestrator.clear_staged_configs(workflow_id)
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0, "mode": "custom"},
+            aux_source_names={},
+        )
+        first_job_ids = orchestrator.commit_workflow(workflow_id)
+
+        # Stop the workflow
+        orchestrator.stop_workflow(workflow_id)
+
+        # Restart with same config
+        second_job_ids = orchestrator.commit_workflow(workflow_id)
+
+        # Should succeed and get new job number
+        assert len(second_job_ids) == 1
+        assert second_job_ids[0].job_number != first_job_ids[0].job_number
+
+
+class TestJobOrchestratorWidgetLifecycleSubscriptions:
+    """Test widget lifecycle subscription mechanism for cross-session sync."""
+
+    def test_subscribe_returns_subscription_id(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Subscribe returns a unique subscription ID."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        callbacks = WidgetLifecycleCallbacks()
+        subscription_id = orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        assert subscription_id is not None
+
+    def test_unsubscribe_removes_subscription(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Unsubscribe removes the subscription so callbacks are no longer invoked."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        events: list[str] = []
+        callbacks = WidgetLifecycleCallbacks(
+            on_staged_changed=lambda wid: events.append(f'staged:{wid}')
+        )
+        subscription_id = orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        # Stage config should notify
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0},
+            aux_source_names={},
+        )
+        assert len(events) == 1
+
+        # Unsubscribe
+        orchestrator.unsubscribe_from_widget_lifecycle(subscription_id)
+
+        # Stage again - should NOT notify
+        events.clear()
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_2",
+            params={"threshold": 60.0},
+            aux_source_names={},
+        )
+        assert len(events) == 0
+
+    def test_stage_config_notifies_subscribers(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """stage_config notifies on_staged_changed callback."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        events: list[WorkflowId] = []
+        callbacks = WidgetLifecycleCallbacks(
+            on_staged_changed=lambda wid: events.append(wid)
+        )
+        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        # Clear first (triggers notification)
+        orchestrator.clear_staged_configs(workflow_id)
+        events.clear()
+
+        # Stage config
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0},
+            aux_source_names={},
+        )
+
+        assert events == [workflow_id]
+
+    def test_clear_staged_configs_notifies_subscribers(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """clear_staged_configs notifies on_staged_changed callback."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        events: list[WorkflowId] = []
+        callbacks = WidgetLifecycleCallbacks(
+            on_staged_changed=lambda wid: events.append(wid)
+        )
+        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        # Clear staged configs
+        orchestrator.clear_staged_configs(workflow_id)
+
+        assert events == [workflow_id]
+
+    def test_commit_workflow_notifies_subscribers(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """commit_workflow notifies on_workflow_committed callback."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        events: list[WorkflowId] = []
+        callbacks = WidgetLifecycleCallbacks(
+            on_workflow_committed=lambda wid: events.append(wid)
+        )
+        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        # Commit workflow (uses default staged configs)
+        orchestrator.commit_workflow(workflow_id)
+
+        assert events == [workflow_id]
+
+    def test_stop_workflow_notifies_subscribers(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """stop_workflow notifies on_workflow_stopped callback."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        events: list[WorkflowId] = []
+        callbacks = WidgetLifecycleCallbacks(
+            on_workflow_stopped=lambda wid: events.append(wid)
+        )
+        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        # First commit to have something to stop
+        orchestrator.commit_workflow(workflow_id)
+        events.clear()
+
+        # Stop workflow
+        orchestrator.stop_workflow(workflow_id)
+
+        assert events == [workflow_id]
+
+    def test_stop_workflow_does_not_notify_if_nothing_to_stop(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """stop_workflow does not notify if there are no active jobs."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        events: list[WorkflowId] = []
+        callbacks = WidgetLifecycleCallbacks(
+            on_workflow_stopped=lambda wid: events.append(wid)
+        )
+        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        # Try to stop without committing first
+        orchestrator.stop_workflow(workflow_id)
+
+        # Should not notify since there was nothing to stop
+        assert events == []
+
+    def test_multiple_subscribers_all_notified(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Multiple subscribers all receive notifications."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        events_1: list[str] = []
+        events_2: list[str] = []
+
+        callbacks_1 = WidgetLifecycleCallbacks(
+            on_workflow_committed=lambda wid: events_1.append('committed')
+        )
+        callbacks_2 = WidgetLifecycleCallbacks(
+            on_workflow_committed=lambda wid: events_2.append('committed')
+        )
+
+        orchestrator.subscribe_to_widget_lifecycle(callbacks_1)
+        orchestrator.subscribe_to_widget_lifecycle(callbacks_2)
+
+        # Commit workflow
+        orchestrator.commit_workflow(workflow_id)
+
+        # Both subscribers should be notified
+        assert events_1 == ['committed']
+        assert events_2 == ['committed']
+
+    def test_callback_exception_does_not_affect_other_subscribers(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Exception in one callback does not prevent others from being called."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        events: list[str] = []
+
+        def failing_callback(wid):
+            raise RuntimeError("Test error")
+
+        def working_callback(wid):
+            events.append('success')
+
+        callbacks_1 = WidgetLifecycleCallbacks(on_workflow_committed=failing_callback)
+        callbacks_2 = WidgetLifecycleCallbacks(on_workflow_committed=working_callback)
+
+        orchestrator.subscribe_to_widget_lifecycle(callbacks_1)
+        orchestrator.subscribe_to_widget_lifecycle(callbacks_2)
+
+        # Commit workflow - first callback fails, second should still be called
+        orchestrator.commit_workflow(workflow_id)
+
+        assert events == ['success']
+
+    def test_none_callbacks_are_skipped(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Callbacks set to None are safely skipped without error."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Subscribe with only one callback set
+        events: list[str] = []
+        callbacks = WidgetLifecycleCallbacks(
+            on_staged_changed=None,
+            on_workflow_committed=lambda wid: events.append('committed'),
+            on_workflow_stopped=None,
+        )
+        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        # All these operations should complete without error
+        orchestrator.clear_staged_configs(workflow_id)
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 50.0},
+            aux_source_names={},
+        )
+        orchestrator.commit_workflow(workflow_id)
+        orchestrator.stop_workflow(workflow_id)
+
+        # Only the commit callback was set
+        assert events == ['committed']
+
+    def test_staging_transaction_replaces_all_configs(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """staging_transaction allows replacing all configs in one operation."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Stage some initial configs
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 100.0},
+            aux_source_names={},
+        )
+
+        # Replace with new configs using transaction
+        with orchestrator.staging_transaction(workflow_id):
+            orchestrator.clear_staged_configs(workflow_id)
+            orchestrator.stage_config(
+                workflow_id,
+                source_name="det_2",
+                params={"threshold": 200.0},
+                aux_source_names={},
+            )
+            orchestrator.stage_config(
+                workflow_id,
+                source_name="det_3",
+                params={"threshold": 300.0},
+                aux_source_names={},
+            )
+
+        # Old config should be gone, new configs present
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert "det_1" not in staged
+        assert "det_2" in staged
+        assert "det_3" in staged
+        assert staged["det_2"].params == {"threshold": 200.0}
+        assert staged["det_3"].params == {"threshold": 300.0}
+
+    def test_staging_transaction_triggers_single_notification(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """staging_transaction triggers only one notification for efficiency."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Subscribe and count notifications
+        notification_count = 0
+
+        def count_notification(wid):
+            nonlocal notification_count
+            notification_count += 1
+
+        callbacks = WidgetLifecycleCallbacks(on_staged_changed=count_notification)
+        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        # Clear the counter (initial subscription triggers notification)
+        notification_count = 0
+
+        # Multiple staging operations in transaction - triggers only ONE notification
+        with orchestrator.staging_transaction(workflow_id):
+            orchestrator.clear_staged_configs(workflow_id)
+            orchestrator.stage_config(
+                workflow_id,
+                source_name="det_1",
+                params={"threshold": 100.0},
+                aux_source_names={},
+            )
+            orchestrator.stage_config(
+                workflow_id,
+                source_name="det_2",
+                params={"threshold": 200.0},
+                aux_source_names={},
+            )
+            orchestrator.stage_config(
+                workflow_id,
+                source_name="det_3",
+                params={"threshold": 300.0},
+                aux_source_names={},
+            )
+
+        # Only one notification despite 4 operations (clear + 3 stage_config)
+        assert notification_count == 1
+
+    def test_staging_transaction_can_be_nested(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """staging_transaction supports nesting for same workflow."""
+        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Subscribe and count notifications
+        notification_count = 0
+
+        def count_notification(wid):
+            nonlocal notification_count
+            notification_count += 1
+
+        callbacks = WidgetLifecycleCallbacks(on_staged_changed=count_notification)
+        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+
+        # Clear the counter
+        notification_count = 0
+
+        # Nested transactions - should trigger only ONE notification
+        with orchestrator.staging_transaction(workflow_id):
+            orchestrator.stage_config(
+                workflow_id, source_name="det_1", params={}, aux_source_names={}
+            )
+            # Inner transaction
+            with orchestrator.staging_transaction(workflow_id):
+                orchestrator.stage_config(
+                    workflow_id, source_name="det_2", params={}, aux_source_names={}
+                )
+            # More staging after inner transaction
+            orchestrator.stage_config(
+                workflow_id, source_name="det_3", params={}, aux_source_names={}
+            )
+
+        # Only one notification after outer transaction completes
+        assert notification_count == 1
+
+        # All configs should be present
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert "det_1" in staged
+        assert "det_2" in staged
+        assert "det_3" in staged
+
+    def test_staging_transaction_rejects_different_workflow(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """staging_transaction raises error if nesting different workflows."""
+        workflow_id_1 = workflow_with_params.get_id()
+
+        # Create a second workflow spec with different ID
+        from ess.livedata.config.workflow_spec import WorkflowSpec
+
+        workflow_2 = WorkflowSpec(
+            instrument="test",
+            namespace="testing",
+            name="different_workflow",
+            version=1,
+            title="Different Workflow",
+            description="A different workflow for testing",
+            stream_kind="detector",
+            params=workflow_with_params.params,
+        )
+        workflow_id_2 = workflow_2.get_id()
+
+        registry = {workflow_id_1: workflow_with_params, workflow_id_2: workflow_2}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Should raise error when trying to nest different workflows
+        with orchestrator.staging_transaction(workflow_id_1):
+            with pytest.raises(ValueError, match="Cannot nest transactions"):
+                with orchestrator.staging_transaction(workflow_id_2):
+                    pass
+
+
+class TestWorkflowAdapterIndependentSourceConfiguration:
+    """Test that workflow adapter preserves independently configured sources."""
+
+    def test_adapter_start_action_preserves_other_sources(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Configuring one source should not affect other sources' configs."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Stage initial config for det_1 with specific params
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 100.0, "mode": "fast"},
+            aux_source_names={},
+        )
+
+        # Create adapter scoped to det_2 and configure it
+        adapter = orchestrator.create_workflow_adapter(
+            workflow_id, selected_sources=["det_2"]
+        )
+
+        # Simulate user clicking "Apply" with different params for det_2
+        adapter.start_action(
+            selected_sources=["det_2"],
+            parameter_values=WorkflowParams(threshold=200.0, mode="slow"),
+        )
+
+        # Verify det_1's config is preserved
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert "det_1" in staged
+        assert staged["det_1"].params["threshold"] == 100.0
+        assert staged["det_1"].params["mode"] == "fast"
+
+        # Verify det_2 has new config
+        assert "det_2" in staged
+        assert staged["det_2"].params["threshold"] == 200.0
+        assert staged["det_2"].params["mode"] == "slow"
+
+    def test_adapter_start_action_updates_existing_source(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """Updating an already-configured source should update its config."""
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Stage initial config for det_1
+        orchestrator.stage_config(
+            workflow_id,
+            source_name="det_1",
+            params={"threshold": 100.0, "mode": "fast"},
+            aux_source_names={},
+        )
+
+        # Create adapter scoped to det_1 and update it
+        adapter = orchestrator.create_workflow_adapter(
+            workflow_id, selected_sources=["det_1"]
+        )
+
+        adapter.start_action(
+            selected_sources=["det_1"],
+            parameter_values=WorkflowParams(threshold=999.0, mode="updated"),
+        )
+
+        # Verify det_1's config is updated
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert staged["det_1"].params["threshold"] == 999.0
+        assert staged["det_1"].params["mode"] == "updated"

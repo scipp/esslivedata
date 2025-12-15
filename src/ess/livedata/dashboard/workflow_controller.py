@@ -129,21 +129,20 @@ class WorkflowController:
         if not source_names:
             return []
 
-        # Clear existing staged configs and stage new ones
-        # This ensures only the requested sources are included in the workflow
-        self._orchestrator.clear_staged_configs(workflow_id)
-
         # Convert Pydantic models to dicts for orchestrator
         params_dict = config.model_dump(mode='json')
         aux_dict = aux_source_names.model_dump(mode='json') if aux_source_names else {}
 
-        for source_name in source_names:
-            self._orchestrator.stage_config(
-                workflow_id,
-                source_name=source_name,
-                params=params_dict,
-                aux_source_names=aux_dict,
-            )
+        # Replace all staged configs in a transaction (single notification)
+        with self._orchestrator.staging_transaction(workflow_id):
+            self._orchestrator.clear_staged_configs(workflow_id)
+            for source_name in source_names:
+                self._orchestrator.stage_config(
+                    workflow_id,
+                    source_name=source_name,
+                    params=params_dict,
+                    aux_source_names=aux_dict,
+                )
 
         # Commit and start workflow
         return self._orchestrator.commit_workflow(workflow_id)
@@ -169,6 +168,12 @@ class WorkflowController:
         # Handle regular workflows
         persistent_config = self.get_workflow_config(workflow_id)
 
+        # Determine initial source names from staged config if available
+        initial_source_names = None
+        staged_jobs = self._orchestrator.get_staged_config(workflow_id)
+        if staged_jobs:
+            initial_source_names = list(staged_jobs.keys())
+
         def start_callback(
             selected_sources: list[str],
             parameter_values: pydantic.BaseModel,
@@ -179,7 +184,9 @@ class WorkflowController:
                 workflow_id, selected_sources, parameter_values, aux_source_names
             )
 
-        return WorkflowConfigurationAdapter(spec, persistent_config, start_callback)
+        return WorkflowConfigurationAdapter(
+            spec, persistent_config, start_callback, initial_source_names
+        )
 
     def get_workflow_titles(self) -> dict[WorkflowId, str]:
         """Get workflow IDs mapped to their titles, sorted by title."""
@@ -200,7 +207,11 @@ class WorkflowController:
         return self._workflow_registry.get(workflow_id)
 
     def get_workflow_config(self, workflow_id: WorkflowId) -> ConfigurationState | None:
-        """Load saved workflow configuration."""
+        """Load saved workflow configuration.
+
+        Returns the reference configuration (from first staged source) for the
+        given workflow. This is primarily used for adapter initialization.
+        """
         try:
             staged_jobs = self._orchestrator.get_staged_config(workflow_id)
         except KeyError:
@@ -210,13 +221,9 @@ class WorkflowController:
         if not staged_jobs:
             return None
 
-        # Convert JobOrchestrator's staged_jobs back to ConfigurationState
-        # (see ConfigurationState schema note about expansion/contraction)
-        source_names = list(staged_jobs.keys())
-        first_job_config = next(iter(staged_jobs.values()))
-
+        # Return config from first staged source as reference
+        first_job = next(iter(staged_jobs.values()))
         return ConfigurationState(
-            source_names=source_names,
-            params=first_job_config.params,
-            aux_source_names=first_job_config.aux_source_names,
+            params=first_job.params,
+            aux_source_names=first_job.aux_source_names,
         )
