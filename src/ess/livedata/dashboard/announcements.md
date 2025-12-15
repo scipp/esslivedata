@@ -20,4 +20,4 @@ This dashboard is just a website:
 
 ## Known issues
 
-- The correlation-histogram functionality is temporarily not functional.
+- The correlation-histogram feature is temporarily not functional.
