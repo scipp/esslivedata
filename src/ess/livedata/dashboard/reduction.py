@@ -43,23 +43,14 @@ Material._resources = {
 
 # CSS fix for hamburger menu icon (replaces Material Icons font dependency)
 _MENU_ICON_CSS = """
-/* Replace Material Icons menu icon with CSS hamburger */
-.mdc-top-app-bar__navigation-icon.material-icons {
-    font-size: 0;  /* Hide "menu" text */
-    position: relative;
-    width: 48px;
-    height: 48px;
+/* Replace Material Icons menu icon with Unicode hamburger */
+button.mdc-top-app-bar__navigation-icon.material-icons {
+    font-family: inherit;
+    font-size: 0 !important;
 }
-.mdc-top-app-bar__navigation-icon.material-icons::before {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 24px;
-    height: 2px;
-    background: currentColor;
-    box-shadow: 0 -8px 0 currentColor, 0 8px 0 currentColor;
+button.mdc-top-app-bar__navigation-icon.material-icons::before {
+    content: "\\2630";  /* Unicode hamburger ☰ */
+    font-size: 24px;
 }
 """
 pn.config.raw_css.append(_MENU_ICON_CSS)
