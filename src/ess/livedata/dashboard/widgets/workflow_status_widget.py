@@ -367,8 +367,21 @@ class WorkflowStatusWidget:
 
         active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
 
+        # Check if there are changes to commit (same logic as _create_commit_row)
+        has_changes = self._has_uncommitted_changes()
+
+        # Show play button if there are uncommitted changes
+        if has_changes:
+            play_btn = create_tool_button(
+                symbol='\u25b6',  # ▶
+                button_color=WorkflowWidgetStyles.STATUS_COLORS['active'],
+                hover_color='rgba(40, 167, 69, 0.1)',
+                on_click_callback=self._on_commit_click,
+            )
+            buttons.append(play_btn)
+
+        # Show reset and stop buttons if workflow is running
         if active_job_number is not None:
-            # Workflow is running - show reset and stop buttons
             reset_btn = create_tool_button(
                 symbol='\u21bb',  # ↻
                 button_color='#6c757d',
@@ -385,19 +398,27 @@ class WorkflowStatusWidget:
                 on_click_callback=self._on_stop_click,
             )
             buttons.append(stop_btn)
-        else:
-            # Workflow is stopped - show play button if there are staged configs
-            staged = self._orchestrator.get_staged_config(self._workflow_id)
-            if staged:
-                play_btn = create_tool_button(
-                    symbol='\u25b6',  # ▶
-                    button_color=WorkflowWidgetStyles.STATUS_COLORS['active'],
-                    hover_color='rgba(40, 167, 69, 0.1)',
-                    on_click_callback=self._on_commit_click,
-                )
-                buttons.append(play_btn)
 
         return pn.Row(*buttons, margin=0)
+
+    def _has_uncommitted_changes(self) -> bool:
+        """Check if there are staged changes that differ from active config."""
+        staged = self._orchestrator.get_staged_config(self._workflow_id)
+        if not staged:
+            return False
+
+        active = self._orchestrator.get_active_config(self._workflow_id)
+        if not active:
+            # Staged configs but no active - has changes
+            return True
+
+        # Check if any config differs from active
+        config_groups = _group_configs_by_equality(staged, active)
+        if any(g.is_modified for g in config_groups):
+            return True
+
+        # Check if source sets differ
+        return set(staged.keys()) != set(active.keys())
 
     def _create_body(self) -> pn.Column:
         """Create the collapsible body content."""

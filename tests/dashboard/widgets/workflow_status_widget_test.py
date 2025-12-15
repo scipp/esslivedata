@@ -322,10 +322,10 @@ class TestWorkflowStatusWidget:
         ]
         assert '\u25b6' not in button_names  # No play button
 
-    def test_header_shows_stop_button_instead_of_play_when_running(
+    def test_header_no_play_button_when_running_without_changes(
         self, workflow_status_widget, job_orchestrator, workflow_id
     ):
-        """Test that stop button is shown instead of play when workflow is running."""
+        """Test that play button is not shown when running and staged matches active."""
         # Stage and commit to start the workflow
         job_orchestrator.stage_config(
             workflow_id,
@@ -338,13 +338,45 @@ class TestWorkflowStatusWidget:
         # Rebuild widget
         workflow_status_widget._build_widget()
 
-        # Check header buttons
+        # Check header buttons - no play because staged == active
         header_buttons = workflow_status_widget._create_header_buttons()
         button_names = [
             obj.name for obj in header_buttons if isinstance(obj, pn.widgets.Button)
         ]
         assert '\u25b6' not in button_names  # No play button
         assert '\u25fc' in button_names  # Stop button (black square)
+
+    def test_header_shows_play_button_when_running_with_modified_staged(
+        self, workflow_status_widget, job_orchestrator, workflow_id
+    ):
+        """Test that play button is shown when running with modified staged config."""
+        # Stage and commit to start the workflow
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_orchestrator.commit_workflow(workflow_id)
+
+        # Modify staged config (different from active)
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 200.0},  # Different value
+            aux_source_names={},
+        )
+
+        # Rebuild widget
+        workflow_status_widget._build_widget()
+
+        # Check header buttons - play button should appear because staged != active
+        header_buttons = workflow_status_widget._create_header_buttons()
+        button_names = [
+            obj.name for obj in header_buttons if isinstance(obj, pn.widgets.Button)
+        ]
+        assert '\u25b6' in button_names  # Play button (commit & restart)
+        assert '\u25fc' in button_names  # Stop button still there
 
 
 class TestWorkflowStatusWidgetWithJobs:
