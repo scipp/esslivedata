@@ -151,8 +151,31 @@ class DashboardBase(ServiceBase, ABC):
             main=main_content,
             header_background=self.get_header_background(),
         )
+        # Inject CSS for offline mode (replaces Material Icons font with Unicode)
+        template.config.raw_css.extend(self.get_raw_css())
         self.start_periodic_updates()
         return template
+
+    def get_raw_css(self) -> list[str]:
+        """
+        Get additional raw CSS to inject into the template.
+
+        Override this method to add custom CSS. The default provides a fix for
+        the hamburger menu icon when running in offline mode (without Google Fonts).
+        """
+        return [
+            """
+            /* Offline mode: Replace Material Icons menu with Unicode hamburger */
+            button.mdc-top-app-bar__navigation-icon.material-icons {
+                font-family: inherit;
+                font-size: 0 !important;
+            }
+            button.mdc-top-app-bar__navigation-icon.material-icons::before {
+                content: "\\2630";
+                font-size: 24px;
+            }
+            """
+        ]
 
     @property
     def server(self):

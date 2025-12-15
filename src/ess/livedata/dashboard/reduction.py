@@ -41,20 +41,6 @@ Material._resources = {
     },
 }
 
-# CSS fix for hamburger menu icon (replaces Material Icons font dependency)
-_MENU_ICON_CSS = """
-/* Replace Material Icons menu icon with Unicode hamburger */
-button.mdc-top-app-bar__navigation-icon.material-icons {
-    font-family: inherit;
-    font-size: 0 !important;
-}
-button.mdc-top-app-bar__navigation-icon.material-icons::before {
-    content: "\\2630";  /* Unicode hamburger ☰ */
-    font-size: 24px;
-}
-"""
-pn.config.raw_css.append(_MENU_ICON_CSS)
-
 ANNOUNCEMENTS_URL = (
     'https://public.esss.dk/groups/scipp/esslivedata/_static/announcements.md'
 )
