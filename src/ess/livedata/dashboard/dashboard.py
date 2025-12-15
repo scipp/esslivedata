@@ -163,20 +163,23 @@ class DashboardBase(ServiceBase, ABC):
         Override this method to add custom CSS. The default provides a fix for
         the hamburger menu icon when running in offline mode (without Google Fonts).
         """
+        # SVG hamburger icon (3 horizontal lines), white color, as data URI
+        hamburger_svg = (
+            "data:image/svg+xml,"
+            "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' "
+            "fill='white'%3E%3Cpath d='M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z'"
+            "/%3E%3C/svg%3E"
+        )
         return [
-            """
-            /* Offline mode: Replace Material Icons menu with Unicode hamburger */
-            button.mdc-top-app-bar__navigation-icon.material-icons {
+            f"""
+            /* Offline mode: Replace Material Icons menu with SVG hamburger */
+            button.mdc-top-app-bar__navigation-icon.material-icons {{
                 font-size: 0 !important;
-                line-height: 1;
-            }
-            button.mdc-top-app-bar__navigation-icon.material-icons::before {
-                content: "\\2630";
-                font-size: 24px;
-                font-family: sans-serif;
-                display: inline-block;
-                line-height: 48px;
-            }
+                background-image: url("{hamburger_svg}");
+                background-repeat: no-repeat;
+                background-position: center;
+                background-size: 30px 36px;
+            }}
             """
         ]
 
