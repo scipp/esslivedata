@@ -167,12 +167,15 @@ class DashboardBase(ServiceBase, ABC):
             """
             /* Offline mode: Replace Material Icons menu with Unicode hamburger */
             button.mdc-top-app-bar__navigation-icon.material-icons {
-                font-family: inherit;
                 font-size: 0 !important;
+                line-height: 1;
             }
             button.mdc-top-app-bar__navigation-icon.material-icons::before {
                 content: "\\2630";
                 font-size: 24px;
+                font-family: sans-serif;
+                display: inline-block;
+                line-height: 48px;
             }
             """
         ]
