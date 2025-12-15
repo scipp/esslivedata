@@ -384,10 +384,11 @@ class ConfigurationModal:
 
     def _on_start_clicked(self, event) -> None:
         """Handle start button click."""
-        if self._panel.validate_and_execute():
-            self._modal.open = False
-            if self._success_callback:
-                self._success_callback()
+        with pn.io.hold():
+            if self._panel.validate_and_execute():
+                self._modal.open = False
+                if self._success_callback:
+                    self._success_callback()
 
     def _on_cancel_clicked(self, event) -> None:
         """Handle cancel button click."""
