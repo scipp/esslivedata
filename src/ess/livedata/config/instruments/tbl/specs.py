@@ -39,6 +39,7 @@ multiblade_view_handle = register_logical_detector_view_spec(
     description='Counts folded into blade, wire, and strip dimensions',
     source_names=['multiblade_detector'],
     roi_support=True,
+    output_ndim=3,
 )
 
 he3_detector_handle = register_logical_detector_view_spec(
