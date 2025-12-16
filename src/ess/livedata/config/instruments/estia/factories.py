@@ -44,7 +44,7 @@ def setup_factories(instrument: Instrument) -> None:
         return SpectrumView(
             data.bins.concat('strip')
             .hist(event_time_offset=edges_ns)
-            .assign_coords(event_time_offset=sc.midpoints(toa_edges))
+            .assign_coords(event_time_offset=toa_edges)
         )
 
     from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename

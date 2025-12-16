@@ -156,6 +156,98 @@ class TestImagePlotter:
         else:
             render_to_bokeh(hv_element)
 
+    def test_plot_with_bin_edge_coordinate_does_not_raise(
+        self, image_plotter, data_key
+    ):
+        """Test that 2D data with bin-edge coordinate on one dimension works."""
+        # Reproduce the scenario from problem.txt: wire dimension without coord,
+        # event_time_offset dimension with bin-edge coordinate
+        event_time_offset_edges = sc.linspace(
+            'event_time_offset', 0.0, 71.0, num=101, unit='ns'
+        )
+        data = sc.DataArray(
+            sc.zeros(
+                dims=['wire', 'event_time_offset'], shape=[32, 100], unit='counts'
+            ),
+            coords={'event_time_offset': event_time_offset_edges},
+        )
+        result = image_plotter.plot(data, data_key)
+        assert result is not None
+
+    def test_plot_with_bin_edge_coordinate_renders_to_bokeh(
+        self, image_plotter, data_key, color_scale
+    ):
+        """Test that 2D data with bin-edge coordinate can be rendered to Bokeh."""
+        # Reproduce the scenario from problem.txt with actual data name
+        event_time_offset_edges = sc.linspace(
+            'event_time_offset', 0.0, 7.1e7, num=101, unit='ns'
+        )
+        data = sc.DataArray(
+            sc.zeros(
+                dims=['wire', 'event_time_offset'], shape=[32, 100], unit='counts'
+            ),
+            coords={'event_time_offset': event_time_offset_edges},
+        )
+        data.name = 'Spectrum View'
+
+        hv_element = image_plotter.plot(data, data_key)
+        if color_scale == PlotScale.log:
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore", "All-NaN slice encountered", RuntimeWarning
+                )
+                # Holoviews tries to compare None to int or float. Not sure what we can
+                # do about that.
+                with pytest.raises(hv.core.options.AbbreviatedException):
+                    render_to_bokeh(hv_element)
+        else:
+            render_to_bokeh(hv_element)
+
+    def test_plot_with_2d_coordinate_does_not_raise(self, image_plotter, data_key):
+        """Test that 2D data with a 2D coordinate (like detector_number) works."""
+        # Reproduce the broken scenario from info.txt: 2D coordinate
+        detector_number = sc.array(
+            dims=['wire', 'strip'],
+            values=np.arange(1, 32 * 64 + 1).reshape(32, 64),
+            unit=None,
+            dtype='int32',
+        )
+        data = sc.DataArray(
+            sc.ones(dims=['wire', 'strip'], shape=[32, 64], unit='counts'),
+            coords={'detector_number': detector_number},
+        )
+        data.name = 'Current Counts'
+
+        result = image_plotter.plot(data, data_key)
+        assert result is not None
+
+    def test_plot_with_bin_edges_can_be_relabeled(self, image_plotter, data_key):
+        """Test that 2D Image with bin edges can be relabeled without bounds error.
+
+        This is a regression test for the issue where converting bin edges to
+        midpoints causes floating-point rounding errors in HoloViews' automatic
+        bound inference, which are then rejected when the Image is cloned during
+        relabel().
+        """
+        # Create data with large coordinate values and bin edges (like bad.h5)
+        event_time_offset_edges = sc.linspace(
+            'event_time_offset', 0.0, 7.1e7, num=101, unit='ns'
+        )
+        data = sc.DataArray(
+            sc.zeros(
+                dims=['wire', 'event_time_offset'], shape=[32, 100], unit='counts'
+            ),
+            coords={'event_time_offset': event_time_offset_edges},
+        )
+        data.name = 'Spectrum View'
+
+        # Get the plot element
+        plot_element = image_plotter.plot(data, data_key)
+
+        # This should not raise - relabel clones the Image and validates bounds
+        labeled = plot_element.relabel('test_label')
+        assert labeled is not None
+
 
 class TestLinePlotter:
     @pytest.fixture

@@ -544,7 +544,9 @@ class SlicerPlotter(Plotter):
         # seem natural to use something like flat_dim = '/'.join(flatten_dims) instead,
         # but in practice that causes more trouble, since we lose connection to
         # the relevant coords.
-        if flatten_dims[1] in data.coords:
+        if (
+            coord := data.coords.get(flatten_dims[1])
+        ) is not None and coord.dims == flatten_dims:
             flat_dim = flatten_dims[1]
         else:
             flat_dim = '/'.join(flatten_dims)
