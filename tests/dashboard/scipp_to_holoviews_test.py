@@ -577,8 +577,7 @@ class TestToHoloviews:
         result = scipp_to_holoviews.to_holoviews(data)
 
         assert isinstance(result, hv.Image)
-        # When using bounds, data is a raw array not a dict
-        np.testing.assert_array_equal(result.data.flatten(), np.arange(10))
+        np.testing.assert_array_equal(result.data['values'].flatten(), np.arange(10))
 
     def test_2d_single_column_returns_image(self):
         """hv.Image with Nx1 data requires explicit bounds computation."""
@@ -590,8 +589,7 @@ class TestToHoloviews:
         result = scipp_to_holoviews.to_holoviews(data)
 
         assert isinstance(result, hv.Image)
-        # When using bounds, data is a raw array not a dict
-        np.testing.assert_array_equal(result.data.flatten(), np.arange(8))
+        np.testing.assert_array_equal(result.data['values'].flatten(), np.arange(8))
 
     def test_2d_single_element_returns_image(self):
         """hv.Image with 1x1 data requires explicit bounds computation."""
@@ -603,8 +601,7 @@ class TestToHoloviews:
         result = scipp_to_holoviews.to_holoviews(data)
 
         assert isinstance(result, hv.Image)
-        # When using bounds, data is a raw array not a dict
-        np.testing.assert_array_equal(result.data, [[42.0]])
+        np.testing.assert_array_equal(result.data['values'], [[42.0]])
 
     def test_2d_single_row_no_coords_returns_image(self):
         """hv.Image with 1xN data works with dummy coords and bounds."""
@@ -614,8 +611,7 @@ class TestToHoloviews:
         result = scipp_to_holoviews.to_holoviews(data)
 
         assert isinstance(result, hv.Image)
-        # When using bounds, data is a raw array not a dict
-        np.testing.assert_array_equal(result.data.flatten(), np.arange(10))
+        np.testing.assert_array_equal(result.data['values'].flatten(), np.arange(10))
 
     def test_2d_single_row_image_renders_to_bokeh(self):
         """Verify that 1xN Image can be rendered to Bokeh."""
