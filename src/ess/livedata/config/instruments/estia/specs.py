@@ -59,7 +59,8 @@ class SpectrumViewOutputs(WorkflowOutputsBase):
             coords={'event_time_offset': sc.arange('event_time_offset', 0, unit='ms')},
         ),
         title='Spectrum View',
-        description='Spectrum view showing time-of-arrival vs. detector position.',
+        description='Spectrum view showing accumulated counts in time-of-arrival vs. '
+        'blade and wire.',
     )
 
 
@@ -67,7 +68,8 @@ spectrum_view_handle = instrument.register_spec(
     name='spectrum_view',
     version=1,
     title='Spectrum view',
-    description='Spectrum view with configurable time-of-arrival bins.',
+    description='Spectrum view with configurable time-of-arrival bins. Counts within '
+    'the same strip are summed.',
     source_names=['multiblade_detector'],
     params=EstiaSpectrumViewParams,
     outputs=SpectrumViewOutputs,
