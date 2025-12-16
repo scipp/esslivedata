@@ -662,21 +662,28 @@ class TestSlicerPlotter:
             expected_slice.values[0, 1:],
         )
 
-    def test_flatten_mode_concatenates_outer_dimensions(self, data_3d, data_key):
-        """Test that flatten mode concatenates outer two dimensions."""
+    def test_flatten_mode_keeps_specified_dimension(self, data_3d, data_key):
+        """Test that flatten mode keeps the specified dimension."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         params.plot_scale.color_scale = PlotScale.linear
         plotter = plots.SlicerPlotter.from_params(params)
         plotter.initialize_from_data({data_key: data_3d})
 
-        result = plotter.plot(data_3d, data_key, mode='flatten')
-
-        # Result should be 2D (Image or QuadMesh depending on coord spacing)
-        assert isinstance(result, hv.Image | hv.QuadMesh)
         # Original data is (z:5, y:8, x:10)
-        # Flattened should be (y:40, x:10) - y dim name preserved per updated logic
-        data_dict = result.data
-        assert data_dict['values'].shape == (40, 10)
+        # Keep x: flatten z,y -> (40, 10)
+        result = plotter.plot(data_3d, data_key, mode='flatten', slice_dim='x')
+        assert isinstance(result, hv.Image | hv.QuadMesh)
+        assert result.data['values'].shape == (40, 10)
+
+        # Keep y: flatten z,x -> (50, 8)
+        result = plotter.plot(data_3d, data_key, mode='flatten', slice_dim='y')
+        assert isinstance(result, hv.Image | hv.QuadMesh)
+        assert result.data['values'].shape == (50, 8)
+
+        # Keep z: flatten y,x -> (80, 5)
+        result = plotter.plot(data_3d, data_key, mode='flatten', slice_dim='z')
+        assert isinstance(result, hv.Image | hv.QuadMesh)
+        assert result.data['values'].shape == (80, 5)
 
     def test_flatten_mode_preserves_all_data(self, data_3d, data_key):
         """Test that flatten mode preserves all data values."""
@@ -685,7 +692,7 @@ class TestSlicerPlotter:
         plotter = plots.SlicerPlotter.from_params(params)
         plotter.initialize_from_data({data_key: data_3d})
 
-        result = plotter.plot(data_3d, data_key, mode='flatten')
+        result = plotter.plot(data_3d, data_key, mode='flatten', slice_dim='x')
         data_dict = result.data
 
         # Total number of values should match
@@ -705,7 +712,7 @@ class TestSlicerPlotter:
         # First call in slice mode
         plotter.plot(data_3d, data_key, mode='slice', slice_dim='z', z_index=0)
         # Second call switching to flatten mode should trigger framewise
-        result2 = plotter.plot(data_3d, data_key, mode='flatten')
+        result2 = plotter.plot(data_3d, data_key, mode='flatten', slice_dim='x')
 
         # The opts should include framewise=True after mode change
         # (We can't easily inspect opts, but the mode change detection is tested)
@@ -751,7 +758,7 @@ class TestSlicerPlotter:
         assert isinstance(result_slice, hv.Image | hv.QuadMesh)
 
         # Flatten mode should work
-        result_flatten = plotter.plot(data, data_key, mode='flatten')
+        result_flatten = plotter.plot(data, data_key, mode='flatten', slice_dim='x')
         assert isinstance(result_flatten, hv.Image | hv.QuadMesh)
 
 

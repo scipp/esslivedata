@@ -463,10 +463,10 @@ class SlicerPlotter(Plotter):
             Key identifying this data.
         mode:
             Either 'slice' to select a single slice, or 'flatten' to concatenate
-            the outer two dimensions into one.
+            two dimensions into one.
         slice_dim:
-            For 'slice' mode: dimension to slice along.
-            For 'flatten' mode: ignored (always flattens outer two dims).
+            For 'slice' mode: dimension to slice along (removes this dimension).
+            For 'flatten' mode: dimension to keep (the other two are flattened).
         **kwargs:
             For 'slice' mode: '{slice_dim}_value' (coordinate) or
             '{slice_dim}_index' (integer) for the slice position.
@@ -477,7 +477,7 @@ class SlicerPlotter(Plotter):
             A HoloViews Image element showing the 2D result.
         """
         if mode == 'flatten':
-            plot_data = self._flatten_outer_dims(data)
+            plot_data = self._flatten_outer_dims(data, keep_dim=slice_dim)
         else:
             plot_data = self._slice_data(data, slice_dim, kwargs)
 
@@ -520,20 +520,35 @@ class SlicerPlotter(Plotter):
             slice_idx = kwargs.get(f'{slice_dim}_index', 0)
         return data[slice_dim, slice_idx]
 
-    def _flatten_outer_dims(self, data: sc.DataArray) -> sc.DataArray:
-        """Flatten outer two dimensions, keeping inner dimension separate."""
+    def _flatten_outer_dims(self, data: sc.DataArray, keep_dim: str) -> sc.DataArray:
+        """Flatten two dimensions, keeping the specified dimension separate.
+
+        Parameters
+        ----------
+        data:
+            3D DataArray to flatten.
+        keep_dim:
+            Dimension to keep (not flatten). The other two dimensions will be
+            flattened together.
+        """
         dims = list(data.dims)
-        outer_dims = dims[:2]
-        # Condinionally use the inner of the flattened dims as output dim name. It might
-        # seem natural to use something like flat_dim = '/'.join(outer_dims) instead,
-        # but in practice the actually causes more trouble, since we lose connection to
+        flatten_dims = [d for d in dims if d != keep_dim]
+
+        # Transpose so keep_dim is last (required for flatten to work on
+        # adjacent dims)
+        new_order = [*flatten_dims, keep_dim]
+        if dims != new_order:
+            data = data.transpose(new_order)
+
+        # Conditionally use the inner of the flattened dims as output dim name. It might
+        # seem natural to use something like flat_dim = '/'.join(flatten_dims) instead,
+        # but in practice that causes more trouble, since we lose connection to
         # the relevant coords.
-        if dims[1] in data.coords:
-            flat_dim = dims[1]
+        if flatten_dims[1] in data.coords:
+            flat_dim = flatten_dims[1]
         else:
-            flat_dim = '/'.join(outer_dims)
-        flat = data.flatten(dims=outer_dims, to=flat_dim)
-        return flat
+            flat_dim = '/'.join(flatten_dims)
+        return data.flatten(dims=flatten_dims, to=flat_dim)
 
 
 class BarsPlotter(Plotter):
