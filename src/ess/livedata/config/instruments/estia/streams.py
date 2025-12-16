@@ -17,7 +17,7 @@ def _make_estia_detectors() -> StreamLUT:
     """ESTIA detector mapping for event detectors (ev44)."""
     return {
         InputStreamKey(
-            topic='estia_detector', source_name='multiblade_detector'
+            topic='estia_detector', source_name='multiblade'
         ): 'multiblade_detector',
     }
 
