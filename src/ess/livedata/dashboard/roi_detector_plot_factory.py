@@ -938,7 +938,7 @@ class ROIDetectorPlotFactory:
         # This factory creates readback subscriptions for bidirectional ROI sync.
 
         detector_plotter = ImagePlotter(
-            value_margin_factor=0.1,
+            grow_threshold=0.1,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
