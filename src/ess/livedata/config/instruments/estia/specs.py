@@ -5,6 +5,9 @@ ESTIA instrument spec registration.
 """
 
 from ess.livedata.config import Instrument, instrument_registry
+from ess.livedata.handlers.detector_view_specs import (
+    register_logical_detector_view_spec,
+)
 
 detector_names = ['multiblade_detector']
 
@@ -15,5 +18,13 @@ instrument = Instrument(
     f144_attribute_registry={},
 )
 
-# Register instrument
 instrument_registry.register(instrument)
+
+multiblade_view_handle = register_logical_detector_view_spec(
+    instrument=instrument,
+    name='estia_multiblade_detector_view',
+    title='Multiblade Detector',
+    description='Counts folded into strip, blade, and wire dimensions',
+    source_names=['multiblade_detector'],
+    roi_support=True,
+)
