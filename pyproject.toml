@@ -68,6 +68,9 @@ loki = [
 odin = [
     "essimaging",
 ]
+estia = [
+    "essreflectometry",
+]
 dashboard = [
   "bokeh",
   "holoviews",

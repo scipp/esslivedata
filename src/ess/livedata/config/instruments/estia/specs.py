@@ -4,10 +4,15 @@
 ESTIA instrument spec registration.
 """
 
+import pydantic
+import scipp as sc
+
 from ess.livedata.config import Instrument, instrument_registry
+from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import (
     register_logical_detector_view_spec,
 )
+from ess.livedata.parameter_models import TOAEdges
 
 detector_names = ['multiblade_detector']
 
@@ -27,4 +32,34 @@ multiblade_view_handle = register_logical_detector_view_spec(
     description='Counts folded into strip, blade, and wire dimensions',
     source_names=['multiblade_detector'],
     roi_support=True,
+)
+
+
+class EstiaSpectrumViewParams(pydantic.BaseModel):
+    """Parameters for ESTIA spectrum view."""
+
+    toa_edges: TOAEdges = pydantic.Field(
+        title='Time of arrival edges',
+        description='Histogram bin edges for the time-of-arrival axis.',
+        default_factory=lambda: TOAEdges(start=0.0, stop=71.0, num_bins=100),
+    )
+
+
+class SpectrumViewOutputs(WorkflowOutputsBase):
+    """Outputs for ESTIA spectrum view workflow."""
+
+    spectrum_view: sc.DataArray = pydantic.Field(
+        title='Spectrum View',
+        description='Spectrum view showing time-of-arrival vs. detector position.',
+    )
+
+
+spectrum_view_handle = instrument.register_spec(
+    name='spectrum_view',
+    version=1,
+    title='Spectrum view',
+    description='Spectrum view with configurable time-of-arrival bins.',
+    source_names=['multiblade_detector'],
+    params=EstiaSpectrumViewParams,
+    outputs=SpectrumViewOutputs,
 )
