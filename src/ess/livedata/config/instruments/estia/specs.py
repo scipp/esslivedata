@@ -32,6 +32,7 @@ multiblade_view_handle = register_logical_detector_view_spec(
     description='Counts folded into strip, blade, and wire dimensions',
     source_names=['multiblade_detector'],
     roi_support=True,
+    output_ndim=3,
 )
 
 
@@ -49,6 +50,14 @@ class SpectrumViewOutputs(WorkflowOutputsBase):
     """Outputs for ESTIA spectrum view workflow."""
 
     spectrum_view: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(
+                dims=['blade', 'wire', 'event_time_offset'],
+                shape=[0, 0, 0],
+                unit='counts',
+            ),
+            coords={'event_time_offset': sc.arange('event_time_offset', 0, unit='ms')},
+        ),
         title='Spectrum View',
         description='Spectrum view showing time-of-arrival vs. detector position.',
     )
