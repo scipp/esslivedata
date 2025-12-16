@@ -102,20 +102,14 @@ class TestImagePlotter:
         assert result is not None
 
     def test_plot_with_all_zeros_renders_to_bokeh(
-        self, image_plotter, zero_data, data_key, color_scale
+        self, image_plotter, zero_data, data_key
     ):
         """Test that image data with all zeros can be rendered to a Bokeh plot."""
         hv_element = image_plotter.plot(zero_data, data_key)
-        if color_scale == PlotScale.log:
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore", "All-NaN slice encountered", RuntimeWarning
-                )
-                # Holoviews tries to compare None to int or float. Not sure what we can
-                # do about that.
-                with pytest.raises(hv.core.options.AbbreviatedException):
-                    render_to_bokeh(hv_element)
-        else:
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", "All-NaN slice encountered", RuntimeWarning
+            )
             render_to_bokeh(hv_element)
 
     def test_plot_with_constant_nonzero_values_does_not_raise(
@@ -140,20 +134,14 @@ class TestImagePlotter:
         assert result is not None
 
     def test_plot_with_negative_values_renders_to_bokeh(
-        self, image_plotter, negative_data, data_key, color_scale
+        self, image_plotter, negative_data, data_key
     ):
         """Test that image data with negative values can be rendered to a Bokeh plot."""
         hv_element = image_plotter.plot(negative_data, data_key)
-        if color_scale == PlotScale.log:
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore", "All-NaN slice encountered", RuntimeWarning
-                )
-                # Holoviews tries to compare None to int or float. Not sure what we can
-                # do about that.
-                with pytest.raises(hv.core.options.AbbreviatedException):
-                    render_to_bokeh(hv_element)
-        else:
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", "All-NaN slice encountered", RuntimeWarning
+            )
             render_to_bokeh(hv_element)
 
     def test_plot_with_bin_edge_coordinate_does_not_raise(
@@ -175,7 +163,7 @@ class TestImagePlotter:
         assert result is not None
 
     def test_plot_with_bin_edge_coordinate_renders_to_bokeh(
-        self, image_plotter, data_key, color_scale
+        self, image_plotter, data_key
     ):
         """Test that 2D data with bin-edge coordinate can be rendered to Bokeh."""
         # Reproduce the scenario from problem.txt with actual data name
@@ -191,16 +179,10 @@ class TestImagePlotter:
         data.name = 'Spectrum View'
 
         hv_element = image_plotter.plot(data, data_key)
-        if color_scale == PlotScale.log:
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore", "All-NaN slice encountered", RuntimeWarning
-                )
-                # Holoviews tries to compare None to int or float. Not sure what we can
-                # do about that.
-                with pytest.raises(hv.core.options.AbbreviatedException):
-                    render_to_bokeh(hv_element)
-        else:
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", "All-NaN slice encountered", RuntimeWarning
+            )
             render_to_bokeh(hv_element)
 
     def test_plot_with_2d_coordinate_does_not_raise(self, image_plotter, data_key):
