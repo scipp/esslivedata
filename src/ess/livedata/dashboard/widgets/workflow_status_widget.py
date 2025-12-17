@@ -25,7 +25,11 @@ from ess.livedata.core.job import JobState
 
 from ..icons import get_icon
 from .configuration_widget import ConfigurationModal
-from .plot_widgets import ButtonStyles, create_tool_button
+from .plot_widgets import (
+    ButtonStyles,
+    create_tool_button,
+    create_tool_button_stylesheet,
+)
 
 if TYPE_CHECKING:
     from ..job_orchestrator import (
@@ -288,37 +292,15 @@ class WorkflowStatusWidget:
         self._expand_btn = pn.widgets.Button(
             name='',
             icon=get_icon(icon_name),
+            icon_size='1.5em',
             button_type='light',
-            width=24,
-            height=24,
+            width=ButtonStyles.TOOL_BUTTON_SIZE,
+            height=ButtonStyles.TOOL_BUTTON_SIZE,
             margin=0,
-            stylesheets=[
-                """
-                button {
-                    background-color: transparent !important;
-                    border: none !important;
-                    padding: 0 !important;
-                    color: #6c757d !important;
-                    cursor: pointer !important;
-                    display: flex !important;
-                    align-items: center !important;
-                    justify-content: center !important;
-                    box-sizing: border-box !important;
-                }
-                button > * {
-                    display: flex !important;
-                    align-items: center !important;
-                    justify-content: center !important;
-                }
-                button svg {
-                    display: block !important;
-                    flex-shrink: 0 !important;
-                }
-                button:hover {
-                    background-color: rgba(0, 0, 0, 0.05) !important;
-                }
-                """
-            ],
+            stylesheets=create_tool_button_stylesheet(
+                button_color='#6c757d',
+                hover_color='rgba(0, 0, 0, 0.05)',
+            ),
         )
         self._expand_btn.on_click(lambda e: self._on_header_click(e))
 
