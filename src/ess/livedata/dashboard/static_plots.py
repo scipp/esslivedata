@@ -11,10 +11,21 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
+from enum import StrEnum
 from typing import Annotated
 
 import holoviews as hv
 import pydantic
+
+
+class LineDash(StrEnum):
+    """Line dash styles for HoloViews plots."""
+
+    solid = "solid"
+    dashed = "dashed"
+    dotted = "dotted"
+    dotdash = "dotdash"
+
 
 # Type annotation for color fields - detected by ParamWidget to use ColorPicker
 Color = Annotated[str, 'color']
@@ -256,8 +267,8 @@ class LinesStyle(pydantic.BaseModel):
         title="Line Width",
         description="Line width in pixels",
     )
-    line_dash: str = pydantic.Field(
-        default="solid",
+    line_dash: LineDash = pydantic.Field(
+        default=LineDash.solid,
         title="Line Style",
         description="Line style: solid, dashed, dotted, dotdash",
     )
