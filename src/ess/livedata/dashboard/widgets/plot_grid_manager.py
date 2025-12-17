@@ -24,8 +24,9 @@ from ..plot_orchestrator import (
     SubscriptionId,
 )
 from .plot_widgets import (
-    create_close_button,
+    ButtonStyles,
     create_download_button,
+    create_tool_button,
     get_workflow_display_info,
 )
 
@@ -91,7 +92,12 @@ class GridRow:
         )
 
         # Remove button
-        remove_button = create_close_button(on_remove)
+        remove_button = create_tool_button(
+            icon_name='x',
+            button_color=ButtonStyles.DANGER_RED,
+            hover_color='rgba(220, 53, 69, 0.1)',
+            on_click_callback=on_remove,
+        )
 
         self._widget = pn.Row(
             label,

@@ -133,72 +133,6 @@ def create_tool_button(
     return button
 
 
-def create_close_button(on_close_callback: Callable[[], None]) -> pn.widgets.Button:
-    """
-    Create a styled close button for plot cells.
-
-    Parameters
-    ----------
-    on_close_callback:
-        Callback function to invoke when the button is clicked.
-
-    Returns
-    -------
-    :
-        Panel Button widget styled as a close button.
-    """
-    return create_tool_button(
-        icon_name='x',
-        button_color=ButtonStyles.DANGER_RED,
-        hover_color='rgba(220, 53, 69, 0.1)',
-        on_click_callback=on_close_callback,
-    )
-
-
-def create_gear_button(on_gear_callback: Callable[[], None]) -> pn.widgets.Button:
-    """
-    Create a styled gear button for plot cells (configuration/settings).
-
-    Parameters
-    ----------
-    on_gear_callback:
-        Callback function to invoke when the button is clicked.
-
-    Returns
-    -------
-    :
-        Panel Button widget styled as a gear button.
-    """
-    return create_tool_button(
-        icon_name='settings',
-        button_color=ButtonStyles.PRIMARY_BLUE,
-        hover_color='rgba(0, 123, 255, 0.1)',
-        on_click_callback=on_gear_callback,
-    )
-
-
-def create_add_button(on_add_callback: Callable[[], None]) -> pn.widgets.Button:
-    """
-    Create a styled plus button for adding a new layer to a plot cell.
-
-    Parameters
-    ----------
-    on_add_callback:
-        Callback function to invoke when the button is clicked.
-
-    Returns
-    -------
-    :
-        Panel Button widget styled as an add button.
-    """
-    return create_tool_button(
-        icon_name='plus',
-        button_color='#28a745',  # Green
-        hover_color='rgba(40, 167, 69, 0.1)',
-        on_click_callback=on_add_callback,
-    )
-
-
 def create_download_button(
     filename: str,
     callback: Callable[[], str],
@@ -276,9 +210,28 @@ def create_cell_toolbar(
     :
         Panel Row widget containing the toolbar.
     """
-    gear_button = create_gear_button(on_gear_callback)
-    add_button = create_add_button(on_add_callback) if on_add_callback else None
-    close_button = create_close_button(on_close_callback)
+    gear_button = create_tool_button(
+        icon_name='settings',
+        button_color=ButtonStyles.PRIMARY_BLUE,
+        hover_color='rgba(0, 123, 255, 0.1)',
+        on_click_callback=on_gear_callback,
+    )
+    add_button = (
+        create_tool_button(
+            icon_name='plus',
+            button_color='#28a745',  # Green
+            hover_color='rgba(40, 167, 69, 0.1)',
+            on_click_callback=on_add_callback,
+        )
+        if on_add_callback
+        else None
+    )
+    close_button = create_tool_button(
+        icon_name='x',
+        button_color=ButtonStyles.DANGER_RED,
+        hover_color='rgba(220, 53, 69, 0.1)',
+        on_click_callback=on_close_callback,
+    )
 
     # Build left content: title and optional tooltip icon
     left_items: list = []
