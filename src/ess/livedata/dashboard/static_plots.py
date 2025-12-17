@@ -32,69 +32,32 @@ Color = Annotated[str, 'color']
 
 
 def _parse_number_list(v: str) -> list[int | float]:
-    """Parse a string into a list of numbers.
+    """Parse a comma-separated string into a list of numbers.
 
-    Accepts either:
-    - Comma-separated values: "10, 20, 30"
-    - JSON array format: "[10, 20, 30]" (for backwards compatibility)
-    - Empty string: ""
-
-    Returns an empty list for empty/whitespace-only input.
+    Example: "10, 20, 30" -> [10, 20, 30]
     """
     v = v.strip()
     if not v:
         return []
-    # Try JSON format first (for backwards compatibility)
-    if v.startswith('['):
-        try:
-            result = json.loads(v)
-            if isinstance(result, list):
-                return result
-        except json.JSONDecodeError:
-            pass
-    # Parse as comma-separated values
-    parts = [p.strip() for p in v.split(',')]
-    result = []
-    for part in parts:
-        if not part:
-            continue
-        try:
-            # Try int first, then float
-            if '.' in part or 'e' in part.lower():
-                result.append(float(part))
-            else:
-                result.append(int(part))
-        except ValueError as e:
-            raise ValueError(f"Invalid number: {part}") from e
-    return result
+    try:
+        result = json.loads(f"[{v}]")
+        if isinstance(result, list):
+            return result
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid format: {e}") from e
+    return []
 
 
 def _parse_rectangle_list(v: str) -> list[list[int | float]]:
-    """Parse a string into a list of rectangle coordinates.
+    """Parse comma-separated JSON arrays into a list of rectangle coordinates.
 
-    Accepts either:
-    - Comma-separated JSON arrays: "[0,0,10,10], [20,20,30,30]"
-    - Full JSON format: "[[0,0,10,10], [20,20,30,30]]" (backwards compatible)
-    - Empty cases: "", "[]"
-
-    Returns an empty list for empty/whitespace-only input.
+    Example: "[0,0,10,10], [20,20,30,30]" -> [[0,0,10,10], [20,20,30,30]]
     """
     v = v.strip()
     if not v or v == '[]':
         return []
-    # Try full JSON array format first (for backwards compatibility)
-    if v.startswith('[['):
-        try:
-            result = json.loads(v)
-            if isinstance(result, list):
-                return result
-        except json.JSONDecodeError:
-            pass
-    # Parse as comma-separated JSON arrays: "[0,0,10,10], [1,1,3,3]"
-    # Add outer brackets to make it valid JSON
-    json_str = f"[{v}]"
     try:
-        result = json.loads(json_str)
+        result = json.loads(f"[{v}]")
         if isinstance(result, list):
             return result
     except json.JSONDecodeError as e:
@@ -248,13 +211,6 @@ class LinesCoordinates(pydantic.BaseModel):
 class LinesStyle(BaseStyle):
     """Style options for lines."""
 
-    line_width: float = pydantic.Field(
-        default=2.0,
-        ge=0.5,
-        le=10.0,
-        title="Line Width",
-        description="Line width in pixels",
-    )
     alpha: float = pydantic.Field(
         default=0.7,
         ge=0.0,
