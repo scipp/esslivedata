@@ -121,6 +121,7 @@ def create_tool_button(
     button = pn.widgets.Button(
         name='',
         icon=get_icon(icon_name),
+        icon_size='1.5em',
         width=ButtonStyles.TOOL_BUTTON_SIZE,
         height=ButtonStyles.TOOL_BUTTON_SIZE,
         button_type='light',
