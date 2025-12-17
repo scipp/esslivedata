@@ -150,7 +150,7 @@ class RectanglesStyle(pydantic.BaseModel):
         description="Rectangle fill color",
     )
     alpha: float = pydantic.Field(
-        default=0.3,
+        default=0.0,
         ge=0.0,
         le=1.0,
         title="Opacity",
@@ -198,6 +198,7 @@ class RectanglesPlotter(StaticPlotter):
         return hv.Rectangles(rects).opts(
             fill_alpha=style.alpha,
             fill_color=style.color,
+            line_color=style.color,
             line_width=style.line_width,
         )
 
