@@ -936,6 +936,57 @@ class PlotOrchestrator:
             )
             return None
 
+    def serialize_grid(self, grid_id: GridId) -> dict[str, Any]:
+        """
+        Serialize a single grid configuration for export.
+
+        The returned dict is suitable for saving as a YAML grid template
+        that can be loaded later via :py:meth:`_parse_single_spec`.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid to serialize.
+
+        Returns
+        -------
+        :
+            Grid configuration dict. UUIDs are not included as they are
+            runtime identity handles with no cross-session significance.
+
+        Raises
+        ------
+        KeyError
+            If grid_id is not found.
+        """
+        grid = self._grids[grid_id]
+        return {
+            'title': grid.title,
+            'nrows': grid.nrows,
+            'ncols': grid.ncols,
+            'cells': [
+                {
+                    'geometry': {
+                        'row': cell.geometry.row,
+                        'col': cell.geometry.col,
+                        'row_span': cell.geometry.row_span,
+                        'col_span': cell.geometry.col_span,
+                    },
+                    'layers': [
+                        {
+                            'workflow_id': str(layer.config.workflow_id),
+                            'output_name': layer.config.output_name,
+                            'source_names': layer.config.source_names,
+                            'plot_name': layer.config.plot_name,
+                            'params': layer.config.params.model_dump(mode='json'),
+                        }
+                        for layer in cell.layers
+                    ],
+                }
+                for cell in grid.cells.values()
+            ],
+        }
+
     def _serialize_grids(self) -> list[dict[str, Any]]:
         """
         Serialize all grids to list for persistence.
@@ -946,35 +997,7 @@ class PlotOrchestrator:
             List of grid configurations. UUIDs are not persisted as they are
             runtime identity handles with no cross-session significance.
         """
-        return [
-            {
-                'title': grid.title,
-                'nrows': grid.nrows,
-                'ncols': grid.ncols,
-                'cells': [
-                    {
-                        'geometry': {
-                            'row': cell.geometry.row,
-                            'col': cell.geometry.col,
-                            'row_span': cell.geometry.row_span,
-                            'col_span': cell.geometry.col_span,
-                        },
-                        'layers': [
-                            {
-                                'workflow_id': str(layer.config.workflow_id),
-                                'output_name': layer.config.output_name,
-                                'source_names': layer.config.source_names,
-                                'plot_name': layer.config.plot_name,
-                                'params': layer.config.params.model_dump(mode='json'),
-                            }
-                            for layer in cell.layers
-                        ],
-                    }
-                    for cell in grid.cells.values()
-                ],
-            }
-            for grid in self._grids.values()
-        ]
+        return [self.serialize_grid(grid_id) for grid_id in self._grids]
 
     def _load_from_store(self) -> None:
         """Load plot grid configurations from config store."""
