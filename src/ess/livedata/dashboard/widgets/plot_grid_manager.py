@@ -55,6 +55,8 @@ class GridRow:
         ID of the grid this row represents.
     grid_config
         Configuration of the grid (title, dimensions).
+    instrument
+        Name of the instrument (e.g., 'dummy', 'dream').
     on_remove
         Callback to invoke when the remove button is clicked.
     get_yaml_content
@@ -66,6 +68,7 @@ class GridRow:
         grid_id: GridId,
         grid_config: PlotGridConfig,
         *,
+        instrument: str,
         on_remove: Callable[[], None],
         get_yaml_content: Callable[[], StringIO],
     ) -> None:
@@ -79,8 +82,11 @@ class GridRow:
         )
 
         # Download button - generates YAML when clicked
+        filename = (
+            f'esslivedata_{instrument}_{_sanitize_filename(grid_config.title)}.yaml'
+        )
         download_button = create_download_button(
-            filename=f'{_sanitize_filename(grid_config.title)}.yaml',
+            filename=filename,
             callback=get_yaml_content,
         )
 
@@ -452,6 +458,7 @@ class PlotGridManager:
             row = GridRow(
                 grid_id=grid_id,
                 grid_config=grid_config,
+                instrument=self._orchestrator.instrument,
                 on_remove=self._make_remove_handler(grid_id),
                 get_yaml_content=self._make_yaml_callback(grid_id),
             )

@@ -61,6 +61,7 @@ def plot_orchestrator(plotting_controller, job_orchestrator, fake_data_service):
         plotting_controller=plotting_controller,
         job_orchestrator=job_orchestrator,
         data_service=fake_data_service,
+        instrument='dummy',
     )
 
 
@@ -168,11 +169,34 @@ class TestGridRow:
         row = GridRow(
             grid_id=None,  # type: ignore[arg-type]
             grid_config=config,
+            instrument='dummy',
             on_remove=on_remove,
             get_yaml_content=get_yaml,
         )
 
         assert isinstance(row.panel, pn.Row)
+
+    def test_download_button_has_correct_filename(
+        self, plot_orchestrator, workflow_registry
+    ):
+        """Test that download button filename includes instrument and grid name."""
+        from io import StringIO
+
+        from ess.livedata.dashboard.plot_orchestrator import PlotGridConfig
+
+        config = PlotGridConfig(title='My Test Grid', nrows=2, ncols=3)
+
+        row = GridRow(
+            grid_id=None,  # type: ignore[arg-type]
+            grid_config=config,
+            instrument='bifrost',
+            on_remove=lambda: None,
+            get_yaml_content=lambda: StringIO(''),
+        )
+
+        # The download button is the second element in the row (index 1)
+        download_button = row.panel[1]
+        assert download_button.filename == 'esslivedata_bifrost_my_test_grid.yaml'
 
     def test_displays_grid_info(self, plot_orchestrator, workflow_registry):
         """Test that GridRow displays grid title and dimensions."""
@@ -185,6 +209,7 @@ class TestGridRow:
         row = GridRow(
             grid_id=None,  # type: ignore[arg-type]
             grid_config=config,
+            instrument='dummy',
             on_remove=lambda: None,
             get_yaml_content=lambda: StringIO(''),
         )
