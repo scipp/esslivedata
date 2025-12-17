@@ -23,6 +23,7 @@ import panel as pn
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 from ess.livedata.core.job import JobState
 
+from ..icons import get_icon
 from .configuration_widget import ConfigurationModal
 from .plot_widgets import ButtonStyles, create_tool_button
 
@@ -283,9 +284,10 @@ class WorkflowStatusWidget:
     def _create_header(self) -> pn.Row:
         """Create the header row with expand button, title, status, and buttons."""
         # Expand/collapse button (store reference for updates)
-        indicator = '\u25bc' if self._expanded else '\u25b6'  # ▼ or ▶
+        icon_name = 'chevron-down' if self._expanded else 'chevron-right'
         self._expand_btn = pn.widgets.Button(
-            name=indicator,
+            name='',
+            icon=get_icon(icon_name),
             button_type='light',
             width=24,
             height=24,
@@ -296,9 +298,15 @@ class WorkflowStatusWidget:
                     background-color: transparent !important;
                     border: none !important;
                     padding: 0 !important;
-                    font-size: 12px !important;
                     color: #6c757d !important;
                     cursor: pointer !important;
+                    display: flex !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                }
+                button svg {
+                    display: block !important;
+                    margin: auto !important;
                 }
                 button:hover {
                     background-color: rgba(0, 0, 0, 0.05) !important;
@@ -373,7 +381,7 @@ class WorkflowStatusWidget:
         # Show play button if there are uncommitted changes
         if has_changes:
             play_btn = create_tool_button(
-                symbol='\u25b6',  # ▶
+                icon_name='player-play',
                 button_color=WorkflowWidgetStyles.STATUS_COLORS['active'],
                 hover_color='rgba(40, 167, 69, 0.1)',
                 on_click_callback=self._on_commit_click,
@@ -383,7 +391,7 @@ class WorkflowStatusWidget:
         # Show reset and stop buttons if workflow is running
         if active_job_number is not None:
             reset_btn = create_tool_button(
-                symbol='\u21bb',  # ↻
+                icon_name='refresh',
                 button_color='#6c757d',
                 hover_color='rgba(108, 117, 125, 0.1)',
                 on_click_callback=self._on_reset_click,
@@ -391,8 +399,7 @@ class WorkflowStatusWidget:
             buttons.append(reset_btn)
 
             stop_btn = create_tool_button(
-                # u25a0 has a better size, but alignment issues, using 25fc for now
-                symbol='\u25fc',  # black square
+                icon_name='player-stop',
                 button_color=ButtonStyles.DANGER_RED,
                 hover_color='rgba(220, 53, 69, 0.1)',
                 on_click_callback=self._on_stop_click,
@@ -551,7 +558,7 @@ class WorkflowStatusWidget:
 
         # Buttons
         gear_btn = create_tool_button(
-            symbol='\u2699',  # ⚙
+            icon_name='settings',
             button_color=ButtonStyles.PRIMARY_BLUE,
             hover_color='rgba(0, 123, 255, 0.1)',
             on_click_callback=lambda: self._on_gear_click(list(group.source_names)),
@@ -562,7 +569,7 @@ class WorkflowStatusWidget:
         # Add remove button (not for unconfigured sources)
         if not is_unconfigured:
             remove_btn = create_tool_button(
-                symbol='\u00d7',  # multiplication sign (x)
+                icon_name='x',
                 button_color=ButtonStyles.DANGER_RED,
                 hover_color='rgba(220, 53, 69, 0.1)',
                 on_click_callback=lambda: self._on_remove_click(
@@ -837,7 +844,8 @@ class WorkflowStatusWidget:
         """Update UI elements for expand/collapse without full rebuild."""
         # Update expand button indicator
         if self._expand_btn is not None:
-            self._expand_btn.name = '\u25bc' if self._expanded else '\u25b6'
+            icon_name = 'chevron-down' if self._expanded else 'chevron-right'
+            self._expand_btn.icon = get_icon(icon_name)
 
         # Update body visibility
         if self._body is not None:

@@ -57,6 +57,11 @@ def mock_callback() -> FakeCallback:
     return FakeCallback()
 
 
+def _is_tool_button(button: pn.widgets.Button) -> bool:
+    """Check if a button is a tool button (has SVG icon)."""
+    return button.icon is not None and button.icon.startswith('<svg')
+
+
 def get_cell_button(grid: PlotGrid, row: int, col: int) -> pn.widgets.Button | None:
     """
     Get the empty cell button widget from a grid cell.
@@ -68,8 +73,8 @@ def get_cell_button(grid: PlotGrid, row: int, col: int) -> pn.widgets.Button | N
         if isinstance(cell, pn.Column) and len(cell) > 0:
             first_item = cell[0]
             if isinstance(first_item, pn.widgets.Button):
-                # Check if this is the close button (multiplication sign character)
-                if first_item.name == '\u00d7':
+                # Check if this is a tool button (SVG icon) - indicates a plot cell
+                if _is_tool_button(first_item):
                     # This is a plot cell with a close button
                     return None
                 # This is an empty cell button
@@ -110,7 +115,7 @@ def find_close_button(grid: PlotGrid, row: int, col: int) -> pn.widgets.Button |
         cell = grid.panel[row, col]  # type: ignore[index]
         if isinstance(cell, pn.Column):
             for item in cell:
-                if isinstance(item, pn.widgets.Button) and item.name == '\u00d7':
+                if isinstance(item, pn.widgets.Button) and _is_tool_button(item):
                     return item
     except (KeyError, IndexError):
         pass

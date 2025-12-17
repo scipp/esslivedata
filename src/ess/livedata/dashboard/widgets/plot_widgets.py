@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import panel as pn
 
 from ...config.workflow_spec import WorkflowId, WorkflowSpec
+from ..icons import get_icon
 from ..plot_params import WindowMode
 
 if TYPE_CHECKING:
@@ -81,6 +82,10 @@ def create_tool_button_stylesheet(
             height: 100% !important;
             width: 100% !important;
         }}
+        {selector} svg {{
+            display: block !important;
+            margin: auto !important;
+        }}
         {hover_selector} {{
             background-color: {hover_color} !important;
         }}
@@ -89,7 +94,7 @@ def create_tool_button_stylesheet(
 
 
 def create_tool_button(
-    symbol: str,
+    icon_name: str,
     button_color: str,
     hover_color: str,
     on_click_callback: Callable[[], None],
@@ -99,8 +104,8 @@ def create_tool_button(
 
     Parameters
     ----------
-    symbol:
-        Unicode symbol to display on the button.
+    icon_name:
+        Name of the icon to display (from icons module).
     button_color:
         Color for the button icon.
     hover_color:
@@ -114,7 +119,8 @@ def create_tool_button(
         Panel Button widget styled as a tool button.
     """
     button = pn.widgets.Button(
-        name=symbol,
+        name='',
+        icon=get_icon(icon_name),
         width=ButtonStyles.TOOL_BUTTON_SIZE,
         height=ButtonStyles.TOOL_BUTTON_SIZE,
         button_type='light',
@@ -141,7 +147,7 @@ def create_close_button(on_close_callback: Callable[[], None]) -> pn.widgets.But
         Panel Button widget styled as a close button.
     """
     return create_tool_button(
-        symbol='\u00d7',  # "X" multiplication sign
+        icon_name='x',
         button_color=ButtonStyles.DANGER_RED,
         hover_color='rgba(220, 53, 69, 0.1)',
         on_click_callback=on_close_callback,
@@ -163,7 +169,7 @@ def create_gear_button(on_gear_callback: Callable[[], None]) -> pn.widgets.Butto
         Panel Button widget styled as a gear button.
     """
     return create_tool_button(
-        symbol='\u2699',  # Gear symbol
+        icon_name='settings',
         button_color=ButtonStyles.PRIMARY_BLUE,
         hover_color='rgba(0, 123, 255, 0.1)',
         on_click_callback=on_gear_callback,
@@ -185,7 +191,7 @@ def create_add_button(on_add_callback: Callable[[], None]) -> pn.widgets.Button:
         Panel Button widget styled as an add button.
     """
     return create_tool_button(
-        symbol='+',
+        icon_name='plus',
         button_color='#28a745',  # Green
         hover_color='rgba(40, 167, 69, 0.1)',
         on_click_callback=on_add_callback,
@@ -221,7 +227,8 @@ def create_download_button(
     return pn.widgets.FileDownload(
         callback=callback,
         filename=filename,
-        label='\u2913',  # Downward arrow to bar (download symbol)
+        label='',
+        icon=get_icon('download'),
         width=ButtonStyles.TOOL_BUTTON_SIZE,
         height=ButtonStyles.TOOL_BUTTON_SIZE,
         button_type='primary',
