@@ -16,6 +16,77 @@ import holoviews as hv
 import pydantic
 
 
+def _parse_number_list(v: str) -> list[int | float]:
+    """Parse a string into a list of numbers.
+
+    Accepts either:
+    - Comma-separated values: "10, 20, 30"
+    - JSON array format: "[10, 20, 30]" (for backwards compatibility)
+    - Empty string: ""
+
+    Returns an empty list for empty/whitespace-only input.
+    """
+    v = v.strip()
+    if not v:
+        return []
+    # Try JSON format first (for backwards compatibility)
+    if v.startswith('['):
+        try:
+            result = json.loads(v)
+            if isinstance(result, list):
+                return result
+        except json.JSONDecodeError:
+            pass
+    # Parse as comma-separated values
+    parts = [p.strip() for p in v.split(',')]
+    result = []
+    for part in parts:
+        if not part:
+            continue
+        try:
+            # Try int first, then float
+            if '.' in part or 'e' in part.lower():
+                result.append(float(part))
+            else:
+                result.append(int(part))
+        except ValueError as e:
+            raise ValueError(f"Invalid number: {part}") from e
+    return result
+
+
+def _parse_rectangle_list(v: str) -> list[list[int | float]]:
+    """Parse a string into a list of rectangle coordinates.
+
+    Accepts either:
+    - Comma-separated JSON arrays: "[0,0,10,10], [20,20,30,30]"
+    - Full JSON format: "[[0,0,10,10], [20,20,30,30]]" (backwards compatible)
+    - Empty cases: "", "[]"
+
+    Returns an empty list for empty/whitespace-only input.
+    """
+    v = v.strip()
+    if not v or v == '[]':
+        return []
+    # Try full JSON array format first (for backwards compatibility)
+    if v.startswith('[['):
+        try:
+            result = json.loads(v)
+            if isinstance(result, list):
+                return result
+        except json.JSONDecodeError:
+            pass
+    # Parse as comma-separated JSON arrays: "[0,0,10,10], [1,1,3,3]"
+    # Add outer brackets to make it valid JSON
+    json_str = f"[{v}]"
+    try:
+        result = json.loads(json_str)
+        if isinstance(result, list):
+            return result
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid format: {e}") from e
+    return []
+
+
 class StaticPlotter(ABC):
     """Base class for static plotters that create plots from params only."""
 
@@ -33,23 +104,16 @@ class RectanglesCoordinates(pydantic.BaseModel):
     """Wrapper for rectangle coordinate input to get full-width card."""
 
     coordinates: str = pydantic.Field(
-        default="[]",
+        default="",
         title="Coordinates",
-        description='Enter as [[x0,y0,x1,y1], ...], e.g., [[0,0,10,10],[20,20,30,30]]',
+        description='E.g., [0,0,10,10], [20,20,30,30]',
     )
 
     @pydantic.field_validator('coordinates')
     @classmethod
     def validate_coordinates(cls, v: str) -> str:
         """Validate rectangle coordinate structure."""
-        try:
-            coords = json.loads(v)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid format: {e}") from e
-
-        if not isinstance(coords, list):
-            raise ValueError("Must be a list of rectangles")
-
+        coords = _parse_rectangle_list(v)
         for i, rect in enumerate(coords):
             if not isinstance(rect, list | tuple):
                 raise ValueError(f"Rectangle {i + 1}: must be a list [x0, y0, x1, y1]")
@@ -67,7 +131,7 @@ class RectanglesCoordinates(pydantic.BaseModel):
 
     def parse(self) -> list[tuple[float, float, float, float]]:
         """Parse validated coordinates into list of rectangle tuples."""
-        coords = json.loads(self.coordinates)
+        coords = _parse_rectangle_list(self.coordinates)
         return [(float(r[0]), float(r[1]), float(r[2]), float(r[3])) for r in coords]
 
 
@@ -150,23 +214,16 @@ class VLinesCoordinates(pydantic.BaseModel):
     """Wrapper for vertical line coordinate input."""
 
     positions: str = pydantic.Field(
-        default="[]",
+        default="",
         title="X Positions",
-        description='Enter as [x1, x2, ...], e.g., [10, 20, 30]',
+        description='Enter as comma-separated values, e.g., 10, 20, 30',
     )
 
     @pydantic.field_validator('positions')
     @classmethod
     def validate_positions(cls, v: str) -> str:
         """Validate line position structure."""
-        try:
-            positions = json.loads(v)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid format: {e}") from e
-
-        if not isinstance(positions, list):
-            raise ValueError("Must be a list of x positions")
-
+        positions = _parse_number_list(v)
         for i, pos in enumerate(positions):
             if not isinstance(pos, int | float):
                 raise ValueError(f"Position {i + 1}: must be a number")
@@ -174,7 +231,7 @@ class VLinesCoordinates(pydantic.BaseModel):
 
     def parse(self) -> list[float]:
         """Parse validated positions into list of floats."""
-        return [float(p) for p in json.loads(self.positions)]
+        return [float(p) for p in _parse_number_list(self.positions)]
 
 
 class LinesStyle(pydantic.BaseModel):
@@ -262,23 +319,16 @@ class HLinesCoordinates(pydantic.BaseModel):
     """Wrapper for horizontal line coordinate input."""
 
     positions: str = pydantic.Field(
-        default="[]",
+        default="",
         title="Y Positions",
-        description='Enter as [y1, y2, ...], e.g., [10, 20, 30]',
+        description='Enter as comma-separated values, e.g., 10, 20, 30',
     )
 
     @pydantic.field_validator('positions')
     @classmethod
     def validate_positions(cls, v: str) -> str:
         """Validate line position structure."""
-        try:
-            positions = json.loads(v)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid format: {e}") from e
-
-        if not isinstance(positions, list):
-            raise ValueError("Must be a list of y positions")
-
+        positions = _parse_number_list(v)
         for i, pos in enumerate(positions):
             if not isinstance(pos, int | float):
                 raise ValueError(f"Position {i + 1}: must be a number")
@@ -286,7 +336,7 @@ class HLinesCoordinates(pydantic.BaseModel):
 
     def parse(self) -> list[float]:
         """Parse validated positions into list of floats."""
-        return [float(p) for p in json.loads(self.positions)]
+        return [float(p) for p in _parse_number_list(self.positions)]
 
 
 class HLinesParams(pydantic.BaseModel):

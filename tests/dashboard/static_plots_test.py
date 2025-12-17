@@ -24,35 +24,45 @@ from ess.livedata.dashboard.static_plots import (  # noqa: E402
 class TestRectanglesCoordinates:
     """Tests for RectanglesCoordinates validation."""
 
-    def test_valid_coordinates(self):
-        """Valid rectangle coordinates are accepted."""
+    def test_simple_format(self):
+        """Simple format without outer brackets is accepted."""
+        coords = RectanglesCoordinates(coordinates="[0,0,10,10], [20,20,30,30]")
+        assert coords.parse() == [(0.0, 0.0, 10.0, 10.0), (20.0, 20.0, 30.0, 30.0)]
+
+    def test_single_rectangle_simple_format(self):
+        """Single rectangle in simple format."""
+        coords = RectanglesCoordinates(coordinates="[0,0,10,10]")
+        assert coords.parse() == [(0.0, 0.0, 10.0, 10.0)]
+
+    def test_json_format_backwards_compatible(self):
+        """Full JSON array format still works for backwards compatibility."""
         coords = RectanglesCoordinates(coordinates="[[0, 0, 10, 10], [20, 20, 30, 30]]")
         assert coords.parse() == [(0.0, 0.0, 10.0, 10.0), (20.0, 20.0, 30.0, 30.0)]
 
-    def test_empty_coordinates(self):
-        """Empty list is valid."""
+    def test_empty_string(self):
+        """Empty string is valid."""
+        coords = RectanglesCoordinates(coordinates="")
+        assert coords.parse() == []
+
+    def test_empty_brackets(self):
+        """Empty brackets is valid."""
         coords = RectanglesCoordinates(coordinates="[]")
         assert coords.parse() == []
 
-    def test_invalid_json(self):
-        """Invalid JSON raises ValueError."""
+    def test_invalid_format(self):
+        """Invalid format raises ValueError."""
         with pytest.raises(ValueError, match="Invalid format"):
-            RectanglesCoordinates(coordinates="not json")
+            RectanglesCoordinates(coordinates="not valid")
 
     def test_wrong_coordinate_count(self):
         """Wrong number of coordinates per rectangle raises ValueError."""
         with pytest.raises(ValueError, match="expected 4 coordinates"):
-            RectanglesCoordinates(coordinates="[[0, 0, 10]]")
+            RectanglesCoordinates(coordinates="[0, 0, 10]")
 
     def test_non_numeric_values(self):
         """Non-numeric values raise ValueError."""
         with pytest.raises(ValueError, match="must be a number"):
-            RectanglesCoordinates(coordinates='[[0, 0, "ten", 10]]')
-
-    def test_not_a_list(self):
-        """Non-list top-level raises ValueError."""
-        with pytest.raises(ValueError, match="Must be a list"):
-            RectanglesCoordinates(coordinates='{"x": 1}')
+            RectanglesCoordinates(coordinates='[0, 0, "ten", 10]')
 
 
 class TestRectanglesPlotter:
@@ -61,7 +71,7 @@ class TestRectanglesPlotter:
     def test_create_static_plot_with_rectangles(self):
         """Creates hv.Rectangles with data."""
         params = RectanglesParams(
-            geometry=RectanglesCoordinates(coordinates="[[0, 0, 10, 10]]")
+            geometry=RectanglesCoordinates(coordinates="[0, 0, 10, 10]")
         )
         plotter = RectanglesPlotter.from_params(params)
         plot = plotter.create_static_plot()
@@ -69,7 +79,7 @@ class TestRectanglesPlotter:
 
     def test_create_static_plot_empty(self):
         """Creates empty hv.Rectangles when no coordinates."""
-        params = RectanglesParams(geometry=RectanglesCoordinates(coordinates="[]"))
+        params = RectanglesParams(geometry=RectanglesCoordinates(coordinates=""))
         plotter = RectanglesPlotter.from_params(params)
         plot = plotter.create_static_plot()
         assert isinstance(plot, hv.Rectangles)
@@ -78,23 +88,33 @@ class TestRectanglesPlotter:
 class TestVLinesCoordinates:
     """Tests for VLinesCoordinates validation."""
 
-    def test_valid_positions(self):
-        """Valid positions are accepted."""
+    def test_simple_format(self):
+        """Simple comma-separated format is accepted."""
+        coords = VLinesCoordinates(positions="10, 20, 30")
+        assert coords.parse() == [10.0, 20.0, 30.0]
+
+    def test_json_format_backwards_compatible(self):
+        """JSON array format still works for backwards compatibility."""
         coords = VLinesCoordinates(positions="[10, 20, 30]")
         assert coords.parse() == [10.0, 20.0, 30.0]
 
-    def test_empty_positions(self):
-        """Empty list is valid."""
+    def test_empty_string(self):
+        """Empty string is valid."""
+        coords = VLinesCoordinates(positions="")
+        assert coords.parse() == []
+
+    def test_empty_brackets(self):
+        """Empty brackets is valid."""
         coords = VLinesCoordinates(positions="[]")
         assert coords.parse() == []
 
-    def test_invalid_json(self):
-        """Invalid JSON raises ValueError."""
-        with pytest.raises(ValueError, match="Invalid format"):
-            VLinesCoordinates(positions="not json")
+    def test_invalid_number(self):
+        """Invalid number raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid number"):
+            VLinesCoordinates(positions="10, not_a_number, 30")
 
-    def test_non_numeric_values(self):
-        """Non-numeric values raise ValueError."""
+    def test_non_numeric_values_json(self):
+        """Non-numeric values in JSON format raise ValueError."""
         with pytest.raises(ValueError, match="must be a number"):
             VLinesCoordinates(positions='[1, "two", 3]')
 
@@ -104,14 +124,14 @@ class TestVLinesPlotter:
 
     def test_create_static_plot_with_lines(self):
         """Creates hv.VLines with data."""
-        params = VLinesParams(geometry=VLinesCoordinates(positions="[10, 20]"))
+        params = VLinesParams(geometry=VLinesCoordinates(positions="10, 20"))
         plotter = VLinesPlotter.from_params(params)
         plot = plotter.create_static_plot()
         assert isinstance(plot, hv.VLines)
 
     def test_create_static_plot_empty(self):
         """Creates empty hv.VLines when no positions."""
-        params = VLinesParams(geometry=VLinesCoordinates(positions="[]"))
+        params = VLinesParams(geometry=VLinesCoordinates(positions=""))
         plotter = VLinesPlotter.from_params(params)
         plot = plotter.create_static_plot()
         assert isinstance(plot, hv.VLines)
@@ -120,14 +140,19 @@ class TestVLinesPlotter:
 class TestHLinesCoordinates:
     """Tests for HLinesCoordinates validation."""
 
-    def test_valid_positions(self):
-        """Valid positions are accepted."""
+    def test_simple_format(self):
+        """Simple comma-separated format is accepted."""
+        coords = HLinesCoordinates(positions="10, 20, 30")
+        assert coords.parse() == [10.0, 20.0, 30.0]
+
+    def test_json_format_backwards_compatible(self):
+        """JSON array format still works for backwards compatibility."""
         coords = HLinesCoordinates(positions="[10, 20, 30]")
         assert coords.parse() == [10.0, 20.0, 30.0]
 
-    def test_empty_positions(self):
-        """Empty list is valid."""
-        coords = HLinesCoordinates(positions="[]")
+    def test_empty_string(self):
+        """Empty string is valid."""
+        coords = HLinesCoordinates(positions="")
         assert coords.parse() == []
 
 
@@ -136,14 +161,14 @@ class TestHLinesPlotter:
 
     def test_create_static_plot_with_lines(self):
         """Creates hv.HLines with data."""
-        params = HLinesParams(geometry=HLinesCoordinates(positions="[10, 20]"))
+        params = HLinesParams(geometry=HLinesCoordinates(positions="10, 20"))
         plotter = HLinesPlotter.from_params(params)
         plot = plotter.create_static_plot()
         assert isinstance(plot, hv.HLines)
 
     def test_create_static_plot_empty(self):
         """Creates empty hv.HLines when no positions."""
-        params = HLinesParams(geometry=HLinesCoordinates(positions="[]"))
+        params = HLinesParams(geometry=HLinesCoordinates(positions=""))
         plotter = HLinesPlotter.from_params(params)
         plot = plotter.create_static_plot()
         assert isinstance(plot, hv.HLines)
