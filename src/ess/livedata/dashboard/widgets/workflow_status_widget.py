@@ -303,10 +303,16 @@ class WorkflowStatusWidget:
                     display: flex !important;
                     align-items: center !important;
                     justify-content: center !important;
+                    box-sizing: border-box !important;
+                }
+                button > * {
+                    display: flex !important;
+                    align-items: center !important;
+                    justify-content: center !important;
                 }
                 button svg {
                     display: block !important;
-                    margin: auto !important;
+                    flex-shrink: 0 !important;
                 }
                 button:hover {
                     background-color: rgba(0, 0, 0, 0.05) !important;
@@ -355,7 +361,7 @@ class WorkflowStatusWidget:
             height=WorkflowWidgetStyles.HEADER_HEIGHT,
             styles={
                 'background': '#f8f9fa',
-                'padding': '8px 12px',
+                'padding': '6px 12px',  # Fit 28px buttons in 40px header
             },
             sizing_mode='stretch_width',
             align='center',

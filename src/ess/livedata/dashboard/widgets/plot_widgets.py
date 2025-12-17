@@ -30,9 +30,6 @@ class ButtonStyles:
     CELL_MARGIN = 2
     TOOL_BUTTON_SIZE = 28
 
-    # Typography
-    TOOL_BUTTON_FONT_SIZE = '20px'
-
 
 def create_tool_button_stylesheet(
     button_color: str,
@@ -71,20 +68,23 @@ def create_tool_button_stylesheet(
             background-color: transparent !important;
             border: none !important;
             color: {button_color} !important;
-            font-weight: bold !important;
-            font-size: {ButtonStyles.TOOL_BUTTON_FONT_SIZE} !important;
             padding: 0 !important;
             margin: 0 !important;
-            line-height: 1 !important;
             display: flex !important;
             align-items: center !important;
             justify-content: center !important;
             height: 100% !important;
             width: 100% !important;
+            box-sizing: border-box !important;
+        }}
+        {selector} > * {{
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
         }}
         {selector} svg {{
             display: block !important;
-            margin: auto !important;
+            flex-shrink: 0 !important;
         }}
         {hover_selector} {{
             background-color: {hover_color} !important;
