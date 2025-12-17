@@ -7,31 +7,29 @@ cells:
 - geometry:
     row: 0
     col: 0
-    row_span: 1
+    row_span: 2
     col_span: 3
-  config:
-    workflow_id: bifrost/detector_data/unified_detector_view/1
-    output_name: current
-    source_names:
-    - unified_detector
-    plot_name: image
-    params:
-      plot_aspect:
-        aspect_type: Free
-- geometry:
-    row: 1
-    col: 0
-    row_span: 1
-    col_span: 3
-  config:
-    workflow_id: bifrost/detector_data/unified_detector_view/1
-    output_name: cumulative
-    source_names:
-    - unified_detector
-    plot_name: image
-    params:
-      plot_aspect:
-        aspect_type: Free
+  layers:
+    - workflow_id: bifrost/detector_data/unified_detector_view/1
+      output_name: current
+      source_names:
+        - unified_detector
+      plot_name: image
+      params:
+        plot_aspect:
+          aspect_type: Free
+    - workflow_id: static/static_overlay/geometric/1
+      output_name: Triplet bounds
+      source_names: []
+      plot_name: rectangles
+      params:
+        geometry:
+          coordinates: "[-0.5,-0.5,899.5,14.5], [-0.5,2.5,899.5,5.5], [-0.5,5.5,899.5,8.5], [-0.5,11.5,899.5,14.5], [99.5,-0.5,199.5,14.5], [199.5,-0.5,299.5,14.5], [399.5,-0.5,499.5,14.5], [599.5,-0.5,699.5,14.5], [799.5,-0.5,899.5,14.5]"
+        style:
+          color: "#ff0000"
+          line_width: 1.5
+          line_dash: solid
+          alpha: 0.0
 - geometry:
     row: 2
     col: 0
