@@ -25,11 +25,7 @@ from ess.livedata.core.job import JobState
 
 from ..icons import get_icon
 from .configuration_widget import ConfigurationModal
-from .plot_widgets import (
-    ButtonStyles,
-    create_tool_button,
-    create_tool_button_stylesheet,
-)
+from .plot_widgets import ButtonStyles, create_tool_button
 
 if TYPE_CHECKING:
     from ..job_orchestrator import (
@@ -287,22 +283,14 @@ class WorkflowStatusWidget:
 
     def _create_header(self) -> pn.Row:
         """Create the header row with expand button, title, status, and buttons."""
-        # Expand/collapse button (store reference for updates)
+        # Expand/collapse button (store reference for icon updates)
         icon_name = 'chevron-down' if self._expanded else 'chevron-right'
-        self._expand_btn = pn.widgets.Button(
-            name='',
-            icon=get_icon(icon_name),
-            icon_size='1.5em',
-            button_type='light',
-            width=ButtonStyles.TOOL_BUTTON_SIZE,
-            height=ButtonStyles.TOOL_BUTTON_SIZE,
-            margin=0,
-            stylesheets=create_tool_button_stylesheet(
-                button_color='#6c757d',
-                hover_color='rgba(0, 0, 0, 0.05)',
-            ),
+        self._expand_btn = create_tool_button(
+            icon_name=icon_name,
+            button_color='#6c757d',
+            hover_color='rgba(0, 0, 0, 0.05)',
+            on_click_callback=lambda: self.set_expanded(not self._expanded),
         )
-        self._expand_btn.on_click(lambda e: self._on_header_click(e))
 
         # Workflow title
         title_html = pn.pane.HTML(
