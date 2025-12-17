@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Literal
 
 import panel as pn
 import pydantic
@@ -150,26 +150,16 @@ class TestWidgetTypeCreation:
         # Should still create an IntInput, not a TextInput fallback
         assert isinstance(widget.widgets["value"], pn.widgets.IntInput)
 
-    def test_annotated_color_field_creates_color_picker(self):
-        Color = Annotated[str, 'color']
+    def test_color_field_creates_color_picker(self):
+        from ess.livedata.dashboard.static_plots import Color
 
         class TestModel(pydantic.BaseModel):
-            color: Color = '#ff0000'
+            color: Color = Color('#ff0000')
 
         widget = ParamWidget(TestModel)
 
         assert isinstance(widget.widgets["color"], pn.widgets.ColorPicker)
         assert widget.widgets["color"].value == '#ff0000'
-
-    def test_annotated_non_color_field_creates_text_input(self):
-        SomeAnnotated = Annotated[str, 'other']
-
-        class TestModel(pydantic.BaseModel):
-            value: SomeAnnotated = 'test'
-
-        widget = ParamWidget(TestModel)
-
-        assert isinstance(widget.widgets["value"], pn.widgets.TextInput)
 
 
 class TestWidgetDefaultValues:

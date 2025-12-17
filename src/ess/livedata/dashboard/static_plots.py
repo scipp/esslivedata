@@ -12,10 +12,10 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 from enum import StrEnum
-from typing import Annotated
 
 import holoviews as hv
 import pydantic
+from pydantic_core import core_schema
 
 
 class LineDash(StrEnum):
@@ -27,8 +27,17 @@ class LineDash(StrEnum):
     dotdash = "dotdash"
 
 
-# Type annotation for color fields - detected by ParamWidget to use ColorPicker
-Color = Annotated[str, 'color']
+class Color(str):
+    """A CSS color value (hex, rgb, or named color).
+
+    Detected by ParamWidget to render as a ColorPicker.
+    """
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type, handler):
+        return core_schema.no_info_after_validator_function(
+            cls, core_schema.str_schema()
+        )
 
 
 def _parse_number_list(v: str) -> list[int | float]:
@@ -44,7 +53,7 @@ def _parse_number_list(v: str) -> list[int | float]:
         if isinstance(result, list):
             return result
     except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid format: {e}") from e
+        raise ValueError(f"Invalid number: {e}") from e
     return []
 
 
