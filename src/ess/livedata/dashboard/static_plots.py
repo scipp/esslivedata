@@ -11,9 +11,13 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
+from typing import Annotated
 
 import holoviews as hv
 import pydantic
+
+# Type annotation for color fields - detected by ParamWidget to use ColorPicker
+Color = Annotated[str, 'color']
 
 
 def _parse_number_list(v: str) -> list[int | float]:
@@ -138,10 +142,10 @@ class RectanglesCoordinates(pydantic.BaseModel):
 class RectanglesStyle(pydantic.BaseModel):
     """Style options for rectangles."""
 
-    color: str = pydantic.Field(
-        default="red",
+    color: Color = pydantic.Field(
+        default="#ff0000",
         title="Color",
-        description="Rectangle fill color (e.g., 'red', '#ff0000')",
+        description="Rectangle fill color",
     )
     alpha: float = pydantic.Field(
         default=0.3,
@@ -237,10 +241,10 @@ class VLinesCoordinates(pydantic.BaseModel):
 class LinesStyle(pydantic.BaseModel):
     """Style options for lines."""
 
-    color: str = pydantic.Field(
-        default="red",
+    color: Color = pydantic.Field(
+        default="#ff0000",
         title="Color",
-        description="Line color (e.g., 'red', '#ff0000')",
+        description="Line color",
     )
     alpha: float = pydantic.Field(
         default=0.7,
