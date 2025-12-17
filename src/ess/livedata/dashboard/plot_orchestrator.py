@@ -169,8 +169,10 @@ class PlotConfig:
         return self.data_sources[0].output_name
 
     def is_static(self) -> bool:
-        """Return True if this is a static overlay (no data sources)."""
-        return len(self.data_sources) == 0
+        """Return True if this is a static overlay (no workflow subscription needed)."""
+        return (
+            len(self.data_sources) == 1 and len(self.data_sources[0].source_names) == 0
+        )
 
 
 @dataclass
@@ -634,15 +636,15 @@ class PlotOrchestrator:
             The layer to subscribe.
         """
         layer_id = layer.layer_id
-        num_data_sources = len(layer.config.data_sources)
+        config = layer.config
 
-        if num_data_sources == 0:
+        if config.is_static():
             # Static overlay: create plot immediately without subscription
             self._create_static_layer_plot(grid_id, cell_id, layer)
             self._persist_to_store()
             return
 
-        if num_data_sources > 1:
+        if len(config.data_sources) > 1:
             # Future work: correlation histograms with multiple data sources
             self._logger.warning(
                 'Multiple data sources not yet supported for layer_id=%s', layer_id
@@ -666,7 +668,7 @@ class PlotOrchestrator:
         # Subscribe to workflow lifecycle.
         # Returns whether callback was invoked immediately (workflow already running).
         subscription_id, was_invoked = self._job_orchestrator.subscribe_to_workflow(
-            workflow_id=layer.config.workflow_id,
+            workflow_id=config.workflow_id,
             callbacks=WorkflowCallbacks(
                 on_started=on_workflow_available,
                 on_stopped=on_workflow_stopped,

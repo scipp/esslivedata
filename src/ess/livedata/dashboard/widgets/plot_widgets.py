@@ -217,11 +217,19 @@ def _get_static_overlay_display_info(config: PlotConfig) -> tuple[str, str]:
     plotter_name = config.plot_name
     try:
         spec = plotter_registry.get_spec(plotter_name)
-        title = spec.title
+        plotter_title = spec.title
     except KeyError:
-        title = plotter_name.replace('_', ' ').title()
+        plotter_title = plotter_name.replace('_', ' ').title()
 
-    description = f'Static overlay: {title}'
+    # Use the user's custom name from output_name
+    custom_name = config.output_name
+
+    # Format title as "Plotter → Custom Name"
+    title = f'{plotter_title} &rarr; {custom_name}'
+
+    # Build description for tooltip
+    description = f'Static overlay: {plotter_title}\nName: {custom_name}'
+
     return title, description
 
 
