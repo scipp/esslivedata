@@ -210,6 +210,21 @@ def _format_window_info(params) -> str:
     return f'{duration_str} window'
 
 
+def _get_static_overlay_display_info(config: PlotConfig) -> tuple[str, str]:
+    """Get display info for a static overlay layer."""
+    from ..plotting import plotter_registry
+
+    plotter_name = config.plot_name
+    try:
+        spec = plotter_registry.get_spec(plotter_name)
+        title = spec.title
+    except KeyError:
+        title = plotter_name.replace('_', ' ').title()
+
+    description = f'Static overlay: {title}'
+    return title, description
+
+
 def get_plot_cell_display_info(
     config: PlotConfig,
     workflow_registry: Mapping[WorkflowId, WorkflowSpec],
@@ -230,6 +245,10 @@ def get_plot_cell_display_info(
         Tuple of (title, description). Title is a short string for display,
         description is a longer string for tooltip.
     """
+    # Handle static overlays (no data sources)
+    if config.is_static():
+        return _get_static_overlay_display_info(config)
+
     workflow_title, output_title = get_workflow_display_info(
         workflow_registry, config.workflow_id, config.output_name
     )

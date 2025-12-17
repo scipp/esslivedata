@@ -29,6 +29,16 @@ from ess.livedata.dashboard.plotting import PlotterSpec
 from .configuration_widget import ConfigurationPanel
 from .wizard import Wizard, WizardStep
 
+# Synthetic workflow ID for static overlays (no actual workflow subscription)
+STATIC_OVERLAY_NAMESPACE = "static_overlay"
+STATIC_OVERLAY_WORKFLOW = WorkflowId(
+    instrument="static",
+    namespace=STATIC_OVERLAY_NAMESPACE,
+    name="geometric",
+    version=1,
+)
+STATIC_OVERLAY_OUTPUT = "static"
+
 # CSS to disable button transition animations for snappier UI response
 _NO_TRANSITION_CSS = """
 .bk-btn {
@@ -163,6 +173,8 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             reverse=True,
         )
         options = {self._format_namespace_label(ns): ns for ns in namespaces}
+        # Add synthetic "Static Overlay" namespace for geometric overlays
+        options["Static Overlay"] = STATIC_OVERLAY_NAMESPACE
 
         return pn.widgets.RadioButtonGroup(
             name='Namespace',
@@ -255,6 +267,11 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             self._workflow_buttons.options = {}
             return
 
+        # Handle synthetic static overlay namespace
+        if self._selected_namespace == STATIC_OVERLAY_NAMESPACE:
+            self._workflow_buttons.options = {"Geometric": STATIC_OVERLAY_WORKFLOW}
+            return
+
         filtered_workflows = [
             (wid, spec)
             for wid, spec in self._workflow_registry.items()
@@ -273,6 +290,12 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         """Update output button options based on selected workflow."""
         if self._selected_workflow_id is None:
             self._output_buttons.options = {}
+            return
+
+        # Handle synthetic static overlay workflow
+        if self._selected_workflow_id == STATIC_OVERLAY_WORKFLOW:
+            # Single dummy output option for static overlays
+            self._output_buttons.options = {"Static": STATIC_OVERLAY_OUTPUT}
             return
 
         workflow_spec = self._workflow_registry.get(self._selected_workflow_id)
@@ -437,6 +460,19 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             self._content_container.append(pn.pane.Markdown("*No output selected*"))
             self._radio_group = None
             self._notify_ready_changed(False)
+            return
+
+        # Handle static overlay workflow - show static plotters
+        if self._output_selection.workflow_id == STATIC_OVERLAY_WORKFLOW:
+            available_plots = self._plotting_controller.get_static_plotters()
+            if available_plots:
+                self._create_radio_buttons(available_plots)
+            else:
+                self._content_container.append(
+                    pn.pane.Markdown("*No static plotters available.*")
+                )
+                self._radio_group = None
+                self._notify_ready_changed(False)
             return
 
         workflow_spec = self._workflow_registry.get(self._output_selection.workflow_id)
@@ -655,6 +691,11 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         if self._plotter_selection is None:
             return
 
+        # Handle static overlay workflow - no source selection needed
+        if self._plotter_selection.workflow_id == STATIC_OVERLAY_WORKFLOW:
+            self._create_static_config_panel()
+            return
+
         workflow_spec = self._workflow_registry.get(self._plotter_selection.workflow_id)
         if workflow_spec is None:
             self._show_error('Workflow spec not found')
@@ -702,17 +743,78 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         self._panel_container.clear()
         self._panel_container.append(self._config_panel.panel)
 
+    def _create_static_config_panel(self) -> None:
+        """Create configuration panel for static overlays (params only, no sources)."""
+        from ess.livedata.dashboard.static_plot_configuration_adapter import (
+            StaticPlotConfigurationAdapter,
+        )
+
+        if self._plotter_selection is None:
+            return
+
+        try:
+            plot_spec = self._plotting_controller.get_spec(
+                self._plotter_selection.plot_name
+            )
+        except Exception as e:
+            self._logger.exception("Error getting plot spec")
+            self._show_error(f'Error getting plot spec: {e}')
+            return
+
+        # Create config_state from initial_config if in edit mode
+        config_state = None
+        if self._initial_config is not None and self._initial_config.is_static():
+            from ess.livedata.dashboard.configuration_adapter import ConfigurationState
+
+            config_state = ConfigurationState(
+                params=(
+                    self._initial_config.params.model_dump(mode='json')
+                    if isinstance(self._initial_config.params, pydantic.BaseModel)
+                    else self._initial_config.params
+                ),
+            )
+
+        config_adapter = StaticPlotConfigurationAdapter(
+            plot_spec=plot_spec,
+            success_callback=self._on_static_config_collected,
+            config_state=config_state,
+        )
+
+        self._config_panel = ConfigurationPanel(config=config_adapter)
+
+        self._panel_container.clear()
+        self._panel_container.append(self._config_panel.panel)
+
     def _on_config_collected(
         self, selected_sources: list[str], params: pydantic.BaseModel | dict[str, Any]
     ) -> None:
         """Callback from adapter - store result for commit() to return."""
+        from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig
+
         if self._plotter_selection is None:
             return
-        self._last_config_result = PlotConfig(
+        # Create PlotConfig with data_sources list (single data source)
+        data_source = DataSourceConfig(
             workflow_id=self._plotter_selection.workflow_id,
-            output_name=self._plotter_selection.output_name,
-            plot_name=self._plotter_selection.plot_name,
             source_names=selected_sources,
+            output_name=self._plotter_selection.output_name,
+        )
+        self._last_config_result = PlotConfig(
+            data_sources=[data_source],
+            plot_name=self._plotter_selection.plot_name,
+            params=params,
+        )
+
+    def _on_static_config_collected(
+        self, params: pydantic.BaseModel | dict[str, Any]
+    ) -> None:
+        """Callback from static adapter - store result for commit() to return."""
+        if self._plotter_selection is None:
+            return
+        # Static overlay: empty data_sources list
+        self._last_config_result = PlotConfig(
+            data_sources=[],
+            plot_name=self._plotter_selection.plot_name,
             params=params,
         )
 

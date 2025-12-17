@@ -115,14 +115,62 @@ class LayerState:
 
 
 @dataclass
-class PlotConfig:
-    """Configuration for a single plot layer."""
+class DataSourceConfig:
+    """Configuration for a single data source in a plot layer.
+
+    This defines how to connect a layer to a workflow's output.
+    """
 
     workflow_id: WorkflowId
     source_names: list[str]
+    output_name: str = 'result'
+
+
+@dataclass
+class PlotConfig:
+    """Configuration for a single plot layer.
+
+    The data_sources list determines the layer type:
+    - len(data_sources) == 0: Static overlay (no subscriptions)
+    - len(data_sources) == 1: Standard plot (single workflow)
+    - len(data_sources) > 1: Future correlation histograms
+    """
+
+    data_sources: list[DataSourceConfig]
     plot_name: str
     params: pydantic.BaseModel
-    output_name: str = 'result'
+
+    # Legacy compatibility properties for single data source access
+    @property
+    def workflow_id(self) -> WorkflowId:
+        """Get workflow_id from first data source (for backward compatibility)."""
+        if not self.data_sources:
+            raise ValueError(
+                "Cannot access workflow_id on static overlay (no data sources)"
+            )
+        return self.data_sources[0].workflow_id
+
+    @property
+    def source_names(self) -> list[str]:
+        """Get source_names from first data source (for backward compatibility)."""
+        if not self.data_sources:
+            raise ValueError(
+                "Cannot access source_names on static overlay (no data sources)"
+            )
+        return self.data_sources[0].source_names
+
+    @property
+    def output_name(self) -> str:
+        """Get output_name from first data source (for backward compatibility)."""
+        if not self.data_sources:
+            raise ValueError(
+                "Cannot access output_name on static overlay (no data sources)"
+            )
+        return self.data_sources[0].output_name
+
+    def is_static(self) -> bool:
+        """Return True if this is a static overlay (no data sources)."""
+        return len(self.data_sources) == 0
 
 
 @dataclass
@@ -553,7 +601,12 @@ class PlotOrchestrator:
         """
         Subscribe a layer to workflow lifecycle and set up initial notification.
 
-        This method handles two scenarios depending on workflow state:
+        Branches based on number of data sources:
+        - 0 data sources (static): Create plot immediately without subscription
+        - 1 data source (normal): Current behavior via subscribe_to_workflow
+        - >1 data sources: Future work for correlation histograms
+
+        For normal layers with one data source, handles two scenarios:
 
         **Scenario A: Workflow not yet running**
 
@@ -581,7 +634,29 @@ class PlotOrchestrator:
             The layer to subscribe.
         """
         layer_id = layer.layer_id
+        num_data_sources = len(layer.config.data_sources)
 
+        if num_data_sources == 0:
+            # Static overlay: create plot immediately without subscription
+            self._create_static_layer_plot(grid_id, cell_id, layer)
+            self._persist_to_store()
+            return
+
+        if num_data_sources > 1:
+            # Future work: correlation histograms with multiple data sources
+            self._logger.warning(
+                'Multiple data sources not yet supported for layer_id=%s', layer_id
+            )
+            cell = self._grids[grid_id].cells[cell_id]
+            self._layer_state[layer_id] = LayerState(
+                error='Multiple data sources not yet supported'
+            )
+            layer_states, composed = self.get_cell_state(cell_id)
+            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
+            self._persist_to_store()
+            return
+
+        # Standard path: single data source
         def on_workflow_available(job_number: JobNumber) -> None:
             self._on_layer_job_available(layer_id, job_number)
 
@@ -608,6 +683,49 @@ class PlotOrchestrator:
 
         # Persist updated state
         self._persist_to_store()
+
+    def _create_static_layer_plot(
+        self, grid_id: GridId, cell_id: CellId, layer: Layer
+    ) -> None:
+        """
+        Create a static layer plot immediately from params.
+
+        Static layers don't subscribe to any workflow; they create their plot
+        directly from the params (e.g., geometric shapes like rectangles, lines).
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid containing the cell.
+        cell_id
+            ID of the cell containing the layer.
+        layer
+            The layer to create plot for.
+        """
+        from .plotting import plotter_registry
+
+        layer_id = layer.layer_id
+        config = layer.config
+        cell = self._grids[grid_id].cells[cell_id]
+
+        try:
+            plotter = plotter_registry.create_plotter(config.plot_name, config.params)
+            # Static plotters implement create_static_plot() method
+            if not hasattr(plotter, 'create_static_plot'):
+                raise TypeError(
+                    f"Plotter '{config.plot_name}' does not support static plots"
+                )
+            plot = plotter.create_static_plot()
+            self._layer_state[layer_id] = LayerState(plot=plot)
+        except Exception:
+            error_msg = traceback.format_exc()
+            self._logger.exception(
+                'Failed to create static plot for layer_id=%s', layer_id
+            )
+            self._layer_state[layer_id] = LayerState(error=error_msg)
+
+        layer_states, composed = self.get_cell_state(cell_id)
+        self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
 
     def _on_layer_job_available(self, layer_id: LayerId, job_number: JobNumber) -> None:
         """
@@ -894,11 +1012,16 @@ class PlotOrchestrator:
         """
         Parse a raw layer dict into a typed Layer.
 
+        Supports two formats for backward compatibility:
+        - New format: 'data_sources' list containing workflow_id, source_names,
+          output_name
+        - Old format: 'workflow_id', 'source_names', 'output_name' at top level
+
         Parameters
         ----------
         layer_data
-            Layer configuration dict with: workflow_id, source_names, plot_name.
-            Optional: output_name, params.
+            Layer configuration dict. Must contain 'plot_name' and either
+            'data_sources' (new format) or 'workflow_id' (old format).
 
         Returns
         -------
@@ -912,10 +1035,33 @@ class PlotOrchestrator:
         if params is None:
             return None
 
+        # Parse data sources: support both new and legacy format
+        data_sources: list[DataSourceConfig]
+        if 'data_sources' in layer_data:
+            # New format: data_sources list
+            data_sources = [
+                DataSourceConfig(
+                    workflow_id=WorkflowId.from_string(ds['workflow_id']),
+                    source_names=ds['source_names'],
+                    output_name=ds.get('output_name', 'result'),
+                )
+                for ds in layer_data['data_sources']
+            ]
+        elif 'workflow_id' in layer_data:
+            # Legacy format: single workflow at top level
+            data_sources = [
+                DataSourceConfig(
+                    workflow_id=WorkflowId.from_string(layer_data['workflow_id']),
+                    source_names=layer_data['source_names'],
+                    output_name=layer_data.get('output_name', 'result'),
+                )
+            ]
+        else:
+            # Static overlay: no data sources
+            data_sources = []
+
         config = PlotConfig(
-            workflow_id=WorkflowId.from_string(layer_data['workflow_id']),
-            output_name=layer_data.get('output_name', 'result'),
-            source_names=layer_data['source_names'],
+            data_sources=data_sources,
             plot_name=plot_name,
             params=params,
         )
@@ -1041,16 +1187,7 @@ class PlotOrchestrator:
                         'row_span': cell.geometry.row_span,
                         'col_span': cell.geometry.col_span,
                     },
-                    'layers': [
-                        {
-                            'workflow_id': str(layer.config.workflow_id),
-                            'output_name': layer.config.output_name,
-                            'source_names': layer.config.source_names,
-                            'plot_name': layer.config.plot_name,
-                            'params': layer.config.params.model_dump(mode='json'),
-                        }
-                        for layer in cell.layers
-                    ],
+                    'layers': [self._serialize_layer(layer) for layer in cell.layers],
                 }
                 for cell in grid.cells.values()
             ],
@@ -1067,6 +1204,22 @@ class PlotOrchestrator:
             runtime identity handles with no cross-session significance.
         """
         return [self.serialize_grid(grid_id) for grid_id in self._grids]
+
+    def _serialize_layer(self, layer: Layer) -> dict[str, Any]:
+        """Serialize a single layer to dict format."""
+        config = layer.config
+        return {
+            'data_sources': [
+                {
+                    'workflow_id': str(ds.workflow_id),
+                    'source_names': ds.source_names,
+                    'output_name': ds.output_name,
+                }
+                for ds in config.data_sources
+            ],
+            'plot_name': config.plot_name,
+            'params': config.params.model_dump(mode='json'),
+        }
 
     def _load_from_store(self) -> None:
         """Load plot grid configurations from config store."""
