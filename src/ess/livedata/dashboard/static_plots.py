@@ -152,27 +152,36 @@ class RectanglesCoordinates(pydantic.BaseModel):
         return [(float(r[0]), float(r[1]), float(r[2]), float(r[3])) for r in coords]
 
 
-class RectanglesStyle(pydantic.BaseModel):
-    """Style options for rectangles."""
+class BaseStyle(pydantic.BaseModel):
+    """Common style options for static overlays."""
 
     color: Color = pydantic.Field(
         default="#ff0000",
         title="Color",
-        description="Rectangle fill color",
-    )
-    alpha: float = pydantic.Field(
-        default=0.0,
-        ge=0.0,
-        le=1.0,
-        title="Opacity",
-        description="Fill transparency (0 = transparent, 1 = opaque)",
     )
     line_width: float = pydantic.Field(
         default=1.0,
         ge=0.0,
         le=10.0,
         title="Line Width",
-        description="Border line width in pixels",
+        description="Line width in pixels",
+    )
+    line_dash: LineDash = pydantic.Field(
+        default=LineDash.solid,
+        title="Line Style",
+        description="Line style: solid, dashed, dotted, dotdash",
+    )
+
+
+class RectanglesStyle(BaseStyle):
+    """Style options for rectangles."""
+
+    alpha: float = pydantic.Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        title="Fill Opacity",
+        description="Fill transparency (0 = transparent, 1 = opaque)",
     )
 
 
@@ -211,6 +220,7 @@ class RectanglesPlotter(StaticPlotter):
             fill_color=style.color,
             line_color=style.color,
             line_width=style.line_width,
+            line_dash=style.line_dash,
         )
 
 
@@ -245,21 +255,9 @@ class VLinesCoordinates(pydantic.BaseModel):
         return [float(p) for p in _parse_number_list(self.positions)]
 
 
-class LinesStyle(pydantic.BaseModel):
+class LinesStyle(BaseStyle):
     """Style options for lines."""
 
-    color: Color = pydantic.Field(
-        default="#ff0000",
-        title="Color",
-        description="Line color",
-    )
-    alpha: float = pydantic.Field(
-        default=0.7,
-        ge=0.0,
-        le=1.0,
-        title="Opacity",
-        description="Line transparency (0 = transparent, 1 = opaque)",
-    )
     line_width: float = pydantic.Field(
         default=2.0,
         ge=0.5,
@@ -267,10 +265,12 @@ class LinesStyle(pydantic.BaseModel):
         title="Line Width",
         description="Line width in pixels",
     )
-    line_dash: LineDash = pydantic.Field(
-        default=LineDash.solid,
-        title="Line Style",
-        description="Line style: solid, dashed, dotted, dotdash",
+    alpha: float = pydantic.Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        title="Opacity",
+        description="Line transparency (0 = transparent, 1 = opaque)",
     )
 
 
