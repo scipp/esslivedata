@@ -110,11 +110,6 @@ class StaticPlotter(ABC):
         """Create a plot element from the stored params."""
 
 
-# =============================================================================
-# Rectangles Plotter
-# =============================================================================
-
-
 class RectanglesCoordinates(pydantic.BaseModel):
     """Wrapper for rectangle coordinate input to get full-width card."""
 
@@ -224,17 +219,12 @@ class RectanglesPlotter(StaticPlotter):
         )
 
 
-# =============================================================================
-# Vertical Lines Plotter
-# =============================================================================
-
-
-class VLinesCoordinates(pydantic.BaseModel):
-    """Wrapper for vertical line coordinate input."""
+class LinesCoordinates(pydantic.BaseModel):
+    """Wrapper for line coordinate input."""
 
     positions: str = pydantic.Field(
         default="",
-        title="X Positions",
+        title="Positions",
         description='Enter as comma-separated values, e.g., 10, 20, 30',
     )
 
@@ -277,79 +267,25 @@ class LinesStyle(BaseStyle):
 class VLinesParams(pydantic.BaseModel):
     """Parameters for static vertical lines overlay."""
 
-    geometry: VLinesCoordinates = pydantic.Field(
-        default_factory=VLinesCoordinates,
-        title="Line Positions",
-        description="List of x-coordinates for vertical lines.",
+    geometry: LinesCoordinates = pydantic.Field(
+        default_factory=LinesCoordinates,
+        title="X Positions",
+        description="X-coordinates where vertical lines will be drawn.",
     )
     style: LinesStyle = pydantic.Field(
         default_factory=LinesStyle,
         title="Appearance",
         description="Visual styling options.",
     )
-
-
-class VLinesPlotter(StaticPlotter):
-    """Plotter for static vertical lines overlay."""
-
-    def __init__(self, params: VLinesParams) -> None:
-        self.params = params
-
-    @classmethod
-    def from_params(cls, params: VLinesParams) -> VLinesPlotter:
-        """Create plotter from params."""
-        return cls(params)
-
-    def create_static_plot(self) -> hv.Element:
-        """Create VLines element from params."""
-        positions = self.params.geometry.parse()
-        style = self.params.style
-        return hv.VLines(positions).opts(
-            alpha=style.alpha,
-            color=style.color,
-            line_width=style.line_width,
-            line_dash=style.line_dash,
-        )
-
-
-# =============================================================================
-# Horizontal Lines Plotter
-# =============================================================================
-
-
-class HLinesCoordinates(pydantic.BaseModel):
-    """Wrapper for horizontal line coordinate input."""
-
-    positions: str = pydantic.Field(
-        default="",
-        title="Y Positions",
-        description='Enter as comma-separated values, e.g., 10, 20, 30',
-    )
-
-    @pydantic.field_validator('positions')
-    @classmethod
-    def validate_positions(cls, v: str) -> str:
-        """Validate line position structure."""
-        positions = _parse_number_list(v)
-        if not positions:
-            raise ValueError("At least one position is required")
-        for i, pos in enumerate(positions):
-            if not isinstance(pos, int | float):
-                raise ValueError(f"Position {i + 1}: must be a number")
-        return v
-
-    def parse(self) -> list[float]:
-        """Parse validated positions into list of floats."""
-        return [float(p) for p in _parse_number_list(self.positions)]
 
 
 class HLinesParams(pydantic.BaseModel):
     """Parameters for static horizontal lines overlay."""
 
-    geometry: HLinesCoordinates = pydantic.Field(
-        default_factory=HLinesCoordinates,
-        title="Line Positions",
-        description="List of y-coordinates for horizontal lines.",
+    geometry: LinesCoordinates = pydantic.Field(
+        default_factory=LinesCoordinates,
+        title="Y Positions",
+        description="Y-coordinates where horizontal lines will be drawn.",
     )
     style: LinesStyle = pydantic.Field(
         default_factory=LinesStyle,
@@ -358,32 +294,35 @@ class HLinesParams(pydantic.BaseModel):
     )
 
 
-class HLinesPlotter(StaticPlotter):
-    """Plotter for static horizontal lines overlay."""
+class LinesPlotter(StaticPlotter):
+    """Plotter for static lines overlay (vertical or horizontal)."""
 
-    def __init__(self, params: HLinesParams) -> None:
+    def __init__(
+        self, params: VLinesParams | HLinesParams, element_class: type
+    ) -> None:
         self.params = params
+        self._element_class = element_class
 
     @classmethod
-    def from_params(cls, params: HLinesParams) -> HLinesPlotter:
-        """Create plotter from params."""
-        return cls(params)
+    def vlines(cls, params: VLinesParams) -> LinesPlotter:
+        """Create vertical lines plotter from params."""
+        return cls(params, hv.VLines)
+
+    @classmethod
+    def hlines(cls, params: HLinesParams) -> LinesPlotter:
+        """Create horizontal lines plotter from params."""
+        return cls(params, hv.HLines)
 
     def create_static_plot(self) -> hv.Element:
-        """Create HLines element from params."""
+        """Create lines element from params."""
         positions = self.params.geometry.parse()
         style = self.params.style
-        return hv.HLines(positions).opts(
+        return self._element_class(positions).opts(
             alpha=style.alpha,
             color=style.color,
             line_width=style.line_width,
             line_dash=style.line_dash,
         )
-
-
-# =============================================================================
-# Registration
-# =============================================================================
 
 
 def _register_static_plotters() -> None:
@@ -413,7 +352,7 @@ def _register_static_plotters() -> None:
         description='Draw static vertical lines as an overlay. '
         'Define x-positions for the lines.',
         data_requirements=static_data_requirements,
-        factory=VLinesPlotter.from_params,
+        factory=LinesPlotter.vlines,
         category=PlotterCategory.STATIC,
     )
 
@@ -423,6 +362,6 @@ def _register_static_plotters() -> None:
         description='Draw static horizontal lines as an overlay. '
         'Define y-positions for the lines.',
         data_requirements=static_data_requirements,
-        factory=HLinesPlotter.from_params,
+        factory=LinesPlotter.hlines,
         category=PlotterCategory.STATIC,
     )

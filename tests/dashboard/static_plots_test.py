@@ -9,15 +9,13 @@ import pytest
 hv.extension('bokeh')
 
 from ess.livedata.dashboard.static_plots import (  # noqa: E402
-    HLinesCoordinates,
     HLinesParams,
-    HLinesPlotter,
+    LinesCoordinates,
+    LinesPlotter,
     RectanglesCoordinates,
     RectanglesParams,
     RectanglesPlotter,
-    VLinesCoordinates,
     VLinesParams,
-    VLinesPlotter,
 )
 
 
@@ -78,77 +76,54 @@ class TestRectanglesPlotter:
         assert isinstance(plot, hv.Rectangles)
 
 
-class TestVLinesCoordinates:
-    """Tests for VLinesCoordinates validation."""
+class TestLinesCoordinates:
+    """Tests for LinesCoordinates validation."""
 
     def test_simple_format(self):
         """Simple comma-separated format is accepted."""
-        coords = VLinesCoordinates(positions="10, 20, 30")
+        coords = LinesCoordinates(positions="10, 20, 30")
         assert coords.parse() == [10.0, 20.0, 30.0]
 
     def test_json_format_backwards_compatible(self):
         """JSON array format still works for backwards compatibility."""
-        coords = VLinesCoordinates(positions="[10, 20, 30]")
+        coords = LinesCoordinates(positions="[10, 20, 30]")
         assert coords.parse() == [10.0, 20.0, 30.0]
 
     def test_empty_string_rejected(self):
         """Empty string is rejected."""
         with pytest.raises(ValueError, match="At least one position is required"):
-            VLinesCoordinates(positions="")
+            LinesCoordinates(positions="")
 
     def test_empty_brackets_rejected(self):
         """Empty brackets is rejected."""
         with pytest.raises(ValueError, match="At least one position is required"):
-            VLinesCoordinates(positions="[]")
+            LinesCoordinates(positions="[]")
 
     def test_invalid_number(self):
         """Invalid number raises ValueError."""
         with pytest.raises(ValueError, match="Invalid number"):
-            VLinesCoordinates(positions="10, not_a_number, 30")
+            LinesCoordinates(positions="10, not_a_number, 30")
 
     def test_non_numeric_values_json(self):
         """Non-numeric values in JSON format raise ValueError."""
         with pytest.raises(ValueError, match="must be a number"):
-            VLinesCoordinates(positions='[1, "two", 3]')
+            LinesCoordinates(positions='[1, "two", 3]')
 
 
-class TestVLinesPlotter:
-    """Tests for VLinesPlotter."""
+class TestLinesPlotter:
+    """Tests for LinesPlotter."""
 
-    def test_create_static_plot_with_lines(self):
-        """Creates hv.VLines with data."""
-        params = VLinesParams(geometry=VLinesCoordinates(positions="10, 20"))
-        plotter = VLinesPlotter.from_params(params)
+    def test_vlines_creates_vlines_element(self):
+        """LinesPlotter.vlines creates hv.VLines."""
+        params = VLinesParams(geometry=LinesCoordinates(positions="10, 20"))
+        plotter = LinesPlotter.vlines(params)
         plot = plotter.create_static_plot()
         assert isinstance(plot, hv.VLines)
 
-
-class TestHLinesCoordinates:
-    """Tests for HLinesCoordinates validation."""
-
-    def test_simple_format(self):
-        """Simple comma-separated format is accepted."""
-        coords = HLinesCoordinates(positions="10, 20, 30")
-        assert coords.parse() == [10.0, 20.0, 30.0]
-
-    def test_json_format_backwards_compatible(self):
-        """JSON array format still works for backwards compatibility."""
-        coords = HLinesCoordinates(positions="[10, 20, 30]")
-        assert coords.parse() == [10.0, 20.0, 30.0]
-
-    def test_empty_string_rejected(self):
-        """Empty string is rejected."""
-        with pytest.raises(ValueError, match="At least one position is required"):
-            HLinesCoordinates(positions="")
-
-
-class TestHLinesPlotter:
-    """Tests for HLinesPlotter."""
-
-    def test_create_static_plot_with_lines(self):
-        """Creates hv.HLines with data."""
-        params = HLinesParams(geometry=HLinesCoordinates(positions="10, 20"))
-        plotter = HLinesPlotter.from_params(params)
+    def test_hlines_creates_hlines_element(self):
+        """LinesPlotter.hlines creates hv.HLines."""
+        params = HLinesParams(geometry=LinesCoordinates(positions="10, 20"))
+        plotter = LinesPlotter.hlines(params)
         plot = plotter.create_static_plot()
         assert isinstance(plot, hv.HLines)
 
