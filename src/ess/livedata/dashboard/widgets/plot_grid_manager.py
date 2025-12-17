@@ -16,6 +16,7 @@ import yaml
 
 from ...config.grid_template import GridSpec
 from ...config.workflow_spec import WorkflowId, WorkflowSpec
+from ..buttons import ButtonStyles, create_download_button, create_tool_button
 from ..plot_orchestrator import (
     GridId,
     PlotCell,
@@ -23,12 +24,7 @@ from ..plot_orchestrator import (
     PlotOrchestrator,
     SubscriptionId,
 )
-from .plot_widgets import (
-    ButtonStyles,
-    create_download_button,
-    create_tool_button,
-    get_workflow_display_info,
-)
+from .plot_widgets import get_workflow_display_info
 
 # Sentinel value for "no template selected" in the dropdown
 _NO_TEMPLATE = "-- No template --"

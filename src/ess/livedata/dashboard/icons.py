@@ -8,6 +8,9 @@ They are embedded as strings to work in air-gapped environments where
 users may not have internet access. Panel's default icon loading fetches
 from CDN at runtime in the browser, which fails offline.
 
+To add a new icon: download from https://raw.githubusercontent.com/tabler/tabler-icons/main/icons/outline/{name}.svg,
+copy the SVG path elements, and add an entry to the _ICONS dict using the _svg() helper.
+
 Usage:
     from ess.livedata.dashboard.icons import get_icon
 
