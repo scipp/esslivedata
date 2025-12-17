@@ -39,15 +39,15 @@ class TestRectanglesCoordinates:
         coords = RectanglesCoordinates(coordinates="[[0, 0, 10, 10], [20, 20, 30, 30]]")
         assert coords.parse() == [(0.0, 0.0, 10.0, 10.0), (20.0, 20.0, 30.0, 30.0)]
 
-    def test_empty_string(self):
-        """Empty string is valid."""
-        coords = RectanglesCoordinates(coordinates="")
-        assert coords.parse() == []
+    def test_empty_string_rejected(self):
+        """Empty string is rejected."""
+        with pytest.raises(ValueError, match="At least one rectangle is required"):
+            RectanglesCoordinates(coordinates="")
 
-    def test_empty_brackets(self):
-        """Empty brackets is valid."""
-        coords = RectanglesCoordinates(coordinates="[]")
-        assert coords.parse() == []
+    def test_empty_brackets_rejected(self):
+        """Empty brackets is rejected."""
+        with pytest.raises(ValueError, match="At least one rectangle is required"):
+            RectanglesCoordinates(coordinates="[]")
 
     def test_invalid_format(self):
         """Invalid format raises ValueError."""
@@ -77,13 +77,6 @@ class TestRectanglesPlotter:
         plot = plotter.create_static_plot()
         assert isinstance(plot, hv.Rectangles)
 
-    def test_create_static_plot_empty(self):
-        """Creates empty hv.Rectangles when no coordinates."""
-        params = RectanglesParams(geometry=RectanglesCoordinates(coordinates=""))
-        plotter = RectanglesPlotter.from_params(params)
-        plot = plotter.create_static_plot()
-        assert isinstance(plot, hv.Rectangles)
-
 
 class TestVLinesCoordinates:
     """Tests for VLinesCoordinates validation."""
@@ -98,15 +91,15 @@ class TestVLinesCoordinates:
         coords = VLinesCoordinates(positions="[10, 20, 30]")
         assert coords.parse() == [10.0, 20.0, 30.0]
 
-    def test_empty_string(self):
-        """Empty string is valid."""
-        coords = VLinesCoordinates(positions="")
-        assert coords.parse() == []
+    def test_empty_string_rejected(self):
+        """Empty string is rejected."""
+        with pytest.raises(ValueError, match="At least one position is required"):
+            VLinesCoordinates(positions="")
 
-    def test_empty_brackets(self):
-        """Empty brackets is valid."""
-        coords = VLinesCoordinates(positions="[]")
-        assert coords.parse() == []
+    def test_empty_brackets_rejected(self):
+        """Empty brackets is rejected."""
+        with pytest.raises(ValueError, match="At least one position is required"):
+            VLinesCoordinates(positions="[]")
 
     def test_invalid_number(self):
         """Invalid number raises ValueError."""
@@ -129,13 +122,6 @@ class TestVLinesPlotter:
         plot = plotter.create_static_plot()
         assert isinstance(plot, hv.VLines)
 
-    def test_create_static_plot_empty(self):
-        """Creates empty hv.VLines when no positions."""
-        params = VLinesParams(geometry=VLinesCoordinates(positions=""))
-        plotter = VLinesPlotter.from_params(params)
-        plot = plotter.create_static_plot()
-        assert isinstance(plot, hv.VLines)
-
 
 class TestHLinesCoordinates:
     """Tests for HLinesCoordinates validation."""
@@ -150,10 +136,10 @@ class TestHLinesCoordinates:
         coords = HLinesCoordinates(positions="[10, 20, 30]")
         assert coords.parse() == [10.0, 20.0, 30.0]
 
-    def test_empty_string(self):
-        """Empty string is valid."""
-        coords = HLinesCoordinates(positions="")
-        assert coords.parse() == []
+    def test_empty_string_rejected(self):
+        """Empty string is rejected."""
+        with pytest.raises(ValueError, match="At least one position is required"):
+            HLinesCoordinates(positions="")
 
 
 class TestHLinesPlotter:
@@ -162,13 +148,6 @@ class TestHLinesPlotter:
     def test_create_static_plot_with_lines(self):
         """Creates hv.HLines with data."""
         params = HLinesParams(geometry=HLinesCoordinates(positions="10, 20"))
-        plotter = HLinesPlotter.from_params(params)
-        plot = plotter.create_static_plot()
-        assert isinstance(plot, hv.HLines)
-
-    def test_create_static_plot_empty(self):
-        """Creates empty hv.HLines when no positions."""
-        params = HLinesParams(geometry=HLinesCoordinates(positions=""))
         plotter = HLinesPlotter.from_params(params)
         plot = plotter.create_static_plot()
         assert isinstance(plot, hv.HLines)

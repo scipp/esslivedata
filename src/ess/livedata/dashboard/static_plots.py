@@ -118,6 +118,8 @@ class RectanglesCoordinates(pydantic.BaseModel):
     def validate_coordinates(cls, v: str) -> str:
         """Validate rectangle coordinate structure."""
         coords = _parse_rectangle_list(v)
+        if not coords:
+            raise ValueError("At least one rectangle is required")
         for i, rect in enumerate(coords):
             if not isinstance(rect, list | tuple):
                 raise ValueError(f"Rectangle {i + 1}: must be a list [x0, y0, x1, y1]")
@@ -193,15 +195,6 @@ class RectanglesPlotter(StaticPlotter):
         """Create rectangles element from params."""
         rects = self.params.geometry.parse()
         style = self.params.style
-
-        if not rects:
-            # Return empty rectangles element
-            return hv.Rectangles([]).opts(
-                fill_alpha=style.alpha,
-                fill_color=style.color,
-                line_width=style.line_width,
-            )
-
         return hv.Rectangles(rects).opts(
             fill_alpha=style.alpha,
             fill_color=style.color,
@@ -228,6 +221,8 @@ class VLinesCoordinates(pydantic.BaseModel):
     def validate_positions(cls, v: str) -> str:
         """Validate line position structure."""
         positions = _parse_number_list(v)
+        if not positions:
+            raise ValueError("At least one position is required")
         for i, pos in enumerate(positions):
             if not isinstance(pos, int | float):
                 raise ValueError(f"Position {i + 1}: must be a number")
@@ -297,15 +292,6 @@ class VLinesPlotter(StaticPlotter):
         """Create VLines element from params."""
         positions = self.params.geometry.parse()
         style = self.params.style
-
-        if not positions:
-            return hv.VLines([]).opts(
-                alpha=style.alpha,
-                color=style.color,
-                line_width=style.line_width,
-                line_dash=style.line_dash,
-            )
-
         return hv.VLines(positions).opts(
             alpha=style.alpha,
             color=style.color,
@@ -333,6 +319,8 @@ class HLinesCoordinates(pydantic.BaseModel):
     def validate_positions(cls, v: str) -> str:
         """Validate line position structure."""
         positions = _parse_number_list(v)
+        if not positions:
+            raise ValueError("At least one position is required")
         for i, pos in enumerate(positions):
             if not isinstance(pos, int | float):
                 raise ValueError(f"Position {i + 1}: must be a number")
@@ -373,15 +361,6 @@ class HLinesPlotter(StaticPlotter):
         """Create HLines element from params."""
         positions = self.params.geometry.parse()
         style = self.params.style
-
-        if not positions:
-            return hv.HLines([]).opts(
-                alpha=style.alpha,
-                color=style.color,
-                line_width=style.line_width,
-                line_dash=style.line_dash,
-            )
-
         return hv.HLines(positions).opts(
             alpha=style.alpha,
             color=style.color,
