@@ -253,7 +253,7 @@ def get_plot_cell_display_info(
         Tuple of (title, description). Title is a short string for display,
         description is a longer string for tooltip.
     """
-    # Handle static overlays (no data sources)
+    # Handle static overlays (single data source with empty source_names)
     if config.is_static():
         return _get_static_overlay_display_info(config)
 

@@ -130,46 +130,65 @@ class DataSourceConfig:
 class PlotConfig:
     """Configuration for a single plot layer.
 
-    The data_sources list determines the layer type:
-    - len(data_sources) == 0: Static overlay (no subscriptions)
-    - len(data_sources) == 1: Standard plot (single workflow)
-    - len(data_sources) > 1: Future correlation histograms
+    The data_sources list supports different layer types:
+
+    - **Single data source**: Standard plot subscribed to one workflow output.
+    - **Single data source with empty source_names**: Static overlay (e.g., geometric
+      shapes). Uses a synthetic workflow ID and stores a user-defined name in
+      output_name.
+    - **Multiple data sources**: Correlation histograms combining outputs from
+      multiple workflows (planned feature).
+
+    For the common single-source case, convenience properties (workflow_id,
+    source_names, output_name) provide direct access to the first data source,
+    avoiding verbose patterns like ``config.data_sources[0].workflow_id`` throughout
+    the codebase. When multi-source correlation histograms are implemented, code
+    handling those will access data_sources directly.
     """
 
     data_sources: list[DataSourceConfig]
     plot_name: str
     params: pydantic.BaseModel
 
-    # Legacy compatibility properties for single data source access
     @property
     def workflow_id(self) -> WorkflowId:
-        """Get workflow_id from first data source (for backward compatibility)."""
+        """Workflow ID from the first data source.
+
+        Convenience property for the common single-source case.
+        For multi-source layers, access data_sources directly.
+        """
         if not self.data_sources:
-            raise ValueError(
-                "Cannot access workflow_id on static overlay (no data sources)"
-            )
+            raise ValueError("Cannot access workflow_id: no data sources configured")
         return self.data_sources[0].workflow_id
 
     @property
     def source_names(self) -> list[str]:
-        """Get source_names from first data source (for backward compatibility)."""
+        """Source names from the first data source.
+
+        Convenience property for the common single-source case.
+        For multi-source layers, access data_sources directly.
+        """
         if not self.data_sources:
-            raise ValueError(
-                "Cannot access source_names on static overlay (no data sources)"
-            )
+            raise ValueError("Cannot access source_names: no data sources configured")
         return self.data_sources[0].source_names
 
     @property
     def output_name(self) -> str:
-        """Get output_name from first data source (for backward compatibility)."""
+        """Output name from the first data source.
+
+        Convenience property for the common single-source case.
+        For multi-source layers, access data_sources directly.
+        """
         if not self.data_sources:
-            raise ValueError(
-                "Cannot access output_name on static overlay (no data sources)"
-            )
+            raise ValueError("Cannot access output_name: no data sources configured")
         return self.data_sources[0].output_name
 
     def is_static(self) -> bool:
-        """Return True if this is a static overlay (no workflow subscription needed)."""
+        """Return True if this is a static overlay (no workflow subscription needed).
+
+        Static overlays have a single data source with empty source_names. They use
+        a synthetic workflow ID and store the user-defined overlay name in output_name.
+        """
         return (
             len(self.data_sources) == 1 and len(self.data_sources[0].source_names) == 0
         )
@@ -603,12 +622,14 @@ class PlotOrchestrator:
         """
         Subscribe a layer to workflow lifecycle and set up initial notification.
 
-        Branches based on number of data sources:
-        - 0 data sources (static): Create plot immediately without subscription
-        - 1 data source (normal): Current behavior via subscribe_to_workflow
-        - >1 data sources: Future work for correlation histograms
+        Branches based on layer type (determined by data sources):
 
-        For normal layers with one data source, handles two scenarios:
+        - **Static overlay** (single data source with empty source_names): Create plot
+          immediately without workflow subscription.
+        - **Standard plot** (single data source): Subscribe to workflow availability.
+        - **Correlation histogram** (multiple data sources): Future work.
+
+        For standard layers with one data source, handles two scenarios:
 
         **Scenario A: Workflow not yet running**
 
@@ -1059,7 +1080,11 @@ class PlotOrchestrator:
                 )
             ]
         else:
-            # Static overlay: no data sources
+            # Fallback for templates missing workflow specification.
+            # Note: This creates an invalid config - static overlays should use
+            # the data_sources format with a synthetic workflow ID. This branch
+            # exists for robustness but templates should always specify workflow_id
+            # or data_sources.
             data_sources = []
 
         config = PlotConfig(
