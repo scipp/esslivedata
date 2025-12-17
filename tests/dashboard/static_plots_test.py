@@ -32,9 +32,9 @@ class TestRectanglesCoordinates:
         coords = RectanglesCoordinates(coordinates="[0,0,10,10]")
         assert coords.parse() == [(0.0, 0.0, 10.0, 10.0)]
 
-    def test_json_format_backwards_compatible(self):
-        """Full JSON array format still works for backwards compatibility."""
-        coords = RectanglesCoordinates(coordinates="[[0, 0, 10, 10], [20, 20, 30, 30]]")
+    def test_multiple_rectangles(self):
+        """Multiple rectangles with space variations are accepted."""
+        coords = RectanglesCoordinates(coordinates="[0, 0, 10, 10], [20, 20, 30, 30]")
         assert coords.parse() == [(0.0, 0.0, 10.0, 10.0), (20.0, 20.0, 30.0, 30.0)]
 
     def test_empty_string_rejected(self):
@@ -84,9 +84,9 @@ class TestLinesCoordinates:
         coords = LinesCoordinates(positions="10, 20, 30")
         assert coords.parse() == [10.0, 20.0, 30.0]
 
-    def test_json_format_backwards_compatible(self):
-        """JSON array format still works for backwards compatibility."""
-        coords = LinesCoordinates(positions="[10, 20, 30]")
+    def test_positions_with_spaces(self):
+        """Positions with space variations are accepted."""
+        coords = LinesCoordinates(positions="10,  20,   30")
         assert coords.parse() == [10.0, 20.0, 30.0]
 
     def test_empty_string_rejected(self):
@@ -96,7 +96,7 @@ class TestLinesCoordinates:
 
     def test_empty_brackets_rejected(self):
         """Empty brackets is rejected."""
-        with pytest.raises(ValueError, match="At least one position is required"):
+        with pytest.raises(ValueError, match="must be a number"):
             LinesCoordinates(positions="[]")
 
     def test_invalid_number(self):
