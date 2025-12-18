@@ -102,12 +102,6 @@ class SimplifiedCorrelationHistogram2dParams(
     )
 
 
-# Map plotter names to their simplified param classes for PlotConfigModal
-SIMPLIFIED_CORRELATION_PARAMS: dict[str, type[CorrelationHistogramParams]] = {
-    'correlation_histogram_1d': SimplifiedCorrelationHistogram1dParams,
-    'correlation_histogram_2d': SimplifiedCorrelationHistogram2dParams,
-}
-
 # Plotter names that are correlation histogram types
 CORRELATION_HISTOGRAM_PLOTTERS = frozenset(
     {'correlation_histogram_1d', 'correlation_histogram_2d'}
