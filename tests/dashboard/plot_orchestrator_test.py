@@ -191,6 +191,30 @@ class FakePlottingController:
         # Use real StreamManager for subscription (avoids duplicating logic)
         self._stream_manager.make_merging_stream(keys, on_first_data=on_first_data)
 
+    def setup_data_pipeline_from_keys(
+        self,
+        keys,
+        plot_name: str,
+        params,
+        on_first_data,
+    ):
+        """Set up data pipeline from pre-built result keys."""
+        # Extract source_names and output_name from keys for test assertions
+        source_names = [key.job_id.source_name for key in keys]
+        output_name = keys[0].output_name if keys else None
+
+        # Record the call for assertions (compatible with old format)
+        self._pipeline_setups.append(
+            {
+                'keys': keys,
+                'source_names': source_names,
+                'output_name': output_name,
+                'plot_name': plot_name,
+            }
+        )
+        # Use real StreamManager for subscription
+        self._stream_manager.make_merging_stream(keys, on_first_data=on_first_data)
+
     def create_plot_from_pipeline(
         self,
         plot_name: str,
