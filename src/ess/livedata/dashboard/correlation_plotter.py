@@ -194,6 +194,7 @@ class CorrelationHistogram1dPlotter:
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             value_margin_factor=0.1,
+            as_histogram=True,
         )
 
     def initialize_from_data(self, data: CorrelationHistogramData) -> None:
