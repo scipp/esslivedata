@@ -9,6 +9,7 @@ import panel as pn
 
 from ess.livedata.core.job import JobState, JobStatus
 from ess.livedata.core.job_manager import JobAction
+from ess.livedata.dashboard.icons import get_icon
 from ess.livedata.dashboard.job_controller import JobController
 from ess.livedata.dashboard.job_service import JobService
 
@@ -57,12 +58,12 @@ class UIConstants:
     # Text
     JOB_NUMBER_MAX_LENGTH = 8
 
-    # Button symbols
-    RESET_SYMBOL = "↻"
-    PAUSE_SYMBOL = "⏸"
-    PLAY_SYMBOL = "▶"
-    STOP_SYMBOL = "⏹"
-    REMOVE_SYMBOL = "🗑"
+    # Button icons (Tabler icon names)
+    RESET_ICON = 'refresh'
+    PAUSE_ICON = 'player-pause'
+    PLAY_ICON = 'player-play'
+    STOP_ICON = 'player-stop'
+    REMOVE_ICON = 'trash'
 
 
 class JobStatusWidget:
@@ -146,10 +147,11 @@ class JobStatusWidget:
             margin=UIConstants.ERROR_MARGIN,
         )
 
-    def _create_button(self, symbol: str, callback) -> pn.widgets.Button:
+    def _create_button(self, icon_name: str, callback) -> pn.widgets.Button:
         """Create a button with consistent styling."""
         button = pn.widgets.Button(
-            name=symbol,
+            name='',
+            icon=get_icon(icon_name),
             button_type="light",
             width=UIConstants.BUTTON_WIDTH,
             height=UIConstants.BUTTON_HEIGHT,
@@ -164,20 +166,20 @@ class JobStatusWidget:
 
         # Reset button - always available for non-removed jobs
         reset_btn = self._create_button(
-            UIConstants.RESET_SYMBOL, lambda event: self._send_action(JobAction.reset)
+            UIConstants.RESET_ICON, lambda event: self._send_action(JobAction.reset)
         )
         buttons.append(reset_btn)
 
         # Stop/Remove button - dual purpose
         if self._job_status.state == JobState.stopped:
             remove_btn = self._create_button(
-                UIConstants.REMOVE_SYMBOL,
+                UIConstants.REMOVE_ICON,
                 lambda event: self._send_action(JobAction.remove),
             )
             buttons.append(remove_btn)
         elif self._job_status.state not in [JobState.stopped]:
             stop_btn = self._create_button(
-                UIConstants.STOP_SYMBOL, lambda event: self._send_action(JobAction.stop)
+                UIConstants.STOP_ICON, lambda event: self._send_action(JobAction.stop)
             )
             buttons.append(stop_btn)
 
@@ -189,13 +191,13 @@ class JobStatusWidget:
         if self._job_status.state in [JobState.active, JobState.paused]:
             if self._job_status.state == JobState.active:
                 pause_btn = self._create_button(
-                    UIConstants.PAUSE_SYMBOL,
+                    UIConstants.PAUSE_ICON,
                     lambda event: self._send_action(JobAction.pause),
                 )
                 buttons.append(pause_btn)
             else:  # paused
                 resume_btn = self._create_button(
-                    UIConstants.PLAY_SYMBOL,
+                    UIConstants.PLAY_ICON,
                     lambda event: self._send_action(JobAction.resume),
                 )
                 buttons.append(resume_btn)
@@ -430,14 +432,16 @@ class JobStatusListWidget:
 
         # Bulk action buttons
         self._bulk_reset_btn = pn.widgets.Button(
-            name=f"{UIConstants.RESET_SYMBOL} Reset Selected",
+            name="Reset Selected",
+            icon=get_icon(UIConstants.RESET_ICON),
             button_type="light",
             margin=bnt_margin,
         )
         self._bulk_reset_btn.on_click(self._bulk_reset)
 
         self._bulk_stop_btn = pn.widgets.Button(
-            name=f"{UIConstants.STOP_SYMBOL} Stop Selected",
+            name="Stop Selected",
+            icon=get_icon(UIConstants.STOP_ICON),
             button_type="light",
             margin=bnt_margin,
         )

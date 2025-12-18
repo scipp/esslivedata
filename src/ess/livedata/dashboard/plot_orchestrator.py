@@ -28,6 +28,7 @@ from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 from .config_store import ConfigStore
 from .data_service import DataService
+from .job_orchestrator import WorkflowCallbacks
 from .plotting_controller import PlottingController
 
 if TYPE_CHECKING:
@@ -43,23 +44,24 @@ class JobOrchestratorProtocol(Protocol):
     """Protocol for JobOrchestrator interface needed by PlotOrchestrator."""
 
     def subscribe_to_workflow(
-        self, workflow_id: WorkflowId, callback: Callable[[JobNumber], None]
+        self, workflow_id: WorkflowId, callbacks: WorkflowCallbacks
     ) -> tuple[SubscriptionId, bool]:
         """
-        Subscribe to workflow data availability notifications.
+        Subscribe to workflow job lifecycle notifications.
 
-        The callback will be called with the job_number when workflow data
-        becomes available (i.e., first result data arrives from the workflow).
+        The on_started callback will be called with the job_number when:
+        1. A workflow is committed (immediately after commit)
+        2. Immediately if subscribing and workflow already has an active job
 
-        If workflow data already exists when you subscribe, the callback
-        will be called immediately with the current job_number.
+        The on_stopped callback (if provided) will be called when the workflow
+        is stopped, with the job_number of the stopped job.
 
         Parameters
         ----------
         workflow_id
             The workflow to subscribe to.
-        callback
-            Called with job_number when workflow data becomes available.
+        callbacks
+            Callbacks for job lifecycle events (on_started, on_stopped).
 
         Returns
         -------
@@ -73,7 +75,7 @@ class JobOrchestratorProtocol(Protocol):
 
     def unsubscribe(self, subscription_id: SubscriptionId) -> None:
         """
-        Unsubscribe from workflow availability notifications.
+        Unsubscribe from workflow lifecycle notifications.
 
         Parameters
         ----------
@@ -104,10 +106,12 @@ class LayerState:
 
     Either plot or error is set (mutually exclusive).
     Both None indicates layer is waiting for data.
+    If stopped is True, the workflow has ended and no more data is expected.
     """
 
     plot: hv.DynamicMap | hv.Layout | None = None
     error: str | None = None
+    stopped: bool = False
 
 
 @dataclass
@@ -208,6 +212,7 @@ class PlotOrchestrator:
         plotting_controller: PlottingController,
         job_orchestrator: JobOrchestratorProtocol,
         data_service: DataService,
+        instrument: str,
         config_store: ConfigStore | None = None,
         raw_templates: Sequence[dict[str, Any]] = (),
     ) -> None:
@@ -222,6 +227,8 @@ class PlotOrchestrator:
             Orchestrator for subscribing to workflow availability.
         data_service
             DataService for monitoring data arrival.
+        instrument
+            Name of the instrument (e.g., 'dummy', 'dream').
         config_store
             Optional store for persisting plot grid configurations across sessions.
         raw_templates
@@ -231,6 +238,7 @@ class PlotOrchestrator:
         self._plotting_controller = plotting_controller
         self._job_orchestrator = job_orchestrator
         self._data_service = data_service
+        self._instrument = instrument
         self._config_store = config_store
         self._logger = logging.getLogger(__name__)
 
@@ -246,6 +254,11 @@ class PlotOrchestrator:
 
         # Load persisted configurations
         self._load_from_store()
+
+    @property
+    def instrument(self) -> str:
+        """The instrument name for this orchestrator."""
+        return self._instrument
 
     def add_grid(self, title: str, nrows: int, ncols: int) -> GridId:
         """
@@ -538,7 +551,7 @@ class PlotOrchestrator:
 
     def _subscribe_layer(self, grid_id: GridId, cell_id: CellId, layer: Layer) -> None:
         """
-        Subscribe a layer to workflow availability and set up initial notification.
+        Subscribe a layer to workflow lifecycle and set up initial notification.
 
         This method handles two scenarios depending on workflow state:
 
@@ -546,14 +559,17 @@ class PlotOrchestrator:
 
         1. Subscribe to workflow (callback not invoked)
         2. Notify UI that cell is "waiting for workflow"
-        3. Later, when workflow is committed, callback fires -> _on_layer_job_available
+        3. When workflow is committed, on_started fires -> _on_layer_job_available
 
         **Scenario B: Workflow already running**
 
-        1. Subscribe to workflow (callback invoked immediately with job_number)
+        1. Subscribe to workflow (on_started invoked immediately with job_number)
         2. _on_layer_job_available sets up data pipeline
         3. If data exists: plot created immediately
            If no data yet: notify UI "waiting for data"
+
+        When the workflow is stopped, on_stopped fires -> _on_layer_job_stopped,
+        which marks the layer as stopped and notifies the UI.
 
         Parameters
         ----------
@@ -569,11 +585,17 @@ class PlotOrchestrator:
         def on_workflow_available(job_number: JobNumber) -> None:
             self._on_layer_job_available(layer_id, job_number)
 
-        # Subscribe to workflow availability.
+        def on_workflow_stopped(job_number: JobNumber) -> None:
+            self._on_layer_job_stopped(layer_id, job_number)
+
+        # Subscribe to workflow lifecycle.
         # Returns whether callback was invoked immediately (workflow already running).
         subscription_id, was_invoked = self._job_orchestrator.subscribe_to_workflow(
             workflow_id=layer.config.workflow_id,
-            callback=on_workflow_available,
+            callbacks=WorkflowCallbacks(
+                on_started=on_workflow_available,
+                on_stopped=on_workflow_stopped,
+            ),
         )
         self._layer_to_subscription[layer_id] = subscription_id
 
@@ -621,6 +643,9 @@ class PlotOrchestrator:
         cell_id = self._layer_to_cell[layer_id]
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
+
+        # Clear any previous state (e.g., from a stopped job) to start fresh
+        self._layer_state.pop(layer_id, None)
 
         # Find the layer config
         config = self.get_layer_config(layer_id)
@@ -684,6 +709,50 @@ class PlotOrchestrator:
         if layer_id not in self._layer_state:
             layer_states, composed = self.get_cell_state(cell_id)
             self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
+
+    def _on_layer_job_stopped(self, layer_id: LayerId, job_number: JobNumber) -> None:
+        """
+        Handle workflow stopped notification for a layer.
+
+        Called when a workflow job is stopped. Marks the layer as stopped
+        and notifies the UI. The plot (if any) is preserved but marked as
+        no longer receiving updates.
+
+        Parameters
+        ----------
+        layer_id
+            ID of the layer whose workflow was stopped.
+        job_number
+            Job number that was stopped.
+        """
+        # Defensive check: layer may have been removed before callback fires
+        if layer_id not in self._layer_to_cell:
+            self._logger.warning(
+                'Ignoring workflow stopped for removed layer_id=%s', layer_id
+            )
+            return
+
+        cell_id = self._layer_to_cell[layer_id]
+        grid_id = self._cell_to_grid[cell_id]
+        cell = self._grids[grid_id].cells[cell_id]
+
+        self._logger.info(
+            'Workflow stopped for layer_id=%s, job_number=%s',
+            layer_id,
+            job_number,
+        )
+
+        # Get current state and mark as stopped
+        current_state = self._layer_state.get(layer_id, LayerState())
+        self._layer_state[layer_id] = LayerState(
+            plot=current_state.plot,
+            error=current_state.error,
+            stopped=True,
+        )
+
+        # Notify UI of the state change
+        layer_states, composed = self.get_cell_state(cell_id)
+        self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
 
     def _compose_cell_plot(self, cell: PlotCell) -> Any:
         """
@@ -936,6 +1005,57 @@ class PlotOrchestrator:
             )
             return None
 
+    def serialize_grid(self, grid_id: GridId) -> dict[str, Any]:
+        """
+        Serialize a single grid configuration for export.
+
+        The returned dict is suitable for saving as a YAML grid template
+        that can be loaded later via :py:meth:`_parse_single_spec`.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid to serialize.
+
+        Returns
+        -------
+        :
+            Grid configuration dict. UUIDs are not included as they are
+            runtime identity handles with no cross-session significance.
+
+        Raises
+        ------
+        KeyError
+            If grid_id is not found.
+        """
+        grid = self._grids[grid_id]
+        return {
+            'title': grid.title,
+            'nrows': grid.nrows,
+            'ncols': grid.ncols,
+            'cells': [
+                {
+                    'geometry': {
+                        'row': cell.geometry.row,
+                        'col': cell.geometry.col,
+                        'row_span': cell.geometry.row_span,
+                        'col_span': cell.geometry.col_span,
+                    },
+                    'layers': [
+                        {
+                            'workflow_id': str(layer.config.workflow_id),
+                            'output_name': layer.config.output_name,
+                            'source_names': layer.config.source_names,
+                            'plot_name': layer.config.plot_name,
+                            'params': layer.config.params.model_dump(mode='json'),
+                        }
+                        for layer in cell.layers
+                    ],
+                }
+                for cell in grid.cells.values()
+            ],
+        }
+
     def _serialize_grids(self) -> list[dict[str, Any]]:
         """
         Serialize all grids to list for persistence.
@@ -946,35 +1066,7 @@ class PlotOrchestrator:
             List of grid configurations. UUIDs are not persisted as they are
             runtime identity handles with no cross-session significance.
         """
-        return [
-            {
-                'title': grid.title,
-                'nrows': grid.nrows,
-                'ncols': grid.ncols,
-                'cells': [
-                    {
-                        'geometry': {
-                            'row': cell.geometry.row,
-                            'col': cell.geometry.col,
-                            'row_span': cell.geometry.row_span,
-                            'col_span': cell.geometry.col_span,
-                        },
-                        'layers': [
-                            {
-                                'workflow_id': str(layer.config.workflow_id),
-                                'output_name': layer.config.output_name,
-                                'source_names': layer.config.source_names,
-                                'plot_name': layer.config.plot_name,
-                                'params': layer.config.params.model_dump(mode='json'),
-                            }
-                            for layer in cell.layers
-                        ],
-                    }
-                    for cell in grid.cells.values()
-                ],
-            }
-            for grid in self._grids.values()
-        ]
+        return [self.serialize_grid(grid_id) for grid_id in self._grids]
 
     def _load_from_store(self) -> None:
         """Load plot grid configurations from config store."""

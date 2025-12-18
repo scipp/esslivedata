@@ -23,6 +23,7 @@ from .plot_params import (
     PlotScale,
     PlotScaleParams,
     PlotScaleParams2d,
+    TickParams,
 )
 from .scipp_to_holoviews import to_holoviews
 
@@ -69,7 +70,33 @@ class Plotter(ABC):
         self._sizing_opts['responsive'] = True
 
     @staticmethod
-    def _make_2d_base_opts(scale_opts: PlotScaleParams2d) -> dict[str, Any]:
+    def _make_tick_opts(tick_params: TickParams | None) -> dict[str, Any]:
+        """
+        Create tick options from TickParams.
+
+        Parameters
+        ----------
+        tick_params:
+            Tick configuration parameters.
+
+        Returns
+        -------
+        :
+            Dictionary of tick options for HoloViews plots.
+        """
+        if tick_params is None:
+            return {}
+        opts: dict[str, Any] = {}
+        if tick_params.custom_xticks:
+            opts['xticks'] = tick_params.xticks
+        if tick_params.custom_yticks:
+            opts['yticks'] = tick_params.yticks
+        return opts
+
+    @staticmethod
+    def _make_2d_base_opts(
+        scale_opts: PlotScaleParams2d, tick_params: TickParams | None = None
+    ) -> dict[str, Any]:
         """
         Create base options for 2D image plots.
 
@@ -77,19 +104,27 @@ class Plotter(ABC):
         ----------
         scale_opts:
             Scaling options for axes and color.
+        tick_params:
+            Tick configuration parameters.
 
         Returns
         -------
         :
             Dictionary of base options for HoloViews image plots.
         """
-        return {
+        opts: dict[str, Any] = {
             'colorbar': True,
             'cmap': 'viridis',
             'logx': scale_opts.x_scale == PlotScale.log,
             'logy': scale_opts.y_scale == PlotScale.log,
             'logz': scale_opts.color_scale == PlotScale.log,
         }
+        if tick_params is not None:
+            if tick_params.custom_xticks:
+                opts['xticks'] = tick_params.xticks
+            if tick_params.custom_yticks:
+                opts['yticks'] = tick_params.yticks
+        return opts
 
     @staticmethod
     def _convert_bin_edges_to_midpoints(
@@ -241,20 +276,26 @@ class LinePlotter(Plotter):
     def __init__(
         self,
         scale_opts: PlotScaleParams,
+        tick_params: TickParams | None = None,
         **kwargs,
     ):
         """
-        Initialize the image plotter.
+        Initialize the line plotter.
 
         Parameters
         ----------
+        scale_opts:
+            Scaling options for axes.
+        tick_params:
+            Tick configuration parameters.
         **kwargs:
             Additional keyword arguments passed to the base class.
         """
         super().__init__(**kwargs)
-        self._base_opts = {
+        self._base_opts: dict[str, Any] = {
             'logx': True if scale_opts.x_scale == PlotScale.log else False,
             'logy': True if scale_opts.y_scale == PlotScale.log else False,
+            **self._make_tick_opts(tick_params),
         }
 
     @classmethod
@@ -265,6 +306,7 @@ class LinePlotter(Plotter):
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
+            tick_params=params.ticks,
         )
 
     def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Curve:
@@ -282,6 +324,7 @@ class ImagePlotter(Plotter):
     def __init__(
         self,
         scale_opts: PlotScaleParams2d,
+        tick_params: TickParams | None = None,
         **kwargs,
     ):
         """
@@ -289,12 +332,16 @@ class ImagePlotter(Plotter):
 
         Parameters
         ----------
+        scale_opts:
+            Scaling options for axes and color.
+        tick_params:
+            Tick configuration parameters.
         **kwargs:
             Additional keyword arguments passed to the base class.
         """
         super().__init__(**kwargs)
         self._scale_opts = scale_opts
-        self._base_opts = self._make_2d_base_opts(scale_opts)
+        self._base_opts = self._make_2d_base_opts(scale_opts, tick_params)
 
     @classmethod
     def from_params(cls, params: PlotParams2d):
@@ -304,6 +351,7 @@ class ImagePlotter(Plotter):
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
+            tick_params=params.ticks,
         )
 
     def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Image:
@@ -327,6 +375,7 @@ class SlicerPlotter(Plotter):
     def __init__(
         self,
         scale_opts: PlotScaleParams2d,
+        tick_params: TickParams | None = None,
         **kwargs,
     ):
         """
@@ -336,13 +385,15 @@ class SlicerPlotter(Plotter):
         ----------
         scale_opts:
             Scaling options for axes and color.
+        tick_params:
+            Tick configuration parameters.
         **kwargs:
             Additional keyword arguments passed to the base class.
         """
         super().__init__(**kwargs)
         self._scale_opts = scale_opts
         self._kdims: list[hv.Dimension] | None = None
-        self._base_opts = self._make_2d_base_opts(scale_opts)
+        self._base_opts = self._make_2d_base_opts(scale_opts, tick_params)
         self._last_slice_dim: str | None = None
         self._last_slice_idx: int | float | None = None
         self._last_mode: str | None = None
@@ -353,6 +404,7 @@ class SlicerPlotter(Plotter):
         return cls(
             scale_opts=params.plot_scale,
             grow_threshold=0.1,
+            tick_params=params.ticks,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
         )
@@ -615,6 +667,7 @@ class Overlay1DPlotter(Plotter):
     def __init__(
         self,
         scale_opts: PlotScaleParams,
+        tick_params: TickParams | None = None,
         **kwargs,
     ):
         """
@@ -624,13 +677,16 @@ class Overlay1DPlotter(Plotter):
         ----------
         scale_opts:
             Scaling options for axes.
+        tick_params:
+            Tick configuration parameters.
         **kwargs:
             Additional keyword arguments passed to the base class.
         """
         super().__init__(**kwargs)
-        self._base_opts = {
+        self._base_opts: dict[str, Any] = {
             'logx': scale_opts.x_scale == PlotScale.log,
             'logy': scale_opts.y_scale == PlotScale.log,
+            **self._make_tick_opts(tick_params),
         }
         self._colors = hv.Cycle.default_cycles["default_colors"]
 
@@ -644,6 +700,7 @@ class Overlay1DPlotter(Plotter):
             layout_params=LayoutParams(combine_mode=CombineMode.overlay),
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
+            tick_params=params.ticks,
         )
 
     def plot(

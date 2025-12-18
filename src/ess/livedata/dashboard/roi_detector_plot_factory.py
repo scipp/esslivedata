@@ -942,6 +942,7 @@ class ROIDetectorPlotFactory:
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
+            tick_params=params.ticks,
         )
         # Use extracted data from pipe for plotter initialization
         detector_plotter.initialize_from_data(detector_pipe.data)
