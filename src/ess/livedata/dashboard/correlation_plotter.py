@@ -11,13 +11,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
 import pydantic
 import scipp as sc
 
 from ess.livedata.config.workflow_spec import ResultKey
 
-from .correlation_histogram import CorrelationHistogrammer, CorrelationHistogramParams
+from .correlation_histogram import CorrelationHistogramParams
 from .plot_params import PlotDisplayParams1d, PlotDisplayParams2d
 from .plots import ImagePlotter, LinePlotter
 
@@ -175,31 +174,6 @@ class CorrelationHistogramAssembler:
         )
 
 
-def _compute_edges_from_data(
-    data: sc.DataArray, num_bins: int, dim: str
-) -> sc.Variable:
-    """Compute histogram edges from data range.
-
-    Parameters
-    ----------
-    data
-        DataArray containing the data to determine range from.
-    num_bins
-        Number of bins for the histogram.
-    dim
-        Dimension name for the edges.
-
-    Returns
-    -------
-    :
-        Scipp Variable with evenly spaced bin edges.
-    """
-    values = sc.values(data) if data.variances is not None else data
-    low = float(values.nanmin().value)
-    high = float(np.nextafter(values.nanmax().value, np.inf))
-    return sc.linspace(dim, low, high, num_bins + 1, unit=data.unit)
-
-
 class CorrelationHistogram1dPlotter:
     """Plotter for 1D correlation histograms.
 
@@ -214,49 +188,42 @@ class CorrelationHistogram1dPlotter:
     ) -> None:
         self._num_bins = params.bins.x_bins
         self._normalize = params.normalization.per_second
-        # Store display params directly (inherited from PlotDisplayParams1d)
-        self._plot_scale = params.plot_scale
-        self._ticks = params.ticks
-        self._layout = params.layout
-        self._plot_aspect = params.plot_aspect
-        self._histogrammer: CorrelationHistogrammer | None = None
-        # Internal LinePlotter for rendering with display options
-        self._renderer: LinePlotter | None = None
-
-    def initialize_from_data(self, data: CorrelationHistogramData) -> None:
-        """Initialize histogram edges and renderer from first data arrival."""
-        if 'x' not in data.axis_data:
-            raise ValueError("Correlation histogram requires x-axis data")
-
-        # Initialize histogram edges from axis data
-        x_axis_data = data.axis_data['x']
-        edges = {'x': _compute_edges_from_data(x_axis_data, self._num_bins, 'x')}
-        self._histogrammer = CorrelationHistogrammer(
-            edges=edges, normalize=self._normalize
-        )
-
-        # Create internal LinePlotter with display options
         self._renderer = LinePlotter(
-            scale_opts=self._plot_scale,
-            tick_params=self._ticks,
-            layout_params=self._layout,
-            aspect_params=self._plot_aspect,
+            scale_opts=params.plot_scale,
+            tick_params=params.ticks,
+            layout_params=params.layout,
+            aspect_params=params.plot_aspect,
             value_margin_factor=0.1,
         )
 
+    def initialize_from_data(self, data: CorrelationHistogramData) -> None:
+        """No-op: histogram edges are computed dynamically on each call."""
+
     def __call__(self, data: CorrelationHistogramData) -> Any:
         """Compute histograms for all data sources and render."""
-        if self._histogrammer is None or self._renderer is None:
-            self.initialize_from_data(data)
-            if self._histogrammer is None or self._renderer is None:
-                raise RuntimeError("Failed to initialize histogrammer or renderer")
+        if 'x' not in data.axis_data:
+            raise ValueError("Correlation histogram requires x-axis data")
 
-        # Compute histogram for EACH data source
+        x_axis = data.axis_data['x']
+        lut = sc.lookup(
+            sc.values(x_axis) if x_axis.variances is not None else x_axis,
+            mode='previous',
+        )
+
         histograms: dict[ResultKey, sc.DataArray] = {}
         for key, source_data in data.data_sources.items():
-            histograms[key] = self._histogrammer(source_data, coords=data.axis_data)
+            dependent = source_data.copy(deep=False)
+            dependent.coords['x'] = lut[dependent.coords['time']]
 
-        # Delegate rendering to LinePlotter (handles overlay/layout)
+            if self._normalize:
+                times = dependent.coords['time']
+                widths = (times[1:] - times[:-1]).to(dtype='float64', unit='s')
+                widths = sc.concat([widths, widths.median()], dim='time')
+                dependent = dependent / widths
+                histograms[key] = dependent.bin(x=self._num_bins).bins.mean()
+            else:
+                histograms[key] = dependent.hist(x=self._num_bins)
+
         return self._renderer(histograms)
 
     @classmethod
@@ -280,51 +247,50 @@ class CorrelationHistogram2dPlotter:
         self._x_bins = params.bins.x_bins
         self._y_bins = params.bins.y_bins
         self._normalize = params.normalization.per_second
-        # Store display params directly (inherited from PlotDisplayParams2d)
-        self._plot_scale = params.plot_scale
-        self._ticks = params.ticks
-        self._layout = params.layout
-        self._plot_aspect = params.plot_aspect
-        self._histogrammer: CorrelationHistogrammer | None = None
-        # Internal ImagePlotter for rendering with display options
-        self._renderer: ImagePlotter | None = None
-
-    def initialize_from_data(self, data: CorrelationHistogramData) -> None:
-        """Initialize histogram edges and renderer from first data arrival."""
-        if 'x' not in data.axis_data or 'y' not in data.axis_data:
-            raise ValueError("2D correlation histogram requires x-axis and y-axis data")
-
-        # Initialize histogram edges from axis data
-        edges = {
-            'x': _compute_edges_from_data(data.axis_data['x'], self._x_bins, 'x'),
-            'y': _compute_edges_from_data(data.axis_data['y'], self._y_bins, 'y'),
-        }
-        self._histogrammer = CorrelationHistogrammer(
-            edges=edges, normalize=self._normalize
-        )
-
-        # Create internal ImagePlotter with display options
         self._renderer = ImagePlotter(
-            scale_opts=self._plot_scale,
-            tick_params=self._ticks,
-            layout_params=self._layout,
-            aspect_params=self._plot_aspect,
+            scale_opts=params.plot_scale,
+            tick_params=params.ticks,
+            layout_params=params.layout,
+            aspect_params=params.plot_aspect,
             value_margin_factor=0.1,
         )
 
+    def initialize_from_data(self, data: CorrelationHistogramData) -> None:
+        """No-op: histogram edges are computed dynamically on each call."""
+
     def __call__(self, data: CorrelationHistogramData) -> Any:
         """Compute 2D histograms for all data sources and render."""
-        if self._histogrammer is None or self._renderer is None:
-            self.initialize_from_data(data)
-            if self._histogrammer is None or self._renderer is None:
-                raise RuntimeError("Failed to initialize histogrammer or renderer")
+        if 'x' not in data.axis_data or 'y' not in data.axis_data:
+            raise ValueError("2D correlation histogram requires x-axis and y-axis data")
 
-        # Compute histogram for EACH data source
+        x_axis = data.axis_data['x']
+        y_axis = data.axis_data['y']
+        x_lut = sc.lookup(
+            sc.values(x_axis) if x_axis.variances is not None else x_axis,
+            mode='previous',
+        )
+        y_lut = sc.lookup(
+            sc.values(y_axis) if y_axis.variances is not None else y_axis,
+            mode='previous',
+        )
+
         histograms: dict[ResultKey, sc.DataArray] = {}
         for key, source_data in data.data_sources.items():
-            histograms[key] = self._histogrammer(source_data, coords=data.axis_data)
+            dependent = source_data.copy(deep=False)
+            dependent.coords['x'] = x_lut[dependent.coords['time']]
+            dependent.coords['y'] = y_lut[dependent.coords['time']]
 
-        # Delegate rendering to ImagePlotter (handles overlay/layout)
+            if self._normalize:
+                times = dependent.coords['time']
+                widths = (times[1:] - times[:-1]).to(dtype='float64', unit='s')
+                widths = sc.concat([widths, widths.median()], dim='time')
+                dependent = dependent / widths
+                histograms[key] = dependent.bin(
+                    x=self._x_bins, y=self._y_bins
+                ).bins.mean()
+            else:
+                histograms[key] = dependent.hist(x=self._x_bins, y=self._y_bins)
+
         return self._renderer(histograms)
 
     @classmethod
