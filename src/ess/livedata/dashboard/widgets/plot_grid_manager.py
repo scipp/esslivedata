@@ -8,9 +8,11 @@ Provides UI for adding and removing plot grids through PlotOrchestrator.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from io import StringIO
 
 import panel as pn
+import yaml
 
 from ...config.grid_template import GridSpec
 from ...config.workflow_spec import WorkflowId, WorkflowSpec
@@ -21,7 +23,11 @@ from ..plot_orchestrator import (
     PlotOrchestrator,
     SubscriptionId,
 )
-from .plot_widgets import get_workflow_display_info
+from .plot_widgets import (
+    create_close_button,
+    create_download_button,
+    get_workflow_display_info,
+)
 
 # Sentinel value for "no template selected" in the dropdown
 _NO_TEMPLATE = "-- No template --"
@@ -35,6 +41,85 @@ _CELL_COLORS = [
     '#fce4ec',  # light pink
     '#e0f7fa',  # light cyan
 ]
+
+
+class GridRow:
+    """
+    Widget row for a single grid in the grid list.
+
+    Displays grid info and action buttons (download, remove).
+
+    Parameters
+    ----------
+    grid_id
+        ID of the grid this row represents.
+    grid_config
+        Configuration of the grid (title, dimensions).
+    instrument
+        Name of the instrument (e.g., 'dummy', 'dream').
+    on_remove
+        Callback to invoke when the remove button is clicked.
+    get_yaml_content
+        Callback that returns the YAML content for download.
+    """
+
+    def __init__(
+        self,
+        grid_id: GridId,
+        grid_config: PlotGridConfig,
+        *,
+        instrument: str,
+        on_remove: Callable[[], None],
+        get_yaml_content: Callable[[], StringIO],
+    ) -> None:
+        self._grid_id = grid_id
+        self._grid_config = grid_config
+
+        # Grid info label
+        label = pn.pane.Str(
+            f'{grid_config.title} ({grid_config.nrows}x{grid_config.ncols})',
+            styles={'flex-grow': '1'},
+        )
+
+        # Download button - generates YAML when clicked
+        filename = (
+            f'esslivedata_{instrument}_{_sanitize_filename(grid_config.title)}.yaml'
+        )
+        download_button = create_download_button(
+            filename=filename,
+            callback=get_yaml_content,
+        )
+
+        # Remove button
+        remove_button = create_close_button(on_remove)
+
+        self._widget = pn.Row(
+            label,
+            download_button,
+            remove_button,
+            sizing_mode='stretch_width',
+        )
+
+    @property
+    def panel(self) -> pn.Row:
+        """Get the Panel viewable object for this row."""
+        return self._widget
+
+
+def _sanitize_filename(title: str) -> str:
+    """
+    Sanitize a title for use as a filename.
+
+    Replaces spaces with underscores and removes/replaces problematic characters.
+    """
+    # Replace spaces with underscores
+    result = title.replace(' ', '_')
+    # Remove characters that are problematic in filenames
+    invalid_chars = '<>:"/\\|?*'
+    for char in invalid_chars:
+        result = result.replace(char, '')
+    # Lowercase for consistency
+    return result.lower()
 
 
 class PlotGridManager:
@@ -370,47 +455,34 @@ class PlotGridManager:
         """Update the grid list display."""
         self._grid_list.clear()
         for grid_id, grid_config in self._orchestrator.get_all_grids().items():
-            # Action buttons
-            move_up_button = pn.widgets.Button(
-                name='↑',
-                button_type='default',
-                width=40,
-                disabled=True,
-                description='Reordering support coming soon',
+            row = GridRow(
+                grid_id=grid_id,
+                grid_config=grid_config,
+                instrument=self._orchestrator.instrument,
+                on_remove=self._make_remove_handler(grid_id),
+                get_yaml_content=self._make_yaml_callback(grid_id),
             )
-            move_down_button = pn.widgets.Button(
-                name='↓',
-                button_type='default',
-                width=40,
-                disabled=True,
-                description='Reordering support coming soon',
-            )
-            remove_button = pn.widgets.Button(
-                name='Remove',
-                button_type='danger',
-                width=80,
-            )
+            self._grid_list.append(row.panel)
 
-            # Capture grid_id in closure
-            def make_remove_handler(gid: GridId):
-                def handler(event):
-                    self._orchestrator.remove_grid(gid)
+    def _make_remove_handler(self, grid_id: GridId) -> Callable[[], None]:
+        """Create a closure that removes the given grid."""
 
-                return handler
+        def handler() -> None:
+            self._orchestrator.remove_grid(grid_id)
 
-            remove_button.on_click(make_remove_handler(grid_id))
+        return handler
 
-            grid_row = pn.Row(
-                pn.pane.Str(
-                    f'{grid_config.title} ({grid_config.nrows}x{grid_config.ncols})',
-                    styles={'flex-grow': '1'},
-                ),
-                move_up_button,
-                move_down_button,
-                remove_button,
-                sizing_mode='stretch_width',
-            )
-            self._grid_list.append(grid_row)
+    def _make_yaml_callback(self, grid_id: GridId) -> Callable[[], StringIO]:
+        """Create a closure that generates YAML content for the given grid."""
+
+        def callback() -> StringIO:
+            grid_data = self._orchestrator.serialize_grid(grid_id)
+            sio = StringIO()
+            yaml.dump(grid_data, sio, default_flow_style=False, sort_keys=False)
+            sio.seek(0)
+            return sio
+
+        return callback
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events."""

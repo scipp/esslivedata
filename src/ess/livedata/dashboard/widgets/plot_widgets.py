@@ -33,7 +33,13 @@ class ButtonStyles:
     TOOL_BUTTON_FONT_SIZE = '20px'
 
 
-def create_tool_button_stylesheet(button_color: str, hover_color: str) -> list[str]:
+def create_tool_button_stylesheet(
+    button_color: str,
+    hover_color: str,
+    *,
+    selector: str = 'button',
+    hover_selector: str | None = None,
+) -> list[str]:
     """
     Create a stylesheet for tool buttons (close, gear, etc.).
 
@@ -43,15 +49,24 @@ def create_tool_button_stylesheet(button_color: str, hover_color: str) -> list[s
         Color for the button icon.
     hover_color:
         RGBA color for the hover background.
+    selector:
+        CSS selector for the button element. Default is 'button' for regular
+        Panel buttons. Use ':host(.solid) button.bk-btn.bk-btn-primary' for
+        FileDownload widgets.
+    hover_selector:
+        CSS selector for the hover state. If None, defaults to '{selector}:hover'.
 
     Returns
     -------
     :
         List containing the stylesheet string.
     """
+    if hover_selector is None:
+        hover_selector = f'{selector}:hover'
+
     return [
         f"""
-        button {{
+        {selector} {{
             background-color: transparent !important;
             border: none !important;
             color: {button_color} !important;
@@ -66,7 +81,7 @@ def create_tool_button_stylesheet(button_color: str, hover_color: str) -> list[s
             height: 100% !important;
             width: 100% !important;
         }}
-        button:hover {{
+        {hover_selector} {{
             background-color: {hover_color} !important;
         }}
         """
@@ -174,6 +189,46 @@ def create_add_button(on_add_callback: Callable[[], None]) -> pn.widgets.Button:
         button_color='#28a745',  # Green
         hover_color='rgba(40, 167, 69, 0.1)',
         on_click_callback=on_add_callback,
+    )
+
+
+def create_download_button(
+    filename: str,
+    callback: Callable[[], str],
+) -> pn.widgets.FileDownload:
+    """
+    Create a styled download button for exporting data.
+
+    Parameters
+    ----------
+    filename:
+        Default filename for the downloaded file.
+    callback:
+        Callback that returns the file content as a string.
+
+    Returns
+    -------
+    :
+        Panel FileDownload widget styled as a tool button.
+    """
+    # FileDownload uses different CSS selectors than regular Button
+    stylesheet = create_tool_button_stylesheet(
+        button_color=ButtonStyles.PRIMARY_BLUE,
+        hover_color='rgba(0, 123, 255, 0.1)',
+        selector=':host(.solid) button.bk-btn.bk-btn-primary',
+    )
+
+    return pn.widgets.FileDownload(
+        callback=callback,
+        filename=filename,
+        label='\u2913',  # Downward arrow to bar (download symbol)
+        width=ButtonStyles.TOOL_BUTTON_SIZE,
+        height=ButtonStyles.TOOL_BUTTON_SIZE,
+        button_type='primary',
+        sizing_mode='fixed',
+        margin=0,
+        embed=False,  # Generate content on click, not upfront
+        stylesheets=stylesheet,
     )
 
 

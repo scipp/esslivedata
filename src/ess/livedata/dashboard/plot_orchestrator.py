@@ -208,6 +208,7 @@ class PlotOrchestrator:
         plotting_controller: PlottingController,
         job_orchestrator: JobOrchestratorProtocol,
         data_service: DataService,
+        instrument: str,
         config_store: ConfigStore | None = None,
         raw_templates: Sequence[dict[str, Any]] = (),
     ) -> None:
@@ -222,6 +223,8 @@ class PlotOrchestrator:
             Orchestrator for subscribing to workflow availability.
         data_service
             DataService for monitoring data arrival.
+        instrument
+            Name of the instrument (e.g., 'dummy', 'dream').
         config_store
             Optional store for persisting plot grid configurations across sessions.
         raw_templates
@@ -231,6 +234,7 @@ class PlotOrchestrator:
         self._plotting_controller = plotting_controller
         self._job_orchestrator = job_orchestrator
         self._data_service = data_service
+        self._instrument = instrument
         self._config_store = config_store
         self._logger = logging.getLogger(__name__)
 
@@ -246,6 +250,11 @@ class PlotOrchestrator:
 
         # Load persisted configurations
         self._load_from_store()
+
+    @property
+    def instrument(self) -> str:
+        """The instrument name for this orchestrator."""
+        return self._instrument
 
     def add_grid(self, title: str, nrows: int, ncols: int) -> GridId:
         """
@@ -936,6 +945,57 @@ class PlotOrchestrator:
             )
             return None
 
+    def serialize_grid(self, grid_id: GridId) -> dict[str, Any]:
+        """
+        Serialize a single grid configuration for export.
+
+        The returned dict is suitable for saving as a YAML grid template
+        that can be loaded later via :py:meth:`_parse_single_spec`.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid to serialize.
+
+        Returns
+        -------
+        :
+            Grid configuration dict. UUIDs are not included as they are
+            runtime identity handles with no cross-session significance.
+
+        Raises
+        ------
+        KeyError
+            If grid_id is not found.
+        """
+        grid = self._grids[grid_id]
+        return {
+            'title': grid.title,
+            'nrows': grid.nrows,
+            'ncols': grid.ncols,
+            'cells': [
+                {
+                    'geometry': {
+                        'row': cell.geometry.row,
+                        'col': cell.geometry.col,
+                        'row_span': cell.geometry.row_span,
+                        'col_span': cell.geometry.col_span,
+                    },
+                    'layers': [
+                        {
+                            'workflow_id': str(layer.config.workflow_id),
+                            'output_name': layer.config.output_name,
+                            'source_names': layer.config.source_names,
+                            'plot_name': layer.config.plot_name,
+                            'params': layer.config.params.model_dump(mode='json'),
+                        }
+                        for layer in cell.layers
+                    ],
+                }
+                for cell in grid.cells.values()
+            ],
+        }
+
     def _serialize_grids(self) -> list[dict[str, Any]]:
         """
         Serialize all grids to list for persistence.
@@ -946,35 +1006,7 @@ class PlotOrchestrator:
             List of grid configurations. UUIDs are not persisted as they are
             runtime identity handles with no cross-session significance.
         """
-        return [
-            {
-                'title': grid.title,
-                'nrows': grid.nrows,
-                'ncols': grid.ncols,
-                'cells': [
-                    {
-                        'geometry': {
-                            'row': cell.geometry.row,
-                            'col': cell.geometry.col,
-                            'row_span': cell.geometry.row_span,
-                            'col_span': cell.geometry.col_span,
-                        },
-                        'layers': [
-                            {
-                                'workflow_id': str(layer.config.workflow_id),
-                                'output_name': layer.config.output_name,
-                                'source_names': layer.config.source_names,
-                                'plot_name': layer.config.plot_name,
-                                'params': layer.config.params.model_dump(mode='json'),
-                            }
-                            for layer in cell.layers
-                        ],
-                    }
-                    for cell in grid.cells.values()
-                ],
-            }
-            for grid in self._grids.values()
-        ]
+        return [self.serialize_grid(grid_id) for grid_id in self._grids]
 
     def _load_from_store(self) -> None:
         """Load plot grid configurations from config store."""
