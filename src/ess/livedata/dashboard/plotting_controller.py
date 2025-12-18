@@ -276,7 +276,7 @@ class PlottingController:
         on_first_data
             Callback invoked when first data arrives, receives the pipe as parameter.
         """
-        from .correlation_histogram import CorrelationHistogramAssembler
+        from .correlation_plotter import CorrelationHistogramAssembler
 
         # Validate params if dict, pass through if already a model
         if isinstance(params, dict):

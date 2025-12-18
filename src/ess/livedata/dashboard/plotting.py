@@ -13,7 +13,7 @@ import pydantic
 import scipp as sc
 
 from ..handlers.detector_view_specs import DetectorROIAuxSources
-from .correlation_histogram import (
+from .correlation_plotter import (
     CorrelationHistogram1dPlotter,
     CorrelationHistogram2dPlotter,
     SimplifiedCorrelationHistogram1dParams,
