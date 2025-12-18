@@ -321,9 +321,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
     def _update_output_options(self) -> None:
         """Update output button options based on selected workflow."""
         if self._selected_workflow_id is None:
-            self._output_container.clear()
             self._output_buttons.options = {}
-            self._output_container.append(self._output_buttons)
             return
 
         # Handle synthetic static overlay workflow - show name input instead of buttons
@@ -333,9 +331,11 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             self._output_container.append(self._name_input)
             return
 
-        # For regular workflows, show output buttons
-        self._output_container.clear()
-        self._output_container.append(self._output_buttons)
+        # For regular workflows, ensure output buttons are shown (in case we're
+        # coming from static overlay which swapped in the name input)
+        if self._name_input in self._output_container:
+            self._output_container.clear()
+            self._output_container.append(self._output_buttons)
 
         workflow_spec = self._workflow_registry.get(self._selected_workflow_id)
         if workflow_spec is None:
