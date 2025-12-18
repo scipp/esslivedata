@@ -314,9 +314,13 @@ class PlotOrchestrator:
         self._grids: dict[GridId, PlotGridConfig] = {}
         self._cell_to_grid: dict[CellId, GridId] = {}
         self._layer_to_subscription: dict[LayerId, SubscriptionId] = {}
+        self._layer_to_subscriptions: dict[LayerId, list[SubscriptionId]] = {}
         self._layer_state: dict[LayerId, LayerState] = {}
         self._layer_to_cell: dict[LayerId, CellId] = {}
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
+        # Track multi-source layers waiting for multiple workflows
+        # Maps layer_id -> {workflow_id: job_number} for workflows that are ready
+        self._layer_pending_workflows: dict[LayerId, dict[WorkflowId, JobNumber]] = {}
 
         # Parse templates (requires plotter registry, so must be done here)
         self._templates = self._parse_grid_specs(list(raw_templates))
@@ -611,9 +615,20 @@ class PlotOrchestrator:
             Set to False when the layer is being updated (still in the cell),
             True when removing the layer completely.
         """
+        # Single-source subscription cleanup
         if layer_id in self._layer_to_subscription:
             self._job_orchestrator.unsubscribe(self._layer_to_subscription[layer_id])
             del self._layer_to_subscription[layer_id]
+
+        # Multi-source subscriptions cleanup
+        if layer_id in self._layer_to_subscriptions:
+            for subscription_id in self._layer_to_subscriptions[layer_id]:
+                self._job_orchestrator.unsubscribe(subscription_id)
+            del self._layer_to_subscriptions[layer_id]
+
+        # Multi-source pending workflows cleanup
+        self._layer_pending_workflows.pop(layer_id, None)
+
         self._layer_state.pop(layer_id, None)
         if remove_from_cell_mapping:
             self._layer_to_cell.pop(layer_id, None)
@@ -665,17 +680,10 @@ class PlotOrchestrator:
             self._persist_to_store()
             return
 
+        # Multi-source path: handle layers with multiple data sources
+        # (e.g., correlation histograms that correlate against other timeseries)
         if len(config.data_sources) > 1:
-            # Future work: correlation histograms with multiple data sources
-            self._logger.warning(
-                'Multiple data sources not yet supported for layer_id=%s', layer_id
-            )
-            cell = self._grids[grid_id].cells[cell_id]
-            self._layer_state[layer_id] = LayerState(
-                error='Multiple data sources not yet supported'
-            )
-            layer_states, composed = self.get_cell_state(cell_id)
-            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
+            self._subscribe_multi_source_layer(grid_id, cell_id, layer)
             self._persist_to_store()
             return
 
@@ -706,6 +714,226 @@ class PlotOrchestrator:
 
         # Persist updated state
         self._persist_to_store()
+
+    def _subscribe_multi_source_layer(
+        self, grid_id: GridId, cell_id: CellId, layer: Layer
+    ) -> None:
+        """
+        Subscribe a layer that has multiple data sources from different workflows.
+
+        Coordinates subscriptions to all unique workflows in the layer's data sources.
+        When all workflows are available, sets up the data pipeline with all sources.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid containing the cell.
+        cell_id
+            ID of the cell containing the layer.
+        layer
+            The layer to subscribe (must have multiple data sources).
+        """
+        layer_id = layer.layer_id
+        config = layer.config
+
+        # Collect unique workflow IDs from all data sources
+        unique_workflows: set[WorkflowId] = {
+            ds.workflow_id for ds in config.data_sources
+        }
+
+        self._logger.debug(
+            'Subscribing multi-source layer_id=%s to %d workflows: %s',
+            layer_id,
+            len(unique_workflows),
+            [str(wf) for wf in unique_workflows],
+        )
+
+        # Initialize tracking for this layer
+        self._layer_pending_workflows[layer_id] = {}
+        self._layer_to_subscriptions[layer_id] = []
+
+        # Subscribe to each unique workflow
+        for workflow_id in unique_workflows:
+            on_available = self._make_multi_source_callbacks_available(
+                layer_id, workflow_id
+            )
+            on_stopped = self._make_multi_source_callbacks_stopped(layer_id)
+
+            subscription_id, was_invoked = self._job_orchestrator.subscribe_to_workflow(
+                workflow_id=workflow_id,
+                callbacks=WorkflowCallbacks(
+                    on_started=on_available,
+                    on_stopped=on_stopped,
+                ),
+            )
+            self._layer_to_subscriptions[layer_id].append(subscription_id)
+
+        # Notify UI that layer is waiting (if not all workflows were already available)
+        if len(self._layer_pending_workflows.get(layer_id, {})) < len(unique_workflows):
+            cell = self._grids[grid_id].cells[cell_id]
+            layer_states, composed = self.get_cell_state(cell_id)
+            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
+
+    def _make_multi_source_callbacks_available(
+        self, layer_id: LayerId, workflow_id: WorkflowId
+    ) -> Callable[[JobNumber], None]:
+        """Create callback for multi-source workflow availability."""
+
+        def on_available(job_number: JobNumber) -> None:
+            self._on_multi_source_workflow_available(layer_id, workflow_id, job_number)
+
+        return on_available
+
+    def _make_multi_source_callbacks_stopped(
+        self, layer_id: LayerId
+    ) -> Callable[[JobNumber], None]:
+        """Create callback for multi-source workflow stopped."""
+
+        def on_stopped(job_number: JobNumber) -> None:
+            self._on_layer_job_stopped(layer_id, job_number)
+
+        return on_stopped
+
+    def _on_multi_source_workflow_available(
+        self, layer_id: LayerId, workflow_id: WorkflowId, job_number: JobNumber
+    ) -> None:
+        """
+        Handle workflow availability for a multi-source layer.
+
+        Tracks which workflows are ready and proceeds with data pipeline setup
+        when all required workflows are available.
+
+        Parameters
+        ----------
+        layer_id
+            ID of the layer waiting for workflows.
+        workflow_id
+            ID of the workflow that became available.
+        job_number
+            Job number for the available workflow.
+        """
+        # Defensive check: layer may have been removed
+        if layer_id not in self._layer_to_cell:
+            self._logger.warning(
+                'Ignoring workflow availability for removed layer_id=%s', layer_id
+            )
+            return
+
+        if layer_id not in self._layer_pending_workflows:
+            self._logger.warning('Layer %s not in pending workflows tracking', layer_id)
+            return
+
+        # Record this workflow as ready
+        self._layer_pending_workflows[layer_id][workflow_id] = job_number
+
+        self._logger.debug(
+            'Multi-source layer_id=%s: workflow %s ready (job_number=%s)',
+            layer_id,
+            workflow_id,
+            job_number,
+        )
+
+        # Check if all workflows are now available
+        config = self.get_layer_config(layer_id)
+        required_workflows = {ds.workflow_id for ds in config.data_sources}
+        ready_workflows = set(self._layer_pending_workflows[layer_id].keys())
+
+        if ready_workflows >= required_workflows:
+            self._logger.info(
+                'All workflows ready for multi-source layer_id=%s, setting up pipeline',
+                layer_id,
+            )
+            self._setup_multi_source_pipeline(layer_id)
+
+    def _setup_multi_source_pipeline(self, layer_id: LayerId) -> None:
+        """
+        Set up data pipeline for a multi-source layer after all workflows are available.
+
+        Builds result keys for all data sources and creates a merged data stream.
+
+        Parameters
+        ----------
+        layer_id
+            ID of the layer to set up.
+        """
+        from ess.livedata.config.workflow_spec import JobId, ResultKey
+
+        cell_id = self._layer_to_cell[layer_id]
+        grid_id = self._cell_to_grid[cell_id]
+        cell = self._grids[grid_id].cells[cell_id]
+        config = self.get_layer_config(layer_id)
+        job_numbers = self._layer_pending_workflows[layer_id]
+
+        # Build result keys for all data sources
+        keys: list[ResultKey] = []
+        for ds in config.data_sources:
+            job_number = job_numbers[ds.workflow_id]
+            keys.extend(
+                ResultKey(
+                    workflow_id=ds.workflow_id,
+                    job_id=JobId(job_number=job_number, source_name=source_name),
+                    output_name=ds.output_name,
+                )
+                for source_name in ds.source_names
+            )
+
+        self._logger.debug(
+            'Setting up multi-source pipeline for layer_id=%s with %d keys',
+            layer_id,
+            len(keys),
+        )
+
+        def on_data_arrived(pipe) -> None:
+            """Create plot when first data arrives for all sources."""
+            self._logger.debug(
+                'Data arrived for multi-source layer_id=%s, creating plot',
+                layer_id,
+            )
+            try:
+                plot = self._plotting_controller.create_plot_from_pipeline(
+                    plot_name=config.plot_name,
+                    params=config.params,
+                    pipe=pipe,
+                )
+                self._layer_state[layer_id] = LayerState(plot=plot)
+
+                layer_states, composed = self.get_cell_state(cell_id)
+                self._notify_cell_updated(
+                    grid_id, cell_id, cell, layer_states, composed
+                )
+            except Exception:
+                error_msg = traceback.format_exc()
+                self._logger.exception(
+                    'Failed to create plot for multi-source layer_id=%s', layer_id
+                )
+                self._layer_state[layer_id] = LayerState(error=error_msg)
+                layer_states, composed = self.get_cell_state(cell_id)
+                self._notify_cell_updated(
+                    grid_id, cell_id, cell, layer_states, composed
+                )
+
+        # Set up data pipeline using the lower-level API
+        try:
+            self._plotting_controller.setup_data_pipeline_from_keys(
+                keys=keys,
+                plot_name=config.plot_name,
+                params=config.params,
+                on_first_data=on_data_arrived,
+            )
+        except Exception:
+            error_msg = traceback.format_exc()
+            self._logger.exception(
+                'Failed to set up multi-source data pipeline for layer_id=%s', layer_id
+            )
+            self._layer_state[layer_id] = LayerState(error=error_msg)
+            layer_states, composed = self.get_cell_state(cell_id)
+            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
+            return
+
+        # If data hasn't arrived yet, notify UI that layer is waiting for data
+        if layer_id not in self._layer_state:
+            layer_states, composed = self.get_cell_state(cell_id)
+            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
 
     def _create_static_layer_plot(
         self, grid_id: GridId, cell_id: CellId, layer: Layer

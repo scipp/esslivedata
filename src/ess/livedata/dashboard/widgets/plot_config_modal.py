@@ -703,11 +703,32 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         axis_labels = (
             ['X-Axis', 'Y-Axis'] if required_axes == 2 else ['Correlation Axis']
         )
+
+        # Get initial correlation axes from edit mode config (if any)
+        initial_axes: list[DataSourceConfig] = []
+        if self._initial_config is not None:
+            # data_sources[0] is primary, [1:] are correlation axes
+            initial_axes = list(self._initial_config.data_sources[1:])
+
         for i, label in enumerate(axis_labels[:required_axes]):
+            # Find initial value for this axis from edit mode config
+            initial_value = None
+            if i < len(initial_axes):
+                initial_ds = initial_axes[i]
+                # Find matching option in dropdown
+                for wf_id, src_name, out_name in options.values():
+                    if (
+                        wf_id == initial_ds.workflow_id
+                        and src_name in initial_ds.source_names
+                        and out_name == initial_ds.output_name
+                    ):
+                        initial_value = (wf_id, src_name, out_name)
+                        break
+
             selector = pn.widgets.Select(
                 name=f'{label} (correlate against)',
                 options={'Select...': None, **options},
-                value=None,
+                value=initial_value,
                 sizing_mode='stretch_width',
             )
             selector.param.watch(
@@ -715,6 +736,17 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             )
             self._axis_selectors.append(selector)
             self._axis_selectors_container.append(selector)
+
+            # If we have an initial value, add it to selected axes
+            if initial_value is not None:
+                workflow_id, source_name, output_name = initial_value
+                self._selected_correlation_axes.append(
+                    DataSourceConfig(
+                        workflow_id=workflow_id,
+                        source_names=[source_name],
+                        output_name=output_name,
+                    )
+                )
 
         # Add the container to the content if not already there
         if self._axis_selectors_container not in self._content_container:

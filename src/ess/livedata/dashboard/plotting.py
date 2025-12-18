@@ -14,6 +14,8 @@ import scipp as sc
 
 from ..handlers.detector_view_specs import DetectorROIAuxSources
 from .correlation_histogram import (
+    CorrelationHistogram1dPlotter,
+    CorrelationHistogram2dPlotter,
     SimplifiedCorrelationHistogram1dParams,
     SimplifiedCorrelationHistogram2dParams,
 )
@@ -368,32 +370,16 @@ plotter_registry.register_plotter(
 
 def _correlation_histogram_1d_factory(
     params: SimplifiedCorrelationHistogram1dParams,
-) -> Plotter:
-    """
-    Dummy factory for 1D correlation histogram plotter.
-
-    This plotter is handled as a special case in PlotOrchestrator since it
-    requires multiple data sources (primary timeseries + correlation axis).
-    This factory exists only for registration purposes to enable UI integration.
-    """
-    raise NotImplementedError(
-        "1D correlation histogram plotter is handled specially in PlotOrchestrator"
-    )
+) -> CorrelationHistogram1dPlotter:
+    """Factory for 1D correlation histogram plotter."""
+    return CorrelationHistogram1dPlotter(params=params)
 
 
 def _correlation_histogram_2d_factory(
     params: SimplifiedCorrelationHistogram2dParams,
-) -> Plotter:
-    """
-    Dummy factory for 2D correlation histogram plotter.
-
-    This plotter is handled as a special case in PlotOrchestrator since it
-    requires multiple data sources (primary timeseries + 2 correlation axes).
-    This factory exists only for registration purposes to enable UI integration.
-    """
-    raise NotImplementedError(
-        "2D correlation histogram plotter is handled specially in PlotOrchestrator"
-    )
+) -> CorrelationHistogram2dPlotter:
+    """Factory for 2D correlation histogram plotter."""
+    return CorrelationHistogram2dPlotter(params=params)
 
 
 plotter_registry.register_plotter(

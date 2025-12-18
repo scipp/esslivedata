@@ -208,14 +208,64 @@ class PlottingController:
             return
 
         # Standard path: create single merged subscription
+        self.setup_data_pipeline_from_keys(keys, plot_name, params, on_first_data)
+
+    def setup_data_pipeline_from_keys(
+        self,
+        keys: list[ResultKey],
+        plot_name: str,
+        params: dict | pydantic.BaseModel,
+        on_first_data: Callable[[Any], None],
+    ) -> None:
+        """
+        Set up a data pipeline from pre-built result keys.
+
+        Lower-level API for cases where the caller has already built the result keys,
+        such as multi-workflow plots where data sources come from different workflows.
+
+        Parameters
+        ----------
+        keys:
+            List of ResultKey objects identifying the data sources.
+        plot_name:
+            The name of the plotter to use.
+        params:
+            The plotter parameters as a dict or validated Pydantic model.
+        on_first_data:
+            Callback invoked when first data arrives, receives the pipe as parameter.
+        """
+        from .correlation_histogram import (
+            CORRELATION_HISTOGRAM_PLOTTERS,
+            OrderedCorrelationAssembler,
+        )
+
+        # Validate params if dict, pass through if already a model
+        if isinstance(params, dict):
+            spec = plotter_registry.get_spec(plot_name)
+            params = spec.params(**params) if spec.params else pydantic.BaseModel()
+
         spec = plotter_registry.get_spec(plot_name)
         window = getattr(params, 'window', None)
         extractors = create_extractors_from_params(keys, window, spec)
 
-        # Set up data pipeline with callback for first data
-        self._stream_manager.make_merging_stream(
-            extractors, on_first_data=on_first_data
-        )
+        # Use order-preserving assembler for correlation histograms
+        # (they need data in a specific order: primary, x-axis, y-axis)
+        if plot_name in CORRELATION_HISTOGRAM_PLOTTERS:
+            # Create factory that ignores the keys_set argument and uses ordered keys
+            ordered_keys = list(keys) if isinstance(keys, dict) else keys
+
+            def ordered_assembler_factory(_keys_set: set[ResultKey]):
+                return OrderedCorrelationAssembler(ordered_keys)
+
+            self._stream_manager.make_merging_stream(
+                extractors,
+                assembler_factory=ordered_assembler_factory,
+                on_first_data=on_first_data,
+            )
+        else:
+            self._stream_manager.make_merging_stream(
+                extractors, on_first_data=on_first_data
+            )
 
     def create_plot_from_pipeline(
         self,
