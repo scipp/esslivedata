@@ -644,34 +644,6 @@ class CorrelationHistogramAssembler:
         )
 
 
-# Legacy assembler - kept for backward compatibility during transition
-class OrderedCorrelationAssembler:
-    """Assembler that preserves key order for correlation histogram plotters.
-
-    .. deprecated::
-        Use CorrelationHistogramAssembler instead, which provides explicit
-        separation of data sources and axis sources.
-    """
-
-    def __init__(self, keys: list[ResultKey]) -> None:
-        self._keys = keys
-        self._keys_set = set(keys)
-
-    @property
-    def keys(self) -> set[ResultKey]:
-        """Return the set of data keys this assembler depends on."""
-        return self._keys_set
-
-    @property
-    def requires_all_keys(self) -> bool:
-        """Correlation histograms require all data sources before plotting."""
-        return True
-
-    def assemble(self, data: dict[ResultKey, Any]) -> list[sc.DataArray]:
-        """Assemble data preserving the original key order."""
-        return [data[key] for key in self._keys if key in data]
-
-
 class CorrelationHistogrammer:
     def __init__(self, edges: dict[str, sc.Variable], normalize: bool = False) -> None:
         self._edges = edges
