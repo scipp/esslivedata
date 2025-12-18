@@ -234,7 +234,7 @@ def make_plot_config(
         output_name=output_name,
     )
     return PlotConfig(
-        data_sources=[data_source],
+        data_source=data_source,
         plot_name=plot_name,
         params=params,
     )
@@ -1786,65 +1786,58 @@ class TestSourceNameFiltering:
 class TestPlotConfigIsStatic:
     """Tests for PlotConfig.is_static() method."""
 
-    def test_is_static_returns_true_for_single_data_source_with_empty_source_names(
-        self, workflow_id
-    ):
-        """Static overlay marker: single data source with empty source_names."""
+    def test_is_static_returns_true_for_empty_source_names(self, workflow_id):
+        """Static overlay marker: data source with empty source_names."""
         data_source = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=[],  # Empty source_names = static
             output_name='My Custom Overlay',
         )
         config = PlotConfig(
-            data_sources=[data_source],
+            data_source=data_source,
             plot_name='rectangles',
             params=FakePlotParams(),
         )
         assert config.is_static() is True
 
-    def test_is_static_returns_false_for_single_data_source_with_source_names(
+    def test_is_static_returns_false_for_data_source_with_source_names(
         self, workflow_id
     ):
-        """Normal plot: single data source with actual source_names."""
+        """Normal plot: data source with actual source_names."""
         data_source = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=['source1'],
             output_name='result',
         )
         config = PlotConfig(
-            data_sources=[data_source],
+            data_source=data_source,
             plot_name='test_plot',
             params=FakePlotParams(),
         )
         assert config.is_static() is False
 
-    def test_is_static_returns_false_for_empty_data_sources(self, workflow_id):
-        """Edge case: empty data_sources list is not static (invalid config)."""
-        config = PlotConfig(
-            data_sources=[],
-            plot_name='test_plot',
-            params=FakePlotParams(),
-        )
-        assert config.is_static() is False
-
-    def test_is_static_returns_false_for_multiple_data_sources(self, workflow_id):
-        """Future correlation histograms: multiple data sources are not static."""
-        data_source1 = DataSourceConfig(
+    def test_is_static_returns_false_for_correlation_histogram_with_axis_sources(
+        self, workflow_id
+    ):
+        """Correlation histogram with axis sources is not static."""
+        data_source = DataSourceConfig(
             workflow_id=workflow_id,
-            source_names=[],
-            output_name='output1',
+            source_names=['monitor1'],
+            output_name='delta',
         )
-        data_source2 = DataSourceConfig(
+        axis_source = DataSourceConfig(
             workflow_id=workflow_id,
-            source_names=[],
-            output_name='output2',
+            source_names=['temperature'],
+            output_name='delta',
         )
         config = PlotConfig(
-            data_sources=[data_source1, data_source2],
-            plot_name='test_plot',
+            data_source=data_source,
+            plot_name='correlation_histogram_1d',
             params=FakePlotParams(),
+            axis_sources=[axis_source],
         )
         assert config.is_static() is False
+        assert config.is_correlation_histogram() is True
 
     def test_static_config_can_access_output_name(self, workflow_id):
         """Static overlay's output_name holds the user's custom name."""
@@ -1854,7 +1847,7 @@ class TestPlotConfigIsStatic:
             output_name='My Rectangles',
         )
         config = PlotConfig(
-            data_sources=[data_source],
+            data_source=data_source,
             plot_name='rectangles',
             params=FakePlotParams(),
         )
