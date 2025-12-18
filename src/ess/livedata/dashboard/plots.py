@@ -226,12 +226,16 @@ class Plotter(ABC):
         return plot_element.opts(**self._sizing_opts)
 
     def _update_autoscaler_and_get_framewise(
-        self, data: sc.DataArray, data_key: ResultKey
+        self,
+        data: sc.DataArray,
+        data_key: ResultKey,
+        *,
+        coord_data: sc.DataArray | None = None,
     ) -> bool:
         """Update autoscaler with data and return whether bounds changed."""
         if data_key not in self.autoscalers:
             self.autoscalers[data_key] = Autoscaler(**self.autoscaler_kwargs)
-        return self.autoscalers[data_key].update_bounds(data)
+        return self.autoscalers[data_key].update_bounds(data, coord_data=coord_data)
 
     def initialize_from_data(self, data: dict[ResultKey, sc.DataArray]) -> None:
         """
@@ -298,7 +302,7 @@ class LinePlotter(Plotter):
     def from_params(cls, params: PlotParams1d):
         """Create LinePlotter from PlotParams1d."""
         return cls(
-            value_margin_factor=0.1,
+            grow_threshold=0.1,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
@@ -343,7 +347,7 @@ class ImagePlotter(Plotter):
     def from_params(cls, params: PlotParams2d):
         """Create ImagePlotter from PlotParams2d."""
         return cls(
-            value_margin_factor=0.1,
+            grow_threshold=0.1,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
@@ -366,7 +370,7 @@ class ImagePlotter(Plotter):
 
 
 class SlicerPlotter(Plotter):
-    """Plotter for 3D data with interactive slicing."""
+    """Plotter for 3D data with interactive slicing or flattening."""
 
     def __init__(
         self,
@@ -391,14 +395,16 @@ class SlicerPlotter(Plotter):
         self._kdims: list[hv.Dimension] | None = None
         self._base_opts = self._make_2d_base_opts(scale_opts, tick_params)
         self._last_slice_dim: str | None = None
+        self._last_slice_idx: int | float | None = None
+        self._last_mode: str | None = None
 
     @classmethod
     def from_params(cls, params: PlotParams3d):
         """Create SlicerPlotter from PlotParams3d."""
         return cls(
             scale_opts=params.plot_scale,
+            grow_threshold=0.1,
             tick_params=params.ticks,
-            value_margin_factor=0.1,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
         )
@@ -425,6 +431,14 @@ class SlicerPlotter(Plotter):
         # Create kdims from the data
         dim_names = list(first_data.dims)
 
+        # Mode selector: slice or flatten
+        mode_selector = hv.Dimension(
+            'mode',
+            values=['slice', 'flatten'],
+            default='slice',
+            label='Mode',
+        )
+
         # Create dimension selector with actual dimension names
         dim_selector = hv.Dimension(
             'slice_dim',
@@ -436,8 +450,9 @@ class SlicerPlotter(Plotter):
         # Create 3 sliders, one for each dimension
         sliders = []
         for dim_name in dim_names:
-            if dim_name in first_data.coords:
-                coord = first_data.coords[dim_name]
+            if (
+                coord := first_data.coords.get(dim_name)
+            ) is not None and coord.ndim == 1:
                 # Use coordinate values for the slider
                 # For bin-edge coordinates, use midpoints
                 if first_data.coords.is_edges(dim_name):
@@ -465,7 +480,7 @@ class SlicerPlotter(Plotter):
                     )
                 )
 
-        self._kdims = [dim_selector, *sliders]
+        self._kdims = [mode_selector, dim_selector, *sliders]
 
     @property
     def kdims(self) -> list[hv.Dimension] | None:
@@ -485,66 +500,107 @@ class SlicerPlotter(Plotter):
         data: sc.DataArray,
         data_key: ResultKey,
         *,
+        mode: str = 'slice',
         slice_dim: str = '',
         **kwargs,
     ) -> hv.Image:
         """
-        Create a 2D image from a slice of 3D data.
+        Create a 2D image from 3D data by slicing or flattening.
 
         Parameters
         ----------
         data:
-            3D DataArray to slice.
+            3D DataArray to process.
         data_key:
             Key identifying this data.
+        mode:
+            Either 'slice' to select a single slice, or 'flatten' to concatenate
+            two dimensions into one.
         slice_dim:
-            Name of the dimension to slice along.
+            For 'slice' mode: dimension to slice along (removes this dimension).
+            For 'flatten' mode: dimension to keep (the other two are flattened).
         **kwargs:
-            Additional keyword arguments including either '{slice_dim}_value'
-            (coordinate) or '{slice_dim}_index' (integer) for the slice position.
+            For 'slice' mode: '{slice_dim}_value' (coordinate) or
+            '{slice_dim}_index' (integer) for the slice position.
 
         Returns
         -------
         :
-            A HoloViews Image element showing the selected slice.
+            A HoloViews Image element showing the 2D result.
         """
-
-        # Determine if we're using coordinate values or integer indices
-        if (coord_value := kwargs.get(f'{slice_dim}_value')) is not None:
-            # Use coordinate-based indexing with scipp's label-based indexing
-            # Get unit from the data's coordinate
-            coord = data.coords[slice_dim]
-            slice_idx = sc.scalar(coord_value, unit=coord.unit)
+        if mode == 'flatten':
+            plot_data = self._flatten_outer_dims(data, keep_dim=slice_dim)
         else:
-            # Fall back to integer index
-            slice_idx = kwargs.get(f'{slice_dim}_index', 0)
-
-        # Slice the 3D data to get 2D
-        sliced_data = data[slice_dim, slice_idx]
+            plot_data = self._slice_data(data, slice_dim, kwargs)
 
         # Prepare data with appropriate dtype and log scale masking
         use_log_scale = self._scale_opts.color_scale == PlotScale.log
-        plot_data = self._prepare_2d_image_data(sliced_data, use_log_scale)
+        plot_data = self._prepare_2d_image_data(plot_data, use_log_scale)
 
-        # Detect if displayed dimensions changed (different slice_dim means
-        # different axes are shown). When this happens, force axis rescaling.
+        # Detect if mode or displayed dimensions changed
+        mode_changed = self._last_mode is not None and self._last_mode != mode
         dim_changed = (
             self._last_slice_dim is not None and self._last_slice_dim != slice_dim
         )
+        self._last_mode = mode
         self._last_slice_dim = slice_dim
 
-        # Update autoscaler with full 3D data to establish global bounds.
-        # This ensures consistent color scale and axis ranges across all slices.
-        framewise = self._update_autoscaler_and_get_framewise(data, data_key)
+        # Update autoscaler: use 3D data for value (color) bounds to ensure
+        # consistent color scale, but use 2D plot_data for coordinate (axis) bounds
+        # so we properly track ranges even with 2D coords (which become 1D
+        # after slicing).
+        framewise = self._update_autoscaler_and_get_framewise(
+            data, data_key, coord_data=plot_data
+        )
 
-        # Force rescale if displayed dimensions changed
-        if dim_changed:
+        # Force rescale if mode or displayed dimensions changed
+        if mode_changed or dim_changed:
             framewise = True
 
-        # Create the image
         image = to_holoviews(plot_data)
-
         return image.opts(framewise=framewise, **self._base_opts)
+
+    def _slice_data(
+        self, data: sc.DataArray, slice_dim: str, kwargs: dict
+    ) -> sc.DataArray:
+        """Slice 3D data along the specified dimension."""
+        # Determine if we're using coordinate values or integer indices
+        if (coord_value := kwargs.get(f'{slice_dim}_value')) is not None:
+            coord = data.coords[slice_dim]
+            slice_idx = sc.scalar(coord_value, unit=coord.unit)
+        else:
+            slice_idx = kwargs.get(f'{slice_dim}_index', 0)
+        return data[slice_dim, slice_idx]
+
+    def _flatten_outer_dims(self, data: sc.DataArray, keep_dim: str) -> sc.DataArray:
+        """Flatten two dimensions, keeping the specified dimension separate.
+
+        Parameters
+        ----------
+        data:
+            3D DataArray to flatten.
+        keep_dim:
+            Dimension to keep (not flatten). The other two dimensions will be
+            flattened together.
+        """
+        dims = list(data.dims)
+        flatten_dims = [d for d in dims if d != keep_dim]
+
+        # Transpose so keep_dim is last (required for flatten to work on
+        # adjacent dims)
+        new_order = [*flatten_dims, keep_dim]
+        if dims != new_order:
+            data = data.transpose(new_order)
+
+        # Conditionally use the inner of the flattened dims as output dim name. It might
+        # seem natural to use something like flat_dim = '/'.join(flatten_dims) instead,
+        # but in practice that causes more trouble, since we lose connection to
+        # the relevant coords.
+        if flatten_dims[1] in data.coords:
+            flat_dim = flatten_dims[1]
+        else:
+            flat_dim = '/'.join(flatten_dims)
+        return data.flatten(dims=flatten_dims, to=flat_dim)
 
 
 class BarsPlotter(Plotter):
@@ -640,7 +696,7 @@ class Overlay1DPlotter(Plotter):
         from .plot_params import CombineMode
 
         return cls(
-            value_margin_factor=0.1,
+            grow_threshold=0.1,
             layout_params=LayoutParams(combine_mode=CombineMode.overlay),
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
