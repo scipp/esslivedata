@@ -29,7 +29,7 @@ class NormalizationParams(pydantic.BaseModel):
     )
 
 
-class CorrelationHistogramParams(pydantic.BaseModel):
+class _CorrelationHistogramBase(pydantic.BaseModel):
     normalization: NormalizationParams = pydantic.Field(
         default_factory=NormalizationParams,
         title="Normalization",
@@ -68,10 +68,8 @@ class Bin2dParams(pydantic.BaseModel):
     )
 
 
-class SimplifiedCorrelationHistogram1dParams(
-    CorrelationHistogramParams, PlotDisplayParams1d
-):
-    """Simplified params for 1D correlation histogram with auto-determined ranges.
+class CorrelationHistogram1dParams(_CorrelationHistogramBase, PlotDisplayParams1d):
+    """Params for 1D correlation histogram with auto-determined ranges.
 
     Used by PlotConfigModal wizard. The plotter auto-determines bin edges from data.
     Inherits display options (layout, plot_scale, ticks, plot_aspect) from
@@ -85,10 +83,8 @@ class SimplifiedCorrelationHistogram1dParams(
     )
 
 
-class SimplifiedCorrelationHistogram2dParams(
-    CorrelationHistogramParams, PlotDisplayParams2d
-):
-    """Simplified params for 2D correlation histogram with auto-determined ranges.
+class CorrelationHistogram2dParams(_CorrelationHistogramBase, PlotDisplayParams2d):
+    """Params for 2D correlation histogram with auto-determined ranges.
 
     Used by PlotConfigModal wizard. The plotter auto-determines bin edges from data.
     Inherits display options (layout, plot_scale, ticks, plot_aspect) from
@@ -193,9 +189,7 @@ class CorrelationHistogram1dPlotter:
 
     kdims: list[str] | None = None
 
-    def __init__(
-        self, params: SimplifiedCorrelationHistogram1dParams, **kwargs
-    ) -> None:
+    def __init__(self, params: CorrelationHistogram1dParams) -> None:
         self._num_bins = params.bins.x_bins
         self._normalize = params.normalization.per_second
         self._renderer = LinePlotter(
@@ -238,7 +232,7 @@ class CorrelationHistogram1dPlotter:
         return self._renderer(histograms)
 
     @classmethod
-    def from_params(cls, params: SimplifiedCorrelationHistogram1dParams):
+    def from_params(cls, params: CorrelationHistogram1dParams):
         """Factory method for plotter registry."""
         return cls(params=params)
 
@@ -252,9 +246,7 @@ class CorrelationHistogram2dPlotter:
 
     kdims: list[str] | None = None
 
-    def __init__(
-        self, params: SimplifiedCorrelationHistogram2dParams, **kwargs
-    ) -> None:
+    def __init__(self, params: CorrelationHistogram2dParams) -> None:
         self._x_bins = params.bins.x_bins
         self._y_bins = params.bins.y_bins
         self._normalize = params.normalization.per_second
@@ -305,6 +297,6 @@ class CorrelationHistogram2dPlotter:
         return self._renderer(histograms)
 
     @classmethod
-    def from_params(cls, params: SimplifiedCorrelationHistogram2dParams):
+    def from_params(cls, params: CorrelationHistogram2dParams):
         """Factory method for plotter registry."""
         return cls(params=params)
