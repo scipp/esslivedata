@@ -151,8 +151,37 @@ class DashboardBase(ServiceBase, ABC):
             main=main_content,
             header_background=self.get_header_background(),
         )
+        # Inject CSS for offline mode (replaces Material Icons font with Unicode)
+        template.config.raw_css.extend(self.get_raw_css())
         self.start_periodic_updates()
         return template
+
+    def get_raw_css(self) -> list[str]:
+        """
+        Get additional raw CSS to inject into the template.
+
+        Override this method to add custom CSS. The default provides a fix for
+        the hamburger menu icon when running in offline mode (without Google Fonts).
+        """
+        # SVG hamburger icon (3 horizontal lines), white color, as data URI
+        hamburger_svg = (
+            "data:image/svg+xml,"
+            "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' "
+            "fill='white'%3E%3Cpath d='M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z'"
+            "/%3E%3C/svg%3E"
+        )
+        return [
+            f"""
+            /* Offline mode: Replace Material Icons menu with SVG hamburger */
+            button.mdc-top-app-bar__navigation-icon.material-icons {{
+                font-size: 0 !important;
+                background-image: url("{hamburger_svg}");
+                background-repeat: no-repeat;
+                background-position: center;
+                background-size: 30px 36px;
+            }}
+            """
+        ]
 
     @property
     def server(self):

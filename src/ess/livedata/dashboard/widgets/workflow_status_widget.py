@@ -23,8 +23,9 @@ import panel as pn
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 from ess.livedata.core.job import JobState
 
+from ..buttons import ButtonStyles, create_tool_button
+from ..icons import get_icon
 from .configuration_widget import ConfigurationModal
-from .plot_widgets import ButtonStyles, create_tool_button
 
 if TYPE_CHECKING:
     from ..job_orchestrator import (
@@ -282,31 +283,14 @@ class WorkflowStatusWidget:
 
     def _create_header(self) -> pn.Row:
         """Create the header row with expand button, title, status, and buttons."""
-        # Expand/collapse button (store reference for updates)
-        indicator = '\u25bc' if self._expanded else '\u25b6'  # ▼ or ▶
-        self._expand_btn = pn.widgets.Button(
-            name=indicator,
-            button_type='light',
-            width=24,
-            height=24,
-            margin=0,
-            stylesheets=[
-                """
-                button {
-                    background-color: transparent !important;
-                    border: none !important;
-                    padding: 0 !important;
-                    font-size: 12px !important;
-                    color: #6c757d !important;
-                    cursor: pointer !important;
-                }
-                button:hover {
-                    background-color: rgba(0, 0, 0, 0.05) !important;
-                }
-                """
-            ],
+        # Expand/collapse button (store reference for icon updates)
+        icon_name = 'chevron-down' if self._expanded else 'chevron-right'
+        self._expand_btn = create_tool_button(
+            icon_name=icon_name,
+            button_color='#6c757d',
+            hover_color='rgba(0, 0, 0, 0.05)',
+            on_click_callback=lambda: self.set_expanded(not self._expanded),
         )
-        self._expand_btn.on_click(lambda e: self._on_header_click(e))
 
         # Workflow title
         title_html = pn.pane.HTML(
@@ -347,7 +331,7 @@ class WorkflowStatusWidget:
             height=WorkflowWidgetStyles.HEADER_HEIGHT,
             styles={
                 'background': '#f8f9fa',
-                'padding': '8px 12px',
+                'padding': '6px 12px',  # Fit 28px buttons in 40px header
             },
             sizing_mode='stretch_width',
             align='center',
@@ -362,13 +346,28 @@ class WorkflowStatusWidget:
             self._header.styles = {**self._header.styles, 'border-bottom': border}
 
     def _create_header_buttons(self) -> pn.Row:
-        """Create reset/stop buttons for header."""
+        """Create action buttons for header (play, reset, stop)."""
         buttons = []
 
-        # Only show buttons if workflow has active jobs
-        if self._orchestrator.get_active_job_number(self._workflow_id) is not None:
+        active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
+
+        # Check if there are changes to commit (same logic as _create_commit_row)
+        has_changes = self._has_uncommitted_changes()
+
+        # Show play button if there are uncommitted changes
+        if has_changes:
+            play_btn = create_tool_button(
+                icon_name='player-play',
+                button_color=WorkflowWidgetStyles.STATUS_COLORS['active'],
+                hover_color='rgba(40, 167, 69, 0.1)',
+                on_click_callback=self._on_commit_click,
+            )
+            buttons.append(play_btn)
+
+        # Show reset and stop buttons if workflow is running
+        if active_job_number is not None:
             reset_btn = create_tool_button(
-                symbol='\u21bb',  # ↻
+                icon_name='refresh',
                 button_color='#6c757d',
                 hover_color='rgba(108, 117, 125, 0.1)',
                 on_click_callback=self._on_reset_click,
@@ -376,8 +375,7 @@ class WorkflowStatusWidget:
             buttons.append(reset_btn)
 
             stop_btn = create_tool_button(
-                # u25a0 has a better size, but alignment issues, using 25fc for now
-                symbol='\u25fc',  # black square
+                icon_name='player-stop',
                 button_color=ButtonStyles.DANGER_RED,
                 hover_color='rgba(220, 53, 69, 0.1)',
                 on_click_callback=self._on_stop_click,
@@ -385,6 +383,25 @@ class WorkflowStatusWidget:
             buttons.append(stop_btn)
 
         return pn.Row(*buttons, margin=0)
+
+    def _has_uncommitted_changes(self) -> bool:
+        """Check if there are staged changes that differ from active config."""
+        staged = self._orchestrator.get_staged_config(self._workflow_id)
+        if not staged:
+            return False
+
+        active = self._orchestrator.get_active_config(self._workflow_id)
+        if not active:
+            # Staged configs but no active - has changes
+            return True
+
+        # Check if any config differs from active
+        config_groups = _group_configs_by_equality(staged, active)
+        if any(g.is_modified for g in config_groups):
+            return True
+
+        # Check if source sets differ
+        return set(staged.keys()) != set(active.keys())
 
     def _create_body(self) -> pn.Column:
         """Create the collapsible body content."""
@@ -517,7 +534,7 @@ class WorkflowStatusWidget:
 
         # Buttons
         gear_btn = create_tool_button(
-            symbol='\u2699',  # ⚙
+            icon_name='settings',
             button_color=ButtonStyles.PRIMARY_BLUE,
             hover_color='rgba(0, 123, 255, 0.1)',
             on_click_callback=lambda: self._on_gear_click(list(group.source_names)),
@@ -528,7 +545,7 @@ class WorkflowStatusWidget:
         # Add remove button (not for unconfigured sources)
         if not is_unconfigured:
             remove_btn = create_tool_button(
-                symbol='\u00d7',  # multiplication sign (x)
+                icon_name='x',
                 button_color=ButtonStyles.DANGER_RED,
                 hover_color='rgba(220, 53, 69, 0.1)',
                 on_click_callback=lambda: self._on_remove_click(
@@ -803,7 +820,8 @@ class WorkflowStatusWidget:
         """Update UI elements for expand/collapse without full rebuild."""
         # Update expand button indicator
         if self._expand_btn is not None:
-            self._expand_btn.name = '\u25bc' if self._expanded else '\u25b6'
+            icon_name = 'chevron-down' if self._expanded else 'chevron-right'
+            self._expand_btn.icon = get_icon(icon_name)
 
         # Update body visibility
         if self._body is not None:
@@ -816,7 +834,7 @@ class WorkflowStatusWidget:
         """Handle gear button click - show configuration modal."""
         try:
             adapter = self._orchestrator.create_workflow_adapter(
-                self._workflow_id, selected_sources=source_names
+                self._workflow_id, selected_sources=source_names, commit=False
             )
 
             modal = ConfigurationModal(

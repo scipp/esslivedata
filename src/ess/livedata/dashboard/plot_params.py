@@ -103,6 +103,35 @@ class PlotAspect(pydantic.BaseModel):
     )
 
 
+class TickParams(pydantic.BaseModel):
+    """Parameters for axis tick configuration."""
+
+    custom_xticks: bool = pydantic.Field(
+        default=False,
+        description="Enable custom x-axis tick count instead of automatic.",
+        title="Custom X Ticks",
+    )
+    xticks: int = pydantic.Field(
+        default=5,
+        description="Number of ticks on x-axis (when custom ticks enabled).",
+        title="X Ticks",
+        ge=2,
+        le=20,
+    )
+    custom_yticks: bool = pydantic.Field(
+        default=False,
+        description="Enable custom y-axis tick count instead of automatic.",
+        title="Custom Y Ticks",
+    )
+    yticks: int = pydantic.Field(
+        default=5,
+        description="Number of ticks on y-axis (when custom ticks enabled).",
+        title="Y Ticks",
+        ge=2,
+        le=20,
+    )
+
+
 class PlotScaleParams(pydantic.BaseModel):
     x_scale: PlotScale = pydantic.Field(
         default=PlotScale.linear, description="Scale for x-axis", title="X Axis Scale"
@@ -187,6 +216,10 @@ class PlotParams1d(PlotParamsBase):
         default_factory=PlotScaleParams,
         description="Scaling options for the plot axes.",
     )
+    ticks: TickParams = pydantic.Field(
+        default_factory=TickParams,
+        description="Tick configuration for plot axes.",
+    )
 
 
 class PlotParams2d(PlotParamsBase):
@@ -200,6 +233,10 @@ class PlotParams2d(PlotParamsBase):
         default_factory=PlotScaleParams2d,
         description="Scaling options for the plot and color axes.",
     )
+    ticks: TickParams = pydantic.Field(
+        default_factory=TickParams,
+        description="Tick configuration for plot axes.",
+    )
 
 
 class PlotParams3d(PlotParamsBase):
@@ -212,6 +249,10 @@ class PlotParams3d(PlotParamsBase):
     plot_scale: PlotScaleParams2d = pydantic.Field(
         default_factory=PlotScaleParams2d,
         description="Scaling options for the plot axes and color.",
+    )
+    ticks: TickParams = pydantic.Field(
+        default_factory=TickParams,
+        description="Tick configuration for plot axes.",
     )
 
 

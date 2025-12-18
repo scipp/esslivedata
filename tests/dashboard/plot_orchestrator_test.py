@@ -277,6 +277,7 @@ def plot_orchestrator(job_orchestrator, fake_plotting_controller, fake_data_serv
         plotting_controller=fake_plotting_controller,
         job_orchestrator=job_orchestrator,
         data_service=fake_data_service,
+        instrument='dummy',
     )
 
 
@@ -1294,6 +1295,7 @@ class TestLateSubscriberPlotRetrieval:
             plotting_controller=failing_controller,
             job_orchestrator=job_orchestrator,
             data_service=fake_data_service,
+            instrument='dummy',
             config_store=None,
         )
 
@@ -1348,6 +1350,7 @@ class TestLateSubscriberPlotRetrieval:
             plotting_controller=fake_plotting_controller,
             job_orchestrator=job_orchestrator,
             data_service=fake_data_service,
+            instrument='dummy',
             config_store=None,
         )
 
