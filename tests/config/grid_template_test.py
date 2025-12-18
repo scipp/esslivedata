@@ -28,13 +28,11 @@ def _make_plot_cell(
 ) -> PlotCell:
     """Create a PlotCell with the given geometry."""
     config = PlotConfig(
-        data_sources=[
-            DataSourceConfig(
-                workflow_id=WorkflowId.from_string('test/ns/wf/1'),
-                output_name='output',
-                source_names=['source1'],
-            )
-        ],
+        data_source=DataSourceConfig(
+            workflow_id=WorkflowId.from_string('test/ns/wf/1'),
+            output_name='output',
+            source_names=['source1'],
+        ),
         plot_name='lines',
         params=EmptyParams(),
     )

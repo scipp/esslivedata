@@ -205,13 +205,13 @@ class PlotParamsBase(pydantic.BaseModel):
     )
 
 
-class PlotParams1d(PlotParamsBase):
-    """Common parameters for 1d plots."""
+class PlotDisplayParams1d(PlotParamsBase):
+    """Display parameters for 1D plots without windowing.
 
-    window: WindowParams = pydantic.Field(
-        default_factory=WindowParams,
-        description="Windowing and aggregation options.",
-    )
+    Used by correlation histograms and other derived 1D plots that don't
+    need window configuration (they process full timeseries data).
+    """
+
     plot_scale: PlotScaleParams = pydantic.Field(
         default_factory=PlotScaleParams,
         description="Scaling options for the plot axes.",
@@ -222,13 +222,13 @@ class PlotParams1d(PlotParamsBase):
     )
 
 
-class PlotParams2d(PlotParamsBase):
-    """Common parameters for 2d plots."""
+class PlotDisplayParams2d(PlotParamsBase):
+    """Display parameters for 2D plots without windowing.
 
-    window: WindowParams = pydantic.Field(
-        default_factory=WindowParams,
-        description="Windowing and aggregation options.",
-    )
+    Used by 2D correlation histograms and other derived 2D plots that don't
+    need window configuration.
+    """
+
     plot_scale: PlotScaleParams2d = pydantic.Field(
         default_factory=PlotScaleParams2d,
         description="Scaling options for the plot and color axes.",
@@ -236,6 +236,24 @@ class PlotParams2d(PlotParamsBase):
     ticks: TickParams = pydantic.Field(
         default_factory=TickParams,
         description="Tick configuration for plot axes.",
+    )
+
+
+class PlotParams1d(PlotDisplayParams1d):
+    """Common parameters for 1D plots with windowing support."""
+
+    window: WindowParams = pydantic.Field(
+        default_factory=WindowParams,
+        description="Windowing and aggregation options.",
+    )
+
+
+class PlotParams2d(PlotDisplayParams2d):
+    """Common parameters for 2D plots with windowing support."""
+
+    window: WindowParams = pydantic.Field(
+        default_factory=WindowParams,
+        description="Windowing and aggregation options.",
     )
 
 

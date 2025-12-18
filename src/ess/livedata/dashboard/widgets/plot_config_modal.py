@@ -707,8 +707,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         # Get initial correlation axes from edit mode config (if any)
         initial_axes: list[DataSourceConfig] = []
         if self._initial_config is not None:
-            # data_sources[0] is primary, [1:] are correlation axes
-            initial_axes = list(self._initial_config.data_sources[1:])
+            initial_axes = list(self._initial_config.axis_sources)
 
         for i, label in enumerate(axis_labels[:required_axes]):
             # Find initial value for this axis from edit mode config
@@ -953,21 +952,20 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             return
 
         # Create primary data source
-        primary_source = DataSourceConfig(
+        data_source = DataSourceConfig(
             workflow_id=self._plotter_selection.workflow_id,
             source_names=selected_sources,
             output_name=self._plotter_selection.output_name,
         )
 
-        # Build data_sources list: primary + correlation axes (if any)
-        data_sources = [primary_source]
-        if self._plotter_selection.correlation_axes:
-            data_sources.extend(self._plotter_selection.correlation_axes)
+        # Get axis sources for correlation histograms (empty for standard plots)
+        axis_sources = self._plotter_selection.correlation_axes or []
 
         self._last_config_result = PlotConfig(
-            data_sources=data_sources,
+            data_source=data_source,
             plot_name=self._plotter_selection.plot_name,
             params=params,
+            axis_sources=axis_sources,
         )
 
     def _show_error(self, message: str) -> None:

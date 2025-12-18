@@ -234,11 +234,6 @@ class PlottingController:
         on_first_data:
             Callback invoked when first data arrives, receives the pipe as parameter.
         """
-        from .correlation_histogram import (
-            CORRELATION_HISTOGRAM_PLOTTERS,
-            OrderedCorrelationAssembler,
-        )
-
         # Validate params if dict, pass through if already a model
         if isinstance(params, dict):
             spec = plotter_registry.get_spec(plot_name)
@@ -248,24 +243,59 @@ class PlottingController:
         window = getattr(params, 'window', None)
         extractors = create_extractors_from_params(keys, window, spec)
 
-        # Use order-preserving assembler for correlation histograms
-        # (they need data in a specific order: primary, x-axis, y-axis)
-        if plot_name in CORRELATION_HISTOGRAM_PLOTTERS:
-            # Create factory that ignores the keys_set argument and uses ordered keys
-            ordered_keys = list(keys) if isinstance(keys, dict) else keys
+        # Standard path - not used for correlation histograms anymore
+        # (correlation histograms now use setup_correlation_histogram_pipeline)
+        self._stream_manager.make_merging_stream(
+            extractors, on_first_data=on_first_data
+        )
 
-            def ordered_assembler_factory(_keys_set: set[ResultKey]):
-                return OrderedCorrelationAssembler(ordered_keys)
+    def setup_correlation_histogram_pipeline(
+        self,
+        data_keys: list[ResultKey],
+        axis_keys: dict[str, ResultKey],
+        plot_name: str,
+        params: dict | pydantic.BaseModel,
+        on_first_data: Callable[[Any], None],
+    ) -> None:
+        """
+        Set up a data pipeline for correlation histograms.
 
-            self._stream_manager.make_merging_stream(
-                extractors,
-                assembler_factory=ordered_assembler_factory,
-                on_first_data=on_first_data,
-            )
-        else:
-            self._stream_manager.make_merging_stream(
-                extractors, on_first_data=on_first_data
-            )
+        Uses CorrelationHistogramAssembler to provide structured data with
+        explicit separation of data sources and axis sources.
+
+        Parameters
+        ----------
+        data_keys
+            Keys for data sources to histogram. Can be multiple.
+        axis_keys
+            Keys for axis sources. Maps axis name ('x', 'y') to ResultKey.
+        plot_name
+            The name of the plotter to use.
+        params
+            The plotter parameters as a dict or validated Pydantic model.
+        on_first_data
+            Callback invoked when first data arrives, receives the pipe as parameter.
+        """
+        from .correlation_histogram import CorrelationHistogramAssembler
+
+        # Validate params if dict, pass through if already a model
+        if isinstance(params, dict):
+            spec = plotter_registry.get_spec(plot_name)
+            params = spec.params(**params) if spec.params else pydantic.BaseModel()
+
+        spec = plotter_registry.get_spec(plot_name)
+        all_keys = list(data_keys) + list(axis_keys.values())
+        extractors = create_extractors_from_params(all_keys, window=None, spec=spec)
+
+        # Create factory for the correlation histogram assembler
+        def correlation_assembler_factory(_keys_set: set[ResultKey]):
+            return CorrelationHistogramAssembler(data_keys, axis_keys)
+
+        self._stream_manager.make_merging_stream(
+            extractors,
+            assembler_factory=correlation_assembler_factory,
+            on_first_data=on_first_data,
+        )
 
     def create_plot_from_pipeline(
         self,

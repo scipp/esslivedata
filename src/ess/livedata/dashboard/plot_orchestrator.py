@@ -130,68 +130,52 @@ class DataSourceConfig:
 class PlotConfig:
     """Configuration for a single plot layer.
 
-    The data_sources list supports different layer types:
-
-    - **Single data source**: Standard plot subscribed to one workflow output.
-    - **Single data source with empty source_names**: Static overlay (e.g., geometric
-      shapes). Uses a synthetic workflow ID and stores a user-defined name in
-      output_name.
-    - **Multiple data sources**: Correlation histograms combining outputs from
-      multiple workflows (planned feature).
-
-    For the common single-source case, convenience properties (workflow_id,
-    source_names, output_name) provide direct access to the first data source,
-    avoiding verbose patterns like ``config.data_sources[0].workflow_id`` throughout
-    the codebase. When multi-source correlation histograms are implemented, code
-    handling those will access data_sources directly.
+    Attributes
+    ----------
+    data_source
+        Primary data source for the plot. Contains workflow_id, source_names,
+        and output_name. For static overlays, source_names is empty.
+    axis_sources
+        Additional data sources that define correlation axes. Empty for standard
+        plots. For correlation histograms: one entry for 1D (x-axis), two for 2D
+        (x-axis, y-axis).
+    plot_name
+        Name of the plotter to use (e.g., 'lines', 'image', 'correlation_histogram_1d').
+    params
+        Plotter-specific parameters as a Pydantic model.
     """
 
-    data_sources: list[DataSourceConfig]
+    data_source: DataSourceConfig
     plot_name: str
     params: pydantic.BaseModel
+    axis_sources: list[DataSourceConfig] = field(default_factory=list)
 
     @property
     def workflow_id(self) -> WorkflowId:
-        """Workflow ID from the first data source.
-
-        Convenience property for the common single-source case.
-        For multi-source layers, access data_sources directly.
-        """
-        if not self.data_sources:
-            raise ValueError("Cannot access workflow_id: no data sources configured")
-        return self.data_sources[0].workflow_id
+        """Workflow ID from the data source."""
+        return self.data_source.workflow_id
 
     @property
     def source_names(self) -> list[str]:
-        """Source names from the first data source.
-
-        Convenience property for the common single-source case.
-        For multi-source layers, access data_sources directly.
-        """
-        if not self.data_sources:
-            raise ValueError("Cannot access source_names: no data sources configured")
-        return self.data_sources[0].source_names
+        """Source names from the data source."""
+        return self.data_source.source_names
 
     @property
     def output_name(self) -> str:
-        """Output name from the first data source.
-
-        Convenience property for the common single-source case.
-        For multi-source layers, access data_sources directly.
-        """
-        if not self.data_sources:
-            raise ValueError("Cannot access output_name: no data sources configured")
-        return self.data_sources[0].output_name
+        """Output name from the data source."""
+        return self.data_source.output_name
 
     def is_static(self) -> bool:
         """Return True if this is a static overlay (no workflow subscription needed).
 
-        Static overlays have a single data source with empty source_names. They use
-        a synthetic workflow ID and store the user-defined overlay name in output_name.
+        Static overlays have empty source_names. They use a synthetic workflow ID
+        and store the user-defined overlay name in output_name.
         """
-        return (
-            len(self.data_sources) == 1 and len(self.data_sources[0].source_names) == 0
-        )
+        return len(self.data_source.source_names) == 0
+
+    def is_correlation_histogram(self) -> bool:
+        """Return True if this is a correlation histogram (has axis sources)."""
+        return len(self.axis_sources) > 0
 
 
 @dataclass
@@ -680,9 +664,9 @@ class PlotOrchestrator:
             self._persist_to_store()
             return
 
-        # Multi-source path: handle layers with multiple data sources
-        # (e.g., correlation histograms that correlate against other timeseries)
-        if len(config.data_sources) > 1:
+        # Correlation histogram path: handle layers with axis sources
+        # These require coordination between data source and axis source workflows
+        if config.is_correlation_histogram():
             self._subscribe_multi_source_layer(grid_id, cell_id, layer)
             self._persist_to_store()
             return
@@ -719,10 +703,10 @@ class PlotOrchestrator:
         self, grid_id: GridId, cell_id: CellId, layer: Layer
     ) -> None:
         """
-        Subscribe a layer that has multiple data sources from different workflows.
+        Subscribe a correlation histogram layer to its data and axis workflows.
 
-        Coordinates subscriptions to all unique workflows in the layer's data sources.
-        When all workflows are available, sets up the data pipeline with all sources.
+        Coordinates subscriptions to the data workflow and all axis workflows.
+        Pipeline setup begins when all axis workflows AND the data workflow are ready.
 
         Parameters
         ----------
@@ -731,21 +715,21 @@ class PlotOrchestrator:
         cell_id
             ID of the cell containing the layer.
         layer
-            The layer to subscribe (must have multiple data sources).
+            The layer to subscribe (must be a correlation histogram with axis_sources).
         """
         layer_id = layer.layer_id
         config = layer.config
 
-        # Collect unique workflow IDs from all data sources
-        unique_workflows: set[WorkflowId] = {
-            ds.workflow_id for ds in config.data_sources
-        }
+        # Collect unique workflow IDs from data source and axis sources
+        data_workflow = config.data_source.workflow_id
+        axis_workflows = {ds.workflow_id for ds in config.axis_sources}
+        unique_workflows = {data_workflow} | axis_workflows
 
         self._logger.debug(
-            'Subscribing multi-source layer_id=%s to %d workflows: %s',
+            'Subscribing correlation layer_id=%s: data=%s, axes=%s',
             layer_id,
-            len(unique_workflows),
-            [str(wf) for wf in unique_workflows],
+            data_workflow,
+            [str(wf) for wf in axis_workflows],
         )
 
         # Initialize tracking for this layer
@@ -759,7 +743,7 @@ class PlotOrchestrator:
             )
             on_stopped = self._make_multi_source_callbacks_stopped(layer_id)
 
-            subscription_id, was_invoked = self._job_orchestrator.subscribe_to_workflow(
+            subscription_id, _ = self._job_orchestrator.subscribe_to_workflow(
                 workflow_id=workflow_id,
                 callbacks=WorkflowCallbacks(
                     on_started=on_available,
@@ -798,10 +782,10 @@ class PlotOrchestrator:
         self, layer_id: LayerId, workflow_id: WorkflowId, job_number: JobNumber
     ) -> None:
         """
-        Handle workflow availability for a multi-source layer.
+        Handle workflow availability for a correlation histogram layer.
 
         Tracks which workflows are ready and proceeds with data pipeline setup
-        when all required workflows are available.
+        when all axis workflows AND the data workflow are ready.
 
         Parameters
         ----------
@@ -827,29 +811,34 @@ class PlotOrchestrator:
         self._layer_pending_workflows[layer_id][workflow_id] = job_number
 
         self._logger.debug(
-            'Multi-source layer_id=%s: workflow %s ready (job_number=%s)',
+            'Correlation layer_id=%s: workflow %s ready (job_number=%s)',
             layer_id,
             workflow_id,
             job_number,
         )
 
-        # Check if all workflows are now available
+        # Check requirements: all axis workflows + data workflow
         config = self.get_layer_config(layer_id)
-        required_workflows = {ds.workflow_id for ds in config.data_sources}
+        data_workflow = config.data_source.workflow_id
+        axis_workflows = {ds.workflow_id for ds in config.axis_sources}
         ready_workflows = set(self._layer_pending_workflows[layer_id].keys())
 
-        if ready_workflows >= required_workflows:
+        data_ready = data_workflow in ready_workflows
+        all_axes_ready = axis_workflows <= ready_workflows
+
+        if data_ready and all_axes_ready:
             self._logger.info(
-                'All workflows ready for multi-source layer_id=%s, setting up pipeline',
+                'All requirements met for correlation layer_id=%s, setting up pipeline',
                 layer_id,
             )
             self._setup_multi_source_pipeline(layer_id)
 
     def _setup_multi_source_pipeline(self, layer_id: LayerId) -> None:
         """
-        Set up data pipeline for a multi-source layer after all workflows are available.
+        Set up data pipeline for a correlation histogram layer.
 
-        Builds result keys for all data sources and creates a merged data stream.
+        Builds result keys for data source and axis sources, then creates the
+        data stream with the correlation histogram assembler.
 
         Parameters
         ----------
@@ -864,29 +853,50 @@ class PlotOrchestrator:
         config = self.get_layer_config(layer_id)
         job_numbers = self._layer_pending_workflows[layer_id]
 
-        # Build result keys for all data sources
-        keys: list[ResultKey] = []
-        for ds in config.data_sources:
-            job_number = job_numbers[ds.workflow_id]
-            keys.extend(
-                ResultKey(
-                    workflow_id=ds.workflow_id,
-                    job_id=JobId(job_number=job_number, source_name=source_name),
-                    output_name=ds.output_name,
+        # Build result keys for data source (primary data to histogram)
+        ds = config.data_source
+        data_job_number = job_numbers[ds.workflow_id]
+        data_keys = [
+            ResultKey(
+                workflow_id=ds.workflow_id,
+                job_id=JobId(job_number=data_job_number, source_name=source_name),
+                output_name=ds.output_name,
+            )
+            for source_name in ds.source_names
+        ]
+
+        # Build result keys for axis sources (correlation axes)
+        # Map axis name ('x', 'y') to ResultKey
+        axis_names = ['x', 'y']
+        axis_keys: dict[str, ResultKey] = {}
+        for i, axis_ds in enumerate(config.axis_sources):
+            axis_job_number = job_numbers[axis_ds.workflow_id]
+            # Each axis source should have exactly one source_name
+            if len(axis_ds.source_names) != 1:
+                raise ValueError(
+                    f"Axis source must have exactly one source_name, "
+                    f"got {len(axis_ds.source_names)}"
                 )
-                for source_name in ds.source_names
+            axis_keys[axis_names[i]] = ResultKey(
+                workflow_id=axis_ds.workflow_id,
+                job_id=JobId(
+                    job_number=axis_job_number, source_name=axis_ds.source_names[0]
+                ),
+                output_name=axis_ds.output_name,
             )
 
         self._logger.debug(
-            'Setting up multi-source pipeline for layer_id=%s with %d keys',
+            'Setting up correlation pipeline for layer_id=%s: '
+            '%d data keys, %d axis keys',
             layer_id,
-            len(keys),
+            len(data_keys),
+            len(axis_keys),
         )
 
         def on_data_arrived(pipe) -> None:
             """Create plot when first data arrives for all sources."""
             self._logger.debug(
-                'Data arrived for multi-source layer_id=%s, creating plot',
+                'Data arrived for correlation layer_id=%s, creating plot',
                 layer_id,
             )
             try:
@@ -904,7 +914,7 @@ class PlotOrchestrator:
             except Exception:
                 error_msg = traceback.format_exc()
                 self._logger.exception(
-                    'Failed to create plot for multi-source layer_id=%s', layer_id
+                    'Failed to create plot for correlation layer_id=%s', layer_id
                 )
                 self._layer_state[layer_id] = LayerState(error=error_msg)
                 layer_states, composed = self.get_cell_state(cell_id)
@@ -912,10 +922,11 @@ class PlotOrchestrator:
                     grid_id, cell_id, cell, layer_states, composed
                 )
 
-        # Set up data pipeline using the lower-level API
+        # Set up data pipeline for correlation histogram
         try:
-            self._plotting_controller.setup_data_pipeline_from_keys(
-                keys=keys,
+            self._plotting_controller.setup_correlation_histogram_pipeline(
+                data_keys=data_keys,
+                axis_keys=axis_keys,
                 plot_name=config.plot_name,
                 params=config.params,
                 on_first_data=on_data_arrived,
@@ -1263,22 +1274,24 @@ class PlotOrchestrator:
         """
         Parse a raw layer dict into a typed Layer.
 
-        Supports two formats for backward compatibility:
-        - New format: 'data_sources' list containing workflow_id, source_names,
-          output_name
-        - Old format: 'workflow_id', 'source_names', 'output_name' at top level
+        Supports multiple formats for backward compatibility:
+        - Current format: 'data_source' (singular) + optional 'axis_sources'
+        - Previous format: 'data_sources' list (for correlation histograms,
+          first entry is data, rest are axes)
+        - Legacy format: 'workflow_id', 'source_names' at top level
 
         Parameters
         ----------
         layer_data
-            Layer configuration dict. Must contain 'plot_name' and either
-            'data_sources' (new format) or 'workflow_id' (old format).
+            Layer configuration dict. Must contain 'plot_name'.
 
         Returns
         -------
         :
             Parsed Layer with a new LayerId, or None if the plotter is unknown.
         """
+        from .correlation_histogram import CORRELATION_HISTOGRAM_PLOTTERS
+
         plot_name = layer_data['plot_name']
 
         # Validate params, skipping layers with unknown plotters
@@ -1286,39 +1299,53 @@ class PlotOrchestrator:
         if params is None:
             return None
 
-        # Parse data sources: support both new and legacy format
-        data_sources: list[DataSourceConfig]
-        if 'data_sources' in layer_data:
-            # New format: data_sources list
-            data_sources = [
-                DataSourceConfig(
-                    workflow_id=WorkflowId.from_string(ds['workflow_id']),
-                    source_names=ds['source_names'],
-                    output_name=ds.get('output_name', 'result'),
-                )
-                for ds in layer_data['data_sources']
-            ]
+        def parse_ds(ds: dict[str, Any]) -> DataSourceConfig:
+            return DataSourceConfig(
+                workflow_id=WorkflowId.from_string(ds['workflow_id']),
+                source_names=ds['source_names'],
+                output_name=ds.get('output_name', 'result'),
+            )
+
+        # Parse data source and axis sources based on format
+        data_source: DataSourceConfig
+        axis_sources: list[DataSourceConfig] = []
+
+        if 'data_source' in layer_data:
+            # Current format: data_source (singular) + optional axis_sources
+            data_source = parse_ds(layer_data['data_source'])
+            if 'axis_sources' in layer_data:
+                axis_sources = [parse_ds(ds) for ds in layer_data['axis_sources']]
+
+        elif 'data_sources' in layer_data:
+            # Previous format: data_sources list
+            ds_list = [parse_ds(ds) for ds in layer_data['data_sources']]
+            if not ds_list:
+                self._logger.warning('Layer has empty data_sources list, skipping')
+                return None
+            # For correlation histograms, first entry is data, rest are axes
+            if plot_name in CORRELATION_HISTOGRAM_PLOTTERS and len(ds_list) > 1:
+                data_source = ds_list[0]
+                axis_sources = ds_list[1:]
+            else:
+                data_source = ds_list[0]
+
         elif 'workflow_id' in layer_data:
             # Legacy format: single workflow at top level
-            data_sources = [
-                DataSourceConfig(
-                    workflow_id=WorkflowId.from_string(layer_data['workflow_id']),
-                    source_names=layer_data['source_names'],
-                    output_name=layer_data.get('output_name', 'result'),
-                )
-            ]
+            data_source = DataSourceConfig(
+                workflow_id=WorkflowId.from_string(layer_data['workflow_id']),
+                source_names=layer_data['source_names'],
+                output_name=layer_data.get('output_name', 'result'),
+            )
+
         else:
-            # Fallback for templates missing workflow specification.
-            # Note: This creates an invalid config - static overlays should use
-            # the data_sources format with a synthetic workflow ID. This branch
-            # exists for robustness but templates should always specify workflow_id
-            # or data_sources.
-            data_sources = []
+            self._logger.warning('Layer missing data source configuration, skipping')
+            return None
 
         config = PlotConfig(
-            data_sources=data_sources,
+            data_source=data_source,
             plot_name=plot_name,
             params=params,
+            axis_sources=axis_sources,
         )
 
         return Layer(layer_id=LayerId(uuid4()), config=config)
@@ -1463,18 +1490,25 @@ class PlotOrchestrator:
     def _serialize_layer(self, layer: Layer) -> dict[str, Any]:
         """Serialize a single layer to dict format."""
         config = layer.config
-        return {
-            'data_sources': [
+        result: dict[str, Any] = {
+            'data_source': {
+                'workflow_id': str(config.data_source.workflow_id),
+                'source_names': config.data_source.source_names,
+                'output_name': config.data_source.output_name,
+            },
+            'plot_name': config.plot_name,
+            'params': config.params.model_dump(mode='json'),
+        }
+        if config.axis_sources:
+            result['axis_sources'] = [
                 {
                     'workflow_id': str(ds.workflow_id),
                     'source_names': ds.source_names,
                     'output_name': ds.output_name,
                 }
-                for ds in config.data_sources
-            ],
-            'plot_name': config.plot_name,
-            'params': config.params.model_dump(mode='json'),
-        }
+                for ds in config.axis_sources
+            ]
+        return result
 
     def _load_from_store(self) -> None:
         """Load plot grid configurations from config store."""
