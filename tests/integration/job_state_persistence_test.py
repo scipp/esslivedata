@@ -110,6 +110,8 @@ def test_subscriber_notified_on_job_restoration(tmp_path) -> None:
     with DashboardBackend(
         instrument='dummy', dev=True, transport='none', config_dir=tmp_path
     ) as backend2:
+        from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
+
         # Track subscriber notifications
         notified_job_numbers = []
 
@@ -117,7 +119,10 @@ def test_subscriber_notified_on_job_restoration(tmp_path) -> None:
             notified_job_numbers.append(job_number)
 
         # Subscribe to workflow - should be immediately notified of restored job
-        backend2.job_orchestrator.subscribe_to_workflow(workflow_id, track_notification)
+        backend2.job_orchestrator.subscribe_to_workflow(
+            workflow_id,
+            WorkflowCallbacks(on_started=track_notification),
+        )
 
         # Subscriber should have been notified immediately with restored job_number
         assert len(notified_job_numbers) == 1

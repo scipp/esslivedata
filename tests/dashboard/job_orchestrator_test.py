@@ -1922,3 +1922,161 @@ class TestWorkflowAdapterIndependentSourceConfiguration:
         staged = orchestrator.get_staged_config(workflow_id)
         assert staged["det_1"].params["threshold"] == 999.0
         assert staged["det_1"].params["mode"] == "updated"
+
+
+class TestWorkflowSubscriptions:
+    """Test subscribe_to_workflow with WorkflowCallbacks."""
+
+    def test_on_started_called_when_workflow_commits(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """on_started callback is called when workflow is committed."""
+        from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        started_job_numbers = []
+        callbacks = WorkflowCallbacks(
+            on_started=lambda job_number: started_job_numbers.append(job_number)
+        )
+        orchestrator.subscribe_to_workflow(workflow_id, callbacks)
+
+        job_ids = orchestrator.commit_workflow(workflow_id)
+
+        assert len(started_job_numbers) == 1
+        assert started_job_numbers[0] == job_ids[0].job_number
+
+    def test_on_stopped_called_when_workflow_stops(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """on_stopped callback is called when workflow is stopped."""
+        from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        started_job_numbers = []
+        stopped_job_numbers = []
+        callbacks = WorkflowCallbacks(
+            on_started=lambda job_number: started_job_numbers.append(job_number),
+            on_stopped=lambda job_number: stopped_job_numbers.append(job_number),
+        )
+        orchestrator.subscribe_to_workflow(workflow_id, callbacks)
+
+        job_ids = orchestrator.commit_workflow(workflow_id)
+        assert len(stopped_job_numbers) == 0
+
+        orchestrator.stop_workflow(workflow_id)
+
+        assert len(stopped_job_numbers) == 1
+        assert stopped_job_numbers[0] == job_ids[0].job_number
+
+    def test_on_stopped_not_called_when_no_callback_provided(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """on_stopped None does not cause error when workflow stops."""
+        from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        started_job_numbers = []
+        callbacks = WorkflowCallbacks(
+            on_started=lambda job_number: started_job_numbers.append(job_number),
+            on_stopped=None,  # Explicitly None
+        )
+        orchestrator.subscribe_to_workflow(workflow_id, callbacks)
+
+        orchestrator.commit_workflow(workflow_id)
+        # Should not raise
+        orchestrator.stop_workflow(workflow_id)
+
+    def test_on_stopped_not_called_when_nothing_to_stop(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """on_stopped is not called when there's no active job to stop."""
+        from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        stopped_job_numbers = []
+        callbacks = WorkflowCallbacks(
+            on_started=lambda _: None,
+            on_stopped=lambda job_number: stopped_job_numbers.append(job_number),
+        )
+        orchestrator.subscribe_to_workflow(workflow_id, callbacks)
+
+        # Try to stop without committing first
+        orchestrator.stop_workflow(workflow_id)
+
+        assert len(stopped_job_numbers) == 0
+
+    def test_on_started_called_immediately_if_workflow_already_running(
+        self,
+        workflow_with_params: WorkflowSpec,
+        fake_workflow_config_service: FakeWorkflowConfigService,
+    ):
+        """on_started is called immediately if workflow is already running."""
+        from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
+
+        workflow_id = workflow_with_params.get_id()
+        registry = {workflow_id: workflow_with_params}
+
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            workflow_config_service=fake_workflow_config_service,
+            workflow_registry=registry,
+            config_store=None,
+        )
+
+        # Commit workflow first
+        job_ids = orchestrator.commit_workflow(workflow_id)
+
+        # Then subscribe
+        started_job_numbers = []
+        callbacks = WorkflowCallbacks(
+            on_started=lambda job_number: started_job_numbers.append(job_number)
+        )
+        _, was_invoked = orchestrator.subscribe_to_workflow(workflow_id, callbacks)
+
+        assert was_invoked is True
+        assert len(started_job_numbers) == 1
+        assert started_job_numbers[0] == job_ids[0].job_number

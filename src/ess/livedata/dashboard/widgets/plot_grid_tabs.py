@@ -512,6 +512,8 @@ class PlotGridTabs:
             # Add state info to description
             if state.error is not None:
                 description = f"{description}\n\nError: {state.error}"
+            elif state.stopped:
+                description = f"{description}\n\nStatus: Workflow ended"
             elif state.plot is None:
                 description = f"{description}\n\nStatus: Waiting for data..."
 
@@ -540,6 +542,7 @@ class PlotGridTabs:
                 on_add_callback=make_add_callback(cell_id),
                 title=title,
                 description=description,
+                stopped=state.stopped,
             )
             toolbars.append(toolbar)
 
@@ -578,6 +581,9 @@ class PlotGridTabs:
             if state.error is not None:
                 status = f"Error: {state.error[:100]}..."
                 text_color = '#dc3545'
+            elif state.stopped:
+                status = "Workflow ended"
+                text_color = '#495057'  # Dark grey - indicates stopped state
             elif state.plot is not None:
                 status = "Ready"
                 text_color = '#28a745'

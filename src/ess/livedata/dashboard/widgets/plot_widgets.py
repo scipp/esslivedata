@@ -24,6 +24,7 @@ def create_cell_toolbar(
     on_add_callback: Callable[[], None] | None = None,
     title: str | None = None,
     description: str | None = None,
+    stopped: bool = False,
 ) -> pn.Row:
     """
     Create a toolbar row containing title and buttons for plot cells.
@@ -47,6 +48,8 @@ def create_cell_toolbar(
         Optional title text to display on the left side of the toolbar.
     description:
         Optional description shown as tooltip when hovering over the title.
+    stopped:
+        If True, adds a visual indicator (border) showing workflow has ended.
 
     Returns
     -------
@@ -109,14 +112,21 @@ def create_cell_toolbar(
         right_buttons.append(add_button)
     right_buttons.append(close_button)
 
+    # Add border when workflow is stopped
+    styles = {}
+    if stopped:
+        styles['border'] = '2px solid #495057'  # Dark grey border
+        styles['border-radius'] = '4px'
+
     return pn.Row(
         *left_items,
         pn.Spacer(sizing_mode='stretch_width'),
         *right_buttons,
         sizing_mode='stretch_width',
         height=ButtonStyles.TOOL_BUTTON_SIZE,
-        margin=(margin, margin, 0, margin),
+        margin=(margin, margin, margin, margin),
         align='end',
+        styles=styles,
     )
 
 

@@ -85,6 +85,19 @@ class WorkflowState:
 
 
 @dataclass
+class WorkflowCallbacks:
+    """Callbacks for workflow job lifecycle events.
+
+    Used by data consumers (like PlotOrchestrator) that need to react
+    to job start/stop for a specific workflow. Subscriptions are per-workflow
+    and receive JobNumber for data pipeline setup/cleanup.
+    """
+
+    on_started: Callable[[JobNumber], None]
+    on_stopped: Callable[[JobNumber], None] | None = None
+
+
+@dataclass
 class WidgetLifecycleCallbacks:
     """Callbacks for widget lifecycle events from JobOrchestrator.
 
@@ -133,7 +146,7 @@ class JobOrchestrator:
         self._workflows: dict[WorkflowId, WorkflowState] = {}
 
         # Workflow subscription tracking (for PlotOrchestrator)
-        self._subscriptions: dict[SubscriptionId, Callable[[JobNumber], None]] = {}
+        self._subscriptions: dict[SubscriptionId, WorkflowCallbacks] = {}
         self._workflow_subscriptions: dict[WorkflowId, set[SubscriptionId]] = {}
 
         # Widget lifecycle subscription tracking (for cross-session widget sync)
@@ -728,6 +741,9 @@ class JobOrchestrator:
         # Notify widget lifecycle subscribers that workflow was stopped
         self._notify_workflow_stopped(workflow_id)
 
+        # Notify workflow subscribers (e.g., PlotOrchestrator) that workflow was stopped
+        self._notify_workflow_stopped_to_subscribers(workflow_id, job_number)
+
         return True
 
     def _notify_workflow_available(
@@ -747,35 +763,70 @@ class JobOrchestrator:
             if subscription_id in self._subscriptions:
                 try:
                     self._logger.debug(
-                        'Calling callback for subscription %s '
+                        'Calling on_started callback for subscription %s '
                         '(workflow=%s, job_number=%s)',
                         subscription_id,
                         workflow_id,
                         job_number,
                     )
-                    self._subscriptions[subscription_id](job_number)
+                    self._subscriptions[subscription_id].on_started(job_number)
                 except Exception:
                     self._logger.exception(
                         'Error in workflow availability callback for workflow %s',
                         workflow_id,
                     )
 
+    def _notify_workflow_stopped_to_subscribers(
+        self, workflow_id: WorkflowId, job_number: JobNumber
+    ) -> None:
+        """
+        Notify all subscribers that a workflow job was stopped.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow that was stopped.
+        job_number
+            The job number that was stopped.
+        """
+        for subscription_id in self._workflow_subscriptions.get(workflow_id, set()):
+            if subscription_id in self._subscriptions:
+                callbacks = self._subscriptions[subscription_id]
+                if callbacks.on_stopped is not None:
+                    try:
+                        self._logger.debug(
+                            'Calling on_stopped callback for subscription %s '
+                            '(workflow=%s, job_number=%s)',
+                            subscription_id,
+                            workflow_id,
+                            job_number,
+                        )
+                        callbacks.on_stopped(job_number)
+                    except Exception:
+                        self._logger.exception(
+                            'Error in workflow stopped callback for workflow %s',
+                            workflow_id,
+                        )
+
     def subscribe_to_workflow(
-        self, workflow_id: WorkflowId, callback: Callable[[JobNumber], None]
+        self, workflow_id: WorkflowId, callbacks: WorkflowCallbacks
     ) -> tuple[SubscriptionId, bool]:
         """
-        Subscribe to workflow job availability notifications.
+        Subscribe to workflow job lifecycle notifications.
 
-        The callback will be called with the job_number when:
+        The on_started callback will be called with the job_number when:
         1. A workflow is committed (immediately after commit)
         2. Immediately if subscribing and workflow already has an active job
+
+        The on_stopped callback (if provided) will be called when the workflow
+        is stopped, with the job_number of the stopped job.
 
         Parameters
         ----------
         workflow_id
             The workflow to subscribe to.
-        callback
-            Called with job_number when a job becomes active.
+        callbacks
+            Callbacks for job lifecycle events (on_started, on_stopped).
 
         Returns
         -------
@@ -786,7 +837,7 @@ class JobOrchestrator:
             running and the callback was invoked synchronously during this call.
         """
         subscription_id = SubscriptionId(uuid.uuid4())
-        self._subscriptions[subscription_id] = callback
+        self._subscriptions[subscription_id] = callbacks
         callback_invoked = False
 
         # Track which workflows have subscriptions
@@ -807,7 +858,7 @@ class JobOrchestrator:
                     subscription_id,
                 )
                 try:
-                    callback(current_job_number)
+                    callbacks.on_started(current_job_number)
                     callback_invoked = True
                 except Exception:
                     self._logger.exception(
