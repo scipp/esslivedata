@@ -197,8 +197,13 @@ class FakePlottingController:
         plot_name: str,
         params,
         on_first_data,
+        axis_keys=None,
     ):
         """Set up data pipeline from pre-built result keys."""
+        from ess.livedata.dashboard.correlation_plotter import (
+            CorrelationHistogramAssembler,
+        )
+
         # Extract source_names and output_name from keys for test assertions
         source_names = [key.job_id.source_name for key in keys]
         output_name = keys[0].output_name if keys else None
@@ -210,10 +215,26 @@ class FakePlottingController:
                 'source_names': source_names,
                 'output_name': output_name,
                 'plot_name': plot_name,
+                'axis_keys': axis_keys,
             }
         )
+
         # Use real StreamManager for subscription
-        self._stream_manager.make_merging_stream(keys, on_first_data=on_first_data)
+        all_keys = list(keys) + (list(axis_keys.values()) if axis_keys else [])
+        if axis_keys:
+            # Correlation histogram: use assembler that separates data from axes
+            def correlation_assembler_factory(_keys_set):
+                return CorrelationHistogramAssembler(keys, axis_keys)
+
+            self._stream_manager.make_merging_stream(
+                all_keys,
+                assembler_factory=correlation_assembler_factory,
+                on_first_data=on_first_data,
+            )
+        else:
+            self._stream_manager.make_merging_stream(
+                all_keys, on_first_data=on_first_data
+            )
 
     def create_plot_from_pipeline(
         self,
