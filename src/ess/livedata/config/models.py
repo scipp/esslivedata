@@ -159,8 +159,8 @@ class ROI(BaseModel, ABC):
     ROIs can be serialized to/from scipp DataArrays which can then be converted
     to da00 format using the existing compat module for Kafka transmission.
 
-    The ROI type is encoded in the DataArray's name attribute, which maps to the
-    'label' field in da00 Variable for the signal.
+    The ROI type is encoded in the DataArray's dimension name: 'bounds' for
+    rectangles, 'vertex' for polygons, 'ellipse' for ellipses.
     """
 
     @abstractmethod
@@ -168,12 +168,10 @@ class ROI(BaseModel, ABC):
         """
         Convert ROI to scipp DataArray representation.
 
-        The DataArray name is set to the ROI type to distinguish ROI shapes.
-
         Returns
         -------
         :
-            DataArray with ROI geometry stored in coordinates and type in name.
+            DataArray with ROI geometry stored in coordinates.
         """
         ...
 
@@ -182,31 +180,28 @@ class ROI(BaseModel, ABC):
         """
         Create ROI from scipp DataArray representation.
 
-        Dispatches to the appropriate ROI subclass based on the DataArray name.
+        Dispatches to the appropriate ROI subclass based on the DataArray's
+        dimension name, which encodes the ROI type.
 
         Parameters
         ----------
         da:
-            DataArray with ROI geometry in coordinates and type in name.
+            DataArray with ROI geometry in coordinates.
 
         Returns
         -------
         :
             ROI instance (Rectangle, Polygon, or Ellipse).
         """
-        if da.name is None or da.name == '':
-            raise ValueError("DataArray missing name (roi_type)")
-
-        roi_type = str(da.name)
-
-        if roi_type == ROIType.RECTANGLE:
+        dim = da.dims[0]
+        if dim == 'bounds':
             return RectangleROI._from_data_array(da)
-        elif roi_type == ROIType.POLYGON:
+        elif dim == 'vertex':
             return PolygonROI._from_data_array(da)
-        elif roi_type == ROIType.ELLIPSE:
+        elif dim == 'ellipse':
             return EllipseROI._from_data_array(da)
         else:
-            raise ValueError(f"Unknown ROI type: {roi_type}")
+            raise ValueError(f"Cannot determine ROI type from dimension: {dim}")
 
     @classmethod
     @abstractmethod
@@ -231,6 +226,9 @@ class ROI(BaseModel, ABC):
         This enables efficient Kafka transmission and deletion detection on the
         consumer side (missing indices indicate deleted ROIs).
 
+        The ROI type is encoded in the dimension name ('bounds' for rectangles,
+        'vertex' for polygons, 'ellipse' for ellipses), not in the DataArray name.
+
         Parameters
         ----------
         rois:
@@ -240,8 +238,7 @@ class ROI(BaseModel, ABC):
         Returns
         -------
         :
-            Concatenated DataArray with roi_index coordinate. Name is set to
-            plural form of ROI type (e.g., 'rectangles', 'polygons', 'ellipses').
+            Concatenated DataArray with roi_index coordinate.
         """
         if not rois:
             template = cls._empty_data_array_template()
@@ -259,13 +256,7 @@ class ROI(BaseModel, ABC):
             roi_das.append(roi_da)
 
         concat_dim = roi_das[0].dims[0]
-        concatenated = sc.concat(roi_das, dim=concat_dim)
-
-        # Use plural form of ROI type name
-        singular_name = roi_das[0].name
-        concatenated.name = cls._get_plural_name(singular_name)
-
-        return concatenated
+        return sc.concat(roi_das, dim=concat_dim)
 
     @classmethod
     def from_concatenated_data_array(cls, da: sc.DataArray) -> dict[int, ROI]:
@@ -294,11 +285,6 @@ class ROI(BaseModel, ABC):
         for idx in roi_indices:
             mask = da.coords['roi_index'] == idx
             roi_da = da[mask].drop_coords('roi_index')
-
-            # Restore singular name
-            roi_da.name = cls._get_singular_name(da.name)
-
-            # Use existing dispatcher
             rois[int(idx)] = ROI.from_data_array(roi_da)
 
         return rois
@@ -309,8 +295,8 @@ class ROI(BaseModel, ABC):
         """
         Return empty DataArray template without roi_index coordinate.
 
-        Each ROI subclass must implement this to define the dimension name,
-        coordinate structure, and plural name for empty case.
+        Each ROI subclass must implement this to define the dimension name
+        and coordinate structure. The dimension name encodes the ROI type.
 
         Returns
         -------
@@ -318,16 +304,6 @@ class ROI(BaseModel, ABC):
             Empty DataArray with ROI-specific coordinates (without roi_index).
         """
         ...
-
-    @staticmethod
-    def _get_plural_name(singular: str) -> str:
-        """Convert ROI type name to plural form."""
-        return singular + 's'
-
-    @staticmethod
-    def _get_singular_name(plural: str) -> str:
-        """Convert plural ROI type name to singular form."""
-        return plural.rstrip('s') if plural.endswith('s') else plural
 
 
 class Interval(BaseModel):
@@ -411,7 +387,7 @@ class RectangleROI(ROI):
                 dims=['bounds'], values=[self.y.min, self.y.max], unit=self.y.unit
             ),
         }
-        da = sc.DataArray(data, coords=coords, name=ROIType.RECTANGLE)
+        da = sc.DataArray(data, coords=coords)
         return da
 
     @classmethod
@@ -437,7 +413,6 @@ class RectangleROI(ROI):
                 'x': sc.empty(dims=['bounds'], shape=[0]),
                 'y': sc.empty(dims=['bounds'], shape=[0]),
             },
-            name='rectangles',
         )
 
 
@@ -478,7 +453,7 @@ class PolygonROI(ROI):
             'x': sc.array(dims=['vertex'], values=self.x, unit=self.x_unit),
             'y': sc.array(dims=['vertex'], values=self.y, unit=self.y_unit),
         }
-        da = sc.DataArray(data, coords=coords, name=ROIType.POLYGON)
+        da = sc.DataArray(data, coords=coords)
         return da
 
     @classmethod
@@ -500,7 +475,6 @@ class PolygonROI(ROI):
                 'x': sc.empty(dims=['vertex'], shape=[0]),
                 'y': sc.empty(dims=['vertex'], shape=[0]),
             },
-            name='polygons',
         )
 
 
@@ -527,17 +501,17 @@ class EllipseROI(ROI):
     )
 
     def to_data_array(self) -> sc.DataArray:
-        """Convert to scipp DataArray with dim dimension."""
-        data = sc.array(dims=['dim'], values=[1, 1], dtype='int32', unit='')
+        """Convert to scipp DataArray with ellipse dimension."""
+        data = sc.array(dims=['ellipse'], values=[1, 1], dtype='int32', unit='')
         coords = {
             'center': sc.array(
-                dims=['dim'], values=[self.center_x, self.center_y], unit=self.unit
+                dims=['ellipse'], values=[self.center_x, self.center_y], unit=self.unit
             ),
             'radius': sc.array(
-                dims=['dim'], values=[self.radius_x, self.radius_y], unit=self.unit
+                dims=['ellipse'], values=[self.radius_x, self.radius_y], unit=self.unit
             ),
         }
-        da = sc.DataArray(data, coords=coords, name=ROIType.ELLIPSE)
+        da = sc.DataArray(data, coords=coords)
         # Add rotation as a scalar coordinate (no dimension)
         da.coords['rotation'] = sc.scalar(self.rotation, unit='deg')
         return da
@@ -573,11 +547,10 @@ class EllipseROI(ROI):
     def _empty_data_array_template(cls) -> sc.DataArray:
         """Return empty DataArray template without roi_index."""
         return sc.DataArray(
-            sc.empty(dims=['dim'], shape=[0], dtype='int32', unit=''),
+            sc.empty(dims=['ellipse'], shape=[0], dtype='int32', unit=''),
             coords={
-                'center': sc.empty(dims=['dim'], shape=[0]),
-                'radius': sc.empty(dims=['dim'], shape=[0]),
-                'rotation': sc.empty(dims=['dim'], shape=[0], unit='deg'),
+                'center': sc.empty(dims=['ellipse'], shape=[0]),
+                'radius': sc.empty(dims=['ellipse'], shape=[0]),
+                'rotation': sc.empty(dims=['ellipse'], shape=[0], unit='deg'),
             },
-            name='ellipses',
         )
