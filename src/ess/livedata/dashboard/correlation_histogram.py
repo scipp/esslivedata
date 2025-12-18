@@ -63,11 +63,8 @@ class CorrelationHistogram2dParams(CorrelationHistogramParams):
     y_edges: EdgesWithUnit
 
 
-class SimplifiedCorrelationHistogram1dParams(CorrelationHistogramParams):
-    """Simplified params for 1D correlation histogram with auto-determined ranges.
-
-    Used by PlotConfigModal wizard. The plotter auto-determines bin edges from data.
-    """
+class Bin1dParams(pydantic.BaseModel):
+    """Bin parameters for 1D correlation histograms."""
 
     x_bins: int = pydantic.Field(
         default=50,
@@ -78,11 +75,8 @@ class SimplifiedCorrelationHistogram1dParams(CorrelationHistogramParams):
     )
 
 
-class SimplifiedCorrelationHistogram2dParams(CorrelationHistogramParams):
-    """Simplified params for 2D correlation histogram with auto-determined ranges.
-
-    Used by PlotConfigModal wizard. The plotter auto-determines bin edges from data.
-    """
+class Bin2dParams(pydantic.BaseModel):
+    """Bin parameters for 2D correlation histograms."""
 
     x_bins: int = pydantic.Field(
         default=50,
@@ -100,11 +94,42 @@ class SimplifiedCorrelationHistogram2dParams(CorrelationHistogramParams):
     )
 
 
+class SimplifiedCorrelationHistogram1dParams(CorrelationHistogramParams):
+    """Simplified params for 1D correlation histogram with auto-determined ranges.
+
+    Used by PlotConfigModal wizard. The plotter auto-determines bin edges from data.
+    """
+
+    bins: Bin1dParams = pydantic.Field(
+        default_factory=Bin1dParams,
+        title="Histogram Bins",
+        description="Bin configuration for the histogram.",
+    )
+
+
+class SimplifiedCorrelationHistogram2dParams(CorrelationHistogramParams):
+    """Simplified params for 2D correlation histogram with auto-determined ranges.
+
+    Used by PlotConfigModal wizard. The plotter auto-determines bin edges from data.
+    """
+
+    bins: Bin2dParams = pydantic.Field(
+        default_factory=Bin2dParams,
+        title="Histogram Bins",
+        description="Bin configuration for the histogram.",
+    )
+
+
 # Map plotter names to their simplified param classes for PlotConfigModal
 SIMPLIFIED_CORRELATION_PARAMS: dict[str, type[CorrelationHistogramParams]] = {
     'correlation_histogram_1d': SimplifiedCorrelationHistogram1dParams,
     'correlation_histogram_2d': SimplifiedCorrelationHistogram2dParams,
 }
+
+# Plotter names that are correlation histogram types
+CORRELATION_HISTOGRAM_PLOTTERS = frozenset(
+    {'correlation_histogram_1d', 'correlation_histogram_2d'}
+)
 
 
 class CorrelationHistogramOutputs(WorkflowOutputsBase):
@@ -532,6 +557,42 @@ class CorrelationHistogramProcessor:
         self._result_callback(result)
 
 
+class OrderedCorrelationAssembler:
+    """Assembler that preserves key order for correlation histogram plotters.
+
+    Unlike MergingStreamAssembler which sorts keys, this assembler preserves
+    the order keys were specified, which is critical for correlation histograms
+    where the first key is primary data and subsequent keys are correlation axes.
+    """
+
+    def __init__(self, keys: list[ResultKey]) -> None:
+        self._keys = keys
+        self._keys_set = set(keys)
+
+    @property
+    def keys(self) -> set[ResultKey]:
+        """Return the set of data keys this assembler depends on."""
+        return self._keys_set
+
+    @property
+    def requires_all_keys(self) -> bool:
+        """Correlation histograms require all data sources before plotting."""
+        return True
+
+    def assemble(self, data: dict[ResultKey, Any]) -> list[sc.DataArray]:
+        """Assemble data preserving the original key order.
+
+        Returns
+        -------
+        :
+            List of DataArrays in the order keys were specified:
+            - [0]: Primary data (dependent variable)
+            - [1]: X-axis correlation data
+            - [2]: Y-axis correlation data (for 2D only)
+        """
+        return [data[key] for key in self._keys if key in data]
+
+
 class CorrelationHistogrammer:
     def __init__(self, edges: dict[str, sc.Variable], normalize: bool = False) -> None:
         self._edges = edges
@@ -564,3 +625,133 @@ class CorrelationHistogrammer:
         if self._normalize:
             return dependent.bin(**self._edges).bins.mean()
         return dependent.hist(**self._edges)
+
+
+def _compute_edges_from_data(
+    data: sc.DataArray, num_bins: int, dim: str
+) -> sc.Variable:
+    """Compute histogram edges from data range.
+
+    Parameters
+    ----------
+    data
+        DataArray containing the data to determine range from.
+    num_bins
+        Number of bins for the histogram.
+    dim
+        Dimension name for the edges.
+
+    Returns
+    -------
+    :
+        Scipp Variable with evenly spaced bin edges.
+    """
+    values = sc.values(data) if data.variances is not None else data
+    low = float(values.nanmin().value)
+    high = float(np.nextafter(values.nanmax().value, np.inf))
+    return sc.linspace(dim, low, high, num_bins + 1, unit=data.unit)
+
+
+class CorrelationHistogram1dPlotter:
+    """Plotter for 1D correlation histograms.
+
+    Receives data from multiple sources (primary + correlation axis) and
+    computes a histogram correlating the primary data against the axis.
+    """
+
+    kdims: list[str] | None = None
+
+    def __init__(
+        self, params: SimplifiedCorrelationHistogram1dParams, **kwargs
+    ) -> None:
+        self._num_bins = params.bins.x_bins
+        self._normalize = params.normalization.per_second
+        self._histogrammer: CorrelationHistogrammer | None = None
+
+    def initialize_from_data(self, data: list[sc.DataArray]) -> None:
+        """Initialize histogram edges from first data arrival."""
+        if len(data) < 2:
+            raise ValueError(
+                "Correlation histogram requires at least 2 data sources "
+                "(primary + x-axis)"
+            )
+        # data[0] = primary, data[1] = x-axis
+        x_axis_data = data[1]
+        dim = 'x'
+        edges = {dim: _compute_edges_from_data(x_axis_data, self._num_bins, dim)}
+        self._histogrammer = CorrelationHistogrammer(
+            edges=edges, normalize=self._normalize
+        )
+
+    def __call__(self, data: list[sc.DataArray]) -> Any:
+        """Compute and plot correlation histogram."""
+        if self._histogrammer is None:
+            self.initialize_from_data(data)
+            if self._histogrammer is None:
+                raise RuntimeError("Failed to initialize histogrammer")
+
+        primary = data[0]
+        coords = {'x': data[1]}
+        histogram = self._histogrammer(primary, coords=coords)
+
+        # Convert to holoviews Curve
+        from .scipp_to_holoviews import to_holoviews
+
+        return to_holoviews(histogram)
+
+    @classmethod
+    def from_params(cls, params: SimplifiedCorrelationHistogram1dParams):
+        """Factory method for plotter registry."""
+        return cls(params=params)
+
+
+class CorrelationHistogram2dPlotter:
+    """Plotter for 2D correlation histograms.
+
+    Receives data from multiple sources (primary + 2 correlation axes) and
+    computes a 2D histogram correlating the primary data against the axes.
+    """
+
+    kdims: list[str] | None = None
+
+    def __init__(
+        self, params: SimplifiedCorrelationHistogram2dParams, **kwargs
+    ) -> None:
+        self._x_bins = params.bins.x_bins
+        self._y_bins = params.bins.y_bins
+        self._normalize = params.normalization.per_second
+        self._histogrammer: CorrelationHistogrammer | None = None
+
+    def initialize_from_data(self, data: list[sc.DataArray]) -> None:
+        """Initialize histogram edges from first data arrival."""
+        if len(data) < 3:
+            raise ValueError(
+                "2D correlation histogram requires at least 3 data sources "
+                "(primary + x-axis + y-axis)"
+            )
+        # data[0] = primary, data[1] = x-axis, data[2] = y-axis
+        x_axis_data = data[1]
+        y_axis_data = data[2]
+        edges = {
+            'x': _compute_edges_from_data(x_axis_data, self._x_bins, 'x'),
+            'y': _compute_edges_from_data(y_axis_data, self._y_bins, 'y'),
+        }
+        self._histogrammer = CorrelationHistogrammer(
+            edges=edges, normalize=self._normalize
+        )
+
+    def __call__(self, data: list[sc.DataArray]) -> Any:
+        """Compute and plot 2D correlation histogram."""
+        if self._histogrammer is None:
+            self.initialize_from_data(data)
+            if self._histogrammer is None:
+                raise RuntimeError("Failed to initialize histogrammer")
+
+        primary = data[0]
+        coords = {'x': data[1], 'y': data[2]}
+        histogram = self._histogrammer(primary, coords=coords)
+
+        # Convert to holoviews Image
+        from .scipp_to_holoviews import to_holoviews
+
+        return to_holoviews(histogram)
