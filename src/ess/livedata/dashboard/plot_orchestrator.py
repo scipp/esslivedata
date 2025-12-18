@@ -1290,7 +1290,7 @@ class PlotOrchestrator:
         :
             Parsed Layer with a new LayerId, or None if the plotter is unknown.
         """
-        from .correlation_histogram import CORRELATION_HISTOGRAM_PLOTTERS
+        from .correlation_plotter import CORRELATION_HISTOGRAM_PLOTTERS
 
         plot_name = layer_data['plot_name']
 
