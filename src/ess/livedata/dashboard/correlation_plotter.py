@@ -180,6 +180,18 @@ class CorrelationHistogramAssembler:
         )
 
 
+def _make_lookup(axis_data: sc.DataArray, data_max_time: sc.Variable) -> sc.bins.Lookup:
+    """Create lookup table with appropriate mode based on time overlap.
+
+    Uses 'previous' mode normally, but falls back to 'nearest' if all data
+    timestamps are before the first axis timestamp (which would produce NaNs).
+    """
+    axis_values = sc.values(axis_data) if axis_data.variances is not None else axis_data
+    axis_min_time = axis_data.coords['time'].min()
+    mode = 'nearest' if data_max_time < axis_min_time else 'previous'
+    return sc.lookup(axis_values, mode=mode)
+
+
 class CorrelationHistogram1dPlotter:
     """Plotter for 1D correlation histograms.
 
@@ -206,19 +218,21 @@ class CorrelationHistogram1dPlotter:
 
     def __call__(self, data: CorrelationHistogramData) -> Any:
         """Compute histograms for all data sources and render."""
+        if not isinstance(data, CorrelationHistogramData):
+            raise TypeError(
+                f"CorrelationHistogram1dPlotter expected CorrelationHistogramData, "
+                f"got {type(data).__name__}. This usually indicates the data pipeline "
+                f"was set up without axis_keys, causing MergingStreamAssembler to be "
+                f"used instead of CorrelationHistogramAssembler."
+            )
         if 'x' not in data.axis_data:
             raise ValueError("Correlation histogram requires x-axis data")
-
-        x_axis = data.axis_data['x']
-        lut = sc.lookup(
-            sc.values(x_axis) if x_axis.variances is not None else x_axis,
-            mode='previous',
-        )
 
         histograms: dict[ResultKey, sc.DataArray] = {}
         for key, source_data in data.data_sources.items():
             dependent = source_data.copy(deep=False)
-            dependent.coords['x'] = lut[dependent.coords['time']]
+            x_lut = _make_lookup(data.axis_data['x'], dependent.coords['time'].max())
+            dependent.coords['x'] = x_lut[dependent.coords['time']]
 
             if self._normalize:
                 times = dependent.coords['time']
@@ -266,20 +280,12 @@ class CorrelationHistogram2dPlotter:
         if 'x' not in data.axis_data or 'y' not in data.axis_data:
             raise ValueError("2D correlation histogram requires x-axis and y-axis data")
 
-        x_axis = data.axis_data['x']
-        y_axis = data.axis_data['y']
-        x_lut = sc.lookup(
-            sc.values(x_axis) if x_axis.variances is not None else x_axis,
-            mode='previous',
-        )
-        y_lut = sc.lookup(
-            sc.values(y_axis) if y_axis.variances is not None else y_axis,
-            mode='previous',
-        )
-
         histograms: dict[ResultKey, sc.DataArray] = {}
         for key, source_data in data.data_sources.items():
             dependent = source_data.copy(deep=False)
+            data_max_time = dependent.coords['time'].max()
+            x_lut = _make_lookup(data.axis_data['x'], data_max_time)
+            y_lut = _make_lookup(data.axis_data['y'], data_max_time)
             dependent.coords['x'] = x_lut[dependent.coords['time']]
             dependent.coords['y'] = y_lut[dependent.coords['time']]
 
