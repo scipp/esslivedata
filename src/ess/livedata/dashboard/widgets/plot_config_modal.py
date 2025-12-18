@@ -56,6 +56,34 @@ _NO_TRANSITION_CSS = """
 """
 
 
+def _inject_axis_source_names(
+    params: pydantic.BaseModel, axis_sources: list[DataSourceConfig]
+) -> pydantic.BaseModel:
+    """Inject axis source names into correlation histogram params.
+
+    Updates the bins.x_axis_source and bins.y_axis_source fields with
+    the source names from axis_sources, so they appear in the UI and
+    are used as axis labels in the plot.
+    """
+    if not hasattr(params, 'bins'):
+        return params
+
+    bins = params.bins
+    updates: dict[str, str] = {}
+
+    # axis_sources[0] is x-axis, axis_sources[1] is y-axis (if present)
+    if len(axis_sources) >= 1 and axis_sources[0].source_names:
+        updates['x_axis_source'] = axis_sources[0].source_names[0]
+    if len(axis_sources) >= 2 and axis_sources[1].source_names:
+        updates['y_axis_source'] = axis_sources[1].source_names[0]
+
+    if not updates:
+        return params
+
+    new_bins = bins.model_copy(update=updates)
+    return params.model_copy(update={'bins': new_bins})
+
+
 @dataclass
 class OutputSelection:
     """Output from output selection step."""
@@ -960,6 +988,14 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
 
         # Get axis sources for correlation histograms (empty for standard plots)
         axis_sources = self._plotter_selection.correlation_axes or []
+
+        # For correlation histograms, inject axis source names into bin params
+        if (
+            self._plotter_selection.plot_name in CORRELATION_HISTOGRAM_PLOTTERS
+            and axis_sources
+            and isinstance(params, pydantic.BaseModel)
+        ):
+            params = _inject_axis_source_names(params, axis_sources)
 
         self._last_config_result = PlotConfig(
             data_source=data_source,

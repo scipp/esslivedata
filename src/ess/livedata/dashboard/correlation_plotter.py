@@ -40,6 +40,12 @@ class _CorrelationHistogramBase(pydantic.BaseModel):
 class Bin1dParams(pydantic.BaseModel):
     """Bin parameters for 1D correlation histograms."""
 
+    x_axis_source: str | None = pydantic.Field(
+        default=None,
+        frozen=True,
+        title="X Axis",
+        description="Data source used for the X axis.",
+    )
     x_bins: int = pydantic.Field(
         default=50,
         ge=1,
@@ -52,12 +58,24 @@ class Bin1dParams(pydantic.BaseModel):
 class Bin2dParams(pydantic.BaseModel):
     """Bin parameters for 2D correlation histograms."""
 
+    x_axis_source: str | None = pydantic.Field(
+        default=None,
+        frozen=True,
+        title="X Axis",
+        description="Data source used for the X axis.",
+    )
     x_bins: int = pydantic.Field(
         default=50,
         ge=1,
         le=1000,
         title="X Bins",
         description="Number of bins for X axis (range auto-determined from data).",
+    )
+    y_axis_source: str | None = pydantic.Field(
+        default=None,
+        frozen=True,
+        title="Y Axis",
+        description="Data source used for the Y axis.",
     )
     y_bins: int = pydantic.Field(
         default=50,
@@ -203,6 +221,7 @@ class CorrelationHistogram1dPlotter:
 
     def __init__(self, params: CorrelationHistogram1dParams) -> None:
         self._num_bins = params.bins.x_bins
+        self._x_name = params.bins.x_axis_source or 'x'
         self._normalize = params.normalization.per_second
         self._renderer = LinePlotter(
             scale_opts=params.plot_scale,
@@ -228,20 +247,21 @@ class CorrelationHistogram1dPlotter:
         if 'x' not in data.axis_data:
             raise ValueError("Correlation histogram requires x-axis data")
 
+        x_name = self._x_name
         histograms: dict[ResultKey, sc.DataArray] = {}
         for key, source_data in data.data_sources.items():
             dependent = source_data.copy(deep=False)
             x_lut = _make_lookup(data.axis_data['x'], dependent.coords['time'].max())
-            dependent.coords['x'] = x_lut[dependent.coords['time']]
+            dependent.coords[x_name] = x_lut[dependent.coords['time']]
 
             if self._normalize:
                 times = dependent.coords['time']
                 widths = (times[1:] - times[:-1]).to(dtype='float64', unit='s')
                 widths = sc.concat([widths, widths.median()], dim='time')
                 dependent = dependent / widths
-                histograms[key] = dependent.bin(x=self._num_bins).bins.mean()
+                histograms[key] = dependent.bin({x_name: self._num_bins}).bins.mean()
             else:
-                histograms[key] = dependent.hist(x=self._num_bins)
+                histograms[key] = dependent.hist({x_name: self._num_bins})
 
         return self._renderer(histograms)
 
@@ -263,6 +283,8 @@ class CorrelationHistogram2dPlotter:
     def __init__(self, params: CorrelationHistogram2dParams) -> None:
         self._x_bins = params.bins.x_bins
         self._y_bins = params.bins.y_bins
+        self._x_name = params.bins.x_axis_source or 'x'
+        self._y_name = params.bins.y_axis_source or 'y'
         self._normalize = params.normalization.per_second
         self._renderer = ImagePlotter(
             scale_opts=params.plot_scale,
@@ -280,14 +302,15 @@ class CorrelationHistogram2dPlotter:
         if 'x' not in data.axis_data or 'y' not in data.axis_data:
             raise ValueError("2D correlation histogram requires x-axis and y-axis data")
 
+        x_name, y_name = self._x_name, self._y_name
         histograms: dict[ResultKey, sc.DataArray] = {}
         for key, source_data in data.data_sources.items():
             dependent = source_data.copy(deep=False)
             data_max_time = dependent.coords['time'].max()
             x_lut = _make_lookup(data.axis_data['x'], data_max_time)
             y_lut = _make_lookup(data.axis_data['y'], data_max_time)
-            dependent.coords['x'] = x_lut[dependent.coords['time']]
-            dependent.coords['y'] = y_lut[dependent.coords['time']]
+            dependent.coords[x_name] = x_lut[dependent.coords['time']]
+            dependent.coords[y_name] = y_lut[dependent.coords['time']]
 
             if self._normalize:
                 times = dependent.coords['time']
@@ -295,10 +318,12 @@ class CorrelationHistogram2dPlotter:
                 widths = sc.concat([widths, widths.median()], dim='time')
                 dependent = dependent / widths
                 histograms[key] = dependent.bin(
-                    x=self._x_bins, y=self._y_bins
+                    {x_name: self._x_bins, y_name: self._y_bins}
                 ).bins.mean()
             else:
-                histograms[key] = dependent.hist(x=self._x_bins, y=self._y_bins)
+                histograms[key] = dependent.hist(
+                    {x_name: self._x_bins, y_name: self._y_bins}
+                )
 
         return self._renderer(histograms)
 
