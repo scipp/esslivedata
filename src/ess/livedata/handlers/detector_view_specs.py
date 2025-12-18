@@ -64,10 +64,18 @@ class DetectorViewOutputs(WorkflowOutputsBase):
         description='Detector counts for the current time window since last update.',
     )
     counts_total: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.scalar(0, unit='counts'),
+            coords={'time': sc.scalar(0, unit='ns')},
+        ),
         title='Total Event Count',
         description='Total number of detector events in the current time window.',
     )
     counts_in_toa_range: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.scalar(0, unit='counts'),
+            coords={'time': sc.scalar(0, unit='ns')},
+        ),
         title='Event Count in TOA Range',
         description='Number of detector events within the configured TOA range filter.',
     )

@@ -21,13 +21,22 @@ from typing import Any
 import panel as pn
 import pydantic
 
-from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
+from ess.livedata.config.workflow_spec import (
+    WorkflowId,
+    WorkflowSpec,
+    find_timeseries_outputs,
+)
 from ess.livedata.dashboard.plot_configuration_adapter import PlotConfigurationAdapter
-from ess.livedata.dashboard.plot_orchestrator import PlotConfig
+from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig, PlotConfig
 from ess.livedata.dashboard.plotting import PlotterSpec
 
 from .configuration_widget import ConfigurationPanel
 from .wizard import Wizard, WizardStep
+
+# Plotter names that require correlation axis selection
+CORRELATION_HISTOGRAM_PLOTTERS = frozenset(
+    {'correlation_histogram_1d', 'correlation_histogram_2d'}
+)
 
 # Synthetic workflow ID for static overlays (no actual workflow subscription)
 STATIC_OVERLAY_NAMESPACE = "static_overlay"
@@ -62,6 +71,7 @@ class PlotterSelection:
     workflow_id: WorkflowId
     output_name: str
     plot_name: str
+    correlation_axes: list[DataSourceConfig] | None = None
 
 
 class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
@@ -451,6 +461,12 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         self._radio_group: pn.widgets.RadioButtonGroup | None = None
         self._content_container = pn.Column(sizing_mode='stretch_width')
 
+        # Correlation axis selection state
+        self._selected_correlation_axes: list[DataSourceConfig] = []
+        self._axis_selectors_container = pn.Column(sizing_mode='stretch_width')
+        self._axis_selectors: list[pn.widgets.Select] = []
+        self._available_timeseries: list[tuple[WorkflowId, str, str]] | None = None
+
     @property
     def name(self) -> str:
         """Display name for this step."""
@@ -462,17 +478,41 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         return "Choose the type of plot you want to create."
 
     def is_valid(self) -> bool:
-        """Step is valid when a plotter has been selected."""
-        return self._selected_plot_name is not None
+        """Step is valid when a plotter has been selected.
+
+        For correlation histogram plotters, also requires axis selection.
+        """
+        if self._selected_plot_name is None:
+            return False
+        # For correlation histograms, require axis selection
+        if self._selected_plot_name in CORRELATION_HISTOGRAM_PLOTTERS:
+            required_axes = self._get_required_axis_count()
+            return len(self._selected_correlation_axes) == required_axes
+        return True
+
+    def _get_required_axis_count(self) -> int:
+        """Get the number of required correlation axes for the selected plotter."""
+        if self._selected_plot_name == 'correlation_histogram_1d':
+            return 1
+        elif self._selected_plot_name == 'correlation_histogram_2d':
+            return 2
+        return 0
 
     def commit(self) -> PlotterSelection | None:
         """Commit the workflow, output, and selected plotter."""
         if self._output_selection is None or self._selected_plot_name is None:
             return None
+        # Include correlation axes for correlation histogram plotters
+        correlation_axes = (
+            self._selected_correlation_axes
+            if self._selected_plot_name in CORRELATION_HISTOGRAM_PLOTTERS
+            else None
+        )
         return PlotterSelection(
             workflow_id=self._output_selection.workflow_id,
             output_name=self._output_selection.output_name,
             plot_name=self._selected_plot_name,
+            correlation_axes=correlation_axes,
         )
 
     def render_content(self) -> pn.Column:
@@ -582,7 +622,10 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         # Initialize with the selected value
         if initial_value is not None:
             self._selected_plot_name = initial_value
-            self._notify_ready_changed(True)
+            # Show axis selection for correlation histogram plotters
+            if initial_value in CORRELATION_HISTOGRAM_PLOTTERS:
+                self._update_axis_selection()
+            self._notify_ready_changed(self.is_valid())
 
     def _make_unique_title_mapping(
         self, available_plots: dict[str, PlotterSpec]
@@ -609,10 +652,96 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         """Handle plotter selection change."""
         if event.new is not None:
             self._selected_plot_name = event.new
-            self._notify_ready_changed(True)
+            # Show axis selection for correlation histogram plotters
+            if self._selected_plot_name in CORRELATION_HISTOGRAM_PLOTTERS:
+                self._update_axis_selection()
+            else:
+                self._hide_axis_selection()
+            self._notify_ready_changed(self.is_valid())
         else:
             self._selected_plot_name = None
+            self._hide_axis_selection()
             self._notify_ready_changed(False)
+
+    def _get_available_timeseries(self) -> list[tuple[WorkflowId, str, str]]:
+        """Get available timeseries outputs from workflow registry (cached)."""
+        if self._available_timeseries is None:
+            self._available_timeseries = find_timeseries_outputs(
+                self._workflow_registry
+            )
+        return self._available_timeseries
+
+    def _update_axis_selection(self) -> None:
+        """Create/update axis selection dropdowns for correlation histograms."""
+        self._axis_selectors_container.clear()
+        self._axis_selectors.clear()
+        self._selected_correlation_axes.clear()
+
+        required_axes = self._get_required_axis_count()
+        if required_axes == 0:
+            return
+
+        available_timeseries = self._get_available_timeseries()
+        if not available_timeseries:
+            self._axis_selectors_container.append(
+                pn.pane.Markdown("*No timeseries available for correlation.*")
+            )
+            return
+
+        # Build options: display name -> (workflow_id, source_name, output_name)
+        options: dict[str, tuple[WorkflowId, str, str]] = {}
+        for workflow_id, source_name, output_name in available_timeseries:
+            # Get human-readable title from workflow spec
+            spec = self._workflow_registry.get(workflow_id)
+            workflow_title = spec.title if spec else workflow_id.name
+            display_name = f"{workflow_title}: {source_name}"
+            if output_name != 'delta':  # Only show output name if not the default
+                display_name = f"{display_name} ({output_name})"
+            options[display_name] = (workflow_id, source_name, output_name)
+
+        # Create dropdown for each required axis
+        axis_labels = (
+            ['X-Axis', 'Y-Axis'] if required_axes == 2 else ['Correlation Axis']
+        )
+        for i, label in enumerate(axis_labels[:required_axes]):
+            selector = pn.widgets.Select(
+                name=f'{label} (correlate against)',
+                options={'Select...': None, **options},
+                value=None,
+                sizing_mode='stretch_width',
+            )
+            selector.param.watch(
+                lambda event, idx=i: self._on_axis_selection_change(event, idx), 'value'
+            )
+            self._axis_selectors.append(selector)
+            self._axis_selectors_container.append(selector)
+
+        # Add the container to the content if not already there
+        if self._axis_selectors_container not in self._content_container:
+            self._content_container.append(self._axis_selectors_container)
+
+    def _hide_axis_selection(self) -> None:
+        """Hide axis selection dropdowns."""
+        self._axis_selectors_container.clear()
+        self._axis_selectors.clear()
+        self._selected_correlation_axes.clear()
+
+    def _on_axis_selection_change(self, event, axis_index: int) -> None:
+        """Handle axis selection change."""
+        # Rebuild the selected axes list from current selector values
+        self._selected_correlation_axes.clear()
+        for selector in self._axis_selectors:
+            value = selector.value
+            if value is not None and isinstance(value, tuple):
+                workflow_id, source_name, output_name = value
+                self._selected_correlation_axes.append(
+                    DataSourceConfig(
+                        workflow_id=workflow_id,
+                        source_names=[source_name],
+                        output_name=output_name,
+                    )
+                )
+        self._notify_ready_changed(self.is_valid())
 
 
 class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]):
@@ -788,18 +917,23 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         self, selected_sources: list[str], params: pydantic.BaseModel | dict[str, Any]
     ) -> None:
         """Callback from adapter - store result for commit() to return."""
-        from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig
-
         if self._plotter_selection is None:
             return
-        # Create PlotConfig with data_sources list (single data source)
-        data_source = DataSourceConfig(
+
+        # Create primary data source
+        primary_source = DataSourceConfig(
             workflow_id=self._plotter_selection.workflow_id,
             source_names=selected_sources,
             output_name=self._plotter_selection.output_name,
         )
+
+        # Build data_sources list: primary + correlation axes (if any)
+        data_sources = [primary_source]
+        if self._plotter_selection.correlation_axes:
+            data_sources.extend(self._plotter_selection.correlation_axes)
+
         self._last_config_result = PlotConfig(
-            data_sources=[data_source],
+            data_sources=data_sources,
             plot_name=self._plotter_selection.plot_name,
             params=params,
         )

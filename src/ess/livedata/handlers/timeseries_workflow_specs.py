@@ -16,6 +16,10 @@ class TimeseriesOutputs(WorkflowOutputsBase):
     """Outputs for the timeseries workflow."""
 
     delta: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.scalar(0.0),
+            coords={'time': sc.scalar(0, unit='ns')},
+        ),
         title='Delta',
         description='New timeseries data since last update.',
     )

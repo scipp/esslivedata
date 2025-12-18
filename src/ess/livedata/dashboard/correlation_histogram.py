@@ -63,6 +63,50 @@ class CorrelationHistogram2dParams(CorrelationHistogramParams):
     y_edges: EdgesWithUnit
 
 
+class SimplifiedCorrelationHistogram1dParams(CorrelationHistogramParams):
+    """Simplified params for 1D correlation histogram with auto-determined ranges.
+
+    Used by PlotConfigModal wizard. The plotter auto-determines bin edges from data.
+    """
+
+    x_bins: int = pydantic.Field(
+        default=50,
+        ge=1,
+        le=1000,
+        title="X Bins",
+        description="Number of bins for X axis (range auto-determined from data).",
+    )
+
+
+class SimplifiedCorrelationHistogram2dParams(CorrelationHistogramParams):
+    """Simplified params for 2D correlation histogram with auto-determined ranges.
+
+    Used by PlotConfigModal wizard. The plotter auto-determines bin edges from data.
+    """
+
+    x_bins: int = pydantic.Field(
+        default=50,
+        ge=1,
+        le=1000,
+        title="X Bins",
+        description="Number of bins for X axis (range auto-determined from data).",
+    )
+    y_bins: int = pydantic.Field(
+        default=50,
+        ge=1,
+        le=1000,
+        title="Y Bins",
+        description="Number of bins for Y axis (range auto-determined from data).",
+    )
+
+
+# Map plotter names to their simplified param classes for PlotConfigModal
+SIMPLIFIED_CORRELATION_PARAMS: dict[str, type[CorrelationHistogramParams]] = {
+    'correlation_histogram_1d': SimplifiedCorrelationHistogram1dParams,
+    'correlation_histogram_2d': SimplifiedCorrelationHistogram2dParams,
+}
+
+
 class CorrelationHistogramOutputs(WorkflowOutputsBase):
     """Outputs for correlation histogram workflows."""
 
