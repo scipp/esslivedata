@@ -7,6 +7,7 @@ import pytest
 
 from ess.livedata.config.workflow_spec import JobId, WorkflowId
 from ess.livedata.core.job import JobState, JobStatus
+from ess.livedata.dashboard.icons import get_icon
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.widgets.workflow_status_widget import (
     WorkflowStatusListWidget,
@@ -14,6 +15,17 @@ from ess.livedata.dashboard.widgets.workflow_status_widget import (
     _get_unconfigured_sources,
     _group_configs_by_equality,
 )
+
+
+def _get_button_icons(buttons) -> list[str | None]:
+    """Extract icons from a collection of buttons for testing."""
+    return [obj.icon for obj in buttons if isinstance(obj, pn.widgets.Button)]
+
+
+def _has_icon(icons: list[str | None], icon_name: str) -> bool:
+    """Check if any icon matches the given icon name."""
+    expected_icon = get_icon(icon_name)
+    return expected_icon in icons
 
 
 @pytest.fixture
@@ -303,10 +315,8 @@ class TestWorkflowStatusWidget:
 
         # Check header buttons
         header_buttons = workflow_status_widget._create_header_buttons()
-        button_names = [
-            obj.name for obj in header_buttons if isinstance(obj, pn.widgets.Button)
-        ]
-        assert '\u25b6' in button_names  # ▶ play button
+        button_icons = _get_button_icons(header_buttons)
+        assert _has_icon(button_icons, 'player-play')  # play button
 
     def test_header_does_not_show_play_button_when_no_staged_configs(
         self, workflow_status_widget, job_orchestrator, workflow_id
@@ -317,10 +327,8 @@ class TestWorkflowStatusWidget:
         workflow_status_widget._build_widget()
 
         header_buttons = workflow_status_widget._create_header_buttons()
-        button_names = [
-            obj.name for obj in header_buttons if isinstance(obj, pn.widgets.Button)
-        ]
-        assert '\u25b6' not in button_names  # No play button
+        button_icons = _get_button_icons(header_buttons)
+        assert not _has_icon(button_icons, 'player-play')  # No play button
 
     def test_header_no_play_button_when_running_without_changes(
         self, workflow_status_widget, job_orchestrator, workflow_id
@@ -340,11 +348,9 @@ class TestWorkflowStatusWidget:
 
         # Check header buttons - no play because staged == active
         header_buttons = workflow_status_widget._create_header_buttons()
-        button_names = [
-            obj.name for obj in header_buttons if isinstance(obj, pn.widgets.Button)
-        ]
-        assert '\u25b6' not in button_names  # No play button
-        assert '\u25fc' in button_names  # Stop button (black square)
+        button_icons = _get_button_icons(header_buttons)
+        assert not _has_icon(button_icons, 'player-play')  # No play button
+        assert _has_icon(button_icons, 'player-stop')  # Stop button
 
     def test_header_shows_play_button_when_running_with_modified_staged(
         self, workflow_status_widget, job_orchestrator, workflow_id
@@ -372,11 +378,9 @@ class TestWorkflowStatusWidget:
 
         # Check header buttons - play button should appear because staged != active
         header_buttons = workflow_status_widget._create_header_buttons()
-        button_names = [
-            obj.name for obj in header_buttons if isinstance(obj, pn.widgets.Button)
-        ]
-        assert '\u25b6' in button_names  # Play button (commit & restart)
-        assert '\u25fc' in button_names  # Stop button still there
+        button_icons = _get_button_icons(header_buttons)
+        assert _has_icon(button_icons, 'player-play')  # Play button (commit & restart)
+        assert _has_icon(button_icons, 'player-stop')  # Stop button still there
 
 
 class TestWorkflowStatusWidgetWithJobs:
