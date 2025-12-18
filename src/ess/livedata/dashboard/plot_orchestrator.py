@@ -779,57 +779,42 @@ class PlotOrchestrator:
             layer_id, cell_id, grid_id, cell, config
         )
 
-        # Branch point: standard vs correlation histogram pipeline
-        try:
-            if config.axis_sources:
-                # Correlation histogram: build axis keys and use correlation pipeline
-                axis_names = ['x', 'y']
-                axis_keys: dict[str, ResultKey] = {}
-                for i, axis_ds in enumerate(config.axis_sources):
-                    axis_job_number = job_numbers[axis_ds.workflow_id]
-                    if len(axis_ds.source_names) != 1:
-                        raise ValueError(
-                            f"Axis source must have exactly one source_name, "
-                            f"got {len(axis_ds.source_names)}"
-                        )
-                    axis_keys[axis_names[i]] = ResultKey(
-                        workflow_id=axis_ds.workflow_id,
-                        job_id=JobId(
-                            job_number=axis_job_number,
-                            source_name=axis_ds.source_names[0],
-                        ),
-                        output_name=axis_ds.output_name,
+        # Build axis keys if this is a correlation histogram
+        axis_keys: dict[str, ResultKey] | None = None
+        if config.axis_sources:
+            axis_names = ['x', 'y']
+            axis_keys = {}
+            for i, axis_ds in enumerate(config.axis_sources):
+                axis_job_number = job_numbers[axis_ds.workflow_id]
+                if len(axis_ds.source_names) != 1:
+                    raise ValueError(
+                        f"Axis source must have exactly one source_name, "
+                        f"got {len(axis_ds.source_names)}"
                     )
-
-                self._logger.debug(
-                    'Setting up correlation pipeline for layer_id=%s: '
-                    '%d data keys, %d axis keys',
-                    layer_id,
-                    len(data_keys),
-                    len(axis_keys),
+                axis_keys[axis_names[i]] = ResultKey(
+                    workflow_id=axis_ds.workflow_id,
+                    job_id=JobId(
+                        job_number=axis_job_number,
+                        source_name=axis_ds.source_names[0],
+                    ),
+                    output_name=axis_ds.output_name,
                 )
 
-                self._plotting_controller.setup_correlation_histogram_pipeline(
-                    data_keys=data_keys,
-                    axis_keys=axis_keys,
-                    plot_name=config.plot_name,
-                    params=config.params,
-                    on_first_data=on_data_arrived,
-                )
-            else:
-                # Standard pipeline
-                self._logger.debug(
-                    'Setting up standard pipeline for layer_id=%s: %d data keys',
-                    layer_id,
-                    len(data_keys),
-                )
+        self._logger.debug(
+            'Setting up pipeline for layer_id=%s: %d data keys, %d axis keys',
+            layer_id,
+            len(data_keys),
+            len(axis_keys) if axis_keys else 0,
+        )
 
-                self._plotting_controller.setup_data_pipeline_from_keys(
-                    keys=data_keys,
-                    plot_name=config.plot_name,
-                    params=config.params,
-                    on_first_data=on_data_arrived,
-                )
+        try:
+            self._plotting_controller.setup_data_pipeline_from_keys(
+                keys=data_keys,
+                plot_name=config.plot_name,
+                params=config.params,
+                on_first_data=on_data_arrived,
+                axis_keys=axis_keys,
+            )
         except Exception:
             error_msg = traceback.format_exc()
             self._logger.exception(
