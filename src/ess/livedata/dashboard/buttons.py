@@ -31,6 +31,7 @@ def create_tool_button_stylesheet(
     *,
     selector: str = 'button',
     hover_selector: str | None = None,
+    include_anchor_styles: bool = False,
 ) -> list[str]:
     """
     Create a stylesheet for tool buttons (close, gear, etc.).
@@ -47,6 +48,9 @@ def create_tool_button_stylesheet(
         FileDownload widgets.
     hover_selector:
         CSS selector for the hover state. If None, defaults to '{selector}:hover'.
+    include_anchor_styles:
+        Whether to include anchor element styling. Set to True for FileDownload
+        widgets which have an anchor inside the button.
 
     Returns
     -------
@@ -55,6 +59,35 @@ def create_tool_button_stylesheet(
     """
     if hover_selector is None:
         hover_selector = f'{selector}:hover'
+
+    anchor_styles = (
+        f"""
+        /* FileDownload anchor needs to fill button and center icon */
+        {selector} a {{
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            width: 100% !important;
+            height: 100% !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            text-decoration: none !important;
+            font-size: 0 !important;  /* Hide label text and separator */
+            line-height: 0 !important;
+        }}
+        /* Icon wrapper inside anchor */
+        {selector} a > * {{
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            line-height: 0 !important;
+        }}
+        """
+        if include_anchor_styles
+        else ''
+    )
 
     return [
         f"""
@@ -79,7 +112,7 @@ def create_tool_button_stylesheet(
         {selector} svg {{
             display: block !important;
             flex-shrink: 0 !important;
-        }}
+        }}{anchor_styles}
         {hover_selector} {{
             background-color: {hover_color} !important;
         }}
@@ -147,16 +180,20 @@ def create_download_button(
         Panel FileDownload widget styled as a tool button.
     """
     # FileDownload uses different CSS selectors than regular Button
+    # and has an anchor element inside that needs centering
     stylesheet = create_tool_button_stylesheet(
         button_color=ButtonStyles.PRIMARY_BLUE,
         hover_color='rgba(0, 123, 255, 0.1)',
         selector=':host(.solid) button.bk-btn.bk-btn-primary',
+        include_anchor_styles=True,
     )
 
     return pn.widgets.FileDownload(
         callback=callback,
         filename=filename,
-        label='',
+        # Use a non-breaking space as label - empty string causes Panel to
+        # fall back to showing the filename as the button text
+        label='\u00a0',
         icon=get_icon('download'),
         width=ButtonStyles.TOOL_BUTTON_SIZE,
         height=ButtonStyles.TOOL_BUTTON_SIZE,
