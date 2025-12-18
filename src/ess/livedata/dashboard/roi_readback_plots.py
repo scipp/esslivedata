@@ -121,6 +121,9 @@ class RectanglesReadbackPlotter(Plotter):
             line_color='color',
             fill_alpha=style.fill_alpha,
             line_width=style.line_width,
+            # Rectangles (as opposed to Polygons) show legend by default, which we
+            # probably do not want.
+            show_legend=False,
         )
 
     def _to_hv_data(
