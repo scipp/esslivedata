@@ -71,6 +71,8 @@ _ICONS: dict[str, str] = {
         '<path d="M14 5m0 1a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 '
         '1 0 0 1 -1 -1z"/>'
     ),
+    # Track next (skip forward/reset)
+    'player-track-next': _svg('<path d="M3 5v14l8 -7z"/><path d="M14 5v14l8 -7z"/>'),
     # Refresh/reset
     'refresh': _svg(
         '<path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4"/>'
@@ -99,7 +101,8 @@ def get_icon(name: str) -> str:
     ----------
     name:
         Icon name. Available icons: x, settings, plus, download, player-play,
-        player-stop, player-pause, refresh, chevron-down, chevron-right, trash.
+        player-stop, player-pause, player-track-next, refresh, chevron-down,
+        chevron-right, trash.
 
     Returns
     -------

@@ -59,7 +59,7 @@ class UIConstants:
     JOB_NUMBER_MAX_LENGTH = 8
 
     # Button icons (Tabler icon names)
-    RESET_ICON = 'refresh'
+    RESET_ICON = 'player-track-next'
     PAUSE_ICON = 'player-pause'
     PLAY_ICON = 'player-play'
     STOP_ICON = 'player-stop'
@@ -164,13 +164,7 @@ class JobStatusWidget:
         """Get button widgets based on current job state."""
         buttons = []
 
-        # Reset button - always available for non-removed jobs
-        reset_btn = self._create_button(
-            UIConstants.RESET_ICON, lambda event: self._send_action(JobAction.reset)
-        )
-        buttons.append(reset_btn)
-
-        # Stop/Remove button - dual purpose
+        # Stop/Remove button - dual purpose (media button order: stop before next)
         if self._job_status.state == JobState.stopped:
             remove_btn = self._create_button(
                 UIConstants.REMOVE_ICON,
@@ -182,6 +176,12 @@ class JobStatusWidget:
                 UIConstants.STOP_ICON, lambda event: self._send_action(JobAction.stop)
             )
             buttons.append(stop_btn)
+
+        # Reset button - always available for non-removed jobs
+        reset_btn = self._create_button(
+            UIConstants.RESET_ICON, lambda event: self._send_action(JobAction.reset)
+        )
+        buttons.append(reset_btn)
 
         # TODO Do we need to be able to pause jobs that have errors/warnings?
         # Currently JobState is insufficient to determine if a job is running or
@@ -447,14 +447,14 @@ class JobStatusListWidget:
         )
         self._bulk_stop_btn.on_click(self._bulk_stop)
 
-        # Controls row
+        # Controls row (media button order: stop before next)
         self._controls = pn.Row(
             self._select_all_btn,
             self._select_none_btn,
             self._invert_selection_btn,
             pn.Spacer(width=20),
-            self._bulk_reset_btn,
             self._bulk_stop_btn,
+            self._bulk_reset_btn,
             margin=(5, 10),
         )
 
