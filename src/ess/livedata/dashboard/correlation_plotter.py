@@ -16,9 +16,25 @@ import scipp as sc
 
 from ess.livedata.config.workflow_spec import ResultKey
 
-from .correlation_histogram import CorrelationHistogramParams
 from .plot_params import PlotDisplayParams1d, PlotDisplayParams2d
 from .plots import ImagePlotter, LinePlotter
+
+
+class NormalizationParams(pydantic.BaseModel):
+    per_second: bool = pydantic.Field(
+        default=False,
+        description="Divide data by time bin width to obtain a rate. When enabled, "
+        "each histogram bin represents a rate (rather than counts), computed as a mean "
+        "instead of a sum over all contributions.",
+    )
+
+
+class CorrelationHistogramParams(pydantic.BaseModel):
+    normalization: NormalizationParams = pydantic.Field(
+        default_factory=NormalizationParams,
+        title="Normalization",
+        description="Options for normalizing the correlation histogram.",
+    )
 
 
 class Bin1dParams(pydantic.BaseModel):

@@ -16,7 +16,6 @@ from ess.livedata.config.workflow_spec import ResultKey
 
 from .command_service import CommandService
 from .config_store import ConfigStoreManager
-from .correlation_histogram import CorrelationHistogramController
 from .data_service import DataService
 from .job_controller import JobController
 from .job_orchestrator import JobOrchestrator
@@ -164,7 +163,6 @@ class DashboardServices:
         self.instrument_module = get_config(self._instrument)
         self.processor_factory = instrument_registry[self._instrument].workflow_factory
 
-        self.correlation_controller = CorrelationHistogramController(self.data_service)
         self.job_orchestrator = JobOrchestrator(
             command_service=self.command_service,
             workflow_config_service=self.workflow_config_service,
@@ -175,5 +173,4 @@ class DashboardServices:
             job_orchestrator=self.job_orchestrator,
             workflow_registry=self.processor_factory,
             data_service=self.data_service,
-            correlation_histogram_controller=self.correlation_controller,
         )
