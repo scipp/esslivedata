@@ -42,7 +42,7 @@ class EstiaSpectrumViewParams(pydantic.BaseModel):
     toa_edges: TOAEdges = pydantic.Field(
         title='Time of arrival edges',
         description='Histogram bin edges for the time-of-arrival axis.',
-        default_factory=lambda: TOAEdges(start=0.0, stop=71.0, num_bins=100),
+        default_factory=lambda: TOAEdges(start=0.0, stop=1000.0/14, num_bins=100),
     )
 
 
