@@ -23,6 +23,7 @@ from .plots import (
     Plotter,
     SlicerPlotter,
 )
+from .roi_readback_plots import _register_roi_readback_plotters
 from .scipp_to_holoviews import _all_coords_evenly_spaced
 from .static_plots import _register_static_plotters
 
@@ -42,6 +43,8 @@ class DataRequirements:
     max_dims: int
     required_extractor: type[UpdateExtractor] | None = None
     required_coords: list[str] = field(default_factory=list)
+    deny_coords: list[str] = field(default_factory=list)
+    required_dim_names: list[str] = field(default_factory=list)
     multiple_datasets: bool = True
     custom_validators: list[Callable[[sc.DataArray], bool]] = field(
         default_factory=list
@@ -67,9 +70,19 @@ class DataRequirements:
         if dataset.ndim < self.min_dims or dataset.ndim > self.max_dims:
             return False
 
-        # Check required coordinates
+        # Check required coordinates (must have ALL)
         for coord in self.required_coords:
             if coord not in dataset.coords:
+                return False
+
+        # Check denied coordinates (must NOT have ANY)
+        for coord in self.deny_coords:
+            if coord in dataset.coords:
+                return False
+
+        # Check required dimension names (must have ALL)
+        for dim_name in self.required_dim_names:
+            if dim_name not in dataset.dims:
                 return False
 
         # Run custom validators
@@ -271,7 +284,9 @@ plotter_registry.register_plotter(
     name='lines',
     title='Lines',
     description='Plot the data as line plots.',
-    data_requirements=DataRequirements(min_dims=1, max_dims=1, multiple_datasets=True),
+    data_requirements=DataRequirements(
+        min_dims=1, max_dims=1, multiple_datasets=True, deny_coords=['roi_index']
+    ),
     factory=LinePlotter.from_params,
 )
 
@@ -364,3 +379,6 @@ plotter_registry.register_plotter(
 
 # Register static plotters (rectangles, vlines, hlines)
 _register_static_plotters()
+
+# Register ROI readback plotters (rectangles_readback, polygons_readback)
+_register_roi_readback_plotters()
