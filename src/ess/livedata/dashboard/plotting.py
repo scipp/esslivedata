@@ -13,6 +13,10 @@ import pydantic
 import scipp as sc
 
 from ..handlers.detector_view_specs import DetectorROIAuxSources
+from .correlation_histogram import (
+    SimplifiedCorrelationHistogram1dParams,
+    SimplifiedCorrelationHistogram2dParams,
+)
 from .extractors import FullHistoryExtractor, UpdateExtractor
 from .plot_params import PlotParamsROIDetector
 from .plots import (
@@ -359,6 +363,72 @@ plotter_registry.register_plotter(
     data_requirements=DataRequirements(min_dims=2, max_dims=2, multiple_datasets=True),
     spec_requirements=SpecRequirements(requires_aux_sources=[DetectorROIAuxSources]),
     factory=_roi_detector_plotter_factory,
+)
+
+
+def _correlation_histogram_1d_factory(
+    params: SimplifiedCorrelationHistogram1dParams,
+) -> Plotter:
+    """
+    Dummy factory for 1D correlation histogram plotter.
+
+    This plotter is handled as a special case in PlotOrchestrator since it
+    requires multiple data sources (primary timeseries + correlation axis).
+    This factory exists only for registration purposes to enable UI integration.
+    """
+    raise NotImplementedError(
+        "1D correlation histogram plotter is handled specially in PlotOrchestrator"
+    )
+
+
+def _correlation_histogram_2d_factory(
+    params: SimplifiedCorrelationHistogram2dParams,
+) -> Plotter:
+    """
+    Dummy factory for 2D correlation histogram plotter.
+
+    This plotter is handled as a special case in PlotOrchestrator since it
+    requires multiple data sources (primary timeseries + 2 correlation axes).
+    This factory exists only for registration purposes to enable UI integration.
+    """
+    raise NotImplementedError(
+        "2D correlation histogram plotter is handled specially in PlotOrchestrator"
+    )
+
+
+plotter_registry.register_plotter(
+    name='correlation_histogram_1d',
+    title='Correlation Histogram 1D',
+    description=(
+        'Create a 1D histogram correlating the selected timeseries against another '
+        'timeseries axis. Useful for visualizing how data varies with a parameter '
+        'like temperature or motor position.'
+    ),
+    data_requirements=DataRequirements(
+        min_dims=0,
+        max_dims=0,
+        multiple_datasets=True,
+        required_extractor=FullHistoryExtractor,
+    ),
+    factory=_correlation_histogram_1d_factory,
+)
+
+
+plotter_registry.register_plotter(
+    name='correlation_histogram_2d',
+    title='Correlation Histogram 2D',
+    description=(
+        'Create a 2D histogram correlating the selected timeseries against two '
+        'timeseries axes. Useful for visualizing how data varies with two parameters '
+        'simultaneously.'
+    ),
+    data_requirements=DataRequirements(
+        min_dims=0,
+        max_dims=0,
+        multiple_datasets=True,
+        required_extractor=FullHistoryExtractor,
+    ),
+    factory=_correlation_histogram_2d_factory,
 )
 
 
