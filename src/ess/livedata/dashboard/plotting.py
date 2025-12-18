@@ -16,8 +16,6 @@ from ..handlers.detector_view_specs import DetectorROIAuxSources
 from .correlation_plotter import (
     CorrelationHistogram1dPlotter,
     CorrelationHistogram2dPlotter,
-    SimplifiedCorrelationHistogram1dParams,
-    SimplifiedCorrelationHistogram2dParams,
 )
 from .extractors import FullHistoryExtractor, UpdateExtractor
 from .plot_params import PlotParamsROIDetector
@@ -368,20 +366,6 @@ plotter_registry.register_plotter(
 )
 
 
-def _correlation_histogram_1d_factory(
-    params: SimplifiedCorrelationHistogram1dParams,
-) -> CorrelationHistogram1dPlotter:
-    """Factory for 1D correlation histogram plotter."""
-    return CorrelationHistogram1dPlotter(params=params)
-
-
-def _correlation_histogram_2d_factory(
-    params: SimplifiedCorrelationHistogram2dParams,
-) -> CorrelationHistogram2dPlotter:
-    """Factory for 2D correlation histogram plotter."""
-    return CorrelationHistogram2dPlotter(params=params)
-
-
 plotter_registry.register_plotter(
     name='correlation_histogram_1d',
     title='Correlation Histogram 1D',
@@ -396,7 +380,7 @@ plotter_registry.register_plotter(
         multiple_datasets=True,
         required_extractor=FullHistoryExtractor,
     ),
-    factory=_correlation_histogram_1d_factory,
+    factory=CorrelationHistogram1dPlotter.from_params,
 )
 
 
@@ -414,7 +398,7 @@ plotter_registry.register_plotter(
         multiple_datasets=True,
         required_extractor=FullHistoryExtractor,
     ),
-    factory=_correlation_histogram_2d_factory,
+    factory=CorrelationHistogram2dPlotter.from_params,
 )
 
 
