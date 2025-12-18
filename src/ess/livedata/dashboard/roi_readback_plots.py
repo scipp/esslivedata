@@ -118,6 +118,7 @@ class RectanglesReadbackPlotter(Plotter):
         style = self._params.style
         return hv.Rectangles(rectangles, vdims=['color']).opts(
             color='color',
+            line_color='color',
             fill_alpha=style.fill_alpha,
             line_width=style.line_width,
         )
@@ -211,6 +212,7 @@ class PolygonsReadbackPlotter(Plotter):
         style = self._params.style
         return hv.Polygons(polygons, vdims=['color']).opts(
             color='color',
+            line_color='color',
             fill_alpha=style.fill_alpha,
             line_width=style.line_width,
         )
