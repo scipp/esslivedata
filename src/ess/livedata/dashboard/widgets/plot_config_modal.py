@@ -958,6 +958,21 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
                 ),
             )
             initial_source_names = self._initial_config.source_names
+        elif (
+            self._plotter_selection.plot_name in CORRELATION_HISTOGRAM_PLOTTERS
+            and self._plotter_selection.correlation_axes
+        ):
+            # For new correlation histograms, pre-populate axis source names
+            from ess.livedata.dashboard.configuration_adapter import ConfigurationState
+
+            axis_sources = self._plotter_selection.correlation_axes
+            bins_params: dict[str, str] = {}
+            if len(axis_sources) >= 1 and axis_sources[0].source_names:
+                bins_params['x_axis_source'] = axis_sources[0].source_names[0]
+            if len(axis_sources) >= 2 and axis_sources[1].source_names:
+                bins_params['y_axis_source'] = axis_sources[1].source_names[0]
+            if bins_params:
+                config_state = ConfigurationState(params={'bins': bins_params})
 
         config_adapter = PlotConfigurationAdapter(
             plot_spec=plot_spec,
