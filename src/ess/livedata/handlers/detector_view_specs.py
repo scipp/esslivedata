@@ -126,18 +126,13 @@ class DetectorViewOutputs(WorkflowOutputsBase):
     )
 
     # ROI geometry readbacks
-    # NOTE: The title MUST match the DataArray.name produced by
-    # to_concatenated_data_array because job_manager.py overwrites DataArray.name
-    # with the field title. The ROI parser relies on the name to determine the
-    # ROI type. This coupling between title and serialization format is fragile
-    # and should be addressed in the future.
     roi_rectangle: sc.DataArray = pydantic.Field(
-        title='rectangles',
+        title='Rectangle ROI (readback)',
         description='Current rectangle ROI geometries confirmed by backend.',
         default_factory=lambda: models.RectangleROI.to_concatenated_data_array({}),
     )
     roi_polygon: sc.DataArray = pydantic.Field(
-        title='polygons',
+        title='Polygon ROI (readback)',
         description='Current polygon ROI geometries confirmed by backend.',
         default_factory=lambda: models.PolygonROI.to_concatenated_data_array({}),
     )

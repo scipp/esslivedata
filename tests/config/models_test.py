@@ -290,7 +290,6 @@ class TestRectangleROI:
         )
         da = roi.to_data_array()
 
-        assert da.name == models.ROIType.RECTANGLE
         assert list(da.dims) == ['bounds']
         assert da.shape == (2,)
         assert 'x' in da.coords
@@ -301,13 +300,13 @@ class TestRectangleROI:
         assert str(da.coords['y'].unit) == 'mm'
 
     def test_from_data_array(self):
-        # Create a DataArray
+        # Create a DataArray with 'bounds' dimension (identifies rectangle type)
         data = sc.array(dims=['bounds'], values=[1, 1], dtype='int32', unit='')
         coords = {
             'x': sc.array(dims=['bounds'], values=[10.0, 20.0], unit='mm'),
             'y': sc.array(dims=['bounds'], values=[5.0, 15.0], unit='mm'),
         }
-        da = sc.DataArray(data, coords=coords, name=models.ROIType.RECTANGLE)
+        da = sc.DataArray(data, coords=coords)
 
         # Convert back to ROI
         roi = models.ROI.from_data_array(da)
@@ -425,7 +424,6 @@ class TestPolygonROI:
         )
         da = roi.to_data_array()
 
-        assert da.name == models.ROIType.POLYGON
         assert list(da.dims) == ['vertex']
         assert da.shape == (3,)
         assert 'x' in da.coords
@@ -434,14 +432,14 @@ class TestPolygonROI:
         np.testing.assert_array_equal(da.coords['y'].values, [0.0, 0.0, 10.0])
 
     def test_from_data_array(self):
-        # Create a DataArray
+        # Create a DataArray with 'vertex' dimension (identifies polygon type)
         n = 4
         data = sc.array(dims=['vertex'], values=np.ones(n, dtype=np.int32), unit='')
         coords = {
             'x': sc.array(dims=['vertex'], values=[0.0, 10.0, 10.0, 0.0], unit='mm'),
             'y': sc.array(dims=['vertex'], values=[0.0, 0.0, 10.0, 10.0], unit='mm'),
         }
-        da = sc.DataArray(data, coords=coords, name=models.ROIType.POLYGON)
+        da = sc.DataArray(data, coords=coords)
 
         # Convert back to ROI
         roi = models.ROI.from_data_array(da)
@@ -530,8 +528,7 @@ class TestEllipseROI:
         )
         da = roi.to_data_array()
 
-        assert da.name == models.ROIType.ELLIPSE
-        assert list(da.dims) == ['dim']
+        assert list(da.dims) == ['ellipse']
         assert da.shape == (2,)
         assert 'center' in da.coords
         assert 'radius' in da.coords
@@ -542,13 +539,13 @@ class TestEllipseROI:
         assert str(da.coords['rotation'].unit) == 'deg'
 
     def test_from_data_array(self):
-        # Create a DataArray
-        data = sc.array(dims=['dim'], values=[1, 1], dtype='int32', unit='')
+        # Create a DataArray with 'ellipse' dimension (identifies ellipse type)
+        data = sc.array(dims=['ellipse'], values=[1, 1], dtype='int32', unit='')
         coords = {
-            'center': sc.array(dims=['dim'], values=[10.0, 20.0], unit='mm'),
-            'radius': sc.array(dims=['dim'], values=[5.0, 3.0], unit='mm'),
+            'center': sc.array(dims=['ellipse'], values=[10.0, 20.0], unit='mm'),
+            'radius': sc.array(dims=['ellipse'], values=[5.0, 3.0], unit='mm'),
         }
-        da = sc.DataArray(data, coords=coords, name=models.ROIType.ELLIPSE)
+        da = sc.DataArray(data, coords=coords)
         da.coords['rotation'] = sc.scalar(45.0, unit='deg')
 
         # Convert back to ROI
@@ -564,12 +561,12 @@ class TestEllipseROI:
 
     def test_from_data_array_no_rotation(self):
         # Create a DataArray without rotation coordinate
-        data = sc.array(dims=['dim'], values=[1, 1], dtype='int32', unit='')
+        data = sc.array(dims=['ellipse'], values=[1, 1], dtype='int32', unit='')
         coords = {
-            'center': sc.array(dims=['dim'], values=[10.0, 20.0], unit='mm'),
-            'radius': sc.array(dims=['dim'], values=[5.0, 3.0], unit='mm'),
+            'center': sc.array(dims=['ellipse'], values=[10.0, 20.0], unit='mm'),
+            'radius': sc.array(dims=['ellipse'], values=[5.0, 3.0], unit='mm'),
         }
-        da = sc.DataArray(data, coords=coords, name=models.ROIType.ELLIPSE)
+        da = sc.DataArray(data, coords=coords)
 
         # Convert back to ROI - should default to 0.0 rotation
         roi = models.ROI.from_data_array(da)
@@ -626,26 +623,18 @@ class TestEllipseROI:
 
 
 class TestROIDispatch:
-    def test_from_data_array_missing_name(self):
-        data = sc.array(dims=['bounds'], values=[1, 1], dtype='int32', unit='')
+    def test_from_data_array_unknown_dimension(self):
+        """Unknown dimension name should raise ValueError."""
+        data = sc.array(dims=['unknown'], values=[1, 1], dtype='int32', unit='')
         coords = {
-            'x': sc.array(dims=['bounds'], values=[10.0, 20.0], unit='mm'),
-            'y': sc.array(dims=['bounds'], values=[5.0, 15.0], unit='mm'),
+            'x': sc.array(dims=['unknown'], values=[10.0, 20.0], unit='mm'),
+            'y': sc.array(dims=['unknown'], values=[5.0, 15.0], unit='mm'),
         }
-        da = sc.DataArray(data, coords=coords)  # No name
+        da = sc.DataArray(data, coords=coords)
 
-        with pytest.raises(ValueError, match="DataArray missing name"):
-            models.ROI.from_data_array(da)
-
-    def test_from_data_array_unknown_type(self):
-        data = sc.array(dims=['bounds'], values=[1, 1], dtype='int32', unit='')
-        coords = {
-            'x': sc.array(dims=['bounds'], values=[10.0, 20.0], unit='mm'),
-            'y': sc.array(dims=['bounds'], values=[5.0, 15.0], unit='mm'),
-        }
-        da = sc.DataArray(data, coords=coords, name='unknown_type')
-
-        with pytest.raises(ValueError, match="Unknown ROI type: unknown_type"):
+        with pytest.raises(
+            ValueError, match="Cannot determine ROI type from dimension"
+        ):
             models.ROI.from_data_array(da)
 
 
@@ -687,9 +676,6 @@ class TestMultipleRectangleROI:
             da.coords['y'].values, [30.0, 40.0, 70.0, 80.0, 120.0, 130.0]
         )
 
-        # Name should indicate collection
-        assert da.name == 'rectangles'
-
     def test_concatenate_empty_dict(self):
         """Empty dict should produce empty DataArray."""
         rois = {}
@@ -717,14 +703,14 @@ class TestMultipleRectangleROI:
 
     def test_from_concatenated_data_array(self):
         """Should reconstruct dict of ROIs from concatenated DataArray."""
-        # Create concatenated DataArray manually
+        # Create concatenated DataArray ('bounds' dimension identifies rectangles)
         data = sc.ones(dims=['bounds'], shape=[4], dtype='int32', unit='')
         coords = {
             'x': sc.array(dims=['bounds'], values=[10.0, 20.0, 50.0, 60.0], unit='mm'),
             'y': sc.array(dims=['bounds'], values=[30.0, 40.0, 70.0, 80.0], unit='mm'),
             'roi_index': sc.array(dims=['bounds'], values=[0, 0, 1, 1], dtype='int32'),
         }
-        da = sc.DataArray(data, coords=coords, name='rectangles')
+        da = sc.DataArray(data, coords=coords)
 
         rois = models.RectangleROI.from_concatenated_data_array(da)
 
@@ -823,9 +809,6 @@ class TestMultiplePolygonROI:
             da.coords['roi_index'].values, [0, 0, 0, 1, 1, 1, 1]
         )
 
-        # Name should indicate collection
-        assert da.name == 'polygons'
-
     def test_concatenate_empty_dict(self):
         """Empty dict should produce empty DataArray."""
         rois = {}
@@ -838,6 +821,7 @@ class TestMultiplePolygonROI:
 
     def test_from_concatenated_data_array(self):
         """Should reconstruct dict of polygons from concatenated DataArray."""
+        # The 'vertex' dimension identifies this as polygons
         data = sc.ones(dims=['vertex'], shape=[7], dtype='int32', unit='')
         coords = {
             'x': sc.array(
@@ -854,7 +838,7 @@ class TestMultiplePolygonROI:
                 dims=['vertex'], values=[0, 0, 0, 1, 1, 1, 1], dtype='int32'
             ),
         }
-        da = sc.DataArray(data, coords=coords, name='polygons')
+        da = sc.DataArray(data, coords=coords)
 
         rois = models.PolygonROI.from_concatenated_data_array(da)
 
@@ -908,41 +892,41 @@ class TestMultipleEllipseROI:
 
         da = models.EllipseROI.to_concatenated_data_array(rois)
 
-        # Should have dim dimension with 4 elements (2 ROIs x 2 dims each)
-        assert list(da.dims) == ['dim']
+        # Should have ellipse dimension with 4 elements (2 ROIs x 2 dims each)
+        assert list(da.dims) == ['ellipse']
         assert da.shape == (4,)
 
         # Should have roi_index coordinate mapping dims to ellipses
         assert 'roi_index' in da.coords
         np.testing.assert_array_equal(da.coords['roi_index'].values, [0, 0, 1, 1])
 
-        # Name should indicate collection
-        assert da.name == 'ellipses'
-
     def test_concatenate_empty_dict(self):
         """Empty dict should produce empty DataArray."""
         rois = {}
         da = models.EllipseROI.to_concatenated_data_array(rois)
 
-        assert list(da.dims) == ['dim']
+        assert list(da.dims) == ['ellipse']
         assert da.shape == (0,)
         assert 'roi_index' in da.coords
         assert len(da.coords['roi_index']) == 0
 
     def test_from_concatenated_data_array(self):
         """Should reconstruct dict of ellipses from concatenated DataArray."""
-        data = sc.ones(dims=['dim'], shape=[4], dtype='int32', unit='')
+        # The 'ellipse' dimension identifies this as ellipses
+        data = sc.ones(dims=['ellipse'], shape=[4], dtype='int32', unit='')
         coords = {
             'center': sc.array(
-                dims=['dim'], values=[10.0, 20.0, 50.0, 60.0], unit='mm'
+                dims=['ellipse'], values=[10.0, 20.0, 50.0, 60.0], unit='mm'
             ),
-            'radius': sc.array(dims=['dim'], values=[5.0, 3.0, 8.0, 4.0], unit='mm'),
+            'radius': sc.array(
+                dims=['ellipse'], values=[5.0, 3.0, 8.0, 4.0], unit='mm'
+            ),
             'rotation': sc.array(
-                dims=['dim'], values=[45.0, 45.0, 90.0, 90.0], unit='deg'
+                dims=['ellipse'], values=[45.0, 45.0, 90.0, 90.0], unit='deg'
             ),
-            'roi_index': sc.array(dims=['dim'], values=[0, 0, 1, 1], dtype='int32'),
+            'roi_index': sc.array(dims=['ellipse'], values=[0, 0, 1, 1], dtype='int32'),
         }
-        da = sc.DataArray(data, coords=coords, name='ellipses')
+        da = sc.DataArray(data, coords=coords)
 
         rois = models.EllipseROI.from_concatenated_data_array(da)
 
