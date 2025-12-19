@@ -118,6 +118,17 @@ class PlottingController:
         """
         return plotter_registry.get_spec(plot_name)
 
+    def get_static_plotters(self) -> dict[str, PlotterSpec]:
+        """
+        Get available static plotters (for overlays without data sources).
+
+        Returns
+        -------
+        :
+            Dictionary of static plotter names to their specifications.
+        """
+        return plotter_registry.get_static_plotters()
+
     def setup_data_pipeline(
         self,
         job_number: JobNumber,

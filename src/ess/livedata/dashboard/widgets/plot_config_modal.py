@@ -29,6 +29,16 @@ from ess.livedata.dashboard.plotting import PlotterSpec
 from .configuration_widget import ConfigurationPanel
 from .wizard import Wizard, WizardStep
 
+# Synthetic workflow ID for static overlays (no actual workflow subscription)
+STATIC_OVERLAY_NAMESPACE = "static_overlay"
+STATIC_OVERLAY_WORKFLOW = WorkflowId(
+    instrument="static",
+    namespace=STATIC_OVERLAY_NAMESPACE,
+    name="geometric",
+    version=1,
+)
+STATIC_OVERLAY_OUTPUT = "static"
+
 # CSS to disable button transition animations for snappier UI response
 _NO_TRANSITION_CSS = """
 .bk-btn {
@@ -92,6 +102,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         self._namespace_buttons = self._create_namespace_buttons()
         self._workflow_buttons = self._create_workflow_buttons()
         self._output_buttons = self._create_output_buttons()
+        self._name_input = self._create_name_input()
 
         # Add buttons to containers
         self._workflow_container.append(self._workflow_buttons)
@@ -133,7 +144,11 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
                 self._workflow_buttons.value = initial_config.workflow_id
                 self._update_output_options()
                 self._selected_output = initial_config.output_name
-                self._output_buttons.value = initial_config.output_name
+                # Set the appropriate widget value based on whether static overlay
+                if initial_config.is_static():
+                    self._name_input.value = initial_config.output_name
+                else:
+                    self._output_buttons.value = initial_config.output_name
             elif self._namespace_buttons.options:
                 # New mode: select first available option
                 namespace_value = next(iter(self._namespace_buttons.options.values()))
@@ -145,15 +160,20 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
                     self._selected_workflow_id = workflow_value
                     self._workflow_buttons.value = workflow_value
                     self._update_output_options()
-                    if self._output_buttons.options:
-                        output_value = next(iter(self._output_buttons.options.values()))
-                        self._selected_output = output_value
-                        self._output_buttons.value = output_value
+                    # For static overlay, don't auto-select (require user input)
+                    if self._selected_workflow_id != STATIC_OVERLAY_WORKFLOW:
+                        if self._output_buttons.options:
+                            output_value = next(
+                                iter(self._output_buttons.options.values())
+                            )
+                            self._selected_output = output_value
+                            self._output_buttons.value = output_value
 
         # Bind handlers after initial values are set
         self._namespace_buttons.param.watch(self._on_namespace_change, 'value')
         self._workflow_buttons.param.watch(self._on_workflow_change, 'value')
         self._output_buttons.param.watch(self._on_output_change, 'value')
+        self._name_input.param.watch(self._on_name_input_change, 'value')
         self._validate()
 
     def _create_namespace_buttons(self) -> pn.widgets.RadioButtonGroup:
@@ -163,6 +183,8 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             reverse=True,
         )
         options = {self._format_namespace_label(ns): ns for ns in namespaces}
+        # Add synthetic "Static Overlay" namespace for geometric overlays
+        options["Static Overlay"] = STATIC_OVERLAY_NAMESPACE
 
         return pn.widgets.RadioButtonGroup(
             name='Namespace',
@@ -198,6 +220,14 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             stylesheets=[_NO_TRANSITION_CSS],
         )
 
+    def _create_name_input(self) -> pn.widgets.TextInput:
+        """Create text input for static overlay naming (handler bound later)."""
+        return pn.widgets.TextInput(
+            name='Overlay Name',
+            placeholder='Enter a name for this overlay...',
+            sizing_mode='stretch_width',
+        )
+
     def _on_namespace_change(self, event) -> None:
         """Handle namespace selection change."""
         # Batch all cascading widget updates
@@ -213,7 +243,11 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
                     self._selected_workflow_id = first_workflow
                     self._workflow_buttons.value = first_workflow
                     self._update_output_options()
-                    if self._output_buttons.options:
+                    # Skip auto-selection for static overlays (user must enter name)
+                    if (
+                        first_workflow != STATIC_OVERLAY_WORKFLOW
+                        and self._output_buttons.options
+                    ):
                         first_output = next(iter(self._output_buttons.options.values()))
                         self._selected_output = first_output
                         self._output_buttons.value = first_output
@@ -231,8 +265,11 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
                 self._selected_workflow_id = event.new
                 self._selected_output = None
                 self._update_output_options()
-                # Select first output
-                if self._output_buttons.options:
+                # Skip auto-selection for static overlays (user must enter name)
+                if (
+                    event.new != STATIC_OVERLAY_WORKFLOW
+                    and self._output_buttons.options
+                ):
                     first_output = next(iter(self._output_buttons.options.values()))
                     self._selected_output = first_output
                     self._output_buttons.value = first_output
@@ -249,10 +286,22 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             self._selected_output = None
         self._validate()
 
+    def _on_name_input_change(self, event) -> None:
+        """Handle static overlay name input change."""
+        name = event.new.strip() if event.new else ''
+        # Store non-empty name, or None if empty/whitespace
+        self._selected_output = name if name else None
+        self._validate()
+
     def _update_workflow_options(self) -> None:
         """Update workflow button options based on selected namespace."""
         if self._selected_namespace is None:
             self._workflow_buttons.options = {}
+            return
+
+        # Handle synthetic static overlay namespace
+        if self._selected_namespace == STATIC_OVERLAY_NAMESPACE:
+            self._workflow_buttons.options = {"Geometric": STATIC_OVERLAY_WORKFLOW}
             return
 
         filtered_workflows = [
@@ -274,6 +323,19 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         if self._selected_workflow_id is None:
             self._output_buttons.options = {}
             return
+
+        # Handle synthetic static overlay workflow - show name input instead of buttons
+        if self._selected_workflow_id == STATIC_OVERLAY_WORKFLOW:
+            self._output_container.clear()
+            self._name_input.value = ''  # Clear for new overlays
+            self._output_container.append(self._name_input)
+            return
+
+        # For regular workflows, ensure output buttons are shown (in case we're
+        # coming from static overlay which swapped in the name input)
+        if self._name_input in self._output_container:
+            self._output_container.clear()
+            self._output_container.append(self._output_buttons)
 
         workflow_spec = self._workflow_registry.get(self._selected_workflow_id)
         if workflow_spec is None:
@@ -437,6 +499,19 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             self._content_container.append(pn.pane.Markdown("*No output selected*"))
             self._radio_group = None
             self._notify_ready_changed(False)
+            return
+
+        # Handle static overlay workflow - show static plotters
+        if self._output_selection.workflow_id == STATIC_OVERLAY_WORKFLOW:
+            available_plots = self._plotting_controller.get_static_plotters()
+            if available_plots:
+                self._create_radio_buttons(available_plots)
+            else:
+                self._content_container.append(
+                    pn.pane.Markdown("*No static plotters available.*")
+                )
+                self._radio_group = None
+                self._notify_ready_changed(False)
             return
 
         workflow_spec = self._workflow_registry.get(self._output_selection.workflow_id)
@@ -655,14 +730,21 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         if self._plotter_selection is None:
             return
 
-        workflow_spec = self._workflow_registry.get(self._plotter_selection.workflow_id)
-        if workflow_spec is None:
-            self._show_error('Workflow spec not found')
-            return
-
-        if not workflow_spec.source_names:
-            self._show_error('No sources available for workflow')
-            return
+        # Handle static overlay workflow - no workflow_spec, empty sources
+        is_static = self._plotter_selection.workflow_id == STATIC_OVERLAY_WORKFLOW
+        if is_static:
+            source_names: list[str] = []
+        else:
+            workflow_spec = self._workflow_registry.get(
+                self._plotter_selection.workflow_id
+            )
+            if workflow_spec is None:
+                self._show_error('Workflow spec not found')
+                return
+            if not workflow_spec.source_names:
+                self._show_error('No sources available for workflow')
+                return
+            source_names = workflow_spec.source_names
 
         try:
             plot_spec = self._plotting_controller.get_spec(
@@ -691,7 +773,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
 
         config_adapter = PlotConfigurationAdapter(
             plot_spec=plot_spec,
-            source_names=workflow_spec.source_names,
+            source_names=source_names,
             success_callback=self._on_config_collected,
             config_state=config_state,
             initial_source_names=initial_source_names,
@@ -706,13 +788,19 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         self, selected_sources: list[str], params: pydantic.BaseModel | dict[str, Any]
     ) -> None:
         """Callback from adapter - store result for commit() to return."""
+        from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig
+
         if self._plotter_selection is None:
             return
-        self._last_config_result = PlotConfig(
+        # Create PlotConfig with data_sources list (single data source)
+        data_source = DataSourceConfig(
             workflow_id=self._plotter_selection.workflow_id,
-            output_name=self._plotter_selection.output_name,
-            plot_name=self._plotter_selection.plot_name,
             source_names=selected_sources,
+            output_name=self._plotter_selection.output_name,
+        )
+        self._last_config_result = PlotConfig(
+            data_sources=[data_source],
+            plot_name=self._plotter_selection.plot_name,
             params=params,
         )
 

@@ -7,6 +7,7 @@ import pytest
 
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
+    DataSourceConfig,
     GridId,
     PlotConfig,
     PlotGridConfig,
@@ -215,16 +216,34 @@ def job_number():
     return uuid.uuid4()
 
 
+def make_plot_config(
+    workflow_id,
+    source_names=None,
+    output_name='test_output',
+    plot_name='test_plot',
+    params=None,
+):
+    """Helper to create a PlotConfig with a single data source."""
+    if source_names is None:
+        source_names = ['source1', 'source2']
+    if params is None:
+        params = FakePlotParams(param1='value1')
+    data_source = DataSourceConfig(
+        workflow_id=workflow_id,
+        source_names=source_names,
+        output_name=output_name,
+    )
+    return PlotConfig(
+        data_sources=[data_source],
+        plot_name=plot_name,
+        params=params,
+    )
+
+
 @pytest.fixture
 def plot_config(workflow_id):
     """Create a basic PlotConfig."""
-    return PlotConfig(
-        workflow_id=workflow_id,
-        output_name='test_output',
-        source_names=['source1', 'source2'],
-        plot_name='test_plot',
-        params=FakePlotParams(param1='value1'),
-    )
+    return make_plot_config(workflow_id)
 
 
 @pytest.fixture
@@ -482,10 +501,10 @@ class TestCellManagement:
         grid = plot_orchestrator.get_grid(grid_id)
         layer_id = grid.cells[cell_id].layers[0].layer_id
 
-        new_config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='new_output',
+        new_config = make_plot_config(
+            workflow_id,
             source_names=['new_source'],
+            output_name='new_output',
             plot_name='new_plot',
             params=FakePlotParams(new_param='new_value'),
         )
@@ -500,18 +519,18 @@ class TestCellManagement:
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
 
         geometry_1 = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-        config_1 = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='out1',
+        config_1 = make_plot_config(
+            workflow_id,
             source_names=['src1'],
+            output_name='out1',
             plot_name='plot1',
             params=FakePlotParams(),
         )
         geometry_2 = CellGeometry(row=1, col=1, row_span=1, col_span=1)
-        config_2 = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='out2',
+        config_2 = make_plot_config(
+            workflow_id,
             source_names=['src2'],
+            output_name='out2',
             plot_name='plot2',
             params=FakePlotParams(),
         )
@@ -641,18 +660,18 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
 
         # Add multiple cells with same workflow_id
         geometry_1 = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-        config_1 = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='out1',
+        config_1 = make_plot_config(
+            workflow_id,
             source_names=['src1'],
+            output_name='out1',
             plot_name='plot1',
             params=FakePlotParams(),
         )
         geometry_2 = CellGeometry(row=1, col=1, row_span=1, col_span=1)
-        config_2 = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='out2',
+        config_2 = make_plot_config(
+            workflow_id,
             source_names=['src2'],
+            output_name='out2',
             plot_name='plot2',
             params=FakePlotParams(),
         )
@@ -735,10 +754,10 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         layer_id = grid.cells[cell_id].layers[0].layer_id
 
         # Update to different workflow_id
-        new_config = PlotConfig(
-            workflow_id=workflow_id_2,
-            output_name='new_output',
+        new_config = make_plot_config(
+            workflow_id_2,
             source_names=['new_source'],
+            output_name='new_output',
             plot_name='new_plot',
             params=FakePlotParams(),
         )
@@ -957,10 +976,10 @@ class TestLifecycleEventNotifications:
         layer_id = grid.cells[cell_id].layers[0].layer_id
 
         # Update config
-        new_config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='new_output',
+        new_config = make_plot_config(
+            workflow_id,
             source_names=['new_source'],
+            output_name='new_output',
             plot_name='new_plot',
             params=FakePlotParams(),
         )
@@ -1155,10 +1174,10 @@ class TestCleanupAndResourceManagement:
 
         for i in range(3):
             geometry = CellGeometry(row=i, col=0, row_span=1, col_span=1)
-            config = PlotConfig(
-                workflow_id=workflow_id,
-                output_name=f'out{i}',
+            config = make_plot_config(
+                workflow_id,
                 source_names=[f'src{i}'],
+                output_name=f'out{i}',
                 plot_name=f'plot{i}',
                 params=FakePlotParams(),
             )
@@ -1301,10 +1320,10 @@ class TestLateSubscriberPlotRetrieval:
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-        config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='test_output',
+        config = make_plot_config(
+            workflow_id,
             source_names=['source1'],
+            output_name='test_output',
             plot_name='test_plot',
             params=FakePlotParams(),
         )
@@ -1360,10 +1379,10 @@ class TestLateSubscriberPlotRetrieval:
         cell_ids = []
         for i in range(3):
             geometry = CellGeometry(row=i, col=0, row_span=1, col_span=1)
-            config = PlotConfig(
-                workflow_id=workflow_id,
-                output_name=f'output_{i}',
+            config = make_plot_config(
+                workflow_id,
                 source_names=[f'source_{i}'],
+                output_name=f'output_{i}',
                 plot_name=f'plot_{i}',
                 params=FakePlotParams(),
             )
@@ -1445,14 +1464,14 @@ class TestLateSubscriberPlotRetrieval:
             fake_data_service[result_key] = sc.scalar(1.0)
 
         # Verify plot exists (get_cell_state now returns layer_states, plot)
-        layer_states, plot1 = plot_orchestrator.get_cell_state(cell_id)
+        _, plot1 = plot_orchestrator.get_cell_state(cell_id)
         assert plot1 is not None
 
         # Update layer config while workflow is still running
-        new_config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='new_output',
+        new_config = make_plot_config(
+            workflow_id,
             source_names=['new_source'],
+            output_name='new_output',
             plot_name='new_plot',
             params=FakePlotParams(),
         )
@@ -1467,7 +1486,7 @@ class TestLateSubscriberPlotRetrieval:
         fake_data_service[result_key2] = sc.scalar(2.0)
 
         # Since workflow is still running, plot should be immediately recreated
-        layer_states2, plot2 = plot_orchestrator.get_cell_state(cell_id)
+        _, plot2 = plot_orchestrator.get_cell_state(cell_id)
         assert plot2 is not None
 
         # Verify plot was recreated with new config
@@ -1509,7 +1528,7 @@ class TestLateSubscriberPlotRetrieval:
             fake_data_service[result_key] = sc.scalar(1.0)
 
         # Verify plot exists
-        layer_states, plot = plot_orchestrator.get_cell_state(cell_id)
+        _, plot = plot_orchestrator.get_cell_state(cell_id)
         assert plot is not None
 
         # Remove cell
@@ -1544,10 +1563,10 @@ class TestSourceNameFiltering:
 
         # Create a plot that wants data from source_A
         geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-        config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='test_output',
+        config = make_plot_config(
+            workflow_id,
             source_names=['source_A'],  # Plot wants source_A
+            output_name='test_output',
             plot_name='test_plot',
             params=FakePlotParams(),
         )
@@ -1609,10 +1628,10 @@ class TestSourceNameFiltering:
 
         # Create a plot that wants data from BOTH source_A and source_B
         geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-        config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='test_output',
+        config = make_plot_config(
+            workflow_id,
             source_names=['source_A', 'source_B'],  # Plot wants BOTH
+            output_name='test_output',
             plot_name='test_plot',
             params=FakePlotParams(),
         )
@@ -1688,10 +1707,10 @@ class TestSourceNameFiltering:
         # NOW add the plot (late subscription)
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-        config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='test_output',
+        config = make_plot_config(
+            workflow_id,
             source_names=['source_A'],
+            output_name='test_output',
             plot_name='test_plot',
             params=FakePlotParams(),
         )
@@ -1736,10 +1755,10 @@ class TestSourceNameFiltering:
         # NOW add the plot wanting source_A (late subscription)
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
-        config = PlotConfig(
-            workflow_id=workflow_id,
-            output_name='test_output',
+        config = make_plot_config(
+            workflow_id,
             source_names=['source_A'],  # Plot wants A, but only B exists
+            output_name='test_output',
             plot_name='test_plot',
             params=FakePlotParams(),
         )
@@ -1762,3 +1781,81 @@ class TestSourceNameFiltering:
         assert (
             fake_plotting_controller.call_count() == 1
         ), "Plot should be created when correct source arrives"
+
+
+class TestPlotConfigIsStatic:
+    """Tests for PlotConfig.is_static() method."""
+
+    def test_is_static_returns_true_for_single_data_source_with_empty_source_names(
+        self, workflow_id
+    ):
+        """Static overlay marker: single data source with empty source_names."""
+        data_source = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=[],  # Empty source_names = static
+            output_name='My Custom Overlay',
+        )
+        config = PlotConfig(
+            data_sources=[data_source],
+            plot_name='rectangles',
+            params=FakePlotParams(),
+        )
+        assert config.is_static() is True
+
+    def test_is_static_returns_false_for_single_data_source_with_source_names(
+        self, workflow_id
+    ):
+        """Normal plot: single data source with actual source_names."""
+        data_source = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=['source1'],
+            output_name='result',
+        )
+        config = PlotConfig(
+            data_sources=[data_source],
+            plot_name='test_plot',
+            params=FakePlotParams(),
+        )
+        assert config.is_static() is False
+
+    def test_is_static_returns_false_for_empty_data_sources(self, workflow_id):
+        """Edge case: empty data_sources list is not static (invalid config)."""
+        config = PlotConfig(
+            data_sources=[],
+            plot_name='test_plot',
+            params=FakePlotParams(),
+        )
+        assert config.is_static() is False
+
+    def test_is_static_returns_false_for_multiple_data_sources(self, workflow_id):
+        """Future correlation histograms: multiple data sources are not static."""
+        data_source1 = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=[],
+            output_name='output1',
+        )
+        data_source2 = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=[],
+            output_name='output2',
+        )
+        config = PlotConfig(
+            data_sources=[data_source1, data_source2],
+            plot_name='test_plot',
+            params=FakePlotParams(),
+        )
+        assert config.is_static() is False
+
+    def test_static_config_can_access_output_name(self, workflow_id):
+        """Static overlay's output_name holds the user's custom name."""
+        data_source = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=[],
+            output_name='My Rectangles',
+        )
+        config = PlotConfig(
+            data_sources=[data_source],
+            plot_name='rectangles',
+            params=FakePlotParams(),
+        )
+        assert config.output_name == 'My Rectangles'

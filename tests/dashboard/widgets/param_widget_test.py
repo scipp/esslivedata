@@ -150,6 +150,17 @@ class TestWidgetTypeCreation:
         # Should still create an IntInput, not a TextInput fallback
         assert isinstance(widget.widgets["value"], pn.widgets.IntInput)
 
+    def test_color_field_creates_color_picker(self):
+        from ess.livedata.dashboard.static_plots import Color
+
+        class TestModel(pydantic.BaseModel):
+            color: Color = Color('#ff0000')
+
+        widget = ParamWidget(TestModel)
+
+        assert isinstance(widget.widgets["color"], pn.widgets.ColorPicker)
+        assert widget.widgets["color"].value == '#ff0000'
+
 
 class TestWidgetDefaultValues:
     """Tests for widget default values."""

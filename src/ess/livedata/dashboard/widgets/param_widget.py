@@ -8,6 +8,8 @@ import panel as pn
 import pydantic
 from pydantic_core import PydanticUndefined
 
+from ess.livedata.dashboard.static_plots import Color
+
 
 def snake_to_camel(snake_str: str) -> str:
     """Convert snake_case to camelCase."""
@@ -97,6 +99,11 @@ class ParamWidget:
             )
             checkbox = pn.widgets.Checkbox(value=default_value or False, **options)
             return pn.layout.Row(checkbox, tooltip, align='center')
+        elif field_type is Color:
+            return pn.widgets.ColorPicker(
+                value=default_value or '#ff0000',
+                **shared_options,
+            )
         elif field_type == Path or field_type is str:
             return pn.widgets.TextInput(
                 value=str(default_value) if default_value else "",
