@@ -895,6 +895,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
                 workflow_id=self._initial_config.workflow_id,
                 output_name=self._initial_config.output_name,
                 plot_name=self._initial_config.plot_name,
+                correlation_axes=list(self._initial_config.axis_sources),
             )
 
         if self._plotter_selection is None:
