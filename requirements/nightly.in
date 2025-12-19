@@ -8,6 +8,7 @@ jinja2
 pydantic>=2
 pooch
 essdiffraction>=25.11.1
+essreflectometry>=25.12.0
 esssans
 essspectroscopy>=25.11.1
 holoviews

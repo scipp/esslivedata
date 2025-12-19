@@ -52,24 +52,54 @@ class DetectorViewParams(pydantic.BaseModel):
     )
 
 
+def _make_nd_template(ndim: int, *, with_time_coord: bool = False) -> sc.DataArray:
+    """Create an empty template with the specified number of dimensions."""
+    coords = {'time': sc.scalar(0, unit='ns')} if with_time_coord else {}
+    if ndim == 0:
+        return sc.DataArray(sc.scalar(0, unit='counts'), coords=coords)
+    dims = [f'dim_{i}' for i in range(ndim)]
+    return sc.DataArray(
+        sc.zeros(dims=dims, shape=[0] * ndim, unit='counts'), coords=coords
+    )
+
+
+def _make_2d_template() -> sc.DataArray:
+    """Create an empty 2D template for cumulative outputs (no time coord)."""
+    return _make_nd_template(2)
+
+
+def _make_2d_template_with_time() -> sc.DataArray:
+    """Create an empty 2D template with time coord for current outputs."""
+    return _make_nd_template(2, with_time_coord=True)
+
+
+def _make_0d_template_with_time() -> sc.DataArray:
+    """Create an empty 0D template with time coord for scalar outputs."""
+    return _make_nd_template(0, with_time_coord=True)
+
+
 class DetectorViewOutputs(WorkflowOutputsBase):
     """Outputs for detector view workflows."""
 
     cumulative: sc.DataArray = pydantic.Field(
         title='Cumulative Counts',
         description='Time-integrated detector counts accumulated over all time.',
+        default_factory=_make_2d_template,
     )
     current: sc.DataArray = pydantic.Field(
         title='Current Counts',
         description='Detector counts for the current time window since last update.',
+        default_factory=_make_2d_template_with_time,
     )
     counts_total: sc.DataArray = pydantic.Field(
         title='Total Event Count',
         description='Total number of detector events in the current time window.',
+        default_factory=_make_0d_template_with_time,
     )
     counts_in_toa_range: sc.DataArray = pydantic.Field(
         title='Event Count in TOA Range',
         description='Number of detector events within the configured TOA range filter.',
+        default_factory=_make_0d_template_with_time,
     )
 
     # Stacked ROI spectra outputs (2D: roi x time_of_arrival)
@@ -79,7 +109,10 @@ class DetectorViewOutputs(WorkflowOutputsBase):
         'Stacked 2D array with roi coordinate containing ROI indices.',
         default_factory=lambda: sc.DataArray(
             sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
-            coords={'roi': sc.array(dims=['roi'], values=[], unit=None)},
+            coords={
+                'roi': sc.array(dims=['roi'], values=[], unit=None),
+                'time': sc.scalar(0, unit='ns'),
+            },
         ),
     )
     roi_spectra_cumulative: sc.DataArray = pydantic.Field(
@@ -108,6 +141,45 @@ class DetectorViewOutputs(WorkflowOutputsBase):
         description='Current polygon ROI geometries confirmed by backend.',
         default_factory=lambda: models.PolygonROI.to_concatenated_data_array({}),
     )
+
+
+def make_detector_view_outputs(output_ndim: int) -> type[DetectorViewOutputs]:
+    """
+    Create a DetectorViewOutputs subclass with spatial outputs of the given ndim.
+
+    Parameters
+    ----------
+    output_ndim:
+        Number of dimensions for spatial outputs (cumulative, current).
+        The counts outputs remain 0D scalars with time coord.
+
+    Returns
+    -------
+    :
+        A subclass of DetectorViewOutputs with appropriate default_factory templates.
+    """
+
+    def make_cumulative_template() -> sc.DataArray:
+        return _make_nd_template(output_ndim)
+
+    def make_current_template() -> sc.DataArray:
+        return _make_nd_template(output_ndim, with_time_coord=True)
+
+    class CustomDetectorViewOutputs(DetectorViewOutputs):
+        cumulative: sc.DataArray = pydantic.Field(
+            title='Cumulative Counts',
+            description='Time-integrated detector counts accumulated over all time.',
+            default_factory=make_cumulative_template,
+        )
+        current: sc.DataArray = pydantic.Field(
+            title='Current Counts',
+            description=(
+                'Detector counts for the current time window since last update.'
+            ),
+            default_factory=make_current_template,
+        )
+
+    return CustomDetectorViewOutputs
 
 
 class DetectorROIAuxSources(AuxSourcesBase):
@@ -248,6 +320,7 @@ def register_logical_detector_view_spec(
     description: str,
     source_names: list[str],
     roi_support: bool = True,
+    output_ndim: int | None = None,
 ) -> SpecHandle:
     """
     Register a logical detector view spec with custom metadata.
@@ -273,12 +346,21 @@ def register_logical_detector_view_spec(
         DetectorROIAuxSources which enables the ROI detector plotter.
         Set to False for views where ROI doesn't make sense (e.g., views
         that sum over dimensions internally).
+    output_ndim:
+        Number of dimensions for spatial outputs (cumulative, current).
+        Defaults to 2 for standard detector views. Set to 3 for views
+        that produce 3D output (e.g., ESTIA's strip/blade/wire folded view).
 
     Returns
     -------
     :
         A SpecHandle.
     """
+    outputs = (
+        make_detector_view_outputs(output_ndim)
+        if output_ndim is not None
+        else DetectorViewOutputs
+    )
     return instrument.register_spec(
         namespace="detector_data",
         name=name,
@@ -288,5 +370,5 @@ def register_logical_detector_view_spec(
         source_names=source_names,
         aux_sources=DetectorROIAuxSources if roi_support else None,
         params=DetectorViewParams,
-        outputs=DetectorViewOutputs,
+        outputs=outputs,
     )

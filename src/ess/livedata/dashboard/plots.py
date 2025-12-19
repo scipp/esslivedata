@@ -186,6 +186,35 @@ class Plotter(ABC):
             )
         return plot_data
 
+    @staticmethod
+    def _get_log_scale_clim(data: sc.DataArray) -> tuple[float, float] | None:
+        """
+        Return fallback clim for log scale if data is all NaN.
+
+        HoloViews' LogColorMapper fails when color_mapper.low is None (which
+        happens when all data is NaN). This provides explicit bounds to avoid
+        the "TypeError: '>' not supported between instances of 'NoneType' and 'int'"
+        error in _draw_colorbar. Limits are not returned if data is not 'None' as in
+        this case we let Holoviews handle the bounds.
+
+        Parameters
+        ----------
+        data:
+            Data array (after log scale masking, may contain NaN).
+
+        Returns
+        -------
+        :
+            Tuple of (low, high) bounds, or None if data has valid positive values.
+        """
+        vmin = float(data.data.nanmin().value)
+        vmax = float(data.data.nanmax().value)
+        # If all NaN, nanmin/nanmax return nan
+        if np.isnan(vmin) or np.isnan(vmax) or vmax <= vmin:
+            # Return placeholder bounds for empty/invalid data
+            return (1.0, 10.0)
+        return None
+
     def __call__(
         self, data: dict[ResultKey, sc.DataArray], **kwargs
     ) -> hv.Overlay | hv.Layout | hv.Element:
@@ -366,7 +395,12 @@ class ImagePlotter(Plotter):
         # value in the colormap, which is not what we want for, e.g., zeros on a log
         # scale plot. The nan values will be shown as transparent.
         histogram = to_holoviews(plot_data)
-        return histogram.opts(framewise=framewise, **self._base_opts)
+        opts = dict(self._base_opts)
+        opts['framewise'] = framewise
+        # Set explicit clim for log scale when data is all NaN to avoid HoloViews error
+        if use_log_scale and (clim := self._get_log_scale_clim(plot_data)) is not None:
+            opts['clim'] = clim
+        return histogram.opts(**opts)
 
 
 class SlicerPlotter(Plotter):
@@ -558,7 +592,12 @@ class SlicerPlotter(Plotter):
             framewise = True
 
         image = to_holoviews(plot_data)
-        return image.opts(framewise=framewise, **self._base_opts)
+        opts = dict(self._base_opts)
+        opts['framewise'] = framewise
+        # Set explicit clim for log scale when data is all NaN to avoid HoloViews error
+        if use_log_scale and (clim := self._get_log_scale_clim(plot_data)) is not None:
+            opts['clim'] = clim
+        return image.opts(**opts)
 
     def _slice_data(
         self, data: sc.DataArray, slice_dim: str, kwargs: dict
@@ -596,7 +635,9 @@ class SlicerPlotter(Plotter):
         # seem natural to use something like flat_dim = '/'.join(flatten_dims) instead,
         # but in practice that causes more trouble, since we lose connection to
         # the relevant coords.
-        if flatten_dims[1] in data.coords:
+        if (
+            coord := data.coords.get(flatten_dims[1])
+        ) is not None and coord.dims == flatten_dims:
             flat_dim = flatten_dims[1]
         else:
             flat_dim = '/'.join(flatten_dims)

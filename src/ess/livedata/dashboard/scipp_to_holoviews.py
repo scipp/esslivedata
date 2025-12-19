@@ -123,17 +123,80 @@ def _has_degenerate_dimension(data: sc.DataArray) -> bool:
 
 def _compute_coord_bounds(coord_values) -> tuple[float, float]:
     """
-    Compute bounds (min, max) for coordinate values.
+    Compute bounds with half-pixel extension for coordinate values.
 
-    For single-element coordinates, creates artificial bounds around the value.
-    For multi-element coordinates, returns min and max of values.
+    For Image plots, bounds should extend half a pixel beyond the outermost
+    coordinate values to properly represent the pixel coverage.
+
+    Parameters
+    ----------
+    coord_values:
+        Array of coordinate values (e.g., bin centers).
+
+    Returns
+    -------
+    :
+        Tuple of (min_bound, max_bound) with half-pixel extensions.
     """
     if len(coord_values) == 1:
         # Single element: create artificial bounds around the value
         center = float(coord_values[0])
         return center - 0.5, center + 0.5
     else:
-        return float(coord_values.min()), float(coord_values.max())
+        # Multiple elements: compute pixel size and extend by half-pixel
+        pixel_size = (coord_values.max() - coord_values.min()) / (len(coord_values) - 1)
+        min_bound = float(coord_values.min() - pixel_size / 2)
+        max_bound = float(coord_values.max() + pixel_size / 2)
+        return min_bound, max_bound
+
+
+def _compute_image_bounds_from_edges(
+    data: sc.DataArray, x_midpoints, y_midpoints
+) -> tuple[float, float, float, float]:
+    """
+    Compute exact bounds for hv.Image from edge coordinates.
+
+    When coordinates are bin edges, we compute bounds from the edge values
+    to avoid floating-point rounding errors from HoloViews' automatic inference.
+
+    Parameters
+    ----------
+    data:
+        DataArray with coordinates (may have bin edges).
+    x_midpoints:
+        Midpoint values for x dimension.
+    y_midpoints:
+        Midpoint values for y dimension.
+
+    Returns
+    -------
+    :
+        Tuple of (left, bottom, right, top) bounds.
+    """
+    x_dim = data.dims[1]
+    y_dim = data.dims[0]
+
+    # For x dimension
+    if _is_edges(data, x_dim):
+        # Use actual edge values
+        x_edges = data.coords[x_dim].values
+        left = float(x_edges[0])
+        right = float(x_edges[-1])
+    else:
+        # Use midpoint-based bounds with half-pixel extension
+        left, right = _compute_coord_bounds(x_midpoints)
+
+    # For y dimension
+    if _is_edges(data, y_dim):
+        # Use actual edge values
+        y_edges = data.coords[y_dim].values
+        bottom = float(y_edges[0])
+        top = float(y_edges[-1])
+    else:
+        # Use midpoint-based bounds with half-pixel extension
+        bottom, top = _compute_coord_bounds(y_midpoints)
+
+    return left, bottom, right, top
 
 
 def convert_image_2d(data: sc.DataArray) -> hv.Image:
@@ -154,13 +217,19 @@ def convert_image_2d(data: sc.DataArray) -> hv.Image:
     x_coords = _get_midpoints(data, data.dims[1]).values
     y_coords = _get_midpoints(data, data.dims[0]).values
 
-    if _has_degenerate_dimension(data):
-        # hv.Image cannot compute bounds for single-element dimensions.
-        # We pass just the array and explicit bounds instead of coordinate tuples.
-        left, right = _compute_coord_bounds(x_coords)
-        bottom, top = _compute_coord_bounds(y_coords)
+    # Check if we have bin edges - if so, compute exact bounds to avoid
+    # floating-point rounding errors from HoloViews' automatic inference
+    has_edges = any(_is_edges(data, dim) for dim in data.dims)
+
+    if _has_degenerate_dimension(data) or has_edges:
+        # Compute explicit bounds either for degenerate dimensions or bin edges
+        left, bottom, right, top = _compute_image_bounds_from_edges(
+            data, x_coords, y_coords
+        )
+        # Pass both coordinates and explicit bounds to maintain data structure
+        # while ensuring exact bounds from edges (avoids floating-point errors)
         return hv.Image(
-            data=data.values,
+            data=(x_coords, y_coords, data.values),
             bounds=(left, bottom, right, top),
             kdims=kdims,
             vdims=vdims,
