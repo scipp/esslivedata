@@ -6,7 +6,6 @@ Bifrost spectrometer factory implementations.
 
 from functools import cache
 
-import numpy as np
 import scipp as sc
 
 from ess.livedata.config import Instrument
@@ -266,17 +265,9 @@ def _combine_banks(*bank: sc.DataArray) -> sc.DataArray:
 def _to_flat_detector_view(obj: sc.Variable | sc.DataArray) -> sc.DataArray:
     da = sc.DataArray(obj) if isinstance(obj, sc.Variable) else obj
     da = da.to(dtype='float32')
-    # Padding between channels to make gaps visible
-    pad_pix = 10
-    da = sc.concat([da, sc.full_like(da['pixel', :pad_pix], value=np.nan)], dim='pixel')
-    # Padding between arc to make gaps visible
-    pad_tube = 1
-    da = sc.concat([da, sc.full_like(da['tube', :pad_tube], value=np.nan)], dim='tube')
-    da = da.flatten(dims=('arc', 'tube'), to='arc/tube').flatten(
+    return da.flatten(dims=('arc', 'tube'), to='arc/tube').flatten(
         dims=('channel', 'pixel'), to='channel/pixel'
     )
-    # Remove last padding
-    return da['channel/pixel', :-pad_pix]['arc/tube', :-pad_tube]
 
 
 def _create_base_reduction_workflow():
