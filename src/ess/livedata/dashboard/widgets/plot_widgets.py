@@ -1,180 +1,20 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Button and widget creation utilities for plot cells."""
+"""Widget creation utilities for plot cells."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import panel as pn
 
 from ...config.workflow_spec import WorkflowId, WorkflowSpec
+from ..buttons import ButtonStyles, create_tool_button
 from ..plot_params import WindowMode
 
 if TYPE_CHECKING:
     from ..plot_orchestrator import PlotConfig
-
-
-@dataclass(frozen=True)
-class ButtonStyles:
-    """Styling constants for plot cell buttons."""
-
-    # Colors
-    PRIMARY_BLUE = '#007bff'
-    DANGER_RED = '#dc3545'
-
-    # Dimensions
-    CELL_MARGIN = 2
-    TOOL_BUTTON_SIZE = 28
-
-    # Typography
-    TOOL_BUTTON_FONT_SIZE = '20px'
-
-
-def create_tool_button_stylesheet(button_color: str, hover_color: str) -> list[str]:
-    """
-    Create a stylesheet for tool buttons (close, gear, etc.).
-
-    Parameters
-    ----------
-    button_color:
-        Color for the button icon.
-    hover_color:
-        RGBA color for the hover background.
-
-    Returns
-    -------
-    :
-        List containing the stylesheet string.
-    """
-    return [
-        f"""
-        button {{
-            background-color: transparent !important;
-            border: none !important;
-            color: {button_color} !important;
-            font-weight: bold !important;
-            font-size: {ButtonStyles.TOOL_BUTTON_FONT_SIZE} !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            line-height: 1 !important;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            height: 100% !important;
-            width: 100% !important;
-        }}
-        button:hover {{
-            background-color: {hover_color} !important;
-        }}
-        """
-    ]
-
-
-def create_tool_button(
-    symbol: str,
-    button_color: str,
-    hover_color: str,
-    on_click_callback: Callable[[], None],
-) -> pn.widgets.Button:
-    """
-    Create a styled tool button for plot cells.
-
-    Parameters
-    ----------
-    symbol:
-        Unicode symbol to display on the button.
-    button_color:
-        Color for the button icon.
-    hover_color:
-        RGBA color for the hover background.
-    on_click_callback:
-        Callback function to invoke when the button is clicked.
-
-    Returns
-    -------
-    :
-        Panel Button widget styled as a tool button.
-    """
-    button = pn.widgets.Button(
-        name=symbol,
-        width=ButtonStyles.TOOL_BUTTON_SIZE,
-        height=ButtonStyles.TOOL_BUTTON_SIZE,
-        button_type='light',
-        sizing_mode='fixed',
-        margin=0,
-        stylesheets=create_tool_button_stylesheet(button_color, hover_color),
-    )
-    button.on_click(lambda _: on_click_callback())
-    return button
-
-
-def create_close_button(on_close_callback: Callable[[], None]) -> pn.widgets.Button:
-    """
-    Create a styled close button for plot cells.
-
-    Parameters
-    ----------
-    on_close_callback:
-        Callback function to invoke when the button is clicked.
-
-    Returns
-    -------
-    :
-        Panel Button widget styled as a close button.
-    """
-    return create_tool_button(
-        symbol='\u00d7',  # "X" multiplication sign
-        button_color=ButtonStyles.DANGER_RED,
-        hover_color='rgba(220, 53, 69, 0.1)',
-        on_click_callback=on_close_callback,
-    )
-
-
-def create_gear_button(on_gear_callback: Callable[[], None]) -> pn.widgets.Button:
-    """
-    Create a styled gear button for plot cells (configuration/settings).
-
-    Parameters
-    ----------
-    on_gear_callback:
-        Callback function to invoke when the button is clicked.
-
-    Returns
-    -------
-    :
-        Panel Button widget styled as a gear button.
-    """
-    return create_tool_button(
-        symbol='\u2699',  # Gear symbol
-        button_color=ButtonStyles.PRIMARY_BLUE,
-        hover_color='rgba(0, 123, 255, 0.1)',
-        on_click_callback=on_gear_callback,
-    )
-
-
-def create_add_button(on_add_callback: Callable[[], None]) -> pn.widgets.Button:
-    """
-    Create a styled plus button for adding a new layer to a plot cell.
-
-    Parameters
-    ----------
-    on_add_callback:
-        Callback function to invoke when the button is clicked.
-
-    Returns
-    -------
-    :
-        Panel Button widget styled as an add button.
-    """
-    return create_tool_button(
-        symbol='+',
-        button_color='#28a745',  # Green
-        hover_color='rgba(40, 167, 69, 0.1)',
-        on_click_callback=on_add_callback,
-    )
 
 
 def create_cell_toolbar(
@@ -184,6 +24,7 @@ def create_cell_toolbar(
     on_add_callback: Callable[[], None] | None = None,
     title: str | None = None,
     description: str | None = None,
+    stopped: bool = False,
 ) -> pn.Row:
     """
     Create a toolbar row containing title and buttons for plot cells.
@@ -207,15 +48,36 @@ def create_cell_toolbar(
         Optional title text to display on the left side of the toolbar.
     description:
         Optional description shown as tooltip when hovering over the title.
+    stopped:
+        If True, adds a visual indicator (border) showing workflow has ended.
 
     Returns
     -------
     :
         Panel Row widget containing the toolbar.
     """
-    gear_button = create_gear_button(on_gear_callback)
-    add_button = create_add_button(on_add_callback) if on_add_callback else None
-    close_button = create_close_button(on_close_callback)
+    gear_button = create_tool_button(
+        icon_name='settings',
+        button_color=ButtonStyles.PRIMARY_BLUE,
+        hover_color='rgba(0, 123, 255, 0.1)',
+        on_click_callback=on_gear_callback,
+    )
+    add_button = (
+        create_tool_button(
+            icon_name='plus',
+            button_color='#28a745',  # Green
+            hover_color='rgba(40, 167, 69, 0.1)',
+            on_click_callback=on_add_callback,
+        )
+        if on_add_callback
+        else None
+    )
+    close_button = create_tool_button(
+        icon_name='x',
+        button_color=ButtonStyles.DANGER_RED,
+        hover_color='rgba(220, 53, 69, 0.1)',
+        on_click_callback=on_close_callback,
+    )
 
     # Build left content: title and optional tooltip icon
     left_items: list = []
@@ -250,14 +112,21 @@ def create_cell_toolbar(
         right_buttons.append(add_button)
     right_buttons.append(close_button)
 
+    # Add border when workflow is stopped
+    styles = {}
+    if stopped:
+        styles['border'] = '2px solid #495057'  # Dark grey border
+        styles['border-radius'] = '4px'
+
     return pn.Row(
         *left_items,
         pn.Spacer(sizing_mode='stretch_width'),
         *right_buttons,
         sizing_mode='stretch_width',
         height=ButtonStyles.TOOL_BUTTON_SIZE,
-        margin=(margin, margin, 0, margin),
+        margin=(margin, margin, margin, margin),
         align='end',
+        styles=styles,
     )
 
 
@@ -341,6 +210,29 @@ def _format_window_info(params) -> str:
     return f'{duration_str} window'
 
 
+def _get_static_overlay_display_info(config: PlotConfig) -> tuple[str, str]:
+    """Get display info for a static overlay layer."""
+    from ..plotting import plotter_registry
+
+    plotter_name = config.plot_name
+    try:
+        spec = plotter_registry.get_spec(plotter_name)
+        plotter_title = spec.title
+    except KeyError:
+        plotter_title = plotter_name.replace('_', ' ').title()
+
+    # Use the user's custom name from output_name
+    custom_name = config.output_name
+
+    # Format title as "Plotter → Custom Name"
+    title = f'{plotter_title} &rarr; {custom_name}'
+
+    # Build description for tooltip
+    description = f'Static overlay: {plotter_title}\nName: {custom_name}'
+
+    return title, description
+
+
 def get_plot_cell_display_info(
     config: PlotConfig,
     workflow_registry: Mapping[WorkflowId, WorkflowSpec],
@@ -361,6 +253,10 @@ def get_plot_cell_display_info(
         Tuple of (title, description). Title is a short string for display,
         description is a longer string for tooltip.
     """
+    # Handle static overlays (single data source with empty source_names)
+    if config.is_static():
+        return _get_static_overlay_display_info(config)
+
     workflow_title, output_title = get_workflow_display_info(
         workflow_registry, config.workflow_id, config.output_name
     )

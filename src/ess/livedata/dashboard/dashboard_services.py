@@ -152,6 +152,7 @@ class DashboardServices:
             plotting_controller=self.plotting_controller,
             job_orchestrator=self.job_orchestrator,
             data_service=self.data_service,
+            instrument=self._instrument,
             config_store=plot_config_store,
             raw_templates=raw_templates,
         )

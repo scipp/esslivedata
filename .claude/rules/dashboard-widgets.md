@@ -35,3 +35,7 @@ def _on_workflow_stopped(self, workflow_id):
 - Widgets must react to events from shared components (controllers/orchestrators/services), not update themselves after triggering actions
 - Shared components notify all subscribers when state changes
 - Widget event handlers should only call methods on shared components, never rebuild directly
+
+## Icons
+
+Do not use Unicode characters for button icons. Use embedded SVG icons from `dashboard/icons.py` via `get_icon()`. Use the `create_tool_button()` helper from `dashboard/buttons.py` for consistent styling.

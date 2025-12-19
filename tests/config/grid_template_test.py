@@ -9,6 +9,7 @@ from ess.livedata.config.grid_template import GridSpec, load_raw_grid_templates
 from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
+    DataSourceConfig,
     Layer,
     LayerId,
     PlotCell,
@@ -27,9 +28,13 @@ def _make_plot_cell(
 ) -> PlotCell:
     """Create a PlotCell with the given geometry."""
     config = PlotConfig(
-        workflow_id=WorkflowId.from_string('test/ns/wf/1'),
-        output_name='output',
-        source_names=['source1'],
+        data_sources=[
+            DataSourceConfig(
+                workflow_id=WorkflowId.from_string('test/ns/wf/1'),
+                output_name='output',
+                source_names=['source1'],
+            )
+        ],
         plot_name='lines',
         params=EmptyParams(),
     )

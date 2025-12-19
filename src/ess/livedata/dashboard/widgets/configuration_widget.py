@@ -33,8 +33,12 @@ class ConfigurationWidget:
         self._source_error_pane = pn.pane.HTML("", sizing_mode='stretch_width')
         self._widget = self._create_widget()
 
-    def _create_source_selector(self) -> pn.widgets.MultiChoice:
-        """Create source selection widget."""
+    def _create_source_selector(self) -> pn.widgets.MultiChoice | None:
+        """Create source selection widget, or None if no sources available."""
+        # No source selector needed when there are no sources (e.g., static overlays)
+        if not self._config.source_names:
+            return None
+
         if (
             not self._config.initial_source_names
             and len(self._config.source_names) == 1
@@ -127,9 +131,12 @@ class ConfigurationWidget:
             pn.pane.HTML(
                 f"<h1>{self._config.title}</h1><p>{self._config.description}</p>"
             ),
-            self._source_selector,
-            self._source_error_pane,
         ]
+
+        # Add source selector only if there are sources to select
+        if self._source_selector is not None:
+            components.append(self._source_selector)
+            components.append(self._source_error_pane)
 
         # Add auxiliary sources widget if it exists
         if self._aux_sources_widget is not None:
@@ -147,6 +154,8 @@ class ConfigurationWidget:
     @property
     def selected_sources(self) -> list[str]:
         """Get the selected source names."""
+        if self._source_selector is None:
+            return []
         return self._source_selector.value
 
     @property
@@ -165,12 +174,13 @@ class ConfigurationWidget:
         """
         errors = []
 
-        # Validate source selection
-        if len(self.selected_sources) == 0:
-            errors.append("Please select at least one source name.")
-            self._highlight_source_error(True)
-        else:
-            self._highlight_source_error(False)
+        # Validate source selection (only if sources are available)
+        if self._source_selector is not None:
+            if len(self.selected_sources) == 0:
+                errors.append("Please select at least one source name.")
+                self._highlight_source_error(True)
+            else:
+                self._highlight_source_error(False)
 
         # Validate parameter widgets
         param_valid, param_errors = self._model_widget.validate_parameters()
@@ -181,6 +191,9 @@ class ConfigurationWidget:
 
     def _highlight_source_error(self, has_error: bool) -> None:
         """Highlight source selector with error state."""
+        if self._source_selector is None:
+            return
+
         if has_error:
             self._source_selector.styles = {
                 'border': '2px solid #dc3545',

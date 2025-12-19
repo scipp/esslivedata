@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Plotter definition and registration."""
 
+import enum
 import typing
 from collections import UserDict
 from collections.abc import Callable
@@ -23,6 +24,14 @@ from .plots import (
     SlicerPlotter,
 )
 from .scipp_to_holoviews import _all_coords_evenly_spaced
+from .static_plots import _register_static_plotters
+
+
+class PlotterCategory(enum.Enum):
+    """Category of plotter for filtering in wizard and orchestrator."""
+
+    DATA = "data"  # Requires workflow data (standard plotters)
+    STATIC = "static"  # No data required (geometric overlays)
 
 
 @dataclass
@@ -128,6 +137,10 @@ class PlotterSpec(pydantic.BaseModel):
         default_factory=SpecRequirements,
         description="Requirements based on workflow spec metadata.",
     )
+    category: PlotterCategory = pydantic.Field(
+        default=PlotterCategory.DATA,
+        description="Category of plotter: DATA (requires workflow) or STATIC (overlay)",
+    )
 
 
 # Type variable for parameter types
@@ -155,6 +168,7 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
         data_requirements: DataRequirements,
         factory: PlotterFactory[P],
         spec_requirements: SpecRequirements | None = None,
+        category: PlotterCategory = PlotterCategory.DATA,
     ) -> None:
         # Try to get the type hint of the 'params' argument if it exists
         # Use get_type_hints to resolve forward references, in case we used
@@ -167,6 +181,7 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
             params=type_hints['params'],
             data_requirements=data_requirements,
             spec_requirements=spec_requirements or SpecRequirements(),
+            category=category,
         )
         self[name] = PlotterEntry(spec=spec, factory=factory)
 
@@ -177,11 +192,13 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
 
         Note: This only checks data requirements, not spec requirements.
         Use get_compatible_plotters_with_spec() when workflow spec is available.
+        Only returns DATA category plotters.
         """
         return {
             name: entry.spec
             for name, entry in self.items()
-            if entry.spec.data_requirements.validate_data(data)
+            if entry.spec.category == PlotterCategory.DATA
+            and entry.spec.data_requirements.validate_data(data)
         }
 
     def get_compatible_plotters_with_spec(
@@ -190,6 +207,8 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
         aux_sources_type: type | None,
     ) -> dict[str, PlotterSpec]:
         """Get plotters compatible with both data and workflow spec.
+
+        Only returns DATA category plotters.
 
         Parameters
         ----------
@@ -206,13 +225,26 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
         return {
             name: entry.spec
             for name, entry in self.items()
-            if entry.spec.data_requirements.validate_data(data)
+            if entry.spec.category == PlotterCategory.DATA
+            and entry.spec.data_requirements.validate_data(data)
             and entry.spec.spec_requirements.validate_spec(aux_sources_type)
         }
 
     def get_specs(self) -> dict[str, PlotterSpec]:
-        """Get all plotter specifications for UI display."""
-        return {name: entry.spec for name, entry in self.items()}
+        """Get all plotter specifications for UI display (DATA category only)."""
+        return {
+            name: entry.spec
+            for name, entry in self.items()
+            if entry.spec.category == PlotterCategory.DATA
+        }
+
+    def get_static_plotters(self) -> dict[str, PlotterSpec]:
+        """Get all STATIC category plotters for overlay selection."""
+        return {
+            name: entry.spec
+            for name, entry in self.items()
+            if entry.spec.category == PlotterCategory.STATIC
+        }
 
     def get_spec(self, name: str) -> PlotterSpec:
         """Get specification for a specific plotter."""
@@ -328,3 +360,7 @@ plotter_registry.register_plotter(
     spec_requirements=SpecRequirements(requires_aux_sources=[DetectorROIAuxSources]),
     factory=_roi_detector_plotter_factory,
 )
+
+
+# Register static plotters (rectangles, vlines, hlines)
+_register_static_plotters()
