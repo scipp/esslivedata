@@ -159,8 +159,8 @@ class Plotter(ABC):
         HoloViews' LogColorMapper fails when color_mapper.low is None (which
         happens when all data is NaN). This provides explicit bounds to avoid
         the "TypeError: '>' not supported between instances of 'NoneType' and 'int'"
-        error in _draw_colorbar. Limits are not returned if data is not 'None' as in this
-        case we let Holoviews handle the bounds.
+        error in _draw_colorbar. Limits are not returned if data is not 'None' as in
+        this case we let Holoviews handle the bounds.
 
         Parameters
         ----------

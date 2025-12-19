@@ -39,7 +39,7 @@ def setup_factories(instrument: Instrument) -> None:
         data: RawDetector[SampleRun],
         toa_edges: SpectrumViewTOAEdges,
     ) -> SpectrumView:
-        """Create spectrum view by summing over strip, which has constant scattering angle."""
+        """Create spectrum view with over strip, which has constant scattering angle."""
         edges_ns = toa_edges.to(unit='ns')
         return SpectrumView(
             data.bins.concat('strip')
