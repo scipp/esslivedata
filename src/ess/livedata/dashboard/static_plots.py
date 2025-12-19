@@ -63,8 +63,6 @@ def _parse_rectangle_list(v: str) -> list[list[int | float]]:
     Example: "[0,0,10,10], [20,20,30,30]" -> [[0,0,10,10], [20,20,30,30]]
     """
     v = v.strip()
-    if not v or v == '[]':
-        return []
     try:
         result = json.loads(f"[{v}]")
         if isinstance(result, list):
