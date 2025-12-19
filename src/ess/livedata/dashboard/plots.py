@@ -154,12 +154,13 @@ class Plotter(ABC):
     @staticmethod
     def _get_log_scale_clim(data: sc.DataArray) -> tuple[float, float] | None:
         """
-        Compute clim for log scale, returning fallback if data is all NaN.
+        Return fallback clim for log scale if data is all NaN.
 
         HoloViews' LogColorMapper fails when color_mapper.low is None (which
         happens when all data is NaN). This provides explicit bounds to avoid
         the "TypeError: '>' not supported between instances of 'NoneType' and 'int'"
-        error in _draw_colorbar.
+        error in _draw_colorbar. Limits are not returned if data is not 'None' as in this
+        case we let Holoviews handle the bounds.
 
         Parameters
         ----------
