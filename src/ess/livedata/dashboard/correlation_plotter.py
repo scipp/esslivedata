@@ -47,9 +47,9 @@ class Bin1dParams(pydantic.BaseModel):
         description="Data source used for the X axis.",
     )
     x_bins: int = pydantic.Field(
-        default=50,
+        default=100,
         ge=1,
-        le=1000,
+        le=5000,
         title="X Bins",
         description="Number of bins for X axis (range auto-determined from data).",
     )
@@ -65,7 +65,7 @@ class Bin2dParams(pydantic.BaseModel):
         description="Data source used for the X axis.",
     )
     x_bins: int = pydantic.Field(
-        default=50,
+        default=20,
         ge=1,
         le=1000,
         title="X Bins",
@@ -78,7 +78,7 @@ class Bin2dParams(pydantic.BaseModel):
         description="Data source used for the Y axis.",
     )
     y_bins: int = pydantic.Field(
-        default=50,
+        default=20,
         ge=1,
         le=1000,
         title="Y Bins",
@@ -318,11 +318,11 @@ class CorrelationHistogram2dPlotter:
                 widths = sc.concat([widths, widths.median()], dim='time')
                 dependent = dependent / widths
                 histograms[key] = dependent.bin(
-                    {x_name: self._x_bins, y_name: self._y_bins}
+                    {y_name: self._y_bins, x_name: self._x_bins}
                 ).bins.mean()
             else:
                 histograms[key] = dependent.hist(
-                    {x_name: self._x_bins, y_name: self._y_bins}
+                    {y_name: self._y_bins, x_name: self._x_bins}
                 )
 
         return self._renderer(histograms)
