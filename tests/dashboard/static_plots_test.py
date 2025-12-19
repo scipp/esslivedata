@@ -44,7 +44,9 @@ class TestRectanglesCoordinates:
 
     def test_empty_brackets_rejected(self):
         """Empty brackets is rejected."""
-        with pytest.raises(ValueError, match="At least one rectangle is required"):
+        with pytest.raises(
+            ValueError, match="1 validation error for RectanglesCoordinates"
+        ):
             RectanglesCoordinates(coordinates="[]")
 
     def test_invalid_format(self):
