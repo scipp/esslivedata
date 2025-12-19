@@ -366,18 +366,18 @@ def _create_base_reduction_workflow():
         )
         per_arc = 3 * 900
         detector_number_step = 100 // pixels_per_tube
-        detector_number_offset = sc.arange(
-            'detector_number_offset', 0, per_arc, step=detector_number_step, unit=None
-        )
+        detector_number = sc.arange(
+            'detector_number', 0, 5 * per_arc, step=detector_number_step, unit=None
+        ).fold(dim='detector_number', sizes={'arc': 5, 'detector_number': -1})
         return SpectrumView(
             data.fold('pixel', sizes={'pixel': pixels_per_tube, 'subpixel': -1})
             .drop_coords(tuple(data.coords))
             .bins.concat('subpixel')
-            .flatten(dims=('tube', 'channel', 'pixel'), to='detector_number_offset')
+            .flatten(dims=('tube', 'channel', 'pixel'), to='detector_number')
             .hist(event_time_offset=edges)
             .assign_coords(
                 event_time_offset=edges.to(unit='ms'),
-                detector_number_offset=detector_number_offset,
+                detector_number=detector_number,
             )
         )
 
