@@ -169,7 +169,7 @@ class DataSubscriber(DataServiceSubscriber[Key], Generic[Key, P]):
         # pn.state.execute(). This breaks the synchronous callback chain that occurs
         # when subscribing to a workflow that already has data, preventing UI blocking
         # during plot creation. The chain would otherwise be:
-        #   subscribe_to_workflow() → on_job_available() → setup_data_pipeline()
+        #   subscribe_to_workflow() → on_all_jobs_ready() → setup_pipeline()
         #   → register_subscriber() → trigger() → on_first_data() → create_plot()
         # All running synchronously before returning control to the event loop.
         if (

@@ -102,7 +102,7 @@ def spectrum_data():
 class TestROIDetectorTwoPhaseCreation:
     """Tests for two-phase ROI plot creation."""
 
-    def test_setup_data_pipeline_single_detector_invokes_callback_with_dict(
+    def test_setup_pipeline_single_detector_invokes_callback_with_dict(
         self,
         plotting_controller,
         data_service,
@@ -110,7 +110,7 @@ class TestROIDetectorTwoPhaseCreation:
         job_number,
         detector_data,
     ):
-        """setup_data_pipeline for ROI invokes callback with dict of pipes."""
+        """setup_pipeline for ROI invokes callback with dict of pipes."""
         detector_key = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='detector_1', job_number=job_number),
@@ -124,11 +124,8 @@ class TestROIDetectorTwoPhaseCreation:
         def on_first_data(pipes):
             callback_results.append(pipes)
 
-        plotting_controller.setup_data_pipeline(
-            job_number=job_number,
-            workflow_id=workflow_id,
-            source_names=['detector_1'],
-            output_name='current',
+        plotting_controller.setup_pipeline(
+            keys=[detector_key],
             plot_name='roi_detector',
             params=params,
             on_first_data=on_first_data,
@@ -141,7 +138,7 @@ class TestROIDetectorTwoPhaseCreation:
         assert len(pipes) == 1
         assert detector_key in pipes
 
-    def test_setup_data_pipeline_multiple_detectors_waits_for_all(
+    def test_setup_pipeline_multiple_detectors_waits_for_all(
         self,
         plotting_controller,
         data_service,
@@ -149,7 +146,7 @@ class TestROIDetectorTwoPhaseCreation:
         job_number,
         detector_data,
     ):
-        """setup_data_pipeline for ROI waits for all detectors before callback."""
+        """setup_pipeline for ROI waits for all detectors before callback."""
         detector_key_1 = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='detector_1', job_number=job_number),
@@ -170,11 +167,8 @@ class TestROIDetectorTwoPhaseCreation:
         def on_first_data(pipes):
             callback_results.append(pipes)
 
-        plotting_controller.setup_data_pipeline(
-            job_number=job_number,
-            workflow_id=workflow_id,
-            source_names=['detector_1', 'detector_2'],
-            output_name='current',
+        plotting_controller.setup_pipeline(
+            keys=[detector_key_1, detector_key_2],
             plot_name='roi_detector',
             params=params,
             on_first_data=on_first_data,
@@ -224,11 +218,8 @@ class TestROIDetectorTwoPhaseCreation:
             captured_pipes.append(pipes)
 
         # Phase 1: setup pipeline
-        plotting_controller.setup_data_pipeline(
-            job_number=job_number,
-            workflow_id=workflow_id,
-            source_names=['detector_1'],
-            output_name='current',
+        plotting_controller.setup_pipeline(
+            keys=[detector_key],
             plot_name='roi_detector',
             params=params,
             on_first_data=on_first_data,
@@ -256,6 +247,7 @@ class TestROIDetectorTwoPhaseCreation:
     ):
         """create_plot_from_pipeline for ROI handles multiple detectors."""
         # Set up two detectors
+        keys = []
         for source_name in ['detector_1', 'detector_2']:
             detector_key = ResultKey(
                 workflow_id=workflow_id,
@@ -269,6 +261,7 @@ class TestROIDetectorTwoPhaseCreation:
             )
             data_service[detector_key] = detector_data
             data_service[spectrum_key] = spectrum_data
+            keys.append(detector_key)
 
         params = PlotParamsROIDetector(plot_scale=PlotScaleParams2d())
         captured_pipes = []
@@ -277,11 +270,8 @@ class TestROIDetectorTwoPhaseCreation:
             captured_pipes.append(pipes)
 
         # Phase 1: setup pipeline
-        plotting_controller.setup_data_pipeline(
-            job_number=job_number,
-            workflow_id=workflow_id,
-            source_names=['detector_1', 'detector_2'],
-            output_name='current',
+        plotting_controller.setup_pipeline(
+            keys=keys,
             plot_name='roi_detector',
             params=params,
             on_first_data=on_first_data,

@@ -10,10 +10,7 @@ import holoviews as hv
 import pydantic
 
 from ess.livedata.config.workflow_spec import (
-    JobId,
-    JobNumber,
     ResultKey,
-    WorkflowId,
     WorkflowSpec,
 )
 
@@ -201,98 +198,6 @@ class PlottingController:
             extractors,
             on_first_data=on_first_data,
             ready_condition=ready_condition,
-        )
-
-    def setup_data_pipeline(
-        self,
-        job_number: JobNumber,
-        workflow_id: WorkflowId,
-        source_names: list[str],
-        output_name: str | None,
-        plot_name: str,
-        params: dict | pydantic.BaseModel,
-        on_first_data: Callable[[Any], None],
-    ) -> None:
-        """
-        Set up the data pipeline for a plot with callback for first data arrival.
-
-        This is Phase 1 of two-phase plot creation. It creates the data subscriber
-        and stream without creating the plotter. When data arrives, the callback
-        is invoked with the pipe, which should then be used with
-        create_plot_from_pipeline() to create the plot.
-
-        .. note::
-            This method is kept for backward compatibility with roi_detector.
-            New code should use :py:meth:`setup_pipeline` instead.
-
-        Parameters
-        ----------
-        job_number:
-            The job number to set up the pipeline for.
-        workflow_id:
-            The workflow ID for this plot.
-        source_names:
-            List of data source names to include.
-        output_name:
-            The name of the output.
-        plot_name:
-            The name of the plotter to use.
-        params:
-            The plotter parameters as a dict or validated Pydantic model.
-        on_first_data:
-            Callback invoked when first data arrives, receives the pipe as parameter.
-        """
-        # Validate params if dict, pass through if already a model
-        if isinstance(params, dict):
-            spec = plotter_registry.get_spec(plot_name)
-            params = spec.params(**params) if spec.params else pydantic.BaseModel()
-
-        # Build result keys for all sources
-        keys = [
-            ResultKey(
-                workflow_id=workflow_id,
-                job_id=JobId(job_number=job_number, source_name=source_name),
-                output_name=output_name,
-            )
-            for source_name in source_names
-        ]
-
-        # Special case for roi_detector: create separate subscriptions per detector
-        # and coordinate them to invoke callback once when all are ready
-        if plot_name == 'roi_detector':
-            spec = plotter_registry.get_spec(plot_name)
-            window = getattr(params, 'window', None)
-
-            # Collect pipes from individual subscriptions
-            pipes: dict[ResultKey, Any] = {}
-
-            def make_detector_callback(key: ResultKey) -> Callable[[Any], None]:
-                """Create a callback that tracks individual detector readiness."""
-
-                def on_detector_ready(pipe: Any) -> None:
-                    pipes[key] = pipe
-                    if len(pipes) == len(keys):
-                        # All detectors ready, invoke user callback with dict of pipes
-                        on_first_data(pipes)
-
-                return on_detector_ready
-
-            # Create one subscription per detector
-            for key in keys:
-                extractors = create_extractors_from_params([key], window, spec)
-                self._stream_manager.make_merging_stream(
-                    extractors, on_first_data=make_detector_callback(key)
-                )
-            return
-
-        # Standard path: create single merged subscription
-        spec = plotter_registry.get_spec(plot_name)
-        window = getattr(params, 'window', None)
-        extractors = create_extractors_from_params(keys, window, spec)
-
-        # Set up data pipeline with callback for first data
-        self._stream_manager.make_merging_stream(
-            extractors, on_first_data=on_first_data
         )
 
     def create_plot_from_pipeline(

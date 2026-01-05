@@ -185,41 +185,6 @@ class FakePlottingController:
             ready_condition=ready_condition,
         )
 
-    def setup_data_pipeline(
-        self,
-        job_number,
-        workflow_id,
-        source_names: list[str],
-        output_name: str | None,
-        plot_name: str,
-        params: dict,
-        on_first_data,
-    ):
-        """Set up data pipeline using real StreamManager (legacy interface)."""
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
-
-        # Record the call for assertions
-        self._pipeline_setups.append(
-            {
-                'source_names': source_names,
-                'output_name': output_name,
-                'plot_name': plot_name,
-            }
-        )
-
-        # Build result keys (same as real PlottingController)
-        keys = [
-            ResultKey(
-                workflow_id=workflow_id,
-                job_id=JobId(job_number=job_number, source_name=source_name),
-                output_name=output_name,
-            )
-            for source_name in source_names
-        ]
-
-        # Use real StreamManager for subscription (avoids duplicating logic)
-        self._stream_manager.make_merging_stream(keys, on_first_data=on_first_data)
-
     def create_plot_from_pipeline(
         self,
         plot_name: str,
