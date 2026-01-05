@@ -898,11 +898,15 @@ class WorkflowStatusWidget:
         if workflow_id != self._workflow_id:
             return
 
-        # Show success notification using Panel's notification system
-        pn.state.notifications.success(
-            f"{self._workflow_spec.title}: {action} ({success_count}/{total_count})",
-            duration=3000,
+        # Convert action to past tense for natural message
+        past_tense = {"start": "Started", "stop": "Stopped", "reset": "Reset"}
+        verb = past_tense.get(action, action.capitalize())
+
+        message = (
+            f"{verb} {success_count}/{total_count} jobs for "
+            f"'{self._workflow_spec.title}'"
         )
+        pn.state.notifications.success(message, duration=3000)
 
     def _on_command_error(
         self,
@@ -919,10 +923,9 @@ class WorkflowStatusWidget:
         if workflow_id != self._workflow_id:
             return
 
-        # Show error notification using Panel's notification system
         pn.state.notifications.error(
-            f"{self._workflow_spec.title}: {action} failed "
-            f"({error_count}/{total_count}) - {error_message}",
+            f"Failed to {action} {error_count}/{total_count} jobs "
+            f"for '{self._workflow_spec.title}': {error_message}",
             duration=5000,
         )
 
