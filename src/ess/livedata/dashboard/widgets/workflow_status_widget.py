@@ -898,7 +898,7 @@ class WorkflowStatusWidget:
 
         # Show success notification using Panel's notification system
         pn.state.notifications.success(
-            f"Workflow {action} confirmed",
+            f"{self._workflow_spec.title}: {action} confirmed",
             duration=3000,
         )
 
@@ -914,7 +914,7 @@ class WorkflowStatusWidget:
 
         # Show error notification using Panel's notification system
         pn.state.notifications.error(
-            f"Workflow {action} failed: {error_message}",
+            f"{self._workflow_spec.title}: {action} failed - {error_message}",
             duration=5000,
         )
 

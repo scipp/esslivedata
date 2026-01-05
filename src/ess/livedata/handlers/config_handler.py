@@ -8,6 +8,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
+from ..config.acknowledgement import CommandAcknowledgement
 from ..config.models import ConfigKey
 from ..core.job_manager import JobCommand
 from ..core.job_manager_adapter import JobManagerAdapter
@@ -41,7 +42,7 @@ class ConfigUpdate:
 
 class ConfigProcessor:
     """
-    Simple config processor that handles workflow_config and start_time messages
+    Simple config processor that handles workflow_config and job_command messages
     by delegating directly to JobManagerAdapter.
     """
 
@@ -62,7 +63,7 @@ class ConfigProcessor:
         self, messages: list[Message[RawConfigItem]]
     ) -> list[Message[Any]]:
         """
-        Process config messages and handle workflow_config and start_time updates.
+        Process config messages and handle workflow_config and job_command updates.
 
         Parameters
         ----------
@@ -72,7 +73,7 @@ class ConfigProcessor:
         Returns
         -------
         :
-            List of response messages
+            List of response messages (CommandAcknowledgement wrapped in ConfigUpdate)
         """
         # Group latest updates by key and source
         latest_updates: defaultdict[str, dict[str | None, ConfigUpdate]] = defaultdict(
@@ -114,12 +115,13 @@ class ConfigProcessor:
                     if (action := self._actions.get(config_key)) is None:
                         self._logger.debug('Unknown config key: %s', config_key)
                         continue
-                    results = action(source_name, update.value)
-                    # Convert results to messages
-                    updates = [ConfigUpdate(*result) for result in results or []]
-                    response_messages.extend(
-                        Message(stream=RESPONSES_STREAM_ID, value=up) for up in updates
-                    )
+                    result = action(source_name, update.value)
+                    # Convert CommandAcknowledgement to response message
+                    if result is not None:
+                        ack_update = self._acknowledgement_to_update(result)
+                        response_messages.append(
+                            Message(stream=RESPONSES_STREAM_ID, value=ack_update)
+                        )
 
                 except Exception:
                     self._logger.exception(
@@ -129,3 +131,12 @@ class ConfigProcessor:
                     )
 
         return response_messages
+
+    def _acknowledgement_to_update(self, ack: CommandAcknowledgement) -> ConfigUpdate:
+        """Convert a CommandAcknowledgement to a ConfigUpdate for serialization."""
+        config_key = ConfigKey(
+            service_name="job_server",
+            source_name=ack.device,
+            key=CommandAcknowledgement.key,
+        )
+        return ConfigUpdate(config_key=config_key, value=ack)

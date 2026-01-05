@@ -4,6 +4,10 @@ import json
 
 import pytest
 
+from ess.livedata.config.acknowledgement import (
+    AcknowledgementResponse,
+    CommandAcknowledgement,
+)
 from ess.livedata.config.models import ConfigKey
 from ess.livedata.core.job_manager import JobAction, JobCommand
 from ess.livedata.core.message import COMMANDS_STREAM_ID, RESPONSES_STREAM_ID, Message
@@ -100,19 +104,19 @@ class TestConfigProcessor:
         )
 
         # Verify response messages go to RESPONSES stream
-        assert len(result_messages) == len(mock_job_manager.workflow_results)
-        for i, message in enumerate(result_messages):
-            expected_key, expected_value = mock_job_manager.workflow_results[i]
-            assert message.stream == RESPONSES_STREAM_ID
-            assert isinstance(message.value, ConfigUpdate)
-            assert message.value.config_key == expected_key
-            assert message.value.value == expected_value
+        assert len(result_messages) == 1
+        message = result_messages[0]
+        assert message.stream == RESPONSES_STREAM_ID
+        assert isinstance(message.value, ConfigUpdate)
+        assert message.value.config_key.key == CommandAcknowledgement.key
+        assert isinstance(message.value.value, CommandAcknowledgement)
+        assert message.value.value.response == AcknowledgementResponse.ACK
 
     def test_process_job_command_message(self):
         mock_job_manager = MockJobManagerAdapter()
         processor = ConfigProcessor(job_manager_adapter=mock_job_manager)
 
-        job_command = JobCommand(action=JobAction.reset)
+        job_command = JobCommand(message_id="test-msg-id", action=JobAction.reset)
         messages = [
             Message(
                 value=RawConfigItem(
@@ -133,8 +137,33 @@ class TestConfigProcessor:
             job_command.model_dump(),
         )
 
-        # Verify response messages
-        assert len(result_messages) == len(mock_job_manager.job_command_results)
+        # Verify response messages (ack for commands with message_id)
+        assert len(result_messages) == 1
+        assert result_messages[0].value.value.message_id == "test-msg-id"
+
+    def test_process_job_command_without_message_id_no_ack(self):
+        mock_job_manager = MockJobManagerAdapter()
+        processor = ConfigProcessor(job_manager_adapter=mock_job_manager)
+
+        job_command = JobCommand(action=JobAction.reset)  # No message_id
+        messages = [
+            Message(
+                value=RawConfigItem(
+                    key=b'source1/service1/job_command',
+                    value=job_command.model_dump_json().encode('utf-8'),
+                ),
+                timestamp=123456789,
+                stream=COMMANDS_STREAM_ID,
+            )
+        ]
+
+        result_messages = processor.process_messages(messages)
+
+        # Verify job manager was called
+        assert len(mock_job_manager.job_command_calls) == 1
+
+        # No acknowledgement for commands without message_id
+        assert len(result_messages) == 0
 
     def test_process_unknown_config_key(self):
         mock_job_manager = MockJobManagerAdapter()
@@ -325,28 +354,29 @@ class MockJobManagerAdapter:
     def __init__(self):
         self.workflow_calls = []
         self.job_command_calls = []
-        self.workflow_results = [
-            (
-                ConfigKey(source_name="test", service_name="test", key="result"),
-                "workflow_result",
-            )
-        ]
-        self.job_command_results = [
-            (
-                ConfigKey(source_name="test", service_name="test", key="result"),
-                "job_command_result",
-            )
-        ]
         self.should_raise_exception = False
 
     def job_command(self, source_name, command):
         self.job_command_calls.append((source_name, command))
         if self.should_raise_exception:
             raise ValueError("Test exception")
-        return self.job_command_results
+        # Return acknowledgement only if message_id is present
+        message_id = command.get("message_id")
+        if message_id is None:
+            return None
+        return CommandAcknowledgement(
+            message_id=message_id,
+            device=str(command.get("job_id", "all")),
+            response=AcknowledgementResponse.ACK,
+        )
 
     def set_workflow_with_config(self, source_name, config):
         self.workflow_calls.append((source_name, config))
         if self.should_raise_exception:
             raise ValueError("Test exception")
-        return self.workflow_results
+        # Return acknowledgement (always for workflow config in mock)
+        return CommandAcknowledgement(
+            message_id=config.get("message_id", "mock-msg-id"),
+            device=source_name,
+            response=AcknowledgementResponse.ACK,
+        )

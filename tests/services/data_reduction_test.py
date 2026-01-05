@@ -71,8 +71,8 @@ def test_can_configure_and_stop_workflow_with_detector(
     # Trigger workflow start
     app.publish_config_message(key=config_key, value=workflow_config.model_dump())
     service.step()
-    assert len(sink.messages) == 1  # Workflow status message
-    sink.messages.clear()
+    # No acknowledgement sent when message_id is not set (backward compatibility)
+    assert len(sink.messages) == 0
 
     app.publish_events(size=2000, time=2)
     service.step()
@@ -206,7 +206,8 @@ def test_can_clear_workflow_via_config(caplog: pytest.LogCaptureFixture) -> None
     app.publish_events(size=2000, time=1)
     app.publish_events(size=3000, time=2)
     service.step()
-    assert len(sink.messages) == 2
+    # Only data reduction result (no ack when message_id not set)
+    assert len(sink.messages) == 1
     assert sink.messages[-1].value.values.sum() == 5000
 
     model = JobCommand(action=JobAction.reset)
@@ -257,18 +258,16 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     app.publish_events(size=3000, time=4)
     service.step()
 
-    assert len(sink.messages) == 1  # Workflow not started, just an error message
-    status = sink.messages[0].value.value
-    assert status.status == workflow_spec.WorkflowStatusType.STARTUP_ERROR
-    sink.messages.clear()  # Clear the error message
+    # No error ack sent when message_id not set (error is logged server-side)
+    assert len(sink.messages) == 0
 
-    bad_param_value = workflow_spec.WorkflowConfig(identifier=workflow_id)
+    valid_workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
     # Trigger workflow start
-    app.publish_config_message(key=config_key, value=bad_param_value.model_dump())
+    app.publish_config_message(key=config_key, value=valid_workflow_config.model_dump())
     app.publish_events(size=1000, time=5)
     service.step()
-    # Service recovered and started the workflow, get status and data
-    assert len(sink.messages) == 2
+    # Service recovered; get data only (no ack without message_id)
+    assert len(sink.messages) == 1
 
 
 def test_service_can_recover_after_bad_workflow_param_was_set(
@@ -294,15 +293,16 @@ def test_service_can_recover_after_bad_workflow_param_was_set(
     service.step()
     app.publish_events(size=3000, time=4)
     service.step()
-    assert len(sink.messages) == 1  # Workflow not started, just an error message
+    # No error ack sent when message_id not set (error is logged server-side)
+    assert len(sink.messages) == 0
 
-    bad_param_value = workflow_spec.WorkflowConfig(identifier=workflow_id, params={})
+    valid_config = workflow_spec.WorkflowConfig(identifier=workflow_id, params={})
     # Trigger workflow start
-    app.publish_config_message(key=config_key, value=bad_param_value.model_dump())
+    app.publish_config_message(key=config_key, value=valid_config.model_dump())
     app.publish_events(size=1000, time=5)
     service.step()
-    # Service recovered and started the workflow, get 2*status and data
-    assert len(sink.messages) == 3
+    # Service recovered; get data only (no ack without message_id)
+    assert len(sink.messages) == 1
 
 
 def test_active_workflow_keeps_running_when_bad_workflow_id_or_params_were_set(
@@ -325,7 +325,8 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_or_params_were_set(
     )
     app.publish_config_message(key=config_key, value=workflow_config.model_dump())
     service.step()
-    sink.messages.clear()  # Clear the workflow status message
+    # No ack without message_id
+    assert len(sink.messages) == 0
 
     # Add events and verify workflow is running
     app.publish_events(size=2000, time=2)
@@ -346,8 +347,9 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_or_params_were_set(
     # Add more events and verify the original workflow is still running
     app.publish_events(size=3000, time=4)
     service.step()
-    assert len(sink.messages) == 2 + 1  # + 1 for the workflow status message
-    assert sink.messages[2].value.values.sum() == 5000
+    # No error ack without message_id, just data messages
+    assert len(sink.messages) == 2
+    assert sink.messages[1].value.values.sum() == 5000
 
     # Try to set a workflow with invalid parameters
     bad_param_value = workflow_spec.WorkflowConfig(
@@ -359,8 +361,9 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_or_params_were_set(
     # Add more events and verify the original workflow is still running
     app.publish_events(size=1000, time=6)
     service.step()
-    assert len(sink.messages) == 3 + 2  # + 2 for the workflow status messages
-    assert sink.messages[4].value.values.sum() == 6000
+    # No error ack without message_id, just data messages
+    assert len(sink.messages) == 3
+    assert sink.messages[2].value.values.sum() == 6000
 
 
 @pytest.mark.parametrize(
