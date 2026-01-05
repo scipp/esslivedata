@@ -84,6 +84,48 @@ def _inject_axis_source_names(
     return params.model_copy(update={'bins': new_bins})
 
 
+def _extract_axis_sources_from_config(config: PlotConfig) -> list[DataSourceConfig]:
+    """Extract axis sources from a PlotConfig's flattened data_sources.
+
+    Uses params.bins.x_axis_source and y_axis_source to identify which
+    DataSourceConfigs in data_sources represent axis data vs histogram data.
+    This is the inverse of the flattening done when creating the PlotConfig.
+
+    Parameters
+    ----------
+    config
+        PlotConfig with flattened data_sources (may include axis sources).
+
+    Returns
+    -------
+    :
+        List of DataSourceConfigs that are axis sources, in order [x, y].
+        Empty if no axis sources are found or params doesn't have bins.
+    """
+    if not hasattr(config.params, 'bins'):
+        return []
+
+    bins = config.params.bins
+    axis_names: list[str] = []
+    if hasattr(bins, 'x_axis_source') and bins.x_axis_source:
+        axis_names.append(bins.x_axis_source)
+    if hasattr(bins, 'y_axis_source') and bins.y_axis_source:
+        axis_names.append(bins.y_axis_source)
+
+    if not axis_names:
+        return []
+
+    # Find DataSourceConfigs matching each axis name (preserve order)
+    axis_sources: list[DataSourceConfig] = []
+    for name in axis_names:
+        for ds in config.data_sources:
+            if ds.source_names and ds.source_names[0] == name:
+                axis_sources.append(ds)
+                break
+
+    return axis_sources
+
+
 @dataclass
 class OutputSelection:
     """Output from output selection step."""
@@ -735,7 +777,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         # Get initial correlation axes from edit mode config (if any)
         initial_axes: list[DataSourceConfig] = []
         if self._initial_config is not None:
-            initial_axes = list(self._initial_config.axis_sources)
+            initial_axes = _extract_axis_sources_from_config(self._initial_config)
 
         for i, label in enumerate(axis_labels[:required_axes]):
             # Find initial value for this axis from edit mode config
@@ -895,7 +937,9 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
                 workflow_id=self._initial_config.workflow_id,
                 output_name=self._initial_config.output_name,
                 plot_name=self._initial_config.plot_name,
-                correlation_axes=list(self._initial_config.axis_sources),
+                correlation_axes=_extract_axis_sources_from_config(
+                    self._initial_config
+                ),
             )
 
         if self._plotter_selection is None:
@@ -1013,11 +1057,12 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         ):
             params = _inject_axis_source_names(params, axis_sources)
 
+        # Flatten primary data source and axis sources into one list
+        all_data_sources = [data_source, *axis_sources]
         self._last_config_result = PlotConfig(
-            data_source=data_source,
+            data_sources=all_data_sources,
             plot_name=self._plotter_selection.plot_name,
             params=params,
-            axis_sources=axis_sources,
         )
 
     def _show_error(self, message: str) -> None:

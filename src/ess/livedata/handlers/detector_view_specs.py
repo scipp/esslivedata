@@ -92,22 +92,14 @@ class DetectorViewOutputs(WorkflowOutputsBase):
         default_factory=_make_2d_template_with_time,
     )
     counts_total: sc.DataArray = pydantic.Field(
-        default_factory=lambda: sc.DataArray(
-            sc.scalar(0, unit='counts'),
-            coords={'time': sc.scalar(0, unit='ns')},
-        ),
+        default_factory=_make_0d_template_with_time,
         title='Total Event Count',
         description='Total number of detector events in the current time window.',
-        default_factory=_make_0d_template_with_time,
     )
     counts_in_toa_range: sc.DataArray = pydantic.Field(
-        default_factory=lambda: sc.DataArray(
-            sc.scalar(0, unit='counts'),
-            coords={'time': sc.scalar(0, unit='ns')},
-        ),
+        default_factory=_make_0d_template_with_time,
         title='Event Count in TOA Range',
         description='Number of detector events within the configured TOA range filter.',
-        default_factory=_make_0d_template_with_time,
     )
 
     # Stacked ROI spectra outputs (2D: roi x time_of_arrival)

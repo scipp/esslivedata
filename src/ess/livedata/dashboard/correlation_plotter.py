@@ -8,7 +8,6 @@ along with simplified parameter models used by the PlotConfigModal wizard.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 import pydantic
@@ -122,19 +121,42 @@ CORRELATION_HISTOGRAM_PLOTTERS = frozenset(
 )
 
 
-# TODO This class should no longer be necessary with the multi-subscription mechanism?
-@dataclass
-class CorrelationHistogramData:
-    """Structured data for correlation histogram plotters.
+def _separate_axis_data(
+    data: dict[ResultKey, sc.DataArray],
+    x_axis_source: str | None,
+    y_axis_source: str | None = None,
+) -> tuple[dict[ResultKey, sc.DataArray], sc.DataArray | None, sc.DataArray | None]:
+    """Separate axis data from histogram data based on source names.
 
-    Separates data sources (to be histogrammed) from axis sources (defining bins).
+    Parameters
+    ----------
+    data
+        Combined data dict containing both histogram data and axis data.
+    x_axis_source
+        Source name identifying the x-axis data.
+    y_axis_source
+        Source name identifying the y-axis data (for 2D histograms).
+
+    Returns
+    -------
+    :
+        Tuple of (histogram_data, x_axis_data, y_axis_data). Axis data is None
+        if not found or not requested.
     """
+    histogram_data: dict[ResultKey, sc.DataArray] = {}
+    x_axis_data: sc.DataArray | None = None
+    y_axis_data: sc.DataArray | None = None
 
-    data_sources: dict[ResultKey, sc.DataArray]
-    """Primary data sources to histogram. Multiple sources = multiple histograms."""
+    for key, arr in data.items():
+        source_name = key.job_id.source_name
+        if x_axis_source and source_name == x_axis_source:
+            x_axis_data = arr
+        elif y_axis_source and source_name == y_axis_source:
+            y_axis_data = arr
+        else:
+            histogram_data[key] = arr
 
-    axis_data: dict[str, sc.DataArray]
-    """Axis data for correlation. Keys are 'x' and optionally 'y'."""
+    return histogram_data, x_axis_data, y_axis_data
 
 
 def _make_lookup(axis_data: sc.DataArray, data_max_time: sc.Variable) -> sc.bins.Lookup:
@@ -152,8 +174,9 @@ def _make_lookup(axis_data: sc.DataArray, data_max_time: sc.Variable) -> sc.bins
 class CorrelationHistogram1dPlotter:
     """Plotter for 1D correlation histograms.
 
-    Receives structured CorrelationHistogramData with data sources and axis data.
-    Computes a histogram for EACH data source, creating overlay/layout as configured.
+    Receives a dict of ResultKey to DataArray. Separates axis data from histogram
+    data using the configured x_axis_source name, then computes a histogram for
+    each remaining data source.
     """
 
     kdims: list[str] | None = None
@@ -167,30 +190,33 @@ class CorrelationHistogram1dPlotter:
             tick_params=params.ticks,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
-            value_margin_factor=0.1,
             as_histogram=True,
         )
 
-    def initialize_from_data(self, data: CorrelationHistogramData) -> None:
+    def initialize_from_data(self, data: dict[ResultKey, sc.DataArray]) -> None:
         """No-op: histogram edges are computed dynamically on each call."""
 
-    def __call__(self, data: CorrelationHistogramData) -> Any:
+    def __call__(self, data: dict[ResultKey, sc.DataArray]) -> Any:
         """Compute histograms for all data sources and render."""
-        if not isinstance(data, CorrelationHistogramData):
-            raise TypeError(
-                f"CorrelationHistogram1dPlotter expected CorrelationHistogramData, "
-                f"got {type(data).__name__}. This usually indicates the data pipeline "
-                f"was set up without axis_keys, causing MergingStreamAssembler to be "
-                f"used instead of CorrelationHistogramAssembler."
+        histogram_data, x_axis_data, _ = _separate_axis_data(
+            data, x_axis_source=self._x_name
+        )
+
+        if x_axis_data is None:
+            raise ValueError(
+                f"Correlation histogram requires x-axis data from source "
+                f"'{self._x_name}', but it was not found in the data."
             )
-        if 'x' not in data.axis_data:
-            raise ValueError("Correlation histogram requires x-axis data")
+        if not histogram_data:
+            raise ValueError(
+                "Correlation histogram requires at least one data source to histogram."
+            )
 
         x_name = self._x_name
         histograms: dict[ResultKey, sc.DataArray] = {}
-        for key, source_data in data.data_sources.items():
+        for key, source_data in histogram_data.items():
             dependent = source_data.copy(deep=False)
-            x_lut = _make_lookup(data.axis_data['x'], dependent.coords['time'].max())
+            x_lut = _make_lookup(x_axis_data, dependent.coords['time'].max())
             dependent.coords[x_name] = x_lut[dependent.coords['time']]
 
             if self._normalize:
@@ -213,8 +239,9 @@ class CorrelationHistogram1dPlotter:
 class CorrelationHistogram2dPlotter:
     """Plotter for 2D correlation histograms.
 
-    Receives structured CorrelationHistogramData with data sources and axis data.
-    Computes a 2D histogram for EACH data source, creating overlay/layout as configured.
+    Receives a dict of ResultKey to DataArray. Separates axis data from histogram
+    data using the configured x_axis_source and y_axis_source names, then computes
+    a 2D histogram for each remaining data source.
     """
 
     kdims: list[str] | None = None
@@ -230,24 +257,39 @@ class CorrelationHistogram2dPlotter:
             tick_params=params.ticks,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
-            value_margin_factor=0.1,
         )
 
-    def initialize_from_data(self, data: CorrelationHistogramData) -> None:
+    def initialize_from_data(self, data: dict[ResultKey, sc.DataArray]) -> None:
         """No-op: histogram edges are computed dynamically on each call."""
 
-    def __call__(self, data: CorrelationHistogramData) -> Any:
+    def __call__(self, data: dict[ResultKey, sc.DataArray]) -> Any:
         """Compute 2D histograms for all data sources and render."""
-        if 'x' not in data.axis_data or 'y' not in data.axis_data:
-            raise ValueError("2D correlation histogram requires x-axis and y-axis data")
+        histogram_data, x_axis_data, y_axis_data = _separate_axis_data(
+            data, x_axis_source=self._x_name, y_axis_source=self._y_name
+        )
+
+        if x_axis_data is None:
+            raise ValueError(
+                f"2D correlation histogram requires x-axis data from source "
+                f"'{self._x_name}', but it was not found in the data."
+            )
+        if y_axis_data is None:
+            raise ValueError(
+                f"2D correlation histogram requires y-axis data from source "
+                f"'{self._y_name}', but it was not found in the data."
+            )
+        if not histogram_data:
+            raise ValueError(
+                "Correlation histogram requires at least one data source to histogram."
+            )
 
         x_name, y_name = self._x_name, self._y_name
         histograms: dict[ResultKey, sc.DataArray] = {}
-        for key, source_data in data.data_sources.items():
+        for key, source_data in histogram_data.items():
             dependent = source_data.copy(deep=False)
             data_max_time = dependent.coords['time'].max()
-            x_lut = _make_lookup(data.axis_data['x'], data_max_time)
-            y_lut = _make_lookup(data.axis_data['y'], data_max_time)
+            x_lut = _make_lookup(x_axis_data, data_max_time)
+            y_lut = _make_lookup(y_axis_data, data_max_time)
             dependent.coords[x_name] = x_lut[dependent.coords['time']]
             dependent.coords[y_name] = y_lut[dependent.coords['time']]
 

@@ -5,15 +5,28 @@
 import holoviews as hv
 import scipp as sc
 
+from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.dashboard.correlation_plotter import (
+    Bin1dParams,
+    Bin2dParams,
     CorrelationHistogram1dParams,
     CorrelationHistogram1dPlotter,
     CorrelationHistogram2dParams,
     CorrelationHistogram2dPlotter,
-    CorrelationHistogramData,
 )
 
 hv.extension('bokeh')
+
+
+def _make_result_key(source_name: str) -> ResultKey:
+    """Create a ResultKey for testing with the given source name."""
+    return ResultKey(
+        workflow_id=WorkflowId(
+            instrument='test', namespace='test', name='test', version=1
+        ),
+        job_id=JobId(source_name=source_name, job_number=1),
+        output_name='result',
+    )
 
 
 def make_axis_data(
@@ -55,12 +68,17 @@ class TestCorrelationHistogram1dPlotter:
         # Source data is all BEFORE the first axis timestamp
         source_data = make_source_data(times=[50, 60, 70], values=[10.0, 20.0, 30.0])
 
-        data = CorrelationHistogramData(
-            data_sources={'test': source_data},
-            axis_data={'x': axis_data},
-        )
+        # Flatten into dict with keys identified by source_name
+        data = {
+            _make_result_key('detector'): source_data,
+            _make_result_key('position'): axis_data,
+        }
 
-        plotter = CorrelationHistogram1dPlotter(CorrelationHistogram1dParams())
+        # Configure plotter to use 'position' as x-axis source
+        params = CorrelationHistogram1dParams(
+            bins=Bin1dParams(x_axis_source='position')
+        )
+        plotter = CorrelationHistogram1dPlotter(params)
 
         # Should not raise - uses 'nearest' mode when data is before axis range
         result = plotter(data)
@@ -74,12 +92,16 @@ class TestCorrelationHistogram1dPlotter:
         # Source data overlaps with axis range
         source_data = make_source_data(times=[150, 250, 350], values=[10.0, 20.0, 30.0])
 
-        data = CorrelationHistogramData(
-            data_sources={'test': source_data},
-            axis_data={'x': axis_data},
-        )
+        # Flatten into dict with keys identified by source_name
+        data = {
+            _make_result_key('detector'): source_data,
+            _make_result_key('position'): axis_data,
+        }
 
-        plotter = CorrelationHistogram1dPlotter(CorrelationHistogram1dParams())
+        params = CorrelationHistogram1dParams(
+            bins=Bin1dParams(x_axis_source='position')
+        )
+        plotter = CorrelationHistogram1dPlotter(params)
         result = plotter(data)
         assert result is not None
 
@@ -100,12 +122,18 @@ class TestCorrelationHistogram2dPlotter:
         # Source data is all BEFORE the first axis timestamp
         source_data = make_source_data(times=[50, 60, 70], values=[10.0, 20.0, 30.0])
 
-        data = CorrelationHistogramData(
-            data_sources={'test': source_data},
-            axis_data={'x': x_axis, 'y': y_axis},
-        )
+        # Flatten into dict with keys identified by source_name
+        data = {
+            _make_result_key('detector'): source_data,
+            _make_result_key('position'): x_axis,
+            _make_result_key('temperature'): y_axis,
+        }
 
-        plotter = CorrelationHistogram2dPlotter(CorrelationHistogram2dParams())
+        # Configure plotter to use 'position' and 'temperature' as axis sources
+        params = CorrelationHistogram2dParams(
+            bins=Bin2dParams(x_axis_source='position', y_axis_source='temperature')
+        )
+        plotter = CorrelationHistogram2dPlotter(params)
 
         # Should not raise - uses 'nearest' mode when data is before axis range
         result = plotter(data)
