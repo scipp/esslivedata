@@ -116,20 +116,23 @@ class LayerSubscription:
             )
             self._on_ready(ready)
 
-    def _build_result_keys(self) -> list[ResultKey]:
-        """Build ResultKeys for all data_sources using collected job_numbers."""
-        keys = []
-        for idx, ds in enumerate(self._data_sources):
-            job_number = self._job_numbers[idx]
-            keys.extend(
+    def _keys_by_data_source(self) -> list[set[ResultKey]]:
+        """Return ResultKeys grouped by data_source."""
+        return [
+            {
                 ResultKey(
                     workflow_id=ds.workflow_id,
-                    job_id=JobId(source_name=source_name, job_number=job_number),
+                    job_id=JobId(source_name=sn, job_number=self._job_numbers[idx]),
                     output_name=ds.output_name,
                 )
-                for source_name in ds.source_names
-            )
-        return keys
+                for sn in ds.source_names
+            }
+            for idx, ds in enumerate(self._data_sources)
+        ]
+
+    def _build_result_keys(self) -> list[ResultKey]:
+        """Build ResultKeys for all data_sources using collected job_numbers."""
+        return [key for group in self._keys_by_data_source() for key in group]
 
     def _build_ready_condition(self) -> Callable[[set[ResultKey]], bool]:
         """
@@ -145,19 +148,7 @@ class LayerSubscription:
             A callable that takes a set of available keys and returns True if
             at least one key from each DataSourceConfig is present.
         """
-        # Group keys by data_source
-        key_groups: list[set[ResultKey]] = []
-        for idx, ds in enumerate(self._data_sources):
-            job_number = self._job_numbers[idx]
-            group = {
-                ResultKey(
-                    workflow_id=ds.workflow_id,
-                    job_id=JobId(source_name=sn, job_number=job_number),
-                    output_name=ds.output_name,
-                )
-                for sn in ds.source_names
-            }
-            key_groups.append(group)
+        key_groups = self._keys_by_data_source()
 
         def ready(available: set[ResultKey]) -> bool:
             return all(bool(available & group) for group in key_groups)
