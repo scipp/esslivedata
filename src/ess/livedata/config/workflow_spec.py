@@ -287,6 +287,32 @@ class WorkflowConfig(BaseModel):
     This model is used to set the parameter values for a specific workflow. The values
     correspond to the parameters defined in the workflow specification
     :py:class:`WorkflowSpec`.
+
+    Note on message_id vs job_number
+    --------------------------------
+    These two identifiers serve fundamentally different purposes:
+
+    - ``message_id``: Transient identifier for command/response correlation
+      (ACK pattern). Frontend generates it, backend echoes it in
+      CommandAcknowledgement. Discarded once ACK is received. Used only for
+      the request/response handshake.
+
+    - ``job_number``: Persistent job identity for the entire job lifecycle.
+      Used in JobId for result routing, job commands (stop/reset), and data
+      correlation.
+
+    Currently this message conflates "configure" and "start" into a single command, so
+    both fields are present. Future work (see issue #445) may split into separate
+    WorkflowConfig (config-only) and WorkflowStart messages. In that design:
+
+    - WorkflowConfig would have message_id (for ACK, and as a "config handle") but no
+      job_number (not starting a job yet).
+    - WorkflowStart would have its own message_id (for ACK), job_number (new
+      job identity), and a config_ref pointing to a previously ACK'd
+      config's message_id.
+
+    This split would enable multiple independent jobs (e.g., frontend + NICOS) to share
+    the same configuration while having distinct job lifecycles.
     """
 
     identifier: WorkflowId = Field(
@@ -295,12 +321,18 @@ class WorkflowConfig(BaseModel):
     message_id: str | None = Field(
         default=None,
         description=(
-            "Unique identifier for command correlation. Frontend generates this UUID "
-            "and backend echoes it in CommandAcknowledgement responses."
+            "Transient identifier for command/response correlation. Frontend generates "
+            "this UUID and backend echoes it in CommandAcknowledgement responses. "
+            "Distinct from job_number which identifies the job itself."
         ),
     )
     job_number: JobNumber | None = Field(
-        default=None, description=("Unique identifier to identify jobs and job results")
+        default=None,
+        description=(
+            "Persistent job identity used for result routing and job control commands. "
+            "Forms part of JobId (source_name + job_number). Distinct from message_id "
+            "which is only for command acknowledgement correlation."
+        ),
     )
     schedule: JobSchedule = Field(
         default_factory=JobSchedule, description="Schedule for the workflow."

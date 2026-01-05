@@ -403,11 +403,16 @@ class JobOrchestrator:
             state.previous = state.current
 
         # Send workflow configs to all staged sources
-        # Note: Currently all jobs use same params, but aux_source_names may differ
+        # Note: Currently all jobs use same params, but aux_source_names may
+        # differ
         for source_name, job_config in state.staged_jobs.items():
-            # We are currently using a single command to mean "configure and start".
-            # See #445 for plans on splitting this, in line with the interface of the
-            # orchestrator interface.
+            # Currently WorkflowConfig conflates "configure" and "start"
+            # into one command. Both message_id (for ACK) and job_number
+            # (for job identity) are sent together. See #445 for plans to
+            # split into separate config and start messages. In that design,
+            # config's message_id would serve as a "config handle" that
+            # start references, enabling multiple jobs to share the same
+            # configuration.
             workflow_config = WorkflowConfig.from_params(
                 workflow_id=workflow_id,
                 params=job_config.params,
