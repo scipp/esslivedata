@@ -60,21 +60,6 @@ class JobManagerAdapter:
 
         config = WorkflowConfig.model_validate(value)
 
-        # No message_id means no acknowledgement expected (backward compatibility)
-        if config.message_id is None:
-            try:
-                _ = self._job_manager.schedule_job(
-                    source_name=source_name, config=config
-                )
-            except DifferentInstrument:
-                self._logger.debug(
-                    "Workflow %s not found, assuming it is handled by another worker",
-                    config.identifier,
-                )
-            except Exception:
-                self._logger.exception("Failed to start workflow %s", config.identifier)
-            return None
-
         try:
             _ = self._job_manager.schedule_job(source_name=source_name, config=config)
         except DifferentInstrument:
@@ -92,15 +77,19 @@ class JobManagerAdapter:
             return None
         except Exception as e:
             self._logger.exception("Failed to start workflow %s", config.identifier)
-            return CommandAcknowledgement(
-                message_id=config.message_id,
-                device=source_name,
-                response=AcknowledgementResponse.ERR,
-                message=str(e),
-            )
-
-        return CommandAcknowledgement(
-            message_id=config.message_id,
-            device=source_name,
-            response=AcknowledgementResponse.ACK,
-        )
+            if config.message_id is not None:
+                return CommandAcknowledgement(
+                    message_id=config.message_id,
+                    device=source_name,
+                    response=AcknowledgementResponse.ERR,
+                    message=str(e),
+                )
+            return None
+        else:
+            if config.message_id is not None:
+                return CommandAcknowledgement(
+                    message_id=config.message_id,
+                    device=source_name,
+                    response=AcknowledgementResponse.ACK,
+                )
+            return None
