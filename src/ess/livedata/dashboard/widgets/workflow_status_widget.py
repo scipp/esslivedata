@@ -364,16 +364,8 @@ class WorkflowStatusWidget:
             )
             buttons.append(play_btn)
 
-        # Show reset and stop buttons if workflow is running
+        # Show stop and reset buttons if workflow is running
         if active_job_number is not None:
-            reset_btn = create_tool_button(
-                icon_name='refresh',
-                button_color='#6c757d',
-                hover_color='rgba(108, 117, 125, 0.1)',
-                on_click_callback=self._on_reset_click,
-            )
-            buttons.append(reset_btn)
-
             stop_btn = create_tool_button(
                 icon_name='player-stop',
                 button_color=ButtonStyles.DANGER_RED,
@@ -381,6 +373,14 @@ class WorkflowStatusWidget:
                 on_click_callback=self._on_stop_click,
             )
             buttons.append(stop_btn)
+
+            reset_btn = create_tool_button(
+                icon_name='backspace',
+                button_color='#6c757d',
+                hover_color='rgba(108, 117, 125, 0.1)',
+                on_click_callback=self._on_reset_click,
+            )
+            buttons.append(reset_btn)
 
         return pn.Row(*buttons, margin=0)
 
