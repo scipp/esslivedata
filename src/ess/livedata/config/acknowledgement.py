@@ -3,7 +3,7 @@
 """
 Command acknowledgement model for frontend-backend communication.
 
-This implements the acknowledgement pattern from the NICOS-BeamLime interface spec.
+This implements the acknowledgement pattern from the NICOS-ESSlivedata interface spec.
 """
 
 from enum import Enum
