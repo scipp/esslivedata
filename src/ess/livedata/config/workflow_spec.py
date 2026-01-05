@@ -6,11 +6,9 @@ Models for data reduction workflow widget creation and configuration.
 
 from __future__ import annotations
 
-import time
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any, TypeVar
 
 import scipp as sc
@@ -294,6 +292,13 @@ class WorkflowConfig(BaseModel):
     identifier: WorkflowId = Field(
         description="Hash of the workflow, used to identify the workflow."
     )
+    message_id: str | None = Field(
+        default=None,
+        description=(
+            "Unique identifier for command correlation. Frontend generates this UUID "
+            "and backend echoes it in CommandAcknowledgement responses."
+        ),
+    )
     job_number: JobNumber | None = Field(
         default=None, description=("Unique identifier to identify jobs and job results")
     )
@@ -319,6 +324,7 @@ class WorkflowConfig(BaseModel):
         params: dict | None = None,
         aux_source_names: dict | None = None,
         job_number: JobNumber | None = None,
+        message_id: str | None = None,
     ) -> WorkflowConfig:
         """
         Create a WorkflowConfig from parameters.
@@ -333,6 +339,8 @@ class WorkflowConfig(BaseModel):
             Auxiliary source selections as dict, or None if no aux sources
         job_number:
             Optional job number (generated if not provided)
+        message_id:
+            Optional message ID for command acknowledgement tracking
 
         Returns
         -------
@@ -341,47 +349,8 @@ class WorkflowConfig(BaseModel):
         """
         return cls(
             identifier=workflow_id,
+            message_id=message_id,
             job_number=job_number if job_number is not None else uuid.uuid4(),
             aux_source_names=aux_source_names or {},
             params=params or {},
         )
-
-
-class WorkflowStatusType(str, Enum):
-    """
-    Status of a workflow execution.
-
-    The idea of the "stopped" status is to have the option of still displaying the data
-    in the UI. The UI may then remove the workflow entirely in a separate step. This is
-    not implemented yet.
-    """
-
-    STARTING = "starting"
-    STOPPING = "stopping"
-    RUNNING = "running"
-    STARTUP_ERROR = "startup_error"
-    STOPPED = "stopped"
-    UNKNOWN = "unknown"
-
-
-class WorkflowStatus(BaseModel):
-    """
-    Model for workflow status.
-
-    This model is used to define the status of a workflow, including its ID and status.
-    """
-
-    source_name: str = Field(description="Source name the workflow is associated with.")
-    workflow_id: WorkflowId | None = Field(
-        default=None, description="ID of the workflow."
-    )
-    status: WorkflowStatusType = Field(
-        default=WorkflowStatusType.UNKNOWN, description="Status of the workflow."
-    )
-    message: str = Field(
-        default='', description="Optional message providing additional information."
-    )
-    timestamp: int = Field(
-        default_factory=lambda: int(time.time()),
-        description="Unix timestamp when the status was created or updated.",
-    )
