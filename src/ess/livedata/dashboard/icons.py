@@ -71,6 +71,12 @@ _ICONS: dict[str, str] = {
         '<path d="M14 5m0 1a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 '
         '1 0 0 1 -1 -1z"/>'
     ),
+    # Backspace (reset/clear)
+    'backspace': _svg(
+        '<path d="M20 6a1 1 0 0 1 1 1v10a1 1 0 0 1 -1 1h-11l-5 -5a1.5 1.5 0 0 1 0 -2l5 '
+        '-5l11 0"/>'
+        '<path d="M12 10l4 4m0 -4l-4 4"/>'
+    ),
     # Refresh/reset
     'refresh': _svg(
         '<path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4"/>'
@@ -98,8 +104,9 @@ def get_icon(name: str) -> str:
     Parameters
     ----------
     name:
-        Icon name. Available icons: x, settings, plus, download, player-play,
-        player-stop, player-pause, refresh, chevron-down, chevron-right, trash.
+        Icon name. Available icons: backspace, chevron-down, chevron-right,
+        download, player-pause, player-play, player-stop, plus, refresh,
+        settings, trash, x.
 
     Returns
     -------
