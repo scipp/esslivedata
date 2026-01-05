@@ -33,6 +33,15 @@ class JobManagerAdapter:
 
         try:
             self._job_manager.job_command(command)
+        except KeyError:
+            # Job not found. Similar to DifferentInstrument for workflows: multiple
+            # backend services receive the same commands, but only the one owning the
+            # job should respond. Future work may add device-based filtering (#445).
+            self._logger.debug(
+                "Job %s not found, assuming it is handled by another worker",
+                command.job_id,
+            )
+            return None
         except Exception as e:
             self._logger.exception("Failed to execute job command %s", command.action)
             if command.message_id is not None:
