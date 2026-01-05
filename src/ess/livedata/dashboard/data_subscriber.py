@@ -73,16 +73,6 @@ class StreamAssembler(ABC, Generic[Key]):
         """Return the set of data keys this assembler depends on."""
         return self._keys
 
-    @property
-    def requires_all_keys(self) -> bool:
-        """Whether the assembler requires all keys before triggering callback.
-
-        Override to return True for assemblers that cannot operate on partial data
-        (e.g., correlation histogram assemblers that need all data sources).
-        Default is False (progressive data display).
-        """
-        return False
-
     @abstractmethod
     def assemble(self, data: dict[Key, Any]) -> Any:
         """
@@ -166,8 +156,6 @@ class DataSubscriber(DataServiceSubscriber[Key], Generic[Key, P]):
             self._pipe.send(assembled_data)
 
         # Invoke first-data callback when we have actual data for the first time.
-        # Some assemblers (like correlation histograms) require specific keys before
-        # the callback can be invoked, while others support progressive display.
         # IMPORTANT: We defer this callback to the next event loop iteration using
         # pn.state.execute(). This breaks the synchronous callback chain that occurs
         # when subscribing to a workflow that already has data, preventing UI blocking
@@ -175,30 +163,10 @@ class DataSubscriber(DataServiceSubscriber[Key], Generic[Key, P]):
         #   subscribe_to_workflow() → on_job_available() → setup_data_pipeline()
         #   → register_subscriber() → trigger() → on_first_data() → create_plot()
         # All running synchronously before returning control to the event loop.
-        has_required_data = self._check_trigger_requirements(data)
-        if (
-            has_required_data
-            and not self._first_data_callback_invoked
-            and self._on_first_data
-        ):
+        if data and not self._first_data_callback_invoked and self._on_first_data:
             self._first_data_callback_invoked = True
             pipe = self._pipe  # Capture for lambda
             pn.state.execute(lambda: self._on_first_data(pipe))
-
-    def _check_trigger_requirements(self, data: dict[Key, Any]) -> bool:
-        """Check if assembler's trigger requirements are met.
-
-        Supports both the legacy `requires_all_keys` boolean and the newer
-        `can_trigger(available_keys)` method for more flexible triggering logic.
-        """
-        # Check if assembler has custom can_trigger method
-        if hasattr(self._assembler, 'can_trigger'):
-            return self._assembler.can_trigger(set(data.keys()))
-
-        # Fall back to legacy requires_all_keys behavior
-        if self._assembler.requires_all_keys:
-            return len(data) == len(self.keys)
-        return bool(data)
 
 
 class MergingStreamAssembler(StreamAssembler):

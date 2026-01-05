@@ -122,6 +122,7 @@ CORRELATION_HISTOGRAM_PLOTTERS = frozenset(
 )
 
 
+# TODO This class should no longer be necessary with the multi-subscription mechanism?
 @dataclass
 class CorrelationHistogramData:
     """Structured data for correlation histogram plotters.
@@ -134,68 +135,6 @@ class CorrelationHistogramData:
 
     axis_data: dict[str, sc.DataArray]
     """Axis data for correlation. Keys are 'x' and optionally 'y'."""
-
-
-class CorrelationHistogramAssembler:
-    """Assembler for correlation histogram data with explicit data/axis separation.
-
-    Produces structured CorrelationHistogramData with separate data sources and
-    axis sources. Requires all axis sources and at least one data source before
-    triggering. Supports progressive arrival of additional data sources.
-    """
-
-    def __init__(
-        self, data_keys: list[ResultKey], axis_keys: dict[str, ResultKey]
-    ) -> None:
-        """
-        Initialize the assembler.
-
-        Parameters
-        ----------
-        data_keys
-            Keys for data sources to histogram. Can be multiple (one histogram each).
-        axis_keys
-            Keys for axis sources. Maps axis name ('x', 'y') to ResultKey.
-        """
-        self._data_keys = data_keys
-        self._axis_keys = axis_keys
-        self._all_keys = set(data_keys) | set(axis_keys.values())
-
-    @property
-    def keys(self) -> set[ResultKey]:
-        """Return the set of all data keys this assembler depends on."""
-        return self._all_keys
-
-    @property
-    def requires_all_keys(self) -> bool:
-        """Override to use can_trigger instead of simple all-or-nothing."""
-        # Return False to let DataSubscriber use can_trigger logic
-        return False
-
-    def can_trigger(self, available_keys: set[ResultKey]) -> bool:
-        """Check if minimum requirements are met for triggering.
-
-        Requires all axis sources + at least one data source.
-        """
-        has_all_axes = set(self._axis_keys.values()) <= available_keys
-        has_any_data = bool(set(self._data_keys) & available_keys)
-        return has_all_axes and has_any_data
-
-    def assemble(self, data: dict[ResultKey, Any]) -> CorrelationHistogramData:
-        """Assemble structured correlation histogram data.
-
-        Returns
-        -------
-        :
-            CorrelationHistogramData with data_sources dict (keyed by ResultKey)
-            and axis_data dict (keyed by axis name 'x', 'y').
-        """
-        return CorrelationHistogramData(
-            data_sources={k: data[k] for k in self._data_keys if k in data},
-            axis_data={
-                name: data[key] for name, key in self._axis_keys.items() if key in data
-            },
-        )
 
 
 def _make_lookup(axis_data: sc.DataArray, data_max_time: sc.Variable) -> sc.bins.Lookup:

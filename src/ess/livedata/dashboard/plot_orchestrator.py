@@ -18,7 +18,6 @@ import logging
 import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from functools import partial
 from typing import TYPE_CHECKING, Any, NewType, Protocol
 from uuid import UUID, uuid4
 
@@ -131,52 +130,68 @@ class DataSourceConfig:
 class PlotConfig:
     """Configuration for a single plot layer.
 
-    Attributes
-    ----------
-    data_source
-        Primary data source for the plot. Contains workflow_id, source_names,
-        and output_name. For static overlays, source_names is empty.
-    axis_sources
-        Additional data sources that define correlation axes. Empty for standard
-        plots. For correlation histograms: one entry for 1D (x-axis), two for 2D
-        (x-axis, y-axis).
-    plot_name
-        Name of the plotter to use (e.g., 'lines', 'image', 'correlation_histogram_1d').
-    params
-        Plotter-specific parameters as a Pydantic model.
+    The data_sources list supports different layer types:
+
+    - **Single data source**: Standard plot subscribed to one workflow output.
+    - **Single data source with empty source_names**: Static overlay (e.g., geometric
+      shapes). Uses a synthetic workflow ID and stores a user-defined name in
+      output_name.
+    - **Multiple data sources**: Correlation histograms combining outputs from
+      multiple workflows (planned feature).
+
+    For the common single-source case, convenience properties (workflow_id,
+    source_names, output_name) provide direct access to the first data source,
+    avoiding verbose patterns like ``config.data_sources[0].workflow_id`` throughout
+    the codebase. When multi-source correlation histograms are implemented, code
+    handling those will access data_sources directly.
     """
 
-    data_source: DataSourceConfig
+    data_sources: list[DataSourceConfig]
     plot_name: str
     params: pydantic.BaseModel
-    axis_sources: list[DataSourceConfig] = field(default_factory=list)
 
     @property
     def workflow_id(self) -> WorkflowId:
-        """Workflow ID from the data source."""
-        return self.data_source.workflow_id
+        """Workflow ID from the first data source.
+
+        Convenience property for the common single-source case.
+        For multi-source layers, access data_sources directly.
+        """
+        if not self.data_sources:
+            raise ValueError("Cannot access workflow_id: no data sources configured")
+        return self.data_sources[0].workflow_id
 
     @property
     def source_names(self) -> list[str]:
-        """Source names from the data source."""
-        return self.data_source.source_names
+        """Source names from the first data source.
+
+        Convenience property for the common single-source case.
+        For multi-source layers, access data_sources directly.
+        """
+        if not self.data_sources:
+            raise ValueError("Cannot access source_names: no data sources configured")
+        return self.data_sources[0].source_names
 
     @property
     def output_name(self) -> str:
-        """Output name from the data source."""
-        return self.data_source.output_name
+        """Output name from the first data source.
+
+        Convenience property for the common single-source case.
+        For multi-source layers, access data_sources directly.
+        """
+        if not self.data_sources:
+            raise ValueError("Cannot access output_name: no data sources configured")
+        return self.data_sources[0].output_name
 
     def is_static(self) -> bool:
         """Return True if this is a static overlay (no workflow subscription needed).
 
-        Static overlays have empty source_names. They use a synthetic workflow ID
-        and store the user-defined overlay name in output_name.
+        Static overlays have a single data source with empty source_names. They use
+        a synthetic workflow ID and store the user-defined overlay name in output_name.
         """
-        return len(self.data_source.source_names) == 0
-
-    def is_correlation_histogram(self) -> bool:
-        """Return True if this is a correlation histogram (has axis sources)."""
-        return len(self.axis_sources) > 0
+        return (
+            len(self.data_sources) == 1 and len(self.data_sources[0].source_names) == 0
+        )
 
 
 @dataclass
@@ -298,14 +313,10 @@ class PlotOrchestrator:
 
         self._grids: dict[GridId, PlotGridConfig] = {}
         self._cell_to_grid: dict[CellId, GridId] = {}
-        # All layers use list of subscriptions (even single-workflow layers)
-        self._layer_to_subscriptions: dict[LayerId, list[SubscriptionId]] = {}
+        self._layer_to_subscription: dict[LayerId, SubscriptionId] = {}
         self._layer_state: dict[LayerId, LayerState] = {}
         self._layer_to_cell: dict[LayerId, CellId] = {}
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
-        # Track which workflows are ready for each layer
-        # Maps layer_id -> {workflow_id: job_number}
-        self._layer_pending_workflows: dict[LayerId, dict[WorkflowId, JobNumber]] = {}
 
         # Parse templates (requires plotter registry, so must be done here)
         self._templates = self._parse_grid_specs(list(raw_templates))
@@ -600,15 +611,9 @@ class PlotOrchestrator:
             Set to False when the layer is being updated (still in the cell),
             True when removing the layer completely.
         """
-        # Unsubscribe from all workflows
-        if layer_id in self._layer_to_subscriptions:
-            for subscription_id in self._layer_to_subscriptions[layer_id]:
-                self._job_orchestrator.unsubscribe(subscription_id)
-            del self._layer_to_subscriptions[layer_id]
-
-        # Clean up pending workflow tracking
-        self._layer_pending_workflows.pop(layer_id, None)
-
+        if layer_id in self._layer_to_subscription:
+            self._job_orchestrator.unsubscribe(self._layer_to_subscription[layer_id])
+            del self._layer_to_subscription[layer_id]
         self._layer_state.pop(layer_id, None)
         if remove_from_cell_mapping:
             self._layer_to_cell.pop(layer_id, None)
@@ -617,14 +622,30 @@ class PlotOrchestrator:
         """
         Subscribe a layer to workflow lifecycle and set up initial notification.
 
-        Uses a unified approach for all non-static layers:
+        Branches based on layer type (determined by data sources):
 
-        1. Collect all required workflows (data source + any axis sources)
-        2. Subscribe to each unique workflow
-        3. Track readiness in _layer_pending_workflows
-        4. When all required workflows are ready, set up the data pipeline
+        - **Static overlay** (single data source with empty source_names): Create plot
+          immediately without workflow subscription.
+        - **Standard plot** (single data source): Subscribe to workflow availability.
+        - **Correlation histogram** (multiple data sources): Future work.
 
-        Static overlays are handled separately (no workflow subscription needed).
+        For standard layers with one data source, handles two scenarios:
+
+        **Scenario A: Workflow not yet running**
+
+        1. Subscribe to workflow (callback not invoked)
+        2. Notify UI that cell is "waiting for workflow"
+        3. When workflow is committed, on_started fires -> _on_layer_job_available
+
+        **Scenario B: Workflow already running**
+
+        1. Subscribe to workflow (on_started invoked immediately with job_number)
+        2. _on_layer_job_available sets up data pipeline
+        3. If data exists: plot created immediately
+           If no data yet: notify UI "waiting for data"
+
+        When the workflow is stopped, on_stopped fires -> _on_layer_job_stopped,
+        which marks the layer as stopped and notifies the UI.
 
         Parameters
         ----------
@@ -644,265 +665,47 @@ class PlotOrchestrator:
             self._persist_to_store()
             return
 
-        # Collect all required workflows (data source + axis sources)
-        data_workflow = config.data_source.workflow_id
-        axis_workflows = {ds.workflow_id for ds in config.axis_sources}
-        required_workflows = {data_workflow} | axis_workflows
-
-        self._logger.debug(
-            'Subscribing layer_id=%s to %d workflow(s): data=%s, axes=%s',
-            layer_id,
-            len(required_workflows),
-            data_workflow,
-            [str(wf) for wf in axis_workflows] if axis_workflows else [],
-        )
-
-        # Initialize tracking for this layer
-        self._layer_pending_workflows[layer_id] = {}
-        self._layer_to_subscriptions[layer_id] = []
-
-        # Subscribe to each unique workflow
-        for workflow_id in required_workflows:
-            subscription_id, _ = self._job_orchestrator.subscribe_to_workflow(
-                workflow_id=workflow_id,
-                callbacks=WorkflowCallbacks(
-                    on_started=partial(self._on_workflow_ready, layer_id, workflow_id),
-                    on_stopped=partial(self._on_layer_job_stopped, layer_id),
-                ),
+        if len(config.data_sources) > 1:
+            # Future work: correlation histograms with multiple data sources
+            self._logger.warning(
+                'Multiple data sources not yet supported for layer_id=%s', layer_id
             )
-            self._layer_to_subscriptions[layer_id].append(subscription_id)
+            cell = self._grids[grid_id].cells[cell_id]
+            self._layer_state[layer_id] = LayerState(
+                error='Multiple data sources not yet supported'
+            )
+            layer_states, composed = self.get_cell_state(cell_id)
+            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
+            self._persist_to_store()
+            return
 
-        # Notify UI if not all workflows are ready yet
-        # (If all were ready, _on_workflow_ready already set up the pipeline)
-        if layer_id not in self._layer_state:
+        # Standard path: single data source
+        def on_workflow_available(job_number: JobNumber) -> None:
+            self._on_layer_job_available(layer_id, job_number)
+
+        def on_workflow_stopped(job_number: JobNumber) -> None:
+            self._on_layer_job_stopped(layer_id, job_number)
+
+        # Subscribe to workflow lifecycle.
+        # Returns whether callback was invoked immediately (workflow already running).
+        subscription_id, was_invoked = self._job_orchestrator.subscribe_to_workflow(
+            workflow_id=config.workflow_id,
+            callbacks=WorkflowCallbacks(
+                on_started=on_workflow_available,
+                on_stopped=on_workflow_stopped,
+            ),
+        )
+        self._layer_to_subscription[layer_id] = subscription_id
+
+        # Scenario A: Workflow doesn't exist yet.
+        # Notify UI that cell is waiting for workflow to be committed.
+        if not was_invoked:
             cell = self._grids[grid_id].cells[cell_id]
             layer_states, composed = self.get_cell_state(cell_id)
             self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
 
+        # Persist updated state
         self._persist_to_store()
-
-    def _on_workflow_ready(
-        self, layer_id: LayerId, workflow_id: WorkflowId, job_number: JobNumber
-    ) -> None:
-        """
-        Handle workflow availability notification for a layer.
-
-        Tracks which workflows are ready and sets up the data pipeline when
-        all required workflows (data source + any axis sources) are available.
-
-        Parameters
-        ----------
-        layer_id
-            ID of the layer waiting for workflows.
-        workflow_id
-            ID of the workflow that became available.
-        job_number
-            Job number for the available workflow.
-        """
-        # Defensive check: layer may have been removed before callback fires
-        if layer_id not in self._layer_to_cell:
-            self._logger.warning(
-                'Ignoring workflow availability for removed layer_id=%s', layer_id
-            )
-            return
-
-        if layer_id not in self._layer_pending_workflows:
-            self._logger.warning('Layer %s not in pending workflows tracking', layer_id)
-            return
-
-        # Record this workflow as ready
-        self._layer_pending_workflows[layer_id][workflow_id] = job_number
-
-        # Check if all required workflows are ready
-        config = self.get_layer_config(layer_id)
-        data_workflow = config.data_source.workflow_id
-        axis_workflows = {ds.workflow_id for ds in config.axis_sources}
-        required_workflows = {data_workflow} | axis_workflows
-        ready_workflows = set(self._layer_pending_workflows[layer_id].keys())
-
-        self._logger.debug(
-            'Layer %s: workflow %s ready (job_number=%s), %d/%d workflows ready',
-            layer_id,
-            workflow_id,
-            job_number,
-            len(ready_workflows),
-            len(required_workflows),
-        )
-
-        if required_workflows <= ready_workflows:
-            self._logger.info(
-                'All %d workflow(s) ready for layer_id=%s, setting up pipeline',
-                len(required_workflows),
-                layer_id,
-            )
-            self._setup_layer_pipeline(layer_id)
-
-    def _setup_layer_pipeline(self, layer_id: LayerId) -> None:
-        """
-        Set up data pipeline for a layer after all required workflows are ready.
-
-        Handles both standard plots (single data source) and correlation histograms
-        (data source + axis sources). The only branching point is the pipeline type:
-        - Standard: setup_data_pipeline_from_keys
-        - Correlation: setup_correlation_histogram_pipeline
-
-        Parameters
-        ----------
-        layer_id
-            ID of the layer to set up.
-        """
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
-
-        cell_id = self._layer_to_cell[layer_id]
-        grid_id = self._cell_to_grid[cell_id]
-        cell = self._grids[grid_id].cells[cell_id]
-        config = self.get_layer_config(layer_id)
-        job_numbers = self._layer_pending_workflows[layer_id]
-
-        # Clear any previous state (e.g., from a stopped job) to start fresh
-        self._layer_state.pop(layer_id, None)
-
-        # Build result keys for data source
-        ds = config.data_source
-        data_job_number = job_numbers[ds.workflow_id]
-        data_keys = [
-            ResultKey(
-                workflow_id=ds.workflow_id,
-                job_id=JobId(job_number=data_job_number, source_name=source_name),
-                output_name=ds.output_name,
-            )
-            for source_name in ds.source_names
-        ]
-
-        # Create the on_data_arrived callback (shared by both paths)
-        on_data_arrived = self._make_on_data_arrived_callback(
-            layer_id, cell_id, grid_id, cell, config
-        )
-
-        # Branch point: standard vs correlation histogram pipeline
-        try:
-            if config.axis_sources:
-                # Correlation histogram: build axis keys and use correlation pipeline
-                axis_names = ['x', 'y']
-                axis_keys: dict[str, ResultKey] = {}
-                for i, axis_ds in enumerate(config.axis_sources):
-                    axis_job_number = job_numbers[axis_ds.workflow_id]
-                    if len(axis_ds.source_names) != 1:
-                        raise ValueError(
-                            f"Axis source must have exactly one source_name, "
-                            f"got {len(axis_ds.source_names)}"
-                        )
-                    axis_keys[axis_names[i]] = ResultKey(
-                        workflow_id=axis_ds.workflow_id,
-                        job_id=JobId(
-                            job_number=axis_job_number,
-                            source_name=axis_ds.source_names[0],
-                        ),
-                        output_name=axis_ds.output_name,
-                    )
-
-                self._logger.debug(
-                    'Setting up correlation pipeline for layer_id=%s: '
-                    '%d data keys, %d axis keys',
-                    layer_id,
-                    len(data_keys),
-                    len(axis_keys),
-                )
-
-                self._plotting_controller.setup_correlation_histogram_pipeline(
-                    data_keys=data_keys,
-                    axis_keys=axis_keys,
-                    plot_name=config.plot_name,
-                    params=config.params,
-                    on_first_data=on_data_arrived,
-                )
-            else:
-                # Standard pipeline
-                self._logger.debug(
-                    'Setting up standard pipeline for layer_id=%s: %d data keys',
-                    layer_id,
-                    len(data_keys),
-                )
-
-                self._plotting_controller.setup_data_pipeline_from_keys(
-                    keys=data_keys,
-                    plot_name=config.plot_name,
-                    params=config.params,
-                    on_first_data=on_data_arrived,
-                )
-        except Exception:
-            error_msg = traceback.format_exc()
-            self._logger.exception(
-                'Failed to set up data pipeline for layer_id=%s', layer_id
-            )
-            self._layer_state[layer_id] = LayerState(error=error_msg)
-            layer_states, composed = self.get_cell_state(cell_id)
-            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
-            return
-
-        # If data hasn't arrived yet, notify UI that layer is waiting for data
-        if layer_id not in self._layer_state:
-            layer_states, composed = self.get_cell_state(cell_id)
-            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
-
-    def _make_on_data_arrived_callback(
-        self,
-        layer_id: LayerId,
-        cell_id: CellId,
-        grid_id: GridId,
-        cell: PlotCell,
-        config: PlotConfig,
-    ) -> Callable[[Any], None]:
-        """
-        Create the on_data_arrived callback for a layer.
-
-        This callback is invoked when first data arrives for the pipeline.
-        It creates the plot and notifies the UI.
-
-        Parameters
-        ----------
-        layer_id
-            ID of the layer.
-        cell_id
-            ID of the cell containing the layer.
-        grid_id
-            ID of the grid containing the cell.
-        cell
-            The plot cell object.
-        config
-            The layer's plot configuration.
-
-        Returns
-        -------
-        :
-            Callback function that takes a pipe and creates the plot.
-        """
-
-        def on_data_arrived(pipe: Any) -> None:
-            self._logger.debug('Data arrived for layer_id=%s, creating plot', layer_id)
-            try:
-                plot = self._plotting_controller.create_plot_from_pipeline(
-                    plot_name=config.plot_name,
-                    params=config.params,
-                    pipe=pipe,
-                )
-                self._layer_state[layer_id] = LayerState(plot=plot)
-                layer_states, composed = self.get_cell_state(cell_id)
-                self._notify_cell_updated(
-                    grid_id, cell_id, cell, layer_states, composed
-                )
-            except Exception:
-                error_msg = traceback.format_exc()
-                self._logger.exception(
-                    'Failed to create plot for layer_id=%s', layer_id
-                )
-                self._layer_state[layer_id] = LayerState(error=error_msg)
-                layer_states, composed = self.get_cell_state(cell_id)
-                self._notify_cell_updated(
-                    grid_id, cell_id, cell, layer_states, composed
-                )
-
-        return on_data_arrived
 
     def _create_static_layer_plot(
         self, grid_id: GridId, cell_id: CellId, layer: Layer
@@ -946,6 +749,107 @@ class PlotOrchestrator:
 
         layer_states, composed = self.get_cell_state(cell_id)
         self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
+
+    def _on_layer_job_available(self, layer_id: LayerId, job_number: JobNumber) -> None:
+        """
+        Handle workflow availability notification for a layer.
+
+        Called when a workflow job becomes available (either immediately during
+        subscription if workflow was already running, or later when committed).
+
+        **Flow:**
+
+        1. Set up data pipeline with on_first_data callback
+        2. If data already exists in DataService:
+           - on_first_data fires immediately -> plot created -> state stored
+           - Compose and notify
+        3. If no data yet:
+           - Notify UI that layer is "waiting for data"
+           - Later when data arrives, on_first_data fires -> plot created
+
+        Parameters
+        ----------
+        layer_id
+            ID of the layer to create plot for.
+        job_number
+            Job number for the workflow.
+        """
+        # Defensive check: layer may have been removed before callback fires
+        if layer_id not in self._layer_to_cell:
+            self._logger.warning(
+                'Ignoring workflow availability for removed layer_id=%s', layer_id
+            )
+            return
+
+        cell_id = self._layer_to_cell[layer_id]
+        grid_id = self._cell_to_grid[cell_id]
+        cell = self._grids[grid_id].cells[cell_id]
+
+        # Clear any previous state (e.g., from a stopped job) to start fresh
+        self._layer_state.pop(layer_id, None)
+
+        # Find the layer config
+        config = self.get_layer_config(layer_id)
+
+        def on_data_arrived(pipe) -> None:
+            """Create plot when first data arrives for the pipeline."""
+            self._logger.debug(
+                'Data arrived for layer_id=%s, job_number=%s, creating plot',
+                layer_id,
+                job_number,
+            )
+            # Create the plot with the now-populated pipe
+            try:
+                plot = self._plotting_controller.create_plot_from_pipeline(
+                    plot_name=config.plot_name,
+                    params=config.params,
+                    pipe=pipe,
+                )
+                # Store layer state
+                self._layer_state[layer_id] = LayerState(plot=plot)
+
+                # Compose and notify
+                layer_states, composed = self.get_cell_state(cell_id)
+                self._notify_cell_updated(
+                    grid_id, cell_id, cell, layer_states, composed
+                )
+            except Exception:
+                error_msg = traceback.format_exc()
+                self._logger.exception(
+                    'Failed to create plot for layer_id=%s', layer_id
+                )
+                self._layer_state[layer_id] = LayerState(error=error_msg)
+                layer_states, composed = self.get_cell_state(cell_id)
+                self._notify_cell_updated(
+                    grid_id, cell_id, cell, layer_states, composed
+                )
+
+        # Set up data pipeline with callback
+        try:
+            self._plotting_controller.setup_data_pipeline(
+                job_number=job_number,
+                workflow_id=config.workflow_id,
+                source_names=config.source_names,
+                output_name=config.output_name,
+                plot_name=config.plot_name,
+                params=config.params,
+                on_first_data=on_data_arrived,
+            )
+        except Exception:
+            error_msg = traceback.format_exc()
+            self._logger.exception(
+                'Failed to set up data pipeline for layer_id=%s', layer_id
+            )
+            self._layer_state[layer_id] = LayerState(error=error_msg)
+            layer_states, composed = self.get_cell_state(cell_id)
+            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
+            return
+
+        # If data hasn't arrived yet (on_data_arrived not called synchronously),
+        # notify UI that layer is waiting for data
+        if layer_id not in self._layer_state:
+            layer_states, composed = self.get_cell_state(cell_id)
+            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
 
     def _on_layer_job_stopped(self, layer_id: LayerId, job_number: JobNumber) -> None:
         """
@@ -1131,24 +1035,22 @@ class PlotOrchestrator:
         """
         Parse a raw layer dict into a typed Layer.
 
-        Supports multiple formats for backward compatibility:
-        - Current format: 'data_source' (singular) + optional 'axis_sources'
-        - Previous format: 'data_sources' list (for correlation histograms,
-          first entry is data, rest are axes)
-        - Legacy format: 'workflow_id', 'source_names' at top level
+        Supports two formats for backward compatibility:
+        - New format: 'data_sources' list containing workflow_id, source_names,
+          output_name
+        - Old format: 'workflow_id', 'source_names', 'output_name' at top level
 
         Parameters
         ----------
         layer_data
-            Layer configuration dict. Must contain 'plot_name'.
+            Layer configuration dict. Must contain 'plot_name' and either
+            'data_sources' (new format) or 'workflow_id' (old format).
 
         Returns
         -------
         :
             Parsed Layer with a new LayerId, or None if the plotter is unknown.
         """
-        from .correlation_plotter import CORRELATION_HISTOGRAM_PLOTTERS
-
         plot_name = layer_data['plot_name']
 
         # Validate params, skipping layers with unknown plotters
@@ -1156,53 +1058,39 @@ class PlotOrchestrator:
         if params is None:
             return None
 
-        def parse_ds(ds: dict[str, Any]) -> DataSourceConfig:
-            return DataSourceConfig(
-                workflow_id=WorkflowId.from_string(ds['workflow_id']),
-                source_names=ds['source_names'],
-                output_name=ds.get('output_name', 'result'),
-            )
-
-        # Parse data source and axis sources based on format
-        data_source: DataSourceConfig
-        axis_sources: list[DataSourceConfig] = []
-
-        if 'data_source' in layer_data:
-            # Current format: data_source (singular) + optional axis_sources
-            data_source = parse_ds(layer_data['data_source'])
-            if 'axis_sources' in layer_data:
-                axis_sources = [parse_ds(ds) for ds in layer_data['axis_sources']]
-
-        elif 'data_sources' in layer_data:
-            # Previous format: data_sources list
-            ds_list = [parse_ds(ds) for ds in layer_data['data_sources']]
-            if not ds_list:
-                self._logger.warning('Layer has empty data_sources list, skipping')
-                return None
-            # For correlation histograms, first entry is data, rest are axes
-            if plot_name in CORRELATION_HISTOGRAM_PLOTTERS and len(ds_list) > 1:
-                data_source = ds_list[0]
-                axis_sources = ds_list[1:]
-            else:
-                data_source = ds_list[0]
-
+        # Parse data sources: support both new and legacy format
+        data_sources: list[DataSourceConfig]
+        if 'data_sources' in layer_data:
+            # New format: data_sources list
+            data_sources = [
+                DataSourceConfig(
+                    workflow_id=WorkflowId.from_string(ds['workflow_id']),
+                    source_names=ds['source_names'],
+                    output_name=ds.get('output_name', 'result'),
+                )
+                for ds in layer_data['data_sources']
+            ]
         elif 'workflow_id' in layer_data:
             # Legacy format: single workflow at top level
-            data_source = DataSourceConfig(
-                workflow_id=WorkflowId.from_string(layer_data['workflow_id']),
-                source_names=layer_data['source_names'],
-                output_name=layer_data.get('output_name', 'result'),
-            )
-
+            data_sources = [
+                DataSourceConfig(
+                    workflow_id=WorkflowId.from_string(layer_data['workflow_id']),
+                    source_names=layer_data['source_names'],
+                    output_name=layer_data.get('output_name', 'result'),
+                )
+            ]
         else:
-            self._logger.warning('Layer missing data source configuration, skipping')
-            return None
+            # Fallback for templates missing workflow specification.
+            # Note: This creates an invalid config - static overlays should use
+            # the data_sources format with a synthetic workflow ID. This branch
+            # exists for robustness but templates should always specify workflow_id
+            # or data_sources.
+            data_sources = []
 
         config = PlotConfig(
-            data_source=data_source,
+            data_sources=data_sources,
             plot_name=plot_name,
             params=params,
-            axis_sources=axis_sources,
         )
 
         return Layer(layer_id=LayerId(uuid4()), config=config)
@@ -1347,25 +1235,18 @@ class PlotOrchestrator:
     def _serialize_layer(self, layer: Layer) -> dict[str, Any]:
         """Serialize a single layer to dict format."""
         config = layer.config
-        result: dict[str, Any] = {
-            'data_source': {
-                'workflow_id': str(config.data_source.workflow_id),
-                'source_names': config.data_source.source_names,
-                'output_name': config.data_source.output_name,
-            },
-            'plot_name': config.plot_name,
-            'params': config.params.model_dump(mode='json'),
-        }
-        if config.axis_sources:
-            result['axis_sources'] = [
+        return {
+            'data_sources': [
                 {
                     'workflow_id': str(ds.workflow_id),
                     'source_names': ds.source_names,
                     'output_name': ds.output_name,
                 }
-                for ds in config.axis_sources
-            ]
-        return result
+                for ds in config.data_sources
+            ],
+            'plot_name': config.plot_name,
+            'params': config.params.model_dump(mode='json'),
+        }
 
     def _load_from_store(self) -> None:
         """Load plot grid configurations from config store."""
