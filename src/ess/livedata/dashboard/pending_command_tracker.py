@@ -145,34 +145,6 @@ class PendingCommandTracker:
 
         return None
 
-    def expire_stale(self, max_age_seconds: float) -> list[PendingCommand]:
-        """
-        Remove and return commands that have been pending longer than max_age.
-
-        Parameters
-        ----------
-        max_age_seconds:
-            Maximum time in seconds a command can be pending.
-
-        Returns
-        -------
-        :
-            List of expired commands that were removed.
-        """
-        current_time = time.time()
-        expired = []
-        expired_ids = []
-
-        for message_id, cmd in self._pending.items():
-            if current_time - cmd.timestamp > max_age_seconds:
-                expired.append(cmd)
-                expired_ids.append(message_id)
-
-        for message_id in expired_ids:
-            del self._pending[message_id]
-
-        return expired
-
     def __len__(self) -> int:
         """Return number of pending commands."""
         return len(self._pending)
