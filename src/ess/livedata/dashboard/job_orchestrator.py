@@ -419,7 +419,9 @@ class JobOrchestrator:
             commands.append((key, workflow_config))
 
         # Register pending command for acknowledgement tracking
-        self._pending_commands.register(message_id, workflow_id, "start")
+        self._pending_commands.register(
+            message_id, workflow_id, "start", expected_count=len(state.staged_jobs)
+        )
 
         self._command_service.send_batch(commands)
 
@@ -742,7 +744,9 @@ class JobOrchestrator:
         ]
 
         # Register pending command for acknowledgement tracking
-        self._pending_commands.register(message_id, workflow_id, "stop")
+        self._pending_commands.register(
+            message_id, workflow_id, "stop", expected_count=len(state.current.jobs)
+        )
 
         self._command_service.send_batch(commands)
 
@@ -806,7 +810,9 @@ class JobOrchestrator:
         ]
 
         # Register pending command for acknowledgement tracking
-        self._pending_commands.register(message_id, workflow_id, "reset")
+        self._pending_commands.register(
+            message_id, workflow_id, "reset", expected_count=len(state.current.jobs)
+        )
 
         self._command_service.send_batch(commands)
 
@@ -1087,7 +1093,11 @@ class JobOrchestrator:
 
         This method should be called when a CommandAcknowledgement is received
         from the responses topic. It correlates the acknowledgement with the
-        original command and notifies widgets on success or error.
+        original command and notifies widgets when all responses are received.
+
+        For commands targeting multiple sources, responses are accumulated until
+        all expected responses arrive. On partial success, both success and error
+        callbacks are invoked.
 
         Parameters
         ----------
@@ -1098,27 +1108,51 @@ class JobOrchestrator:
         error_message:
             Error message if response is "ERR".
         """
-        pending = self._pending_commands.resolve(message_id)
-        if pending is None:
-            self._logger.debug(
-                'Received acknowledgement for unknown message_id: %s', message_id
-            )
+        result = self._pending_commands.record_response(
+            message_id, success=(response == "ACK"), error_message=error_message
+        )
+
+        if result is None:
+            # Either unknown message_id or still waiting for more responses
             return
 
-        if response == "ERR":
+        total = result.success_count + result.error_count
+
+        if result.all_succeeded:
+            self._logger.info(
+                'Command %s for workflow %s acknowledged (%d/%d)',
+                result.action,
+                result.workflow_id,
+                result.success_count,
+                total,
+            )
+            self._notify_command_success(result.workflow_id, result.action)
+        elif result.all_failed:
+            combined_errors = "; ".join(result.error_messages) or "Unknown error"
             self._logger.warning(
-                'Command %s for workflow %s failed: %s',
-                pending.action,
-                pending.workflow_id,
-                error_message,
+                'Command %s for workflow %s failed (%d/%d): %s',
+                result.action,
+                result.workflow_id,
+                result.error_count,
+                total,
+                combined_errors,
             )
             self._notify_command_error(
-                pending.workflow_id, pending.action, error_message or "Unknown error"
+                result.workflow_id, result.action, combined_errors
             )
         else:
-            self._logger.info(
-                'Command %s for workflow %s acknowledged',
-                pending.action,
-                pending.workflow_id,
+            # Partial success - notify both
+            combined_errors = "; ".join(result.error_messages) or "Unknown error"
+            self._logger.warning(
+                'Command %s for workflow %s partially succeeded (%d/%d, %d failed): %s',
+                result.action,
+                result.workflow_id,
+                result.success_count,
+                total,
+                result.error_count,
+                combined_errors,
             )
-            self._notify_command_success(pending.workflow_id, pending.action)
+            self._notify_command_success(result.workflow_id, result.action)
+            self._notify_command_error(
+                result.workflow_id, result.action, combined_errors
+            )

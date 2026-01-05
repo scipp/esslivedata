@@ -8,7 +8,7 @@ sent by the frontend, enabling proper error handling and UI feedback.
 """
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from ..config.workflow_spec import WorkflowId
@@ -16,13 +16,45 @@ from ..config.workflow_spec import WorkflowId
 CommandAction = Literal["start", "stop", "reset"]
 
 
-@dataclass(frozen=True)
+@dataclass
 class PendingCommand:
     """A command awaiting acknowledgement."""
 
     workflow_id: WorkflowId
     action: CommandAction
     timestamp: float  # Time when command was sent
+    expected_count: int  # Number of responses expected
+    success_count: int = 0
+    error_count: int = 0
+    error_messages: list[str] = field(default_factory=list)
+
+    @property
+    def is_complete(self) -> bool:
+        """Check if all expected responses have been received."""
+        return self.success_count + self.error_count >= self.expected_count
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    """Result of a completed command batch."""
+
+    workflow_id: WorkflowId
+    action: CommandAction
+    success_count: int
+    error_count: int
+    error_messages: list[str]
+
+    @property
+    def all_succeeded(self) -> bool:
+        return self.error_count == 0
+
+    @property
+    def all_failed(self) -> bool:
+        return self.success_count == 0
+
+    @property
+    def partial_success(self) -> bool:
+        return self.success_count > 0 and self.error_count > 0
 
 
 class PendingCommandTracker:
@@ -31,14 +63,19 @@ class PendingCommandTracker:
 
     This class encapsulates the mapping from message_id to pending command info,
     allowing the JobOrchestrator to correlate acknowledgement responses with
-    original commands.
+    original commands. Commands may target multiple sources, so responses are
+    accumulated until all expected responses are received.
     """
 
     def __init__(self) -> None:
         self._pending: dict[str, PendingCommand] = {}
 
     def register(
-        self, message_id: str, workflow_id: WorkflowId, action: CommandAction
+        self,
+        message_id: str,
+        workflow_id: WorkflowId,
+        action: CommandAction,
+        expected_count: int = 1,
     ) -> None:
         """
         Register a command as pending acknowledgement.
@@ -51,30 +88,62 @@ class PendingCommandTracker:
             Workflow that the command targets.
         action:
             Type of action being performed.
+        expected_count:
+            Number of acknowledgement responses expected (one per source).
         """
         self._pending[message_id] = PendingCommand(
             workflow_id=workflow_id,
             action=action,
             timestamp=time.time(),
+            expected_count=expected_count,
         )
 
-    def resolve(self, message_id: str) -> PendingCommand | None:
+    def record_response(
+        self, message_id: str, success: bool, error_message: str | None = None
+    ) -> CommandResult | None:
         """
-        Resolve a pending command by its message_id.
+        Record a response for a pending command.
 
-        Removes the command from pending tracking and returns its info.
+        Accumulates responses until all expected responses are received,
+        then returns the final result and removes the command from tracking.
 
         Parameters
         ----------
         message_id:
             The message_id from the acknowledgement response.
+        success:
+            True if this response indicates success (ACK), False for error (ERR).
+        error_message:
+            Error message if success is False.
 
         Returns
         -------
         :
-            The pending command info, or None if not found.
+            CommandResult if all responses received, None if still waiting.
+            Also returns None if message_id is not found.
         """
-        return self._pending.pop(message_id, None)
+        pending = self._pending.get(message_id)
+        if pending is None:
+            return None
+
+        if success:
+            pending.success_count += 1
+        else:
+            pending.error_count += 1
+            if error_message:
+                pending.error_messages.append(error_message)
+
+        if pending.is_complete:
+            del self._pending[message_id]
+            return CommandResult(
+                workflow_id=pending.workflow_id,
+                action=pending.action,
+                success_count=pending.success_count,
+                error_count=pending.error_count,
+                error_messages=pending.error_messages,
+            )
+
+        return None
 
     def expire_stale(self, max_age_seconds: float) -> list[PendingCommand]:
         """
