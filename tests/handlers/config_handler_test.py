@@ -107,10 +107,8 @@ class TestConfigProcessor:
         assert len(result_messages) == 1
         message = result_messages[0]
         assert message.stream == RESPONSES_STREAM_ID
-        assert isinstance(message.value, ConfigUpdate)
-        assert message.value.config_key.key == CommandAcknowledgement.key
-        assert isinstance(message.value.value, CommandAcknowledgement)
-        assert message.value.value.response == AcknowledgementResponse.ACK
+        assert isinstance(message.value, CommandAcknowledgement)
+        assert message.value.response == AcknowledgementResponse.ACK
 
     def test_process_job_command_message(self):
         mock_job_manager = MockJobManagerAdapter()
@@ -139,7 +137,7 @@ class TestConfigProcessor:
 
         # Verify response messages (ack for commands with message_id)
         assert len(result_messages) == 1
-        assert result_messages[0].value.value.message_id == "test-msg-id"
+        assert result_messages[0].value.message_id == "test-msg-id"
 
     def test_process_job_command_without_message_id_no_ack(self):
         mock_job_manager = MockJobManagerAdapter()

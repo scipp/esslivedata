@@ -345,13 +345,10 @@ class FakeJobOrchestrator:
 class TestOrchestratorAcknowledgementProcessing:
     def test_forward_with_ack_message(self) -> None:
         """Test that acknowledgement messages are forwarded to job orchestrator."""
-        from dataclasses import dataclass
-
         from ess.livedata.config.acknowledgement import (
             AcknowledgementResponse,
             CommandAcknowledgement,
         )
-        from ess.livedata.config.models import ConfigKey
 
         source = FakeMessageSource()
         data_service = DataService()
@@ -363,41 +360,24 @@ class TestOrchestratorAcknowledgementProcessing:
             job_service=job_service,
             job_orchestrator=job_orchestrator,
         )
-
-        @dataclass(frozen=True)
-        class FakeRawConfigItem:
-            key: bytes
-            value: bytes
 
         ack = CommandAcknowledgement(
             message_id="test-uuid",
             device="detector1",
             response=AcknowledgementResponse.ACK,
         )
-        config_key = ConfigKey(
-            service_name="job_server",
-            source_name="detector1",
-            key=CommandAcknowledgement.key,
-        )
-        raw_item = FakeRawConfigItem(
-            key=str(config_key).encode('utf-8'),
-            value=ack.model_dump_json().encode('utf-8'),
-        )
 
-        orchestrator.forward(RESPONSES_STREAM_ID, raw_item)
+        orchestrator.forward(RESPONSES_STREAM_ID, ack)
 
         assert len(job_orchestrator.acknowledgements) == 1
         assert job_orchestrator.acknowledgements[0] == ("test-uuid", "ACK", None)
 
     def test_forward_with_error_ack_message(self) -> None:
         """Test that error acknowledgement messages include error message."""
-        from dataclasses import dataclass
-
         from ess.livedata.config.acknowledgement import (
             AcknowledgementResponse,
             CommandAcknowledgement,
         )
-        from ess.livedata.config.models import ConfigKey
 
         source = FakeMessageSource()
         data_service = DataService()
@@ -409,11 +389,6 @@ class TestOrchestratorAcknowledgementProcessing:
             job_service=job_service,
             job_orchestrator=job_orchestrator,
         )
-
-        @dataclass(frozen=True)
-        class FakeRawConfigItem:
-            key: bytes
-            value: bytes
 
         ack = CommandAcknowledgement(
             message_id="test-uuid",
@@ -421,17 +396,8 @@ class TestOrchestratorAcknowledgementProcessing:
             response=AcknowledgementResponse.ERR,
             message="Workflow not found",
         )
-        config_key = ConfigKey(
-            service_name="job_server",
-            source_name="detector1",
-            key=CommandAcknowledgement.key,
-        )
-        raw_item = FakeRawConfigItem(
-            key=str(config_key).encode('utf-8'),
-            value=ack.model_dump_json().encode('utf-8'),
-        )
 
-        orchestrator.forward(RESPONSES_STREAM_ID, raw_item)
+        orchestrator.forward(RESPONSES_STREAM_ID, ack)
 
         assert len(job_orchestrator.acknowledgements) == 1
         assert job_orchestrator.acknowledgements[0] == (
@@ -442,7 +408,10 @@ class TestOrchestratorAcknowledgementProcessing:
 
     def test_forward_with_response_message_no_orchestrator(self) -> None:
         """Test that response messages are handled gracefully without orchestrator."""
-        from dataclasses import dataclass
+        from ess.livedata.config.acknowledgement import (
+            AcknowledgementResponse,
+            CommandAcknowledgement,
+        )
 
         source = FakeMessageSource()
         data_service = DataService()
@@ -454,50 +423,13 @@ class TestOrchestratorAcknowledgementProcessing:
             job_orchestrator=None,
         )
 
-        @dataclass(frozen=True)
-        class FakeRawConfigItem:
-            key: bytes
-            value: bytes
-
-        raw_item = FakeRawConfigItem(key=b"test/key", value=b'{"key": "value"}')
+        ack = CommandAcknowledgement(
+            message_id="test-uuid",
+            device="detector1",
+            response=AcknowledgementResponse.ACK,
+        )
         # Should not raise an exception
-        orchestrator.forward(RESPONSES_STREAM_ID, raw_item)
-
-    def test_forward_ignores_non_ack_messages(self) -> None:
-        """Test that non-acknowledgement response messages are ignored."""
-        from dataclasses import dataclass
-
-        from ess.livedata.config.models import ConfigKey
-
-        source = FakeMessageSource()
-        data_service = DataService()
-        job_service = JobService()
-        job_orchestrator = FakeJobOrchestrator()
-        orchestrator = Orchestrator(
-            message_source=source,
-            data_service=data_service,
-            job_service=job_service,
-            job_orchestrator=job_orchestrator,
-        )
-
-        @dataclass(frozen=True)
-        class FakeRawConfigItem:
-            key: bytes
-            value: bytes
-
-        # A non-command_ack message
-        config_key = ConfigKey(
-            service_name="job_server", source_name="detector1", key="other_key"
-        )
-        raw_item = FakeRawConfigItem(
-            key=str(config_key).encode('utf-8'),
-            value=b'{"data": "value"}',
-        )
-
-        orchestrator.forward(RESPONSES_STREAM_ID, raw_item)
-
-        # Should not call process_acknowledgement
-        assert len(job_orchestrator.acknowledgements) == 0
+        orchestrator.forward(RESPONSES_STREAM_ID, ack)
 
 
 def _data_stream_id(key: ResultKey) -> StreamId:

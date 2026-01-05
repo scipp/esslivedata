@@ -15,6 +15,9 @@ from ..core.job_manager_adapter import JobManagerAdapter
 from ..core.message import RESPONSES_STREAM_ID, Message
 from ..kafka.message_adapter import RawConfigItem
 
+# Re-export for backwards compatibility with tests
+__all__ = ['ConfigProcessor', 'ConfigUpdate']
+
 
 @dataclass
 class ConfigUpdate:
@@ -61,7 +64,7 @@ class ConfigProcessor:
 
     def process_messages(
         self, messages: list[Message[RawConfigItem]]
-    ) -> list[Message[Any]]:
+    ) -> list[Message[CommandAcknowledgement]]:
         """
         Process config messages and handle workflow_config and job_command updates.
 
@@ -73,7 +76,7 @@ class ConfigProcessor:
         Returns
         -------
         :
-            List of response messages (CommandAcknowledgement wrapped in ConfigUpdate)
+            List of response messages containing CommandAcknowledgements.
         """
         # Group latest updates by key and source
         latest_updates: defaultdict[str, dict[str | None, ConfigUpdate]] = defaultdict(
@@ -104,7 +107,7 @@ class ConfigProcessor:
                 self._logger.exception('Error processing config message')
 
         # Process the latest updates
-        response_messages: list[Message[Any]] = []
+        response_messages: list[Message[CommandAcknowledgement]] = []
 
         for config_key, source_updates in latest_updates.items():
             for source_name, update in source_updates.items():
@@ -116,11 +119,9 @@ class ConfigProcessor:
                         self._logger.debug('Unknown config key: %s', config_key)
                         continue
                     result = action(source_name, update.value)
-                    # Convert CommandAcknowledgement to response message
                     if result is not None:
-                        ack_update = self._acknowledgement_to_update(result)
                         response_messages.append(
-                            Message(stream=RESPONSES_STREAM_ID, value=ack_update)
+                            Message(stream=RESPONSES_STREAM_ID, value=result)
                         )
 
                 except Exception:
@@ -131,12 +132,3 @@ class ConfigProcessor:
                     )
 
         return response_messages
-
-    def _acknowledgement_to_update(self, ack: CommandAcknowledgement) -> ConfigUpdate:
-        """Convert a CommandAcknowledgement to a ConfigUpdate for serialization."""
-        config_key = ConfigKey(
-            service_name="job_server",
-            source_name=ack.device,
-            key=CommandAcknowledgement.key,
-        )
-        return ConfigUpdate(config_key=config_key, value=ack)

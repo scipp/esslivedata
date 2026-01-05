@@ -2,12 +2,10 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING, Any
 
 from ..config.acknowledgement import CommandAcknowledgement
-from ..config.models import ConfigKey
 from ..config.workflow_spec import ResultKey
 from ..core.message import (
     RESPONSES_STREAM_ID,
@@ -83,23 +81,13 @@ class Orchestrator:
             result_key = ResultKey.model_validate_json(stream_id.name)
             self._data_service[result_key] = value
 
-    def _process_response(self, raw_item) -> None:
-        """Process a response message from the backend."""
+    def _process_response(self, ack: CommandAcknowledgement) -> None:
+        """Process a command acknowledgement from the backend."""
         if self._job_orchestrator is None:
             return
 
-        try:
-            key_str = raw_item.key.decode('utf-8')
-            value_dict = json.loads(raw_item.value.decode('utf-8'))
-
-            config_key = ConfigKey.from_string(key_str)
-
-            if config_key.key == CommandAcknowledgement.key:
-                ack = CommandAcknowledgement.model_validate(value_dict)
-                self._job_orchestrator.process_acknowledgement(
-                    message_id=ack.message_id,
-                    response=ack.response.value,
-                    error_message=ack.message,
-                )
-        except Exception:
-            self._logger.exception("Error processing response message")
+        self._job_orchestrator.process_acknowledgement(
+            message_id=ack.message_id,
+            response=ack.response.value,
+            error_message=ack.message,
+        )
