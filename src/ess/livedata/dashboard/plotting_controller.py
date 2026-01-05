@@ -10,10 +10,7 @@ import holoviews as hv
 import pydantic
 
 from ess.livedata.config.workflow_spec import (
-    JobId,
-    JobNumber,
     ResultKey,
-    WorkflowId,
     WorkflowSpec,
 )
 
@@ -129,63 +126,50 @@ class PlottingController:
         """
         return plotter_registry.get_static_plotters()
 
-    def setup_data_pipeline(
+    def setup_pipeline(
         self,
-        job_number: JobNumber,
-        workflow_id: WorkflowId,
-        source_names: list[str],
-        output_name: str | None,
+        keys: list[ResultKey],
         plot_name: str,
         params: dict | pydantic.BaseModel,
         on_first_data: Callable[[Any], None],
+        ready_condition: Callable[[set[ResultKey]], bool] | None = None,
     ) -> None:
         """
-        Set up the data pipeline for a plot with callback for first data arrival.
+        Set up data pipeline for any plot type.
 
-        This is Phase 1 of two-phase plot creation. It creates the data subscriber
-        and stream without creating the plotter. When data arrives, the callback
-        is invoked with the pipe, which should then be used with
-        create_plot_from_pipeline() to create the plot.
+        This is the unified interface for setting up data pipelines that works
+        for both single-source and multi-source layers. PlotOrchestrator should
+        use this method exclusively.
 
         Parameters
         ----------
-        job_number:
-            The job number to set up the pipeline for.
-        workflow_id:
-            The workflow ID for this plot.
-        source_names:
-            List of data source names to include.
-        output_name:
-            The name of the output.
-        plot_name:
-            The name of the plotter to use.
-        params:
-            The plotter parameters as a dict or validated Pydantic model.
-        on_first_data:
-            Callback invoked when first data arrives, receives the pipe as parameter.
+        keys
+            ResultKeys for all data sources (built by LayerSubscription).
+        plot_name
+            Name of the plotter to use.
+        params
+            Plotter parameters as a dict or validated Pydantic model.
+        on_first_data
+            Callback when data is ready for plot creation.
+        ready_condition
+            Condition for when on_first_data should fire. If None, fires
+            when any data is available (single-source default). For multi-source
+            layers, LayerSubscription provides a condition requiring data from
+            each DataSourceConfig.
         """
         # Validate params if dict, pass through if already a model
         if isinstance(params, dict):
             spec = plotter_registry.get_spec(plot_name)
             params = spec.params(**params) if spec.params else pydantic.BaseModel()
 
-        # Build result keys for all sources
-        keys = [
-            ResultKey(
-                workflow_id=workflow_id,
-                job_id=JobId(job_number=job_number, source_name=source_name),
-                output_name=output_name,
-            )
-            for source_name in source_names
-        ]
+        spec = plotter_registry.get_spec(plot_name)
+        window = getattr(params, 'window', None)
 
         # Special case for roi_detector: create separate subscriptions per detector
-        # and coordinate them to invoke callback once when all are ready
+        # and coordinate them to invoke callback once when all are ready.
+        # This is needed because roi_detector creates separate DynamicMaps per detector
+        # rather than a single merged stream.
         if plot_name == 'roi_detector':
-            spec = plotter_registry.get_spec(plot_name)
-            window = getattr(params, 'window', None)
-
-            # Collect pipes from individual subscriptions
             pipes: dict[ResultKey, Any] = {}
 
             def make_detector_callback(key: ResultKey) -> Callable[[Any], None]:
@@ -208,13 +192,12 @@ class PlottingController:
             return
 
         # Standard path: create single merged subscription
-        spec = plotter_registry.get_spec(plot_name)
-        window = getattr(params, 'window', None)
         extractors = create_extractors_from_params(keys, window, spec)
 
-        # Set up data pipeline with callback for first data
         self._stream_manager.make_merging_stream(
-            extractors, on_first_data=on_first_data
+            extractors,
+            on_first_data=on_first_data,
+            ready_condition=ready_condition,
         )
 
     def create_plot_from_pipeline(

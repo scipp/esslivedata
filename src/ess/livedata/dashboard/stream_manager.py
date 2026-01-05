@@ -33,6 +33,7 @@ class StreamManager(Generic[P]):
         keys: Sequence[ResultKey] | dict[ResultKey, UpdateExtractor],
         assembler_factory: Callable[[set[ResultKey]], Any] = MergingStreamAssembler,
         on_first_data: Callable[[P], None] | None = None,
+        ready_condition: Callable[[set[ResultKey]], bool] | None = None,
     ) -> P:
         """
         Create a merging stream for the given result keys.
@@ -50,6 +51,12 @@ class StreamManager(Generic[P]):
         on_first_data:
             Optional callback invoked when first data arrives with the created pipe.
             Called after pipe creation with non-empty data.
+        ready_condition:
+            Optional callable that determines when on_first_data should fire.
+            Receives the set of keys that have data. If None, fires when any
+            data is available (existing behavior). For multi-source layers,
+            LayerSubscription provides a condition requiring data from each
+            DataSourceConfig.
 
         Returns
         -------
@@ -69,7 +76,11 @@ class StreamManager(Generic[P]):
 
         assembler = assembler_factory(keys_set)
         subscriber = DataSubscriber(
-            assembler, self._pipe_factory, extractors, on_first_data
+            assembler,
+            self._pipe_factory,
+            extractors,
+            on_first_data,
+            ready_condition,
         )
         self.data_service.register_subscriber(subscriber)
         return subscriber.pipe

@@ -256,6 +256,149 @@ class TestDataSubscriber:
             assert len(pipe.send_calls) == 0
 
 
+class TestDataSubscriberReadyCondition:
+    """Test cases for DataSubscriber ready_condition parameter."""
+
+    def test_on_first_data_fires_when_default_ready_condition_met(
+        self, sample_keys, fake_pipe_factory, sample_extractors
+    ):
+        """Default ready_condition fires when any data is available."""
+        callback_invoked = []
+
+        def on_first_data(pipe):
+            callback_invoked.append(pipe)
+
+        assembler = FakeStreamAssembler(sample_keys, 'assembled_data')
+        subscriber = DataSubscriber(
+            assembler,
+            fake_pipe_factory,
+            sample_extractors,
+            on_first_data=on_first_data,
+        )
+
+        # Trigger with some data
+        subscriber.trigger({'key1': 'value1'})
+
+        # Default condition should fire (any data available)
+        assert len(callback_invoked) == 1
+        assert isinstance(callback_invoked[0], FakePipe)
+
+    def test_on_first_data_not_fired_when_ready_condition_not_met(
+        self, sample_keys, fake_pipe_factory, sample_extractors
+    ):
+        """on_first_data not fired when ready_condition returns False."""
+        callback_invoked = []
+
+        def on_first_data(pipe):
+            callback_invoked.append(pipe)
+
+        def ready_condition(keys: set[str]) -> bool:
+            # Require both key1 and key2
+            return 'key1' in keys and 'key2' in keys
+
+        assembler = FakeStreamAssembler(sample_keys, 'assembled_data')
+        subscriber = DataSubscriber(
+            assembler,
+            fake_pipe_factory,
+            sample_extractors,
+            on_first_data=on_first_data,
+            ready_condition=ready_condition,
+        )
+
+        # Trigger with only key1
+        subscriber.trigger({'key1': 'value1'})
+
+        # Callback should not fire (key2 missing)
+        assert len(callback_invoked) == 0
+
+    def test_on_first_data_fires_when_ready_condition_met(
+        self, sample_keys, fake_pipe_factory, sample_extractors
+    ):
+        """on_first_data fires when ready_condition returns True."""
+        callback_invoked = []
+
+        def on_first_data(pipe):
+            callback_invoked.append(pipe)
+
+        def ready_condition(keys: set[str]) -> bool:
+            # Require both key1 and key2
+            return 'key1' in keys and 'key2' in keys
+
+        assembler = FakeStreamAssembler(sample_keys, 'assembled_data')
+        subscriber = DataSubscriber(
+            assembler,
+            fake_pipe_factory,
+            sample_extractors,
+            on_first_data=on_first_data,
+            ready_condition=ready_condition,
+        )
+
+        # Trigger with both key1 and key2
+        subscriber.trigger({'key1': 'value1', 'key2': 'value2'})
+
+        # Callback should fire
+        assert len(callback_invoked) == 1
+
+    def test_on_first_data_fires_once_when_ready_condition_becomes_met(
+        self, sample_keys, fake_pipe_factory, sample_extractors
+    ):
+        """on_first_data fires once when condition becomes met on later trigger."""
+        callback_invoked = []
+
+        def on_first_data(pipe):
+            callback_invoked.append(pipe)
+
+        def ready_condition(keys: set[str]) -> bool:
+            return 'key1' in keys and 'key2' in keys
+
+        assembler = FakeStreamAssembler(sample_keys, 'assembled_data')
+        subscriber = DataSubscriber(
+            assembler,
+            fake_pipe_factory,
+            sample_extractors,
+            on_first_data=on_first_data,
+            ready_condition=ready_condition,
+        )
+
+        # First trigger with only key1 - condition not met
+        subscriber.trigger({'key1': 'value1'})
+        assert len(callback_invoked) == 0
+
+        # Second trigger with both keys - condition met
+        subscriber.trigger({'key1': 'value1', 'key2': 'value2'})
+        assert len(callback_invoked) == 1
+
+        # Third trigger - callback should not fire again
+        subscriber.trigger({'key1': 'value1', 'key2': 'value2', 'key3': 'value3'})
+        assert len(callback_invoked) == 1
+
+    def test_ready_condition_receives_correct_keys(
+        self, sample_keys, fake_pipe_factory, sample_extractors
+    ):
+        """ready_condition receives the correct set of keys from data."""
+        received_keys = []
+
+        def ready_condition(keys: set[str]) -> bool:
+            received_keys.append(keys.copy())
+            return False  # Never fire
+
+        assembler = FakeStreamAssembler(sample_keys, 'assembled_data')
+        subscriber = DataSubscriber(
+            assembler,
+            fake_pipe_factory,
+            sample_extractors,
+            on_first_data=lambda p: None,
+            ready_condition=ready_condition,
+        )
+
+        # Trigger with specific keys
+        subscriber.trigger({'key1': 'value1', 'key3': 'value3'})
+
+        # ready_condition should receive the keys that had data
+        assert len(received_keys) == 1
+        assert received_keys[0] == {'key1', 'key3'}
+
+
 class TestMergingStreamAssembler:
     """Test cases for MergingStreamAssembler class."""
 

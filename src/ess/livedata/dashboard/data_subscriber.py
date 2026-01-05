@@ -99,6 +99,7 @@ class DataSubscriber(DataServiceSubscriber[Key], Generic[Key, P]):
         pipe_factory: Callable[[dict[Key, Any]], P],
         extractors: Mapping[Key, UpdateExtractor],
         on_first_data: Callable[[P], None] | None = None,
+        ready_condition: Callable[[set[Key]], bool] | None = None,
     ) -> None:
         """
         Initialize the subscriber with an assembler and pipe factory.
@@ -114,12 +115,19 @@ class DataSubscriber(DataServiceSubscriber[Key], Generic[Key, P]):
         on_first_data:
             Optional callback invoked when first data arrives with the created pipe.
             Called after pipe creation with non-empty data.
+        ready_condition:
+            Optional callable that determines when on_first_data should fire.
+            Receives the set of keys that have data. If None, fires when any
+            data is available (existing behavior). For multi-source layers,
+            LayerSubscription provides a condition requiring data from each
+            DataSourceConfig.
         """
         self._assembler = assembler
         self._pipe_factory = pipe_factory
         self._pipe: P | None = None
         self._extractors = extractors
         self._on_first_data = on_first_data
+        self._ready_condition = ready_condition or (lambda keys: bool(keys))
         self._first_data_callback_invoked = False
         # Initialize parent class to cache keys
         super().__init__()
@@ -155,15 +163,21 @@ class DataSubscriber(DataServiceSubscriber[Key], Generic[Key, P]):
             # Subsequent triggers - send to existing pipe
             self._pipe.send(assembled_data)
 
-        # Invoke first-data callback when we have actual data for the first time.
+        # Invoke first-data callback when we have actual data for the first time
+        # AND the ready_condition is satisfied.
         # IMPORTANT: We defer this callback to the next event loop iteration using
         # pn.state.execute(). This breaks the synchronous callback chain that occurs
         # when subscribing to a workflow that already has data, preventing UI blocking
         # during plot creation. The chain would otherwise be:
-        #   subscribe_to_workflow() → on_job_available() → setup_data_pipeline()
+        #   subscribe_to_workflow() → on_all_jobs_ready() → setup_pipeline()
         #   → register_subscriber() → trigger() → on_first_data() → create_plot()
         # All running synchronously before returning control to the event loop.
-        if data and not self._first_data_callback_invoked and self._on_first_data:
+        if (
+            data
+            and not self._first_data_callback_invoked
+            and self._on_first_data
+            and self._ready_condition(set(data.keys()))
+        ):
             self._first_data_callback_invoked = True
             pipe = self._pipe  # Capture for lambda
             pn.state.execute(lambda: self._on_first_data(pipe))

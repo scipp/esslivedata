@@ -29,6 +29,7 @@ from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 from .config_store import ConfigStore
 from .data_service import DataService
 from .job_orchestrator import WorkflowCallbacks
+from .layer_subscription import LayerSubscription, SubscriptionReady
 from .plotting_controller import PlottingController
 
 if TYPE_CHECKING:
@@ -313,7 +314,7 @@ class PlotOrchestrator:
 
         self._grids: dict[GridId, PlotGridConfig] = {}
         self._cell_to_grid: dict[CellId, GridId] = {}
-        self._layer_to_subscription: dict[LayerId, SubscriptionId] = {}
+        self._layer_subscriptions: dict[LayerId, LayerSubscription] = {}
         self._layer_state: dict[LayerId, LayerState] = {}
         self._layer_to_cell: dict[LayerId, CellId] = {}
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
@@ -611,9 +612,9 @@ class PlotOrchestrator:
             Set to False when the layer is being updated (still in the cell),
             True when removing the layer completely.
         """
-        if layer_id in self._layer_to_subscription:
-            self._job_orchestrator.unsubscribe(self._layer_to_subscription[layer_id])
-            del self._layer_to_subscription[layer_id]
+        if layer_id in self._layer_subscriptions:
+            self._layer_subscriptions[layer_id].unsubscribe()
+            del self._layer_subscriptions[layer_id]
         self._layer_state.pop(layer_id, None)
         if remove_from_cell_mapping:
             self._layer_to_cell.pop(layer_id, None)
@@ -622,30 +623,18 @@ class PlotOrchestrator:
         """
         Subscribe a layer to workflow lifecycle and set up initial notification.
 
+        Uses LayerSubscription to handle both single and multi-source layers uniformly.
+        LayerSubscription manages:
+        - Subscribing to all required workflows
+        - Tracking which workflows have started
+        - Notifying when ALL workflows are ready (for multi-source layers)
+        - Propagating stop notifications
+
         Branches based on layer type (determined by data sources):
 
         - **Static overlay** (single data source with empty source_names): Create plot
           immediately without workflow subscription.
-        - **Standard plot** (single data source): Subscribe to workflow availability.
-        - **Correlation histogram** (multiple data sources): Future work.
-
-        For standard layers with one data source, handles two scenarios:
-
-        **Scenario A: Workflow not yet running**
-
-        1. Subscribe to workflow (callback not invoked)
-        2. Notify UI that cell is "waiting for workflow"
-        3. When workflow is committed, on_started fires -> _on_layer_job_available
-
-        **Scenario B: Workflow already running**
-
-        1. Subscribe to workflow (on_started invoked immediately with job_number)
-        2. _on_layer_job_available sets up data pipeline
-        3. If data exists: plot created immediately
-           If no data yet: notify UI "waiting for data"
-
-        When the workflow is stopped, on_stopped fires -> _on_layer_job_stopped,
-        which marks the layer as stopped and notifies the UI.
+        - **Dynamic layers** (single or multiple data sources): Use LayerSubscription.
 
         Parameters
         ----------
@@ -665,44 +654,27 @@ class PlotOrchestrator:
             self._persist_to_store()
             return
 
-        if len(config.data_sources) > 1:
-            # Future work: correlation histograms with multiple data sources
-            self._logger.warning(
-                'Multiple data sources not yet supported for layer_id=%s', layer_id
-            )
-            cell = self._grids[grid_id].cells[cell_id]
-            self._layer_state[layer_id] = LayerState(
-                error='Multiple data sources not yet supported'
-            )
-            layer_states, composed = self.get_cell_state(cell_id)
-            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
-            self._persist_to_store()
-            return
+        # Unified path for all non-static layers (single or multi-source)
+        def on_all_jobs_ready(ready: SubscriptionReady) -> None:
+            self._on_all_jobs_ready(layer_id, cell_id, grid_id, ready)
 
-        # Standard path: single data source
-        def on_workflow_available(job_number: JobNumber) -> None:
-            self._on_layer_job_available(layer_id, job_number)
-
-        def on_workflow_stopped(job_number: JobNumber) -> None:
+        def on_any_job_stopped(job_number: JobNumber) -> None:
             self._on_layer_job_stopped(layer_id, job_number)
 
-        # Subscribe to workflow lifecycle.
-        # Returns whether callback was invoked immediately (workflow already running).
-        subscription_id, was_invoked = self._job_orchestrator.subscribe_to_workflow(
-            workflow_id=config.workflow_id,
-            callbacks=WorkflowCallbacks(
-                on_started=on_workflow_available,
-                on_stopped=on_workflow_stopped,
-            ),
+        subscription = LayerSubscription(
+            data_sources=config.data_sources,
+            job_orchestrator=self._job_orchestrator,
+            on_ready=on_all_jobs_ready,
+            on_stopped=on_any_job_stopped,
         )
-        self._layer_to_subscription[layer_id] = subscription_id
+        self._layer_subscriptions[layer_id] = subscription
+        subscription.start()  # May fire on_ready synchronously if workflows running
 
-        # Scenario A: Workflow doesn't exist yet.
-        # Notify UI that cell is waiting for workflow to be committed.
-        if not was_invoked:
-            cell = self._grids[grid_id].cells[cell_id]
-            layer_states, composed = self.get_cell_state(cell_id)
-            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
+        # Always notify current state - either "waiting" or plot-ready
+        # (if on_ready fired synchronously and data existed)
+        cell = self._grids[grid_id].cells[cell_id]
+        layer_states, composed = self.get_cell_state(cell_id)
+        self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
 
         # Persist updated state
         self._persist_to_store()
@@ -750,39 +722,47 @@ class PlotOrchestrator:
         layer_states, composed = self.get_cell_state(cell_id)
         self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
 
-    def _on_layer_job_available(self, layer_id: LayerId, job_number: JobNumber) -> None:
+    def _on_all_jobs_ready(
+        self,
+        layer_id: LayerId,
+        cell_id: CellId,
+        grid_id: GridId,
+        ready: SubscriptionReady,
+    ) -> None:
         """
-        Handle workflow availability notification for a layer.
+        Handle notification when all workflows for a layer are ready.
 
-        Called when a workflow job becomes available (either immediately during
-        subscription if workflow was already running, or later when committed).
+        Called by LayerSubscription when all data sources have running jobs.
+        Sets up the data pipeline with the unified setup_pipeline() method.
 
         **Flow:**
 
-        1. Set up data pipeline with on_first_data callback
-        2. If data already exists in DataService:
+        1. Set up data pipeline with on_first_data callback and ready_condition
+        2. If data already exists in DataService and ready_condition is satisfied:
            - on_first_data fires immediately -> plot created -> state stored
            - Compose and notify
-        3. If no data yet:
+        3. If no data yet or ready_condition not satisfied:
            - Notify UI that layer is "waiting for data"
-           - Later when data arrives, on_first_data fires -> plot created
+           - Later when data arrives and ready_condition is met, on_first_data fires
 
         Parameters
         ----------
         layer_id
             ID of the layer to create plot for.
-        job_number
-            Job number for the workflow.
+        cell_id
+            ID of the cell containing the layer.
+        grid_id
+            ID of the grid containing the cell.
+        ready
+            SubscriptionReady containing ResultKeys and ready_condition.
         """
         # Defensive check: layer may have been removed before callback fires
         if layer_id not in self._layer_to_cell:
             self._logger.warning(
-                'Ignoring workflow availability for removed layer_id=%s', layer_id
+                'Ignoring all-jobs-ready for removed layer_id=%s', layer_id
             )
             return
 
-        cell_id = self._layer_to_cell[layer_id]
-        grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
         # Clear any previous state (e.g., from a stopped job) to start fresh
@@ -794,9 +774,8 @@ class PlotOrchestrator:
         def on_data_arrived(pipe) -> None:
             """Create plot when first data arrives for the pipeline."""
             self._logger.debug(
-                'Data arrived for layer_id=%s, job_number=%s, creating plot',
+                'Data arrived for layer_id=%s, creating plot',
                 layer_id,
-                job_number,
             )
             # Create the plot with the now-populated pipe
             try:
@@ -824,16 +803,14 @@ class PlotOrchestrator:
                     grid_id, cell_id, cell, layer_states, composed
                 )
 
-        # Set up data pipeline with callback
+        # Set up data pipeline with callback using the unified interface
         try:
-            self._plotting_controller.setup_data_pipeline(
-                job_number=job_number,
-                workflow_id=config.workflow_id,
-                source_names=config.source_names,
-                output_name=config.output_name,
+            self._plotting_controller.setup_pipeline(
+                keys=ready.keys,
                 plot_name=config.plot_name,
                 params=config.params,
                 on_first_data=on_data_arrived,
+                ready_condition=ready.ready_condition,
             )
         except Exception:
             error_msg = traceback.format_exc()
