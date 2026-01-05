@@ -31,26 +31,26 @@ class JobManagerAdapter:
         _ = source_name  # Legacy, not used.
         command = JobCommand.model_validate(value)
 
-        # No message_id means no acknowledgement expected
-        if command.message_id is None:
-            self._job_manager.job_command(command)
-            return None
-
         try:
             self._job_manager.job_command(command)
-            return CommandAcknowledgement(
-                message_id=command.message_id,
-                device=str(command.job_id) if command.job_id else "all",
-                response=AcknowledgementResponse.ACK,
-            )
         except Exception as e:
             self._logger.exception("Failed to execute job command %s", command.action)
-            return CommandAcknowledgement(
-                message_id=command.message_id,
-                device=str(command.job_id) if command.job_id else "all",
-                response=AcknowledgementResponse.ERR,
-                message=str(e),
-            )
+            if command.message_id is not None:
+                return CommandAcknowledgement(
+                    message_id=command.message_id,
+                    device=str(command.job_id) if command.job_id else "all",
+                    response=AcknowledgementResponse.ERR,
+                    message=str(e),
+                )
+            return None
+        else:
+            if command.message_id is not None:
+                return CommandAcknowledgement(
+                    message_id=command.message_id,
+                    device=str(command.job_id) if command.job_id else "all",
+                    response=AcknowledgementResponse.ACK,
+                )
+            return None
 
     def set_workflow_with_config(
         self, source_name: str | None, value: dict | None
