@@ -82,7 +82,6 @@ class LayerSubscription:
         # Track job_numbers per data_source index (not workflow_id to handle dups)
         self._job_numbers: dict[int, JobNumber] = {}
         self._subscription_ids: list[SubscriptionId] = []
-        self._ready_fired = False
 
     def start(self) -> None:
         """
@@ -98,7 +97,7 @@ class LayerSubscription:
                 workflow_id=ds.workflow_id,
                 callbacks=WorkflowCallbacks(
                     on_started=partial(self._on_workflow_started, idx),
-                    on_stopped=self._on_stopped,
+                    on_stopped=partial(self._handle_workflow_stopped, idx),
                 ),
             )
             self._subscription_ids.append(sub_id)
@@ -107,14 +106,24 @@ class LayerSubscription:
         """Handle workflow start for a specific data_source."""
         self._job_numbers[ds_index] = job_number
 
-        # Check if all data_sources have job_numbers and we haven't fired yet
-        if len(self._job_numbers) == len(self._data_sources) and not self._ready_fired:
-            self._ready_fired = True
+        if len(self._job_numbers) == len(self._data_sources):
             ready = SubscriptionReady(
                 keys=self._build_result_keys(),
                 ready_condition=self._build_ready_condition(),
             )
             self._on_ready(ready)
+
+    def _handle_workflow_stopped(self, ds_index: int, job_number: JobNumber) -> None:
+        """Handle workflow stop for a specific data_source.
+
+        Clears the job_number for the stopped source so the length check in
+        _on_workflow_started will wait for restart before firing on_ready.
+        """
+        if ds_index in self._job_numbers:
+            del self._job_numbers[ds_index]
+
+        if self._on_stopped is not None:
+            self._on_stopped(job_number)
 
     def _keys_by_data_source(self) -> list[set[ResultKey]]:
         """Return ResultKeys grouped by data_source."""

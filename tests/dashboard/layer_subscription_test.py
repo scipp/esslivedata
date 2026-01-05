@@ -31,6 +31,7 @@ class FakeJobOrchestrator:
 
     def __init__(self):
         self._subscriptions: dict[SubscriptionId, WorkflowCallbacks] = {}
+        self._workflow_subscriptions: dict[WorkflowId, set[SubscriptionId]] = {}
         self._running_jobs: dict[WorkflowId, JobNumber] = {}
         self._next_sub_id = 0
 
@@ -48,6 +49,11 @@ class FakeJobOrchestrator:
         self._next_sub_id += 1
         self._subscriptions[sub_id] = callbacks
 
+        # Track which workflow this subscription is for
+        if workflow_id not in self._workflow_subscriptions:
+            self._workflow_subscriptions[workflow_id] = set()
+        self._workflow_subscriptions[workflow_id].add(sub_id)
+
         # If workflow is already running, invoke on_started immediately
         if workflow_id in self._running_jobs:
             job_number = self._running_jobs[workflow_id]
@@ -60,21 +66,30 @@ class FakeJobOrchestrator:
     def unsubscribe(self, subscription_id: SubscriptionId) -> None:
         """Unsubscribe from workflow notifications."""
         self._subscriptions.pop(subscription_id, None)
+        for workflow_subs in self._workflow_subscriptions.values():
+            workflow_subs.discard(subscription_id)
 
     def simulate_workflow_started(
         self, workflow_id: WorkflowId, job_number: JobNumber
     ) -> None:
-        """Simulate a workflow starting."""
+        """Simulate workflow starting (notifies only subscribers for workflow)."""
         self._running_jobs[workflow_id] = job_number
-        for callbacks in self._subscriptions.values():
-            if callbacks.on_started:
-                callbacks.on_started(job_number)
+        for sub_id in self._workflow_subscriptions.get(workflow_id, set()):
+            if sub_id in self._subscriptions:
+                callbacks = self._subscriptions[sub_id]
+                if callbacks.on_started:
+                    callbacks.on_started(job_number)
 
-    def simulate_workflow_stopped(self, job_number: JobNumber) -> None:
-        """Simulate a workflow stopping."""
-        for callbacks in self._subscriptions.values():
-            if callbacks.on_stopped:
-                callbacks.on_stopped(job_number)
+    def simulate_workflow_stopped(
+        self, workflow_id: WorkflowId, job_number: JobNumber
+    ) -> None:
+        """Simulate workflow stopping (notifies only subscribers for workflow)."""
+        self._running_jobs.pop(workflow_id, None)
+        for sub_id in self._workflow_subscriptions.get(workflow_id, set()):
+            if sub_id in self._subscriptions:
+                callbacks = self._subscriptions[sub_id]
+                if callbacks.on_stopped:
+                    callbacks.on_stopped(job_number)
 
 
 @pytest.fixture
@@ -299,7 +314,7 @@ class TestLayerSubscriptionSingleSource:
         subscription.start()
 
         # Simulate workflow stopping
-        fake_job_orchestrator.simulate_workflow_stopped(job_number)
+        fake_job_orchestrator.simulate_workflow_stopped(workflow_id, job_number)
 
         assert len(stopped_invocations) == 1
         assert stopped_invocations[0] == job_number
@@ -524,13 +539,13 @@ class TestLayerSubscriptionMultiSource:
         subscription.start()
 
         # Stop first workflow
-        fake_job_orchestrator.simulate_workflow_stopped(job_number)
+        fake_job_orchestrator.simulate_workflow_stopped(workflow_id, job_number)
 
-        # on_stopped should fire (twice - once for each subscription)
-        # This is by design - LayerSubscription doesn't deduplicate stop notifications
-        assert len(stopped_invocations) >= 1
+        # on_stopped should fire once for this workflow
+        assert len(stopped_invocations) == 1
+        assert stopped_invocations[0] == job_number
 
-    def test_on_ready_fires_only_once(
+    def test_on_ready_fires_again_when_job_replaced(
         self,
         workflow_id,
         workflow_id_2,
@@ -538,7 +553,7 @@ class TestLayerSubscriptionMultiSource:
         job_number_2,
         fake_job_orchestrator,
     ):
-        """on_ready should fire only once even if workflows restart."""
+        """on_ready should fire again when a workflow restarts with a new job_number."""
         ready_invocations = []
 
         def on_ready(ready: SubscriptionReady) -> None:
@@ -566,14 +581,67 @@ class TestLayerSubscriptionMultiSource:
         fake_job_orchestrator.simulate_workflow_started(workflow_id, job_number)
         fake_job_orchestrator.simulate_workflow_started(workflow_id_2, job_number_2)
 
-        # on_ready should fire once
         assert len(ready_invocations) == 1
 
-        # Simulate restart (shouldn't fire on_ready again)
+        # Simulate job replacement with NEW job_number
+        new_job_number = uuid.uuid4()
+        fake_job_orchestrator.simulate_workflow_started(workflow_id, new_job_number)
+
+        # on_ready should fire again with new keys
+        assert len(ready_invocations) == 2
+        # Verify the new ready has the new job_number
+        new_ready = ready_invocations[1]
+        det_key = next(k for k in new_ready.keys if k.job_id.source_name == 'det1')
+        assert det_key.job_id.job_number == new_job_number
+
+    def test_on_ready_fires_again_after_stop_and_restart(
+        self,
+        workflow_id,
+        workflow_id_2,
+        job_number,
+        job_number_2,
+        fake_job_orchestrator,
+    ):
+        """on_ready should fire again after a workflow stops and restarts."""
+        ready_invocations = []
+
+        def on_ready(ready: SubscriptionReady) -> None:
+            ready_invocations.append(ready)
+
+        data_source_1 = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=['det1'],
+            output_name='data',
+        )
+        data_source_2 = DataSourceConfig(
+            workflow_id=workflow_id_2,
+            source_names=['temp'],
+            output_name='axis',
+        )
+
+        subscription = LayerSubscription(
+            data_sources=[data_source_1, data_source_2],
+            job_orchestrator=fake_job_orchestrator,
+            on_ready=on_ready,
+            on_stopped=lambda _: None,
+        )
+        subscription.start()
+
+        # Start both workflows
         fake_job_orchestrator.simulate_workflow_started(workflow_id, job_number)
+        fake_job_orchestrator.simulate_workflow_started(workflow_id_2, job_number_2)
 
-        # Still only one invocation
         assert len(ready_invocations) == 1
+
+        # Stop workflow_id
+        fake_job_orchestrator.simulate_workflow_stopped(workflow_id, job_number)
+
+        # Restart with new job_number
+        new_job_number = uuid.uuid4()
+        fake_job_orchestrator.simulate_workflow_started(workflow_id, new_job_number)
+
+        # on_ready should fire again
+        assert len(ready_invocations) == 2
 
 
 class TestLayerSubscriptionDuplicateWorkflows:
