@@ -156,6 +156,35 @@ class FakePlottingController:
         """Return all recorded pipeline setup calls."""
         return self._pipeline_setups.copy()
 
+    def setup_pipeline(
+        self,
+        keys,
+        plot_name: str,
+        params,
+        on_first_data,
+        ready_condition=None,
+    ):
+        """Set up data pipeline using real StreamManager (unified interface)."""
+        # Extract source_names and output_name from keys for assertions
+        source_names = [key.job_id.source_name for key in keys] if keys else []
+        output_name = keys[0].output_name if keys else None
+
+        # Record the call for assertions
+        self._pipeline_setups.append(
+            {
+                'source_names': source_names,
+                'output_name': output_name,
+                'plot_name': plot_name,
+            }
+        )
+
+        # Use real StreamManager for subscription (avoids duplicating logic)
+        self._stream_manager.make_merging_stream(
+            keys,
+            on_first_data=on_first_data,
+            ready_condition=ready_condition,
+        )
+
     def setup_data_pipeline(
         self,
         job_number,
@@ -166,7 +195,7 @@ class FakePlottingController:
         params: dict,
         on_first_data,
     ):
-        """Set up data pipeline using real StreamManager."""
+        """Set up data pipeline using real StreamManager (legacy interface)."""
         from ess.livedata.config.workflow_spec import JobId, ResultKey
 
         # Record the call for assertions

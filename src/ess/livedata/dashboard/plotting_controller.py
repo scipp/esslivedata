@@ -129,6 +129,52 @@ class PlottingController:
         """
         return plotter_registry.get_static_plotters()
 
+    def setup_pipeline(
+        self,
+        keys: list[ResultKey],
+        plot_name: str,
+        params: dict | pydantic.BaseModel,
+        on_first_data: Callable[[Any], None],
+        ready_condition: Callable[[set[ResultKey]], bool] | None = None,
+    ) -> None:
+        """
+        Set up data pipeline for any plot type.
+
+        This is the unified interface for setting up data pipelines that works
+        for both single-source and multi-source layers. PlotOrchestrator should
+        use this method exclusively.
+
+        Parameters
+        ----------
+        keys
+            ResultKeys for all data sources (built by LayerSubscription).
+        plot_name
+            Name of the plotter to use.
+        params
+            Plotter parameters as a dict or validated Pydantic model.
+        on_first_data
+            Callback when data is ready for plot creation.
+        ready_condition
+            Condition for when on_first_data should fire. If None, fires
+            when any data is available (single-source default). For multi-source
+            layers, LayerSubscription provides a condition requiring data from
+            each DataSourceConfig.
+        """
+        # Validate params if dict, pass through if already a model
+        if isinstance(params, dict):
+            spec = plotter_registry.get_spec(plot_name)
+            params = spec.params(**params) if spec.params else pydantic.BaseModel()
+
+        spec = plotter_registry.get_spec(plot_name)
+        window = getattr(params, 'window', None)
+        extractors = create_extractors_from_params(keys, window, spec)
+
+        self._stream_manager.make_merging_stream(
+            extractors,
+            on_first_data=on_first_data,
+            ready_condition=ready_condition,
+        )
+
     def setup_data_pipeline(
         self,
         job_number: JobNumber,
@@ -146,6 +192,10 @@ class PlottingController:
         and stream without creating the plotter. When data arrives, the callback
         is invoked with the pipe, which should then be used with
         create_plot_from_pipeline() to create the plot.
+
+        .. note::
+            This method is kept for backward compatibility with roi_detector.
+            New code should use :py:meth:`setup_pipeline` instead.
 
         Parameters
         ----------

@@ -1,0 +1,623 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""Tests for LayerSubscription class."""
+
+from __future__ import annotations
+
+import uuid
+from typing import TYPE_CHECKING
+from uuid import UUID
+
+import pytest
+
+from ess.livedata.config.workflow_spec import JobId, JobNumber, ResultKey, WorkflowId
+from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
+from ess.livedata.dashboard.layer_subscription import (
+    LayerSubscription,
+    SubscriptionReady,
+)
+from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig
+
+if TYPE_CHECKING:
+    pass
+
+
+# Type aliases for clarity
+SubscriptionId = UUID
+
+
+class FakeJobOrchestrator:
+    """Fake JobOrchestrator for testing LayerSubscription."""
+
+    def __init__(self):
+        self._subscriptions: dict[SubscriptionId, WorkflowCallbacks] = {}
+        self._running_jobs: dict[WorkflowId, JobNumber] = {}
+        self._next_sub_id = 0
+
+    def add_running_job(self, workflow_id: WorkflowId, job_number: JobNumber) -> None:
+        """Mark a workflow as running with the given job number."""
+        self._running_jobs[workflow_id] = job_number
+
+    def subscribe_to_workflow(
+        self,
+        workflow_id: WorkflowId,
+        callbacks: WorkflowCallbacks,
+    ) -> tuple[SubscriptionId, bool]:
+        """Subscribe to workflow lifecycle events."""
+        sub_id = SubscriptionId(int=self._next_sub_id)
+        self._next_sub_id += 1
+        self._subscriptions[sub_id] = callbacks
+
+        # If workflow is already running, invoke on_started immediately
+        if workflow_id in self._running_jobs:
+            job_number = self._running_jobs[workflow_id]
+            if callbacks.on_started:
+                callbacks.on_started(job_number)
+            return sub_id, True
+
+        return sub_id, False
+
+    def unsubscribe(self, subscription_id: SubscriptionId) -> None:
+        """Unsubscribe from workflow notifications."""
+        self._subscriptions.pop(subscription_id, None)
+
+    def simulate_workflow_started(
+        self, workflow_id: WorkflowId, job_number: JobNumber
+    ) -> None:
+        """Simulate a workflow starting."""
+        self._running_jobs[workflow_id] = job_number
+        for callbacks in self._subscriptions.values():
+            if callbacks.on_started:
+                callbacks.on_started(job_number)
+
+    def simulate_workflow_stopped(self, job_number: JobNumber) -> None:
+        """Simulate a workflow stopping."""
+        for callbacks in self._subscriptions.values():
+            if callbacks.on_stopped:
+                callbacks.on_stopped(job_number)
+
+
+@pytest.fixture
+def workflow_id() -> WorkflowId:
+    """Sample workflow ID."""
+    return WorkflowId(
+        instrument='test_instrument',
+        namespace='test_namespace',
+        name='test_workflow',
+        version=1,
+    )
+
+
+@pytest.fixture
+def workflow_id_2() -> WorkflowId:
+    """Second sample workflow ID."""
+    return WorkflowId(
+        instrument='test_instrument',
+        namespace='test_namespace',
+        name='test_workflow_2',
+        version=1,
+    )
+
+
+@pytest.fixture
+def job_number() -> JobNumber:
+    """Sample job number."""
+    return uuid.uuid4()
+
+
+@pytest.fixture
+def job_number_2() -> JobNumber:
+    """Second sample job number."""
+    return uuid.uuid4()
+
+
+@pytest.fixture
+def fake_job_orchestrator() -> FakeJobOrchestrator:
+    """Create a fake job orchestrator."""
+    return FakeJobOrchestrator()
+
+
+class TestLayerSubscriptionSingleSource:
+    """Tests for LayerSubscription with a single data source."""
+
+    def test_on_ready_fires_when_workflow_already_running(
+        self, workflow_id, job_number, fake_job_orchestrator
+    ):
+        """on_ready should fire immediately if workflow is already running."""
+        # Setup: workflow is already running
+        fake_job_orchestrator.add_running_job(workflow_id, job_number)
+
+        ready_invocations = []
+
+        def on_ready(ready: SubscriptionReady) -> None:
+            ready_invocations.append(ready)
+
+        data_source = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=['detector1', 'detector2'],
+            output_name='result',
+        )
+
+        subscription = LayerSubscription(
+            data_sources=[data_source],
+            job_orchestrator=fake_job_orchestrator,
+            on_ready=on_ready,
+        )
+        subscription.start()
+
+        # on_ready should fire immediately
+        assert len(ready_invocations) == 1
+        ready = ready_invocations[0]
+        assert len(ready.keys) == 2
+        assert all(key.job_id.job_number == job_number for key in ready.keys)
+
+    def test_on_ready_fires_when_workflow_starts_later(
+        self, workflow_id, job_number, fake_job_orchestrator
+    ):
+        """on_ready should fire when workflow starts after subscription."""
+        ready_invocations = []
+
+        def on_ready(ready: SubscriptionReady) -> None:
+            ready_invocations.append(ready)
+
+        data_source = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=['detector1'],
+            output_name='result',
+        )
+
+        subscription = LayerSubscription(
+            data_sources=[data_source],
+            job_orchestrator=fake_job_orchestrator,
+            on_ready=on_ready,
+        )
+        subscription.start()
+
+        # on_ready should not fire yet
+        assert len(ready_invocations) == 0
+
+        # Simulate workflow starting
+        fake_job_orchestrator.simulate_workflow_started(workflow_id, job_number)
+
+        # Now on_ready should fire
+        assert len(ready_invocations) == 1
+
+    def test_result_keys_built_correctly(
+        self, workflow_id, job_number, fake_job_orchestrator
+    ):
+        """Result keys should be built correctly from data source config."""
+        fake_job_orchestrator.add_running_job(workflow_id, job_number)
+
+        ready_invocations = []
+
+        def on_ready(ready: SubscriptionReady) -> None:
+            ready_invocations.append(ready)
+
+        data_source = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=['detector1', 'detector2'],
+            output_name='result',
+        )
+
+        subscription = LayerSubscription(
+            data_sources=[data_source],
+            job_orchestrator=fake_job_orchestrator,
+            on_ready=on_ready,
+        )
+        subscription.start()
+
+        ready = ready_invocations[0]
+        assert len(ready.keys) == 2
+
+        # Verify keys are correct
+        key_source_names = {key.job_id.source_name for key in ready.keys}
+        assert key_source_names == {'detector1', 'detector2'}
+
+        for key in ready.keys:
+            assert key.workflow_id == workflow_id
+            assert key.job_id.job_number == job_number
+            assert key.output_name == 'result'
+
+    def test_ready_condition_requires_at_least_one_key(
+        self, workflow_id, job_number, fake_job_orchestrator
+    ):
+        """ready_condition should require at least one key from data source."""
+        fake_job_orchestrator.add_running_job(workflow_id, job_number)
+
+        ready_invocations = []
+
+        def on_ready(ready: SubscriptionReady) -> None:
+            ready_invocations.append(ready)
+
+        data_source = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=['detector1', 'detector2'],
+            output_name='result',
+        )
+
+        subscription = LayerSubscription(
+            data_sources=[data_source],
+            job_orchestrator=fake_job_orchestrator,
+            on_ready=on_ready,
+        )
+        subscription.start()
+
+        ready = ready_invocations[0]
+        ready_condition = ready.ready_condition
+
+        # Create keys for testing
+        key1 = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='detector1', job_number=job_number),
+            output_name='result',
+        )
+        key2 = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='detector2', job_number=job_number),
+            output_name='result',
+        )
+        other_key = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='other', job_number=job_number),
+            output_name='result',
+        )
+
+        # Empty set should not be ready
+        assert ready_condition(set()) is False
+
+        # Unrelated key should not be ready
+        assert ready_condition({other_key}) is False
+
+        # Any matching key should be ready (progressive display)
+        assert ready_condition({key1}) is True
+        assert ready_condition({key2}) is True
+        assert ready_condition({key1, key2}) is True
+
+    def test_on_stopped_propagates(
+        self, workflow_id, job_number, fake_job_orchestrator
+    ):
+        """on_stopped should be called when workflow stops."""
+        fake_job_orchestrator.add_running_job(workflow_id, job_number)
+
+        stopped_invocations = []
+
+        def on_stopped(job_num: JobNumber) -> None:
+            stopped_invocations.append(job_num)
+
+        data_source = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=['detector1'],
+            output_name='result',
+        )
+
+        subscription = LayerSubscription(
+            data_sources=[data_source],
+            job_orchestrator=fake_job_orchestrator,
+            on_ready=lambda r: None,
+            on_stopped=on_stopped,
+        )
+        subscription.start()
+
+        # Simulate workflow stopping
+        fake_job_orchestrator.simulate_workflow_stopped(job_number)
+
+        assert len(stopped_invocations) == 1
+        assert stopped_invocations[0] == job_number
+
+    def test_unsubscribe_removes_subscriptions(
+        self, workflow_id, job_number, fake_job_orchestrator
+    ):
+        """unsubscribe should remove all workflow subscriptions."""
+        data_source = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=['detector1'],
+            output_name='result',
+        )
+
+        subscription = LayerSubscription(
+            data_sources=[data_source],
+            job_orchestrator=fake_job_orchestrator,
+            on_ready=lambda r: None,
+        )
+        subscription.start()
+
+        # Should have one subscription
+        assert len(fake_job_orchestrator._subscriptions) == 1
+
+        subscription.unsubscribe()
+
+        # Should have no subscriptions
+        assert len(fake_job_orchestrator._subscriptions) == 0
+
+
+class TestLayerSubscriptionMultiSource:
+    """Tests for LayerSubscription with multiple data sources."""
+
+    def test_on_ready_waits_for_all_workflows(
+        self,
+        workflow_id,
+        workflow_id_2,
+        job_number,
+        job_number_2,
+        fake_job_orchestrator,
+    ):
+        """on_ready should wait for all workflows to be ready."""
+        # Only first workflow is running
+        fake_job_orchestrator.add_running_job(workflow_id, job_number)
+
+        ready_invocations = []
+
+        def on_ready(ready: SubscriptionReady) -> None:
+            ready_invocations.append(ready)
+
+        data_source_1 = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=['detector1'],
+            output_name='data_result',
+        )
+        data_source_2 = DataSourceConfig(
+            workflow_id=workflow_id_2,
+            source_names=['temperature'],
+            output_name='axis_result',
+        )
+
+        subscription = LayerSubscription(
+            data_sources=[data_source_1, data_source_2],
+            job_orchestrator=fake_job_orchestrator,
+            on_ready=on_ready,
+        )
+        subscription.start()
+
+        # on_ready should NOT fire yet (waiting for workflow_id_2)
+        assert len(ready_invocations) == 0
+
+        # Simulate second workflow starting
+        fake_job_orchestrator.simulate_workflow_started(workflow_id_2, job_number_2)
+
+        # Now on_ready should fire
+        assert len(ready_invocations) == 1
+
+    def test_result_keys_from_all_data_sources(
+        self,
+        workflow_id,
+        workflow_id_2,
+        job_number,
+        job_number_2,
+        fake_job_orchestrator,
+    ):
+        """Result keys should include keys from all data sources."""
+        fake_job_orchestrator.add_running_job(workflow_id, job_number)
+        fake_job_orchestrator.add_running_job(workflow_id_2, job_number_2)
+
+        ready_invocations = []
+
+        def on_ready(ready: SubscriptionReady) -> None:
+            ready_invocations.append(ready)
+
+        data_source_1 = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=['det1', 'det2'],
+            output_name='data',
+        )
+        data_source_2 = DataSourceConfig(
+            workflow_id=workflow_id_2,
+            source_names=['temp'],
+            output_name='axis',
+        )
+
+        subscription = LayerSubscription(
+            data_sources=[data_source_1, data_source_2],
+            job_orchestrator=fake_job_orchestrator,
+            on_ready=on_ready,
+        )
+        subscription.start()
+
+        ready = ready_invocations[0]
+        assert len(ready.keys) == 3  # 2 from det sources + 1 from temp
+
+        # Verify keys are from both workflows
+        workflow_ids = {key.workflow_id for key in ready.keys}
+        assert workflow_ids == {workflow_id, workflow_id_2}
+
+    def test_ready_condition_requires_key_from_each_data_source(
+        self,
+        workflow_id,
+        workflow_id_2,
+        job_number,
+        job_number_2,
+        fake_job_orchestrator,
+    ):
+        """ready_condition should require at least one key from each data source."""
+        fake_job_orchestrator.add_running_job(workflow_id, job_number)
+        fake_job_orchestrator.add_running_job(workflow_id_2, job_number_2)
+
+        ready_invocations = []
+
+        def on_ready(ready: SubscriptionReady) -> None:
+            ready_invocations.append(ready)
+
+        data_source_1 = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=['det1', 'det2'],
+            output_name='data',
+        )
+        data_source_2 = DataSourceConfig(
+            workflow_id=workflow_id_2,
+            source_names=['temp'],
+            output_name='axis',
+        )
+
+        subscription = LayerSubscription(
+            data_sources=[data_source_1, data_source_2],
+            job_orchestrator=fake_job_orchestrator,
+            on_ready=on_ready,
+        )
+        subscription.start()
+
+        ready_condition = ready_invocations[0].ready_condition
+
+        # Create keys
+        key_det1 = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='det1', job_number=job_number),
+            output_name='data',
+        )
+        key_det2 = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='det2', job_number=job_number),
+            output_name='data',
+        )
+        key_temp = ResultKey(
+            workflow_id=workflow_id_2,
+            job_id=JobId(source_name='temp', job_number=job_number_2),
+            output_name='axis',
+        )
+
+        # Only detector data - not ready (missing temp)
+        assert ready_condition({key_det1}) is False
+        assert ready_condition({key_det1, key_det2}) is False
+
+        # Only temp data - not ready (missing detector)
+        assert ready_condition({key_temp}) is False
+
+        # One from each data source - ready
+        assert ready_condition({key_det1, key_temp}) is True
+        assert ready_condition({key_det2, key_temp}) is True
+
+        # All keys - ready
+        assert ready_condition({key_det1, key_det2, key_temp}) is True
+
+    def test_on_stopped_fires_for_any_workflow(
+        self,
+        workflow_id,
+        workflow_id_2,
+        job_number,
+        job_number_2,
+        fake_job_orchestrator,
+    ):
+        """on_stopped should fire when ANY subscribed workflow stops."""
+        fake_job_orchestrator.add_running_job(workflow_id, job_number)
+        fake_job_orchestrator.add_running_job(workflow_id_2, job_number_2)
+
+        stopped_invocations = []
+
+        def on_stopped(job_num: JobNumber) -> None:
+            stopped_invocations.append(job_num)
+
+        data_source_1 = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=['det1'],
+            output_name='data',
+        )
+        data_source_2 = DataSourceConfig(
+            workflow_id=workflow_id_2,
+            source_names=['temp'],
+            output_name='axis',
+        )
+
+        subscription = LayerSubscription(
+            data_sources=[data_source_1, data_source_2],
+            job_orchestrator=fake_job_orchestrator,
+            on_ready=lambda r: None,
+            on_stopped=on_stopped,
+        )
+        subscription.start()
+
+        # Stop first workflow
+        fake_job_orchestrator.simulate_workflow_stopped(job_number)
+
+        # on_stopped should fire (twice - once for each subscription)
+        # This is by design - LayerSubscription doesn't deduplicate stop notifications
+        assert len(stopped_invocations) >= 1
+
+    def test_on_ready_fires_only_once(
+        self,
+        workflow_id,
+        workflow_id_2,
+        job_number,
+        job_number_2,
+        fake_job_orchestrator,
+    ):
+        """on_ready should fire only once even if workflows restart."""
+        ready_invocations = []
+
+        def on_ready(ready: SubscriptionReady) -> None:
+            ready_invocations.append(ready)
+
+        data_source_1 = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=['det1'],
+            output_name='data',
+        )
+        data_source_2 = DataSourceConfig(
+            workflow_id=workflow_id_2,
+            source_names=['temp'],
+            output_name='axis',
+        )
+
+        subscription = LayerSubscription(
+            data_sources=[data_source_1, data_source_2],
+            job_orchestrator=fake_job_orchestrator,
+            on_ready=on_ready,
+        )
+        subscription.start()
+
+        # Start both workflows
+        fake_job_orchestrator.simulate_workflow_started(workflow_id, job_number)
+        fake_job_orchestrator.simulate_workflow_started(workflow_id_2, job_number_2)
+
+        # on_ready should fire once
+        assert len(ready_invocations) == 1
+
+        # Simulate restart (shouldn't fire on_ready again)
+        fake_job_orchestrator.simulate_workflow_started(workflow_id, job_number)
+
+        # Still only one invocation
+        assert len(ready_invocations) == 1
+
+
+class TestLayerSubscriptionDuplicateWorkflows:
+    """Tests for LayerSubscription when multiple data sources share workflow_id."""
+
+    def test_handles_duplicate_workflow_id(
+        self, workflow_id, job_number, fake_job_orchestrator
+    ):
+        """Should handle multiple data sources with same workflow_id."""
+        fake_job_orchestrator.add_running_job(workflow_id, job_number)
+
+        ready_invocations = []
+
+        def on_ready(ready: SubscriptionReady) -> None:
+            ready_invocations.append(ready)
+
+        # Both data sources use the same workflow_id
+        data_source_1 = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=['det1'],
+            output_name='data',
+        )
+        data_source_2 = DataSourceConfig(
+            workflow_id=workflow_id,
+            source_names=['det2'],
+            output_name='other_data',
+        )
+
+        subscription = LayerSubscription(
+            data_sources=[data_source_1, data_source_2],
+            job_orchestrator=fake_job_orchestrator,
+            on_ready=on_ready,
+        )
+        subscription.start()
+
+        # on_ready should fire (both use same workflow which is running)
+        assert len(ready_invocations) == 1
+
+        ready = ready_invocations[0]
+        assert len(ready.keys) == 2
+
+        # Verify keys have different source_names
+        source_names = {key.job_id.source_name for key in ready.keys}
+        assert source_names == {'det1', 'det2'}
+
+        # Both keys should have same job_number
+        assert all(key.job_id.job_number == job_number for key in ready.keys)
