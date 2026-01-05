@@ -888,7 +888,9 @@ class WorkflowStatusWidget:
         """
         self._orchestrator.reset_workflow(self._workflow_id)
 
-    def _on_command_success(self, workflow_id: WorkflowId, action: str) -> None:
+    def _on_command_success(
+        self, workflow_id: WorkflowId, action: str, success_count: int, total_count: int
+    ) -> None:
         """Handle command success notification from orchestrator.
 
         Only shows notification if it's for this widget's workflow.
@@ -898,12 +900,17 @@ class WorkflowStatusWidget:
 
         # Show success notification using Panel's notification system
         pn.state.notifications.success(
-            f"{self._workflow_spec.title}: {action} confirmed",
+            f"{self._workflow_spec.title}: {action} ({success_count}/{total_count})",
             duration=3000,
         )
 
     def _on_command_error(
-        self, workflow_id: WorkflowId, action: str, error_message: str
+        self,
+        workflow_id: WorkflowId,
+        action: str,
+        error_count: int,
+        total_count: int,
+        error_message: str,
     ) -> None:
         """Handle command error notification from orchestrator.
 
@@ -914,7 +921,8 @@ class WorkflowStatusWidget:
 
         # Show error notification using Panel's notification system
         pn.state.notifications.error(
-            f"{self._workflow_spec.title}: {action} failed - {error_message}",
+            f"{self._workflow_spec.title}: {action} failed "
+            f"({error_count}/{total_count}) - {error_message}",
             duration=5000,
         )
 

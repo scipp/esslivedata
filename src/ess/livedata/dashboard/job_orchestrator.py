@@ -108,15 +108,15 @@ class WidgetLifecycleCallbacks:
     on_staged_changed: Callable[[WorkflowId], None] | None = None
     on_workflow_committed: Callable[[WorkflowId], None] | None = None
     on_workflow_stopped: Callable[[WorkflowId], None] | None = None
-    on_command_success: Callable[[WorkflowId, str], None] | None = None
+    on_command_success: Callable[[WorkflowId, str, int, int], None] | None = None
     """Called when a command succeeds.
 
-    Args: workflow_id, action ("start"/"stop"/"reset").
+    Args: workflow_id, action ("start"/"stop"/"reset"), success_count, total_count.
     """
-    on_command_error: Callable[[WorkflowId, str, str], None] | None = None
+    on_command_error: Callable[[WorkflowId, str, int, int, str], None] | None = None
     """Called when a command fails.
 
-    Args: workflow_id, action ("start"/"stop"/"reset"), error_message.
+    Args: workflow_id, action, error_count, total_count, error_message.
     """
 
 
@@ -1059,12 +1059,16 @@ class JobOrchestrator:
                         subscription_id,
                     )
 
-    def _notify_command_success(self, workflow_id: WorkflowId, action: str) -> None:
+    def _notify_command_success(
+        self, workflow_id: WorkflowId, action: str, success_count: int, total_count: int
+    ) -> None:
         """Notify all widget subscribers that a command succeeded."""
         for subscription_id, callbacks in self._widget_subscriptions.items():
             if callbacks.on_command_success is not None:
                 try:
-                    callbacks.on_command_success(workflow_id, action)
+                    callbacks.on_command_success(
+                        workflow_id, action, success_count, total_count
+                    )
                 except Exception:
                     self._logger.exception(
                         'Error in on_command_success callback for subscription %s',
@@ -1072,13 +1076,20 @@ class JobOrchestrator:
                     )
 
     def _notify_command_error(
-        self, workflow_id: WorkflowId, action: str, error_message: str
+        self,
+        workflow_id: WorkflowId,
+        action: str,
+        error_count: int,
+        total_count: int,
+        error_message: str,
     ) -> None:
         """Notify all widget subscribers that a command failed."""
         for subscription_id, callbacks in self._widget_subscriptions.items():
             if callbacks.on_command_error is not None:
                 try:
-                    callbacks.on_command_error(workflow_id, action, error_message)
+                    callbacks.on_command_error(
+                        workflow_id, action, error_count, total_count, error_message
+                    )
                 except Exception:
                     self._logger.exception(
                         'Error in on_command_error callback for subscription %s',
@@ -1126,7 +1137,9 @@ class JobOrchestrator:
                 result.success_count,
                 total,
             )
-            self._notify_command_success(result.workflow_id, result.action)
+            self._notify_command_success(
+                result.workflow_id, result.action, result.success_count, total
+            )
         elif result.all_failed:
             combined_errors = "; ".join(result.error_messages) or "Unknown error"
             self._logger.warning(
@@ -1138,7 +1151,11 @@ class JobOrchestrator:
                 combined_errors,
             )
             self._notify_command_error(
-                result.workflow_id, result.action, combined_errors
+                result.workflow_id,
+                result.action,
+                result.error_count,
+                total,
+                combined_errors,
             )
         else:
             # Partial success - notify both
@@ -1152,7 +1169,13 @@ class JobOrchestrator:
                 result.error_count,
                 combined_errors,
             )
-            self._notify_command_success(result.workflow_id, result.action)
+            self._notify_command_success(
+                result.workflow_id, result.action, result.success_count, total
+            )
             self._notify_command_error(
-                result.workflow_id, result.action, combined_errors
+                result.workflow_id,
+                result.action,
+                result.error_count,
+                total,
+                combined_errors,
             )
