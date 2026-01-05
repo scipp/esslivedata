@@ -217,6 +217,8 @@ class WorkflowStatusWidget:
                     on_staged_changed=self._on_lifecycle_event,
                     on_workflow_committed=self._on_lifecycle_event,
                     on_workflow_stopped=self._on_lifecycle_event,
+                    on_command_success=self._on_command_success,
+                    on_command_error=self._on_command_error,
                 )
             )
         )
@@ -878,9 +880,43 @@ class WorkflowStatusWidget:
                     )
 
     def _on_reset_click(self) -> None:
-        """Handle reset button click."""
-        # TODO: Implement reset via orchestrator/controller
-        pass
+        """Handle reset button click - resets accumulated data for the workflow.
+
+        The reset command clears accumulated data in the backend but keeps
+        the workflow running. No widget rebuild is needed - the data streams
+        will reflect the reset automatically.
+        """
+        self._orchestrator.reset_workflow(self._workflow_id)
+
+    def _on_command_success(self, workflow_id: WorkflowId, action: str) -> None:
+        """Handle command success notification from orchestrator.
+
+        Only shows notification if it's for this widget's workflow.
+        """
+        if workflow_id != self._workflow_id:
+            return
+
+        # Show success notification using Panel's notification system
+        pn.state.notifications.success(
+            f"Workflow {action} confirmed",
+            duration=3000,
+        )
+
+    def _on_command_error(
+        self, workflow_id: WorkflowId, action: str, error_message: str
+    ) -> None:
+        """Handle command error notification from orchestrator.
+
+        Only shows error if it's for this widget's workflow.
+        """
+        if workflow_id != self._workflow_id:
+            return
+
+        # Show error notification using Panel's notification system
+        pn.state.notifications.error(
+            f"Workflow {action} failed: {error_message}",
+            duration=5000,
+        )
 
     def _on_stop_click(self) -> None:
         """Handle stop button click - stops the workflow.
