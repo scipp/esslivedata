@@ -167,6 +167,34 @@ class PlottingController:
 
         spec = plotter_registry.get_spec(plot_name)
         window = getattr(params, 'window', None)
+
+        # Special case for roi_detector: create separate subscriptions per detector
+        # and coordinate them to invoke callback once when all are ready.
+        # This is needed because roi_detector creates separate DynamicMaps per detector
+        # rather than a single merged stream.
+        if plot_name == 'roi_detector':
+            pipes: dict[ResultKey, Any] = {}
+
+            def make_detector_callback(key: ResultKey) -> Callable[[Any], None]:
+                """Create a callback that tracks individual detector readiness."""
+
+                def on_detector_ready(pipe: Any) -> None:
+                    pipes[key] = pipe
+                    if len(pipes) == len(keys):
+                        # All detectors ready, invoke user callback with dict of pipes
+                        on_first_data(pipes)
+
+                return on_detector_ready
+
+            # Create one subscription per detector
+            for key in keys:
+                extractors = create_extractors_from_params([key], window, spec)
+                self._stream_manager.make_merging_stream(
+                    extractors, on_first_data=make_detector_callback(key)
+                )
+            return
+
+        # Standard path: create single merged subscription
         extractors = create_extractors_from_params(keys, window, spec)
 
         self._stream_manager.make_merging_stream(
