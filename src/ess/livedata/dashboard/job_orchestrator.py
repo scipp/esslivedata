@@ -732,36 +732,10 @@ class JobOrchestrator:
             True if jobs were stopped, False if no active jobs.
         """
         state = self._workflows[workflow_id]
-        if state.current is None:
-            self._logger.debug('No active jobs for workflow %s to stop', workflow_id)
+        job_number = state.current.job_number if state.current else None
+
+        if not self._send_job_commands(workflow_id, JobAction.stop):
             return False
-
-        # Generate message_id for command acknowledgement tracking
-        message_id = str(uuid.uuid4())
-
-        # Send stop commands to backend
-        commands = [
-            (
-                ConfigKey(key=JobCommand.key, source_name=str(job_id)),
-                JobCommand(job_id=job_id, action=JobAction.stop, message_id=message_id),
-            )
-            for job_id in state.current.job_ids()
-        ]
-
-        # Register pending command for acknowledgement tracking
-        self._pending_commands.register(
-            message_id, workflow_id, "stop", expected_count=len(state.current.jobs)
-        )
-
-        self._command_service.send_batch(commands)
-
-        job_number = state.current.job_number
-        self._logger.info(
-            'Stopped workflow %s (job_number=%s, %d jobs)',
-            workflow_id,
-            job_number,
-            len(state.current.jobs),
-        )
 
         # Clear local state immediately (don't wait for backend confirmation)
         state.previous = state.current
@@ -795,34 +769,52 @@ class JobOrchestrator:
         :
             True if reset commands were sent, False if no active jobs.
         """
+        return self._send_job_commands(workflow_id, JobAction.reset)
+
+    def _send_job_commands(self, workflow_id: WorkflowId, action: JobAction) -> bool:
+        """Send a command to all jobs for a workflow.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to send commands for.
+        action
+            The action to perform on all jobs.
+
+        Returns
+        -------
+        :
+            True if commands were sent, False if no active jobs.
+        """
         state = self._workflows[workflow_id]
         if state.current is None:
-            self._logger.debug('No active jobs for workflow %s to reset', workflow_id)
+            self._logger.debug(
+                'No active jobs for workflow %s to %s', workflow_id, action.value
+            )
             return False
 
-        # Generate message_id for command acknowledgement tracking
         message_id = str(uuid.uuid4())
 
-        # Send reset commands to backend
         commands = [
             (
                 ConfigKey(key=JobCommand.key, source_name=str(job_id)),
-                JobCommand(
-                    job_id=job_id, action=JobAction.reset, message_id=message_id
-                ),
+                JobCommand(job_id=job_id, action=action, message_id=message_id),
             )
             for job_id in state.current.job_ids()
         ]
 
-        # Register pending command for acknowledgement tracking
         self._pending_commands.register(
-            message_id, workflow_id, "reset", expected_count=len(state.current.jobs)
+            message_id,
+            workflow_id,
+            action.value,
+            expected_count=len(state.current.jobs),
         )
 
         self._command_service.send_batch(commands)
 
         self._logger.info(
-            'Reset workflow %s (job_number=%s, %d jobs)',
+            '%s workflow %s (job_number=%s, %d jobs)',
+            action.value.capitalize(),
             workflow_id,
             state.current.job_number,
             len(state.current.jobs),
