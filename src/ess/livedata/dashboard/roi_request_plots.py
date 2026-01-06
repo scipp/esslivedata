@@ -822,7 +822,7 @@ def _register_roi_request_plotters() -> None:
 
     plotter_registry.register_plotter(
         name='rectangles_request',
-        title='Rectangles (Interactive)',
+        title='ROI Rectangles (Interactive)',
         description='Draw and edit ROI rectangles interactively. '
         'Publishes ROI updates to backend for processing.',
         data_requirements=roi_data_requirements,
@@ -832,7 +832,7 @@ def _register_roi_request_plotters() -> None:
 
     plotter_registry.register_plotter(
         name='polygons_request',
-        title='Polygons (Interactive)',
+        title='ROI Polygons (Interactive)',
         description='Draw and edit ROI polygons interactively. '
         'Publishes ROI updates to backend for processing.',
         data_requirements=roi_data_requirements,

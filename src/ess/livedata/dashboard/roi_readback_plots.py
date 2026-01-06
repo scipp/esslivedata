@@ -256,7 +256,7 @@ def _register_roi_readback_plotters() -> None:
 
     plotter_registry.register_plotter(
         name='rectangles_readback',
-        title='Rectangles (ROI Readback)',
+        title='ROI Rectangles (Readback)',
         description='Display ROI rectangles from workflow output. '
         'Each rectangle is colored by its ROI index.',
         data_requirements=DataRequirements(
@@ -271,7 +271,7 @@ def _register_roi_readback_plotters() -> None:
 
     plotter_registry.register_plotter(
         name='polygons_readback',
-        title='Polygons (ROI Readback)',
+        title='ROI Polygons (Readback)',
         description='Display ROI polygons from workflow output. '
         'Each polygon is colored by its ROI index.',
         data_requirements=DataRequirements(
