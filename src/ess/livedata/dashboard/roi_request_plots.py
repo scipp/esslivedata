@@ -14,18 +14,248 @@ Unlike the monolithic ROIDetectorPlotFactory, these plotters:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import holoviews as hv
 import pydantic
 import scipp as sc
 
-from ess.livedata.config.models import PolygonROI, RectangleROI
+from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
 from ess.livedata.config.roi_names import get_roi_mapper
 
 from .plots import Plotter
-from .roi_detector_plot_factory import PolygonConverter, RectangleConverter
 from .static_plots import Color, LineDash, _parse_rectangle_list
+
+
+class RectangleConverter:
+    """Converter for rectangle ROIs using BoxEdit stream."""
+
+    def parse_stream_data(
+        self,
+        data: dict[str, Any],
+        x_unit: str | None,
+        y_unit: str | None,
+        index_offset: int = 0,
+    ) -> dict[int, RectangleROI]:
+        """
+        Convert BoxEdit data dictionary to RectangleROI instances.
+
+        BoxEdit returns data as a dictionary with keys 'x0', 'x1', 'y0', 'y1',
+        where each value is a list of coordinates for all boxes.
+
+        Parameters
+        ----------
+        data:
+            Dictionary from BoxEdit stream with keys x0, x1, y0, y1.
+        x_unit:
+            Unit for x coordinates (from the detector data coordinates).
+        y_unit:
+            Unit for y coordinates (from the detector data coordinates).
+        index_offset:
+            Not used for rectangles (always 0).
+
+        Returns
+        -------
+        :
+            Dictionary mapping box index to RectangleROI. Empty boxes are skipped.
+        """
+        if not data or not data.get("x0"):
+            return {}
+
+        x0_list = data.get("x0", [])
+        x1_list = data.get("x1", [])
+        y0_list = data.get("y0", [])
+        y1_list = data.get("y1", [])
+
+        rois = {}
+        for i, (x0, x1, y0, y1) in enumerate(
+            zip(x0_list, x1_list, y0_list, y1_list, strict=True)
+        ):
+            # Skip empty/invalid boxes (where corners are equal)
+            if x0 == x1 or y0 == y1:
+                continue
+
+            # Ensure min < max
+            x_min, x_max = (x0, x1) if x0 < x1 else (x1, x0)
+            y_min, y_max = (y0, y1) if y0 < y1 else (y1, y0)
+
+            rois[i] = RectangleROI(
+                x=Interval(min=x_min, max=x_max, unit=x_unit),
+                y=Interval(min=y_min, max=y_max, unit=y_unit),
+            )
+
+        return rois
+
+    def to_hv_data(
+        self, rois: dict[int, RectangleROI], index_to_color: dict[int, str] | None
+    ) -> list[tuple[float, ...]]:
+        """
+        Convert RectangleROI instances to HoloViews Rectangles format.
+
+        Parameters
+        ----------
+        rois:
+            Dictionary mapping ROI index to RectangleROI.
+        index_to_color:
+            Optional mapping from ROI index to color string. If provided, each
+            rectangle tuple will include the color as a fifth element.
+
+        Returns
+        -------
+        :
+            List of (x0, y0, x1, y1) or (x0, y0, x1, y1, color) tuples for HoloViews
+            Rectangles. Returned in sorted order by ROI index.
+            All coordinates are explicitly cast to float to ensure compatibility
+            with BoxEdit drag operations.
+        """
+        rectangles = []
+        for idx in sorted(rois.keys()):
+            roi = rois[idx]
+            rect_tuple = (
+                float(roi.x.min),
+                float(roi.y.min),
+                float(roi.x.max),
+                float(roi.y.max),
+            )
+            if index_to_color is not None and idx in index_to_color:
+                rect_tuple = (*rect_tuple, index_to_color[idx])
+            rectangles.append(rect_tuple)
+        return rectangles
+
+    def to_stream_data(self, rois: dict[int, RectangleROI]) -> dict[str, list[float]]:
+        """
+        Convert RectangleROI instances to BoxEdit data format.
+
+        Parameters
+        ----------
+        rois:
+            Dictionary mapping ROI index to RectangleROI.
+
+        Returns
+        -------
+        :
+            Dictionary with keys 'x0', 'x1', 'y0', 'y1' in BoxEdit format.
+            Empty dict with empty lists if no ROIs.
+        """
+        if not rois:
+            return {"x0": [], "y0": [], "x1": [], "y1": []}
+
+        sorted_indices = sorted(rois.keys())
+        return {
+            "x0": [rois[i].x.min for i in sorted_indices],
+            "y0": [rois[i].y.min for i in sorted_indices],
+            "x1": [rois[i].x.max for i in sorted_indices],
+            "y1": [rois[i].y.max for i in sorted_indices],
+        }
+
+
+class PolygonConverter:
+    """Converter for polygon ROIs using PolyDraw stream."""
+
+    def parse_stream_data(
+        self,
+        data: dict[str, Any],
+        x_unit: str | None,
+        y_unit: str | None,
+        index_offset: int = 0,
+    ) -> dict[int, PolygonROI]:
+        """
+        Convert PolyDraw data dictionary to PolygonROI instances.
+
+        PolyDraw returns data as a dictionary with keys 'xs', 'ys',
+        where each value is a list of lists of coordinates for all polygons.
+
+        Parameters
+        ----------
+        data:
+            Dictionary from PolyDraw stream with keys 'xs', 'ys'.
+        x_unit:
+            Unit for x coordinates (from the detector data coordinates).
+        y_unit:
+            Unit for y coordinates (from the detector data coordinates).
+        index_offset:
+            Starting index for polygon ROIs (e.g., 4 for indices 4-7).
+
+        Returns
+        -------
+        :
+            Dictionary mapping polygon index to PolygonROI. Empty polygons are skipped.
+        """
+        if not data or not data.get("xs"):
+            return {}
+
+        xs_list = data.get("xs", [])
+        ys_list = data.get("ys", [])
+
+        rois = {}
+        for i, (xs, ys) in enumerate(zip(xs_list, ys_list, strict=True)):
+            # Skip polygons with fewer than 3 vertices
+            if len(xs) < 3 or len(ys) < 3:
+                continue
+
+            rois[index_offset + i] = PolygonROI(
+                x=list(xs), y=list(ys), x_unit=x_unit, y_unit=y_unit
+            )
+
+        return rois
+
+    def to_hv_data(
+        self, rois: dict[int, PolygonROI], index_to_color: dict[int, str] | None
+    ) -> list[dict[str, Any]]:
+        """
+        Convert PolygonROI instances to HoloViews Polygons format.
+
+        Parameters
+        ----------
+        rois:
+            Dictionary mapping ROI index to PolygonROI.
+        index_to_color:
+            Optional mapping from ROI index to color string.
+
+        Returns
+        -------
+        :
+            List of dicts with 'x', 'y' (and optionally 'color') for HoloViews Polygons.
+            Returned in sorted order by ROI index.
+        """
+        polygons = []
+        for idx in sorted(rois.keys()):
+            roi = rois[idx]
+            poly_dict: dict[str, Any] = {
+                'x': [float(v) for v in roi.x],
+                'y': [float(v) for v in roi.y],
+            }
+            if index_to_color is not None and idx in index_to_color:
+                poly_dict['color'] = index_to_color[idx]
+            polygons.append(poly_dict)
+        return polygons
+
+    def to_stream_data(
+        self, rois: dict[int, PolygonROI]
+    ) -> dict[str, list[list[float]]]:
+        """
+        Convert PolygonROI instances to PolyDraw data format.
+
+        Parameters
+        ----------
+        rois:
+            Dictionary mapping ROI index to PolygonROI.
+
+        Returns
+        -------
+        :
+            Dictionary with keys 'xs', 'ys' in PolyDraw format.
+            Empty dict with empty lists if no ROIs.
+        """
+        if not rois:
+            return {"xs": [], "ys": []}
+
+        sorted_indices = sorted(rois.keys())
+        return {
+            "xs": [[float(v) for v in rois[i].x] for i in sorted_indices],
+            "ys": [[float(v) for v in rois[i].y] for i in sorted_indices],
+        }
+
 
 if TYPE_CHECKING:
     from ess.livedata.config.workflow_spec import ResultKey
@@ -584,9 +814,7 @@ def _register_roi_request_plotters() -> None:
     # The actual data is ignored - only the ResultKey is used for job_id.
     # Requirements match roi_detector: 2D data with ROI aux sources.
     roi_data_requirements = DataRequirements(
-        min_dims=2,
-        max_dims=2,
-        multiple_datasets=True,
+        min_dims=2, max_dims=2, multiple_datasets=False
     )
     roi_spec_requirements = SpecRequirements(
         requires_aux_sources=[DetectorROIAuxSources],
