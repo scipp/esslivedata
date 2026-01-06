@@ -249,9 +249,7 @@ class CorrelationHistogram1dPlotter(CorrelationHistogramPlotter):
         ]
         renderer = LinePlotter.from_params(params)
         super().__init__(
-            axes=axes,
-            normalize=params.normalization.per_second,
-            renderer=renderer,
+            axes=axes, normalize=params.normalization.per_second, renderer=renderer
         )
 
     @classmethod
@@ -279,9 +277,7 @@ class CorrelationHistogram2dPlotter(CorrelationHistogramPlotter):
         ]
         renderer = ImagePlotter.from_params(params)
         super().__init__(
-            axes=axes,
-            normalize=params.normalization.per_second,
-            renderer=renderer,
+            axes=axes, normalize=params.normalization.per_second, renderer=renderer
         )
 
     @classmethod
