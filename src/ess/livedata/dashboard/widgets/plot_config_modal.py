@@ -26,6 +26,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
     find_timeseries_outputs,
 )
+from ess.livedata.dashboard.correlation_plotter import CORRELATION_HISTOGRAM_PLOTTERS
 from ess.livedata.dashboard.data_roles import PRIMARY, X_AXIS, Y_AXIS
 from ess.livedata.dashboard.plot_configuration_adapter import PlotConfigurationAdapter
 from ess.livedata.dashboard.plot_orchestrator import (
@@ -36,11 +37,6 @@ from ess.livedata.dashboard.plotting import PlotterSpec
 
 from .configuration_widget import ConfigurationPanel
 from .wizard import Wizard, WizardStep
-
-# Plotter names that require correlation axis selection
-CORRELATION_HISTOGRAM_PLOTTERS = frozenset(
-    {'correlation_histogram_1d', 'correlation_histogram_2d'}
-)
 
 # Synthetic workflow ID for static overlays (no actual workflow subscription)
 STATIC_OVERLAY_NAMESPACE = "static_overlay"
