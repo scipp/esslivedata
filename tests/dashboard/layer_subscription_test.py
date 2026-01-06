@@ -10,7 +10,8 @@ from uuid import UUID
 
 import pytest
 
-from ess.livedata.config.workflow_spec import JobId, JobNumber, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
+from ess.livedata.dashboard.data_roles import PRIMARY, X_AXIS
 from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
 from ess.livedata.dashboard.layer_subscription import (
     LayerSubscription,
@@ -154,7 +155,7 @@ class TestLayerSubscriptionSingleSource:
         )
 
         subscription = LayerSubscription(
-            data_sources=[data_source],
+            data_sources={PRIMARY: data_source},
             job_orchestrator=fake_job_orchestrator,
             on_ready=on_ready,
         )
@@ -163,8 +164,9 @@ class TestLayerSubscriptionSingleSource:
         # on_ready should fire immediately
         assert len(ready_invocations) == 1
         ready = ready_invocations[0]
-        assert len(ready.keys) == 2
-        assert all(key.job_id.job_number == job_number for key in ready.keys)
+        all_keys = [k for keys in ready.keys_by_role.values() for k in keys]
+        assert len(all_keys) == 2
+        assert all(key.job_id.job_number == job_number for key in all_keys)
 
     def test_on_ready_fires_when_workflow_starts_later(
         self, workflow_id, job_number, fake_job_orchestrator
@@ -182,7 +184,7 @@ class TestLayerSubscriptionSingleSource:
         )
 
         subscription = LayerSubscription(
-            data_sources=[data_source],
+            data_sources={PRIMARY: data_source},
             job_orchestrator=fake_job_orchestrator,
             on_ready=on_ready,
         )
@@ -215,28 +217,29 @@ class TestLayerSubscriptionSingleSource:
         )
 
         subscription = LayerSubscription(
-            data_sources=[data_source],
+            data_sources={PRIMARY: data_source},
             job_orchestrator=fake_job_orchestrator,
             on_ready=on_ready,
         )
         subscription.start()
 
         ready = ready_invocations[0]
-        assert len(ready.keys) == 2
+        all_keys = [k for keys in ready.keys_by_role.values() for k in keys]
+        assert len(all_keys) == 2
 
         # Verify keys are correct
-        key_source_names = {key.job_id.source_name for key in ready.keys}
+        key_source_names = {key.job_id.source_name for key in all_keys}
         assert key_source_names == {'detector1', 'detector2'}
 
-        for key in ready.keys:
+        for key in all_keys:
             assert key.workflow_id == workflow_id
             assert key.job_id.job_number == job_number
             assert key.output_name == 'result'
 
-    def test_ready_condition_requires_at_least_one_key(
+    def test_keys_by_role_contains_primary_keys(
         self, workflow_id, job_number, fake_job_orchestrator
     ):
-        """ready_condition should require at least one key from data source."""
+        """keys_by_role should contain keys organized by role."""
         fake_job_orchestrator.add_running_job(workflow_id, job_number)
 
         ready_invocations = []
@@ -251,42 +254,27 @@ class TestLayerSubscriptionSingleSource:
         )
 
         subscription = LayerSubscription(
-            data_sources=[data_source],
+            data_sources={PRIMARY: data_source},
             job_orchestrator=fake_job_orchestrator,
             on_ready=on_ready,
         )
         subscription.start()
 
         ready = ready_invocations[0]
-        ready_condition = ready.ready_condition
 
-        # Create keys for testing
-        key1 = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(source_name='detector1', job_number=job_number),
-            output_name='result',
-        )
-        key2 = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(source_name='detector2', job_number=job_number),
-            output_name='result',
-        )
-        other_key = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(source_name='other', job_number=job_number),
-            output_name='result',
-        )
+        # Verify keys_by_role has the PRIMARY role
+        assert PRIMARY in ready.keys_by_role
+        primary_keys = ready.keys_by_role[PRIMARY]
+        assert len(primary_keys) == 2
 
-        # Empty set should not be ready
-        assert ready_condition(set()) is False
+        # Verify keys are correct
+        key_source_names = {key.job_id.source_name for key in primary_keys}
+        assert key_source_names == {'detector1', 'detector2'}
 
-        # Unrelated key should not be ready
-        assert ready_condition({other_key}) is False
-
-        # Any matching key should be ready (progressive display)
-        assert ready_condition({key1}) is True
-        assert ready_condition({key2}) is True
-        assert ready_condition({key1, key2}) is True
+        for key in primary_keys:
+            assert key.workflow_id == workflow_id
+            assert key.job_id.job_number == job_number
+            assert key.output_name == 'result'
 
     def test_on_stopped_propagates(
         self, workflow_id, job_number, fake_job_orchestrator
@@ -306,7 +294,7 @@ class TestLayerSubscriptionSingleSource:
         )
 
         subscription = LayerSubscription(
-            data_sources=[data_source],
+            data_sources={PRIMARY: data_source},
             job_orchestrator=fake_job_orchestrator,
             on_ready=lambda r: None,
             on_stopped=on_stopped,
@@ -330,7 +318,7 @@ class TestLayerSubscriptionSingleSource:
         )
 
         subscription = LayerSubscription(
-            data_sources=[data_source],
+            data_sources={PRIMARY: data_source},
             job_orchestrator=fake_job_orchestrator,
             on_ready=lambda r: None,
         )
@@ -377,7 +365,7 @@ class TestLayerSubscriptionMultiSource:
         )
 
         subscription = LayerSubscription(
-            data_sources=[data_source_1, data_source_2],
+            data_sources={PRIMARY: data_source_1, X_AXIS: data_source_2},
             job_orchestrator=fake_job_orchestrator,
             on_ready=on_ready,
         )
@@ -421,20 +409,21 @@ class TestLayerSubscriptionMultiSource:
         )
 
         subscription = LayerSubscription(
-            data_sources=[data_source_1, data_source_2],
+            data_sources={PRIMARY: data_source_1, X_AXIS: data_source_2},
             job_orchestrator=fake_job_orchestrator,
             on_ready=on_ready,
         )
         subscription.start()
 
         ready = ready_invocations[0]
-        assert len(ready.keys) == 3  # 2 from det sources + 1 from temp
+        all_keys = [k for keys in ready.keys_by_role.values() for k in keys]
+        assert len(all_keys) == 3  # 2 from det sources + 1 from temp
 
         # Verify keys are from both workflows
-        workflow_ids = {key.workflow_id for key in ready.keys}
+        workflow_ids = {key.workflow_id for key in all_keys}
         assert workflow_ids == {workflow_id, workflow_id_2}
 
-    def test_ready_condition_requires_key_from_each_data_source(
+    def test_keys_by_role_contains_keys_for_each_role(
         self,
         workflow_id,
         workflow_id_2,
@@ -442,7 +431,7 @@ class TestLayerSubscriptionMultiSource:
         job_number_2,
         fake_job_orchestrator,
     ):
-        """ready_condition should require at least one key from each data source."""
+        """keys_by_role should contain keys organized by role."""
         fake_job_orchestrator.add_running_job(workflow_id, job_number)
         fake_job_orchestrator.add_running_job(workflow_id_2, job_number_2)
 
@@ -463,44 +452,29 @@ class TestLayerSubscriptionMultiSource:
         )
 
         subscription = LayerSubscription(
-            data_sources=[data_source_1, data_source_2],
+            data_sources={PRIMARY: data_source_1, X_AXIS: data_source_2},
             job_orchestrator=fake_job_orchestrator,
             on_ready=on_ready,
         )
         subscription.start()
 
-        ready_condition = ready_invocations[0].ready_condition
+        ready = ready_invocations[0]
 
-        # Create keys
-        key_det1 = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(source_name='det1', job_number=job_number),
-            output_name='data',
-        )
-        key_det2 = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(source_name='det2', job_number=job_number),
-            output_name='data',
-        )
-        key_temp = ResultKey(
-            workflow_id=workflow_id_2,
-            job_id=JobId(source_name='temp', job_number=job_number_2),
-            output_name='axis',
-        )
+        # Verify structure of keys_by_role
+        assert PRIMARY in ready.keys_by_role
+        assert X_AXIS in ready.keys_by_role
 
-        # Only detector data - not ready (missing temp)
-        assert ready_condition({key_det1}) is False
-        assert ready_condition({key_det1, key_det2}) is False
+        # Check primary keys
+        primary_keys = ready.keys_by_role[PRIMARY]
+        assert len(primary_keys) == 2
+        primary_source_names = {key.job_id.source_name for key in primary_keys}
+        assert primary_source_names == {'det1', 'det2'}
 
-        # Only temp data - not ready (missing detector)
-        assert ready_condition({key_temp}) is False
-
-        # One from each data source - ready
-        assert ready_condition({key_det1, key_temp}) is True
-        assert ready_condition({key_det2, key_temp}) is True
-
-        # All keys - ready
-        assert ready_condition({key_det1, key_det2, key_temp}) is True
+        # Check x_axis keys
+        x_axis_keys = ready.keys_by_role[X_AXIS]
+        assert len(x_axis_keys) == 1
+        assert x_axis_keys[0].job_id.source_name == 'temp'
+        assert x_axis_keys[0].workflow_id == workflow_id_2
 
     def test_on_stopped_fires_for_any_workflow(
         self,
@@ -531,7 +505,7 @@ class TestLayerSubscriptionMultiSource:
         )
 
         subscription = LayerSubscription(
-            data_sources=[data_source_1, data_source_2],
+            data_sources={PRIMARY: data_source_1, X_AXIS: data_source_2},
             job_orchestrator=fake_job_orchestrator,
             on_ready=lambda r: None,
             on_stopped=on_stopped,
@@ -571,7 +545,7 @@ class TestLayerSubscriptionMultiSource:
         )
 
         subscription = LayerSubscription(
-            data_sources=[data_source_1, data_source_2],
+            data_sources={PRIMARY: data_source_1, X_AXIS: data_source_2},
             job_orchestrator=fake_job_orchestrator,
             on_ready=on_ready,
         )
@@ -591,7 +565,8 @@ class TestLayerSubscriptionMultiSource:
         assert len(ready_invocations) == 2
         # Verify the new ready has the new job_number
         new_ready = ready_invocations[1]
-        det_key = next(k for k in new_ready.keys if k.job_id.source_name == 'det1')
+        all_keys = [k for keys in new_ready.keys_by_role.values() for k in keys]
+        det_key = next(k for k in all_keys if k.job_id.source_name == 'det1')
         assert det_key.job_id.job_number == new_job_number
 
     def test_on_ready_fires_again_after_stop_and_restart(
@@ -620,7 +595,7 @@ class TestLayerSubscriptionMultiSource:
         )
 
         subscription = LayerSubscription(
-            data_sources=[data_source_1, data_source_2],
+            data_sources={PRIMARY: data_source_1, X_AXIS: data_source_2},
             job_orchestrator=fake_job_orchestrator,
             on_ready=on_ready,
             on_stopped=lambda _: None,
@@ -671,7 +646,7 @@ class TestLayerSubscriptionDuplicateWorkflows:
         )
 
         subscription = LayerSubscription(
-            data_sources=[data_source_1, data_source_2],
+            data_sources={PRIMARY: data_source_1, X_AXIS: data_source_2},
             job_orchestrator=fake_job_orchestrator,
             on_ready=on_ready,
         )
@@ -681,11 +656,12 @@ class TestLayerSubscriptionDuplicateWorkflows:
         assert len(ready_invocations) == 1
 
         ready = ready_invocations[0]
-        assert len(ready.keys) == 2
+        all_keys = [k for keys in ready.keys_by_role.values() for k in keys]
+        assert len(all_keys) == 2
 
         # Verify keys have different source_names
-        source_names = {key.job_id.source_name for key in ready.keys}
+        source_names = {key.job_id.source_name for key in all_keys}
         assert source_names == {'det1', 'det2'}
 
         # Both keys should have same job_number
-        assert all(key.job_id.job_number == job_number for key in ready.keys)
+        assert all(key.job_id.job_number == job_number for key in all_keys)

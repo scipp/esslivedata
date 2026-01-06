@@ -4,6 +4,11 @@
 
 This module contains the plotter implementations for correlation histograms,
 along with simplified parameter models used by the PlotConfigModal wizard.
+
+Correlation histograms receive pre-structured data from DataSubscriber:
+- "primary": dict[ResultKey, DataArray] - data to histogram (may have multiple sources)
+- "x_axis": dict[ResultKey, DataArray] - x-axis correlation values
+- "y_axis": dict[ResultKey, DataArray] - y-axis correlation values (2D only)
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ import scipp as sc
 
 from ess.livedata.config.workflow_spec import ResultKey
 
+from .data_roles import PRIMARY, X_AXIS, Y_AXIS
 from .plot_params import PlotDisplayParams1d, PlotDisplayParams2d
 from .plots import ImagePlotter, LinePlotter
 
@@ -121,44 +127,6 @@ CORRELATION_HISTOGRAM_PLOTTERS = frozenset(
 )
 
 
-def _separate_axis_data(
-    data: dict[ResultKey, sc.DataArray],
-    x_axis_source: str | None,
-    y_axis_source: str | None = None,
-) -> tuple[dict[ResultKey, sc.DataArray], sc.DataArray | None, sc.DataArray | None]:
-    """Separate axis data from histogram data based on source names.
-
-    Parameters
-    ----------
-    data
-        Combined data dict containing both histogram data and axis data.
-    x_axis_source
-        Source name identifying the x-axis data.
-    y_axis_source
-        Source name identifying the y-axis data (for 2D histograms).
-
-    Returns
-    -------
-    :
-        Tuple of (histogram_data, x_axis_data, y_axis_data). Axis data is None
-        if not found or not requested.
-    """
-    histogram_data: dict[ResultKey, sc.DataArray] = {}
-    x_axis_data: sc.DataArray | None = None
-    y_axis_data: sc.DataArray | None = None
-
-    for key, arr in data.items():
-        source_name = key.job_id.source_name
-        if x_axis_source and source_name == x_axis_source:
-            x_axis_data = arr
-        elif y_axis_source and source_name == y_axis_source:
-            y_axis_data = arr
-        else:
-            histogram_data[key] = arr
-
-    return histogram_data, x_axis_data, y_axis_data
-
-
 def _make_lookup(axis_data: sc.DataArray, data_max_time: sc.Variable) -> sc.bins.Lookup:
     """Create lookup table with appropriate mode based on time overlap.
 
@@ -174,9 +142,9 @@ def _make_lookup(axis_data: sc.DataArray, data_max_time: sc.Variable) -> sc.bins
 class CorrelationHistogram1dPlotter:
     """Plotter for 1D correlation histograms.
 
-    Receives a dict of ResultKey to DataArray. Separates axis data from histogram
-    data using the configured x_axis_source name, then computes a histogram for
-    each remaining data source.
+    Receives pre-structured data from DataSubscriber (multi-role assembly):
+    - "primary": dict[ResultKey, DataArray] - data to histogram
+    - "x_axis": dict[ResultKey, DataArray] - x-axis correlation values
     """
 
     kdims: list[str] | None = None
@@ -193,19 +161,27 @@ class CorrelationHistogram1dPlotter:
             as_histogram=True,
         )
 
-    def initialize_from_data(self, data: dict[ResultKey, sc.DataArray]) -> None:
+    def initialize_from_data(self, data: dict[str, Any]) -> None:
         """No-op: histogram edges are computed dynamically on each call."""
 
-    def __call__(self, data: dict[ResultKey, sc.DataArray]) -> Any:
-        """Compute histograms for all data sources and render."""
-        histogram_data, x_axis_data, _ = _separate_axis_data(
-            data, x_axis_source=self._x_name
+    def __call__(self, data: dict[str, Any]) -> Any:
+        """Compute histograms for all data sources and render.
+
+        Parameters
+        ----------
+        data
+            Structured data from DataSubscriber with "primary" and "x_axis" roles.
+        """
+        histogram_data: dict[ResultKey, sc.DataArray] = data.get(PRIMARY, {})
+        x_axis_dict = data.get(X_AXIS, {})
+        x_axis_data: sc.DataArray | None = (
+            next(iter(x_axis_dict.values()), None) if x_axis_dict else None
         )
 
         if x_axis_data is None:
             raise ValueError(
-                f"Correlation histogram requires x-axis data from source "
-                f"'{self._x_name}', but it was not found in the data."
+                f"Correlation histogram requires x-axis data (role '{X_AXIS}'), "
+                "but it was not found in the data."
             )
         if not histogram_data:
             raise ValueError(
@@ -239,9 +215,10 @@ class CorrelationHistogram1dPlotter:
 class CorrelationHistogram2dPlotter:
     """Plotter for 2D correlation histograms.
 
-    Receives a dict of ResultKey to DataArray. Separates axis data from histogram
-    data using the configured x_axis_source and y_axis_source names, then computes
-    a 2D histogram for each remaining data source.
+    Receives pre-structured data from DataSubscriber (multi-role assembly):
+    - "primary": dict[ResultKey, DataArray] - data to histogram
+    - "x_axis": dict[ResultKey, DataArray] - x-axis correlation values
+    - "y_axis": dict[ResultKey, DataArray] - y-axis correlation values
     """
 
     kdims: list[str] | None = None
@@ -259,24 +236,37 @@ class CorrelationHistogram2dPlotter:
             aspect_params=params.plot_aspect,
         )
 
-    def initialize_from_data(self, data: dict[ResultKey, sc.DataArray]) -> None:
+    def initialize_from_data(self, data: dict[str, Any]) -> None:
         """No-op: histogram edges are computed dynamically on each call."""
 
-    def __call__(self, data: dict[ResultKey, sc.DataArray]) -> Any:
-        """Compute 2D histograms for all data sources and render."""
-        histogram_data, x_axis_data, y_axis_data = _separate_axis_data(
-            data, x_axis_source=self._x_name, y_axis_source=self._y_name
+    def __call__(self, data: dict[str, Any]) -> Any:
+        """Compute 2D histograms for all data sources and render.
+
+        Parameters
+        ----------
+        data
+            Structured data from DataSubscriber with "primary", "x_axis",
+            and "y_axis" roles.
+        """
+        histogram_data: dict[ResultKey, sc.DataArray] = data.get(PRIMARY, {})
+        x_axis_dict = data.get(X_AXIS, {})
+        y_axis_dict = data.get(Y_AXIS, {})
+        x_axis_data: sc.DataArray | None = (
+            next(iter(x_axis_dict.values()), None) if x_axis_dict else None
+        )
+        y_axis_data: sc.DataArray | None = (
+            next(iter(y_axis_dict.values()), None) if y_axis_dict else None
         )
 
         if x_axis_data is None:
             raise ValueError(
-                f"2D correlation histogram requires x-axis data from source "
-                f"'{self._x_name}', but it was not found in the data."
+                f"2D correlation histogram requires x-axis data (role '{X_AXIS}'), "
+                "but it was not found in the data."
             )
         if y_axis_data is None:
             raise ValueError(
-                f"2D correlation histogram requires y-axis data from source "
-                f"'{self._y_name}', but it was not found in the data."
+                f"2D correlation histogram requires y-axis data (role '{Y_AXIS}'), "
+                "but it was not found in the data."
             )
         if not histogram_data:
             raise ValueError(

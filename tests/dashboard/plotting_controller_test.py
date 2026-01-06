@@ -111,6 +111,8 @@ class TestROIDetectorTwoPhaseCreation:
         detector_data,
     ):
         """setup_pipeline for ROI invokes callback with dict of pipes."""
+        from ess.livedata.dashboard.data_roles import PRIMARY
+
         detector_key = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='detector_1', job_number=job_number),
@@ -125,7 +127,7 @@ class TestROIDetectorTwoPhaseCreation:
             callback_results.append(pipes)
 
         plotting_controller.setup_pipeline(
-            keys=[detector_key],
+            keys_by_role={PRIMARY: [detector_key]},
             plot_name='roi_detector',
             params=params,
             on_first_data=on_first_data,
@@ -147,6 +149,8 @@ class TestROIDetectorTwoPhaseCreation:
         detector_data,
     ):
         """setup_pipeline for ROI waits for all detectors before callback."""
+        from ess.livedata.dashboard.data_roles import PRIMARY
+
         detector_key_1 = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='detector_1', job_number=job_number),
@@ -168,7 +172,7 @@ class TestROIDetectorTwoPhaseCreation:
             callback_results.append(pipes)
 
         plotting_controller.setup_pipeline(
-            keys=[detector_key_1, detector_key_2],
+            keys_by_role={PRIMARY: [detector_key_1, detector_key_2]},
             plot_name='roi_detector',
             params=params,
             on_first_data=on_first_data,
@@ -198,6 +202,8 @@ class TestROIDetectorTwoPhaseCreation:
         spectrum_data,
     ):
         """create_plot_from_pipeline for ROI returns Layout from dict of pipes."""
+        from ess.livedata.dashboard.data_roles import PRIMARY
+
         detector_key = ResultKey(
             workflow_id=workflow_id,
             job_id=JobId(source_name='detector_1', job_number=job_number),
@@ -219,7 +225,7 @@ class TestROIDetectorTwoPhaseCreation:
 
         # Phase 1: setup pipeline
         plotting_controller.setup_pipeline(
-            keys=[detector_key],
+            keys_by_role={PRIMARY: [detector_key]},
             plot_name='roi_detector',
             params=params,
             on_first_data=on_first_data,
@@ -246,6 +252,8 @@ class TestROIDetectorTwoPhaseCreation:
         spectrum_data,
     ):
         """create_plot_from_pipeline for ROI handles multiple detectors."""
+        from ess.livedata.dashboard.data_roles import PRIMARY
+
         # Set up two detectors
         keys = []
         for source_name in ['detector_1', 'detector_2']:
@@ -271,7 +279,7 @@ class TestROIDetectorTwoPhaseCreation:
 
         # Phase 1: setup pipeline
         plotting_controller.setup_pipeline(
-            keys=keys,
+            keys_by_role={PRIMARY: keys},
             plot_name='roi_detector',
             params=params,
             on_first_data=on_first_data,

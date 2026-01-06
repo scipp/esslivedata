@@ -128,11 +128,10 @@ class PlottingController:
 
     def setup_pipeline(
         self,
-        keys: list[ResultKey],
+        keys_by_role: dict[str, list[ResultKey]],
         plot_name: str,
         params: dict | pydantic.BaseModel,
         on_first_data: Callable[[Any], None],
-        ready_condition: Callable[[set[ResultKey]], bool] | None = None,
     ) -> None:
         """
         Set up data pipeline for any plot type.
@@ -143,20 +142,18 @@ class PlottingController:
 
         Parameters
         ----------
-        keys
-            ResultKeys for all data sources (built by LayerSubscription).
+        keys_by_role
+            ResultKeys grouped by role (built by LayerSubscription).
+            E.g., {"primary": [...], "x_axis": [...]}
         plot_name
             Name of the plotter to use.
         params
             Plotter parameters as a dict or validated Pydantic model.
         on_first_data
             Callback when data is ready for plot creation.
-        ready_condition
-            Condition for when on_first_data should fire. If None, fires
-            when any data is available (single-source default). For multi-source
-            layers, LayerSubscription provides a condition requiring data from
-            each DataSourceConfig.
         """
+        from .data_roles import PRIMARY
+
         # Validate params if dict, pass through if already a model
         if isinstance(params, dict):
             spec = plotter_registry.get_spec(plot_name)
@@ -164,6 +161,9 @@ class PlottingController:
 
         spec = plotter_registry.get_spec(plot_name)
         window = getattr(params, 'window', None)
+
+        # Flatten keys for extractor creation
+        all_keys = [key for keys in keys_by_role.values() for key in keys]
 
         # Special case for roi_detector: create separate subscriptions per detector
         # and coordinate them to invoke callback once when all are ready.
@@ -177,27 +177,28 @@ class PlottingController:
 
                 def on_detector_ready(pipe: Any) -> None:
                     pipes[key] = pipe
-                    if len(pipes) == len(keys):
+                    if len(pipes) == len(all_keys):
                         # All detectors ready, invoke user callback with dict of pipes
                         on_first_data(pipes)
 
                 return on_detector_ready
 
             # Create one subscription per detector
-            for key in keys:
+            for key in all_keys:
                 extractors = create_extractors_from_params([key], window, spec)
-                self._stream_manager.make_merging_stream(
-                    extractors, on_first_data=make_detector_callback(key)
+                self._stream_manager.make_stream(
+                    keys_by_role={PRIMARY: [key]},
+                    on_first_data=make_detector_callback(key),
+                    extractors=extractors,
                 )
             return
 
-        # Standard path: create single merged subscription
-        extractors = create_extractors_from_params(keys, window, spec)
-
-        self._stream_manager.make_merging_stream(
-            extractors,
+        # Standard path: single subscription with role-aware assembly
+        extractors = create_extractors_from_params(all_keys, window, spec)
+        self._stream_manager.make_stream(
+            keys_by_role=keys_by_role,
             on_first_data=on_first_data,
-            ready_condition=ready_condition,
+            extractors=extractors,
         )
 
     def create_plot_from_pipeline(

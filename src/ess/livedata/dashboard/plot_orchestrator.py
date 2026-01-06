@@ -27,6 +27,7 @@ from ess.livedata.config.grid_template import GridSpec
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 from .config_store import ConfigStore
+from .data_roles import PRIMARY
 from .data_service import DataService
 from .job_orchestrator import WorkflowCallbacks
 from .layer_subscription import LayerSubscription, SubscriptionReady
@@ -131,68 +132,55 @@ class DataSourceConfig:
 class PlotConfig:
     """Configuration for a single plot layer.
 
-    The data_sources list supports different layer types:
+    The data_sources dict maps role names to DataSourceConfig:
 
-    - **Single data source**: Standard plot subscribed to one workflow output.
-    - **Single data source with empty source_names**: Static overlay (e.g., geometric
-      shapes). Uses a synthetic workflow ID and stores a user-defined name in
-      output_name.
-    - **Multiple data sources**: Correlation histograms combining outputs from
-      multiple workflows (planned feature).
+    - **"primary"**: The main data source (required). For standard plots, this is
+      the only entry. For correlation histograms, this is the data to be histogrammed.
+    - **"x_axis"**: X-axis correlation data (optional). Used by correlation histograms.
+    - **"y_axis"**: Y-axis correlation data (optional). For 2D correlation histograms.
 
-    For the common single-source case, convenience properties (workflow_id,
-    source_names, output_name) provide direct access to the first data source,
-    avoiding verbose patterns like ``config.data_sources[0].workflow_id`` throughout
-    the codebase. When multi-source correlation histograms are implemented, code
-    handling those will access data_sources directly.
+    Static overlays (e.g., geometric shapes) have a primary source with empty
+    source_names, a synthetic workflow ID, and store a user-defined name in output_name.
+
+    Convenience properties (workflow_id, source_names, output_name) provide direct
+    access to the primary data source.
     """
 
-    data_sources: list[DataSourceConfig]
+    data_sources: dict[str, DataSourceConfig]
     plot_name: str
     params: pydantic.BaseModel
 
     @property
     def workflow_id(self) -> WorkflowId:
-        """Workflow ID from the first data source.
-
-        Convenience property for the common single-source case.
-        For multi-source layers, access data_sources directly.
-        """
-        if not self.data_sources:
-            raise ValueError("Cannot access workflow_id: no data sources configured")
-        return self.data_sources[0].workflow_id
+        """Workflow ID from the primary data source."""
+        if PRIMARY not in self.data_sources:
+            raise ValueError("Cannot access workflow_id: no primary data source")
+        return self.data_sources[PRIMARY].workflow_id
 
     @property
     def source_names(self) -> list[str]:
-        """Source names from the first data source.
-
-        Convenience property for the common single-source case.
-        For multi-source layers, access data_sources directly.
-        """
-        if not self.data_sources:
-            raise ValueError("Cannot access source_names: no data sources configured")
-        return self.data_sources[0].source_names
+        """Source names from the primary data source."""
+        if PRIMARY not in self.data_sources:
+            raise ValueError("Cannot access source_names: no primary data source")
+        return self.data_sources[PRIMARY].source_names
 
     @property
     def output_name(self) -> str:
-        """Output name from the first data source.
-
-        Convenience property for the common single-source case.
-        For multi-source layers, access data_sources directly.
-        """
-        if not self.data_sources:
-            raise ValueError("Cannot access output_name: no data sources configured")
-        return self.data_sources[0].output_name
+        """Output name from the primary data source."""
+        if PRIMARY not in self.data_sources:
+            raise ValueError("Cannot access output_name: no primary data source")
+        return self.data_sources[PRIMARY].output_name
 
     def is_static(self) -> bool:
         """Return True if this is a static overlay (no workflow subscription needed).
 
-        Static overlays have a single data source with empty source_names. They use
-        a synthetic workflow ID and store the user-defined overlay name in output_name.
+        Static overlays have only a primary data source with empty source_names.
+        They use a synthetic workflow ID and store the user-defined overlay name
+        in output_name.
         """
-        return (
-            len(self.data_sources) == 1 and len(self.data_sources[0].source_names) == 0
-        )
+        if PRIMARY not in self.data_sources or len(self.data_sources) != 1:
+            return False
+        return len(self.data_sources[PRIMARY].source_names) == 0
 
 
 @dataclass
@@ -737,13 +725,13 @@ class PlotOrchestrator:
 
         **Flow:**
 
-        1. Set up data pipeline with on_first_data callback and ready_condition
-        2. If data already exists in DataService and ready_condition is satisfied:
+        1. Set up data pipeline with keys_by_role structure
+        2. If data already exists in DataService and all roles have data:
            - on_first_data fires immediately -> plot created -> state stored
            - Compose and notify
-        3. If no data yet or ready_condition not satisfied:
+        3. If no data yet or not all roles have data:
            - Notify UI that layer is "waiting for data"
-           - Later when data arrives and ready_condition is met, on_first_data fires
+           - Later when data arrives, on_first_data fires
 
         Parameters
         ----------
@@ -754,7 +742,7 @@ class PlotOrchestrator:
         grid_id
             ID of the grid containing the cell.
         ready
-            SubscriptionReady containing ResultKeys and ready_condition.
+            SubscriptionReady containing keys_by_role for structured data access.
         """
         # Defensive check: layer may have been removed before callback fires
         if layer_id not in self._layer_to_cell:
@@ -806,11 +794,10 @@ class PlotOrchestrator:
         # Set up data pipeline with callback using the unified interface
         try:
             self._plotting_controller.setup_pipeline(
-                keys=ready.keys,
+                keys_by_role=ready.keys_by_role,
                 plot_name=config.plot_name,
                 params=config.params,
                 on_first_data=on_data_arrived,
-                ready_condition=ready.ready_condition,
             )
         except Exception:
             error_msg = traceback.format_exc()
@@ -1035,34 +1022,51 @@ class PlotOrchestrator:
         if params is None:
             return None
 
-        # Parse data sources: support both new and legacy format
-        data_sources: list[DataSourceConfig]
+        # Parse data sources: support dict, list, and legacy formats
+        data_sources: dict[str, DataSourceConfig]
         if 'data_sources' in layer_data:
-            # New format: data_sources list
-            data_sources = [
-                DataSourceConfig(
-                    workflow_id=WorkflowId.from_string(ds['workflow_id']),
-                    source_names=ds['source_names'],
-                    output_name=ds.get('output_name', 'result'),
+            raw_sources = layer_data['data_sources']
+            if isinstance(raw_sources, dict):
+                # New format: data_sources dict with role keys
+                data_sources = {
+                    role: DataSourceConfig(
+                        workflow_id=WorkflowId.from_string(ds['workflow_id']),
+                        source_names=ds['source_names'],
+                        output_name=ds.get('output_name', 'result'),
+                    )
+                    for role, ds in raw_sources.items()
+                }
+            else:
+                # Legacy format: data_sources list (first entry is primary)
+                data_sources = (
+                    {
+                        PRIMARY: DataSourceConfig(
+                            workflow_id=WorkflowId.from_string(
+                                raw_sources[0]['workflow_id']
+                            ),
+                            source_names=raw_sources[0]['source_names'],
+                            output_name=raw_sources[0].get('output_name', 'result'),
+                        )
+                    }
+                    if raw_sources
+                    else {}
                 )
-                for ds in layer_data['data_sources']
-            ]
         elif 'workflow_id' in layer_data:
             # Legacy format: single workflow at top level
-            data_sources = [
-                DataSourceConfig(
+            data_sources = {
+                PRIMARY: DataSourceConfig(
                     workflow_id=WorkflowId.from_string(layer_data['workflow_id']),
                     source_names=layer_data['source_names'],
                     output_name=layer_data.get('output_name', 'result'),
                 )
-            ]
+            }
         else:
             # Fallback for templates missing workflow specification.
             # Note: This creates an invalid config - static overlays should use
             # the data_sources format with a synthetic workflow ID. This branch
             # exists for robustness but templates should always specify workflow_id
             # or data_sources.
-            data_sources = []
+            data_sources = {}
 
         config = PlotConfig(
             data_sources=data_sources,
@@ -1213,14 +1217,14 @@ class PlotOrchestrator:
         """Serialize a single layer to dict format."""
         config = layer.config
         return {
-            'data_sources': [
-                {
+            'data_sources': {
+                role: {
                     'workflow_id': str(ds.workflow_id),
                     'source_names': ds.source_names,
                     'output_name': ds.output_name,
                 }
-                for ds in config.data_sources
-            ],
+                for role, ds in config.data_sources.items()
+            },
             'plot_name': config.plot_name,
             'params': config.params.model_dump(mode='json'),
         }

@@ -14,10 +14,8 @@ from ess.livedata.config.models import ROI, Interval, PolygonROI, RectangleROI
 from ess.livedata.config.roi_names import get_roi_mapper
 from ess.livedata.config.workflow_spec import ResultKey
 
-from .data_subscriber import (
-    DataSubscriber,
-    MergingStreamAssembler,
-)
+from .data_roles import PRIMARY
+from .data_subscriber import DataSubscriber
 from .extractors import LatestValueExtractor
 from .plot_params import PlotParamsROIDetector
 from .plots import ImagePlotter
@@ -875,9 +873,12 @@ class ROIDetectorPlotFactory:
             """Factory function to create ReadbackPipe with callback."""
             return ReadbackPipe(on_data_update)
 
-        assembler = MergingStreamAssembler({roi_readback_key})
         extractors = {roi_readback_key: LatestValueExtractor()}
-        subscriber = DataSubscriber(assembler, pipe_factory, extractors)
+        subscriber = DataSubscriber(
+            keys_by_role={PRIMARY: [roi_readback_key]},
+            pipe_factory=pipe_factory,
+            extractors=extractors,
+        )
         self._stream_manager.data_service.register_subscriber(subscriber)
 
     def _subscribe_to_rect_readback(

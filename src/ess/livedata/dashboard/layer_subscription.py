@@ -10,7 +10,7 @@ enabling uniform handling of both simple plots and correlation histograms.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -26,10 +26,14 @@ if TYPE_CHECKING:
 
 @dataclass
 class SubscriptionReady:
-    """Data provided when all workflows are ready."""
+    """Data provided when all workflows are ready.
 
-    keys: list[ResultKey]
-    ready_condition: Callable[[set[ResultKey]], bool]
+    The keys_by_role dict maps role names (e.g., "primary", "x_axis") to lists
+    of ResultKeys for that role. This structure is preserved through the data
+    pipeline, allowing plotters to receive pre-structured data.
+    """
+
+    keys_by_role: dict[str, list[ResultKey]] = field(default_factory=dict)
 
 
 class LayerSubscription:
@@ -39,11 +43,11 @@ class LayerSubscription:
     Handles:
     - Subscribing to all required workflows via JobOrchestrator
     - Tracking which workflows have started (job_numbers available)
-    - Notifying when ALL workflows are ready (with ResultKeys and ready_condition)
+    - Notifying when ALL workflows are ready (with keys_by_role)
     - Propagating stop notifications (fires on ANY workflow stop)
 
-    Subscribes once per DataSourceConfig. If multiple DataSourceConfigs share the
-    same workflow_id, this results in redundant subscriptions, which is harmless
+    Subscribes once per role in data_sources. If multiple roles share the same
+    workflow_id, this results in redundant subscriptions, which is harmless
     and simpler than de-duplicating.
 
     Use start() to begin subscriptions after construction. This avoids callbacks
@@ -52,7 +56,7 @@ class LayerSubscription:
 
     def __init__(
         self,
-        data_sources: list[DataSourceConfig],
+        data_sources: dict[str, DataSourceConfig],
         job_orchestrator: JobOrchestratorProtocol,
         on_ready: Callable[[SubscriptionReady], None],
         on_stopped: Callable[[JobNumber], None] | None = None,
@@ -63,24 +67,25 @@ class LayerSubscription:
         Parameters
         ----------
         data_sources
-            List of data source configurations. Each describes one workflow's
-            contribution to the layer's data requirements.
+            Dict mapping role names to data source configurations. Each describes
+            one workflow's contribution to the layer's data requirements.
         job_orchestrator
             Orchestrator for subscribing to workflow lifecycle.
         on_ready
             Called when ALL workflows have started. Receives SubscriptionReady
-            containing ResultKeys and a ready_condition for gating plot creation.
+            containing keys_by_role for structured data access.
         on_stopped
             Called when ANY subscribed workflow stops. For correlation plots,
             losing any data source means the correlation cannot be computed.
         """
         self._data_sources = data_sources
+        self._roles = list(data_sources.keys())
         self._job_orchestrator = job_orchestrator
         self._on_ready = on_ready
         self._on_stopped = on_stopped
 
-        # Track job_numbers per data_source index (not workflow_id to handle dups)
-        self._job_numbers: dict[int, JobNumber] = {}
+        # Track job_numbers per role name
+        self._job_numbers: dict[str, JobNumber] = {}
         self._subscription_ids: list[SubscriptionId] = []
 
     def start(self) -> None:
@@ -92,77 +97,49 @@ class LayerSubscription:
         """
         from .job_orchestrator import WorkflowCallbacks
 
-        for idx, ds in enumerate(self._data_sources):
+        for role, ds in self._data_sources.items():
             sub_id, _ = self._job_orchestrator.subscribe_to_workflow(
                 workflow_id=ds.workflow_id,
                 callbacks=WorkflowCallbacks(
-                    on_started=partial(self._on_workflow_started, idx),
-                    on_stopped=partial(self._handle_workflow_stopped, idx),
+                    on_started=partial(self._on_workflow_started, role),
+                    on_stopped=partial(self._handle_workflow_stopped, role),
                 ),
             )
             self._subscription_ids.append(sub_id)
 
-    def _on_workflow_started(self, ds_index: int, job_number: JobNumber) -> None:
-        """Handle workflow start for a specific data_source."""
-        self._job_numbers[ds_index] = job_number
+    def _on_workflow_started(self, role: str, job_number: JobNumber) -> None:
+        """Handle workflow start for a specific role."""
+        self._job_numbers[role] = job_number
 
         if len(self._job_numbers) == len(self._data_sources):
-            ready = SubscriptionReady(
-                keys=self._build_result_keys(),
-                ready_condition=self._build_ready_condition(),
-            )
+            ready = SubscriptionReady(keys_by_role=self._build_keys_by_role())
             self._on_ready(ready)
 
-    def _handle_workflow_stopped(self, ds_index: int, job_number: JobNumber) -> None:
-        """Handle workflow stop for a specific data_source.
+    def _handle_workflow_stopped(self, role: str, job_number: JobNumber) -> None:
+        """Handle workflow stop for a specific role.
 
         Clears the job_number for the stopped source so the length check in
         _on_workflow_started will wait for restart before firing on_ready.
         """
-        if ds_index in self._job_numbers:
-            del self._job_numbers[ds_index]
+        if role in self._job_numbers:
+            del self._job_numbers[role]
 
         if self._on_stopped is not None:
             self._on_stopped(job_number)
 
-    def _keys_by_data_source(self) -> list[set[ResultKey]]:
-        """Return ResultKeys grouped by data_source."""
-        return [
-            {
+    def _build_keys_by_role(self) -> dict[str, list[ResultKey]]:
+        """Build ResultKeys grouped by role."""
+        return {
+            role: [
                 ResultKey(
                     workflow_id=ds.workflow_id,
-                    job_id=JobId(source_name=sn, job_number=self._job_numbers[idx]),
+                    job_id=JobId(source_name=sn, job_number=self._job_numbers[role]),
                     output_name=ds.output_name,
                 )
                 for sn in ds.source_names
-            }
-            for idx, ds in enumerate(self._data_sources)
-        ]
-
-    def _build_result_keys(self) -> list[ResultKey]:
-        """Build ResultKeys for all data_sources using collected job_numbers."""
-        return [key for group in self._keys_by_data_source() for key in group]
-
-    def _build_ready_condition(self) -> Callable[[set[ResultKey]], bool]:
-        """
-        Build a ready_condition that requires at least one key from each source.
-
-        This ensures correlation plots wait for all required data sources, while
-        allowing progressive display within each data source (e.g., if a data source
-        has multiple source_names, we don't wait for all of them).
-
-        Returns
-        -------
-        :
-            A callable that takes a set of available keys and returns True if
-            at least one key from each DataSourceConfig is present.
-        """
-        key_groups = self._keys_by_data_source()
-
-        def ready(available: set[ResultKey]) -> bool:
-            return all(bool(available & group) for group in key_groups)
-
-        return ready
+            ]
+            for role, ds in self._data_sources.items()
+        }
 
     def unsubscribe(self) -> None:
         """Unsubscribe from all workflow notifications."""

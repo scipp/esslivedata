@@ -7,6 +7,9 @@ import scipp as sc
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
 from ess.livedata.dashboard.correlation_plotter import (
+    PRIMARY,
+    X_AXIS,
+    Y_AXIS,
     Bin1dParams,
     Bin2dParams,
     CorrelationHistogram1dParams,
@@ -68,10 +71,10 @@ class TestCorrelationHistogram1dPlotter:
         # Source data is all BEFORE the first axis timestamp
         source_data = make_source_data(times=[50, 60, 70], values=[10.0, 20.0, 30.0])
 
-        # Flatten into dict with keys identified by source_name
+        # Structured data by role
         data = {
-            _make_result_key('detector'): source_data,
-            _make_result_key('position'): axis_data,
+            PRIMARY: {_make_result_key('detector'): source_data},
+            X_AXIS: {_make_result_key('position'): axis_data},
         }
 
         # Configure plotter to use 'position' as x-axis source
@@ -92,10 +95,10 @@ class TestCorrelationHistogram1dPlotter:
         # Source data overlaps with axis range
         source_data = make_source_data(times=[150, 250, 350], values=[10.0, 20.0, 30.0])
 
-        # Flatten into dict with keys identified by source_name
+        # Structured data by role
         data = {
-            _make_result_key('detector'): source_data,
-            _make_result_key('position'): axis_data,
+            PRIMARY: {_make_result_key('detector'): source_data},
+            X_AXIS: {_make_result_key('position'): axis_data},
         }
 
         params = CorrelationHistogram1dParams(
@@ -122,11 +125,11 @@ class TestCorrelationHistogram2dPlotter:
         # Source data is all BEFORE the first axis timestamp
         source_data = make_source_data(times=[50, 60, 70], values=[10.0, 20.0, 30.0])
 
-        # Flatten into dict with keys identified by source_name
+        # Structured data by role
         data = {
-            _make_result_key('detector'): source_data,
-            _make_result_key('position'): x_axis,
-            _make_result_key('temperature'): y_axis,
+            PRIMARY: {_make_result_key('detector'): source_data},
+            X_AXIS: {_make_result_key('position'): x_axis},
+            Y_AXIS: {_make_result_key('temperature'): y_axis},
         }
 
         # Configure plotter to use 'position' and 'temperature' as axis sources
