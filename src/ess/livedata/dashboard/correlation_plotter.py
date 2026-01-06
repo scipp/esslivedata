@@ -13,6 +13,7 @@ Correlation histograms receive pre-structured data from DataSubscriber:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import pydantic
@@ -139,27 +140,65 @@ def _make_lookup(axis_data: sc.DataArray, data_max_time: sc.Variable) -> sc.bins
     return sc.lookup(axis_values, mode=mode)
 
 
-class CorrelationHistogram1dPlotter:
-    """Plotter for 1D correlation histograms.
+def _histogram_with_normalization(
+    data: sc.DataArray, bin_spec: dict[str, int], normalize: bool
+) -> sc.DataArray:
+    """Bin data and optionally normalize by time width.
+
+    Parameters
+    ----------
+    data
+        DataArray with 'time' coordinate and axis coordinates already assigned.
+    bin_spec
+        Mapping from coordinate name to number of bins.
+    normalize
+        If True, divide by time bin width and compute mean instead of sum.
+
+    Returns
+    -------
+    :
+        Histogrammed data.
+    """
+    if normalize:
+        times = data.coords['time']
+        widths = (times[1:] - times[:-1]).to(dtype='float64', unit='s')
+        widths = sc.concat([widths, widths.median()], dim='time')
+        data = data / widths
+        return data.bin(bin_spec).bins.mean()
+    return data.hist(bin_spec)
+
+
+@dataclass(frozen=True)
+class AxisSpec:
+    """Specification for a correlation axis."""
+
+    role: str
+    """Data role to use for this axis (e.g., X_AXIS, Y_AXIS)."""
+    name: str
+    """Coordinate name to assign in the data."""
+    bins: int
+    """Number of bins for this axis."""
+
+
+class CorrelationHistogramPlotter:
+    """Base plotter for correlation histograms with arbitrary number of axes.
 
     Receives pre-structured data from DataSubscriber (multi-role assembly):
     - "primary": dict[ResultKey, DataArray] - data to histogram
-    - "x_axis": dict[ResultKey, DataArray] - x-axis correlation values
+    - One or more axis roles (e.g., "x_axis", "y_axis") containing correlation values
     """
 
     kdims: list[str] | None = None
 
-    def __init__(self, params: CorrelationHistogram1dParams) -> None:
-        self._num_bins = params.bins.x_bins
-        self._x_name = params.bins.x_axis_source or 'x'
-        self._normalize = params.normalization.per_second
-        self._renderer = LinePlotter(
-            scale_opts=params.plot_scale,
-            tick_params=params.ticks,
-            layout_params=params.layout,
-            aspect_params=params.plot_aspect,
-            as_histogram=True,
-        )
+    def __init__(
+        self,
+        axes: list[AxisSpec],
+        normalize: bool,
+        renderer: LinePlotter | ImagePlotter,
+    ) -> None:
+        self._axes = axes
+        self._normalize = normalize
+        self._renderer = renderer
 
     def initialize_from_data(self, data: dict[str, Any]) -> None:
         """No-op: histogram edges are computed dynamically on each call."""
@@ -170,41 +209,69 @@ class CorrelationHistogram1dPlotter:
         Parameters
         ----------
         data
-            Structured data from DataSubscriber with "primary" and "x_axis" roles.
+            Structured data from DataSubscriber with "primary" role and axis roles.
         """
         histogram_data: dict[ResultKey, sc.DataArray] = data.get(PRIMARY, {})
-        x_axis_dict = data.get(X_AXIS, {})
-        x_axis_data: sc.DataArray | None = (
-            next(iter(x_axis_dict.values()), None) if x_axis_dict else None
-        )
-
-        if x_axis_data is None:
-            raise ValueError(
-                f"Correlation histogram requires x-axis data (role '{X_AXIS}'), "
-                "but it was not found in the data."
-            )
         if not histogram_data:
             raise ValueError(
                 "Correlation histogram requires at least one data source to histogram."
             )
 
-        x_name = self._x_name
+        # Extract and validate all axis data
+        axis_data: dict[str, sc.DataArray] = {}
+        for axis in self._axes:
+            axis_dict = data.get(axis.role, {})
+            ax = next(iter(axis_dict.values()), None) if axis_dict else None
+            if ax is None:
+                raise ValueError(
+                    f"Correlation histogram requires data for role '{axis.role}', "
+                    "but it was not found in the data."
+                )
+            axis_data[axis.name] = ax
+
+        # Build bin spec
+        bin_spec = {axis.name: axis.bins for axis in self._axes}
+
         histograms: dict[ResultKey, sc.DataArray] = {}
         for key, source_data in histogram_data.items():
             dependent = source_data.copy(deep=False)
-            x_lut = _make_lookup(x_axis_data, dependent.coords['time'].max())
-            dependent.coords[x_name] = x_lut[dependent.coords['time']]
+            data_max_time = dependent.coords['time'].max()
 
-            if self._normalize:
-                times = dependent.coords['time']
-                widths = (times[1:] - times[:-1]).to(dtype='float64', unit='s')
-                widths = sc.concat([widths, widths.median()], dim='time')
-                dependent = dependent / widths
-                histograms[key] = dependent.bin({x_name: self._num_bins}).bins.mean()
-            else:
-                histograms[key] = dependent.hist({x_name: self._num_bins})
+            # Add all axis coordinates via lookup
+            for axis in self._axes:
+                lut = _make_lookup(axis_data[axis.name], data_max_time)
+                dependent.coords[axis.name] = lut[dependent.coords['time']]
+
+            histograms[key] = _histogram_with_normalization(
+                dependent, bin_spec, self._normalize
+            )
 
         return self._renderer(histograms)
+
+
+class CorrelationHistogram1dPlotter(CorrelationHistogramPlotter):
+    """Plotter for 1D correlation histograms."""
+
+    def __init__(self, params: CorrelationHistogram1dParams) -> None:
+        axes = [
+            AxisSpec(
+                role=X_AXIS,
+                name=params.bins.x_axis_source or 'x',
+                bins=params.bins.x_bins,
+            )
+        ]
+        renderer = LinePlotter(
+            scale_opts=params.plot_scale,
+            tick_params=params.ticks,
+            layout_params=params.layout,
+            aspect_params=params.plot_aspect,
+            as_histogram=True,
+        )
+        super().__init__(
+            axes=axes,
+            normalize=params.normalization.per_second,
+            renderer=renderer,
+        )
 
     @classmethod
     def from_params(cls, params: CorrelationHistogram1dParams):
@@ -212,91 +279,33 @@ class CorrelationHistogram1dPlotter:
         return cls(params=params)
 
 
-class CorrelationHistogram2dPlotter:
-    """Plotter for 2D correlation histograms.
-
-    Receives pre-structured data from DataSubscriber (multi-role assembly):
-    - "primary": dict[ResultKey, DataArray] - data to histogram
-    - "x_axis": dict[ResultKey, DataArray] - x-axis correlation values
-    - "y_axis": dict[ResultKey, DataArray] - y-axis correlation values
-    """
-
-    kdims: list[str] | None = None
+class CorrelationHistogram2dPlotter(CorrelationHistogramPlotter):
+    """Plotter for 2D correlation histograms."""
 
     def __init__(self, params: CorrelationHistogram2dParams) -> None:
-        self._x_bins = params.bins.x_bins
-        self._y_bins = params.bins.y_bins
-        self._x_name = params.bins.x_axis_source or 'x'
-        self._y_name = params.bins.y_axis_source or 'y'
-        self._normalize = params.normalization.per_second
-        self._renderer = ImagePlotter(
+        axes = [
+            AxisSpec(
+                role=X_AXIS,
+                name=params.bins.x_axis_source or 'x',
+                bins=params.bins.x_bins,
+            ),
+            AxisSpec(
+                role=Y_AXIS,
+                name=params.bins.y_axis_source or 'y',
+                bins=params.bins.y_bins,
+            ),
+        ]
+        renderer = ImagePlotter(
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
         )
-
-    def initialize_from_data(self, data: dict[str, Any]) -> None:
-        """No-op: histogram edges are computed dynamically on each call."""
-
-    def __call__(self, data: dict[str, Any]) -> Any:
-        """Compute 2D histograms for all data sources and render.
-
-        Parameters
-        ----------
-        data
-            Structured data from DataSubscriber with "primary", "x_axis",
-            and "y_axis" roles.
-        """
-        histogram_data: dict[ResultKey, sc.DataArray] = data.get(PRIMARY, {})
-        x_axis_dict = data.get(X_AXIS, {})
-        y_axis_dict = data.get(Y_AXIS, {})
-        x_axis_data: sc.DataArray | None = (
-            next(iter(x_axis_dict.values()), None) if x_axis_dict else None
+        super().__init__(
+            axes=axes,
+            normalize=params.normalization.per_second,
+            renderer=renderer,
         )
-        y_axis_data: sc.DataArray | None = (
-            next(iter(y_axis_dict.values()), None) if y_axis_dict else None
-        )
-
-        if x_axis_data is None:
-            raise ValueError(
-                f"2D correlation histogram requires x-axis data (role '{X_AXIS}'), "
-                "but it was not found in the data."
-            )
-        if y_axis_data is None:
-            raise ValueError(
-                f"2D correlation histogram requires y-axis data (role '{Y_AXIS}'), "
-                "but it was not found in the data."
-            )
-        if not histogram_data:
-            raise ValueError(
-                "Correlation histogram requires at least one data source to histogram."
-            )
-
-        x_name, y_name = self._x_name, self._y_name
-        histograms: dict[ResultKey, sc.DataArray] = {}
-        for key, source_data in histogram_data.items():
-            dependent = source_data.copy(deep=False)
-            data_max_time = dependent.coords['time'].max()
-            x_lut = _make_lookup(x_axis_data, data_max_time)
-            y_lut = _make_lookup(y_axis_data, data_max_time)
-            dependent.coords[x_name] = x_lut[dependent.coords['time']]
-            dependent.coords[y_name] = y_lut[dependent.coords['time']]
-
-            if self._normalize:
-                times = dependent.coords['time']
-                widths = (times[1:] - times[:-1]).to(dtype='float64', unit='s')
-                widths = sc.concat([widths, widths.median()], dim='time')
-                dependent = dependent / widths
-                histograms[key] = dependent.bin(
-                    {y_name: self._y_bins, x_name: self._x_bins}
-                ).bins.mean()
-            else:
-                histograms[key] = dependent.hist(
-                    {y_name: self._y_bins, x_name: self._x_bins}
-                )
-
-        return self._renderer(histograms)
 
     @classmethod
     def from_params(cls, params: CorrelationHistogram2dParams):
