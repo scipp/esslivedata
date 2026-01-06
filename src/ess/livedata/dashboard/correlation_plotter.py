@@ -22,7 +22,12 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import ResultKey
 
 from .data_roles import PRIMARY, X_AXIS, Y_AXIS
-from .plot_params import PlotDisplayParams1d, PlotDisplayParams2d
+from .plot_params import (
+    Curve1dParams,
+    Curve1dRenderMode,
+    PlotDisplayParams1d,
+    PlotDisplayParams2d,
+)
 from .plots import ImagePlotter, LinePlotter
 
 
@@ -97,13 +102,17 @@ class CorrelationHistogram1dParams(_CorrelationHistogramBase, PlotDisplayParams1
 
     Used by PlotConfigModal wizard. The plotter auto-determines bin edges from data.
     Inherits display options (layout, plot_scale, ticks, plot_aspect) from
-    PlotDisplayParams1d.
+    PlotDisplayParams1d. Renders as histogram by default.
     """
 
     bins: Bin1dParams = pydantic.Field(
         default_factory=Bin1dParams,
         title="Histogram Bins",
         description="Bin configuration for the histogram.",
+    )
+    curve: Curve1dParams = pydantic.Field(
+        default_factory=lambda: Curve1dParams(mode=Curve1dRenderMode.histogram),
+        description="1D curve rendering options (defaults to histogram mode).",
     )
 
 
@@ -238,13 +247,7 @@ class CorrelationHistogram1dPlotter(CorrelationHistogramPlotter):
                 bins=params.bins.x_bins,
             )
         ]
-        renderer = LinePlotter(
-            scale_opts=params.plot_scale,
-            tick_params=params.ticks,
-            layout_params=params.layout,
-            aspect_params=params.plot_aspect,
-            as_histogram=True,
-        )
+        renderer = LinePlotter.from_params(params)
         super().__init__(
             axes=axes,
             normalize=params.normalization.per_second,
@@ -274,12 +277,7 @@ class CorrelationHistogram2dPlotter(CorrelationHistogramPlotter):
                 bins=params.bins.x_bins,
             ),
         ]
-        renderer = ImagePlotter(
-            scale_opts=params.plot_scale,
-            tick_params=params.ticks,
-            layout_params=params.layout,
-            aspect_params=params.plot_aspect,
-        )
+        renderer = ImagePlotter.from_params(params)
         super().__init__(
             axes=axes,
             normalize=params.normalization.per_second,

@@ -252,12 +252,12 @@ class TestCorrelationHistogram2dPlotter:
         plotter = CorrelationHistogram2dPlotter(params)
 
         assert len(plotter._axes) == 2
-        assert plotter._axes[0].role == X_AXIS
-        assert plotter._axes[0].name == 'position'
-        assert plotter._axes[0].bins == 20
-        assert plotter._axes[1].role == Y_AXIS
-        assert plotter._axes[1].name == 'temperature'
-        assert plotter._axes[1].bins == 30
+        assert plotter._axes[0].role == Y_AXIS
+        assert plotter._axes[0].name == 'temperature'
+        assert plotter._axes[0].bins == 30
+        assert plotter._axes[1].role == X_AXIS
+        assert plotter._axes[1].name == 'position'
+        assert plotter._axes[1].bins == 20
 
     def test_from_params_factory(self):
         """Verifies from_params factory method works."""

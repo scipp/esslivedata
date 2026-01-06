@@ -336,12 +336,15 @@ class LinePlotter(Plotter):
     @classmethod
     def from_params(cls, params: PlotParams1d):
         """Create LinePlotter from PlotParams1d."""
+        from .plot_params import Curve1dRenderMode
+
         return cls(
             grow_threshold=0.1,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
+            as_histogram=params.curve.mode == Curve1dRenderMode.histogram,
         )
 
     def plot(

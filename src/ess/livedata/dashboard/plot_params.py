@@ -48,6 +48,25 @@ class PlotScale(str, enum.Enum):
     log = 'log'
 
 
+class Curve1dRenderMode(StrEnum):
+    """Enumeration of rendering modes for 1D curves."""
+
+    curve = 'curve'
+    histogram = 'histogram'
+
+
+class Curve1dParams(pydantic.BaseModel):
+    """Parameters for 1D curve rendering."""
+
+    mode: Curve1dRenderMode = pydantic.Field(
+        default=Curve1dRenderMode.curve,
+        description=(
+            "Rendering mode: 'curve' for smooth lines or 'histogram' for step plot."
+        ),
+        title="Curve Mode",
+    )
+
+
 class CombineMode(str, enum.Enum):
     """Enumeration of combine modes for multiple datasets."""
 
@@ -219,6 +238,10 @@ class PlotDisplayParams1d(PlotParamsBase):
     ticks: TickParams = pydantic.Field(
         default_factory=TickParams,
         description="Tick configuration for plot axes.",
+    )
+    curve: Curve1dParams = pydantic.Field(
+        default_factory=Curve1dParams,
+        description="1D curve rendering options.",
     )
 
 
