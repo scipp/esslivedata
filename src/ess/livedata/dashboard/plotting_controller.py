@@ -58,6 +58,7 @@ class PlottingController:
         self._job_service = job_service
         self._stream_manager = stream_manager
         self._logger = logger or logging.getLogger(__name__)
+        self._roi_publisher = roi_publisher
         self._roi_detector_plot_factory = ROIDetectorPlotFactory(
             stream_manager=stream_manager, roi_publisher=roi_publisher, logger=logger
         )
@@ -272,7 +273,7 @@ class PlottingController:
         # Special case for ROI request plotters: they return a DynamicMap with
         # BoxEdit/PolyDraw streams already attached. Don't wrap again.
         if isinstance(plotter, RectanglesRequestPlotter | PolygonsRequestPlotter):
-            plotter._roi_publisher = self._roi_detector_plot_factory._roi_publisher
+            plotter._roi_publisher = self._roi_publisher
             # Get the first data key and its data for the plot() call
             data_key = next(iter(pipe.data.keys()))
             data = pipe.data[data_key]
