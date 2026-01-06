@@ -137,6 +137,11 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         """Available source names."""
 
     @property
+    def allow_multiple_sources(self) -> bool:
+        """Whether multiple sources can be selected simultaneously."""
+        return True
+
+    @property
     def initial_source_names(self) -> list[str]:
         """
         Initially selected source names.
