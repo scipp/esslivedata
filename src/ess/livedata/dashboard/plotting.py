@@ -24,6 +24,7 @@ from .plots import (
     SlicerPlotter,
 )
 from .roi_readback_plots import _register_roi_readback_plotters
+from .roi_request_plots import _register_roi_request_plotters
 from .scipp_to_holoviews import _all_coords_evenly_spaced
 from .static_plots import _register_static_plotters
 
@@ -382,3 +383,6 @@ _register_static_plotters()
 
 # Register ROI readback plotters (rectangles_readback, polygons_readback)
 _register_roi_readback_plotters()
+
+# Register ROI request plotters (rectangles_request, polygons_request)
+_register_roi_request_plotters()

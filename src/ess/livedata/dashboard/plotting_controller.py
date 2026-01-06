@@ -22,6 +22,7 @@ from .plot_params import create_extractors_from_params
 from .plotting import PlotterSpec, plotter_registry
 from .roi_detector_plot_factory import ROIDetectorPlotFactory
 from .roi_publisher import ROIPublisher
+from .roi_request_plots import PolygonsRequestPlotter, RectanglesRequestPlotter
 from .stream_manager import StreamManager
 
 K = TypeVar('K', bound=Hashable)
@@ -267,6 +268,16 @@ class PlottingController:
             return hv.Layout(plots).opts(shared_axes=False)
 
         plotter = plotter_registry.create_plotter(plot_name, params=params)
+
+        # Special case for ROI request plotters: they return a DynamicMap with
+        # BoxEdit/PolyDraw streams already attached. Don't wrap again.
+        if isinstance(plotter, RectanglesRequestPlotter | PolygonsRequestPlotter):
+            plotter._roi_publisher = self._roi_detector_plot_factory._roi_publisher
+            # Get the first data key and its data for the plot() call
+            data_key = next(iter(pipe.data.keys()))
+            data = pipe.data[data_key]
+            # plot() creates and returns the interactive DynamicMap
+            return plotter.plot(data, data_key)
 
         # Initialize plotter with extracted data from pipe to determine kdims
         plotter.initialize_from_data(pipe.data)

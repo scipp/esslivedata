@@ -1,0 +1,613 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""Interactive ROI request plotters for user-drawn ROI selection.
+
+These plotters create interactive BoxEdit/PolyDraw elements that allow users
+to draw ROIs visually. Edits are published to Kafka for backend processing.
+
+Unlike the monolithic ROIDetectorPlotFactory, these plotters:
+- Initialize from params (no bidirectional sync with readback)
+- Subscribe to readback stream only for job_id context
+- Publish directly on user edit
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+import holoviews as hv
+import pydantic
+import scipp as sc
+
+from ess.livedata.config.models import PolygonROI, RectangleROI
+from ess.livedata.config.roi_names import get_roi_mapper
+
+from .plots import Plotter
+from .roi_detector_plot_factory import PolygonConverter, RectangleConverter
+from .static_plots import Color, LineDash, _parse_rectangle_list
+
+if TYPE_CHECKING:
+    from ess.livedata.config.workflow_spec import ResultKey
+
+    from .roi_publisher import ROIPublisher
+
+
+class OptionalRectanglesCoordinates(pydantic.BaseModel):
+    """Wrapper for optional rectangle coordinate input.
+
+    Unlike RectanglesCoordinates from static_plots, this allows empty coordinates
+    for request plotters where no initial rectangles are configured.
+    """
+
+    coordinates: str = pydantic.Field(
+        default="",
+        title="Coordinates",
+        description='E.g., [0,0,10,10], [20,20,30,30] (leave empty for none)',
+    )
+
+    @pydantic.field_validator('coordinates')
+    @classmethod
+    def validate_coordinates(cls, v: str) -> str:
+        """Validate rectangle coordinate structure, allowing empty."""
+        v = v.strip()
+        if not v:
+            return ""  # Allow empty
+
+        coords = _parse_rectangle_list(v)
+        for i, rect in enumerate(coords):
+            if not isinstance(rect, list | tuple):
+                raise ValueError(f"Rectangle {i + 1}: must be a list [x0, y0, x1, y1]")
+            if len(rect) != 4:
+                raise ValueError(
+                    f"Rectangle {i + 1}: expected 4 coordinates [x0, y0, x1, y1], "
+                    f"got {len(rect)}"
+                )
+            for j, val in enumerate(rect):
+                if not isinstance(val, int | float):
+                    raise ValueError(
+                        f"Rectangle {i + 1}, coordinate {j + 1}: must be a number"
+                    )
+        return v
+
+    def parse(self) -> list[tuple[float, float, float, float]]:
+        """Parse validated coordinates into list of rectangle tuples."""
+        if not self.coordinates:
+            return []
+        coords = _parse_rectangle_list(self.coordinates)
+        return [(float(r[0]), float(r[1]), float(r[2]), float(r[3])) for r in coords]
+
+
+class RectanglesRequestStyle(pydantic.BaseModel):
+    """Style options for ROI request rectangles."""
+
+    color: Color = pydantic.Field(
+        default=Color("#808080"),
+        title="Color",
+    )
+    line_width: float = pydantic.Field(
+        default=2.0,
+        ge=0.0,
+        le=10.0,
+        title="Line Width",
+        description="Line width in pixels",
+    )
+    line_dash: LineDash = pydantic.Field(
+        default=LineDash.dashed,
+        title="Line Style",
+        description="Line style: solid, dashed, dotted, dotdash",
+    )
+
+
+class RectanglesRequestOptions(pydantic.BaseModel):
+    """Options for rectangles request plotter."""
+
+    max_roi_count: int = pydantic.Field(
+        default=4,
+        ge=1,
+        le=8,
+        title="Max ROIs",
+        description="Maximum number of rectangles that can be drawn.",
+    )
+
+
+class RectanglesRequestParams(pydantic.BaseModel):
+    """Parameters for interactive rectangles request plotter."""
+
+    geometry: OptionalRectanglesCoordinates = pydantic.Field(
+        default_factory=OptionalRectanglesCoordinates,
+        title="Initial Coordinates",
+        description="Initial rectangle coordinates. Leave empty for none.",
+    )
+    style: RectanglesRequestStyle = pydantic.Field(
+        default_factory=RectanglesRequestStyle,
+        title="Appearance",
+        description="Visual styling options.",
+    )
+    options: RectanglesRequestOptions = pydantic.Field(
+        default_factory=RectanglesRequestOptions,
+        title="Options",
+        description="Drawing options.",
+    )
+
+
+class RectanglesRequestPlotter(Plotter):
+    """
+    Interactive plotter for ROI rectangle requests.
+
+    Creates a BoxEdit-enabled DynamicMap that allows users to draw rectangles.
+    Publishes ROI updates to Kafka when shapes are edited.
+
+    The plotter subscribes to the ROI readback stream to obtain the job_id
+    for publishing. The readback data itself is not used for display.
+    """
+
+    def __init__(
+        self,
+        params: RectanglesRequestParams,
+        roi_publisher: ROIPublisher | None = None,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        super().__init__()
+        self._params = params
+        self._roi_publisher = roi_publisher
+        self._logger = logger or logging.getLogger(__name__)
+        self._converter = RectangleConverter()
+        self._roi_mapper = get_roi_mapper()
+
+        # Runtime state set during plot creation
+        self._result_key: ResultKey | None = None
+        self._current_rois: dict[int, RectangleROI] = {}
+        # Keep streams alive to prevent garbage collection
+        self._pipe: hv.streams.Pipe | None = None
+        self._box_stream: hv.streams.BoxEdit | None = None
+
+    def plot(
+        self,
+        data: sc.DataArray,
+        data_key: ResultKey,
+        **kwargs,
+    ) -> hv.DynamicMap:
+        """
+        Create interactive rectangles with BoxEdit.
+
+        Parameters
+        ----------
+        data:
+            ROI readback DataArray (used only for job_id extraction).
+        data_key:
+            Key identifying this data stream (provides job_id for publishing).
+        **kwargs:
+            Unused additional arguments.
+
+        Returns
+        -------
+        :
+            DynamicMap with BoxEdit interactivity.
+        """
+        del data, kwargs  # We only need job_id from data_key
+
+        self._result_key = data_key
+
+        # Parse initial geometry from params
+        initial_rects = self._parse_initial_geometry()
+
+        # Create pipe for programmatic updates (store as instance var to prevent GC)
+        self._pipe = hv.streams.Pipe(data=[])
+
+        def make_rectangles(data: list) -> hv.Rectangles:
+            return hv.Rectangles(data)
+
+        dmap = hv.DynamicMap(make_rectangles, streams=[self._pipe])
+
+        # Create BoxEdit stream attached to the DynamicMap (store to prevent GC)
+        self._box_stream = hv.streams.BoxEdit(
+            source=dmap,
+            num_objects=self._params.options.max_roi_count,
+            data=self._converter.to_stream_data(initial_rects),
+        )
+
+        # Initialize pipe with current rectangles
+        self._pipe.send(self._converter.to_hv_data(initial_rects, index_to_color=None))
+
+        # Store initial state
+        self._current_rois = initial_rects
+
+        # Watch for edits
+        self._box_stream.param.watch(self._on_edit, 'data')
+
+        # Publish initial state
+        self._publish_rois(initial_rects)
+
+        # Apply styling
+        style = self._params.style
+        return dmap.opts(
+            color=style.color,
+            fill_alpha=0,
+            line_width=style.line_width,
+            line_dash=style.line_dash,
+            # Bokeh bug: line_dash='dashed' doesn't render with WebGL backend
+            backend_opts={'plot.output_backend': 'canvas'},
+        )
+
+    def _parse_initial_geometry(self) -> dict[int, RectangleROI]:
+        """Parse initial rectangles from params."""
+        coords_str = self._params.geometry.coordinates
+        if not coords_str or coords_str.strip() == '':
+            return {}
+
+        try:
+            rects = self._params.geometry.parse()
+        except Exception:
+            self._logger.warning("Failed to parse initial rectangle coordinates")
+            return {}
+
+        # Convert to RectangleROI objects (unitless)
+        rois: dict[int, RectangleROI] = {}
+        from ess.livedata.config.models import Interval
+
+        for i, (x0, y0, x1, y1) in enumerate(rects):
+            rois[i] = RectangleROI(
+                x=Interval(min=min(x0, x1), max=max(x0, x1), unit=None),
+                y=Interval(min=min(y0, y1), max=max(y0, y1), unit=None),
+            )
+        return rois
+
+    def _on_edit(self, event) -> None:
+        """Handle BoxEdit data changes from user interaction."""
+        data = event.new if hasattr(event, 'new') else event
+        if data is None:
+            data = {}
+
+        try:
+            # Parse new ROIs from edit stream (unitless)
+            new_rois = self._converter.parse_stream_data(
+                data, x_unit=None, y_unit=None, index_offset=0
+            )
+
+            # Only publish if changed
+            if new_rois == self._current_rois:
+                return
+
+            self._current_rois = new_rois
+            self._publish_rois(new_rois)
+
+        except Exception as e:
+            self._logger.error("Failed to process rectangle edit: %s", e)
+
+    def _publish_rois(self, rois: dict[int, RectangleROI]) -> None:
+        """Publish ROIs to Kafka."""
+        if not self._roi_publisher or not self._result_key:
+            return
+
+        geometry = self._roi_mapper.geometry_for_type("rectangle")
+        if geometry is None:
+            self._logger.warning("Rectangle geometry not configured")
+            return
+
+        self._roi_publisher.publish(
+            self._result_key.job_id,
+            rois,
+            geometry,
+        )
+        self._logger.info(
+            "Published %d rectangle ROI(s) for job %s",
+            len(rois),
+            self._result_key.job_id,
+        )
+
+
+class PolygonsRequestStyle(pydantic.BaseModel):
+    """Style options for ROI request polygons."""
+
+    color: Color = pydantic.Field(
+        default=Color("#808080"),
+        title="Color",
+    )
+    line_width: float = pydantic.Field(
+        default=2.0,
+        ge=0.0,
+        le=10.0,
+        title="Line Width",
+        description="Line width in pixels",
+    )
+    line_dash: LineDash = pydantic.Field(
+        default=LineDash.dashed,
+        title="Line Style",
+        description="Line style: solid, dashed, dotted, dotdash",
+    )
+
+
+class PolygonsCoordinates(pydantic.BaseModel):
+    """Wrapper for polygon coordinate input."""
+
+    coordinates: str = pydantic.Field(
+        default="",
+        title="Coordinates",
+        description='E.g., [[0,0],[10,0],[5,10]], [[20,20],[30,20],[30,30],[20,30]]',
+    )
+
+    def parse(self) -> list[tuple[list[float], list[float]]]:
+        """Parse validated coordinates into list of (xs, ys) tuples."""
+        import json
+
+        coords_str = self.coordinates.strip()
+        if not coords_str:
+            return []
+
+        try:
+            # Parse as JSON array of polygons
+            result = json.loads(f"[{coords_str}]")
+            polygons = []
+            for poly in result:
+                if not isinstance(poly, list) or len(poly) < 3:
+                    continue
+                xs = [float(p[0]) for p in poly]
+                ys = [float(p[1]) for p in poly]
+                polygons.append((xs, ys))
+            return polygons
+        except (json.JSONDecodeError, IndexError, TypeError):
+            return []
+
+
+class PolygonsRequestOptions(pydantic.BaseModel):
+    """Options for polygons request plotter."""
+
+    max_roi_count: int = pydantic.Field(
+        default=4,
+        ge=1,
+        le=8,
+        title="Max ROIs",
+        description="Maximum number of polygons that can be drawn.",
+    )
+
+
+class PolygonsRequestParams(pydantic.BaseModel):
+    """Parameters for interactive polygons request plotter."""
+
+    geometry: PolygonsCoordinates = pydantic.Field(
+        default_factory=PolygonsCoordinates,
+        title="Initial Coordinates",
+        description="Initial polygon coordinates. Leave empty for none.",
+    )
+    style: PolygonsRequestStyle = pydantic.Field(
+        default_factory=PolygonsRequestStyle,
+        title="Appearance",
+        description="Visual styling options.",
+    )
+    options: PolygonsRequestOptions = pydantic.Field(
+        default_factory=PolygonsRequestOptions,
+        title="Options",
+        description="Drawing options.",
+    )
+
+
+class PolygonsRequestPlotter(Plotter):
+    """
+    Interactive plotter for ROI polygon requests.
+
+    Creates a PolyDraw-enabled DynamicMap that allows users to draw polygons.
+    Publishes ROI updates to Kafka when shapes are edited.
+    """
+
+    def __init__(
+        self,
+        params: PolygonsRequestParams,
+        roi_publisher: ROIPublisher | None = None,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        super().__init__()
+        self._params = params
+        self._roi_publisher = roi_publisher
+        self._logger = logger or logging.getLogger(__name__)
+        self._converter = PolygonConverter()
+        self._roi_mapper = get_roi_mapper()
+
+        # Runtime state
+        self._result_key: ResultKey | None = None
+        self._current_rois: dict[int, PolygonROI] = {}
+        self._index_offset: int = 4
+        # Keep streams alive to prevent garbage collection
+        self._pipe: hv.streams.Pipe | None = None
+        self._poly_stream: hv.streams.PolyDraw | None = None
+
+    def plot(
+        self,
+        data: sc.DataArray,
+        data_key: ResultKey,
+        **kwargs,
+    ) -> hv.DynamicMap:
+        """
+        Create interactive polygons with PolyDraw.
+
+        Parameters
+        ----------
+        data:
+            ROI readback DataArray (used only for job_id extraction).
+        data_key:
+            Key identifying this data stream (provides job_id for publishing).
+        **kwargs:
+            Unused additional arguments.
+
+        Returns
+        -------
+        :
+            DynamicMap with PolyDraw interactivity.
+        """
+        del data, kwargs
+
+        self._result_key = data_key
+
+        # Get polygon index offset from mapper
+        poly_geom = self._roi_mapper.geometry_for_type("polygon")
+        self._index_offset = poly_geom.index_offset if poly_geom else 4
+
+        # Parse initial geometry from params
+        initial_polys = self._parse_initial_geometry(self._index_offset)
+
+        # Create pipe for programmatic updates (store to prevent GC)
+        self._pipe = hv.streams.Pipe(data=[])
+
+        def make_polygons(pipe_data: list) -> hv.Polygons:
+            if not pipe_data:
+                return hv.Polygons([])
+            return hv.Polygons(pipe_data)
+
+        dmap = hv.DynamicMap(make_polygons, streams=[self._pipe])
+
+        # Create PolyDraw stream (store to prevent GC)
+        self._poly_stream = hv.streams.PolyDraw(
+            source=dmap,
+            num_objects=self._params.options.max_roi_count,
+            drag=True,
+            show_vertices=True,
+            data=self._converter.to_stream_data(initial_polys),
+        )
+
+        # Initialize pipe
+        self._pipe.send(self._converter.to_hv_data(initial_polys, index_to_color=None))
+
+        # Store initial state
+        self._current_rois = initial_polys
+
+        # Watch for edits
+        self._poly_stream.param.watch(self._on_edit, 'data')
+
+        # Publish initial state
+        self._publish_rois(initial_polys)
+
+        # Apply styling
+        style = self._params.style
+        styled_dmap = dmap.opts(
+            color=style.color,
+            fill_alpha=0,
+            line_width=style.line_width,
+            line_dash=style.line_dash,
+            backend_opts={'plot.output_backend': 'canvas'},
+        )
+
+        # Attach self to dmap to prevent garbage collection of plotter and its streams
+        styled_dmap._roi_request_plotter = self
+
+        return styled_dmap
+
+    def _parse_initial_geometry(self, index_offset: int) -> dict[int, PolygonROI]:
+        """Parse initial polygons from params."""
+        coords_str = self._params.geometry.coordinates
+        if not coords_str or coords_str.strip() == '':
+            return {}
+
+        try:
+            polygons = self._params.geometry.parse()
+        except Exception:
+            self._logger.warning("Failed to parse initial polygon coordinates")
+            return {}
+
+        rois: dict[int, PolygonROI] = {}
+        for i, (xs, ys) in enumerate(polygons):
+            if len(xs) >= 3:
+                rois[index_offset + i] = PolygonROI(
+                    x=xs, y=ys, x_unit=None, y_unit=None
+                )
+        return rois
+
+    def _on_edit(self, event) -> None:
+        """Handle PolyDraw data changes from user interaction."""
+        data = event.new if hasattr(event, 'new') else event
+        if data is None:
+            data = {}
+
+        try:
+            new_rois = self._converter.parse_stream_data(
+                data, x_unit=None, y_unit=None, index_offset=self._index_offset
+            )
+
+            # Skip if unchanged
+            if new_rois == self._current_rois:
+                return
+
+            # Skip while user is actively drawing (trailing duplicate vertex)
+            for roi in new_rois.values():
+                if len(roi.x) >= 2:
+                    if roi.x[-1] == roi.x[-2] and roi.y[-1] == roi.y[-2]:
+                        return
+
+            self._current_rois = new_rois
+            self._publish_rois(new_rois)
+
+        except Exception as e:
+            self._logger.error("Failed to process polygon edit: %s", e)
+
+    def _publish_rois(self, rois: dict[int, PolygonROI]) -> None:
+        """Publish ROIs to Kafka."""
+        if not self._roi_publisher or not self._result_key:
+            return
+
+        geometry = self._roi_mapper.geometry_for_type("polygon")
+        if geometry is None:
+            self._logger.warning("Polygon geometry not configured")
+            return
+
+        self._roi_publisher.publish(
+            self._result_key.job_id,
+            rois,
+            geometry,
+        )
+        self._logger.info(
+            "Published %d polygon ROI(s) for job %s",
+            len(rois),
+            self._result_key.job_id,
+        )
+
+
+def _create_rectangles_request_plotter(
+    params: RectanglesRequestParams,
+) -> RectanglesRequestPlotter:
+    """Factory function for plotter registry (publisher injected later)."""
+    return RectanglesRequestPlotter(params)
+
+
+def _create_polygons_request_plotter(
+    params: PolygonsRequestParams,
+) -> PolygonsRequestPlotter:
+    """Factory function for plotter registry (publisher injected later)."""
+    return PolygonsRequestPlotter(params)
+
+
+def _register_roi_request_plotters() -> None:
+    """Register ROI request plotters with the plotter registry."""
+    from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
+
+    from .plotting import DataRequirements, SpecRequirements, plotter_registry
+
+    # Request plotters subscribe to detector image output for job_id context.
+    # The actual data is ignored - only the ResultKey is used for job_id.
+    # Requirements match roi_detector: 2D data with ROI aux sources.
+    roi_data_requirements = DataRequirements(
+        min_dims=2,
+        max_dims=2,
+        multiple_datasets=True,
+    )
+    roi_spec_requirements = SpecRequirements(
+        requires_aux_sources=[DetectorROIAuxSources],
+    )
+
+    plotter_registry.register_plotter(
+        name='rectangles_request',
+        title='Rectangles (Interactive)',
+        description='Draw and edit ROI rectangles interactively. '
+        'Publishes ROI updates to backend for processing.',
+        data_requirements=roi_data_requirements,
+        spec_requirements=roi_spec_requirements,
+        factory=_create_rectangles_request_plotter,
+    )
+
+    plotter_registry.register_plotter(
+        name='polygons_request',
+        title='Polygons (Interactive)',
+        description='Draw and edit ROI polygons interactively. '
+        'Publishes ROI updates to backend for processing.',
+        data_requirements=roi_data_requirements,
+        spec_requirements=roi_spec_requirements,
+        factory=_create_polygons_request_plotter,
+    )
