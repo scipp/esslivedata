@@ -261,16 +261,17 @@ class CorrelationHistogram2dPlotter(CorrelationHistogramPlotter):
     """Plotter for 2D correlation histograms."""
 
     def __init__(self, params: CorrelationHistogram2dParams) -> None:
+        # Y axis first: dims[0] maps to vertical, dims[1] to horizontal
         axes = [
-            AxisSpec(
-                role=X_AXIS,
-                name=params.bins.x_axis_source or 'x',
-                bins=params.bins.x_bins,
-            ),
             AxisSpec(
                 role=Y_AXIS,
                 name=params.bins.y_axis_source or 'y',
                 bins=params.bins.y_bins,
+            ),
+            AxisSpec(
+                role=X_AXIS,
+                name=params.bins.x_axis_source or 'x',
+                bins=params.bins.x_bins,
             ),
         ]
         renderer = ImagePlotter(
