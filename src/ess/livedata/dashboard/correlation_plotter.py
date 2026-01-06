@@ -146,6 +146,11 @@ def _make_lookup(axis_data: sc.DataArray, data_max_time: sc.Variable) -> sc.bins
     axis_values = sc.values(axis_data) if axis_data.variances is not None else axis_data
     axis_min_time = axis_data.coords['time'].min()
     mode = 'nearest' if data_max_time < axis_min_time else 'previous'
+    if mode == 'nearest':  # scipp>=25.11.0 rejects int coords in this mode
+        dim = axis_values.dim
+        axis_values = axis_values.assign_coords(
+            {dim: axis_values.coords[dim].astype('float64')}
+        )
     return sc.lookup(axis_values, mode=mode)
 
 
