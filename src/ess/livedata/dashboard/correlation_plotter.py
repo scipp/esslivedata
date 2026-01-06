@@ -140,34 +140,6 @@ def _make_lookup(axis_data: sc.DataArray, data_max_time: sc.Variable) -> sc.bins
     return sc.lookup(axis_values, mode=mode)
 
 
-def _histogram_with_normalization(
-    data: sc.DataArray, bin_spec: dict[str, int], normalize: bool
-) -> sc.DataArray:
-    """Bin data and optionally normalize by time width.
-
-    Parameters
-    ----------
-    data
-        DataArray with 'time' coordinate and axis coordinates already assigned.
-    bin_spec
-        Mapping from coordinate name to number of bins.
-    normalize
-        If True, divide by time bin width and compute mean instead of sum.
-
-    Returns
-    -------
-    :
-        Histogrammed data.
-    """
-    if normalize:
-        times = data.coords['time']
-        widths = (times[1:] - times[:-1]).to(dtype='float64', unit='s')
-        widths = sc.concat([widths, widths.median()], dim='time')
-        data = data / widths
-        return data.bin(bin_spec).bins.mean()
-    return data.hist(bin_spec)
-
-
 @dataclass(frozen=True)
 class AxisSpec:
     """Specification for a correlation axis."""
@@ -242,9 +214,15 @@ class CorrelationHistogramPlotter:
                 lut = _make_lookup(axis_data[axis.name], data_max_time)
                 dependent.coords[axis.name] = lut[dependent.coords['time']]
 
-            histograms[key] = _histogram_with_normalization(
-                dependent, bin_spec, self._normalize
-            )
+            # Bin data with optional normalization by time width
+            if self._normalize:
+                times = dependent.coords['time']
+                widths = (times[1:] - times[:-1]).to(dtype='float64', unit='s')
+                widths = sc.concat([widths, widths.median()], dim='time')
+                dependent = dependent / widths
+                histograms[key] = dependent.bin(bin_spec).bins.mean()
+            else:
+                histograms[key] = dependent.hist(bin_spec)
 
         return self._renderer(histograms)
 

@@ -19,7 +19,6 @@ from ess.livedata.dashboard.correlation_plotter import (
     CorrelationHistogram2dParams,
     CorrelationHistogram2dPlotter,
     CorrelationHistogramPlotter,
-    _histogram_with_normalization,
     _make_lookup,
 )
 from ess.livedata.dashboard.plot_params import PlotScaleParams
@@ -111,46 +110,6 @@ class TestMakeLookup:
 
         result = lookup[sc.scalar(150, unit='ms')]
         assert result.value == 1.0
-
-
-class TestHistogramWithNormalization:
-    """Tests for the _histogram_with_normalization helper function."""
-
-    def test_without_normalization_uses_hist(self):
-        """Without normalization, should sum values in bins."""
-        data = sc.DataArray(
-            data=sc.array(dims=['time'], values=[1.0, 1.0, 1.0, 1.0], unit='counts'),
-            coords={
-                'time': sc.array(dims=['time'], values=[10, 20, 30, 40], unit='ms'),
-                'x': sc.array(dims=['time'], values=[0.0, 0.0, 1.0, 1.0], unit='m'),
-            },
-        )
-
-        result = _histogram_with_normalization(data, {'x': 2}, normalize=False)
-
-        # Two bins, each should have sum of 2 counts
-        assert result.dims == ('x',)
-        assert result.sizes['x'] == 2
-        assert sc.allclose(
-            result.data,
-            sc.array(dims=['x'], values=[2.0, 2.0], unit='counts'),
-        )
-
-    def test_with_normalization_divides_by_time_width(self):
-        """With normalization, should divide by time width and compute mean."""
-        data = sc.DataArray(
-            data=sc.array(dims=['time'], values=[10.0, 10.0], unit='counts'),
-            coords={
-                'time': sc.array(dims=['time'], values=[0, 1000], unit='ms'),
-                'x': sc.array(dims=['time'], values=[0.5, 0.5], unit='m'),
-            },
-        )
-
-        result = _histogram_with_normalization(data, {'x': 1}, normalize=True)
-
-        # Values should be divided by time width (1s) and averaged
-        assert result.dims == ('x',)
-        assert result.unit == sc.Unit('counts/s')
 
 
 class TestCorrelationHistogramPlotter:
