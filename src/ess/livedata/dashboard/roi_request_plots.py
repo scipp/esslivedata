@@ -611,6 +611,11 @@ class RectanglesRequestPlotter(
     def _get_style(self) -> RectanglesRequestStyle:
         return self._params.style
 
+    @classmethod
+    def from_params(cls, params: RectanglesRequestParams) -> RectanglesRequestPlotter:
+        """Create plotter from params (concrete type hint for registry)."""
+        return cls(params)
+
 
 class PolygonsRequestStyle(pydantic.BaseModel):
     """Style options for ROI request polygons."""
@@ -758,54 +763,7 @@ class PolygonsRequestPlotter(
     def _get_style(self) -> PolygonsRequestStyle:
         return self._params.style
 
-
-def _create_rectangles_request_plotter(
-    params: RectanglesRequestParams,
-) -> RectanglesRequestPlotter:
-    """Factory function for plotter registry (publisher injected later)."""
-    return RectanglesRequestPlotter(params)
-
-
-def _create_polygons_request_plotter(
-    params: PolygonsRequestParams,
-) -> PolygonsRequestPlotter:
-    """Factory function for plotter registry (publisher injected later)."""
-    return PolygonsRequestPlotter(params)
-
-
-def _register_roi_request_plotters() -> None:
-    """Register ROI request plotters with the plotter registry."""
-    from .plotting import DataRequirements, plotter_registry
-
-    # Request plotters subscribe to the ROI readback output for job_id context.
-    # The actual data is ignored - only the ResultKey is used for publishing.
-    # Requirements match the corresponding readback plotters.
-    plotter_registry.register_plotter(
-        name='rectangles_request',
-        title='ROI Rectangles (Interactive)',
-        description='Draw and edit ROI rectangles interactively. '
-        'Publishes ROI updates to backend for processing.',
-        data_requirements=DataRequirements(
-            min_dims=1,
-            max_dims=1,
-            required_coords=['roi_index', 'x', 'y'],
-            required_dim_names=['bounds'],
-            multiple_datasets=False,
-        ),
-        factory=_create_rectangles_request_plotter,
-    )
-
-    plotter_registry.register_plotter(
-        name='polygons_request',
-        title='ROI Polygons (Interactive)',
-        description='Draw and edit ROI polygons interactively. '
-        'Publishes ROI updates to backend for processing.',
-        data_requirements=DataRequirements(
-            min_dims=1,
-            max_dims=1,
-            required_coords=['roi_index', 'x', 'y'],
-            required_dim_names=['vertex'],
-            multiple_datasets=False,
-        ),
-        factory=_create_polygons_request_plotter,
-    )
+    @classmethod
+    def from_params(cls, params: PolygonsRequestParams) -> PolygonsRequestPlotter:
+        """Create plotter from params (concrete type hint for registry)."""
+        return cls(params)

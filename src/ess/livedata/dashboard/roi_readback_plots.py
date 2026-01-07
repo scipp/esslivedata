@@ -253,38 +253,3 @@ class PolygonsReadbackPlotter(Plotter):
                 }
             )
         return polygons
-
-
-def _register_roi_readback_plotters() -> None:
-    """Register ROI readback plotters with the plotter registry."""
-    from .plotting import DataRequirements, plotter_registry
-
-    plotter_registry.register_plotter(
-        name='rectangles_readback',
-        title='ROI Rectangles (Readback)',
-        description='Display ROI rectangles from workflow output. '
-        'Each rectangle is colored by its ROI index.',
-        data_requirements=DataRequirements(
-            min_dims=1,
-            max_dims=1,
-            required_coords=['roi_index', 'x', 'y'],
-            required_dim_names=['bounds'],
-            multiple_datasets=False,
-        ),
-        factory=RectanglesReadbackPlotter.from_params,
-    )
-
-    plotter_registry.register_plotter(
-        name='polygons_readback',
-        title='ROI Polygons (Readback)',
-        description='Display ROI polygons from workflow output. '
-        'Each polygon is colored by its ROI index.',
-        data_requirements=DataRequirements(
-            min_dims=1,
-            max_dims=1,
-            required_coords=['roi_index', 'x', 'y'],
-            required_dim_names=['vertex'],
-            multiple_datasets=False,
-        ),
-        factory=PolygonsReadbackPlotter.from_params,
-    )
