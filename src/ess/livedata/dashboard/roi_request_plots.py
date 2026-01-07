@@ -368,6 +368,9 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         self._result_key: ResultKey | None = None
         self._current_rois: dict[int, ROIType] = {}
         self._index_offset: int = 0
+        # Units extracted from readback data coordinates
+        self._x_unit: str | None = None
+        self._y_unit: str | None = None
         # Keep streams alive to prevent garbage collection
         self._edit_stream: hv.streams.Stream | None = None
         # Store DynamicMap for idempotent plot() calls
@@ -429,7 +432,7 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         :
             DynamicMap with edit interactivity.
         """
-        del data, kwargs  # We only need job_id from data_key
+        del kwargs
 
         # Return existing DynamicMap if already initialized (idempotent)
         if self._dmap is not None:
@@ -437,6 +440,12 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
 
         self._result_key = data_key
         self._index_offset = self._get_index_offset()
+
+        # Extract units from readback data coordinates (canvas uses these units)
+        if 'x' in data.coords:
+            self._x_unit = str(data.coords['x'].unit) if data.coords['x'].unit else None
+        if 'y' in data.coords:
+            self._y_unit = str(data.coords['y'].unit) if data.coords['y'].unit else None
         initial_rois = self._parse_initial_geometry()
 
         # Create pipe for programmatic updates
@@ -472,7 +481,10 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
 
         try:
             new_rois = self._converter.parse_stream_data(
-                data, x_unit=None, y_unit=None, index_offset=self._index_offset
+                data,
+                x_unit=self._x_unit,
+                y_unit=self._y_unit,
+                index_offset=self._index_offset,
             )
 
             # Skip if unchanged

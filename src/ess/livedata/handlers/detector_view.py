@@ -200,10 +200,12 @@ class DetectorView(Workflow):
                 if idx in geometry.index_range
             }
 
-            # Convert to concatenated DataArray with roi_index coordinate
+            # Convert to concatenated DataArray with roi_index coordinate.
+            # Include coordinate units from detector view so the dashboard can
+            # use them when publishing user-drawn ROIs.
             roi_class = geometry.roi_class
             roi_result[geometry.readback_key] = roi_class.to_concatenated_data_array(
-                roi_models
+                roi_models, coord_units=self._get_detector_coord_units()
             )
 
         self._initial_readback_sent = True
@@ -284,3 +286,23 @@ class DetectorView(Workflow):
                     model=roi_model,
                 )
         # else: No changes detected, preserve existing ROI states
+
+    def _get_detector_coord_units(self) -> dict[str, sc.Unit | None]:
+        """Get coordinate units from detector view for ROI readback DataArrays.
+
+        Maps detector coordinate units to ROI 'x' and 'y' coordinates.
+        Finds 1D coordinates that vary along each dimension, regardless of name.
+        """
+        cumulative = self._view.cumulative
+        y_dim, x_dim = cumulative.dims
+
+        def find_unit_for_dim(dim: str) -> sc.Unit | None:
+            for coord in cumulative.coords.values():
+                if coord.dims == (dim,):
+                    return coord.unit
+            return None
+
+        return {
+            'x': find_unit_for_dim(x_dim),
+            'y': find_unit_for_dim(y_dim),
+        }
