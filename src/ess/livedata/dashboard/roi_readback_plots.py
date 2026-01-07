@@ -109,13 +109,16 @@ class RectanglesReadbackPlotter(Plotter):
             idx: roi for idx, roi in rois.items() if isinstance(roi, RectangleROI)
         }
 
+        style = self._params.style
         if not rect_rois:
-            return hv.Rectangles([])
+            return hv.Rectangles([]).opts(
+                fill_alpha=style.fill_alpha,
+                line_width=style.line_width,
+                show_legend=False,
+            )
 
         # Convert to HoloViews format with colors
         rectangles = self._to_hv_data(rect_rois)
-
-        style = self._params.style
         return hv.Rectangles(rectangles, vdims=['color']).opts(
             color='color',
             line_color='color',
@@ -206,13 +209,15 @@ class PolygonsReadbackPlotter(Plotter):
             idx: roi for idx, roi in rois.items() if isinstance(roi, PolygonROI)
         }
 
+        style = self._params.style
         if not poly_rois:
-            return hv.Polygons([])
+            return hv.Polygons([]).opts(
+                fill_alpha=style.fill_alpha,
+                line_width=style.line_width,
+            )
 
         # Convert to HoloViews format with colors
         polygons = self._to_hv_data(poly_rois)
-
-        style = self._params.style
         return hv.Polygons(polygons, vdims=['color']).opts(
             color='color',
             line_color='color',
