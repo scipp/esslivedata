@@ -658,10 +658,8 @@ class PolygonsRequestPlotter(Plotter):
         # Create pipe for programmatic updates (store to prevent GC)
         self._pipe = hv.streams.Pipe(data=[])
 
-        def make_polygons(pipe_data: list) -> hv.Polygons:
-            if not pipe_data:
-                return hv.Polygons([])
-            return hv.Polygons(pipe_data)
+        def make_polygons(data: list) -> hv.Polygons:
+            return hv.Polygons(data)
 
         dmap = hv.DynamicMap(make_polygons, streams=[self._pipe])
 
@@ -688,18 +686,13 @@ class PolygonsRequestPlotter(Plotter):
 
         # Apply styling
         style = self._params.style
-        styled_dmap = dmap.opts(
+        return dmap.opts(
             color=style.color,
             fill_alpha=0,
             line_width=style.line_width,
             line_dash=style.line_dash,
             backend_opts={'plot.output_backend': 'canvas'},
         )
-
-        # Attach self to dmap to prevent garbage collection of plotter and its streams
-        styled_dmap._roi_request_plotter = self
-
-        return styled_dmap
 
     def _parse_initial_geometry(self, index_offset: int) -> dict[int, PolygonROI]:
         """Parse initial polygons from params."""
