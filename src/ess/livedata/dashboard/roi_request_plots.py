@@ -21,10 +21,16 @@ import pydantic
 import scipp as sc
 
 from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
-from ess.livedata.config.roi_names import get_roi_mapper
+from ess.livedata.config.roi_names import ROIGeometryType, get_roi_mapper
 
 from .plots import Plotter
 from .static_plots import Color, LineDash, RectanglesCoordinates
+
+
+def _get_max_rois_for_geometry(geometry_type: ROIGeometryType) -> int:
+    """Get max ROI count for a geometry type from central config."""
+    geom = get_roi_mapper().geometry_for_type(geometry_type)
+    return geom.num_rois if geom else 4
 
 
 class RectangleConverter:
@@ -316,9 +322,9 @@ class RectanglesRequestOptions(pydantic.BaseModel):
     """Options for rectangles request plotter."""
 
     max_roi_count: int = pydantic.Field(
-        default=4,
+        default_factory=lambda: _get_max_rois_for_geometry("rectangle"),
         ge=1,
-        le=8,
+        le=_get_max_rois_for_geometry("rectangle"),
         title="Max ROIs",
         description="Maximum number of rectangles that can be drawn.",
     )
@@ -653,9 +659,9 @@ class PolygonsRequestOptions(pydantic.BaseModel):
     """Options for polygons request plotter."""
 
     max_roi_count: int = pydantic.Field(
-        default=4,
+        default_factory=lambda: _get_max_rois_for_geometry("polygon"),
         ge=1,
-        le=8,
+        le=_get_max_rois_for_geometry("polygon"),
         title="Max ROIs",
         description="Maximum number of polygons that can be drawn.",
     )
