@@ -17,15 +17,12 @@ from ess.livedata.dashboard.workflow_controller import WorkflowController
 from ess.livedata.fakes import FakeMessageSink
 from ess.livedata.handlers.config_handler import ConfigUpdate
 
-from .conftest import FakeWorkflowConfigService
-
 
 class WorkflowControllerFixture(NamedTuple):
     """Container for workflow controller fixture components."""
 
     controller: WorkflowController
     fake_message_sink: FakeMessageSink
-    workflow_config_service: "FakeWorkflowConfigService"
     config_store: dict[WorkflowId, dict]
 
 
@@ -128,7 +125,6 @@ def fake_config_store() -> dict[str, dict]:
 def workflow_controller(
     command_service: CommandService,
     fake_message_sink: FakeMessageSink,
-    fake_workflow_config_service: FakeWorkflowConfigService,
     fake_config_store: dict[str, dict],
     source_names: list[str],
     workflow_registry: dict[WorkflowId, WorkflowSpec],
@@ -139,7 +135,6 @@ def workflow_controller(
 
     job_orchestrator = JobOrchestrator(
         command_service=command_service,
-        workflow_config_service=fake_workflow_config_service,
         workflow_registry=workflow_registry,
         config_store=fake_config_store,
     )
@@ -151,7 +146,6 @@ def workflow_controller(
     return WorkflowControllerFixture(
         controller=controller,
         fake_message_sink=fake_message_sink,
-        workflow_config_service=fake_workflow_config_service,
         config_store=fake_config_store,
     )
 
@@ -246,7 +240,6 @@ class TestWorkflowController:
         self,
         command_service: CommandService,
         fake_message_sink: FakeMessageSink,
-        fake_workflow_config_service: FakeWorkflowConfigService,
         fake_config_store: dict[str, dict],
         source_names: list[str],
     ):
@@ -287,7 +280,6 @@ class TestWorkflowController:
 
         job_orchestrator = JobOrchestrator(
             command_service=command_service,
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=config_store,
         )

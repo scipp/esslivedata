@@ -58,8 +58,8 @@ def test_can_configure_and_stop_detector_workflow(
     # Trigger workflow start
     app.publish_config_message(key=config_key, value=workflow_config.model_dump())
     service.step()
-    assert len(sink.messages) == 1  # Workflow status message
-    sink.messages.clear()
+    # No ack when message_id not set
+    assert len(sink.messages) == 0
 
     app.publish_events(size=2000, time=2)
     service.step()
@@ -126,18 +126,16 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     app.publish_events(size=3000, time=4)
     service.step()
 
-    assert len(sink.messages) == 1  # Workflow not started, just an error message
-    status = sink.messages[0].value.value
-    assert status.status == workflow_spec.WorkflowStatusType.STARTUP_ERROR
-    sink.messages.clear()  # Clear the error message
+    # No error ack sent when message_id not set (error is logged server-side)
+    assert len(sink.messages) == 0
 
     good_workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
     # Trigger workflow start
     app.publish_config_message(key=config_key, value=good_workflow_config.model_dump())
     app.publish_events(size=1000, time=5)
     service.step()
-    # Service recovered and started the workflow, get status and data
-    assert len(sink.messages) == 7  # status + 6 data messages
+    # Service recovered; get data only (no ack without message_id)
+    assert len(sink.messages) == 6  # 6 data messages
 
 
 def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
@@ -160,7 +158,8 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     )
     app.publish_config_message(key=config_key, value=workflow_config.model_dump())
     service.step()
-    sink.messages.clear()  # Clear the workflow status message
+    # No ack without message_id
+    assert len(sink.messages) == 0
 
     # Add events and verify workflow is running
     app.publish_events(size=2000, time=2)
@@ -181,8 +180,9 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     # Add more events and verify the original workflow is still running
     app.publish_events(size=3000, time=4)
     service.step()
-    assert len(sink.messages) == 12 + 1  # + 1 for the workflow status message
-    assert sink.messages[7].value.values.sum() == 5000  # cumulative (after status msg)
+    # No error ack without message_id, just data messages
+    assert len(sink.messages) == 12
+    assert sink.messages[6].value.values.sum() == 5000  # cumulative
 
 
 @pytest.fixture

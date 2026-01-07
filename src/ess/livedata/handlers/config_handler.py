@@ -8,11 +8,15 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
+from ..config.acknowledgement import CommandAcknowledgement
 from ..config.models import ConfigKey
 from ..core.job_manager import JobCommand
 from ..core.job_manager_adapter import JobManagerAdapter
 from ..core.message import RESPONSES_STREAM_ID, Message
 from ..kafka.message_adapter import RawConfigItem
+
+# Re-export for backwards compatibility with tests
+__all__ = ['ConfigProcessor', 'ConfigUpdate']
 
 
 @dataclass
@@ -41,7 +45,7 @@ class ConfigUpdate:
 
 class ConfigProcessor:
     """
-    Simple config processor that handles workflow_config and start_time messages
+    Simple config processor that handles workflow_config and job_command messages
     by delegating directly to JobManagerAdapter.
     """
 
@@ -60,9 +64,9 @@ class ConfigProcessor:
 
     def process_messages(
         self, messages: list[Message[RawConfigItem]]
-    ) -> list[Message[Any]]:
+    ) -> list[Message[CommandAcknowledgement]]:
         """
-        Process config messages and handle workflow_config and start_time updates.
+        Process config messages and handle workflow_config and job_command updates.
 
         Parameters
         ----------
@@ -72,7 +76,7 @@ class ConfigProcessor:
         Returns
         -------
         :
-            List of response messages
+            List of response messages containing CommandAcknowledgements.
         """
         # Group latest updates by key and source
         latest_updates: defaultdict[str, dict[str | None, ConfigUpdate]] = defaultdict(
@@ -103,7 +107,7 @@ class ConfigProcessor:
                 self._logger.exception('Error processing config message')
 
         # Process the latest updates
-        response_messages: list[Message[Any]] = []
+        response_messages: list[Message[CommandAcknowledgement]] = []
 
         for config_key, source_updates in latest_updates.items():
             for source_name, update in source_updates.items():
@@ -114,12 +118,11 @@ class ConfigProcessor:
                     if (action := self._actions.get(config_key)) is None:
                         self._logger.debug('Unknown config key: %s', config_key)
                         continue
-                    results = action(source_name, update.value)
-                    # Convert results to messages
-                    updates = [ConfigUpdate(*result) for result in results or []]
-                    response_messages.extend(
-                        Message(stream=RESPONSES_STREAM_ID, value=up) for up in updates
-                    )
+                    result = action(source_name, update.value)
+                    if result is not None:
+                        response_messages.append(
+                            Message(stream=RESPONSES_STREAM_ID, value=result)
+                        )
 
                 except Exception:
                     self._logger.exception(

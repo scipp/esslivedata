@@ -27,7 +27,6 @@ from .plotting_controller import PlottingController
 from .roi_publisher import ROIPublisher
 from .stream_manager import StreamManager
 from .transport import Transport
-from .workflow_config_service import WorkflowConfigService
 from .workflow_controller import WorkflowController
 
 
@@ -111,7 +110,6 @@ class DashboardServices:
         self.command_service = CommandService(
             sink=transport_resources.command_sink, logger=self._logger
         )
-        self.workflow_config_service = WorkflowConfigService(logger=self._logger)
 
         # da00 of backend services converted to scipp.DataArray
         ScippDataService = DataService[ResultKey, sc.DataArray]
@@ -135,12 +133,9 @@ class DashboardServices:
             logger=self._logger,
             roi_publisher=roi_publisher,
         )
-        self.orchestrator = Orchestrator(
-            transport_resources.message_source,
-            data_service=self.data_service,
-            job_service=self.job_service,
-            workflow_config_service=self.workflow_config_service,
-        )
+
+        # Orchestrator will be wired to job_orchestrator after workflow setup
+        self._transport_resources = transport_resources
         self._logger.info("Data infrastructure setup complete")
 
     def _setup_plot_orchestrator(self) -> None:
@@ -167,7 +162,6 @@ class DashboardServices:
         self.correlation_controller = CorrelationHistogramController(self.data_service)
         self.job_orchestrator = JobOrchestrator(
             command_service=self.command_service,
-            workflow_config_service=self.workflow_config_service,
             workflow_registry=self.processor_factory,
             config_store=self.workflow_config_store,
         )
@@ -176,4 +170,12 @@ class DashboardServices:
             workflow_registry=self.processor_factory,
             data_service=self.data_service,
             correlation_histogram_controller=self.correlation_controller,
+        )
+
+        # Create orchestrator now that job_orchestrator exists
+        self.orchestrator = Orchestrator(
+            self._transport_resources.message_source,
+            data_service=self.data_service,
+            job_service=self.job_service,
+            job_orchestrator=self.job_orchestrator,
         )

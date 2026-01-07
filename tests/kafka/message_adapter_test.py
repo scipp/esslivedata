@@ -563,15 +563,24 @@ class TestCommandsAdapter:
 
 class TestResponsesAdapter:
     def test_adapter(self) -> None:
-        key = b'my_source/my_service/my_key'
-        encoded = json.dumps('my_value').encode('utf-8')
+        from ess.livedata.config.acknowledgement import (
+            AcknowledgementResponse,
+            CommandAcknowledgement,
+        )
+
+        ack = CommandAcknowledgement(
+            message_id="test-msg-123",
+            device="source1",
+            response=AcknowledgementResponse.ACK,
+        )
+        encoded = ack.model_dump_json().encode('utf-8')
         message = FakeKafkaMessage(
-            key=key, value=encoded, topic="dummy_livedata_responses"
+            key=b'', value=encoded, topic="dummy_livedata_responses"
         )
         adapter = ResponsesAdapter()
         adapted_message = adapter.adapt(message)
         assert adapted_message.stream == RESPONSES_STREAM_ID
-        assert adapted_message.value == RawConfigItem(key=key, value=encoded)
+        assert adapted_message.value == ack
 
 
 class TestErrorHandling:
