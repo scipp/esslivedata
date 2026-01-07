@@ -329,60 +329,90 @@ class TestOrchestrator:
         assert result_key in data_service
 
 
-class FakeWorkflowConfigService:
-    """Fake workflow config service that records processed responses."""
+class FakeJobOrchestrator:
+    """Fake job orchestrator that records processed acknowledgements."""
 
     def __init__(self):
-        self.processed_responses = []
+        self.acknowledgements: list[tuple[str, str, str | None]] = []
 
-    def process_response(self, response) -> None:
-        """Record the processed response."""
-        self.processed_responses.append(response)
+    def process_acknowledgement(
+        self, message_id: str, response: str, error_message: str | None = None
+    ) -> None:
+        """Record the processed acknowledgement."""
+        self.acknowledgements.append((message_id, response, error_message))
 
 
-class TestOrchestratorConfigProcessing:
-    def test_forward_with_config_message(self) -> None:
-        """Test that config messages are forwarded to workflow config service."""
+class TestOrchestratorAcknowledgementProcessing:
+    def test_forward_with_ack_message(self) -> None:
+        """Test that acknowledgement messages are forwarded to job orchestrator."""
+        from ess.livedata.config.acknowledgement import (
+            AcknowledgementResponse,
+            CommandAcknowledgement,
+        )
+
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        workflow_config_service = FakeWorkflowConfigService()
+        job_orchestrator = FakeJobOrchestrator()
         orchestrator = Orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            workflow_config_service=workflow_config_service,
+            job_orchestrator=job_orchestrator,
         )
 
-        config_data = {"key": "value"}
-        orchestrator.forward(RESPONSES_STREAM_ID, config_data)
+        ack = CommandAcknowledgement(
+            message_id="test-uuid",
+            device="detector1",
+            response=AcknowledgementResponse.ACK,
+        )
 
-        assert len(workflow_config_service.processed_responses) == 1
-        assert workflow_config_service.processed_responses[0] == config_data
+        orchestrator.forward(RESPONSES_STREAM_ID, ack)
 
-    def test_update_with_config_message(self) -> None:
-        """Test that config messages are processed in update."""
+        assert len(job_orchestrator.acknowledgements) == 1
+        assert job_orchestrator.acknowledgements[0] == ("test-uuid", "ACK", None)
+
+    def test_forward_with_error_ack_message(self) -> None:
+        """Test that error acknowledgement messages include error message."""
+        from ess.livedata.config.acknowledgement import (
+            AcknowledgementResponse,
+            CommandAcknowledgement,
+        )
+
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
-        workflow_config_service = FakeWorkflowConfigService()
+        job_orchestrator = FakeJobOrchestrator()
         orchestrator = Orchestrator(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            workflow_config_service=workflow_config_service,
+            job_orchestrator=job_orchestrator,
         )
 
-        config_data = {"instrument": "test"}
-        source.add_config_message(config_data)
+        ack = CommandAcknowledgement(
+            message_id="test-uuid",
+            device="detector1",
+            response=AcknowledgementResponse.ERR,
+            message="Workflow not found",
+        )
 
-        orchestrator.update()
+        orchestrator.forward(RESPONSES_STREAM_ID, ack)
 
-        assert len(workflow_config_service.processed_responses) == 1
-        assert workflow_config_service.processed_responses[0] == config_data
+        assert len(job_orchestrator.acknowledgements) == 1
+        assert job_orchestrator.acknowledgements[0] == (
+            "test-uuid",
+            "ERR",
+            "Workflow not found",
+        )
 
-    def test_forward_with_config_message_no_processor(self) -> None:
-        """Test that config messages are handled gracefully without service."""
+    def test_forward_with_response_message_no_orchestrator(self) -> None:
+        """Test that response messages are handled gracefully without orchestrator."""
+        from ess.livedata.config.acknowledgement import (
+            AcknowledgementResponse,
+            CommandAcknowledgement,
+        )
+
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
@@ -390,62 +420,16 @@ class TestOrchestratorConfigProcessing:
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            workflow_config_service=None,
+            job_orchestrator=None,
         )
 
-        config_data = {"key": "value"}
+        ack = CommandAcknowledgement(
+            message_id="test-uuid",
+            device="detector1",
+            response=AcknowledgementResponse.ACK,
+        )
         # Should not raise an exception
-        orchestrator.forward(RESPONSES_STREAM_ID, config_data)
-
-    def test_update_with_mixed_config_and_data_messages(self) -> None:
-        """Test that config and data messages are batched in transaction."""
-        source = FakeMessageSource()
-        data_service = DataService()
-        job_service = JobService()
-        workflow_config_service = FakeWorkflowConfigService()
-        orchestrator = Orchestrator(
-            message_source=source,
-            data_service=data_service,
-            job_service=job_service,
-            workflow_config_service=workflow_config_service,
-        )
-
-        workflow_id = WorkflowId(
-            instrument="test_instrument",
-            namespace="test_namespace",
-            name="test_workflow",
-            version=1,
-        )
-        job_id = JobId(source_name="detector1", job_number=make_job_number())
-        result_key = ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name='result'
-        )
-
-        config_data = {"instrument": "test"}
-        data = sc.DataArray(sc.array(dims=['x'], values=[1, 2, 3]))
-
-        source.add_config_message(config_data)
-        source.add_message(result_key.model_dump_json(), data)
-
-        # Track transaction calls
-        transaction_count = 0
-        original_transaction = data_service.transaction
-
-        def counting_transaction():
-            nonlocal transaction_count
-            transaction_count += 1
-            return original_transaction()
-
-        data_service.transaction = counting_transaction
-
-        orchestrator.update()
-
-        # Both messages should be processed
-        assert len(workflow_config_service.processed_responses) == 1
-        assert workflow_config_service.processed_responses[0] == config_data
-        assert result_key in data_service
-        # Should use only one transaction for batching
-        assert transaction_count == 1
+        orchestrator.forward(RESPONSES_STREAM_ID, ack)
 
 
 def _data_stream_id(key: ResultKey) -> StreamId:

@@ -13,7 +13,6 @@ from ess.livedata.config.workflow_spec import (
 )
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
-from ess.livedata.dashboard.workflow_config_service import WorkflowConfigService
 from ess.livedata.fakes import FakeMessageSink
 
 
@@ -27,13 +26,6 @@ class SimpleTestOutputs(WorkflowOutputsBase):
     """Simple outputs model for testing."""
 
     result: sc.DataArray = pydantic.Field(title='Result')
-
-
-class FakeWorkflowConfigService(WorkflowConfigService):
-    """Minimal fake for WorkflowConfigService."""
-
-    def subscribe_to_workflow_status(self, source_name, callback):
-        pass
 
 
 @pytest.fixture
@@ -103,12 +95,6 @@ def workflow_registry(workflow_id, workflow_spec, workflow_id_2, workflow_spec_2
 
 
 @pytest.fixture
-def fake_workflow_config_service():
-    """Create a fake workflow config service for tests."""
-    return FakeWorkflowConfigService()
-
-
-@pytest.fixture
 def fake_message_sink():
     """Create a FakeMessageSink for testing."""
     return FakeMessageSink()
@@ -121,11 +107,10 @@ def command_service(fake_message_sink):
 
 
 @pytest.fixture
-def job_orchestrator(command_service, fake_workflow_config_service, workflow_registry):
+def job_orchestrator(command_service, workflow_registry):
     """Create a JobOrchestrator with fakes for testing."""
     return JobOrchestrator(
         command_service=command_service,
-        workflow_config_service=fake_workflow_config_service,
         workflow_registry=workflow_registry,
         config_store=None,
     )

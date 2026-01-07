@@ -18,6 +18,7 @@ from streaming_data_types.fbschemas.eventdata_ev44 import Event44Message
 
 from ess.livedata.core.job import JobStatus
 
+from ..config.acknowledgement import CommandAcknowledgement
 from ..core.message import (
     COMMANDS_STREAM_ID,
     RESPONSES_STREAM_ID,
@@ -291,15 +292,13 @@ class CommandsAdapter(MessageAdapter[KafkaMessage, Message[RawConfigItem]]):
         return Message(stream=COMMANDS_STREAM_ID, timestamp=timestamp, value=item)
 
 
-class ResponsesAdapter(MessageAdapter[KafkaMessage, Message[RawConfigItem]]):
+class ResponsesAdapter(MessageAdapter[KafkaMessage, Message[CommandAcknowledgement]]):
     """Adapts Kafka messages from the livedata responses topic."""
 
-    def adapt(self, message: KafkaMessage) -> Message[RawConfigItem]:
+    def adapt(self, message: KafkaMessage) -> Message[CommandAcknowledgement]:
         timestamp = message.timestamp()[1]
-        # Livedata configuration uses a compacted Kafka topic. The Kafka message key
-        # is the encoded string representation of a :py:class:`ConfigKey` object.
-        item = RawConfigItem(key=message.key(), value=message.value())
-        return Message(stream=RESPONSES_STREAM_ID, timestamp=timestamp, value=item)
+        ack = CommandAcknowledgement.model_validate_json(message.value())
+        return Message(stream=RESPONSES_STREAM_ID, timestamp=timestamp, value=ack)
 
 
 class ChainedAdapter(MessageAdapter[T, V]):

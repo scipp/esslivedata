@@ -36,7 +36,7 @@ from ess.livedata.core.job_manager import JobAction, JobCommand
 from .command_service import CommandService
 from .config_store import ConfigStore
 from .configuration_adapter import ConfigurationState
-from .workflow_config_service import WorkflowConfigService
+from .pending_command_tracker import PendingCommandTracker
 from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
 SourceName = str
@@ -108,6 +108,16 @@ class WidgetLifecycleCallbacks:
     on_staged_changed: Callable[[WorkflowId], None] | None = None
     on_workflow_committed: Callable[[WorkflowId], None] | None = None
     on_workflow_stopped: Callable[[WorkflowId], None] | None = None
+    on_command_success: Callable[[WorkflowId, str, int, int], None] | None = None
+    """Called when a command succeeds.
+
+    Args: workflow_id, action ("start"/"stop"/"reset"), success_count, total_count.
+    """
+    on_command_error: Callable[[WorkflowId, str, int, int, str], None] | None = None
+    """Called when a command fails.
+
+    Args: workflow_id, action, error_count, total_count, error_message.
+    """
 
 
 class JobOrchestrator:
@@ -117,7 +127,6 @@ class JobOrchestrator:
         self,
         *,
         command_service: CommandService,
-        workflow_config_service: WorkflowConfigService,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         config_store: ConfigStore | None = None,
     ) -> None:
@@ -128,8 +137,6 @@ class JobOrchestrator:
         ----------
         command_service
             Service for sending workflow commands to backend services.
-        workflow_config_service
-            Service for receiving workflow status updates from backend services.
         workflow_registry
             Registry of available workflows and their specifications.
         config_store
@@ -137,10 +144,12 @@ class JobOrchestrator:
             Orchestrator loads configs on init and persists on commit.
         """
         self._command_service = command_service
-        self._workflow_config_service = workflow_config_service
         self._workflow_registry = workflow_registry
         self._config_store = config_store
         self._logger = logging.getLogger(__name__)
+
+        # Command acknowledgement tracking
+        self._pending_commands = PendingCommandTracker()
 
         # Workflow state tracking
         self._workflows: dict[WorkflowId, WorkflowState] = {}
@@ -364,6 +373,9 @@ class JobOrchestrator:
         # Create new JobSet with auto-generated job number
         job_set = JobSet(jobs=state.staged_jobs.copy())
 
+        # Generate message_id for command acknowledgement tracking
+        message_id = str(uuid.uuid4())
+
         # Prepare all commands (stop old jobs + start new workflow) in single batch
         commands = []
 
@@ -374,7 +386,7 @@ class JobOrchestrator:
                 workflow_id,
                 state.current.job_number,
             )
-            # Create stop commands for all old jobs
+            # Create stop commands for all old jobs (no message_id - fire and forget)
             commands.extend(
                 (
                     ConfigKey(key=JobCommand.key, source_name=str(job_id)),
@@ -391,19 +403,30 @@ class JobOrchestrator:
             state.previous = state.current
 
         # Send workflow configs to all staged sources
-        # Note: Currently all jobs use same params, but aux_source_names may differ
+        # Note: Currently all jobs use same params, but aux_source_names may
+        # differ
         for source_name, job_config in state.staged_jobs.items():
-            # We are currently using a single command to mean "configure and start".
-            # See #445 for plans on splitting this, in line with the interface of the
-            # orchestrator interface.
+            # Currently WorkflowConfig conflates "configure" and "start"
+            # into one command. Both message_id (for ACK) and job_number
+            # (for job identity) are sent together. See #445 for plans to
+            # split into separate config and start messages. In that design,
+            # config's message_id would serve as a "config handle" that
+            # start references, enabling multiple jobs to share the same
+            # configuration.
             workflow_config = WorkflowConfig.from_params(
                 workflow_id=workflow_id,
                 params=job_config.params,
                 aux_source_names=job_config.aux_source_names,
                 job_number=job_set.job_number,
+                message_id=message_id,
             )
             key = keys.WORKFLOW_CONFIG.create_key(source_name=source_name)
             commands.append((key, workflow_config))
+
+        # Register pending command for acknowledgement tracking
+        self._pending_commands.register(
+            message_id, workflow_id, "start", expected_count=len(state.staged_jobs)
+        )
 
         self._command_service.send_batch(commands)
 
@@ -709,27 +732,10 @@ class JobOrchestrator:
             True if jobs were stopped, False if no active jobs.
         """
         state = self._workflows[workflow_id]
-        if state.current is None:
-            self._logger.debug('No active jobs for workflow %s to stop', workflow_id)
+        job_number = state.current.job_number if state.current else None
+
+        if not self._send_job_commands(workflow_id, JobAction.stop):
             return False
-
-        # Send stop commands to backend
-        commands = [
-            (
-                ConfigKey(key=JobCommand.key, source_name=str(job_id)),
-                JobCommand(job_id=job_id, action=JobAction.stop),
-            )
-            for job_id in state.current.job_ids()
-        ]
-        self._command_service.send_batch(commands)
-
-        job_number = state.current.job_number
-        self._logger.info(
-            'Stopped workflow %s (job_number=%s, %d jobs)',
-            workflow_id,
-            job_number,
-            len(state.current.jobs),
-        )
 
         # Clear local state immediately (don't wait for backend confirmation)
         state.previous = state.current
@@ -743,6 +749,76 @@ class JobOrchestrator:
 
         # Notify workflow subscribers (e.g., PlotOrchestrator) that workflow was stopped
         self._notify_workflow_stopped_to_subscribers(workflow_id, job_number)
+
+        return True
+
+    def reset_workflow(self, workflow_id: WorkflowId) -> bool:
+        """
+        Reset all jobs for a workflow.
+
+        Sends reset commands to the backend to clear accumulated data without
+        stopping the job. The job continues running but starts fresh.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to reset.
+
+        Returns
+        -------
+        :
+            True if reset commands were sent, False if no active jobs.
+        """
+        return self._send_job_commands(workflow_id, JobAction.reset)
+
+    def _send_job_commands(self, workflow_id: WorkflowId, action: JobAction) -> bool:
+        """Send a command to all jobs for a workflow.
+
+        Parameters
+        ----------
+        workflow_id
+            The workflow to send commands for.
+        action
+            The action to perform on all jobs.
+
+        Returns
+        -------
+        :
+            True if commands were sent, False if no active jobs.
+        """
+        state = self._workflows[workflow_id]
+        if state.current is None:
+            self._logger.debug(
+                'No active jobs for workflow %s to %s', workflow_id, action.value
+            )
+            return False
+
+        message_id = str(uuid.uuid4())
+
+        commands = [
+            (
+                ConfigKey(key=JobCommand.key, source_name=str(job_id)),
+                JobCommand(job_id=job_id, action=action, message_id=message_id),
+            )
+            for job_id in state.current.job_ids()
+        ]
+
+        self._pending_commands.register(
+            message_id,
+            workflow_id,
+            action.value,
+            expected_count=len(state.current.jobs),
+        )
+
+        self._command_service.send_batch(commands)
+
+        self._logger.info(
+            '%s workflow %s (job_number=%s, %d jobs)',
+            action.value.capitalize(),
+            workflow_id,
+            state.current.job_number,
+            len(state.current.jobs),
+        )
 
         return True
 
@@ -979,3 +1055,124 @@ class JobOrchestrator:
                         'Error in on_workflow_stopped callback for subscription %s',
                         subscription_id,
                     )
+
+    def _notify_command_success(
+        self, workflow_id: WorkflowId, action: str, success_count: int, total_count: int
+    ) -> None:
+        """Notify all widget subscribers that a command succeeded."""
+        for subscription_id, callbacks in self._widget_subscriptions.items():
+            if callbacks.on_command_success is not None:
+                try:
+                    callbacks.on_command_success(
+                        workflow_id, action, success_count, total_count
+                    )
+                except Exception:
+                    self._logger.exception(
+                        'Error in on_command_success callback for subscription %s',
+                        subscription_id,
+                    )
+
+    def _notify_command_error(
+        self,
+        workflow_id: WorkflowId,
+        action: str,
+        error_count: int,
+        total_count: int,
+        error_message: str,
+    ) -> None:
+        """Notify all widget subscribers that a command failed."""
+        for subscription_id, callbacks in self._widget_subscriptions.items():
+            if callbacks.on_command_error is not None:
+                try:
+                    callbacks.on_command_error(
+                        workflow_id, action, error_count, total_count, error_message
+                    )
+                except Exception:
+                    self._logger.exception(
+                        'Error in on_command_error callback for subscription %s',
+                        subscription_id,
+                    )
+
+    def process_acknowledgement(
+        self, message_id: str, response: str, error_message: str | None = None
+    ) -> None:
+        """
+        Process a command acknowledgement from the backend.
+
+        This method should be called when a CommandAcknowledgement is received
+        from the responses topic. It correlates the acknowledgement with the
+        original command and notifies widgets when all responses are received.
+
+        For commands targeting multiple sources, responses are accumulated until
+        all expected responses arrive. On partial success, both success and error
+        callbacks are invoked.
+
+        Parameters
+        ----------
+        message_id:
+            The message_id echoed from the original command.
+        response:
+            "ACK" for success, "ERR" for failure.
+        error_message:
+            Error message if response is "ERR".
+        """
+        result = self._pending_commands.record_response(
+            message_id, success=(response == "ACK"), error_message=error_message
+        )
+
+        if result is None:
+            # Either unknown message_id or still waiting for more responses
+            return
+
+        total = result.success_count + result.error_count
+
+        if result.all_succeeded:
+            self._logger.info(
+                'Command %s for workflow %s acknowledged (%d/%d)',
+                result.action,
+                result.workflow_id,
+                result.success_count,
+                total,
+            )
+            self._notify_command_success(
+                result.workflow_id, result.action, result.success_count, total
+            )
+        elif result.all_failed:
+            combined_errors = "; ".join(result.error_messages) or "Unknown error"
+            self._logger.warning(
+                'Command %s for workflow %s failed (%d/%d): %s',
+                result.action,
+                result.workflow_id,
+                result.error_count,
+                total,
+                combined_errors,
+            )
+            self._notify_command_error(
+                result.workflow_id,
+                result.action,
+                result.error_count,
+                total,
+                combined_errors,
+            )
+        else:
+            # Partial success - notify both
+            combined_errors = "; ".join(result.error_messages) or "Unknown error"
+            self._logger.warning(
+                'Command %s for workflow %s partially succeeded (%d/%d, %d failed): %s',
+                result.action,
+                result.workflow_id,
+                result.success_count,
+                total,
+                result.error_count,
+                combined_errors,
+            )
+            self._notify_command_success(
+                result.workflow_id, result.action, result.success_count, total
+            )
+            self._notify_command_error(
+                result.workflow_id,
+                result.action,
+                result.error_count,
+                total,
+                combined_errors,
+            )

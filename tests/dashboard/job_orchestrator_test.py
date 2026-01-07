@@ -25,8 +25,6 @@ from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
 from ess.livedata.fakes import FakeMessageSink
 from ess.livedata.handlers.config_handler import ConfigUpdate
 
-from .conftest import FakeWorkflowConfigService
-
 
 class WorkflowParams(pydantic.BaseModel):
     """Test params model with defaults."""
@@ -204,7 +202,6 @@ class TestJobOrchestratorInitialization:
         self,
         workflow_with_params: WorkflowSpec,
         workflow_no_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """All workflows in registry should be initialized even without config store."""
         workflow_id_1 = workflow_with_params.get_id()
@@ -216,7 +213,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -231,7 +227,6 @@ class TestJobOrchestratorInitialization:
     def test_workflow_with_params_gets_default_config(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Workflow with params model should get default params for all sources."""
         workflow_id = workflow_with_params.get_id()
@@ -239,7 +234,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -257,7 +251,6 @@ class TestJobOrchestratorInitialization:
     def test_workflow_no_params_has_empty_staged_jobs(
         self,
         workflow_no_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Workflow without params should exist but have empty staged_jobs."""
         workflow_id = workflow_no_params.get_id()
@@ -265,7 +258,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -277,7 +269,6 @@ class TestJobOrchestratorInitialization:
     def test_workflow_empty_sources_has_empty_staged_jobs(
         self,
         workflow_empty_sources: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Workflow with empty source_names should have empty staged_jobs."""
         workflow_id = workflow_empty_sources.get_id()
@@ -285,7 +276,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -297,7 +287,6 @@ class TestJobOrchestratorInitialization:
     def test_loads_config_from_store(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Should load and use config from store when available."""
         workflow_id = workflow_with_params.get_id()
@@ -317,7 +306,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -333,7 +321,6 @@ class TestJobOrchestratorInitialization:
     def test_loads_invalid_config_without_validation(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Invalid configs are loaded as-is (validation happens later in UI)."""
         workflow_id = workflow_with_params.get_id()
@@ -353,7 +340,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -368,7 +354,6 @@ class TestJobOrchestratorInitialization:
     def test_loads_aux_sources_from_config(
         self,
         workflow_with_params_and_aux: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Should load aux_source_names from config store."""
         workflow_id = workflow_with_params_and_aux.get_id()
@@ -387,7 +372,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -400,7 +384,6 @@ class TestJobOrchestratorInitialization:
     def test_get_staged_config_never_raises_for_valid_workflow_id(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """get_staged_config should never raise KeyError for valid workflow_id."""
         workflow_id = workflow_with_params.get_id()
@@ -408,7 +391,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -420,7 +402,6 @@ class TestJobOrchestratorInitialization:
     def test_get_staged_config_raises_for_unknown_workflow_id(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """get_staged_config should raise KeyError for unknown workflow_id."""
         workflow_id = workflow_with_params.get_id()
@@ -428,7 +409,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -444,7 +424,6 @@ class TestJobOrchestratorInitialization:
     def test_get_staged_config_returns_dict(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """get_staged_config returns dict mapping source names to configs."""
         workflow_id = workflow_with_params.get_id()
@@ -452,7 +431,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -469,7 +447,6 @@ class TestJobOrchestratorInitialization:
     def test_workflow_with_required_params_gets_empty_state(
         self,
         workflow_params_without_defaults: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Workflow with params that can't be instantiated gets empty WorkflowState."""
         workflow_id = workflow_params_without_defaults.get_id()
@@ -477,7 +454,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -491,7 +467,6 @@ class TestJobOrchestratorInitialization:
         self,
         workflow_with_enum_params: WorkflowSpec,
         tmp_path,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Enum values in params should be serialized as strings, not enum objects."""
         workflow_id = workflow_with_enum_params.get_id()
@@ -504,7 +479,6 @@ class TestJobOrchestratorInitialization:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -537,7 +511,6 @@ class TestJobOrchestratorMutationSafety:
     def test_stage_config_makes_defensive_copy_of_params(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Modifying params dict after staging should not affect staged config."""
         workflow_id = workflow_with_params.get_id()
@@ -545,7 +518,6 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -572,7 +544,6 @@ class TestJobOrchestratorMutationSafety:
     def test_stage_config_makes_defensive_copy_of_aux_source_names(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Modifying aux_source_names after staging should not affect staged config."""
         workflow_id = workflow_with_params.get_id()
@@ -580,7 +551,6 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -606,7 +576,6 @@ class TestJobOrchestratorMutationSafety:
     def test_get_staged_config_returns_independent_copy(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Modifying returned config should not affect internal state."""
         workflow_id = workflow_with_params.get_id()
@@ -614,7 +583,6 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -639,7 +607,6 @@ class TestJobOrchestratorMutationSafety:
     def test_get_active_config_returns_independent_copy(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Modifying returned active config should not affect internal state."""
         workflow_id = workflow_with_params.get_id()
@@ -647,7 +614,6 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -671,7 +637,6 @@ class TestJobOrchestratorMutationSafety:
     def test_load_from_store_creates_independent_job_configs(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Each JobConfig should have independent params/aux_source_names dicts."""
         workflow_id = workflow_with_params.get_id()
@@ -695,7 +660,6 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -713,7 +677,6 @@ class TestJobOrchestratorMutationSafety:
     def test_committed_config_not_affected_by_new_staging(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """After commit, modifying staged config should not affect active config."""
         workflow_id = workflow_with_params.get_id()
@@ -721,7 +684,6 @@ class TestJobOrchestratorMutationSafety:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -760,7 +722,6 @@ class TestJobOrchestratorCommit:
     def test_commit_workflow_returns_job_ids_for_staged_sources(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Verify commit_workflow returns correct JobIds for all staged sources."""
         workflow_id = workflow_with_params.get_id()
@@ -768,7 +729,6 @@ class TestJobOrchestratorCommit:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -799,7 +759,6 @@ class TestJobOrchestratorCommit:
     def test_commit_workflow_raises_if_nothing_staged(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Verify commit_workflow raises ValueError if no configs staged."""
         workflow_id = workflow_with_params.get_id()
@@ -807,7 +766,6 @@ class TestJobOrchestratorCommit:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -822,7 +780,6 @@ class TestJobOrchestratorCommit:
     def test_commit_workflow_sends_workflow_configs_to_backend(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Verify correct WorkflowConfig messages sent for each source."""
         workflow_id = workflow_with_params.get_id()
@@ -831,7 +788,6 @@ class TestJobOrchestratorCommit:
         fake_sink = FakeMessageSink()
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=fake_sink),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -876,7 +832,6 @@ class TestJobOrchestratorCommit:
     def test_commit_workflow_stops_previous_jobs_on_second_commit(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Verify second commit sends stop commands for previous jobs."""
         workflow_id = workflow_with_params.get_id()
@@ -885,7 +840,6 @@ class TestJobOrchestratorCommit:
         fake_sink = FakeMessageSink()
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=fake_sink),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -947,7 +901,6 @@ class TestJobOrchestratorCommit:
     def test_clear_staged_configs_then_commit_raises_error(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Verify clear + commit interaction raises appropriate error."""
         workflow_id = workflow_with_params.get_id()
@@ -955,7 +908,6 @@ class TestJobOrchestratorCommit:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -982,7 +934,6 @@ class TestJobOrchestratorCommit:
     def test_persist_config_is_noop_when_config_store_is_none(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Config persistence should silently no-op when config_store is None."""
         workflow_id = workflow_with_params.get_id()
@@ -990,7 +941,6 @@ class TestJobOrchestratorCommit:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,  # No config store
         )
@@ -1012,7 +962,6 @@ class TestJobOrchestratorCommit:
         self,
         workflow_no_params: WorkflowSpec,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Config persistence should silently no-op when staged_jobs is empty."""
         workflow_id_no_params = workflow_no_params.get_id()
@@ -1027,7 +976,6 @@ class TestJobOrchestratorCommit:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -1072,7 +1020,6 @@ class TestJobOrchestratorStop:
     def test_stop_workflow_sends_stop_commands_to_backend(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Verify stop_workflow sends stop commands for all active jobs."""
         workflow_id = workflow_with_params.get_id()
@@ -1081,7 +1028,6 @@ class TestJobOrchestratorStop:
         fake_sink = FakeMessageSink()
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=fake_sink),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1123,7 +1069,6 @@ class TestJobOrchestratorStop:
     def test_stop_workflow_clears_active_job_state(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Verify stop_workflow clears current job state."""
         workflow_id = workflow_with_params.get_id()
@@ -1131,7 +1076,6 @@ class TestJobOrchestratorStop:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1157,7 +1101,6 @@ class TestJobOrchestratorStop:
     def test_stop_workflow_returns_false_when_no_active_jobs(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Verify stop_workflow returns False when no active jobs."""
         workflow_id = workflow_with_params.get_id()
@@ -1165,7 +1108,6 @@ class TestJobOrchestratorStop:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1179,7 +1121,6 @@ class TestJobOrchestratorStop:
     def test_stop_workflow_preserves_staged_config(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Verify stop_workflow preserves staged configuration for restart."""
         workflow_id = workflow_with_params.get_id()
@@ -1187,7 +1128,6 @@ class TestJobOrchestratorStop:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1215,7 +1155,6 @@ class TestJobOrchestratorStop:
     def test_stop_workflow_persists_stopped_state(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Verify stop_workflow persists stopped state to config store."""
         workflow_id = workflow_with_params.get_id()
@@ -1224,7 +1163,6 @@ class TestJobOrchestratorStop:
         config_store: dict[str, dict] = {}
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=config_store,
         )
@@ -1256,7 +1194,6 @@ class TestJobOrchestratorStop:
     def test_stop_workflow_allows_immediate_restart(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Verify workflow can be restarted immediately after stopping."""
         workflow_id = workflow_with_params.get_id()
@@ -1264,7 +1201,6 @@ class TestJobOrchestratorStop:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1296,7 +1232,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
     def test_subscribe_returns_subscription_id(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Subscribe returns a unique subscription ID."""
         from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
@@ -1306,7 +1241,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1319,7 +1253,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
     def test_unsubscribe_removes_subscription(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Unsubscribe removes the subscription so callbacks are no longer invoked."""
         from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
@@ -1329,7 +1262,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1365,7 +1297,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
     def test_stage_config_notifies_subscribers(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """stage_config notifies on_staged_changed callback."""
         from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
@@ -1375,7 +1306,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1403,7 +1333,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
     def test_clear_staged_configs_notifies_subscribers(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """clear_staged_configs notifies on_staged_changed callback."""
         from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
@@ -1413,7 +1342,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1432,7 +1360,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
     def test_commit_workflow_notifies_subscribers(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """commit_workflow notifies on_workflow_committed callback."""
         from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
@@ -1442,7 +1369,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1461,7 +1387,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
     def test_stop_workflow_notifies_subscribers(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """stop_workflow notifies on_workflow_stopped callback."""
         from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
@@ -1471,7 +1396,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1494,7 +1418,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
     def test_stop_workflow_does_not_notify_if_nothing_to_stop(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """stop_workflow does not notify if there are no active jobs."""
         from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
@@ -1504,7 +1427,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1524,7 +1446,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
     def test_multiple_subscribers_all_notified(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Multiple subscribers all receive notifications."""
         from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
@@ -1534,7 +1455,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1562,7 +1482,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
     def test_callback_exception_does_not_affect_other_subscribers(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Exception in one callback does not prevent others from being called."""
         from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
@@ -1572,7 +1491,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1599,7 +1517,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
     def test_none_callbacks_are_skipped(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Callbacks set to None are safely skipped without error."""
         from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
@@ -1609,7 +1526,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1640,7 +1556,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
     def test_staging_transaction_replaces_all_configs(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """staging_transaction allows replacing all configs in one operation."""
         workflow_id = workflow_with_params.get_id()
@@ -1648,7 +1563,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1688,7 +1602,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
     def test_staging_transaction_triggers_single_notification(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """staging_transaction triggers only one notification for efficiency."""
         from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
@@ -1698,7 +1611,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1744,7 +1656,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
     def test_staging_transaction_can_be_nested(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """staging_transaction supports nesting for same workflow."""
         from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
@@ -1754,7 +1665,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1799,7 +1709,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
     def test_staging_transaction_rejects_different_workflow(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """staging_transaction raises error if nesting different workflows."""
         workflow_id_1 = workflow_with_params.get_id()
@@ -1823,7 +1732,6 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1841,7 +1749,6 @@ class TestWorkflowAdapterIndependentSourceConfiguration:
     def test_adapter_start_action_preserves_other_sources(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Configuring one source should not affect other sources' configs."""
         workflow_id = workflow_with_params.get_id()
@@ -1849,7 +1756,6 @@ class TestWorkflowAdapterIndependentSourceConfiguration:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1887,7 +1793,6 @@ class TestWorkflowAdapterIndependentSourceConfiguration:
     def test_adapter_start_action_updates_existing_source(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """Updating an already-configured source should update its config."""
         workflow_id = workflow_with_params.get_id()
@@ -1895,7 +1800,6 @@ class TestWorkflowAdapterIndependentSourceConfiguration:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1930,7 +1834,6 @@ class TestWorkflowSubscriptions:
     def test_on_started_called_when_workflow_commits(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """on_started callback is called when workflow is committed."""
         from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
@@ -1940,7 +1843,6 @@ class TestWorkflowSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1959,7 +1861,6 @@ class TestWorkflowSubscriptions:
     def test_on_stopped_called_when_workflow_stops(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """on_stopped callback is called when workflow is stopped."""
         from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
@@ -1969,7 +1870,6 @@ class TestWorkflowSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -1993,7 +1893,6 @@ class TestWorkflowSubscriptions:
     def test_on_stopped_not_called_when_no_callback_provided(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """on_stopped None does not cause error when workflow stops."""
         from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
@@ -2003,7 +1902,6 @@ class TestWorkflowSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -2022,7 +1920,6 @@ class TestWorkflowSubscriptions:
     def test_on_stopped_not_called_when_nothing_to_stop(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """on_stopped is not called when there's no active job to stop."""
         from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
@@ -2032,7 +1929,6 @@ class TestWorkflowSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
@@ -2052,7 +1948,6 @@ class TestWorkflowSubscriptions:
     def test_on_started_called_immediately_if_workflow_already_running(
         self,
         workflow_with_params: WorkflowSpec,
-        fake_workflow_config_service: FakeWorkflowConfigService,
     ):
         """on_started is called immediately if workflow is already running."""
         from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
@@ -2062,7 +1957,6 @@ class TestWorkflowSubscriptions:
 
         orchestrator = JobOrchestrator(
             command_service=CommandService(sink=FakeMessageSink()),
-            workflow_config_service=fake_workflow_config_service,
             workflow_registry=registry,
             config_store=None,
         )
