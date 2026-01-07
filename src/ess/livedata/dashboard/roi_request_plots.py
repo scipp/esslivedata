@@ -5,10 +5,9 @@
 These plotters create interactive BoxEdit/PolyDraw elements that allow users
 to draw ROIs visually. Edits are published to Kafka for backend processing.
 
-Unlike the monolithic ROIDetectorPlotFactory, these plotters:
-- Initialize from params (no bidirectional sync with readback)
-- Subscribe to readback stream only for job_id context
-- Publish directly on user edit
+These plotters subscribe to the ROI readback output stream for job_id context.
+The readback data itself is not used for display - only the ResultKey is needed
+to identify where to publish ROI updates.
 """
 
 from __future__ import annotations
@@ -346,8 +345,8 @@ class RectanglesRequestPlotter(Plotter):
     Creates a BoxEdit-enabled DynamicMap that allows users to draw rectangles.
     Publishes ROI updates to Kafka when shapes are edited.
 
-    The plotter subscribes to the ROI readback stream to obtain the job_id
-    for publishing. The readback data itself is not used for display.
+    Subscribes to the rectangle ROI readback output to obtain the job_id for
+    publishing. The readback data itself is not used for display.
     """
 
     def __init__(
@@ -596,6 +595,9 @@ class PolygonsRequestPlotter(Plotter):
 
     Creates a PolyDraw-enabled DynamicMap that allows users to draw polygons.
     Publishes ROI updates to Kafka when shapes are edited.
+
+    Subscribes to the polygon ROI readback output to obtain the job_id for
+    publishing. The readback data itself is not used for display.
     """
 
     def __init__(
@@ -784,27 +786,23 @@ def _create_polygons_request_plotter(
 
 def _register_roi_request_plotters() -> None:
     """Register ROI request plotters with the plotter registry."""
-    from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
+    from .plotting import DataRequirements, plotter_registry
 
-    from .plotting import DataRequirements, SpecRequirements, plotter_registry
-
-    # Request plotters subscribe to detector image output for job_id context.
-    # The actual data is ignored - only the ResultKey is used for job_id.
-    # Requirements match roi_detector: 2D data with ROI aux sources.
-    roi_data_requirements = DataRequirements(
-        min_dims=2, max_dims=2, multiple_datasets=False
-    )
-    roi_spec_requirements = SpecRequirements(
-        requires_aux_sources=[DetectorROIAuxSources],
-    )
-
+    # Request plotters subscribe to the ROI readback output for job_id context.
+    # The actual data is ignored - only the ResultKey is used for publishing.
+    # Requirements match the corresponding readback plotters.
     plotter_registry.register_plotter(
         name='rectangles_request',
         title='ROI Rectangles (Interactive)',
         description='Draw and edit ROI rectangles interactively. '
         'Publishes ROI updates to backend for processing.',
-        data_requirements=roi_data_requirements,
-        spec_requirements=roi_spec_requirements,
+        data_requirements=DataRequirements(
+            min_dims=1,
+            max_dims=1,
+            required_coords=['roi_index', 'x', 'y'],
+            required_dim_names=['bounds'],
+            multiple_datasets=False,
+        ),
         factory=_create_rectangles_request_plotter,
     )
 
@@ -813,7 +811,12 @@ def _register_roi_request_plotters() -> None:
         title='ROI Polygons (Interactive)',
         description='Draw and edit ROI polygons interactively. '
         'Publishes ROI updates to backend for processing.',
-        data_requirements=roi_data_requirements,
-        spec_requirements=roi_spec_requirements,
+        data_requirements=DataRequirements(
+            min_dims=1,
+            max_dims=1,
+            required_coords=['roi_index', 'x', 'y'],
+            required_dim_names=['vertex'],
+            multiple_datasets=False,
+        ),
         factory=_create_polygons_request_plotter,
     )

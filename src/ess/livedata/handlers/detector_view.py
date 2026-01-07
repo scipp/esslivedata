@@ -64,6 +64,7 @@ class DetectorView(Workflow):
             set()
         )  # Track which geometries were updated
         self._roi_mapper = get_roi_mapper()
+        self._initial_readback_sent = False
         self._current_start_time: int | None = None
 
         # Ratemeter: track event counts per finalize period
@@ -175,10 +176,21 @@ class DetectorView(Workflow):
             'roi_spectra_cumulative': roi_cumulative.assign_coords(roi=roi_coord),
         }
 
-        # Publish ROI readbacks for each geometry type that was updated.
-        # Each geometry type gets its own readback stream.
+        # Publish ROI readbacks for each geometry type that was updated,
+        # or on first finalize to provide initial empty state for request plotters.
+        # NOTE: If the dashboard connects after job start, it will miss this initial
+        # readback and request plotter layers won't be created until the first ROI
+        # update, which will never happen (chicken-egg problem). In production we do not
+        # expect frequent frontend application restarts so in practice this might not
+        # be a problem. A workaround if it really happens is to stop and restart the
+        # job. Solutions may include sending the readback periodcally even if there was
+        # no actual change.
         for geometry in self._roi_mapper.geometries:
-            if geometry.readback_key not in self._updated_geometries:
+            should_publish = (
+                geometry.readback_key in self._updated_geometries
+                or not self._initial_readback_sent
+            )
+            if not should_publish:
                 continue
 
             # Extract ROI models for this geometry type
@@ -194,7 +206,7 @@ class DetectorView(Workflow):
                 roi_models
             )
 
-        # Clear updated geometries after publishing
+        self._initial_readback_sent = True
         self._updated_geometries.clear()
 
         # Ratemeter: output event counts and reset for next period
@@ -221,6 +233,7 @@ class DetectorView(Workflow):
             roi_state.clear()
         self._counts_total = 0
         self._counts_in_toa_range = 0
+        self._initial_readback_sent = False
 
     def _update_rois(self, rois: dict[int, models.ROI], geometry: ROIGeometry) -> None:
         """
