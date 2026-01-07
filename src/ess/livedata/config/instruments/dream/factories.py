@@ -13,44 +13,6 @@ from ess.livedata.config import Instrument
 from . import specs
 from .specs import PowderWorkflowParams
 
-# Bank sizes for mantle detector logical views
-_bank_sizes = {
-    'mantle_detector': {
-        'wire': 32,
-        'module': 5,
-        'segment': 6,
-        'strip': 256,
-        'counter': 2,
-    },
-}
-
-
-def _get_mantle_front_layer(da: sc.DataArray) -> sc.DataArray:
-    """Transform function to extract mantle front layer."""
-    return (
-        da.fold(dim=da.dim, sizes=_bank_sizes['mantle_detector'])
-        .transpose(('wire', 'module', 'segment', 'counter', 'strip'))['wire', 0]
-        .flatten(('module', 'segment', 'counter'), to='mod/seg/cntr')
-    )
-
-
-def _get_wire_view(da: sc.DataArray) -> sc.DataArray:
-    """Transform function to extract wire view."""
-    return (
-        da.fold(dim=da.dim, sizes=_bank_sizes['mantle_detector'])
-        .sum('strip')
-        .flatten(('module', 'segment', 'counter'), to='mod/seg/cntr')
-        # Transpose so that wire is the "x" dimension for more natural plotting.
-        .transpose()
-    )
-
-
-def _get_strip_view(da: sc.DataArray) -> sc.DataArray:
-    """Transform function to extract strip view (sum over all but strip)."""
-    return da.fold(dim=da.dim, sizes=_bank_sizes['mantle_detector']).sum(
-        ('wire', 'module', 'segment', 'counter')
-    )
-
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize DREAM-specific factories and workflows."""
@@ -61,7 +23,6 @@ def setup_factories(instrument: Instrument) -> None:
     from ess import dream, powder
     from ess.dream import DreamPowderWorkflow
     from ess.livedata.handlers.detector_data_handler import (
-        DetectorLogicalView,
         DetectorProjection,
         get_nexus_geometry_filename,
     )
@@ -96,24 +57,12 @@ def setup_factories(instrument: Instrument) -> None:
     # Attach unified detector view factory
     specs.projection_handle.attach_factory()(_detector_projection.make_view)
 
-    # Create logical views for mantle detector
-    _mantle_front_layer_view = DetectorLogicalView(
-        instrument=instrument, transform=_get_mantle_front_layer
-    )
+    # Attach logical view factories using the registry.
+    # This imports DetectorLogicalView and creates views from the transforms
+    # defined in views.py.
+    from .views import mantle_views
 
-    _mantle_wire_view = DetectorLogicalView(
-        instrument=instrument, transform=_get_wire_view
-    )
-
-    _mantle_strip_view = DetectorLogicalView(
-        instrument=instrument, transform=_get_strip_view
-    )
-
-    # Attach logical view factories
-    # Note: Logical views only have view handles, no ROI handles
-    specs.mantle_front_layer_handle.attach_factory()(_mantle_front_layer_view.make_view)
-    specs.mantle_wire_view_handle.attach_factory()(_mantle_wire_view.make_view)
-    specs.mantle_strip_view_handle.attach_factory()(_mantle_strip_view.make_view)
+    mantle_views.attach_factories(instrument)
 
     # Powder reduction workflow setup
     # Normalization to monitors is partially broken due to some wavelength-range check

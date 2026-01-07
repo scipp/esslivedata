@@ -13,11 +13,9 @@ import scipp as sc
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
-from ess.livedata.handlers.detector_view_specs import (
-    DetectorViewOutputs,
-    DetectorViewParams,
-    register_detector_view_spec,
-)
+from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
+
+from .views import mantle_views
 
 # Detector names for DREAM data reduction workflows
 detector_names = [
@@ -53,40 +51,10 @@ projection_handle = register_detector_view_spec(
     projection=_projections,
 )
 
-# Register logical view specs (mantle front layer and wire view)
-# These don't use the standard projection pattern, so we register them directly
-mantle_front_layer_handle = instrument.register_spec(
-    namespace='detector_data',
-    name='mantle_front_layer',
-    version=1,
-    title='Mantle front layer',
-    description='All voxels of the front layer of the mantle detector.',
-    source_names=['mantle_detector'],
-    params=DetectorViewParams,
-    outputs=DetectorViewOutputs,
-)
-
-mantle_wire_view_handle = instrument.register_spec(
-    namespace='detector_data',
-    name='mantle_wire_view',
-    version=1,
-    title='Mantle wire view',
-    description='Sum over strips to show counts per wire in the mantle detector.',
-    source_names=['mantle_detector'],
-    params=DetectorViewParams,
-    outputs=DetectorViewOutputs,
-)
-
-mantle_strip_view_handle = instrument.register_spec(
-    namespace='detector_data',
-    name='mantle_strip_view',
-    version=1,
-    title='Mantle strip view',
-    description='Sum over all dimensions except strip to show counts per strip.',
-    source_names=['mantle_detector'],
-    params=DetectorViewParams,
-    outputs=DetectorViewOutputs,
-)
+# Register logical view specs using the registry pattern.
+# This couples transforms with their spec metadata to prevent mismatches.
+# See views.py for transform definitions.
+mantle_views.register_specs(instrument)
 
 
 # Pydantic models for DREAM workflows
