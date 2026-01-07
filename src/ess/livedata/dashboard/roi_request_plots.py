@@ -13,7 +13,8 @@ to identify where to publish ROI updates.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 import holoviews as hv
 import pydantic
@@ -261,6 +262,11 @@ if TYPE_CHECKING:
 
     from .roi_publisher import ROIPublisher
 
+# TypeVars for generic base class
+ROIType = TypeVar('ROIType', RectangleROI, PolygonROI)
+ParamsType = TypeVar('ParamsType', bound=pydantic.BaseModel)
+ConverterType = TypeVar('ConverterType', RectangleConverter, PolygonConverter)
+
 
 class OptionalRectanglesCoordinates(RectanglesCoordinates):
     """Wrapper for optional rectangle coordinate input.
@@ -338,20 +344,16 @@ class RectanglesRequestParams(pydantic.BaseModel):
     )
 
 
-class RectanglesRequestPlotter(Plotter):
-    """
-    Interactive plotter for ROI rectangle requests.
+class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, ConverterType]):
+    """Base class for interactive ROI request plotters.
 
-    Creates a BoxEdit-enabled DynamicMap that allows users to draw rectangles.
-    Publishes ROI updates to Kafka when shapes are edited.
-
-    Subscribes to the rectangle ROI readback output to obtain the job_id for
-    publishing. The readback data itself is not used for display.
+    Implements the Template Method pattern for creating interactive ROI editors.
+    Subclasses provide hooks for ROI type-specific behavior.
     """
 
     def __init__(
         self,
-        params: RectanglesRequestParams,
+        params: ParamsType,
         roi_publisher: ROIPublisher | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -359,15 +361,50 @@ class RectanglesRequestPlotter(Plotter):
         self._params = params
         self._roi_publisher = roi_publisher
         self._logger = logger or logging.getLogger(__name__)
-        self._converter = RectangleConverter()
+        self._converter = self._create_converter()
         self._roi_mapper = get_roi_mapper()
 
         # Runtime state set during plot creation
         self._result_key: ResultKey | None = None
-        self._current_rois: dict[int, RectangleROI] = {}
+        self._current_rois: dict[int, ROIType] = {}
+        self._index_offset: int = 0
         # Keep streams alive to prevent garbage collection
         self._pipe: hv.streams.Pipe | None = None
-        self._box_stream: hv.streams.BoxEdit | None = None
+        self._edit_stream: hv.streams.Stream | None = None
+
+    @abstractmethod
+    def _create_converter(self) -> ConverterType:
+        """Create the converter for this ROI type."""
+
+    @abstractmethod
+    def _geometry_type(self) -> str:
+        """Return geometry type name ('rectangle' or 'polygon')."""
+
+    @abstractmethod
+    def _get_index_offset(self) -> int:
+        """Return index offset for ROI indices (0 for rectangles, 4 for polygons)."""
+
+    @abstractmethod
+    def _parse_initial_geometry(self) -> dict[int, ROIType]:
+        """Parse initial geometry from params using self._index_offset."""
+
+    @abstractmethod
+    def _create_element(self, data: list) -> hv.Element:
+        """Create HoloViews element (Rectangles or Polygons)."""
+
+    @abstractmethod
+    def _create_edit_stream(
+        self, dmap: hv.DynamicMap, initial_data: dict
+    ) -> hv.streams.Stream:
+        """Create edit stream (BoxEdit or PolyDraw)."""
+
+    @abstractmethod
+    def _should_skip_edit(self, new_rois: dict[int, ROIType]) -> bool:
+        """Return True if this edit event should be skipped."""
+
+    @abstractmethod
+    def _get_style(self) -> Any:
+        """Return the style params object with color, line_width, line_dash."""
 
     def plot(
         self,
@@ -375,8 +412,7 @@ class RectanglesRequestPlotter(Plotter):
         data_key: ResultKey,
         **kwargs,
     ) -> hv.DynamicMap:
-        """
-        Create interactive rectangles with BoxEdit.
+        """Create interactive ROI editor with edit stream.
 
         Parameters
         ----------
@@ -390,44 +426,68 @@ class RectanglesRequestPlotter(Plotter):
         Returns
         -------
         :
-            DynamicMap with BoxEdit interactivity.
+            DynamicMap with edit interactivity.
         """
         del data, kwargs  # We only need job_id from data_key
 
         self._result_key = data_key
+        self._index_offset = self._get_index_offset()
+        initial_rois = self._parse_initial_geometry()
 
-        # Parse initial geometry from params
-        initial_rects = self._parse_initial_geometry()
-
-        # Create pipe for programmatic updates (store as instance var to prevent GC)
+        # Create pipe for programmatic updates (store to prevent GC)
         self._pipe = hv.streams.Pipe(data=[])
+        dmap = hv.DynamicMap(self._create_element, streams=[self._pipe])
 
-        def make_rectangles(data: list) -> hv.Rectangles:
-            return hv.Rectangles(data)
-
-        dmap = hv.DynamicMap(make_rectangles, streams=[self._pipe])
-
-        # Create BoxEdit stream attached to the DynamicMap (store to prevent GC)
-        self._box_stream = hv.streams.BoxEdit(
-            source=dmap,
-            num_objects=self._params.options.max_roi_count,
-            data=self._converter.to_stream_data(initial_rects),
+        # Create edit stream (store to prevent GC)
+        self._edit_stream = self._create_edit_stream(
+            dmap, self._converter.to_stream_data(initial_rois)
         )
 
-        # Initialize pipe with current rectangles
-        self._pipe.send(self._converter.to_hv_data(initial_rects, index_to_color=None))
+        # Initialize pipe with current data
+        self._pipe.send(self._converter.to_hv_data(initial_rois, index_to_color=None))
 
         # Store initial state
-        self._current_rois = initial_rects
+        self._current_rois = initial_rois
 
         # Watch for edits
-        self._box_stream.param.watch(self._on_edit, 'data')
+        self._edit_stream.param.watch(self._on_edit, 'data')
 
         # Publish initial state
-        self._publish_rois(initial_rects)
+        self._publish_rois(initial_rois)
 
         # Apply styling
-        style = self._params.style
+        return self._apply_styling(dmap)
+
+    def _on_edit(self, event) -> None:
+        """Handle edit stream data changes from user interaction."""
+        data = event.new if hasattr(event, 'new') else event
+        if data is None:
+            data = {}
+
+        try:
+            new_rois = self._converter.parse_stream_data(
+                data, x_unit=None, y_unit=None, index_offset=self._index_offset
+            )
+
+            # Skip if unchanged
+            if new_rois == self._current_rois:
+                return
+
+            # Allow subclass-specific skip logic
+            if self._should_skip_edit(new_rois):
+                return
+
+            self._current_rois = new_rois
+            self._publish_rois(new_rois)
+
+        except Exception as e:
+            self._logger.error(
+                "Failed to process %s edit: %s", self._geometry_type(), e
+            )
+
+    def _apply_styling(self, dmap: hv.DynamicMap) -> hv.DynamicMap:
+        """Apply common styling options to the DynamicMap."""
+        style = self._get_style()
         return dmap.opts(
             color=style.color,
             fill_alpha=0,
@@ -436,6 +496,47 @@ class RectanglesRequestPlotter(Plotter):
             # Bokeh bug: line_dash='dashed' doesn't render with WebGL backend
             backend_opts={'plot.output_backend': 'canvas'},
         )
+
+    def _publish_rois(self, rois: dict[int, ROIType]) -> None:
+        """Publish ROIs to Kafka."""
+        if not self._roi_publisher or not self._result_key:
+            return
+
+        geometry = self._roi_mapper.geometry_for_type(self._geometry_type())
+        if geometry is None:
+            self._logger.warning("%s geometry not configured", self._geometry_type())
+            return
+
+        self._roi_publisher.publish(
+            self._result_key.job_id,
+            rois,
+            geometry,
+        )
+        self._logger.info(
+            "Published %d %s ROI(s) for job %s",
+            len(rois),
+            self._geometry_type(),
+            self._result_key.job_id,
+        )
+
+
+class RectanglesRequestPlotter(
+    BaseROIRequestPlotter[RectangleROI, RectanglesRequestParams, RectangleConverter]
+):
+    """Interactive plotter for ROI rectangle requests.
+
+    Creates a BoxEdit-enabled DynamicMap that allows users to draw rectangles.
+    Publishes ROI updates to Kafka when shapes are edited.
+    """
+
+    def _create_converter(self) -> RectangleConverter:
+        return RectangleConverter()
+
+    def _geometry_type(self) -> str:
+        return "rectangle"
+
+    def _get_index_offset(self) -> int:
+        return 0
 
     def _parse_initial_geometry(self) -> dict[int, RectangleROI]:
         """Parse initial rectangles from params."""
@@ -449,10 +550,7 @@ class RectanglesRequestPlotter(Plotter):
             self._logger.warning("Failed to parse initial rectangle coordinates")
             return {}
 
-        # Convert to RectangleROI objects (unitless)
         rois: dict[int, RectangleROI] = {}
-        from ess.livedata.config.models import Interval
-
         for i, (x0, y0, x1, y1) in enumerate(rects):
             rois[i] = RectangleROI(
                 x=Interval(min=min(x0, x1), max=max(x0, x1), unit=None),
@@ -460,48 +558,24 @@ class RectanglesRequestPlotter(Plotter):
             )
         return rois
 
-    def _on_edit(self, event) -> None:
-        """Handle BoxEdit data changes from user interaction."""
-        data = event.new if hasattr(event, 'new') else event
-        if data is None:
-            data = {}
+    def _create_element(self, data: list) -> hv.Rectangles:
+        return hv.Rectangles(data)
 
-        try:
-            # Parse new ROIs from edit stream (unitless)
-            new_rois = self._converter.parse_stream_data(
-                data, x_unit=None, y_unit=None, index_offset=0
-            )
-
-            # Only publish if changed
-            if new_rois == self._current_rois:
-                return
-
-            self._current_rois = new_rois
-            self._publish_rois(new_rois)
-
-        except Exception as e:
-            self._logger.error("Failed to process rectangle edit: %s", e)
-
-    def _publish_rois(self, rois: dict[int, RectangleROI]) -> None:
-        """Publish ROIs to Kafka."""
-        if not self._roi_publisher or not self._result_key:
-            return
-
-        geometry = self._roi_mapper.geometry_for_type("rectangle")
-        if geometry is None:
-            self._logger.warning("Rectangle geometry not configured")
-            return
-
-        self._roi_publisher.publish(
-            self._result_key.job_id,
-            rois,
-            geometry,
+    def _create_edit_stream(
+        self, dmap: hv.DynamicMap, initial_data: dict
+    ) -> hv.streams.BoxEdit:
+        return hv.streams.BoxEdit(
+            source=dmap,
+            num_objects=self._params.options.max_roi_count,
+            data=initial_data,
         )
-        self._logger.info(
-            "Published %d rectangle ROI(s) for job %s",
-            len(rois),
-            self._result_key.job_id,
-        )
+
+    def _should_skip_edit(self, new_rois: dict[int, RectangleROI]) -> bool:
+        del new_rois  # Rectangles never skip edits
+        return False
+
+    def _get_style(self) -> RectanglesRequestStyle:
+        return self._params.style
 
 
 class PolygonsRequestStyle(pydantic.BaseModel):
@@ -589,112 +663,26 @@ class PolygonsRequestParams(pydantic.BaseModel):
     )
 
 
-class PolygonsRequestPlotter(Plotter):
-    """
-    Interactive plotter for ROI polygon requests.
+class PolygonsRequestPlotter(
+    BaseROIRequestPlotter[PolygonROI, PolygonsRequestParams, PolygonConverter]
+):
+    """Interactive plotter for ROI polygon requests.
 
     Creates a PolyDraw-enabled DynamicMap that allows users to draw polygons.
     Publishes ROI updates to Kafka when shapes are edited.
-
-    Subscribes to the polygon ROI readback output to obtain the job_id for
-    publishing. The readback data itself is not used for display.
     """
 
-    def __init__(
-        self,
-        params: PolygonsRequestParams,
-        roi_publisher: ROIPublisher | None = None,
-        logger: logging.Logger | None = None,
-    ) -> None:
-        super().__init__()
-        self._params = params
-        self._roi_publisher = roi_publisher
-        self._logger = logger or logging.getLogger(__name__)
-        self._converter = PolygonConverter()
-        self._roi_mapper = get_roi_mapper()
+    def _create_converter(self) -> PolygonConverter:
+        return PolygonConverter()
 
-        # Runtime state
-        self._result_key: ResultKey | None = None
-        self._current_rois: dict[int, PolygonROI] = {}
-        self._index_offset: int = 4
-        # Keep streams alive to prevent garbage collection
-        self._pipe: hv.streams.Pipe | None = None
-        self._poly_stream: hv.streams.PolyDraw | None = None
+    def _geometry_type(self) -> str:
+        return "polygon"
 
-    def plot(
-        self,
-        data: sc.DataArray,
-        data_key: ResultKey,
-        **kwargs,
-    ) -> hv.DynamicMap:
-        """
-        Create interactive polygons with PolyDraw.
-
-        Parameters
-        ----------
-        data:
-            ROI readback DataArray (used only for job_id extraction).
-        data_key:
-            Key identifying this data stream (provides job_id for publishing).
-        **kwargs:
-            Unused additional arguments.
-
-        Returns
-        -------
-        :
-            DynamicMap with PolyDraw interactivity.
-        """
-        del data, kwargs
-
-        self._result_key = data_key
-
-        # Get polygon index offset from mapper
+    def _get_index_offset(self) -> int:
         poly_geom = self._roi_mapper.geometry_for_type("polygon")
-        self._index_offset = poly_geom.index_offset if poly_geom else 4
+        return poly_geom.index_offset if poly_geom else 4
 
-        # Parse initial geometry from params
-        initial_polys = self._parse_initial_geometry(self._index_offset)
-
-        # Create pipe for programmatic updates (store to prevent GC)
-        self._pipe = hv.streams.Pipe(data=[])
-
-        def make_polygons(data: list) -> hv.Polygons:
-            return hv.Polygons(data)
-
-        dmap = hv.DynamicMap(make_polygons, streams=[self._pipe])
-
-        # Create PolyDraw stream (store to prevent GC)
-        self._poly_stream = hv.streams.PolyDraw(
-            source=dmap,
-            num_objects=self._params.options.max_roi_count,
-            drag=True,
-            show_vertices=True,
-            data=self._converter.to_stream_data(initial_polys),
-        )
-
-        # Initialize pipe
-        self._pipe.send(self._converter.to_hv_data(initial_polys, index_to_color=None))
-
-        # Store initial state
-        self._current_rois = initial_polys
-
-        # Watch for edits
-        self._poly_stream.param.watch(self._on_edit, 'data')
-
-        # Publish initial state
-        self._publish_rois(initial_polys)
-
-        # Apply styling
-        style = self._params.style
-        return dmap.opts(
-            color=style.color,
-            fill_alpha=0,
-            line_width=style.line_width,
-            line_dash=style.line_dash,
-            backend_opts={'plot.output_backend': 'canvas'},
-        )
-
-    def _parse_initial_geometry(self, index_offset: int) -> dict[int, PolygonROI]:
+    def _parse_initial_geometry(self) -> dict[int, PolygonROI]:
         """Parse initial polygons from params."""
         coords_str = self._params.geometry.coordinates
         if not coords_str or coords_str.strip() == '':
@@ -709,58 +697,35 @@ class PolygonsRequestPlotter(Plotter):
         rois: dict[int, PolygonROI] = {}
         for i, (xs, ys) in enumerate(polygons):
             if len(xs) >= 3:
-                rois[index_offset + i] = PolygonROI(
+                rois[self._index_offset + i] = PolygonROI(
                     x=xs, y=ys, x_unit=None, y_unit=None
                 )
         return rois
 
-    def _on_edit(self, event) -> None:
-        """Handle PolyDraw data changes from user interaction."""
-        data = event.new if hasattr(event, 'new') else event
-        if data is None:
-            data = {}
+    def _create_element(self, data: list) -> hv.Polygons:
+        return hv.Polygons(data)
 
-        try:
-            new_rois = self._converter.parse_stream_data(
-                data, x_unit=None, y_unit=None, index_offset=self._index_offset
-            )
-
-            # Skip if unchanged
-            if new_rois == self._current_rois:
-                return
-
-            # Skip while user is actively drawing (trailing duplicate vertex)
-            for roi in new_rois.values():
-                if len(roi.x) >= 2:
-                    if roi.x[-1] == roi.x[-2] and roi.y[-1] == roi.y[-2]:
-                        return
-
-            self._current_rois = new_rois
-            self._publish_rois(new_rois)
-
-        except Exception as e:
-            self._logger.error("Failed to process polygon edit: %s", e)
-
-    def _publish_rois(self, rois: dict[int, PolygonROI]) -> None:
-        """Publish ROIs to Kafka."""
-        if not self._roi_publisher or not self._result_key:
-            return
-
-        geometry = self._roi_mapper.geometry_for_type("polygon")
-        if geometry is None:
-            self._logger.warning("Polygon geometry not configured")
-            return
-
-        self._roi_publisher.publish(
-            self._result_key.job_id,
-            rois,
-            geometry,
+    def _create_edit_stream(
+        self, dmap: hv.DynamicMap, initial_data: dict
+    ) -> hv.streams.PolyDraw:
+        return hv.streams.PolyDraw(
+            source=dmap,
+            num_objects=self._params.options.max_roi_count,
+            drag=True,
+            show_vertices=True,
+            data=initial_data,
         )
-        self._logger.info(
-            "Published %d polygon ROI(s) for job %s",
-            len(rois),
-            self._result_key.job_id,
-        )
+
+    def _should_skip_edit(self, new_rois: dict[int, PolygonROI]) -> bool:
+        """Skip while user is actively drawing (trailing duplicate vertex)."""
+        for roi in new_rois.values():
+            if len(roi.x) >= 2:
+                if roi.x[-1] == roi.x[-2] and roi.y[-1] == roi.y[-2]:
+                    return True
+        return False
+
+    def _get_style(self) -> PolygonsRequestStyle:
+        return self._params.style
 
 
 def _create_rectangles_request_plotter(
