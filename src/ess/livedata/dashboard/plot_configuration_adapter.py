@@ -75,6 +75,11 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         """Get available source names."""
         return self._source_names
 
+    @property
+    def allow_multiple_sources(self) -> bool:
+        """Whether multiple sources can be selected based on plotter requirements."""
+        return self._plot_spec.data_requirements.multiple_datasets
+
     def start_action(
         self,
         selected_sources: list[str],

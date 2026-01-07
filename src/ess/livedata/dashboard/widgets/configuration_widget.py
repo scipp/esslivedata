@@ -33,27 +33,47 @@ class ConfigurationWidget:
         self._source_error_pane = pn.pane.HTML("", sizing_mode='stretch_width')
         self._widget = self._create_widget()
 
-    def _create_source_selector(self) -> pn.widgets.MultiChoice | None:
+    def _create_source_selector(
+        self,
+    ) -> pn.widgets.MultiChoice | pn.widgets.Select | None:
         """Create source selection widget, or None if no sources available."""
         # No source selector needed when there are no sources (e.g., static overlays)
         if not self._config.source_names:
             return None
 
-        if (
-            not self._config.initial_source_names
-            and len(self._config.source_names) == 1
-        ):
-            initial_source_names = self._config.source_names
+        sorted_sources = sorted(self._config.source_names)
+
+        if self._config.allow_multiple_sources:
+            # MultiChoice for multiple source selection
+            if (
+                not self._config.initial_source_names
+                and len(self._config.source_names) == 1
+            ):
+                initial_source_names = self._config.source_names
+            else:
+                initial_source_names = self._config.initial_source_names
+            return pn.widgets.MultiChoice(
+                name="Source Names",
+                options=sorted_sources,
+                value=sorted(initial_source_names),
+                placeholder="Select source names to apply workflow to",
+                sizing_mode='stretch_width',
+                margin=(0, 0, 0, 0),
+            )
         else:
-            initial_source_names = self._config.initial_source_names
-        return pn.widgets.MultiChoice(
-            name="Source Names",
-            options=sorted(self._config.source_names),
-            value=sorted(initial_source_names),
-            placeholder="Select source names to apply workflow to",
-            sizing_mode='stretch_width',
-            margin=(0, 0, 0, 0),
-        )
+            # Select dropdown for single source selection
+            initial_source = (
+                self._config.initial_source_names[0]
+                if self._config.initial_source_names
+                else sorted_sources[0]
+            )
+            return pn.widgets.Select(
+                name="Source Name",
+                options=sorted_sources,
+                value=initial_source,
+                sizing_mode='stretch_width',
+                margin=(0, 0, 0, 0),
+            )
 
     def _create_aux_sources_widget(self) -> ParamWidget | None:
         """Create auxiliary sources widget using ParamWidget."""
@@ -156,6 +176,10 @@ class ConfigurationWidget:
         """Get the selected source names."""
         if self._source_selector is None:
             return []
+        if isinstance(self._source_selector, pn.widgets.Select):
+            # Single selection returns a string, wrap in list
+            return [self._source_selector.value] if self._source_selector.value else []
+        # MultiChoice returns a list
         return self._source_selector.value
 
     @property
