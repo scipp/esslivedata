@@ -21,7 +21,7 @@ from .job_service import JobService
 from .plot_params import create_extractors_from_params
 from .plotting import PlotterSpec, plotter_registry
 from .roi_publisher import ROIPublisher
-from .roi_request_plots import PolygonsRequestPlotter, RectanglesRequestPlotter
+from .roi_request_plots import ROIPublisherAware
 from .stream_manager import StreamManager
 
 K = TypeVar('K', bound=Hashable)
@@ -214,10 +214,10 @@ class PlottingController:
         """
         plotter = plotter_registry.create_plotter(plot_name, params=params)
 
-        # Special case for ROI request plotters: they return a DynamicMap with
+        # ROI request plotters need a publisher and return a DynamicMap with
         # BoxEdit/PolyDraw streams already attached. Don't wrap again.
-        if isinstance(plotter, RectanglesRequestPlotter | PolygonsRequestPlotter):
-            plotter._roi_publisher = self._roi_publisher
+        if isinstance(plotter, ROIPublisherAware):
+            plotter.set_roi_publisher(self._roi_publisher)
             # Get the first data key and its data for the plot() call
             data_key = next(iter(pipe.data.keys()))
             data = pipe.data[data_key]

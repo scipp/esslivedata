@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
 import holoviews as hv
 import pydantic
@@ -25,6 +25,18 @@ from ess.livedata.config.roi_names import ROIGeometryType, get_roi_mapper
 
 from .plots import Plotter
 from .static_plots import Color, LineDash, RectanglesCoordinates
+
+if TYPE_CHECKING:
+    from .roi_publisher import ROIPublisher
+
+
+@runtime_checkable
+class ROIPublisherAware(Protocol):
+    """Protocol for plotters that can publish ROI updates."""
+
+    def set_roi_publisher(self, publisher: ROIPublisher | None) -> None:
+        """Set the ROI publisher for this plotter."""
+        ...
 
 
 def _get_max_rois_for_geometry(geometry_type: ROIGeometryType) -> int:
@@ -266,8 +278,6 @@ class PolygonConverter:
 if TYPE_CHECKING:
     from ess.livedata.config.workflow_spec import ResultKey
 
-    from .roi_publisher import ROIPublisher
-
 # TypeVars for generic base class
 ROIType = TypeVar('ROIType', RectangleROI, PolygonROI)
 ParamsType = TypeVar('ParamsType', bound=pydantic.BaseModel)
@@ -381,6 +391,10 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         self._edit_stream: hv.streams.Stream | None = None
         # Store DynamicMap for idempotent plot() calls
         self._dmap: hv.DynamicMap | None = None
+
+    def set_roi_publisher(self, publisher: ROIPublisher | None) -> None:
+        """Set the ROI publisher for this plotter."""
+        self._roi_publisher = publisher
 
     @abstractmethod
     def _create_converter(self) -> ConverterType:
@@ -531,11 +545,7 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
             self._logger.warning("%s geometry not configured", self._geometry_type())
             return
 
-        self._roi_publisher.publish(
-            self._result_key.job_id,
-            rois,
-            geometry,
-        )
+        self._roi_publisher.publish(self._result_key.job_id, rois, geometry)
         self._logger.info(
             "Published %d %s ROI(s) for job %s",
             len(rois),
@@ -605,10 +615,7 @@ class RectanglesRequestPlotter(
 class PolygonsRequestStyle(pydantic.BaseModel):
     """Style options for ROI request polygons."""
 
-    color: Color = pydantic.Field(
-        default=Color("#808080"),
-        title="Color",
-    )
+    color: Color = pydantic.Field(default=Color("#808080"), title="Color")
     line_width: float = pydantic.Field(
         default=2.0,
         ge=0.0,
