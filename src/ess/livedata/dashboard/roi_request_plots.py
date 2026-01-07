@@ -369,8 +369,9 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         self._current_rois: dict[int, ROIType] = {}
         self._index_offset: int = 0
         # Keep streams alive to prevent garbage collection
-        self._pipe: hv.streams.Pipe | None = None
         self._edit_stream: hv.streams.Stream | None = None
+        # Store DynamicMap for idempotent plot() calls
+        self._dmap: hv.DynamicMap | None = None
 
     @abstractmethod
     def _create_converter(self) -> ConverterType:
@@ -430,13 +431,17 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         """
         del data, kwargs  # We only need job_id from data_key
 
+        # Return existing DynamicMap if already initialized (idempotent)
+        if self._dmap is not None:
+            return self._dmap
+
         self._result_key = data_key
         self._index_offset = self._get_index_offset()
         initial_rois = self._parse_initial_geometry()
 
-        # Create pipe for programmatic updates (store to prevent GC)
-        self._pipe = hv.streams.Pipe(data=[])
-        dmap = hv.DynamicMap(self._create_element, streams=[self._pipe])
+        # Create pipe for programmatic updates
+        pipe = hv.streams.Pipe(data=[])
+        dmap = hv.DynamicMap(self._create_element, streams=[pipe])
 
         # Create edit stream (store to prevent GC)
         self._edit_stream = self._create_edit_stream(
@@ -444,7 +449,7 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         )
 
         # Initialize pipe with current data
-        self._pipe.send(self._converter.to_hv_data(initial_rois, index_to_color=None))
+        pipe.send(self._converter.to_hv_data(initial_rois, index_to_color=None))
 
         # Store initial state
         self._current_rois = initial_rois
@@ -455,8 +460,9 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         # Publish initial state
         self._publish_rois(initial_rois)
 
-        # Apply styling
-        return self._apply_styling(dmap)
+        # Apply styling and store for idempotent returns
+        self._dmap = self._apply_styling(dmap)
+        return self._dmap
 
     def _on_edit(self, event) -> None:
         """Handle edit stream data changes from user interaction."""
