@@ -24,7 +24,7 @@ from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
 from ess.livedata.config.roi_names import get_roi_mapper
 
 from .plots import Plotter
-from .static_plots import Color, LineDash, _parse_rectangle_list
+from .static_plots import Color, LineDash, RectanglesCoordinates
 
 
 class RectangleConverter:
@@ -263,10 +263,10 @@ if TYPE_CHECKING:
     from .roi_publisher import ROIPublisher
 
 
-class OptionalRectanglesCoordinates(pydantic.BaseModel):
+class OptionalRectanglesCoordinates(RectanglesCoordinates):
     """Wrapper for optional rectangle coordinate input.
 
-    Unlike RectanglesCoordinates from static_plots, this allows empty coordinates
+    Unlike RectanglesCoordinates, this allows empty coordinates
     for request plotters where no initial rectangles are configured.
     """
 
@@ -282,30 +282,8 @@ class OptionalRectanglesCoordinates(pydantic.BaseModel):
         """Validate rectangle coordinate structure, allowing empty."""
         v = v.strip()
         if not v:
-            return ""  # Allow empty
-
-        coords = _parse_rectangle_list(v)
-        for i, rect in enumerate(coords):
-            if not isinstance(rect, list | tuple):
-                raise ValueError(f"Rectangle {i + 1}: must be a list [x0, y0, x1, y1]")
-            if len(rect) != 4:
-                raise ValueError(
-                    f"Rectangle {i + 1}: expected 4 coordinates [x0, y0, x1, y1], "
-                    f"got {len(rect)}"
-                )
-            for j, val in enumerate(rect):
-                if not isinstance(val, int | float):
-                    raise ValueError(
-                        f"Rectangle {i + 1}, coordinate {j + 1}: must be a number"
-                    )
-        return v
-
-    def parse(self) -> list[tuple[float, float, float, float]]:
-        """Parse validated coordinates into list of rectangle tuples."""
-        if not self.coordinates:
-            return []
-        coords = _parse_rectangle_list(self.coordinates)
-        return [(float(r[0]), float(r[1]), float(r[2]), float(r[3])) for r in coords]
+            return ""  # Allow empty instead of raising
+        return super().validate_coordinates(v)
 
 
 class RectanglesRequestStyle(pydantic.BaseModel):
