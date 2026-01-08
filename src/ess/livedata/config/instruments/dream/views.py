@@ -38,6 +38,5 @@ def get_strip_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
     """Transform to extract strip view (sum over all but strip)."""
     from ess.dream.workflows import DETECTOR_BANK_SIZES
 
-    return da.fold(dim=da.dim, sizes=DETECTOR_BANK_SIZES[source_name]).sum(
-        ('wire', 'module', 'segment', 'counter')
-    )
+    folded = da.fold(dim=da.dim, sizes=DETECTOR_BANK_SIZES[source_name])
+    return folded.sum(tuple(d for d in folded.dims if d != 'strip'))
