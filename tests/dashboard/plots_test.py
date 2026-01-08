@@ -1343,3 +1343,118 @@ class TestOverlay1DPlotter:
             opts = hv.Store.lookup_options('bokeh', curve, 'plot').kwargs
             assert opts.get('responsive') is True
             assert 'aspect' not in opts or opts.get('aspect') is None
+
+
+class TestLagIndicator:
+    """Tests for lag indicator functionality in plotters."""
+
+    @pytest.fixture
+    def data_key(self):
+        """Create a test ResultKey."""
+        workflow_id = WorkflowId(
+            instrument='test_instrument',
+            namespace='test_namespace',
+            name='test_workflow',
+            version=1,
+        )
+        job_id = JobId(source_name='test_source', job_number=uuid.uuid4())
+        return ResultKey(
+            workflow_id=workflow_id, job_id=job_id, output_name='test_result'
+        )
+
+    def test_time_info_shown_when_coords_present(self, data_key):
+        """Test that time interval and lag are shown in title."""
+        import time
+
+        now_ns = time.time_ns()
+        # Create data with start_time 2 seconds ago and end_time 1 second ago
+        start_time_ns = now_ns - int(2e9)
+        end_time_ns = now_ns - int(1e9)
+        data = sc.DataArray(
+            data=sc.array(dims=['x'], values=[1.0, 2.0, 3.0]),
+            coords={
+                'x': sc.array(dims=['x'], values=[0.0, 1.0, 2.0]),
+                'start_time': sc.scalar(start_time_ns, unit='ns'),
+                'end_time': sc.scalar(end_time_ns, unit='ns'),
+            },
+        )
+
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        result = plotter({data_key: data})
+
+        # Check that title contains time range and lag
+        opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
+        assert 'title' in opts
+        title = opts['title']
+        # Should contain time range separator and lag
+        assert ' - ' in title  # hyphen between times
+        assert 'Lag:' in title
+        # Lag should be approximately 1 second
+        assert '1.' in title or '2.' in title
+
+    def test_no_lag_title_when_end_time_absent(self, data_key):
+        """Test that no lag title is added when end_time coord is absent."""
+        data = sc.DataArray(
+            data=sc.array(dims=['x'], values=[1.0, 2.0, 3.0]),
+            coords={'x': sc.array(dims=['x'], values=[0.0, 1.0, 2.0])},
+        )
+
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        result = plotter({data_key: data})
+
+        # Check that no title is set (or title doesn't contain Lag)
+        opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
+        title = opts.get('title', '')
+        assert 'Lag:' not in title
+
+    def test_lag_uses_maximum_across_multiple_sources(self):
+        """Test that lag shows the maximum (oldest data) when multiple sources."""
+        import time
+
+        workflow_id = WorkflowId(
+            instrument='test_instrument',
+            namespace='test_namespace',
+            name='test_workflow',
+            version=1,
+        )
+
+        now_ns = time.time_ns()
+        # Source 1: data from 2s to 1s ago
+        data_key1 = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source1', job_number=uuid.uuid4()),
+            output_name='result',
+        )
+        data1 = sc.DataArray(
+            data=sc.array(dims=['x'], values=[1.0, 2.0, 3.0]),
+            coords={
+                'x': sc.array(dims=['x'], values=[0.0, 1.0, 2.0]),
+                'start_time': sc.scalar(now_ns - int(2e9), unit='ns'),
+                'end_time': sc.scalar(now_ns - int(1e9), unit='ns'),
+            },
+        )
+
+        # Source 2: data from 6s to 5s ago (older, should determine the lag)
+        data_key2 = ResultKey(
+            workflow_id=workflow_id,
+            job_id=JobId(source_name='source2', job_number=uuid.uuid4()),
+            output_name='result',
+        )
+        data2 = sc.DataArray(
+            data=sc.array(dims=['x'], values=[4.0, 5.0, 6.0]),
+            coords={
+                'x': sc.array(dims=['x'], values=[0.0, 1.0, 2.0]),
+                'start_time': sc.scalar(now_ns - int(6e9), unit='ns'),
+                'end_time': sc.scalar(now_ns - int(5e9), unit='ns'),
+            },
+        )
+
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        result = plotter({data_key1: data1, data_key2: data2})
+
+        # Check that lag is approximately 5 seconds (the older data)
+        opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
+        assert 'title' in opts
+        assert 'Lag:' in opts['title']
+        # Should show ~5 seconds, not ~1 second (using oldest end_time)
+        assert '5.' in opts['title'] or '6.' in opts['title']
