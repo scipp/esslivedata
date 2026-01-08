@@ -365,6 +365,7 @@ class Instrument:
                     instrument=self,
                     transform=config.transform,
                     reduction_dim=config.reduction_dim,
+                    roi_support=config.roi_support,
                 )
                 handle.attach_factory()(view.make_view)
 

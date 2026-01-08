@@ -171,10 +171,12 @@ class DetectorLogicalView:
         instrument: Instrument,
         transform: Callable[[sc.DataArray, str], sc.DataArray] | None = None,
         reduction_dim: str | list[str] | None = None,
+        roi_support: bool = True,
     ) -> None:
         self._instrument = instrument
         self._transform = transform if transform is not None else _identity
         self._reduction_dim = reduction_dim
+        self._roi_support = roi_support
         self._window_length = 1
 
     def make_view(self, source_name: str, params: DetectorViewParams) -> DetectorView:
@@ -189,7 +191,9 @@ class DetectorLogicalView:
             transform=bound_transform,
             reduction_dim=self._reduction_dim,
         )
-        return DetectorView(params=params, detector_view=detector_view)
+        return DetectorView(
+            params=params, detector_view=detector_view, roi_support=self._roi_support
+        )
 
 
 class DetectorHandlerFactory(
