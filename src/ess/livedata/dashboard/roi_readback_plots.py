@@ -214,6 +214,7 @@ class PolygonsReadbackPlotter(Plotter):
             return hv.Polygons([]).opts(
                 fill_alpha=style.fill_alpha,
                 line_width=style.line_width,
+                show_legend=False,
             )
 
         # Convert to HoloViews format with colors
@@ -223,6 +224,7 @@ class PolygonsReadbackPlotter(Plotter):
             line_color='color',
             fill_alpha=style.fill_alpha,
             line_width=style.line_width,
+            show_legend=False,
         )
 
     def _to_hv_data(self, rois: dict[int, PolygonROI]) -> list[dict[str, Any]]:

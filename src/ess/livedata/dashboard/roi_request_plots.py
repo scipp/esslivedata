@@ -21,7 +21,12 @@ import pydantic
 import scipp as sc
 
 from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
-from ess.livedata.config.roi_names import ROIGeometryType, get_roi_mapper
+from ess.livedata.config.roi_names import (
+    ROIGeometryType,
+    get_default_index_offset,
+    get_default_num_rois,
+    get_roi_mapper,
+)
 
 from .plots import Plotter
 from .static_plots import Color, LineDash, RectanglesCoordinates
@@ -42,7 +47,7 @@ class ROIPublisherAware(Protocol):
 def _get_max_rois_for_geometry(geometry_type: ROIGeometryType) -> int:
     """Get max ROI count for a geometry type from central config."""
     geom = get_roi_mapper().geometry_for_type(geometry_type)
-    return geom.num_rois if geom else 4
+    return geom.num_rois if geom else get_default_num_rois(geometry_type)
 
 
 class RectangleConverter:
@@ -207,7 +212,7 @@ class PolygonConverter:
 
         rois = {}
         for i, (xs, ys) in enumerate(zip(xs_list, ys_list, strict=True)):
-            # Skip polygons with fewer than 3 vertices
+            # Polygons are always closed by HoloViews, so 3 vertices define a triangle.
             if len(xs) < 3 or len(ys) < 3:
                 continue
 
@@ -239,6 +244,7 @@ class PolygonConverter:
         polygons = []
         for idx in sorted(rois.keys()):
             roi = rois[idx]
+            # Explicit float() ensures Python floats for Bokeh JSON serialization.
             poly_dict: dict[str, Any] = {
                 'x': [float(v) for v in roi.x],
                 'y': [float(v) for v in roi.y],
@@ -387,7 +393,9 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         # Units extracted from readback data coordinates
         self._x_unit: str | None = None
         self._y_unit: str | None = None
-        # Keep streams alive to prevent garbage collection
+        # Store edit stream reference. While the DynamicMap keeps streams alive via
+        # source linkage, we store an explicit reference for clarity and defensive
+        # programming in case HoloViews internals change.
         self._edit_stream: hv.streams.Stream | None = None
         # Store DynamicMap for idempotent plot() calls
         self._dmap: hv.DynamicMap | None = None
@@ -472,7 +480,7 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         pipe = hv.streams.Pipe(data=[])
         dmap = hv.DynamicMap(self._create_element, streams=[pipe])
 
-        # Create edit stream (store to prevent GC)
+        # Create and store edit stream (see __init__ comment for why we store this)
         self._edit_stream = self._create_edit_stream(
             dmap, self._converter.to_stream_data(initial_rois)
         )
@@ -528,6 +536,7 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         style = self._get_style()
         return dmap.opts(
             color=style.color,
+            # Transparent fill so users can see the underlying image while editing.
             fill_alpha=0,
             line_width=style.line_width,
             line_dash=style.line_dash,
@@ -715,8 +724,12 @@ class PolygonsRequestPlotter(
         return "polygon"
 
     def _get_index_offset(self) -> int:
+        # Polygons start after rectangles so each geometry type gets distinct colors
+        # from the color cycle when displayed together.
         poly_geom = self._roi_mapper.geometry_for_type("polygon")
-        return poly_geom.index_offset if poly_geom else 4
+        return (
+            poly_geom.index_offset if poly_geom else get_default_index_offset("polygon")
+        )
 
     def _parse_initial_geometry(self) -> dict[int, PolygonROI]:
         """Parse initial polygons from params."""
@@ -753,7 +766,20 @@ class PolygonsRequestPlotter(
         )
 
     def _should_skip_edit(self, new_rois: dict[int, PolygonROI]) -> bool:
-        """Skip while user is actively drawing (trailing duplicate vertex)."""
+        """Skip publishing while user is actively drawing a polygon.
+
+        PolyDraw reports the cursor position as a trailing duplicate vertex
+        (last vertex == second-to-last vertex). We only publish when the
+        user clicks to confirm a vertex, which removes the duplicate.
+        This avoids race conditions with backend updates during drawing.
+
+        NOTE: This relies on undocumented Bokeh PolyDrawTool behavior.
+        In poly_draw_tool.ts, "new" mode initializes with [x,x]/[y,y] and
+        "add" mode captures-then-pushes the last vertex, creating a brief
+        duplicate after each click until cursor movement updates it.
+        This is fundamental to the rubber-band preview UX but not a
+        documented API guarantee.
+        """
         for roi in new_rois.values():
             if len(roi.x) >= 2:
                 if roi.x[-1] == roi.x[-2] and roi.y[-1] == roi.y[-2]:

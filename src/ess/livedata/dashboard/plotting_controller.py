@@ -214,8 +214,9 @@ class PlottingController:
         """
         plotter = plotter_registry.create_plotter(plot_name, params=params)
 
-        # ROI request plotters need a publisher and return a DynamicMap with
-        # BoxEdit/PolyDraw streams already attached. Don't wrap again.
+        # ROI request plotters create and return their own DynamicMap with interactive
+        # BoxEdit/PolyDraw edit streams. Standard plotters return plot elements that
+        # we wrap in a DynamicMap below.
         if isinstance(plotter, ROIPublisherAware):
             plotter.set_roi_publisher(self._roi_publisher)
             # Get the first data key and its data for the plot() call
