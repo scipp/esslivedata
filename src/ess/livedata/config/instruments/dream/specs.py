@@ -54,6 +54,7 @@ instrument.add_logical_view(
         'endcap_forward_detector',
     ],
     transform=get_wire_view,
+    roi_support=False,
 )
 instrument.add_logical_view(
     name='strip_view',
@@ -61,6 +62,8 @@ instrument.add_logical_view(
     description='Sum over all dimensions except strip to show counts per strip.',
     source_names=detector_names,
     transform=get_strip_view,
+    output_ndim=1,
+    roi_support=False,
 )
 
 # Mapping of detector names to their projection types
