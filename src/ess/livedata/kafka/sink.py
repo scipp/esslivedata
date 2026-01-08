@@ -86,12 +86,13 @@ class KafkaSink(MessageSink[T]):
                 topic = stream_kind_to_topic(
                     instrument=self._instrument, kind=msg.stream.kind
                 )
-                if msg.stream.kind in (
-                    StreamKind.LIVEDATA_COMMANDS,
-                    StreamKind.LIVEDATA_RESPONSES,
-                ):
+                if msg.stream.kind == StreamKind.LIVEDATA_COMMANDS:
                     key_bytes = str(msg.value.config_key).encode('utf-8')
                     value = msg.value.value.model_dump_json().encode('utf-8')
+                elif msg.stream.kind == StreamKind.LIVEDATA_RESPONSES:
+                    # Acknowledgements are events, not state - no key needed
+                    key_bytes = None
+                    value = msg.value.model_dump_json().encode('utf-8')
                 elif msg.stream == STATUS_STREAM_ID:
                     key_bytes = None
                     value = job_status_to_x5f2(msg.value)
