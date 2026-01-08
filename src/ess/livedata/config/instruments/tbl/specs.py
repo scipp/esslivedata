@@ -5,10 +5,9 @@ TBL workflow spec registration.
 """
 
 from ess.livedata.config import Instrument, instrument_registry
-from ess.livedata.handlers.detector_view_specs import (
-    DetectorViewOutputs,
-    register_logical_detector_view_spec,
-)
+from ess.livedata.handlers.detector_view_specs import DetectorViewOutputs
+
+from .views import fold_image, get_he3_detector_view, get_multiblade_view, identity
 
 detector_names = [
     'timepix3_detector',
@@ -23,40 +22,42 @@ instrument = Instrument(name='tbl', detector_names=detector_names)
 
 instrument_registry.register(instrument)
 
-timepix3_view_handle = register_logical_detector_view_spec(
-    instrument=instrument,
+instrument.add_logical_view(
     name='tbl_detector_timepix3',
     title='Timepix3 Detector',
     description='512x512 image downsampled from full resolution',
     source_names=['timepix3_detector'],
+    transform=fold_image,
+    reduction_dim=['x_bin', 'y_bin'],
     roi_support=True,
 )
 
-multiblade_view_handle = register_logical_detector_view_spec(
-    instrument=instrument,
+instrument.add_logical_view(
     name='multiblade_detector_view',
     title='Multiblade Detector',
     description='Counts folded into blade, wire, and strip dimensions',
     source_names=['multiblade_detector'],
+    transform=get_multiblade_view,
     roi_support=True,
     output_ndim=3,
 )
 
-he3_detector_handle = register_logical_detector_view_spec(
-    instrument=instrument,
+instrument.add_logical_view(
     name='he3_detector_view',
     title='He3 Detector',
     description='Combined view of both detector banks with tube and pixel axes',
     source_names=['he3_detector_bank0', 'he3_detector_bank1'],
+    transform=get_he3_detector_view,
     roi_support=True,
 )
 
-ngem_detector_handle = register_logical_detector_view_spec(
-    instrument=instrument,
+instrument.add_logical_view(
     name='ngem_detector_view',
     title='NGEM Detector',
     description='2D detector counts view',
     source_names=['ngem_detector'],
+    transform=identity,
+    reduction_dim='dim_0',
     roi_support=True,
 )
 

@@ -26,6 +26,7 @@ The typical convention uses this structure (but you can organize differently):
 src/ess/livedata/config/instruments/<instrument>/
 ├── __init__.py          # Imports and re-exports for package namespace
 ├── specs.py             # Instrument instance and workflow spec registration
+├── views.py             # Detector view transform functions (optional)
 ├── streams.py           # Stream mappings (typically defines stream_mapping and detector_fakes)
 └── factories.py         # Factory implementations (setup_factories function)
 ```
@@ -230,19 +231,55 @@ def setup_factories(instrument: Instrument) -> None:
 
 ESSlivedata supports different detector view projections:
 
-#### Logical View (2D detectors)
+#### Logical Views (2D/3D detectors with transforms)
 
-For regular 2D detectors or individual layers/slices of 3D detectors:
+For detectors that need custom transforms (folding, slicing, renaming dimensions), use `instrument.add_logical_view()` in `specs.py`. This registers both the spec and transform, with the factory auto-attached during `load_factories()`:
 
 ```python
-from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
+# In specs.py
+from .views import get_detector_view
 
-# Create logical view
-logical_view = DetectorLogicalView(instrument=instrument)
+instrument.add_logical_view(
+    name='detector_xy',
+    title='Detector XY View',
+    description='2D view of detector counts',
+    source_names=['detector1'],
+    transform=get_detector_view,
+    roi_support=True,  # Enable ROI selection (default: True)
+)
+```
 
-# Attach to spec handle from specs.py
-from . import specs
-specs.detector_view_handle.attach_factory()(logical_view.make_view)
+The transform function goes in a separate `views.py` to keep `specs.py` lightweight:
+
+```python
+# In views.py
+import scipp as sc
+
+def get_detector_view(da: sc.DataArray) -> sc.DataArray:
+    """Transform detector data to 2D view."""
+    return da.fold(dim='detector_number', sizes={'y': 128, 'x': 128})
+```
+
+For downsampling views that need proper ROI index mapping, use `reduction_dim`:
+
+```python
+# In views.py
+def fold_image(da: sc.DataArray) -> sc.DataArray:
+    """Fold for downsampling - don't sum here, use reduction_dim instead."""
+    da = da.rename_dims({'dim_0': 'x', 'dim_1': 'y'})
+    da = da.fold(dim='x', sizes={'x': 512, 'x_bin': -1})
+    da = da.fold(dim='y', sizes={'y': 512, 'y_bin': -1})
+    return da
+
+# In specs.py
+instrument.add_logical_view(
+    name='detector_downsampled',
+    title='Detector (512x512)',
+    description='Downsampled detector view',
+    source_names=['detector1'],
+    transform=fold_image,
+    reduction_dim=['x_bin', 'y_bin'],  # Dimensions to sum over
+)
 ```
 
 #### Geometric Projections (complex geometries)
