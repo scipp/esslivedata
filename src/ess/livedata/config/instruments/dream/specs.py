@@ -11,7 +11,7 @@ import pydantic
 import scipp as sc
 
 from ess.livedata import parameter_models
-from ess.livedata.config import Instrument, instrument_registry
+from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
 
@@ -31,6 +31,30 @@ instrument = Instrument(
     name='dream',
     detector_names=detector_names,
     monitors=['monitor1', 'monitor2'],
+    source_metadata={
+        'mantle_detector': SourceMetadata(
+            title='Mantle',
+            description='Main cylindrical detector covering the mantle region',
+        ),
+        'endcap_backward_detector': SourceMetadata(
+            title='Backward Endcap',
+            description='Endcap detector at backward scattering angles',
+        ),
+        'endcap_forward_detector': SourceMetadata(
+            title='Forward Endcap',
+            description='Endcap detector at forward scattering angles',
+        ),
+        'high_resolution_detector': SourceMetadata(
+            title='High Resolution',
+            description='High-resolution detector bank',
+        ),
+        'sans_detector': SourceMetadata(
+            title='SANS',
+            description='Small-angle neutron scattering detector',
+        ),
+        'monitor1': SourceMetadata(title='Monitor 1'),
+        'monitor2': SourceMetadata(title='Monitor 2'),
+    },
 )
 
 # Register instrument

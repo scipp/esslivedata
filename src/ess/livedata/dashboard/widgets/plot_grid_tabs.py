@@ -506,7 +506,9 @@ class PlotGridTabs:
 
             # Get display info for this layer
             title, description = get_plot_cell_display_info(
-                config, self._workflow_registry
+                config,
+                self._workflow_registry,
+                get_source_title=self._orchestrator.get_source_title,
             )
 
             # Add state info to description

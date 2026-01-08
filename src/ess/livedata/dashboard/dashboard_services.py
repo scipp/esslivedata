@@ -150,6 +150,7 @@ class DashboardServices:
             instrument=self._instrument,
             config_store=plot_config_store,
             raw_templates=raw_templates,
+            instrument_config=self.instrument_config,
         )
         self._logger.info("PlotOrchestrator setup complete")
 
@@ -157,19 +158,22 @@ class DashboardServices:
         """Initialize workflow controller and related components."""
         # Load the module to register the instrument's workflows
         self.instrument_module = get_config(self._instrument)
-        self.processor_factory = instrument_registry[self._instrument].workflow_factory
+        self.instrument_config = instrument_registry[self._instrument]
+        self.processor_factory = self.instrument_config.workflow_factory
 
         self.correlation_controller = CorrelationHistogramController(self.data_service)
         self.job_orchestrator = JobOrchestrator(
             command_service=self.command_service,
             workflow_registry=self.processor_factory,
             config_store=self.workflow_config_store,
+            instrument_config=self.instrument_config,
         )
         self.workflow_controller = WorkflowController(
             job_orchestrator=self.job_orchestrator,
             workflow_registry=self.processor_factory,
             data_service=self.data_service,
             correlation_histogram_controller=self.correlation_controller,
+            instrument_config=self.instrument_config,
         )
 
         # Create orchestrator now that job_orchestrator exists
