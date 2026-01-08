@@ -10,7 +10,7 @@ in specs.py.
 import scipp as sc
 
 
-def fold_image(da: sc.DataArray) -> sc.DataArray:
+def fold_image(da: sc.DataArray, source_name: str) -> sc.DataArray:
     """Fold detector image dimensions for downsampling to 512x512."""
     # 4096x4096 is the actual panel size, but ess.livedata might not be able to keep
     # up with that so we downsample to 512x512.

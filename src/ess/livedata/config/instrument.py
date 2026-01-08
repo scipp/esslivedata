@@ -23,7 +23,7 @@ class LogicalViewConfig:
     title: str
     description: str
     source_names: list[str]
-    transform: Callable[[sc.DataArray], sc.DataArray]
+    transform: Callable[[sc.DataArray, str], sc.DataArray]
     roi_support: bool = True
     output_ndim: int | None = None
     reduction_dim: str | list[str] | None = None
@@ -175,7 +175,7 @@ class Instrument:
         title: str,
         description: str,
         source_names: Sequence[str],
-        transform: Callable[[sc.DataArray], sc.DataArray],
+        transform: Callable[[sc.DataArray, str], sc.DataArray],
         roi_support: bool = True,
         output_ndim: int | None = None,
         reduction_dim: str | list[str] | None = None,
@@ -198,6 +198,10 @@ class Instrument:
             List of detector source names this view applies to.
         transform:
             Function that transforms raw detector data to the view output.
+            Signature: ``(da: DataArray, source_name: str) -> DataArray``.
+            The ``source_name`` identifies which detector bank the data is from,
+            allowing a single transform to handle multiple banks with different
+            parameters (e.g., different fold sizes).
             If reduction_dim is specified, the transform should NOT include
             summing - that is handled separately to enable proper ROI index mapping.
         roi_support:

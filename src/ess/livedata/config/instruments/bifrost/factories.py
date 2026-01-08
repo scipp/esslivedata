@@ -262,7 +262,9 @@ def _combine_banks(*bank: sc.DataArray) -> sc.DataArray:
     return _transpose_with_coords(combined, ('arc', 'tube', 'channel', 'pixel')).copy()
 
 
-def _to_flat_detector_view(obj: sc.Variable | sc.DataArray) -> sc.DataArray:
+def _to_flat_detector_view(
+    obj: sc.Variable | sc.DataArray, source_name: str
+) -> sc.DataArray:
     da = sc.DataArray(obj) if isinstance(obj, sc.Variable) else obj
     da = da.to(dtype='float32')
     return da.flatten(dims=('arc', 'tube'), to='arc/tube').flatten(
