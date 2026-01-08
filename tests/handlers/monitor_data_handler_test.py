@@ -149,8 +149,11 @@ class TestMonitorStreamProcessor:
 
         assert "cumulative" in result
         assert "current" in result
-        # Check cumulative data (excluding time coord which current has)
-        assert_identical(result["cumulative"], result["current"].drop_coords("time"))
+        # Check cumulative data (excluding time coords which current has)
+        current_without_time = result["current"].drop_coords(
+            ["time", "start_time", "end_time"]
+        )
+        assert_identical(result["cumulative"], current_without_time)
 
         # Verify time coordinate is present
         assert "time" in result["current"].coords
@@ -212,6 +215,62 @@ class TestMonitorStreamProcessor:
         processor.accumulate({"det1": np.array([30e6])}, start_time=5000, end_time=6000)
         result2 = processor.finalize()
         assert result2["current"].coords["time"].value == 5000
+
+    def test_current_has_start_end_time_coords(self, processor):
+        """Test that 'current' result has start_time and end_time coords.
+
+        Delta outputs like 'current' need their own time bounds that represent
+        the period since the last finalize, not the entire job duration.
+        """
+        processor.accumulate({"det1": np.array([10e6])}, start_time=1000, end_time=2000)
+        result = processor.finalize()
+
+        # Verify start_time and end_time coords are present on current
+        assert "start_time" in result["current"].coords
+        assert "end_time" in result["current"].coords
+        assert result["current"].coords["start_time"].value == 1000
+        assert result["current"].coords["end_time"].value == 2000
+        assert result["current"].coords["start_time"].unit == "ns"
+        assert result["current"].coords["end_time"].unit == "ns"
+
+        # cumulative should not have start_time or end_time coords
+        # (they will be added by Job.get() with job-level times)
+        assert "start_time" not in result["cumulative"].coords
+        assert "end_time" not in result["cumulative"].coords
+
+    def test_delta_outputs_track_time_since_last_finalize(self, processor):
+        """Test that delta outputs track time since last finalize, not job start.
+
+        This is critical for showing correct time bounds when the dashboard
+        displays the period used to compute delta outputs like 'current'.
+        """
+        # First period: accumulate and finalize
+        processor.accumulate({"det1": np.array([10e6])}, start_time=1000, end_time=2000)
+        result1 = processor.finalize()
+        assert result1["current"].coords["start_time"].value == 1000
+        assert result1["current"].coords["end_time"].value == 2000
+
+        # Second period: new time range
+        processor.accumulate({"det1": np.array([20e6])}, start_time=3000, end_time=4000)
+        result2 = processor.finalize()
+
+        # Delta output should reflect second period's time range, NOT job start
+        assert result2["current"].coords["start_time"].value == 3000
+        assert result2["current"].coords["end_time"].value == 4000
+
+    def test_counts_have_start_end_time_coords(self, processor):
+        """Test that counts outputs have start_time and end_time coords."""
+        processor.accumulate({"det1": np.array([10e6])}, start_time=1000, end_time=2000)
+        result = processor.finalize()
+
+        # Verify start_time and end_time coords on counts outputs
+        for key in ["counts_total", "counts_in_toa_range"]:
+            assert "start_time" in result[key].coords, f"Missing start_time on {key}"
+            assert "end_time" in result[key].coords, f"Missing end_time on {key}"
+            assert result[key].coords["start_time"].value == 1000
+            assert result[key].coords["end_time"].value == 2000
+            assert result[key].coords["start_time"].unit == "ns"
+            assert result[key].coords["end_time"].unit == "ns"
 
     def test_clear(self, processor):
         """Test clear method resets processor state."""

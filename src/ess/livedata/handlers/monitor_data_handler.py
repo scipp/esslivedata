@@ -26,6 +26,7 @@ class MonitorStreamProcessor(Workflow):
         self._cumulative: sc.DataArray | None = None
         self._current: sc.DataArray | None = None
         self._current_start_time: int | None = None
+        self._current_end_time: int | None = None
         # Ratemeter configuration - convert range to edges unit once
         dim = edges.dim
         if toa_range is not None:
@@ -57,9 +58,10 @@ class MonitorStreamProcessor(Workflow):
         if len(data) != 1:
             raise ValueError("MonitorStreamProcessor expects exactly one data item.")
 
-        # Track start time of first data since last finalize
+        # Track time range of data since last finalize
         if self._current_start_time is None:
             self._current_start_time = start_time
+        self._current_end_time = end_time
 
         raw = next(iter(data.values()))
         # Note: In theory we should consider rebinning/histogramming only in finalize(),
@@ -104,14 +106,23 @@ class MonitorStreamProcessor(Workflow):
             self._cumulative += current
         self._current = sc.zeros_like(current)
 
-        # Add time coord to current result
-        time_coord = sc.scalar(self._current_start_time, unit='ns')
-        current = current.assign_coords(time=time_coord)
-        self._current_start_time = None
+        # Create time coords for delta outputs. The start_time and end_time coords
+        # represent the time range of the current (delta) output, which is the
+        # period since the last finalize. This differs from the job-level times
+        # which cover the entire job duration.
+        start_time_coord = sc.scalar(self._current_start_time, unit='ns')
+        end_time_coord = sc.scalar(self._current_end_time, unit='ns')
+
+        # The 'time' coord is kept for backward compatibility
+        current = current.assign_coords(
+            time=start_time_coord, start_time=start_time_coord, end_time=end_time_coord
+        )
 
         # Compute ratemeter counts (always output both)
         counts_total = current.sum()
-        counts_total.coords['time'] = time_coord
+        counts_total.coords['time'] = start_time_coord
+        counts_total.coords['start_time'] = start_time_coord
+        counts_total.coords['end_time'] = end_time_coord
 
         if self._toa_range is not None:
             low, high = self._toa_range
@@ -120,8 +131,14 @@ class MonitorStreamProcessor(Workflow):
         else:
             # When TOA range not enabled, counts_in_toa_range equals total
             counts_in_toa_range = counts_total.copy()
-        counts_in_toa_range.coords['time'] = time_coord
+        counts_in_toa_range.coords['time'] = start_time_coord
+        counts_in_toa_range.coords['start_time'] = start_time_coord
+        counts_in_toa_range.coords['end_time'] = end_time_coord
         counts_in_toa_range.coords[self._edges.dim] = self._toa_range_edges
+
+        # Reset time tracking for next period
+        self._current_start_time = None
+        self._current_end_time = None
 
         return {
             'cumulative': self._cumulative,
@@ -134,6 +151,7 @@ class MonitorStreamProcessor(Workflow):
         self._cumulative = None
         self._current = None
         self._current_start_time = None
+        self._current_end_time = None
 
 
 class MonitorHandlerFactory(
