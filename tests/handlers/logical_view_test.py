@@ -48,6 +48,38 @@ class TestLogicalViewConfig:
         assert config.roi_support is False
         assert config.output_ndim == 3
 
+    def test_config_with_reduction_dim_string(self):
+        config = LogicalViewConfig(
+            name='test_view',
+            title='Test View',
+            description='A test view.',
+            source_names=['detector1'],
+            transform=_identity_transform,
+            reduction_dim='dim_0',
+        )
+        assert config.reduction_dim == 'dim_0'
+
+    def test_config_with_reduction_dim_list(self):
+        config = LogicalViewConfig(
+            name='test_view',
+            title='Test View',
+            description='A test view.',
+            source_names=['detector1'],
+            transform=_identity_transform,
+            reduction_dim=['x_bin', 'y_bin'],
+        )
+        assert config.reduction_dim == ['x_bin', 'y_bin']
+
+    def test_config_reduction_dim_defaults_to_none(self):
+        config = LogicalViewConfig(
+            name='test_view',
+            title='Test View',
+            description='A test view.',
+            source_names=['detector1'],
+            transform=_identity_transform,
+        )
+        assert config.reduction_dim is None
+
 
 class TestAddLogicalView:
     def test_add_logical_view_returns_handle(self):
@@ -124,3 +156,44 @@ class TestAddLogicalView:
         )
         config = instrument._logical_views[0]
         assert config.transform is _identity_transform
+
+    def test_add_logical_view_with_reduction_dim_string(self):
+        """Verify that reduction_dim as string is preserved."""
+        instrument = Instrument(name='test', detector_names=['detector1'])
+        instrument.add_logical_view(
+            name='test_view',
+            title='Test View',
+            description='A test view.',
+            source_names=['detector1'],
+            transform=_identity_transform,
+            reduction_dim='dim_0',
+        )
+        config = instrument._logical_views[0]
+        assert config.reduction_dim == 'dim_0'
+
+    def test_add_logical_view_with_reduction_dim_list(self):
+        """Verify that reduction_dim as list is preserved."""
+        instrument = Instrument(name='test', detector_names=['detector1'])
+        instrument.add_logical_view(
+            name='test_view',
+            title='Test View',
+            description='A test view.',
+            source_names=['detector1'],
+            transform=_identity_transform,
+            reduction_dim=['x_bin', 'y_bin'],
+        )
+        config = instrument._logical_views[0]
+        assert config.reduction_dim == ['x_bin', 'y_bin']
+
+    def test_add_logical_view_reduction_dim_defaults_to_none(self):
+        """Verify that reduction_dim defaults to None."""
+        instrument = Instrument(name='test', detector_names=['detector1'])
+        instrument.add_logical_view(
+            name='test_view',
+            title='Test View',
+            description='A test view.',
+            source_names=['detector1'],
+            transform=_identity_transform,
+        )
+        config = instrument._logical_views[0]
+        assert config.reduction_dim is None

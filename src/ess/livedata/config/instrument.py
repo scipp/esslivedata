@@ -26,6 +26,7 @@ class LogicalViewConfig:
     transform: Callable[[sc.DataArray], sc.DataArray]
     roi_support: bool = True
     output_ndim: int | None = None
+    reduction_dim: str | list[str] | None = None
 
 
 class InstrumentRegistry(UserDict[str, 'Instrument']):
@@ -177,6 +178,7 @@ class Instrument:
         transform: Callable[[sc.DataArray], sc.DataArray],
         roi_support: bool = True,
         output_ndim: int | None = None,
+        reduction_dim: str | list[str] | None = None,
     ) -> SpecHandle:
         """
         Register a logical detector view.
@@ -196,10 +198,16 @@ class Instrument:
             List of detector source names this view applies to.
         transform:
             Function that transforms raw detector data to the view output.
+            If reduction_dim is specified, the transform should NOT include
+            summing - that is handled separately to enable proper ROI index mapping.
         roi_support:
             Whether ROI selection is supported for this view.
         output_ndim:
             Number of dimensions for spatial outputs.
+        reduction_dim:
+            Dimension(s) to sum over after applying transform. If specified,
+            enables proper ROI support by tracking which input pixels contribute
+            to each output pixel.
 
         Returns
         -------
@@ -207,17 +215,27 @@ class Instrument:
             Handle for the registered spec.
         """
         from ess.livedata.handlers.detector_view_specs import (
-            register_logical_detector_view_spec,
+            DetectorROIAuxSources,
+            DetectorViewOutputs,
+            DetectorViewParams,
+            make_detector_view_outputs,
         )
 
-        handle = register_logical_detector_view_spec(
-            instrument=self,
+        outputs = (
+            make_detector_view_outputs(output_ndim)
+            if output_ndim is not None
+            else DetectorViewOutputs
+        )
+        handle = self.register_spec(
+            namespace="detector_data",
             name=name,
+            version=1,
             title=title,
             description=description,
             source_names=list(source_names),
-            roi_support=roi_support,
-            output_ndim=output_ndim,
+            aux_sources=DetectorROIAuxSources if roi_support else None,
+            params=DetectorViewParams,
+            outputs=outputs,
         )
         self._logical_view_handles[name] = handle
         self._logical_views.append(
@@ -229,6 +247,7 @@ class Instrument:
                 transform=transform,
                 roi_support=roi_support,
                 output_ndim=output_ndim,
+                reduction_dim=reduction_dim,
             )
         )
         return handle
@@ -338,7 +357,11 @@ class Instrument:
 
             for config in self._logical_views:
                 handle = self._logical_view_handles[config.name]
-                view = DetectorLogicalView(instrument=self, transform=config.transform)
+                view = DetectorLogicalView(
+                    instrument=self,
+                    transform=config.transform,
+                    reduction_dim=config.reduction_dim,
+                )
                 handle.attach_factory()(view.make_view)
 
         if hasattr(module, 'setup_factories'):
