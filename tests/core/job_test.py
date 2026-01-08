@@ -315,6 +315,66 @@ class TestJob:
         assert isinstance(result.data, sc.DataGroup)
         assert result.error_message is None
 
+    def test_get_adds_time_coords_to_data_arrays(
+        self, fake_processor, sample_workflow_id
+    ):
+        """Test that get() adds start_time and end_time coords to DataArrays."""
+        job_id = JobId(source_name="test_source", job_number=1)
+        job = Job(
+            job_id=job_id,
+            workflow_id=sample_workflow_id,
+            processor=fake_processor,
+            source_names=["test_source"],
+        )
+
+        # Set up processor to return a DataArray
+        fake_processor.data = {
+            "output": sc.DataArray(data=sc.array(dims=["x"], values=[1, 2, 3]))
+        }
+
+        # Add data to set job times
+        data = JobData(
+            start_time=1000,
+            end_time=2000,
+            primary_data={"test_source": sc.scalar(42.0)},
+            aux_data={},
+        )
+        job.add(data)
+
+        result = job.get()
+        output = result.data["output"]
+
+        assert "start_time" in output.coords
+        assert "end_time" in output.coords
+        assert output.coords["start_time"].value == 1000
+        assert output.coords["end_time"].value == 2000
+        assert output.coords["start_time"].unit == "ns"
+        assert output.coords["end_time"].unit == "ns"
+
+    def test_get_does_not_add_time_coords_when_no_data_added(
+        self, fake_processor, sample_workflow_id
+    ):
+        """Test that get() does not add time coords when job has no timing info."""
+        job_id = JobId(source_name="test_source", job_number=1)
+        job = Job(
+            job_id=job_id,
+            workflow_id=sample_workflow_id,
+            processor=fake_processor,
+            source_names=["test_source"],
+        )
+
+        # Set up processor to return a DataArray
+        fake_processor.data = {
+            "output": sc.DataArray(data=sc.array(dims=["x"], values=[1, 2, 3]))
+        }
+
+        # Don't add any data, so start_time and end_time remain None
+        result = job.get()
+        output = result.data["output"]
+
+        assert "start_time" not in output.coords
+        assert "end_time" not in output.coords
+
     def test_get_calls_processor_finalize(self, sample_job, fake_processor):
         """Test that get() calls processor.finalize()."""
         sample_job.get()

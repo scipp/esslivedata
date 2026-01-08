@@ -99,6 +99,31 @@ class JobState(str, Enum):
     warning = "warning"
 
 
+def _add_time_coords(
+    data: sc.DataGroup, start_time: int | None, end_time: int | None
+) -> sc.DataGroup:
+    """
+    Add start_time and end_time as 0-D coordinates to all DataArrays in a DataGroup.
+
+    These coordinates provide temporal provenance for each output, enabling lag
+    calculation in the dashboard (lag = current_time - end_time).
+    """
+    if start_time is None or end_time is None:
+        return data
+    start_coord = sc.scalar(start_time, unit='ns')
+    end_coord = sc.scalar(end_time, unit='ns')
+    return sc.DataGroup(
+        {
+            key: (
+                val.assign_coords(start_time=start_coord, end_time=end_coord)
+                if isinstance(val, sc.DataArray)
+                else val
+            )
+            for key, val in data.items()
+        }
+    )
+
+
 class Job:
     def __init__(
         self,
@@ -206,6 +231,7 @@ class Job:
             data = sc.DataGroup(
                 {str(key): val for key, val in self._processor.finalize().items()}
             )
+            data = _add_time_coords(data, self.start_time, self.end_time)
             return JobResult(
                 job_id=self._job_id,
                 workflow_id=self._workflow_id,
