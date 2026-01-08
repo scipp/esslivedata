@@ -30,11 +30,11 @@ from .scipp_to_holoviews import to_holoviews
 
 
 def _format_time_ns(ns: int) -> str:
-    """Format nanoseconds since epoch as HH:MM:SS in local time."""
+    """Format nanoseconds since epoch as HH:MM:SS.s in local time (0.1s precision)."""
     from datetime import UTC, datetime
 
     dt = datetime.fromtimestamp(ns / 1e9, tz=UTC).astimezone()
-    return dt.strftime('%H:%M:%S')
+    return f"{dt.strftime('%H:%M:%S')}.{dt.microsecond // 100000}"
 
 
 def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
