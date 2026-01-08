@@ -153,7 +153,6 @@ class DetectorView(Workflow):
             current = current - self._previous
         self._previous = cumulative
 
-        # The 'time' coord is kept for backward compatibility
         current = current.assign_coords(
             time=start_time_coord, start_time=start_time_coord, end_time=end_time_coord
         )

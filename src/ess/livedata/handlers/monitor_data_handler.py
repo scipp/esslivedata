@@ -113,7 +113,6 @@ class MonitorStreamProcessor(Workflow):
         start_time_coord = sc.scalar(self._current_start_time, unit='ns')
         end_time_coord = sc.scalar(self._current_end_time, unit='ns')
 
-        # The 'time' coord is kept for backward compatibility
         current = current.assign_coords(
             time=start_time_coord, start_time=start_time_coord, end_time=end_time_coord
         )
