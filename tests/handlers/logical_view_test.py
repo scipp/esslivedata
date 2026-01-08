@@ -197,3 +197,97 @@ class TestAddLogicalView:
         )
         config = instrument._logical_views[0]
         assert config.reduction_dim is None
+
+
+class TestAddLogicalViewSpecOutputs:
+    """Tests for workflow spec outputs based on roi_support."""
+
+    def test_roi_support_true_includes_roi_outputs_in_spec(self):
+        """Verify spec includes ROI outputs when roi_support=True (default)."""
+        instrument = Instrument(name='test', detector_names=['detector1'])
+        handle = instrument.add_logical_view(
+            name='test_view',
+            title='Test View',
+            description='A test view.',
+            source_names=['detector1'],
+            transform=_identity_transform,
+            roi_support=True,
+        )
+        spec = instrument.workflow_factory[handle.workflow_id]
+        output_fields = set(spec.outputs.model_fields.keys())
+
+        # ROI outputs should be present
+        assert 'roi_rectangle' in output_fields
+        assert 'roi_polygon' in output_fields
+        assert 'roi_spectra_current' in output_fields
+        assert 'roi_spectra_cumulative' in output_fields
+
+    def test_roi_support_false_excludes_roi_outputs_from_spec(self):
+        """Verify spec excludes ROI outputs when roi_support=False.
+
+        This is important because the frontend uses the spec's outputs to determine
+        what outputs are available for plotting. If ROI outputs are present in the
+        spec but not actually produced by the workflow, the frontend will show
+        misleading options.
+        """
+        instrument = Instrument(name='test', detector_names=['detector1'])
+        handle = instrument.add_logical_view(
+            name='test_view',
+            title='Test View',
+            description='A test view.',
+            source_names=['detector1'],
+            transform=_identity_transform,
+            roi_support=False,
+        )
+        spec = instrument.workflow_factory[handle.workflow_id]
+        output_fields = set(spec.outputs.model_fields.keys())
+
+        # ROI outputs should NOT be present
+        assert 'roi_rectangle' not in output_fields
+        assert 'roi_polygon' not in output_fields
+        assert 'roi_spectra_current' not in output_fields
+        assert 'roi_spectra_cumulative' not in output_fields
+
+        # Basic outputs should still be present
+        assert 'cumulative' in output_fields
+        assert 'current' in output_fields
+        assert 'counts_total' in output_fields
+
+    def test_roi_support_false_with_output_ndim_excludes_roi_outputs(self):
+        """Verify custom ndim outputs also exclude ROI when roi_support=False."""
+        instrument = Instrument(name='test', detector_names=['detector1'])
+        handle = instrument.add_logical_view(
+            name='test_view',
+            title='Test View',
+            description='A test view.',
+            source_names=['detector1'],
+            transform=_identity_transform,
+            roi_support=False,
+            output_ndim=1,
+        )
+        spec = instrument.workflow_factory[handle.workflow_id]
+        output_fields = set(spec.outputs.model_fields.keys())
+
+        # ROI outputs should NOT be present
+        assert 'roi_rectangle' not in output_fields
+        assert 'roi_polygon' not in output_fields
+
+        # Basic outputs should still be present
+        assert 'cumulative' in output_fields
+        assert 'current' in output_fields
+
+    def test_roi_support_false_sets_aux_sources_to_none(self):
+        """Verify aux_sources is None when roi_support=False."""
+        instrument = Instrument(name='test', detector_names=['detector1'])
+        handle = instrument.add_logical_view(
+            name='test_view',
+            title='Test View',
+            description='A test view.',
+            source_names=['detector1'],
+            transform=_identity_transform,
+            roi_support=False,
+        )
+        spec = instrument.workflow_factory[handle.workflow_id]
+
+        # aux_sources should be None for no ROI support
+        assert spec.aux_sources is None
