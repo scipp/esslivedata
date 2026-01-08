@@ -11,6 +11,24 @@ import scipp as sc
 from .plot_params import WindowAggregation
 
 
+def _set_time_bounds_from_range(data: sc.DataArray) -> sc.DataArray:
+    """
+    Set scalar start_time/end_time coords from min/max of 1-D coords.
+
+    When data comes from a TemporalBuffer, start_time and end_time are 1-D
+    coordinates (one value per time slice). This function computes the overall
+    time range and sets scalar coords for use in plot titles.
+
+    If the coords are already scalar or don't exist, returns data unchanged.
+    """
+    result = data
+    if 'start_time' in data.coords and data.coords['start_time'].ndim == 1:
+        result = result.assign_coords(start_time=data.coords['start_time'].min())
+    if 'end_time' in data.coords and data.coords['end_time'].ndim == 1:
+        result = result.assign_coords(end_time=data.coords['end_time'].max())
+    return result
+
+
 class UpdateExtractor(ABC):
     """Extracts a specific view of buffered data."""
 
@@ -63,7 +81,10 @@ class LatestValueExtractor(UpdateExtractor):
 
     def extract(self, data: sc.DataArray) -> Any:
         """Extract the latest value from the data, unwrapped."""
-        return data[self._concat_dim, -1] if self._concat_dim in data.dims else data
+        if self._concat_dim not in data.dims:
+            return data
+        # Extract last slice - this also gets the last value from any 1-D coords
+        return data[self._concat_dim, -1]
 
 
 def _ensure_datetime_coord(data: sc.DataArray, dim: str = 'time') -> sc.DataArray:
@@ -102,7 +123,8 @@ class FullHistoryExtractor(UpdateExtractor):
 
     def extract(self, data: sc.DataArray) -> Any:
         """Extract all data from the buffer, converting time to datetime64."""
-        return _ensure_datetime_coord(data, self._concat_dim)
+        result = _ensure_datetime_coord(data, self._concat_dim)
+        return _set_time_bounds_from_range(result)
 
 
 class WindowAggregatingExtractor(UpdateExtractor):
@@ -173,6 +195,19 @@ class WindowAggregatingExtractor(UpdateExtractor):
         # the cutoff shift above should handle that well enough.
         windowed_data = data[self._concat_dim, cutoff_time:]
 
+        # Capture time bounds before aggregation (which removes the time dimension)
+        time_bounds = {}
+        if 'start_time' in windowed_data.coords:
+            start_coord = windowed_data.coords['start_time']
+            time_bounds['start_time'] = (
+                start_coord.min() if start_coord.ndim == 1 else start_coord
+            )
+        if 'end_time' in windowed_data.coords:
+            end_coord = windowed_data.coords['end_time']
+            time_bounds['end_time'] = (
+                end_coord.max() if end_coord.ndim == 1 else end_coord
+            )
+
         # Resolve and cache aggregator function on first call
         if self._aggregator is None:
             if self._aggregation == WindowAggregation.auto:
@@ -193,4 +228,10 @@ class WindowAggregatingExtractor(UpdateExtractor):
             if self._aggregator is None:
                 raise ValueError(f"Unknown aggregation method: {self._aggregation}")
 
-        return self._aggregator(windowed_data, self._concat_dim)
+        result = self._aggregator(windowed_data, self._concat_dim)
+
+        # Restore time bounds as scalar coords on the aggregated result
+        if time_bounds:
+            result = result.assign_coords(**time_bounds)
+
+        return result
