@@ -10,18 +10,11 @@ from typing import TYPE_CHECKING
 
 import pydantic
 
-from ..config.roi_names import get_roi_mapper
-
 if TYPE_CHECKING:
     from ess.livedata.config.workflow_spec import ResultKey
 
     from .extractors import UpdateExtractor
     from .plotting import PlotterSpec
-
-
-def _get_default_max_roi_count() -> int:
-    """Get the default maximum ROI count from the mapper configuration."""
-    return get_roi_mapper().total_rois
 
 
 class WindowMode(str, enum.Enum):
@@ -276,27 +269,6 @@ class PlotParamsBars(PlotParamsBase):
     orientation: BarOrientation = pydantic.Field(
         default_factory=BarOrientation,
         description="Bar orientation options.",
-    )
-
-
-class ROIOptions(pydantic.BaseModel):
-    """Options for ROI detector plots."""
-
-    max_roi_count: int = pydantic.Field(
-        default_factory=lambda: min(3, _get_default_max_roi_count()),
-        description="Maximum number of regions of interest (ROIs) that can be defined.",
-        title="Max ROI Count",
-        ge=1,
-        le=_get_default_max_roi_count(),
-    )
-
-
-class PlotParamsROIDetector(PlotParams2d):
-    """Parameters for ROI detector plots."""
-
-    roi_options: ROIOptions = pydantic.Field(
-        default_factory=ROIOptions,
-        description="Options for ROI selection and display.",
     )
 
 

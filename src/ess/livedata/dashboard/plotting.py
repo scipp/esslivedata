@@ -12,9 +12,7 @@ from typing import Any, Generic, Protocol, TypeVar
 import pydantic
 import scipp as sc
 
-from ..handlers.detector_view_specs import DetectorROIAuxSources
 from .extractors import FullHistoryExtractor, UpdateExtractor
-from .plot_params import PlotParamsROIDetector
 from .plots import (
     BarsPlotter,
     ImagePlotter,
@@ -23,7 +21,14 @@ from .plots import (
     Plotter,
     SlicerPlotter,
 )
-from .roi_readback_plots import _register_roi_readback_plotters
+from .roi_readback_plots import (
+    PolygonsReadbackPlotter,
+    RectanglesReadbackPlotter,
+)
+from .roi_request_plots import (
+    PolygonsRequestPlotter,
+    RectanglesRequestPlotter,
+)
 from .scipp_to_holoviews import _all_coords_evenly_spaced
 from .static_plots import _register_static_plotters
 
@@ -341,44 +346,58 @@ plotter_registry.register_plotter(
 )
 
 
-def _roi_detector_plotter_factory(params: PlotParamsROIDetector) -> Plotter:
-    """
-    Dummy factory for ROI detector plotter.
-
-    This plotter is handled as a special case in PlottingController and does not
-    use the standard Plotter interface. This factory exists only for registration
-    purposes to enable UI integration.
-    """
-    raise NotImplementedError(
-        "ROI detector plotter is handled specially in PlottingController"
-    )
-
-
-plotter_registry.register_plotter(
-    name='roi_detector',
-    title='ROI Detector',
-    description=(
-        'Plot 2D detector image with interactive ROI selection and 1D spectrum.'
-        '<p>To configure the ROI, first, activate the BoxEdit tool from the plot '
-        'toolbar, then:</p>'
-        '<ul>'
-        '<li><strong>Add ROI:</strong> Click and hold for 300 ms to start one corner, '
-        'then move the pointer to the other corner and hold for 300 ms. '
-        'Alternatively, hold Shift then click and drag anywhere on the plot.</li>'
-        '<li><strong>Move ROI:</strong> Click and drag an existing ROI. '
-        'The ROI will be dropped once you let go of the mouse button.</li>'
-        '<li><strong>Delete ROI:</strong> Tap an ROI to select it, then press '
-        'Backspace while the mouse is within the plot area.</li>'
-        '</ul>'
-    ),
-    data_requirements=DataRequirements(min_dims=2, max_dims=2, multiple_datasets=True),
-    spec_requirements=SpecRequirements(requires_aux_sources=[DetectorROIAuxSources]),
-    factory=_roi_detector_plotter_factory,
-)
-
-
 # Register static plotters (rectangles, vlines, hlines)
 _register_static_plotters()
 
-# Register ROI readback plotters (rectangles_readback, polygons_readback)
-_register_roi_readback_plotters()
+
+# ROI data requirements (shared between readback and request plotters)
+_RECTANGLE_ROI_REQUIREMENTS: dict = {
+    'min_dims': 1,
+    'max_dims': 1,
+    'required_coords': ['roi_index', 'x', 'y'],
+    'required_dim_names': ['bounds'],
+    'multiple_datasets': False,
+}
+_POLYGON_ROI_REQUIREMENTS: dict = {
+    'min_dims': 1,
+    'max_dims': 1,
+    'required_coords': ['roi_index', 'x', 'y'],
+    'required_dim_names': ['vertex'],
+    'multiple_datasets': False,
+}
+
+# Register ROI rectangle plotters (readback + request)
+plotter_registry.register_plotter(
+    name='rectangles_readback',
+    title='ROI Rectangles (Readback)',
+    description='Display ROI rectangles from workflow output. '
+    'Each rectangle is colored by its ROI index.',
+    data_requirements=DataRequirements(**_RECTANGLE_ROI_REQUIREMENTS),
+    factory=RectanglesReadbackPlotter.from_params,
+)
+plotter_registry.register_plotter(
+    name='rectangles_request',
+    title='ROI Rectangles (Interactive)',
+    description='Draw and edit ROI rectangles interactively. '
+    'Publishes ROI updates to backend for processing.',
+    data_requirements=DataRequirements(**_RECTANGLE_ROI_REQUIREMENTS),
+    factory=RectanglesRequestPlotter.from_params,
+)
+
+# Register ROI polygon plotters (readback + request)
+plotter_registry.register_plotter(
+    name='polygons_readback',
+    title='ROI Polygons (Readback)',
+    description='Display ROI polygons from workflow output. '
+    'Each polygon is colored by its ROI index.',
+    data_requirements=DataRequirements(**_POLYGON_ROI_REQUIREMENTS),
+    factory=PolygonsReadbackPlotter.from_params,
+)
+plotter_registry.register_plotter(
+    name='polygons_request',
+    title='ROI Polygons (Interactive)',
+    description='Draw and edit ROI polygons interactively. '
+    'Publishes ROI updates to backend for processing.',
+    data_requirements=DataRequirements(**_POLYGON_ROI_REQUIREMENTS),
+    factory=PolygonsRequestPlotter.from_params,
+)

@@ -127,12 +127,12 @@ class DetectorViewOutputs(WorkflowOutputsBase):
 
     # ROI geometry readbacks
     roi_rectangle: sc.DataArray = pydantic.Field(
-        title='Rectangle ROI (readback)',
+        title='ROI Rectangles (readback)',
         description='Current rectangle ROI geometries confirmed by backend.',
         default_factory=lambda: models.RectangleROI.to_concatenated_data_array({}),
     )
     roi_polygon: sc.DataArray = pydantic.Field(
-        title='Polygon ROI (readback)',
+        title='ROI Polygons (readback)',
         description='Current polygon ROI geometries confirmed by backend.',
         default_factory=lambda: models.PolygonROI.to_concatenated_data_array({}),
     )

@@ -214,7 +214,11 @@ class ROI(BaseModel, ABC):
         ...
 
     @classmethod
-    def to_concatenated_data_array(cls, rois: dict[int, ROI]) -> sc.DataArray:
+    def to_concatenated_data_array(
+        cls,
+        rois: dict[int, ROI],
+        coord_units: dict[str, sc.Unit | str | None] | None = None,
+    ) -> sc.DataArray:
         """
         Convert multiple ROIs to single concatenated DataArray.
 
@@ -234,6 +238,11 @@ class ROI(BaseModel, ABC):
         rois:
             Dictionary mapping ROI index to ROI instance. Empty dict returns
             empty DataArray with appropriate structure.
+        coord_units:
+            Optional dict mapping coordinate names (e.g., 'x', 'y') to units.
+            Used to set units on empty DataArray coordinates when rois is empty.
+            This enables consumers to know the expected coordinate units even
+            before any ROIs exist.
 
         Returns
         -------
@@ -245,6 +254,14 @@ class ROI(BaseModel, ABC):
             template.coords['roi_index'] = sc.empty(
                 dims=[template.dim], shape=[0], dtype='int32'
             )
+            if coord_units:
+                for coord_name, unit in coord_units.items():
+                    if coord_name in template.coords:
+                        template.coords[coord_name] = sc.empty(
+                            dims=template.coords[coord_name].dims,
+                            shape=template.coords[coord_name].shape,
+                            unit=unit,
+                        )
             return template
 
         roi_das = []
