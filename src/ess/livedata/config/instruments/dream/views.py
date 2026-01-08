@@ -1,17 +1,13 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-DREAM logical detector view definitions.
+DREAM logical detector view transform functions.
 
-This module defines transform functions and registers them with a LogicalViewRegistry.
-The registry is used by specs.py (lightweight spec registration) and factories.py
-(heavy factory attachment) to ensure transforms are always correctly paired with
-their spec metadata.
+These transforms are registered with the instrument via instrument.add_logical_view()
+in specs.py.
 """
 
 import scipp as sc
-
-from ess.livedata.handlers.logical_view_registry import LogicalViewRegistry
 
 # Bank sizes for mantle detector logical views
 _bank_sizes = {
@@ -25,8 +21,8 @@ _bank_sizes = {
 }
 
 
-def _get_mantle_front_layer(da: sc.DataArray) -> sc.DataArray:
-    """Transform function to extract mantle front layer."""
+def get_mantle_front_layer(da: sc.DataArray) -> sc.DataArray:
+    """Transform to extract mantle front layer."""
     return (
         da.fold(dim=da.dim, sizes=_bank_sizes['mantle_detector'])
         .transpose(('wire', 'module', 'segment', 'counter', 'strip'))['wire', 0]
@@ -34,8 +30,8 @@ def _get_mantle_front_layer(da: sc.DataArray) -> sc.DataArray:
     )
 
 
-def _get_wire_view(da: sc.DataArray) -> sc.DataArray:
-    """Transform function to extract wire view."""
+def get_wire_view(da: sc.DataArray) -> sc.DataArray:
+    """Transform to extract wire view."""
     return (
         da.fold(dim=da.dim, sizes=_bank_sizes['mantle_detector'])
         .sum('strip')
@@ -45,35 +41,8 @@ def _get_wire_view(da: sc.DataArray) -> sc.DataArray:
     )
 
 
-def _get_strip_view(da: sc.DataArray) -> sc.DataArray:
-    """Transform function to extract strip view (sum over all but strip)."""
+def get_strip_view(da: sc.DataArray) -> sc.DataArray:
+    """Transform to extract strip view (sum over all but strip)."""
     return da.fold(dim=da.dim, sizes=_bank_sizes['mantle_detector']).sum(
         ('wire', 'module', 'segment', 'counter')
     )
-
-
-logical_views = LogicalViewRegistry()
-
-logical_views.add(
-    name='mantle_front_layer',
-    title='Mantle front layer',
-    description='All voxels of the front layer of the mantle detector.',
-    source_names=['mantle_detector'],
-    transform=_get_mantle_front_layer,
-)
-
-logical_views.add(
-    name='mantle_wire_view',
-    title='Mantle wire view',
-    description='Sum over strips to show counts per wire in the mantle detector.',
-    source_names=['mantle_detector'],
-    transform=_get_wire_view,
-)
-
-logical_views.add(
-    name='mantle_strip_view',
-    title='Mantle strip view',
-    description='Sum over all dimensions except strip to show counts per strip.',
-    source_names=['mantle_detector'],
-    transform=_get_strip_view,
-)

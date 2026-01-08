@@ -57,11 +57,6 @@ def setup_factories(instrument: Instrument) -> None:
     # Attach unified detector view factory
     specs.projection_handle.attach_factory()(_detector_projection.make_view)
 
-    # Attach logical view factories using the registry.
-    from .views import logical_views
-
-    logical_views.attach_factories(instrument)
-
     # Powder reduction workflow setup
     # Normalization to monitors is partially broken due to some wavelength-range check
     # in essdiffraction that does not play with TOA-TOF conversion (I think).

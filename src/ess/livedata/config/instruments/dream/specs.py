@@ -15,7 +15,7 @@ from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
 
-from .views import logical_views
+from .views import get_mantle_front_layer, get_strip_view, get_wire_view
 
 # Detector names for DREAM data reduction workflows
 detector_names = [
@@ -36,8 +36,28 @@ instrument = Instrument(
 # Register instrument
 instrument_registry.register(instrument)
 
-# Register logical view specs using the registry pattern.
-logical_views.register_specs(instrument)
+# Register logical detector views
+instrument.add_logical_view(
+    name='mantle_front_layer',
+    title='Mantle front layer',
+    description='All voxels of the front layer of the mantle detector.',
+    source_names=['mantle_detector'],
+    transform=get_mantle_front_layer,
+)
+instrument.add_logical_view(
+    name='mantle_wire_view',
+    title='Mantle wire view',
+    description='Sum over strips to show counts per wire in the mantle detector.',
+    source_names=['mantle_detector'],
+    transform=get_wire_view,
+)
+instrument.add_logical_view(
+    name='mantle_strip_view',
+    title='Mantle strip view',
+    description='Sum over all dimensions except strip to show counts per strip.',
+    source_names=['mantle_detector'],
+    transform=get_strip_view,
+)
 
 # Mapping of detector names to their projection types
 # (excluding sans_detector which has no geometry)

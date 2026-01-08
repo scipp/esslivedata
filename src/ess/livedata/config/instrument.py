@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import UserDict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -13,6 +13,19 @@ import scippnexus as snx
 from ess.livedata.handlers.workflow_factory import SpecHandle, WorkflowFactory
 
 from .workflow_spec import WorkflowSpec
+
+
+@dataclass
+class LogicalViewConfig:
+    """Configuration for a single logical detector view."""
+
+    name: str
+    title: str
+    description: str
+    source_names: list[str]
+    transform: Callable[[sc.DataArray], sc.DataArray]
+    roi_support: bool = True
+    output_ndim: int | None = None
 
 
 class InstrumentRegistry(UserDict[str, 'Instrument']):
@@ -60,6 +73,10 @@ class Instrument:
     _detector_group_names: dict[str, str] = field(default_factory=dict)
     _monitor_workflow_handle: SpecHandle | None = field(default=None, init=False)
     _timeseries_workflow_handle: SpecHandle | None = field(default=None, init=False)
+    _logical_views: list[LogicalViewConfig] = field(default_factory=list, init=False)
+    _logical_view_handles: dict[str, SpecHandle] = field(
+        default_factory=dict, init=False
+    )
 
     def __post_init__(self) -> None:
         """Auto-register standard workflow specs based on instrument metadata."""
@@ -149,6 +166,72 @@ class Instrument:
 
     def get_detector_number(self, name: str) -> sc.Variable:
         return self._detector_numbers[name]
+
+    def add_logical_view(
+        self,
+        *,
+        name: str,
+        title: str,
+        description: str,
+        source_names: Sequence[str],
+        transform: Callable[[sc.DataArray], sc.DataArray],
+        roi_support: bool = True,
+        output_ndim: int | None = None,
+    ) -> SpecHandle:
+        """
+        Register a logical detector view.
+
+        This registers the view spec immediately (lightweight) and stores the
+        configuration for later factory attachment during load_factories().
+
+        Parameters
+        ----------
+        name:
+            Unique name for the view within the detector_data namespace.
+        title:
+            Human-readable title for the view.
+        description:
+            Description of the view.
+        source_names:
+            List of detector source names this view applies to.
+        transform:
+            Function that transforms raw detector data to the view output.
+        roi_support:
+            Whether ROI selection is supported for this view.
+        output_ndim:
+            Number of dimensions for spatial outputs.
+
+        Returns
+        -------
+        :
+            Handle for the registered spec.
+        """
+        from ess.livedata.handlers.detector_view_specs import (
+            register_logical_detector_view_spec,
+        )
+
+        handle = register_logical_detector_view_spec(
+            instrument=self,
+            name=name,
+            title=title,
+            description=description,
+            source_names=list(source_names),
+            roi_support=roi_support,
+            output_ndim=output_ndim,
+        )
+        self._logical_view_handles[name] = handle
+        self._logical_views.append(
+            LogicalViewConfig(
+                name=name,
+                title=title,
+                description=description,
+                source_names=list(source_names),
+                transform=transform,
+                roi_support=roi_support,
+                output_ndim=output_ndim,
+            )
+        )
+        return handle
 
     def register_spec(
         self,
@@ -249,6 +332,14 @@ class Instrument:
             self._timeseries_workflow_handle.attach_factory()(
                 TimeseriesStreamProcessor.create_workflow
             )
+
+        if self._logical_views:
+            from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
+
+            for config in self._logical_views:
+                handle = self._logical_view_handles[config.name]
+                view = DetectorLogicalView(instrument=self, transform=config.transform)
+                handle.attach_factory()(view.make_view)
 
         if hasattr(module, 'setup_factories'):
             module.setup_factories(self)
