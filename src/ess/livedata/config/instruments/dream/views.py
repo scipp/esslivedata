@@ -52,10 +52,9 @@ def _get_strip_view(da: sc.DataArray) -> sc.DataArray:
     )
 
 
-# Create registry and add all mantle logical views
-mantle_views = LogicalViewRegistry()
+logical_views = LogicalViewRegistry()
 
-mantle_views.add(
+logical_views.add(
     name='mantle_front_layer',
     title='Mantle front layer',
     description='All voxels of the front layer of the mantle detector.',
@@ -63,7 +62,7 @@ mantle_views.add(
     transform=_get_mantle_front_layer,
 )
 
-mantle_views.add(
+logical_views.add(
     name='mantle_wire_view',
     title='Mantle wire view',
     description='Sum over strips to show counts per wire in the mantle detector.',
@@ -71,7 +70,7 @@ mantle_views.add(
     transform=_get_wire_view,
 )
 
-mantle_views.add(
+logical_views.add(
     name='mantle_strip_view',
     title='Mantle strip view',
     description='Sum over all dimensions except strip to show counts per strip.',

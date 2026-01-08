@@ -15,7 +15,7 @@ from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
 
-from .views import mantle_views
+from .views import logical_views
 
 # Detector names for DREAM data reduction workflows
 detector_names = [
@@ -36,6 +36,9 @@ instrument = Instrument(
 # Register instrument
 instrument_registry.register(instrument)
 
+# Register logical view specs using the registry pattern.
+logical_views.register_specs(instrument)
+
 # Mapping of detector names to their projection types
 # (excluding sans_detector which has no geometry)
 _projections: dict[str, str] = {
@@ -50,11 +53,6 @@ projection_handle = register_detector_view_spec(
     instrument=instrument,
     projection=_projections,
 )
-
-# Register logical view specs using the registry pattern.
-# This couples transforms with their spec metadata to prevent mismatches.
-# See views.py for transform definitions.
-mantle_views.register_specs(instrument)
 
 
 # Pydantic models for DREAM workflows

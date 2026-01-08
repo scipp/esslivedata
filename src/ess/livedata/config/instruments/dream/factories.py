@@ -58,11 +58,9 @@ def setup_factories(instrument: Instrument) -> None:
     specs.projection_handle.attach_factory()(_detector_projection.make_view)
 
     # Attach logical view factories using the registry.
-    # This imports DetectorLogicalView and creates views from the transforms
-    # defined in views.py.
-    from .views import mantle_views
+    from .views import logical_views
 
-    mantle_views.attach_factories(instrument)
+    logical_views.attach_factories(instrument)
 
     # Powder reduction workflow setup
     # Normalization to monitors is partially broken due to some wavelength-range check

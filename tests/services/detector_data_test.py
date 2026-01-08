@@ -13,7 +13,7 @@ from tests.helpers.livedata_app import LivedataApp
 
 
 def _get_workflow_from_registry(
-    instrument: str,
+    instrument: str, name: str | None = None
 ) -> tuple[workflow_spec.WorkflowId, workflow_spec.WorkflowSpec]:
     # Assume we can just use the first registered workflow.
     namespace = 'detector_data'
@@ -21,7 +21,8 @@ def _get_workflow_from_registry(
     workflow_registry = instrument_config.workflow_factory
     for wid, spec in workflow_registry.items():
         if spec.namespace == namespace:
-            return wid, spec
+            if name is None or name == spec.name:
+                return wid, spec
     raise ValueError(f"Namespace {namespace} not found in specs")
 
 
@@ -48,7 +49,8 @@ def test_can_configure_and_stop_detector_workflow(
     app = make_detector_app(instrument)
     sink = app.sink
     service = app.service
-    workflow_id, _ = _get_workflow_from_registry(instrument)
+    name = 'detector_projection' if instrument == 'dream' else None
+    workflow_id, _ = _get_workflow_from_registry(instrument, name=name)
 
     source_name = detector_source_name[instrument]
     config_key = ConfigKey(
