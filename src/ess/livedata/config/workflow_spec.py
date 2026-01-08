@@ -6,12 +6,10 @@ Models for data reduction workflow widget creation and configuration.
 
 from __future__ import annotations
 
-import time
 import uuid
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any, TypeVar
 
 import scipp as sc
@@ -290,13 +288,52 @@ class WorkflowConfig(BaseModel):
     This model is used to set the parameter values for a specific workflow. The values
     correspond to the parameters defined in the workflow specification
     :py:class:`WorkflowSpec`.
+
+    Note on message_id vs job_number
+    --------------------------------
+    These two identifiers serve fundamentally different purposes:
+
+    - ``message_id``: Transient identifier for command/response correlation
+      (ACK pattern). Frontend generates it, backend echoes it in
+      CommandAcknowledgement. Discarded once ACK is received. Used only for
+      the request/response handshake.
+
+    - ``job_number``: Persistent job identity for the entire job lifecycle.
+      Used in JobId for result routing, job commands (stop/reset), and data
+      correlation.
+
+    Currently this message conflates "configure" and "start" into a single command, so
+    both fields are present. Future work (see issue #445) may split into separate
+    WorkflowConfig (config-only) and WorkflowStart messages. In that design:
+
+    - WorkflowConfig would have message_id (for ACK, and as a "config handle") but no
+      job_number (not starting a job yet).
+    - WorkflowStart would have its own message_id (for ACK), job_number (new
+      job identity), and a config_ref pointing to a previously ACK'd
+      config's message_id.
+
+    This split would enable multiple independent jobs (e.g., frontend + NICOS) to share
+    the same configuration while having distinct job lifecycles.
     """
 
     identifier: WorkflowId = Field(
         description="Hash of the workflow, used to identify the workflow."
     )
+    message_id: str | None = Field(
+        default=None,
+        description=(
+            "Transient identifier for command/response correlation. Frontend generates "
+            "this UUID and backend echoes it in CommandAcknowledgement responses. "
+            "Distinct from job_number which identifies the job itself."
+        ),
+    )
     job_number: JobNumber | None = Field(
-        default=None, description=("Unique identifier to identify jobs and job results")
+        default=None,
+        description=(
+            "Persistent job identity used for result routing and job control commands. "
+            "Forms part of JobId (source_name + job_number). Distinct from message_id "
+            "which is only for command acknowledgement correlation."
+        ),
     )
     schedule: JobSchedule = Field(
         default_factory=JobSchedule, description="Schedule for the workflow."
@@ -320,6 +357,7 @@ class WorkflowConfig(BaseModel):
         params: dict | None = None,
         aux_source_names: dict | None = None,
         job_number: JobNumber | None = None,
+        message_id: str | None = None,
     ) -> WorkflowConfig:
         """
         Create a WorkflowConfig from parameters.
@@ -334,6 +372,8 @@ class WorkflowConfig(BaseModel):
             Auxiliary source selections as dict, or None if no aux sources
         job_number:
             Optional job number (generated if not provided)
+        message_id:
+            Optional message ID for command acknowledgement tracking
 
         Returns
         -------
@@ -342,50 +382,11 @@ class WorkflowConfig(BaseModel):
         """
         return cls(
             identifier=workflow_id,
+            message_id=message_id,
             job_number=job_number if job_number is not None else uuid.uuid4(),
             aux_source_names=aux_source_names or {},
             params=params or {},
         )
-
-
-class WorkflowStatusType(str, Enum):
-    """
-    Status of a workflow execution.
-
-    The idea of the "stopped" status is to have the option of still displaying the data
-    in the UI. The UI may then remove the workflow entirely in a separate step. This is
-    not implemented yet.
-    """
-
-    STARTING = "starting"
-    STOPPING = "stopping"
-    RUNNING = "running"
-    STARTUP_ERROR = "startup_error"
-    STOPPED = "stopped"
-    UNKNOWN = "unknown"
-
-
-class WorkflowStatus(BaseModel):
-    """
-    Model for workflow status.
-
-    This model is used to define the status of a workflow, including its ID and status.
-    """
-
-    source_name: str = Field(description="Source name the workflow is associated with.")
-    workflow_id: WorkflowId | None = Field(
-        default=None, description="ID of the workflow."
-    )
-    status: WorkflowStatusType = Field(
-        default=WorkflowStatusType.UNKNOWN, description="Status of the workflow."
-    )
-    message: str = Field(
-        default='', description="Optional message providing additional information."
-    )
-    timestamp: int = Field(
-        default_factory=lambda: int(time.time()),
-        description="Unix timestamp when the status was created or updated.",
-    )
 
 
 def _is_timeseries_output(da: sc.DataArray) -> bool:

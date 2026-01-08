@@ -111,7 +111,7 @@ class LayerState:
     If stopped is True, the workflow has ended and no more data is expected.
     """
 
-    plot: hv.DynamicMap | hv.Layout | None = None
+    plot: hv.DynamicMap | None = None
     error: str | None = None
     stopped: bool = False
 
@@ -246,7 +246,7 @@ class CellUpdatedCallback(Protocol):
         layer_states
             Per-layer runtime state (pipe, plot, error) for each layer in the cell.
         plot
-            The composed plot (hv.Overlay or hv.Layout), or None if no layers
+            The composed plot (hv.DynamicMap or hv.Overlay), or None if no layers
             have data yet.
         """
 
@@ -435,7 +435,7 @@ class PlotOrchestrator:
 
     def get_cell_state(
         self, cell_id: CellId
-    ) -> tuple[dict[LayerId, LayerState], hv.DynamicMap | hv.Layout | None]:
+    ) -> tuple[dict[LayerId, LayerState], hv.DynamicMap | hv.Overlay | None]:
         """
         Get the current layer states and composed plot for a cell.
 
@@ -888,19 +888,7 @@ class PlotOrchestrator:
             return None
 
         if len(plots) == 1:
-            # Single layer: return as-is. May be DynamicMap or hv.Layout.
-            # hv.Layout is returned by roi_detector; this will be removed when
-            # roi_detector is migrated to the layer system.
             return plots[0]
-
-        # Multiple layers: hv.Layout cannot be composed with other layers.
-        # TODO: Remove this check when roi_detector is migrated to the layer system.
-        for plot in plots:
-            if isinstance(plot, hv.Layout):
-                raise TypeError(
-                    "Cannot compose multiple layers when one returns hv.Layout. "
-                    "Layout-wrapped plots (e.g., roi_detector) must be single-layer."
-                )
 
         # No change to shared_axes here. We prevent sharing between different cells
         # using linked_axes=False in PlotGridTabs when wrapping in pn.pane.HoloViews.
@@ -1383,7 +1371,7 @@ class PlotOrchestrator:
         cell_id: CellId,
         cell: PlotCell,
         layer_states: dict[LayerId, LayerState],
-        plot: hv.DynamicMap | hv.Layout | None = None,
+        plot: hv.DynamicMap | hv.Overlay | None = None,
     ) -> None:
         """Notify subscribers that a cell was added or updated."""
         for subscription in self._lifecycle_subscribers.values():

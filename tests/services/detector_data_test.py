@@ -58,34 +58,35 @@ def test_can_configure_and_stop_detector_workflow(
     # Trigger workflow start
     app.publish_config_message(key=config_key, value=workflow_config.model_dump())
     service.step()
-    assert len(sink.messages) == 1  # Workflow status message
-    sink.messages.clear()
+    # No ack when message_id not set
+    assert len(sink.messages) == 0
 
     app.publish_events(size=2000, time=2)
     service.step()
     # Each workflow call returns 6 results: cumulative, current,
     # roi_spectra_current, roi_spectra_cumulative, counts_total, counts_in_toa
-    assert len(sink.messages) == 6
+    # First finalize also sends 2 initial ROI readbacks (rectangles, polygons)
+    assert len(sink.messages) == 8
     assert sink.messages[0].value.nansum().value == 2000  # cumulative
     assert sink.messages[1].value.nansum().value == 2000  # current
     # No data -> no data published
     service.step()
-    assert len(sink.messages) == 6
+    assert len(sink.messages) == 8
 
     app.publish_events(size=3000, time=4)
     service.step()
-    assert len(sink.messages) == 12
-    assert sink.messages[6].value.nansum().value == 5000  # cumulative
-    assert sink.messages[7].value.nansum().value == 3000  # current
+    assert len(sink.messages) == 14  # 8 + 6 (no initial readbacks on subsequent calls)
+    assert sink.messages[8].value.nansum().value == 5000  # cumulative
+    assert sink.messages[9].value.nansum().value == 3000  # current
 
     # More events but the same time
     app.publish_events(size=1000, time=4)
     # Later time
     app.publish_events(size=1000, time=5)
     service.step()
-    assert len(sink.messages) == 18
-    assert sink.messages[12].value.nansum().value == 7000  # cumulative
-    assert sink.messages[13].value.nansum().value == 2000  # current
+    assert len(sink.messages) == 20
+    assert sink.messages[14].value.nansum().value == 7000  # cumulative
+    assert sink.messages[15].value.nansum().value == 2000  # current
 
     # Stop workflow
     command = JobCommand(action=JobAction.stop)
@@ -96,7 +97,7 @@ def test_can_configure_and_stop_detector_workflow(
     service.step()
     app.publish_events(size=1000, time=20)
     service.step()
-    assert len(sink.messages) == 18
+    assert len(sink.messages) == 20
 
 
 def test_service_can_recover_after_bad_workflow_id_was_set(
@@ -126,18 +127,17 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     app.publish_events(size=3000, time=4)
     service.step()
 
-    assert len(sink.messages) == 1  # Workflow not started, just an error message
-    status = sink.messages[0].value.value
-    assert status.status == workflow_spec.WorkflowStatusType.STARTUP_ERROR
-    sink.messages.clear()  # Clear the error message
+    # No error ack sent when message_id not set (error is logged server-side)
+    assert len(sink.messages) == 0
 
     good_workflow_config = workflow_spec.WorkflowConfig(identifier=workflow_id)
     # Trigger workflow start
     app.publish_config_message(key=config_key, value=good_workflow_config.model_dump())
     app.publish_events(size=1000, time=5)
     service.step()
-    # Service recovered and started the workflow, get status and data
-    assert len(sink.messages) == 7  # status + 6 data messages
+    # Service recovered; get data only (no ack without message_id)
+    # First finalize sends 8 data messages (6 + 2 initial ROI readbacks)
+    assert len(sink.messages) == 8
 
 
 def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
@@ -160,14 +160,15 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     )
     app.publish_config_message(key=config_key, value=workflow_config.model_dump())
     service.step()
-    sink.messages.clear()  # Clear the workflow status message
+    # No ack without message_id
+    assert len(sink.messages) == 0
 
     # Add events and verify workflow is running
     app.publish_events(size=2000, time=2)
     service.step()
     # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
-    # counts_total, counts_in_toa
-    assert len(sink.messages) == 6
+    # counts_total, counts_in_toa + 2 initial ROI readbacks
+    assert len(sink.messages) == 8
     assert sink.messages[0].value.values.sum() == 2000
 
     # Try to set an invalid workflow ID
@@ -181,8 +182,9 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     # Add more events and verify the original workflow is still running
     app.publish_events(size=3000, time=4)
     service.step()
-    assert len(sink.messages) == 12 + 1  # + 1 for the workflow status message
-    assert sink.messages[7].value.values.sum() == 5000  # cumulative (after status msg)
+    # No error ack without message_id, just data messages (8 + 6)
+    assert len(sink.messages) == 14
+    assert sink.messages[8].value.values.sum() == 5000  # cumulative
 
 
 @pytest.fixture
@@ -220,8 +222,8 @@ def test_message_with_unknown_schema_is_ignored(
 
     app.step()
     # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
-    # counts_total, counts_in_toa
-    assert len(sink.messages) == 6
+    # counts_total, counts_in_toa + 2 initial ROI readbacks
+    assert len(sink.messages) == 8
     assert sink.messages[0].value.values.sum() == 2000
 
     # Check log messages for exceptions
@@ -249,8 +251,8 @@ def test_message_that_cannot_be_decoded_is_ignored(
 
     app.step()
     # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
-    # counts_total, counts_in_toa
-    assert len(sink.messages) == 6
+    # counts_total, counts_in_toa + 2 initial ROI readbacks
+    assert len(sink.messages) == 8
     assert sink.messages[0].value.values.sum() == 2000
 
     # Check log messages for exceptions

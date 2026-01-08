@@ -153,3 +153,55 @@ def get_roi_mapper(instrument: str | None = None) -> ROIStreamMapper:
     # For now, all instruments use the default configuration
     # Future: could load instrument-specific configuration
     return ROIStreamMapper(DEFAULT_ROI_GEOMETRIES)
+
+
+def _get_default_geometry(geometry_type: ROIGeometryType) -> ROIGeometry:
+    """Get the default geometry configuration for a type."""
+    for geom in DEFAULT_ROI_GEOMETRIES:
+        if geom.geometry_type == geometry_type:
+            return geom
+    raise ValueError(f"Unknown geometry type: {geometry_type}")
+
+
+def get_default_index_offset(geometry_type: ROIGeometryType) -> int:
+    """
+    Get the default index offset for a geometry type.
+
+    Parameters
+    ----------
+    geometry_type:
+        The geometry type ('rectangle' or 'polygon').
+
+    Returns
+    -------
+    :
+        The default index offset for this geometry type.
+
+    Raises
+    ------
+    ValueError:
+        If the geometry type is not found in default configuration.
+    """
+    return _get_default_geometry(geometry_type).index_offset
+
+
+def get_default_num_rois(geometry_type: ROIGeometryType) -> int:
+    """
+    Get the default number of ROIs for a geometry type.
+
+    Parameters
+    ----------
+    geometry_type:
+        The geometry type ('rectangle' or 'polygon').
+
+    Returns
+    -------
+    :
+        The default number of ROIs for this geometry type.
+
+    Raises
+    ------
+    ValueError:
+        If the geometry type is not found in default configuration.
+    """
+    return _get_default_geometry(geometry_type).num_rois

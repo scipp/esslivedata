@@ -64,8 +64,8 @@ def test_can_configure_and_stop_monitor_workflow(
     # Trigger workflow start
     app.publish_config_message(key=config_key, value=workflow_config.model_dump())
     service.step()
-    assert len(sink.messages) == 1  # Workflow status message
-    sink.messages.clear()
+    # No ack when message_id not set
+    assert len(sink.messages) == 0
 
     app.publish_monitor_events(size=2000, time=2)
     service.step()

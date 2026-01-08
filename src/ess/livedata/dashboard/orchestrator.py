@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from ..config.acknowledgement import CommandAcknowledgement
 from ..config.workflow_spec import ResultKey
 from ..core.message import (
     RESPONSES_STREAM_ID,
@@ -14,7 +15,9 @@ from ..core.message import (
 )
 from .data_service import DataService
 from .job_service import JobService
-from .workflow_config_service import WorkflowConfigService
+
+if TYPE_CHECKING:
+    from .job_orchestrator import JobOrchestrator
 
 
 class Orchestrator:
@@ -32,12 +35,12 @@ class Orchestrator:
         message_source: MessageSource,
         data_service: DataService,
         job_service: JobService,
-        workflow_config_service: WorkflowConfigService | None = None,
+        job_orchestrator: JobOrchestrator | None = None,
     ) -> None:
         self._message_source = message_source
         self._data_service = data_service
         self._job_service = job_service
-        self._workflow_config_service = workflow_config_service
+        self._job_orchestrator = job_orchestrator
         self._logger = logging.getLogger(__name__)
 
     def update(self) -> None:
@@ -73,8 +76,18 @@ class Orchestrator:
         if stream_id == STATUS_STREAM_ID:
             self._job_service.status_updated(value)
         elif stream_id == RESPONSES_STREAM_ID:
-            if self._workflow_config_service is not None:
-                self._workflow_config_service.process_response(value)
+            self._process_response(value)
         else:
             result_key = ResultKey.model_validate_json(stream_id.name)
             self._data_service[result_key] = value
+
+    def _process_response(self, ack: CommandAcknowledgement) -> None:
+        """Process a command acknowledgement from the backend."""
+        if self._job_orchestrator is None:
+            return
+
+        self._job_orchestrator.process_acknowledgement(
+            message_id=ack.message_id,
+            response=ack.response.value,
+            error_message=ack.message,
+        )

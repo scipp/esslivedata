@@ -17,8 +17,8 @@ from ess.livedata.config.workflow_spec import (
 from .job_service import JobService
 from .plot_params import create_extractors_from_params
 from .plotting import PlotterSpec, plotter_registry
-from .roi_detector_plot_factory import ROIDetectorPlotFactory
 from .roi_publisher import ROIPublisher
+from .roi_request_plots import ROIPublisherAware
 from .stream_manager import StreamManager
 
 K = TypeVar('K', bound=Hashable)
@@ -54,9 +54,7 @@ class PlottingController:
         self._job_service = job_service
         self._stream_manager = stream_manager
         self._logger = logger or logging.getLogger(__name__)
-        self._roi_detector_plot_factory = ROIDetectorPlotFactory(
-            stream_manager=stream_manager, roi_publisher=roi_publisher, logger=logger
-        )
+        self._roi_publisher = roi_publisher
 
     def get_available_plotters_from_spec(
         self, workflow_spec: WorkflowSpec, output_name: str
@@ -152,8 +150,6 @@ class PlottingController:
         on_first_data
             Callback when data is ready for plot creation.
         """
-        from .data_roles import PRIMARY
-
         # Validate params if dict, pass through if already a model
         if isinstance(params, dict):
             spec = plotter_registry.get_spec(plot_name)
@@ -164,34 +160,6 @@ class PlottingController:
 
         # Flatten keys for extractor creation
         all_keys = [key for keys in keys_by_role.values() for key in keys]
-
-        # Special case for roi_detector: create separate subscriptions per detector
-        # and coordinate them to invoke callback once when all are ready.
-        # This is needed because roi_detector creates separate DynamicMaps per detector
-        # rather than a single merged stream.
-        if plot_name == 'roi_detector':
-            pipes: dict[ResultKey, Any] = {}
-
-            def make_detector_callback(key: ResultKey) -> Callable[[Any], None]:
-                """Create a callback that tracks individual detector readiness."""
-
-                def on_detector_ready(pipe: Any) -> None:
-                    pipes[key] = pipe
-                    if len(pipes) == len(all_keys):
-                        # All detectors ready, invoke user callback with dict of pipes
-                        on_first_data(pipes)
-
-                return on_detector_ready
-
-            # Create one subscription per detector
-            for key in all_keys:
-                extractors = create_extractors_from_params([key], window, spec)
-                self._stream_manager.make_stream(
-                    keys_by_role={PRIMARY: [key]},
-                    on_first_data=make_detector_callback(key),
-                    extractors=extractors,
-                )
-            return
 
         # Standard path: single subscription with role-aware assembly
         extractors = create_extractors_from_params(all_keys, window, spec)
@@ -206,7 +174,7 @@ class PlottingController:
         plot_name: str,
         params: dict | pydantic.BaseModel,
         pipe: Any,
-    ) -> hv.DynamicMap | hv.Layout:
+    ) -> hv.DynamicMap:
         """
         Create a plot from an already-initialized data pipeline.
 
@@ -222,35 +190,24 @@ class PlottingController:
             The plotter parameters as a dict or validated Pydantic model.
         pipe:
             The pipe from setup_data_pipeline() with data available.
-            For roi_detector, this is a dict of pipes (one per detector).
-            For standard plots, this is a single pipe.
 
         Returns
         -------
         :
             A HoloViews DynamicMap that updates with streaming data.
-            For roi_detector, returns a Layout with separate DynamicMaps.
         """
-        # Special case for roi_detector: receives dict of pipes (one per detector).
-        # TODO: Remove when roi_detector is migrated to the layer system.
-        if plot_name == 'roi_detector':
-            # pipe is dict[ResultKey, Pipe]
-            pipes_dict = pipe
-
-            plots = []
-            for key, detector_pipe in pipes_dict.items():
-                # Create ROI detector plot with ROI overlays
-                factory = self._roi_detector_plot_factory
-                detector_with_rois, _plot_state = (
-                    factory.create_roi_detector_plot_components(
-                        detector_key=key, params=params, detector_pipe=detector_pipe
-                    )
-                )
-                plots.append(detector_with_rois)
-
-            return hv.Layout(plots).opts(shared_axes=False)
-
         plotter = plotter_registry.create_plotter(plot_name, params=params)
+
+        # ROI request plotters create and return their own DynamicMap with interactive
+        # BoxEdit/PolyDraw edit streams. Standard plotters return plot elements that
+        # we wrap in a DynamicMap below.
+        if isinstance(plotter, ROIPublisherAware):
+            plotter.set_roi_publisher(self._roi_publisher)
+            # Get the first data key and its data for the plot() call
+            data_key = next(iter(pipe.data.keys()))
+            data = pipe.data[data_key]
+            # plot() creates and returns the interactive DynamicMap
+            return plotter.plot(data, data_key)
 
         # Initialize plotter with extracted data from pipe to determine kdims
         plotter.initialize_from_data(pipe.data)

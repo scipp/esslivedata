@@ -61,6 +61,13 @@ class JobAction(str, Enum):
 
 class JobCommand(pydantic.BaseModel):
     key: ClassVar[str] = "job_command"
+    message_id: str | None = pydantic.Field(
+        default=None,
+        description=(
+            "Unique identifier for command correlation. Frontend generates this UUID "
+            "and backend echoes it in CommandAcknowledgement responses."
+        ),
+    )
     job_id: JobId | None = pydantic.Field(
         default=None, description="ID of the job to control."
     )
