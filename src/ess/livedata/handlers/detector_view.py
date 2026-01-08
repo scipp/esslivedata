@@ -66,6 +66,7 @@ class DetectorView(Workflow):
         self._roi_mapper = get_roi_mapper()
         self._initial_readback_sent = False
         self._current_start_time: int | None = None
+        self._current_end_time: int | None = None
 
         # Ratemeter: track event counts per finalize period
         self._counts_total: int = 0
@@ -116,9 +117,10 @@ class DetectorView(Workflow):
                 "DetectorViewProcessor expects exactly one detector data item."
             )
 
-        # Track start time of first detector data since last finalize
+        # Track time range of detector data since last finalize
         if self._current_start_time is None:
             self._current_start_time = start_time
+        self._current_end_time = end_time
 
         raw = next(iter(detector_data.values()))
         filtered = self.apply_toa_range(raw)
@@ -136,6 +138,13 @@ class DetectorView(Workflow):
                 "finalize called without any detector data accumulated via accumulate"
             )
 
+        # Create time coords for delta outputs. The start_time and end_time coords
+        # represent the time range of the current (delta) output, which is the
+        # period since the last finalize. This differs from the job-level times
+        # which cover the entire job duration.
+        start_time_coord = sc.scalar(self._current_start_time, unit='ns')
+        end_time_coord = sc.scalar(self._current_end_time, unit='ns')
+
         cumulative = self._view.cumulative.copy()
         # This is a hack to get the current counts. Should be updated once
         # ess.reduce.live.raw.RollingDetectorView has been modified to support this.
@@ -144,10 +153,10 @@ class DetectorView(Workflow):
             current = current - self._previous
         self._previous = cumulative
 
-        # Add time coord to current result
-        time_coord = sc.scalar(self._current_start_time, unit='ns')
-        current = current.assign_coords(time=time_coord)
-        self._current_start_time = None
+        # The 'time' coord is kept for backward compatibility
+        current = current.assign_coords(
+            time=start_time_coord, start_time=start_time_coord, end_time=end_time_coord
+        )
 
         result = sc.DataGroup(cumulative=cumulative, current=current)
         view_result = dict(result * self._inv_weights if self._use_weights else result)
@@ -171,7 +180,10 @@ class DetectorView(Workflow):
 
         roi_result = {
             'roi_spectra_current': roi_current.assign_coords(
-                roi=roi_coord, time=time_coord
+                roi=roi_coord,
+                time=start_time_coord,
+                start_time=start_time_coord,
+                end_time=end_time_coord,
             ),
             'roi_spectra_cumulative': roi_cumulative.assign_coords(roi=roi_coord),
         }
@@ -215,15 +227,27 @@ class DetectorView(Workflow):
         counts_result = {
             'counts_total': sc.DataArray(
                 sc.scalar(self._counts_total, unit='counts'),
-                coords={'time': time_coord},
+                coords={
+                    'time': start_time_coord,
+                    'start_time': start_time_coord,
+                    'end_time': end_time_coord,
+                },
             ),
             'counts_in_toa_range': sc.DataArray(
                 sc.scalar(self._counts_in_toa_range, unit='counts'),
-                coords={'time': time_coord},
+                coords={
+                    'time': start_time_coord,
+                    'start_time': start_time_coord,
+                    'end_time': end_time_coord,
+                },
             ),
         }
         self._counts_total = 0
         self._counts_in_toa_range = 0
+
+        # Reset time tracking for next period
+        self._current_start_time = None
+        self._current_end_time = None
 
         return {**view_result, **roi_result, **counts_result}
 
@@ -231,6 +255,7 @@ class DetectorView(Workflow):
         self._view.clear_counts()
         self._previous = None
         self._current_start_time = None
+        self._current_end_time = None
         for roi_state in self._rois.values():
             roi_state.clear()
         self._counts_total = 0
