@@ -62,7 +62,7 @@ essreduce==25.12.1
     #   essspectroscopy
 essreflectometry==25.12.0
     # via -r basetest.in
-esssans==25.11.0
+esssans==25.12.0
     # via -r basetest.in
 essspectroscopy==25.12.0
     # via -r basetest.in
