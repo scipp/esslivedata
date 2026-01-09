@@ -136,12 +136,9 @@ def register_monitor_view_workflow_specs(
         namespace='data_reduction',
         name='monitor_view',
         version=1,
-        title="Monitor View",
-        description=(
-            "StreamProcessor-based monitor workflow for data_reduction service. "
-            "Histograms monitor events by time-of-arrival and provides cumulative "
-            "and window-level outputs."
-        ),
+        title="Beam monitor data",
+        description="Histogrammed and time-integrated beam monitor data. The monitor "
+        "is histogrammed or rebinned into specified time-of-arrival (TOA) bins.",
         source_names=source_names,
         params=MonitorDataParams,
         outputs=MonitorHistogramOutputs,
