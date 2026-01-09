@@ -12,7 +12,7 @@ from streaming_data_types import logdata_f144
 from ess.reduce import streaming
 
 from ..core.handler import Accumulator
-from .to_nxevent_data import DetectorEvents, MonitorEvents
+from .to_nxevent_data import DetectorEvents
 
 T = TypeVar('T')
 
@@ -210,36 +210,6 @@ class GroupIntoPixels(Accumulator[DetectorEvents, sc.DataArray]):
         )
         self._chunks.clear()
         return da.group(self._groups).fold(dim=self._dim, sizes=self._sizes)
-
-    def clear(self) -> None:
-        self._chunks.clear()
-
-
-class CollectTOA(Accumulator[MonitorEvents, np.ndarray]):
-    """
-    Accumulator that bins time of arrival data into a histogram.
-
-    Monitor data handlers use this as a preprocessor before actual accumulation. For
-    detector data it could be used to produce a histogram for a selected ROI.
-    """
-
-    def __init__(self):
-        self._chunks: list[np.ndarray] = []
-
-    def add(self, timestamp: int, data: MonitorEvents) -> None:
-        _ = timestamp
-        # We could easily support other units, but ev44 is always in ns so this should
-        # never happen.
-        if data.unit != 'ns':
-            raise ValueError(f"Expected unit 'ns', got '{data.unit}'")
-        self._chunks.append(data.time_of_arrival)
-
-    def get(self) -> np.ndarray:
-        # Using NumPy here as for these specific operations with medium-sized data it is
-        # a bit faster than Scipp. Could optimize the concatenate by reusing a buffer.
-        result = np.concatenate(self._chunks or [[]])
-        self._chunks.clear()
-        return result
 
     def clear(self) -> None:
         self._chunks.clear()

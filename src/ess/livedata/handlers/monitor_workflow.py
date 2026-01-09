@@ -104,14 +104,14 @@ def build_monitor_workflow() -> sciline.Pipeline:
     return workflow
 
 
-def create_monitor_view_workflow(
+def create_monitor_workflow(
     source_name: str,
     edges: sc.Variable,
     *,
     toa_range: tuple[sc.Variable, sc.Variable] | None = None,
 ):
     """
-    Factory for monitor view workflow using StreamProcessor.
+    Factory for monitor workflow using StreamProcessor.
 
     Parameters
     ----------

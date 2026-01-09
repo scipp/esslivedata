@@ -73,7 +73,6 @@ class Instrument:
     active_namespace: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
     _monitor_workflow_handle: SpecHandle | None = field(default=None, init=False)
-    _monitor_view_workflow_handle: SpecHandle | None = field(default=None, init=False)
     _timeseries_workflow_handle: SpecHandle | None = field(default=None, init=False)
     _logical_views: list[LogicalViewConfig] = field(default_factory=list, init=False)
     _logical_view_handles: dict[str, SpecHandle] = field(
@@ -83,7 +82,6 @@ class Instrument:
     def __post_init__(self) -> None:
         """Auto-register standard workflow specs based on instrument metadata."""
         from ess.livedata.handlers.monitor_workflow_specs import (
-            register_monitor_view_workflow_specs,
             register_monitor_workflow_specs,
         )
         from ess.livedata.handlers.timeseries_workflow_specs import (
@@ -91,9 +89,6 @@ class Instrument:
         )
 
         self._monitor_workflow_handle = register_monitor_workflow_specs(
-            instrument=self, source_names=self.monitors
-        )
-        self._monitor_view_workflow_handle = register_monitor_view_workflow_specs(
             instrument=self, source_names=self.monitors
         )
 
@@ -340,21 +335,12 @@ class Instrument:
         module = importlib.import_module(f'ess.livedata.config.instruments.{self.name}')
 
         if self._monitor_workflow_handle is not None:
-            from ess.livedata.handlers.monitor_data_handler import (
-                MonitorStreamProcessor,
+            from ess.livedata.handlers.monitor_workflow_specs import (
+                create_monitor_workflow_factory,
             )
 
             self._monitor_workflow_handle.attach_factory()(
-                MonitorStreamProcessor.create_workflow
-            )
-
-        if self._monitor_view_workflow_handle is not None:
-            from ess.livedata.handlers.monitor_workflow_specs import (
-                create_monitor_view_workflow_factory,
-            )
-
-            self._monitor_view_workflow_handle.attach_factory()(
-                create_monitor_view_workflow_factory
+                create_monitor_workflow_factory
             )
 
         if self._timeseries_workflow_handle is not None:

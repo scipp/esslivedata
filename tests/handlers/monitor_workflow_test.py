@@ -10,7 +10,7 @@ from ess.livedata.handlers.monitor_workflow import (
     build_monitor_workflow,
     counts_in_range,
     counts_total,
-    create_monitor_view_workflow,
+    create_monitor_workflow,
     cumulative_view,
     histogram_monitor_data,
     window_view,
@@ -23,7 +23,49 @@ from ess.livedata.handlers.monitor_workflow_types import (
     TOARangeLow,
     WindowMonitorHistogram,
 )
+from ess.livedata.parameter_models import TimeUnit
 from ess.reduce import streaming
+
+
+class TestMonitorDataParams:
+    """Tests for MonitorDataParams Pydantic model."""
+
+    def test_default_values(self):
+        """Test that MonitorDataParams has correct default values."""
+        params = MonitorDataParams()
+
+        assert params.toa_edges.start == 0.0
+        assert params.toa_edges.stop == 1000.0 / 14
+        assert params.toa_edges.num_bins == 100
+        assert params.toa_edges.unit == TimeUnit.MS
+        # Ratemeter defaults
+        assert params.toa_range.enabled is False
+        assert params.toa_range.start == 0.0
+        assert params.toa_range.stop == 10.0
+
+    def test_custom_values(self):
+        """Test MonitorDataParams with custom values."""
+        custom_edges = TOAEdges(
+            start=10.0,
+            stop=50.0,
+            num_bins=200,
+            unit=TimeUnit.US,
+        )
+        params = MonitorDataParams(toa_edges=custom_edges)
+
+        assert params.toa_edges.start == 10.0
+        assert params.toa_edges.stop == 50.0
+        assert params.toa_edges.num_bins == 200
+        assert params.toa_edges.unit == TimeUnit.US
+
+    def test_get_edges(self):
+        """Test that get_edges returns correct scipp Variable."""
+        params = MonitorDataParams()
+        edges = params.toa_edges.get_edges()
+
+        assert isinstance(edges, sc.Variable)
+        assert edges.unit == sc.Unit('ms')
+        assert len(edges) == 101  # num_bins + 1
 
 
 class TestWindowAccumulator:
@@ -214,7 +256,7 @@ class TestBuildMonitorWorkflow:
         assert result.sum().value == 5.0
 
 
-class TestCreateMonitorViewWorkflow:
+class TestCreateMonitorWorkflow:
     """Tests for the factory function."""
 
     @pytest.fixture
@@ -226,24 +268,22 @@ class TestCreateMonitorViewWorkflow:
             StreamProcessorWorkflow,
         )
 
-        workflow = create_monitor_view_workflow('monitor_1', toa_edges)
+        workflow = create_monitor_workflow('monitor_1', toa_edges)
         assert isinstance(workflow, StreamProcessorWorkflow)
 
     def test_workflow_has_required_methods(self, toa_edges):
-        workflow = create_monitor_view_workflow('monitor_1', toa_edges)
+        workflow = create_monitor_workflow('monitor_1', toa_edges)
         assert hasattr(workflow, 'accumulate')
         assert hasattr(workflow, 'finalize')
         assert hasattr(workflow, 'clear')
 
     def test_workflow_with_toa_range(self, toa_edges):
         toa_range = (sc.scalar(10_000_000, unit='ns'), sc.scalar(60_000_000, unit='ns'))
-        workflow = create_monitor_view_workflow(
-            'monitor_1', toa_edges, toa_range=toa_range
-        )
+        workflow = create_monitor_workflow('monitor_1', toa_edges, toa_range=toa_range)
         assert workflow is not None
 
 
-class TestMonitorViewWorkflowIntegration:
+class TestMonitorWorkflowIntegration:
     """Integration tests for the V2 monitor workflow."""
 
     @pytest.fixture
@@ -262,7 +302,7 @@ class TestMonitorViewWorkflowIntegration:
         return binned
 
     def test_full_workflow_cycle(self, toa_edges, sample_binned_events):
-        workflow = create_monitor_view_workflow('monitor_1', toa_edges)
+        workflow = create_monitor_workflow('monitor_1', toa_edges)
 
         # Accumulate data
         workflow.accumulate(
@@ -285,7 +325,7 @@ class TestMonitorViewWorkflowIntegration:
 
     def test_time_coords_on_delta_outputs(self, toa_edges, sample_binned_events):
         """Delta outputs get time, start_time, end_time coords."""
-        workflow = create_monitor_view_workflow('monitor_1', toa_edges)
+        workflow = create_monitor_workflow('monitor_1', toa_edges)
         workflow.accumulate(
             {'monitor_1': sample_binned_events}, start_time=1000, end_time=2000
         )
@@ -319,7 +359,7 @@ class TestMonitorViewWorkflowIntegration:
         self, toa_edges, sample_binned_events
     ):
         """Cumulative output should not have time coords (spans all time)."""
-        workflow = create_monitor_view_workflow('monitor_1', toa_edges)
+        workflow = create_monitor_workflow('monitor_1', toa_edges)
         workflow.accumulate(
             {'monitor_1': sample_binned_events}, start_time=1000, end_time=2000
         )
@@ -333,7 +373,7 @@ class TestMonitorViewWorkflowIntegration:
         self, toa_edges, sample_binned_events
     ):
         """Time coords should track first start_time and last end_time."""
-        workflow = create_monitor_view_workflow('monitor_1', toa_edges)
+        workflow = create_monitor_workflow('monitor_1', toa_edges)
         # Multiple accumulate calls before finalize
         workflow.accumulate(
             {'monitor_1': sample_binned_events}, start_time=1000, end_time=2000
@@ -353,7 +393,7 @@ class TestMonitorViewWorkflowIntegration:
 
     def test_time_coords_reset_after_finalize(self, toa_edges, sample_binned_events):
         """Time coords should reset between finalize cycles."""
-        workflow = create_monitor_view_workflow('monitor_1', toa_edges)
+        workflow = create_monitor_workflow('monitor_1', toa_edges)
 
         # First cycle
         workflow.accumulate(
@@ -375,7 +415,7 @@ class TestMonitorViewWorkflowIntegration:
         self, toa_edges, sample_binned_events
     ):
         """Verify cumulative accumulates while window clears each cycle."""
-        workflow = create_monitor_view_workflow('monitor_1', toa_edges)
+        workflow = create_monitor_workflow('monitor_1', toa_edges)
 
         # First cycle
         workflow.accumulate(
@@ -398,7 +438,7 @@ class TestMonitorViewWorkflowIntegration:
 
     def test_full_workflow_cycle_histogram_mode(self, toa_edges):
         """Test full workflow cycle with histogram-mode monitor data."""
-        workflow = create_monitor_view_workflow('monitor_1', toa_edges)
+        workflow = create_monitor_workflow('monitor_1', toa_edges)
 
         # Create histogram data like Cumulative preprocessor produces
         input_edges = sc.linspace('tof', 0, 10, num=11, unit='ns')
@@ -425,7 +465,7 @@ class TestMonitorViewWorkflowIntegration:
         assert results['counts_in_toa_range'].value == 10.0
 
 
-class TestRegisterMonitorViewWorkflowSpecs:
+class TestRegisterMonitorWorkflowSpecs:
     """Tests for spec registration."""
 
     @pytest.fixture
@@ -434,13 +474,13 @@ class TestRegisterMonitorViewWorkflowSpecs:
         from ess.livedata.config.instrument import Instrument
 
         return Instrument(
-            name='test_inst_monitor_view',
+            name='test_inst_monitor',
             monitors=['monitor_1', 'monitor_2'],
         )
 
     def test_auto_registers_via_post_init(self, test_instrument):
         """Verify the spec is auto-registered via __post_init__."""
-        handle = test_instrument._monitor_view_workflow_handle
+        handle = test_instrument._monitor_workflow_handle
         assert handle is not None
 
     def test_register_with_empty_source_names_returns_none(self):
@@ -449,52 +489,52 @@ class TestRegisterMonitorViewWorkflowSpecs:
 
         inst = Instrument(name='test_inst_empty_monitors', monitors=[])
         # The auto-registration should have returned None
-        assert inst._monitor_view_workflow_handle is None
+        assert inst._monitor_workflow_handle is None
 
     def test_registered_spec_has_correct_namespace(self, test_instrument):
-        """Verify the spec is registered in data_reduction namespace."""
+        """Verify the spec is registered in monitor_data namespace."""
         factory = test_instrument.workflow_factory
 
         # Find the spec that was registered
         for workflow_id, spec in factory.items():
-            if spec.name == 'monitor_view':
-                assert workflow_id.namespace == 'data_reduction'
+            if spec.name == 'monitor_histogram':
+                assert workflow_id.namespace == 'monitor_data'
                 return
 
-        pytest.fail("monitor_view spec not found in workflow_factory")
+        pytest.fail("monitor_histogram spec not found in workflow_factory")
 
     def test_spec_uses_monitor_data_params(self, test_instrument):
         factory = test_instrument.workflow_factory
 
         for spec in factory.values():
-            if spec.name == 'monitor_view':
+            if spec.name == 'monitor_histogram':
                 assert spec.params is MonitorDataParams
                 return
 
-        pytest.fail("monitor_view spec not found")
+        pytest.fail("monitor_histogram spec not found")
 
     def test_can_attach_factory_to_handle(self, test_instrument):
         """Test that we can attach the factory to the registered spec."""
-        from ess.livedata.handlers.monitor_workflow import create_monitor_view_workflow
+        from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
 
-        # Get the handle for monitor_view spec
+        # Get the handle for monitor_histogram spec
         factory = test_instrument.workflow_factory
         workflow_id = None
         for _workflow_id, spec in factory.items():
-            if spec.name == 'monitor_view':
+            if spec.name == 'monitor_histogram':
                 workflow_id = _workflow_id
                 break
         if workflow_id is None:
-            pytest.fail("monitor_view spec not found")
+            pytest.fail("monitor_histogram spec not found")
 
         # Find the handle in the instrument
-        handle = test_instrument._monitor_view_workflow_handle
+        handle = test_instrument._monitor_workflow_handle
         assert handle is not None
 
         # Attach factory
         @handle.attach_factory()
         def _factory(source_name: str, params: MonitorDataParams):
-            return create_monitor_view_workflow(
+            return create_monitor_workflow(
                 source_name=source_name,
                 edges=params.toa_edges.get_edges(),
                 toa_range=(

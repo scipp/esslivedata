@@ -107,55 +107,17 @@ def register_monitor_workflow_specs(
     )
 
 
-def register_monitor_view_workflow_specs(
-    instrument: Instrument, source_names: list[str]
-) -> SpecHandle | None:
+def create_monitor_workflow_factory(source_name: str, params: MonitorDataParams):
     """
-    Register monitor view workflow specs for data_reduction service.
+    Factory function for monitor workflow from MonitorDataParams.
 
-    This registers a StreamProcessor-based monitor workflow that runs in the
-    data_reduction service. It produces the same outputs as the monitor_data
-    service workflow but uses the ToNXevent_data preprocessor.
-
-    Parameters
-    ----------
-    instrument
-        The instrument to register the workflow specs for.
-    source_names
-        List of monitor names (source names) for which to register the workflow.
-        If empty, returns None without registering.
-
-    Returns
-    -------
-    SpecHandle for later factory attachment, or None if no monitors.
-    """
-    if not source_names:
-        return None
-
-    return instrument.register_spec(
-        namespace='data_reduction',
-        name='monitor_view',
-        version=1,
-        title="Beam monitor data",
-        description="Histogrammed and time-integrated beam monitor data. The monitor "
-        "is histogrammed or rebinned into specified time-of-arrival (TOA) bins.",
-        source_names=source_names,
-        params=MonitorDataParams,
-        outputs=MonitorHistogramOutputs,
-    )
-
-
-def create_monitor_view_workflow_factory(source_name: str, params: MonitorDataParams):
-    """
-    Factory function for monitor view workflow from MonitorDataParams.
-
-    This is a wrapper around create_monitor_view_workflow that unpacks the params.
+    This is a wrapper around create_monitor_workflow that unpacks the params.
     Defined here so the params type hint can be properly resolved by the
     workflow factory registration system.
     """
-    from .monitor_workflow import create_monitor_view_workflow
+    from .monitor_workflow import create_monitor_workflow
 
-    return create_monitor_view_workflow(
+    return create_monitor_workflow(
         source_name=source_name,
         edges=params.toa_edges.get_edges(),
         toa_range=params.toa_range.range_ns if params.toa_range.enabled else None,
