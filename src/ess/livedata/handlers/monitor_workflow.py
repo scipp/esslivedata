@@ -153,4 +153,5 @@ def create_monitor_view_workflow(
             CumulativeMonitorHistogram: streaming.EternalAccumulator(),
             WindowMonitorHistogram: WindowAccumulator(),
         },
+        window_outputs=['current', 'counts_total', 'counts_in_toa_range'],
     )

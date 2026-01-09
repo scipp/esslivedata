@@ -283,6 +283,94 @@ class TestMonitorViewWorkflowIntegration:
         assert results['counts_total'].value == 5.0
         assert results['counts_in_toa_range'].value == 5.0
 
+    def test_time_coords_on_delta_outputs(self, toa_edges, sample_binned_events):
+        """Delta outputs get time, start_time, end_time coords."""
+        workflow = create_monitor_view_workflow('monitor_1', toa_edges)
+        workflow.accumulate(
+            {'monitor_1': sample_binned_events}, start_time=1000, end_time=2000
+        )
+        results = workflow.finalize()
+
+        # Current (window histogram) should have time coords
+        assert 'time' in results['current'].coords
+        assert 'start_time' in results['current'].coords
+        assert 'end_time' in results['current'].coords
+        assert results['current'].coords['time'].value == 1000
+        assert results['current'].coords['start_time'].value == 1000
+        assert results['current'].coords['end_time'].value == 2000
+
+        # counts_total should have time coords
+        assert 'time' in results['counts_total'].coords
+        assert 'start_time' in results['counts_total'].coords
+        assert 'end_time' in results['counts_total'].coords
+        assert results['counts_total'].coords['time'].value == 1000
+        assert results['counts_total'].coords['start_time'].value == 1000
+        assert results['counts_total'].coords['end_time'].value == 2000
+
+        # counts_in_toa_range should have time coords
+        assert 'time' in results['counts_in_toa_range'].coords
+        assert 'start_time' in results['counts_in_toa_range'].coords
+        assert 'end_time' in results['counts_in_toa_range'].coords
+        assert results['counts_in_toa_range'].coords['time'].value == 1000
+        assert results['counts_in_toa_range'].coords['start_time'].value == 1000
+        assert results['counts_in_toa_range'].coords['end_time'].value == 2000
+
+    def test_cumulative_output_has_no_time_coords(
+        self, toa_edges, sample_binned_events
+    ):
+        """Cumulative output should not have time coords (spans all time)."""
+        workflow = create_monitor_view_workflow('monitor_1', toa_edges)
+        workflow.accumulate(
+            {'monitor_1': sample_binned_events}, start_time=1000, end_time=2000
+        )
+        results = workflow.finalize()
+
+        assert 'time' not in results['cumulative'].coords
+        assert 'start_time' not in results['cumulative'].coords
+        assert 'end_time' not in results['cumulative'].coords
+
+    def test_time_coords_track_first_start_last_end(
+        self, toa_edges, sample_binned_events
+    ):
+        """Time coords should track first start_time and last end_time."""
+        workflow = create_monitor_view_workflow('monitor_1', toa_edges)
+        # Multiple accumulate calls before finalize
+        workflow.accumulate(
+            {'monitor_1': sample_binned_events}, start_time=1000, end_time=2000
+        )
+        workflow.accumulate(
+            {'monitor_1': sample_binned_events}, start_time=2000, end_time=3000
+        )
+        workflow.accumulate(
+            {'monitor_1': sample_binned_events}, start_time=3000, end_time=4000
+        )
+        results = workflow.finalize()
+
+        # start_time should be from first accumulate, end_time from last
+        assert results['current'].coords['time'].value == 1000
+        assert results['current'].coords['start_time'].value == 1000
+        assert results['current'].coords['end_time'].value == 4000
+
+    def test_time_coords_reset_after_finalize(self, toa_edges, sample_binned_events):
+        """Time coords should reset between finalize cycles."""
+        workflow = create_monitor_view_workflow('monitor_1', toa_edges)
+
+        # First cycle
+        workflow.accumulate(
+            {'monitor_1': sample_binned_events}, start_time=1000, end_time=2000
+        )
+        results1 = workflow.finalize()
+        assert results1['current'].coords['start_time'].value == 1000
+        assert results1['current'].coords['end_time'].value == 2000
+
+        # Second cycle should have fresh time tracking
+        workflow.accumulate(
+            {'monitor_1': sample_binned_events}, start_time=5000, end_time=6000
+        )
+        results2 = workflow.finalize()
+        assert results2['current'].coords['start_time'].value == 5000
+        assert results2['current'].coords['end_time'].value == 6000
+
     def test_cumulative_accumulates_window_clears(
         self, toa_edges, sample_binned_events
     ):
