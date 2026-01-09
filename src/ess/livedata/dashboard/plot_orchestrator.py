@@ -335,6 +335,11 @@ class PlotOrchestrator:
         """The instrument name for this orchestrator."""
         return self._instrument
 
+    @property
+    def instrument_config(self) -> Instrument | None:
+        """The instrument configuration (if available)."""
+        return self._instrument_config
+
     def get_source_title(self, source_name: str) -> str:
         """Get display title for a source name.
 

@@ -579,6 +579,16 @@ class JobOrchestrator:
         """
         return self._workflow_registry
 
+    def get_source_title(self, source_name: str) -> str:
+        """Get display title for a source name.
+
+        Falls back to the source name if no instrument config is available
+        or no title is defined for the source.
+        """
+        if self._instrument_config is not None:
+            return self._instrument_config.get_source_title(source_name)
+        return source_name
+
     def create_workflow_adapter(
         self,
         workflow_id: WorkflowId,

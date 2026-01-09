@@ -328,6 +328,7 @@ class PlotGridTabs:
             success_callback=wrapped_on_success,
             cancel_callback=self._cleanup_modal,
             initial_config=initial_config,
+            instrument_config=self._orchestrator.instrument_config,
         )
 
         # Add modal to container so it renders

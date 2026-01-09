@@ -16,12 +16,15 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import panel as pn
 import pydantic
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
+
+if TYPE_CHECKING:
+    from ess.livedata.config import Instrument
 from ess.livedata.dashboard.plot_configuration_adapter import PlotConfigurationAdapter
 from ess.livedata.dashboard.plot_orchestrator import PlotConfig
 from ess.livedata.dashboard.plotting import PlotterSpec
@@ -624,6 +627,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         plotting_controller,
         logger: logging.Logger,
         initial_config: PlotConfig | None = None,
+        instrument_config: Instrument | None = None,
     ) -> None:
         """
         Initialize spec-based configuration step.
@@ -638,12 +642,15 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             Logger instance for error reporting.
         initial_config
             Optional initial configuration for edit mode.
+        instrument_config
+            Optional instrument configuration for source metadata lookup.
         """
         super().__init__()
         self._workflow_registry = dict(workflow_registry)
         self._plotting_controller = plotting_controller
         self._logger = logger
         self._initial_config = initial_config
+        self._instrument_config = instrument_config
         self._config_panel: ConfigurationPanel | None = None
         self._panel_container = pn.Column(sizing_mode='stretch_width')
         self._plotter_selection: PlotterSelection | None = None
@@ -777,6 +784,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             success_callback=self._on_config_collected,
             config_state=config_state,
             initial_source_names=initial_source_names,
+            instrument_config=self._instrument_config,
         )
 
         self._config_panel = ConfigurationPanel(config=config_adapter)
@@ -840,6 +848,8 @@ class PlotConfigModal:
     initial_config
         Optional existing configuration for edit mode. When provided, the wizard
         starts at the configuration step with pre-filled values.
+    instrument_config
+        Optional instrument configuration for source metadata lookup.
     """
 
     def __init__(
@@ -849,6 +859,7 @@ class PlotConfigModal:
         success_callback: Callable[[PlotConfig], None],
         cancel_callback: Callable[[], None],
         initial_config: PlotConfig | None = None,
+        instrument_config: Instrument | None = None,
     ) -> None:
         self._success_callback = success_callback
         self._cancel_callback = cancel_callback
@@ -872,6 +883,7 @@ class PlotConfigModal:
             plotting_controller=plotting_controller,
             logger=self._logger,
             initial_config=initial_config,
+            instrument_config=instrument_config,
         )
 
         # Create wizard

@@ -515,12 +515,12 @@ class WorkflowStatusWidget:
         self, group: ConfigGroup, *, is_unconfigured: bool
     ) -> pn.Row:
         """Create a toolbar row for a config group."""
-        # Source tags
+        # Source tags - use display titles from orchestrator
         source_tags_html = ''.join(
             f'<span style="display: inline-block; padding: 1px 6px; '
             f'background: {"#fff3cd" if is_unconfigured else "#e9ecef"}; '
             f'border-radius: 3px; margin-right: 4px; font-size: 11px;">'
-            f'{name}</span>'
+            f'{self._orchestrator.get_source_title(name)}</span>'
             for name in group.source_names
         )
 
