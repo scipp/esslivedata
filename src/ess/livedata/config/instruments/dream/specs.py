@@ -45,18 +45,25 @@ instrument.add_logical_view(
     transform=get_mantle_front_layer,
 )
 instrument.add_logical_view(
-    name='mantle_wire_view',
-    title='Mantle wire view',
-    description='Sum over strips to show counts per wire in the mantle detector.',
-    source_names=['mantle_detector'],
+    name='wire_view',
+    title='Wire view',
+    description='Sum over strips to show counts per wire.',
+    source_names=[
+        'mantle_detector',
+        'endcap_backward_detector',
+        'endcap_forward_detector',
+    ],
     transform=get_wire_view,
+    roi_support=False,
 )
 instrument.add_logical_view(
-    name='mantle_strip_view',
-    title='Mantle strip view',
+    name='strip_view',
+    title='Strip view',
     description='Sum over all dimensions except strip to show counts per strip.',
-    source_names=['mantle_detector'],
+    source_names=detector_names,
     transform=get_strip_view,
+    output_ndim=1,
+    roi_support=False,
 )
 
 # Mapping of detector names to their projection types

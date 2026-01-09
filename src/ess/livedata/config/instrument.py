@@ -220,16 +220,11 @@ class Instrument:
         """
         from ess.livedata.handlers.detector_view_specs import (
             DetectorROIAuxSources,
-            DetectorViewOutputs,
             DetectorViewParams,
             make_detector_view_outputs,
         )
 
-        outputs = (
-            make_detector_view_outputs(output_ndim)
-            if output_ndim is not None
-            else DetectorViewOutputs
-        )
+        outputs = make_detector_view_outputs(output_ndim, roi_support=roi_support)
         handle = self.register_spec(
             namespace="detector_data",
             name=name,
@@ -365,6 +360,7 @@ class Instrument:
                     instrument=self,
                     transform=config.transform,
                     reduction_dim=config.reduction_dim,
+                    roi_support=config.roi_support,
                 )
                 handle.attach_factory()(view.make_view)
 

@@ -35,6 +35,8 @@ class DetectorView(Workflow):
         self,
         params: DetectorViewParams,
         detector_view: raw.RollingDetectorView,
+        *,
+        roi_support: bool = True,
     ) -> None:
         self._use_toa_range = params.toa_range.enabled
         self._toa_range = params.toa_range.range_ns
@@ -64,6 +66,7 @@ class DetectorView(Workflow):
             set()
         )  # Track which geometries were updated
         self._roi_mapper = get_roi_mapper()
+        self._roi_support = roi_support
         self._initial_readback_sent = False
         self._current_start_time: int | None = None
 
@@ -185,31 +188,34 @@ class DetectorView(Workflow):
         # be a problem. A workaround if it really happens is to stop and restart the
         # job. Solutions may include sending the readback periodcally even if there was
         # no actual change.
-        for geometry in self._roi_mapper.geometries:
-            should_publish = (
-                geometry.readback_key in self._updated_geometries
-                or not self._initial_readback_sent
-            )
-            if not should_publish:
-                continue
+        if self._roi_support:
+            for geometry in self._roi_mapper.geometries:
+                should_publish = (
+                    geometry.readback_key in self._updated_geometries
+                    or not self._initial_readback_sent
+                )
+                if not should_publish:
+                    continue
 
-            # Extract ROI models for this geometry type
-            roi_models = {
-                idx: roi_state.model
-                for idx, roi_state in self._rois.items()
-                if idx in geometry.index_range
-            }
+                # Extract ROI models for this geometry type
+                roi_models = {
+                    idx: roi_state.model
+                    for idx, roi_state in self._rois.items()
+                    if idx in geometry.index_range
+                }
 
-            # Convert to concatenated DataArray with roi_index coordinate.
-            # Include coordinate units from detector view so the dashboard can
-            # use them when publishing user-drawn ROIs.
-            roi_class = geometry.roi_class
-            roi_result[geometry.readback_key] = roi_class.to_concatenated_data_array(
-                roi_models, coord_units=self._get_detector_coord_units()
-            )
+                # Convert to concatenated DataArray with roi_index coordinate.
+                # Include coordinate units from detector view so the dashboard can
+                # use them when publishing user-drawn ROIs.
+                roi_class = geometry.roi_class
+                roi_result[geometry.readback_key] = (
+                    roi_class.to_concatenated_data_array(
+                        roi_models, coord_units=self._get_detector_coord_units()
+                    )
+                )
 
-        self._initial_readback_sent = True
-        self._updated_geometries.clear()
+            self._initial_readback_sent = True
+            self._updated_geometries.clear()
 
         # Ratemeter: output event counts and reset for next period
         counts_result = {
