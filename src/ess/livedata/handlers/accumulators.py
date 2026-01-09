@@ -12,7 +12,9 @@ from streaming_data_types import logdata_f144
 from ess.reduce import streaming
 
 from ..core.handler import Accumulator
-from .to_nxevent_data import DetectorEvents
+from .to_nxevent_data import DetectorEvents, MonitorEvents
+
+__all__ = ["DetectorEvents", "MonitorEvents"]
 
 T = TypeVar('T')
 

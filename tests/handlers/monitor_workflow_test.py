@@ -18,12 +18,14 @@ from ess.livedata.handlers.monitor_workflow import (
 from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
 from ess.livedata.handlers.monitor_workflow_types import (
     MonitorHistogram,
-    TOAEdges,
     TOARangeHigh,
     TOARangeLow,
     WindowMonitorHistogram,
 )
-from ess.livedata.parameter_models import TimeUnit
+from ess.livedata.handlers.monitor_workflow_types import (
+    TOAEdges as TOAEdgesKey,
+)
+from ess.livedata.parameter_models import TimeUnit, TOAEdges
 from ess.reduce import streaming
 
 
@@ -246,7 +248,7 @@ class TestBuildMonitorWorkflow:
 
         edges = sc.linspace('time_of_arrival', 0, 10, num=6, unit='ns')
         workflow[NeXusData[NXmonitor, SampleRun]] = binned
-        workflow[TOAEdges] = edges
+        workflow[TOAEdgesKey] = edges
         workflow[TOARangeLow] = edges['time_of_arrival', 0]
         workflow[TOARangeHigh] = edges['time_of_arrival', -1]
 
