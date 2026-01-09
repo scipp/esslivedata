@@ -105,3 +105,61 @@ def register_monitor_workflow_specs(
         params=MonitorDataParams,
         outputs=MonitorHistogramOutputs,
     )
+
+
+def register_monitor_view_workflow_specs(
+    instrument: Instrument, source_names: list[str]
+) -> SpecHandle | None:
+    """
+    Register monitor view workflow specs for data_reduction service.
+
+    This registers a StreamProcessor-based monitor workflow that runs in the
+    data_reduction service. It produces the same outputs as the monitor_data
+    service workflow but uses the ToNXevent_data preprocessor.
+
+    Parameters
+    ----------
+    instrument
+        The instrument to register the workflow specs for.
+    source_names
+        List of monitor names (source names) for which to register the workflow.
+        If empty, returns None without registering.
+
+    Returns
+    -------
+    SpecHandle for later factory attachment, or None if no monitors.
+    """
+    if not source_names:
+        return None
+
+    return instrument.register_spec(
+        namespace='data_reduction',
+        name='monitor_view',
+        version=1,
+        title="Monitor View",
+        description=(
+            "StreamProcessor-based monitor workflow for data_reduction service. "
+            "Histograms monitor events by time-of-arrival and provides cumulative "
+            "and window-level outputs."
+        ),
+        source_names=source_names,
+        params=MonitorDataParams,
+        outputs=MonitorHistogramOutputs,
+    )
+
+
+def create_monitor_view_workflow_factory(source_name: str, params: MonitorDataParams):
+    """
+    Factory function for monitor view workflow from MonitorDataParams.
+
+    This is a wrapper around create_monitor_view_workflow that unpacks the params.
+    Defined here so the params type hint can be properly resolved by the
+    workflow factory registration system.
+    """
+    from .monitor_workflow import create_monitor_view_workflow
+
+    return create_monitor_view_workflow(
+        source_name=source_name,
+        edges=params.toa_edges.get_edges(),
+        toa_range=params.toa_range.range_ns if params.toa_range.enabled else None,
+    )

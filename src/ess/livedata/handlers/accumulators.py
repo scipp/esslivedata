@@ -74,6 +74,18 @@ class LatestValueHandler(Accumulator[sc.DataArray, sc.DataArray]):
         self._latest = None
 
 
+class WindowAccumulator(streaming.EternalAccumulator[T], Generic[T]):
+    """
+    Streaming accumulator that clears after each finalize cycle.
+
+    Use this for "current window" outputs where you want the delta since
+    the last finalize, not the cumulative total.
+    """
+
+    def on_finalize(self) -> None:
+        self.clear()
+
+
 class LatestValue(streaming.Accumulator[T], Generic[T]):
     """
     Streaming accumulator that keeps only the latest value.
