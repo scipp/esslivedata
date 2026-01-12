@@ -771,9 +771,8 @@ def _get_coord_units_from_histogram(
 
     def get_unit_for_dim(dim: str) -> sc.Unit | None:
         coord = histogram.coords.get(dim)
-        if coord is not None and coord.unit is not None:
-            # Return None for dimensionless (so frontend uses indices)
-            return None if coord.unit == sc.units.one else coord.unit
+        if coord is not None:
+            return coord.unit
         return None
 
     return {'x': get_unit_for_dim(x_dim), 'y': get_unit_for_dim(y_dim)}
