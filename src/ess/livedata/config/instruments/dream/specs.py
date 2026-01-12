@@ -14,7 +14,8 @@ from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import (
-    DetectorViewOutputsBase,
+    DetectorROIAuxSources,
+    DetectorViewOutputs,
     DetectorViewParams,
     register_detector_view_spec,
 )
@@ -286,6 +287,7 @@ sciline_detector_view_handle = instrument.register_spec(
     title='Sciline Detector View',
     description='Sciline-based logical detector view with TOF histogramming.',
     source_names=['endcap_backward_detector'],
+    aux_sources=DetectorROIAuxSources,
     params=DetectorViewParams,
-    outputs=DetectorViewOutputsBase,  # No ROI support in Phase 1
+    outputs=DetectorViewOutputs,
 )

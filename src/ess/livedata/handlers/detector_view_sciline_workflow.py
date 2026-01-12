@@ -47,6 +47,8 @@ from ess.reduce.nexus.types import (
 from ess.reduce.nexus.workflow import GenericNeXusWorkflow
 from ess.reduce.streaming import EternalAccumulator
 
+from ..config import models
+
 # ============================================================================
 # Type definitions
 # ============================================================================
@@ -102,6 +104,33 @@ CountsTotal = NewType('CountsTotal', sc.DataArray)
 
 CountsInTOARange = NewType('CountsInTOARange', sc.DataArray)
 """Event counts within configured TOA range as 0D scalar (from current window)."""
+
+# ROI configuration types (context keys - updated less frequently than events)
+ROIRectangleRequest = NewType('ROIRectangleRequest', sc.DataArray)
+"""ROI rectangle configuration as concatenated DataArray (empty if no ROIs)."""
+
+ROIPolygonRequest = NewType('ROIPolygonRequest', sc.DataArray)
+"""ROI polygon configuration as concatenated DataArray (empty if no ROIs)."""
+
+# ROI readback types (outputs - echo request with correct units for frontend)
+ROIRectangleReadback = NewType('ROIRectangleReadback', sc.DataArray)
+"""ROI rectangle readback with coordinate units from histogram."""
+
+ROIPolygonReadback = NewType('ROIPolygonReadback', sc.DataArray)
+"""ROI polygon readback with coordinate units from histogram."""
+
+# ROI output types
+ROISpectra = NewType('ROISpectra', sc.DataArray)
+"""TOF spectra for ROIs with dims (roi, tof).
+
+Computed from histogram, not accumulated.
+"""
+
+CumulativeROISpectra = NewType('CumulativeROISpectra', sc.DataArray)
+"""ROI spectra extracted from cumulative histogram."""
+
+CurrentROISpectra = NewType('CurrentROISpectra', sc.DataArray)
+"""ROI spectra extracted from current window histogram."""
 
 
 # ============================================================================
@@ -505,6 +534,311 @@ def counts_in_toa_range(
 
 
 # ============================================================================
+# Providers - ROI Spectra Extraction
+# ============================================================================
+
+
+def _extract_roi_spectra(
+    histogram_3d: sc.DataArray,
+    rectangle_request: sc.DataArray | None,
+    polygon_request: sc.DataArray | None,
+) -> sc.DataArray:
+    """
+    Extract TOF spectra from 3D histogram for all configured ROIs.
+
+    Parameters
+    ----------
+    histogram_3d:
+        3D histogram with dims (y, x, tof).
+    rectangle_request:
+        Concatenated DataArray with rectangle ROI definitions, or None.
+    polygon_request:
+        Concatenated DataArray with polygon ROI definitions, or None.
+
+    Returns
+    -------
+    :
+        2D DataArray with dims (roi, tof) containing spectra for each ROI.
+        Returns empty DataArray with shape (0, n_tof) if no ROIs configured.
+    """
+    tof_dim = 'tof' if 'tof' in histogram_3d.dims else histogram_3d.dims[-1]
+    tof_coord = histogram_3d.coords[tof_dim]
+    n_tof = histogram_3d.sizes[tof_dim]
+
+    # Get spatial dims (all dims except tof)
+    spatial_dims = [d for d in histogram_3d.dims if d != tof_dim]
+    if len(spatial_dims) != 2:
+        raise ValueError(
+            f"Expected 2 spatial dims, got {len(spatial_dims)}: {spatial_dims}"
+        )
+    y_dim, x_dim = spatial_dims
+
+    spectra: list[sc.DataArray] = []
+    roi_indices: list[int] = []
+
+    # Process rectangle ROIs
+    if rectangle_request is not None and len(rectangle_request) > 0:
+        rois = models.ROI.from_concatenated_data_array(rectangle_request)
+        for idx, roi in rois.items():
+            if isinstance(roi, models.RectangleROI):
+                spectrum = _extract_rectangle_spectrum(
+                    histogram_3d, roi, x_dim=x_dim, y_dim=y_dim, tof_dim=tof_dim
+                )
+                spectra.append(spectrum)
+                roi_indices.append(idx)
+
+    # Process polygon ROIs
+    if polygon_request is not None and len(polygon_request) > 0:
+        rois = models.ROI.from_concatenated_data_array(polygon_request)
+        for idx, roi in rois.items():
+            if isinstance(roi, models.PolygonROI):
+                spectrum = _extract_polygon_spectrum(
+                    histogram_3d, roi, x_dim=x_dim, y_dim=y_dim, tof_dim=tof_dim
+                )
+                spectra.append(spectrum)
+                roi_indices.append(idx)
+
+    # Build output DataArray
+    if not spectra:
+        # Return empty DataArray with correct structure
+        return sc.DataArray(
+            data=sc.zeros(dims=['roi', tof_dim], shape=[0, n_tof], unit='counts'),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[], dtype='int32'),
+                tof_dim: tof_coord,
+            },
+        )
+
+    # Stack spectra along roi dimension
+    stacked = sc.concat(spectra, dim='roi')
+    stacked.coords['roi'] = sc.array(dims=['roi'], values=roi_indices, dtype='int32')
+    return stacked
+
+
+def _extract_rectangle_spectrum(
+    histogram_3d: sc.DataArray,
+    roi: models.RectangleROI,
+    *,
+    x_dim: str,
+    y_dim: str,
+    tof_dim: str,
+) -> sc.DataArray:
+    """Extract TOF spectrum for a rectangle ROI by slicing and summing."""
+    bounds = roi.get_bounds(x_dim=x_dim, y_dim=y_dim)
+
+    # Slice the histogram by the ROI bounds
+    x_low, x_high = bounds[x_dim]
+    y_low, y_high = bounds[y_dim]
+    sliced = histogram_3d[y_dim, y_low:y_high][x_dim, x_low:x_high]
+
+    # Sum over spatial dimensions to get 1D spectrum
+    spectrum = sliced.sum(dim=[y_dim, x_dim])
+    return spectrum
+
+
+def _extract_polygon_spectrum(
+    histogram_3d: sc.DataArray,
+    roi: models.PolygonROI,
+    *,
+    x_dim: str,
+    y_dim: str,
+    tof_dim: str,
+) -> sc.DataArray:
+    """Extract TOF spectrum for a polygon ROI by masking and summing."""
+    # Get polygon vertices
+    x_vertices = roi.x
+    y_vertices = roi.y
+
+    # Get coordinate arrays for the histogram
+    x_coords = histogram_3d.coords.get(x_dim)
+    y_coords = histogram_3d.coords.get(y_dim)
+
+    # Create mask using point-in-polygon test
+    # We need to check each (y, x) bin center against the polygon
+    if x_coords is not None and y_coords is not None:
+        # Use bin centers for coordinate-based selection
+        if roi.x_unit is not None:
+            x_centers = sc.midpoints(x_coords).to(unit=roi.x_unit).values
+        else:
+            x_centers = np.arange(histogram_3d.sizes[x_dim])
+
+        if roi.y_unit is not None:
+            y_centers = sc.midpoints(y_coords).to(unit=roi.y_unit).values
+        else:
+            y_centers = np.arange(histogram_3d.sizes[y_dim])
+    else:
+        # Fallback to index-based selection
+        x_centers = np.arange(histogram_3d.sizes[x_dim])
+        y_centers = np.arange(histogram_3d.sizes[y_dim])
+
+    # Create 2D grid of points
+    xx, yy = np.meshgrid(x_centers, y_centers)
+
+    # Point-in-polygon test using matplotlib path
+    from matplotlib.path import Path
+
+    polygon_path = Path(list(zip(x_vertices, y_vertices, strict=True)))
+    points = np.column_stack([xx.ravel(), yy.ravel()])
+    mask_flat = polygon_path.contains_points(points)
+    mask_2d = mask_flat.reshape(xx.shape)
+
+    # Convert to scipp Variable and broadcast to 3D
+    mask_var = sc.array(dims=[y_dim, x_dim], values=mask_2d)
+
+    # Apply mask and sum over spatial dimensions
+    # Use where to zero out values outside the polygon
+    # Create zero with matching dtype to avoid DTypeError
+    zero = sc.zeros_like(histogram_3d)
+    masked = sc.where(mask_var, histogram_3d, zero)
+    spectrum = masked.sum(dim=[y_dim, x_dim])
+    return spectrum
+
+
+def cumulative_roi_spectra(
+    data_3d: CumulativeHistogram,
+    rectangle_request: ROIRectangleRequest,
+    polygon_request: ROIPolygonRequest,
+) -> CumulativeROISpectra:
+    """
+    Extract ROI spectra from cumulative histogram.
+
+    Parameters
+    ----------
+    data_3d:
+        Cumulative 3D histogram (y, x, tof).
+    rectangle_request:
+        Rectangle ROI configuration, or None.
+    polygon_request:
+        Polygon ROI configuration, or None.
+
+    Returns
+    -------
+    :
+        ROI spectra with dims (roi, tof).
+    """
+    return CumulativeROISpectra(
+        _extract_roi_spectra(data_3d, rectangle_request, polygon_request)
+    )
+
+
+def current_roi_spectra(
+    data_3d: WindowHistogram,
+    rectangle_request: ROIRectangleRequest,
+    polygon_request: ROIPolygonRequest,
+) -> CurrentROISpectra:
+    """
+    Extract ROI spectra from current window histogram.
+
+    Parameters
+    ----------
+    data_3d:
+        Current window 3D histogram (y, x, tof).
+    rectangle_request:
+        Rectangle ROI configuration, or None.
+    polygon_request:
+        Polygon ROI configuration, or None.
+
+    Returns
+    -------
+    :
+        ROI spectra with dims (roi, tof).
+    """
+    return CurrentROISpectra(
+        _extract_roi_spectra(data_3d, rectangle_request, polygon_request)
+    )
+
+
+def _get_coord_units_from_histogram(
+    histogram: sc.DataArray,
+) -> dict[str, sc.Unit | None]:
+    """Extract coordinate units from histogram for ROI readback.
+
+    Maps histogram spatial coordinate units to ROI 'x' and 'y' coordinates.
+    Assumes histogram dims are (y, x, tof) or similar with last dim being TOF.
+    """
+    tof_dim = 'tof' if 'tof' in histogram.dims else histogram.dims[-1]
+    spatial_dims = [d for d in histogram.dims if d != tof_dim]
+
+    if len(spatial_dims) != 2:
+        return {'x': None, 'y': None}
+
+    y_dim, x_dim = spatial_dims
+
+    def get_unit_for_dim(dim: str) -> sc.Unit | None:
+        coord = histogram.coords.get(dim)
+        if coord is not None and coord.unit is not None:
+            # Return None for dimensionless (so frontend uses indices)
+            return None if coord.unit == sc.units.one else coord.unit
+        return None
+
+    return {'x': get_unit_for_dim(x_dim), 'y': get_unit_for_dim(y_dim)}
+
+
+def roi_rectangle_readback(
+    request: ROIRectangleRequest,
+    histogram: CumulativeHistogram,
+) -> ROIRectangleReadback:
+    """
+    Produce ROI rectangle readback with correct coordinate units.
+
+    If request has ROIs, returns them unchanged. If empty, creates empty
+    DataArray with coordinate units from the histogram so the frontend
+    knows what units to use when creating ROIs.
+
+    Parameters
+    ----------
+    request:
+        ROI rectangle request from context.
+    histogram:
+        Cumulative histogram with coordinate units.
+
+    Returns
+    -------
+    :
+        ROI readback with correct coordinate units.
+    """
+    if request is not None and len(request) > 0:
+        return ROIRectangleReadback(request)
+
+    coord_units = _get_coord_units_from_histogram(histogram)
+    return ROIRectangleReadback(
+        models.RectangleROI.to_concatenated_data_array({}, coord_units=coord_units)
+    )
+
+
+def roi_polygon_readback(
+    request: ROIPolygonRequest,
+    histogram: CumulativeHistogram,
+) -> ROIPolygonReadback:
+    """
+    Produce ROI polygon readback with correct coordinate units.
+
+    If request has ROIs, returns them unchanged. If empty, creates empty
+    DataArray with coordinate units from the histogram so the frontend
+    knows what units to use when creating ROIs.
+
+    Parameters
+    ----------
+    request:
+        ROI polygon request from context.
+    histogram:
+        Cumulative histogram with coordinate units.
+
+    Returns
+    -------
+    :
+        ROI readback with correct coordinate units.
+    """
+    if request is not None and len(request) > 0:
+        return ROIPolygonReadback(request)
+
+    coord_units = _get_coord_units_from_histogram(histogram)
+    return ROIPolygonReadback(
+        models.PolygonROI.to_concatenated_data_array({}, coord_units=coord_units)
+    )
+
+
+# ============================================================================
 # Workflow Construction
 # ============================================================================
 
@@ -544,9 +878,19 @@ def create_base_workflow(
     workflow.insert(counts_total)
     workflow.insert(counts_in_toa_range)
 
+    # Add ROI providers
+    workflow.insert(cumulative_roi_spectra)
+    workflow.insert(current_roi_spectra)
+    workflow.insert(roi_rectangle_readback)
+    workflow.insert(roi_polygon_readback)
+
     # Set configuration parameters
     workflow[TOFBins] = tof_bins
     workflow[TOFSlice] = tof_slice
+
+    # Set default ROI configuration (empty DataArrays - None can't be serialized)
+    workflow[ROIRectangleRequest] = models.RectangleROI.to_concatenated_data_array({})
+    workflow[ROIPolygonRequest] = models.PolygonROI.to_concatenated_data_array({})
 
     return workflow
 
@@ -770,16 +1114,37 @@ class DetectorViewScilineFactory:
                 reduction_dim=self._reduction_dim,
             )
 
+        # Create empty ROI DataArrays for initial context
+        empty_rectangle = models.RectangleROI.to_concatenated_data_array({})
+        empty_polygon = models.PolygonROI.to_concatenated_data_array({})
+
         return StreamProcessorWorkflow(
             workflow,
             # Inject preprocessor output as NeXusData; GenericNeXusWorkflow
             # providers will group events by pixel to produce RawDetector.
             dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},
+            # ROI configuration comes from auxiliary streams, updated less frequently
+            context_keys={
+                'roi_rectangle': ROIRectangleRequest,
+                'roi_polygon': ROIPolygonRequest,
+            },
             target_keys={
                 'cumulative': CumulativeDetectorImage,
                 'current': CurrentDetectorImage,
                 'counts_total': CountsTotal,
                 'counts_in_toa_range': CountsInTOARange,
+                # ROI spectra (extracted from accumulated histograms)
+                'roi_spectra_cumulative': CumulativeROISpectra,
+                'roi_spectra_current': CurrentROISpectra,
+                # ROI readbacks (providers ensure correct units from histogram coords)
+                'roi_rectangle': ROIRectangleReadback,
+                'roi_polygon': ROIPolygonReadback,
+            },
+            # Set initial context so finalize() returns valid values before any
+            # ROI is set
+            initial_context={
+                ROIRectangleRequest: empty_rectangle,
+                ROIPolygonRequest: empty_polygon,
             },
             accumulators=create_accumulators(),
         )
