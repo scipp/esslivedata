@@ -12,6 +12,7 @@ from ess.livedata.config import Instrument
 
 from . import specs
 from .specs import PowderWorkflowParams
+from .views import get_mantle_front_layer
 
 
 def setup_factories(instrument: Instrument) -> None:
@@ -180,3 +181,24 @@ def setup_factories(instrument: Instrument) -> None:
                 powder.types.WavelengthMonitor[SampleRun, powder.types.CaveMonitor],
             ),
         )
+
+    # Sciline-based detector view workflow (Phase 1: without ROI support)
+    from ess.livedata.handlers.detector_view_sciline_workflow import (
+        DetectorViewScilineFactory,
+    )
+    from ess.livedata.handlers.detector_view_specs import DetectorViewParams
+
+    # Create factory with wire_view transform for 2D visualization
+    _sciline_detector_view = DetectorViewScilineFactory(
+        instrument=instrument,
+        tof_bins=sc.linspace('event_time_offset', 0, 71_000_000, 101, unit='ns'),
+        nexus_filename=get_nexus_geometry_filename('dream-no-shape'),
+        logical_transform=get_mantle_front_layer,
+    )
+
+    @specs.sciline_detector_view_handle.attach_factory()
+    def _sciline_detector_view_factory(
+        source_name: str, params: DetectorViewParams
+    ) -> StreamProcessorWorkflow:
+        """Factory for Sciline-based detector view workflow."""
+        return _sciline_detector_view.make_workflow(source_name, params)

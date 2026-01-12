@@ -13,7 +13,11 @@ import scipp as sc
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
-from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
+from ess.livedata.handlers.detector_view_specs import (
+    DetectorViewOutputsBase,
+    DetectorViewParams,
+    register_detector_view_spec,
+)
 
 from .views import get_mantle_front_layer, get_strip_view, get_wire_view
 
@@ -271,4 +275,17 @@ powder_reduction_with_vanadium_handle = instrument.register_spec(
     aux_sources=DreamAuxSources,
     outputs=PowderReductionWithVanadiumOutputs,
     params=PowderWorkflowParams,
+)
+
+# Register Sciline-based detector view spec (Phase 1: without ROI support)
+# Uses wire_view transform for a simple 2D visualization
+sciline_detector_view_handle = instrument.register_spec(
+    namespace='data_reduction',
+    name='sciline_detector_view',
+    version=1,
+    title='Sciline Detector View',
+    description='Sciline-based logical detector view with TOF histogramming.',
+    source_names=_powder_detector_names,
+    params=DetectorViewParams,
+    outputs=DetectorViewOutputsBase,  # No ROI support in Phase 1
 )
