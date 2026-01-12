@@ -320,6 +320,10 @@ def project_events_geometric(
     :
         Events binned by screen coordinates with TOF preserved.
     """
+    # TODO Can we modify the provider in ess.reduce to not add variances in the first
+    # place (optionally)? This is wasteful here, if variances are needed they can be
+    # added after histogramming.
+    raw_detector = sc.values(raw_detector)
     return ScreenBinnedEvents(projector.project_events(raw_detector))
 
 
@@ -345,6 +349,7 @@ def project_events_logical(
     :
         Events binned by logical coordinates with TOF preserved.
     """
+    raw_detector = sc.values(raw_detector)
     if transform is None:
         return ScreenBinnedEvents(raw_detector)
 
