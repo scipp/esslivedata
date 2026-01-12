@@ -155,6 +155,15 @@ class EventProjector:
         """
         Project events from detector pixels to screen coordinates.
 
+        This method broadcasts per-pixel screen coordinates to individual events,
+        then re-bins events by screen position. We use manual numpy indexing rather
+        than ``sc.bins_like`` for performance reasons:
+
+        - ``sc.bins_like`` has O(n_pixels) overhead that dominates when pixels >> events
+        - With 1M pixels and <1M events (typical for live streaming), numpy is 2-10x
+          faster
+        - ``sc.bins_like`` only becomes faster at high event density (>10 events/pixel)
+
         Parameters
         ----------
         events:
@@ -177,13 +186,16 @@ class EventProjector:
             for key in self._edges.keys()
         }
 
-        # Extract event data from bins
+        # Extract flat event table from bins, discarding the pixel binning structure.
+        # This is more efficient than using bin(dim='detector_number', ...) which
+        # would process the bin structure before flattening.
         constituents = events.data.bins.constituents
         begin = constituents['begin'].values
         end = constituents['end'].values
         event_table = constituents['data']
 
-        # Compute event-to-pixel mapping
+        # Compute event-to-pixel mapping: for each event, which pixel did it come from?
+        # This allows broadcasting per-pixel coordinates to per-event coordinates.
         n_events_per_pixel = end - begin
         event_to_pixel = np.repeat(
             np.arange(len(n_events_per_pixel)), n_events_per_pixel
@@ -196,7 +208,7 @@ class EventProjector:
         for name in event_table.coords:
             event_coords[name] = event_table.coords[name]
 
-        # Add screen coordinates by broadcasting from pixel to event
+        # Add screen coordinates by indexing pixel coords with the event-to-pixel map
         for key, coord in replica_coords.items():
             event_coords[key] = sc.array(
                 dims=[event_table.dim],
