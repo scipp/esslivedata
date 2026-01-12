@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for Sciline-based detector view workflow."""
 
+import numpy as np
 import pytest
 import scipp as sc
 
@@ -12,12 +13,15 @@ from ess.livedata.handlers.detector_view_sciline_workflow import (
     CumulativeHistogram,
     CurrentDetectorImage,
     DetectorHistogram3D,
+    EventProjector,
     WindowAccumulator,
     WindowHistogram,
+    add_logical_projection,
     compute_detector_histogram_3d,
     create_accumulators,
     create_base_workflow,
     cumulative_histogram,
+    project_events_logical,
     window_histogram,
 )
 from ess.reduce.nexus.types import RawDetector, SampleRun
@@ -119,14 +123,15 @@ class TestCreateBaseWorkflow:
         wf = create_base_workflow(tof_bins=tof_bins, tof_slice=tof_slice)
         assert wf is not None
 
-    def test_creates_workflow_with_logical_transform(self):
-        """Test workflow creation with logical transform."""
+    def test_creates_workflow_and_add_logical_projection(self):
+        """Test workflow creation with logical projection added separately."""
         tof_bins = sc.linspace('tof', 0, 100000, 11, unit='ns')
 
         def identity(da: sc.DataArray) -> sc.DataArray:
             return da
 
-        wf = create_base_workflow(tof_bins=tof_bins, logical_transform=identity)
+        wf = create_base_workflow(tof_bins=tof_bins)
+        add_logical_projection(wf, transform=identity)
         assert wf is not None
 
 
@@ -146,36 +151,51 @@ class TestCreateAccumulators:
 class TestComputeDetectorHistogram3D:
     """Tests for compute_detector_histogram_3d function."""
 
-    def test_histogram_without_transform(self):
-        """Test histogramming without logical transform."""
+    def test_histogram_from_screen_binned_events(self):
+        """Test histogramming screen-binned events to 3D."""
         data = make_fake_nexus_detector_data(y_size=4, x_size=4)
         tof_bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
 
-        result = compute_detector_histogram_3d(
+        # Use project_events_logical with a fold transform
+        transform = make_logical_transform(4, 4)
+        screen_binned = project_events_logical(
             raw_detector=RawDetector[SampleRun](data),
-            tof_bins=tof_bins,
-            transform=None,
+            transform=transform,
+            reduction_dim=None,
         )
 
-        # Without transform, we get 1D histogram (all events concatenated)
+        result = compute_detector_histogram_3d(
+            screen_binned_events=screen_binned,
+            tof_bins=tof_bins,
+        )
+
         assert 'tof' in result.dims
         assert result.sizes['tof'] == 10
+        assert result.sizes['y'] == 4
+        assert result.sizes['x'] == 4
 
-    def test_histogram_with_logical_transform(self):
-        """Test histogramming with logical transform to (y, x) spatial dims."""
+    def test_histogram_with_reduction_dim(self):
+        """Test histogramming with reduction dimension."""
         data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
         tof_bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
         transform = make_logical_transform(4, 4)
 
-        result = compute_detector_histogram_3d(
+        # Reduce along y dimension
+        screen_binned = project_events_logical(
             raw_detector=RawDetector[SampleRun](data),
-            tof_bins=tof_bins,
             transform=transform,
+            reduction_dim='y',
         )
 
-        # With transform, we get histogram over all events (still 1D in tof)
-        # The transform reshapes but bins.concat().hist() collapses spatial
+        result = compute_detector_histogram_3d(
+            screen_binned_events=screen_binned,
+            tof_bins=tof_bins,
+        )
+
+        # Should have x and tof dims, y was reduced
         assert 'tof' in result.dims
+        assert 'x' in result.dims
+        assert 'y' not in result.dims
 
 
 class TestIdentityProviders:
@@ -200,6 +220,185 @@ class TestIdentityProviders:
         result = window_histogram(DetectorHistogram3D(data_3d))
 
         assert sc.identical(result, data_3d)
+
+
+class TestEventProjector:
+    """Tests for EventProjector class."""
+
+    @staticmethod
+    def make_screen_coords_and_edges(n_pixels: int, screen_shape: tuple[int, int]):
+        """Create test coordinates and edges for projection."""
+        n_replicas = 2
+        det_side = int(np.sqrt(n_pixels))
+        scale_x = screen_shape[0] / det_side
+        scale_y = screen_shape[1] / det_side
+
+        pixel_y = np.arange(n_pixels) // det_side
+        pixel_x = np.arange(n_pixels) % det_side
+
+        rng = np.random.default_rng(42)
+        coords_x = []
+        coords_y = []
+        for _ in range(n_replicas):
+            noise = rng.normal(0, 0.1, n_pixels)
+            coords_x.append(pixel_x * scale_x + noise)
+            coords_y.append(pixel_y * scale_y + noise)
+
+        coords = sc.DataGroup(
+            screen_x=sc.array(
+                dims=['replica', 'detector_number'], values=np.array(coords_x), unit='m'
+            ),
+            screen_y=sc.array(
+                dims=['replica', 'detector_number'], values=np.array(coords_y), unit='m'
+            ),
+        )
+        edges = sc.DataGroup(
+            screen_x=sc.linspace(
+                'screen_x', 0, screen_shape[0], screen_shape[0] + 1, unit='m'
+            ),
+            screen_y=sc.linspace(
+                'screen_y', 0, screen_shape[1], screen_shape[1] + 1, unit='m'
+            ),
+        )
+        return coords, edges
+
+    def test_project_events_preserves_total_counts(self):
+        """Test that event projection preserves total event count."""
+        n_pixels = 16
+        screen_shape = (4, 4)
+        data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
+        coords, edges = self.make_screen_coords_and_edges(n_pixels, screen_shape)
+
+        # Make edges wider to ensure all events are captured despite noise
+        edges = sc.DataGroup(
+            screen_x=sc.linspace('screen_x', -1, screen_shape[0] + 1, 10, unit='m'),
+            screen_y=sc.linspace('screen_y', -1, screen_shape[1] + 1, 10, unit='m'),
+        )
+
+        projector = EventProjector(coords, edges)
+        result = projector.project_events(data)
+
+        # Total events should be preserved when edges are wide enough
+        original_events = data.bins.size().sum().value
+        projected_events = result.bins.size().sum().value
+        assert projected_events == original_events
+
+    def test_project_events_returns_binned_data(self):
+        """Test that result is binned data with screen coordinate dims."""
+        n_pixels = 16
+        screen_shape = (4, 4)
+        data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
+        coords, edges = self.make_screen_coords_and_edges(n_pixels, screen_shape)
+
+        projector = EventProjector(coords, edges)
+        result = projector.project_events(data)
+
+        assert result.bins is not None
+        assert 'screen_x' in result.dims
+        assert 'screen_y' in result.dims
+        assert result.sizes['screen_x'] == screen_shape[0]
+        assert result.sizes['screen_y'] == screen_shape[1]
+
+    def test_project_events_preserves_event_time_offset(self):
+        """Test that event_time_offset is preserved in projected events."""
+        n_pixels = 16
+        screen_shape = (4, 4)
+        data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
+        coords, edges = self.make_screen_coords_and_edges(n_pixels, screen_shape)
+
+        projector = EventProjector(coords, edges)
+        result = projector.project_events(data)
+
+        # Check that events have event_time_offset coordinate
+        event_data = result.bins.constituents['data']
+        assert 'event_time_offset' in event_data.coords
+
+    def test_project_events_cycles_replicas(self):
+        """Test that projector cycles through replicas."""
+        n_pixels = 16
+        screen_shape = (4, 4)
+        data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
+        coords, edges = self.make_screen_coords_and_edges(n_pixels, screen_shape)
+
+        projector = EventProjector(coords, edges)
+
+        # Project twice with same data
+        result1 = projector.project_events(data)
+        result2 = projector.project_events(data)
+
+        # Results should differ (different replicas with different noise)
+        assert not sc.identical(result1.bins.size(), result2.bins.size())
+
+
+class TestProjectEventsLogical:
+    """Tests for project_events_logical provider."""
+
+    def test_no_transform_returns_raw_data(self):
+        """Test that None transform returns input unchanged."""
+        data = make_fake_nexus_detector_data(y_size=4, x_size=4)
+
+        result = project_events_logical(
+            raw_detector=RawDetector[SampleRun](data),
+            transform=None,
+            reduction_dim=None,
+        )
+
+        # ScreenBinnedEvents is a NewType wrapping DataArray, compare directly
+        assert sc.identical(result, data)
+
+    def test_fold_transform(self):
+        """Test that fold transform reshapes detector data."""
+        data = make_fake_nexus_detector_data(y_size=4, x_size=4)
+        transform = make_logical_transform(4, 4)
+
+        result = project_events_logical(
+            raw_detector=RawDetector[SampleRun](data),
+            transform=transform,
+            reduction_dim=None,
+        )
+
+        assert 'y' in result.dims
+        assert 'x' in result.dims
+        assert 'detector_number' not in result.dims
+        assert result.sizes['y'] == 4
+        assert result.sizes['x'] == 4
+
+    def test_reduction_dim_concatenates_events(self):
+        """Test that reduction_dim concatenates events along specified dim."""
+        data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
+        transform = make_logical_transform(4, 4)
+
+        # Reduce along y dimension
+        result = project_events_logical(
+            raw_detector=RawDetector[SampleRun](data),
+            transform=transform,
+            reduction_dim='y',
+        )
+
+        # y dimension should be reduced
+        assert 'y' not in result.dims
+        assert 'x' in result.dims
+        assert result.sizes['x'] == 4
+        # Each x bin should have all events from that column
+        assert result.bins.size().sum().value == 4 * 4 * 10
+
+    def test_multiple_reduction_dims(self):
+        """Test reduction over multiple dimensions."""
+        data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
+        transform = make_logical_transform(4, 4)
+
+        # Reduce along both y and x
+        result = project_events_logical(
+            raw_detector=RawDetector[SampleRun](data),
+            transform=transform,
+            reduction_dim=['y', 'x'],
+        )
+
+        # Both dimensions should be reduced - result is scalar with all events
+        assert 'y' not in result.dims
+        assert 'x' not in result.dims
+        assert result.dims == ()
+        assert result.bins.size().sum().value == 4 * 4 * 10
 
 
 class TestDetectorImageProviders:
@@ -336,6 +535,10 @@ class TestIntegrationWithStreamProcessor:
         tof_bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
         base_workflow = create_base_workflow(tof_bins=tof_bins)
 
+        # Add logical projection with a fold transform
+        transform = make_logical_transform(4, 4)
+        add_logical_projection(base_workflow, transform=transform)
+
         workflow = StreamProcessorWorkflow(
             base_workflow,
             dynamic_keys={'detector': RawDetector[SampleRun]},
@@ -368,6 +571,10 @@ class TestIntegrationWithStreamProcessor:
         assert 'counts_total' in result
         assert 'counts_in_toa_range' in result
 
+        # Verify output shapes
+        assert result['cumulative'].dims == ('y', 'x')
+        assert result['cumulative'].sizes == {'y': 4, 'x': 4}
+
     def test_cumulative_accumulates_current_resets(self):
         """Test that cumulative accumulates and current resets after finalize."""
         from ess.livedata.handlers.stream_processor_workflow import (
@@ -376,6 +583,10 @@ class TestIntegrationWithStreamProcessor:
 
         tof_bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
         base_workflow = create_base_workflow(tof_bins=tof_bins)
+
+        # Add logical projection with a fold transform
+        transform = make_logical_transform(4, 4)
+        add_logical_projection(base_workflow, transform=transform)
 
         workflow = StreamProcessorWorkflow(
             base_workflow,
