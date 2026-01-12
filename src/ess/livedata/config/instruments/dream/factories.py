@@ -12,7 +12,6 @@ from ess.livedata.config import Instrument
 
 from . import specs
 from .specs import PowderWorkflowParams
-from .views import get_mantle_front_layer
 
 
 def setup_factories(instrument: Instrument) -> None:
@@ -193,7 +192,10 @@ def setup_factories(instrument: Instrument) -> None:
         instrument=instrument,
         tof_bins=sc.linspace('event_time_offset', 0, 71_000_000, 101, unit='ns'),
         nexus_filename=get_nexus_geometry_filename('dream-no-shape'),
-        logical_transform=get_mantle_front_layer,
+        # logical_transform=get_mantle_front_layer,
+        projection_type='xy_plane',
+        resolution={'y': 111, 'x': 111},
+        pixel_noise=sc.scalar(0.01, unit='m'),
     )
 
     @specs.sciline_detector_view_handle.attach_factory()

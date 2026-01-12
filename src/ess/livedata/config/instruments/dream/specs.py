@@ -285,7 +285,7 @@ sciline_detector_view_handle = instrument.register_spec(
     version=1,
     title='Sciline Detector View',
     description='Sciline-based logical detector view with TOF histogramming.',
-    source_names=_powder_detector_names,
+    source_names=['endcap_backward_detector'],
     params=DetectorViewParams,
     outputs=DetectorViewOutputsBase,  # No ROI support in Phase 1
 )
