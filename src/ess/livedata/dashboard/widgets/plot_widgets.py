@@ -236,6 +236,7 @@ def _get_static_overlay_display_info(config: PlotConfig) -> tuple[str, str]:
 def get_plot_cell_display_info(
     config: PlotConfig,
     workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+    get_source_title: Callable[[str], str] | None = None,
 ) -> tuple[str, str]:
     """
     Assemble title and description for a plot cell toolbar.
@@ -246,6 +247,9 @@ def get_plot_cell_display_info(
         Plot configuration containing workflow, output, and params.
     workflow_registry:
         Registry mapping workflow IDs to their specifications.
+    get_source_title:
+        Optional function to get display title for a source name.
+        If not provided, source names are displayed as-is.
 
     Returns
     -------
@@ -265,10 +269,14 @@ def get_plot_cell_display_info(
     # Using HTML entity for arrow since title is rendered in HTML pane
     window_info = _format_window_info(config.params)
 
-    # Format source info: name if single, count if multiple
+    # Helper to get display title for a source
+    def _title(source_name: str) -> str:
+        return get_source_title(source_name) if get_source_title else source_name
+
+    # Format source info: title if single, count if multiple
     num_sources = len(config.source_names)
     if num_sources == 1:
-        source_info = config.source_names[0]
+        source_info = _title(config.source_names[0])
     else:
         source_info = f'{num_sources} sources'
 
@@ -280,8 +288,8 @@ def get_plot_cell_display_info(
 
     title = f'{workflow_title} &rarr; {output_title} ({details})'
 
-    # Build description for tooltip
-    sources_str = ', '.join(config.source_names)
+    # Build description for tooltip using display titles
+    sources_str = ', '.join(_title(s) for s in config.source_names)
     description_parts = [
         f'Workflow: {workflow_title}',
         f'Output: {output_title}',

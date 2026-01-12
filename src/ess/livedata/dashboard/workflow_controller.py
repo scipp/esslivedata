@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 import pydantic
 
@@ -23,6 +24,9 @@ from .correlation_histogram import CorrelationHistogramController, make_workflow
 from .data_service import DataService
 from .job_orchestrator import JobOrchestrator
 from .workflow_configuration_adapter import WorkflowConfigurationAdapter
+
+if TYPE_CHECKING:
+    from ess.livedata.config import Instrument
 
 
 class WorkflowController:
@@ -51,6 +55,7 @@ class WorkflowController:
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         data_service: DataService[ResultKey, object] | None = None,
         correlation_histogram_controller: CorrelationHistogramController | None = None,
+        instrument_config: Instrument | None = None,
     ) -> None:
         """
         Initialize the workflow controller.
@@ -65,9 +70,12 @@ class WorkflowController:
             Optional data service for cleaning up workflow data keys.
         correlation_histogram_controller
             Optional controller for correlation histogram workflows.
+        instrument_config
+            Optional instrument configuration for source metadata lookup.
         """
         self._logger = logging.getLogger(__name__)
         self._orchestrator = job_orchestrator
+        self._instrument_config = instrument_config
 
         # Extend registry with correlation histogram specs if controller provided
         self._workflow_registry = dict(workflow_registry)
@@ -185,7 +193,11 @@ class WorkflowController:
             )
 
         return WorkflowConfigurationAdapter(
-            spec, persistent_config, start_callback, initial_source_names
+            spec,
+            persistent_config,
+            start_callback,
+            initial_source_names,
+            instrument_config=self._instrument_config,
         )
 
     def get_workflow_titles(self) -> dict[WorkflowId, str]:
