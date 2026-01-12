@@ -23,6 +23,7 @@ def make_reduction_service_builder(
         .with_area_detector_route()
         .with_logdata_route()
         .with_livedata_commands_route()
+        .with_livedata_roi_route()
         .build()
     )
     instrument_config = instrument_registry[instrument]
