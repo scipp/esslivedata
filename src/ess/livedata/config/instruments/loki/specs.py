@@ -14,6 +14,8 @@ from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
 
+from .views import get_wire_view
+
 
 class SansWorkflowOptions(pydantic.BaseModel):
     use_transmission_run: bool = pydantic.Field(
@@ -99,6 +101,17 @@ xy_projection_handle = register_detector_view_spec(
     instrument=instrument,
     projection='xy_plane',
     source_names=detector_names,
+)
+
+# Register wire view for all detector banks
+instrument.add_logical_view(
+    name='wire_view',
+    title='Wire View',
+    description='Sum over straw and pixel dimensions to show layer x tube counts.',
+    source_names=detector_names,
+    transform=get_wire_view,
+    output_ndim=2,
+    reduction_dim=['straw', 'pixel'],
 )
 
 # Register I(Q) workflow spec (basic)

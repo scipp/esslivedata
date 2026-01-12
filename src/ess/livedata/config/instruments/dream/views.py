@@ -10,23 +10,23 @@ in specs.py.
 import scipp as sc
 
 
-def get_mantle_front_layer(da: sc.DataArray) -> sc.DataArray:
+def get_mantle_front_layer(da: sc.DataArray, source_name: str) -> sc.DataArray:
     """Transform to extract mantle front layer."""
     from ess.dream.workflows import DETECTOR_BANK_SIZES
 
     return (
-        da.fold(dim=da.dim, sizes=DETECTOR_BANK_SIZES['mantle_detector'])
+        da.fold(dim=da.dim, sizes=DETECTOR_BANK_SIZES[source_name])
         .transpose(('wire', 'module', 'segment', 'counter', 'strip'))['wire', 0]
         .flatten(('module', 'segment', 'counter'), to='mod/seg/cntr')
     )
 
 
-def get_wire_view(da: sc.DataArray) -> sc.DataArray:
+def get_wire_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
     """Transform to extract wire view."""
     from ess.dream.workflows import DETECTOR_BANK_SIZES
 
     return (
-        da.fold(dim=da.dim, sizes=DETECTOR_BANK_SIZES['mantle_detector'])
+        da.fold(dim=da.dim, sizes=DETECTOR_BANK_SIZES[source_name])
         .sum('strip')
         .flatten(('module', 'segment', 'counter'), to='mod/seg/cntr')
         # Transpose so that wire is the "x" dimension for more natural plotting.
@@ -34,10 +34,9 @@ def get_wire_view(da: sc.DataArray) -> sc.DataArray:
     )
 
 
-def get_strip_view(da: sc.DataArray) -> sc.DataArray:
+def get_strip_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
     """Transform to extract strip view (sum over all but strip)."""
     from ess.dream.workflows import DETECTOR_BANK_SIZES
 
-    return da.fold(dim=da.dim, sizes=DETECTOR_BANK_SIZES['mantle_detector']).sum(
-        ('wire', 'module', 'segment', 'counter')
-    )
+    folded = da.fold(dim=da.dim, sizes=DETECTOR_BANK_SIZES[source_name])
+    return folded.sum(tuple(d for d in folded.dims if d != 'strip'))

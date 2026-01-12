@@ -147,7 +147,7 @@ class TestDetectorLogicalView:
         instrument = FakeInstrument(detector_number)
 
         # A transform that sums over y
-        def sum_y(da: sc.DataArray) -> sc.DataArray:
+        def sum_y(da: sc.DataArray, source_name: str) -> sc.DataArray:
             return da.sum('y')
 
         factory = DetectorLogicalView(instrument=instrument, transform=sum_y)
@@ -189,7 +189,7 @@ class TestDetectorLogicalViewWithReduction:
     def fold_transform(self):
         """Transform that folds 8x8 to 4x4 with 2x2 bins."""
 
-        def transform(da: sc.DataArray) -> sc.DataArray:
+        def transform(da: sc.DataArray, source_name: str) -> sc.DataArray:
             da = da.fold(dim='x', sizes={'x': 4, 'x_bin': 2})
             da = da.fold(dim='y', sizes={'y': 4, 'y_bin': 2})
             return da
@@ -278,7 +278,7 @@ class TestDetectorLogicalViewWithReduction:
         instrument = FakeInstrument(detector_number_2d)
 
         # Fold only x, sum only over x_bin
-        def fold_x_only(da: sc.DataArray) -> sc.DataArray:
+        def fold_x_only(da: sc.DataArray, source_name: str) -> sc.DataArray:
             return da.fold(dim='x', sizes={'x': 4, 'x_bin': 2})
 
         factory = DetectorLogicalView(
@@ -376,7 +376,7 @@ class TestDetectorLogicalViewROISupport:
         instrument = FakeInstrument(detector_number)
 
         # Transform that just transposes (no reduction)
-        def transpose_dims(da: sc.DataArray) -> sc.DataArray:
+        def transpose_dims(da: sc.DataArray, source_name: str) -> sc.DataArray:
             return da.transpose(('y', 'x'))
 
         factory = DetectorLogicalView(instrument=instrument, transform=transpose_dims)
