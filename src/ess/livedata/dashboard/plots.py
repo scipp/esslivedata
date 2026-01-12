@@ -248,7 +248,11 @@ class Plotter(ABC):
             return hv.Overlay(plots).opts(shared_axes=True)
         if len(plots) == 1:
             return plots[0]
-        return hv.Layout(plots).cols(self.layout_params.layout_columns)
+        return (
+            hv.Layout(plots)
+            .opts(shared_axes=False)
+            .cols(self.layout_params.layout_columns)
+        )
 
     def _apply_generic_options(self, plot_element: hv.Element) -> hv.Element:
         """Apply generic options like aspect ratio to a plot element."""

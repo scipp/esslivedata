@@ -36,6 +36,8 @@ from .plotting_controller import PlottingController
 if TYPE_CHECKING:
     import holoviews as hv
 
+    from ess.livedata.config import Instrument
+
 SubscriptionId = NewType('SubscriptionId', UUID)
 GridId = NewType('GridId', UUID)
 CellId = NewType('CellId', UUID)
@@ -273,6 +275,7 @@ class PlotOrchestrator:
         instrument: str,
         config_store: ConfigStore | None = None,
         raw_templates: Sequence[dict[str, Any]] = (),
+        instrument_config: Instrument | None = None,
     ) -> None:
         """
         Initialize the plot orchestrator.
@@ -292,11 +295,14 @@ class PlotOrchestrator:
         raw_templates
             Raw grid template dicts loaded from YAML files. These are parsed
             during initialization and made available via get_available_templates().
+        instrument_config
+            Optional instrument configuration for source metadata lookup.
         """
         self._plotting_controller = plotting_controller
         self._job_orchestrator = job_orchestrator
         self._data_service = data_service
         self._instrument = instrument
+        self._instrument_config = instrument_config
         self._config_store = config_store
         self._logger = logging.getLogger(__name__)
 
@@ -317,6 +323,21 @@ class PlotOrchestrator:
     def instrument(self) -> str:
         """The instrument name for this orchestrator."""
         return self._instrument
+
+    @property
+    def instrument_config(self) -> Instrument | None:
+        """The instrument configuration (if available)."""
+        return self._instrument_config
+
+    def get_source_title(self, source_name: str) -> str:
+        """Get display title for a source name.
+
+        Falls back to the source name if no instrument config is available
+        or no title is defined for the source.
+        """
+        if self._instrument_config is not None:
+            return self._instrument_config.get_source_title(source_name)
+        return source_name
 
     def add_grid(self, title: str, nrows: int, ncols: int) -> GridId:
         """

@@ -114,7 +114,7 @@ class DetectorProjection:
         return DetectorView(params=params, detector_view=detector_view)
 
 
-def _identity(da: sc.DataArray) -> sc.DataArray:
+def _identity(da: sc.DataArray, source_name: str) -> sc.DataArray:
     return da
 
 
@@ -132,6 +132,9 @@ class DetectorLogicalView:
         Instrument configuration.
     transform:
         Callable that transforms input data (e.g., fold, slice, or reshape operations).
+        The signature is ``(da: DataArray, source_name: str) -> DataArray``, where
+        ``source_name`` identifies which detector bank the data is from. This allows
+        a single transform to handle multiple detector banks with different parameters.
         If reduction_dim is specified, the transform should NOT include summing - that
         is handled separately to enable proper ROI index mapping.
     reduction_dim:
@@ -150,7 +153,7 @@ class DetectorLogicalView:
 
     .. code-block:: python
 
-        def fold_image(da):
+        def fold_image(da, source_name):
             da = da.fold('x', {'x': 512, 'x_bin': -1})
             da = da.fold('y', {'y': 512, 'y_bin': -1})
             return da
@@ -166,23 +169,31 @@ class DetectorLogicalView:
         self,
         *,
         instrument: Instrument,
-        transform: Callable[[sc.DataArray], sc.DataArray] | None = None,
+        transform: Callable[[sc.DataArray, str], sc.DataArray] | None = None,
         reduction_dim: str | list[str] | None = None,
+        roi_support: bool = True,
     ) -> None:
         self._instrument = instrument
         self._transform = transform if transform is not None else _identity
         self._reduction_dim = reduction_dim
+        self._roi_support = roi_support
         self._window_length = 1
 
     def make_view(self, source_name: str, params: DetectorViewParams) -> DetectorView:
         """Factory method that creates a detector view for the given source."""
+
+        def bound_transform(da: sc.DataArray) -> sc.DataArray:
+            return self._transform(da, source_name)
+
         detector_view = raw.RollingDetectorView.with_logical_view(
             detector_number=self._instrument.get_detector_number(source_name),
             window=self._window_length,
-            transform=self._transform,
+            transform=bound_transform,
             reduction_dim=self._reduction_dim,
         )
-        return DetectorView(params=params, detector_view=detector_view)
+        return DetectorView(
+            params=params, detector_view=detector_view, roi_support=self._roi_support
+        )
 
 
 class DetectorHandlerFactory(

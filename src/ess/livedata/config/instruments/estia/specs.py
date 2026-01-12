@@ -9,10 +9,9 @@ import scipp as sc
 
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import WorkflowOutputsBase
-from ess.livedata.handlers.detector_view_specs import (
-    register_logical_detector_view_spec,
-)
 from ess.livedata.parameter_models import TOAEdges
+
+from .views import get_multiblade_view
 
 detector_names = ['multiblade_detector']
 
@@ -25,12 +24,12 @@ instrument = Instrument(
 
 instrument_registry.register(instrument)
 
-multiblade_view_handle = register_logical_detector_view_spec(
-    instrument=instrument,
+instrument.add_logical_view(
     name='estia_multiblade_detector_view',
     title='Multiblade Detector',
     description='Counts folded into strip, blade, and wire dimensions',
     source_names=['multiblade_detector'],
+    transform=get_multiblade_view,
     roi_support=True,
     output_ndim=3,
 )

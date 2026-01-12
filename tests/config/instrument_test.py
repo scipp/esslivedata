@@ -4,7 +4,11 @@ import pydantic
 import pytest
 import scipp as sc
 
-from ess.livedata.config.instrument import Instrument, InstrumentRegistry
+from ess.livedata.config.instrument import (
+    Instrument,
+    InstrumentRegistry,
+    SourceMetadata,
+)
 from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.handlers.workflow_factory import (
     Workflow,
@@ -408,3 +412,96 @@ class TestInstrumentRegisterSpec:
         assert hasattr(processor, 'accumulate')
         assert hasattr(processor, 'finalize')
         assert hasattr(processor, 'clear')
+
+
+class TestSourceMetadata:
+    """Tests for SourceMetadata model and Instrument title/description lookup."""
+
+    def test_source_metadata_creation(self):
+        """Test creating SourceMetadata with title and description."""
+        metadata = SourceMetadata(
+            title='Detector One', description='First detector bank'
+        )
+
+        assert metadata.title == 'Detector One'
+        assert metadata.description == 'First detector bank'
+
+    def test_source_metadata_default_description(self):
+        """Test that description defaults to empty string."""
+        metadata = SourceMetadata(title='Detector')
+
+        assert metadata.title == 'Detector'
+        assert metadata.description == ''
+
+    def test_get_source_title_returns_title_when_defined(self):
+        """Test get_source_title returns the title when metadata is defined."""
+        instrument = Instrument(
+            name='test',
+            detector_names=['det1'],
+            source_metadata={'det1': SourceMetadata(title='Detector One')},
+        )
+
+        assert instrument.get_source_title('det1') == 'Detector One'
+
+    def test_get_source_title_falls_back_to_name(self):
+        """Test get_source_title returns source name when no metadata defined."""
+        instrument = Instrument(name='test', detector_names=['det1'])
+
+        assert instrument.get_source_title('det1') == 'det1'
+
+    def test_get_source_title_unknown_source_returns_name(self):
+        """Test get_source_title returns the name for unknown sources."""
+        instrument = Instrument(name='test')
+
+        assert instrument.get_source_title('unknown_source') == 'unknown_source'
+
+    def test_get_source_description_returns_description_when_defined(self):
+        """Test get_source_description returns the description when defined."""
+        instrument = Instrument(
+            name='test',
+            detector_names=['det1'],
+            source_metadata={
+                'det1': SourceMetadata(
+                    title='Detector One', description='Main detector bank'
+                )
+            },
+        )
+
+        assert instrument.get_source_description('det1') == 'Main detector bank'
+
+    def test_get_source_description_returns_empty_when_not_defined(self):
+        """Test get_source_description returns empty string when no metadata."""
+        instrument = Instrument(name='test', detector_names=['det1'])
+
+        assert instrument.get_source_description('det1') == ''
+
+    def test_get_source_description_returns_empty_for_title_only_metadata(self):
+        """Test get_source_description returns empty when only title is defined."""
+        instrument = Instrument(
+            name='test',
+            detector_names=['det1'],
+            source_metadata={'det1': SourceMetadata(title='Detector One')},
+        )
+
+        assert instrument.get_source_description('det1') == ''
+
+    def test_source_metadata_for_multiple_sources(self):
+        """Test source metadata works for multiple sources of different types."""
+        instrument = Instrument(
+            name='test',
+            detector_names=['det1', 'det2'],
+            monitors=['monitor1'],
+            source_metadata={
+                'det1': SourceMetadata(title='First Detector', description='Desc 1'),
+                'det2': SourceMetadata(title='Second Detector'),
+                'monitor1': SourceMetadata(title='Beam Monitor'),
+            },
+        )
+
+        assert instrument.get_source_title('det1') == 'First Detector'
+        assert instrument.get_source_title('det2') == 'Second Detector'
+        assert instrument.get_source_title('monitor1') == 'Beam Monitor'
+
+        assert instrument.get_source_description('det1') == 'Desc 1'
+        assert instrument.get_source_description('det2') == ''
+        assert instrument.get_source_description('monitor1') == ''

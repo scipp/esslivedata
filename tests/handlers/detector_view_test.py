@@ -1785,3 +1785,73 @@ class TestDetectorViewStackedROISpectra:
         # Verify counts: ROI 0 (rectangle) has 3 events, ROI 4 (polygon) has 1 event
         assert sc.sum(stacked['roi', 0]).value == STANDARD_ROI_EVENTS
         assert sc.sum(stacked['roi', 1]).value == CORNER_ROI_EVENTS
+
+
+class TestDetectorViewROISupportDisabled:
+    """Tests for DetectorView with roi_support=False."""
+
+    def test_finalize_without_roi_readback_when_roi_support_disabled(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that ROI readbacks are not published when roi_support=False."""
+        params = DetectorViewParams()
+        view = DetectorView(
+            params=params, detector_view=mock_rolling_view, roi_support=False
+        )
+
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=1000, end_time=2000
+        )
+        result = view.finalize()
+
+        # Should have detector view results
+        assert 'cumulative' in result
+        assert 'current' in result
+
+        # Should NOT have ROI readbacks
+        assert 'roi_rectangle' not in result
+        assert 'roi_polygon' not in result
+
+        # Should still have roi spectra output (empty)
+        assert 'roi_spectra_current' in result
+        assert 'roi_spectra_cumulative' in result
+
+    def test_roi_support_disabled_does_not_call_get_detector_coord_units(
+        self,
+    ) -> None:
+        """Test that 1D views don't crash when roi_support=False.
+
+        This tests the fix for the bug where _get_detector_coord_units was called
+        even for views that don't support ROIs and have non-2D output.
+        """
+        from ess.reduce.live import raw
+
+        # Create a 1D view (simulating strip_view)
+        detector_number = sc.arange('strip', 5, dtype='int64')
+        detector_view = raw.RollingDetectorView.with_logical_view(
+            detector_number=detector_number,
+            window=1,
+            transform=lambda da: da,  # Identity transform
+        )
+
+        params = DetectorViewParams()
+        view = DetectorView(
+            params=params, detector_view=detector_view, roi_support=False
+        )
+
+        # Directly add counts to the view (simpler than creating binned events)
+        view._view.add_counts([0, 1, 2, 3, 4])
+        view._current_start_time = 1000
+        view._counts_total = 5
+        view._counts_in_toa_range = 5
+
+        # This should NOT raise even though cumulative has 1 dimension
+        result = view.finalize()
+
+        assert 'cumulative' in result
+        assert len(result['cumulative'].dims) == 1
+        # No ROI readbacks should be published
+        assert 'roi_rectangle' not in result
+        assert 'roi_polygon' not in result

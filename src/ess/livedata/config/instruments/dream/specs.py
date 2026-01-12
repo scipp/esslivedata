@@ -11,13 +11,11 @@ import pydantic
 import scipp as sc
 
 from ess.livedata import parameter_models
-from ess.livedata.config import Instrument, instrument_registry
+from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
-from ess.livedata.handlers.detector_view_specs import (
-    DetectorViewOutputs,
-    DetectorViewParams,
-    register_detector_view_spec,
-)
+from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
+
+from .views import get_mantle_front_layer, get_strip_view, get_wire_view
 
 # Detector names for DREAM data reduction workflows
 detector_names = [
@@ -33,10 +31,64 @@ instrument = Instrument(
     name='dream',
     detector_names=detector_names,
     monitors=['monitor1', 'monitor2'],
+    source_metadata={
+        'mantle_detector': SourceMetadata(
+            title='Mantle',
+            description='Main cylindrical detector covering the mantle region',
+        ),
+        'endcap_backward_detector': SourceMetadata(
+            title='Backward Endcap',
+            description='Endcap detector at backward scattering angles',
+        ),
+        'endcap_forward_detector': SourceMetadata(
+            title='Forward Endcap',
+            description='Endcap detector at forward scattering angles',
+        ),
+        'high_resolution_detector': SourceMetadata(
+            title='High Resolution',
+            description='High-resolution detector bank',
+        ),
+        'sans_detector': SourceMetadata(
+            title='SANS',
+            description='Small-angle neutron scattering detector',
+        ),
+        'monitor1': SourceMetadata(title='Monitor 1'),
+        'monitor2': SourceMetadata(title='Monitor 2'),
+    },
 )
 
 # Register instrument
 instrument_registry.register(instrument)
+
+# Register logical detector views
+instrument.add_logical_view(
+    name='mantle_front_layer',
+    title='Mantle front layer',
+    description='All voxels of the front layer of the mantle detector.',
+    source_names=['mantle_detector'],
+    transform=get_mantle_front_layer,
+)
+instrument.add_logical_view(
+    name='wire_view',
+    title='Wire view',
+    description='Sum over strips to show counts per wire.',
+    source_names=[
+        'mantle_detector',
+        'endcap_backward_detector',
+        'endcap_forward_detector',
+    ],
+    transform=get_wire_view,
+    roi_support=False,
+)
+instrument.add_logical_view(
+    name='strip_view',
+    title='Strip view',
+    description='Sum over all dimensions except strip to show counts per strip.',
+    source_names=detector_names,
+    transform=get_strip_view,
+    output_ndim=1,
+    roi_support=False,
+)
 
 # Mapping of detector names to their projection types
 # (excluding sans_detector which has no geometry)
@@ -51,41 +103,6 @@ _projections: dict[str, str] = {
 projection_handle = register_detector_view_spec(
     instrument=instrument,
     projection=_projections,
-)
-
-# Register logical view specs (mantle front layer and wire view)
-# These don't use the standard projection pattern, so we register them directly
-mantle_front_layer_handle = instrument.register_spec(
-    namespace='detector_data',
-    name='mantle_front_layer',
-    version=1,
-    title='Mantle front layer',
-    description='All voxels of the front layer of the mantle detector.',
-    source_names=['mantle_detector'],
-    params=DetectorViewParams,
-    outputs=DetectorViewOutputs,
-)
-
-mantle_wire_view_handle = instrument.register_spec(
-    namespace='detector_data',
-    name='mantle_wire_view',
-    version=1,
-    title='Mantle wire view',
-    description='Sum over strips to show counts per wire in the mantle detector.',
-    source_names=['mantle_detector'],
-    params=DetectorViewParams,
-    outputs=DetectorViewOutputs,
-)
-
-mantle_strip_view_handle = instrument.register_spec(
-    namespace='detector_data',
-    name='mantle_strip_view',
-    version=1,
-    title='Mantle strip view',
-    description='Sum over all dimensions except strip to show counts per strip.',
-    source_names=['mantle_detector'],
-    params=DetectorViewParams,
-    outputs=DetectorViewOutputs,
 )
 
 

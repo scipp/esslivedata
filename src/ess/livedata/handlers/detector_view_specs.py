@@ -78,8 +78,8 @@ def _make_0d_template_with_time() -> sc.DataArray:
     return _make_nd_template(0, with_time_coord=True)
 
 
-class DetectorViewOutputs(WorkflowOutputsBase):
-    """Outputs for detector view workflows."""
+class DetectorViewOutputsBase(WorkflowOutputsBase):
+    """Base outputs for detector view workflows (without ROI support)."""
 
     cumulative: sc.DataArray = pydantic.Field(
         title='Cumulative Counts',
@@ -101,6 +101,10 @@ class DetectorViewOutputs(WorkflowOutputsBase):
         description='Number of detector events within the configured TOA range filter.',
         default_factory=_make_0d_template_with_time,
     )
+
+
+class DetectorViewOutputs(DetectorViewOutputsBase):
+    """Outputs for detector view workflows with ROI support."""
 
     # Stacked ROI spectra outputs (2D: roi x time_of_arrival)
     roi_spectra_current: sc.DataArray = pydantic.Field(
@@ -138,21 +142,34 @@ class DetectorViewOutputs(WorkflowOutputsBase):
     )
 
 
-def make_detector_view_outputs(output_ndim: int) -> type[DetectorViewOutputs]:
+def make_detector_view_outputs(
+    output_ndim: int | None = None,
+    *,
+    roi_support: bool = True,
+) -> type[DetectorViewOutputsBase]:
     """
-    Create a DetectorViewOutputs subclass with spatial outputs of the given ndim.
+    Create a DetectorViewOutputs subclass with the appropriate configuration.
 
     Parameters
     ----------
     output_ndim:
         Number of dimensions for spatial outputs (cumulative, current).
         The counts outputs remain 0D scalars with time coord.
+        If None, uses 2D default.
+    roi_support:
+        Whether to include ROI-related outputs. If False, the returned class
+        will not include roi_spectra_current, roi_spectra_cumulative,
+        roi_rectangle, or roi_polygon fields.
 
     Returns
     -------
     :
-        A subclass of DetectorViewOutputs with appropriate default_factory templates.
+        A subclass of DetectorViewOutputsBase with appropriate configuration.
     """
+    base_class = DetectorViewOutputs if roi_support else DetectorViewOutputsBase
+
+    if output_ndim is None:
+        return base_class
 
     def make_cumulative_template() -> sc.DataArray:
         return _make_nd_template(output_ndim)
@@ -160,7 +177,7 @@ def make_detector_view_outputs(output_ndim: int) -> type[DetectorViewOutputs]:
     def make_current_template() -> sc.DataArray:
         return _make_nd_template(output_ndim, with_time_coord=True)
 
-    class CustomDetectorViewOutputs(DetectorViewOutputs):
+    class CustomDetectorViewOutputs(base_class):  # type: ignore[valid-type]
         cumulative: sc.DataArray = pydantic.Field(
             title='Cumulative Counts',
             description='Time-integrated detector counts accumulated over all time.',
@@ -304,66 +321,4 @@ def register_detector_view_spec(
         aux_sources=DetectorROIAuxSources,
         params=DetectorViewParams,
         outputs=DetectorViewOutputs,
-    )
-
-
-def register_logical_detector_view_spec(
-    *,
-    instrument: Instrument,
-    name: str,
-    title: str,
-    description: str,
-    source_names: list[str],
-    roi_support: bool = True,
-    output_ndim: int | None = None,
-) -> SpecHandle:
-    """
-    Register a logical detector view spec with custom metadata.
-
-    Use this helper for logical detector views that don't use the standard
-    projection pattern. Unlike projection-based views, logical views are
-    bespoke and require custom titles and descriptions.
-
-    Parameters
-    ----------
-    instrument:
-        Instrument to register specs with.
-    name:
-        Unique name for the spec within the detector_data namespace.
-    title:
-        Human-readable title for the view.
-    description:
-        Description of the view.
-    source_names:
-        List of detector source names.
-    roi_support:
-        Whether ROI selection is supported for this view. If True, includes
-        DetectorROIAuxSources which enables the ROI detector plotter.
-        Set to False for views where ROI doesn't make sense (e.g., views
-        that sum over dimensions internally).
-    output_ndim:
-        Number of dimensions for spatial outputs (cumulative, current).
-        Defaults to 2 for standard detector views. Set to 3 for views
-        that produce 3D output (e.g., ESTIA's strip/blade/wire folded view).
-
-    Returns
-    -------
-    :
-        A SpecHandle.
-    """
-    outputs = (
-        make_detector_view_outputs(output_ndim)
-        if output_ndim is not None
-        else DetectorViewOutputs
-    )
-    return instrument.register_spec(
-        namespace="detector_data",
-        name=name,
-        version=1,
-        title=title,
-        description=description,
-        source_names=source_names,
-        aux_sources=DetectorROIAuxSources if roi_support else None,
-        params=DetectorViewParams,
-        outputs=outputs,
     )
