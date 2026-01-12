@@ -4,22 +4,39 @@
 Sciline-based detector view workflow for live data visualization.
 
 This module implements the detector view workflow using Sciline and StreamProcessor,
-providing a logical view of detector data that accumulates counts in a 3D
-(screen-x, screen-y, TOF) space and computes detector images as downstream projections.
+providing event-based projection of detector data to screen coordinates while
+preserving TOF information for flexible histogramming.
 
-Phase 1 focuses on logical views (direct pixel mapping) without ROI support.
+Supports two projection modes:
+1. Geometric projections (xy_plane, cylinder_mantle_z) using Histogrammer coordinates
+2. Logical views (fold/slice transforms with optional reduction)
 """
 
 from __future__ import annotations
 
 import pathlib
 from collections.abc import Callable
-from typing import Any, NewType
+from typing import Any, Literal, NewType
 
+import numpy as np
 import sciline
 import scipp as sc
 from scippnexus import NXdetector
 
+from ess.reduce.live.raw import (
+    CalibratedPositionWithNoisyReplicas,
+    DetectorViewResolution,
+    PositionNoiseReplicaCount,
+    PositionNoiseSigma,
+    gaussian_position_noise,
+    make_cylinder_mantle_coords,
+    make_xy_plane_coords,
+    pixel_cylinder_axis,
+    pixel_cylinder_radius,
+    pixel_shape,
+    position_noise_for_cylindrical_pixel,
+    position_with_noisy_replicas,
+)
 from ess.reduce.nexus.types import (
     Filename,
     NeXusData,
@@ -47,6 +64,20 @@ LogicalTransform = NewType(
     'LogicalTransform', Callable[[sc.DataArray], sc.DataArray] | None
 )
 """Callable that transforms detector data to logical coordinates, or None."""
+
+# Reduction dimension for logical views
+ReductionDim = NewType('ReductionDim', str | list[str] | None)
+"""Dimension(s) to sum over after applying logical transform."""
+
+# Projection type for geometric views
+ProjectionType = NewType(
+    'ProjectionType', Literal['xy_plane', 'cylinder_mantle_z'] | None
+)
+"""Type of geometric projection to use, or None for logical view."""
+
+# Intermediate types for event projection
+ScreenBinnedEvents = NewType('ScreenBinnedEvents', sc.DataArray)
+"""Events binned by screen coordinates (screen_y, screen_x) with TOF preserved."""
 
 # Shared intermediate - computed once, then split for accumulation
 DetectorHistogram3D = NewType('DetectorHistogram3D', sc.DataArray)
@@ -92,54 +123,244 @@ class WindowAccumulator(EternalAccumulator):
 
 
 # ============================================================================
-# Providers
+# EventProjector - Projects events to screen coordinates
 # ============================================================================
 
 
-def compute_detector_histogram_3d(
-    raw_detector: RawDetector[SampleRun],
-    tof_bins: TOFBins,
-    transform: LogicalTransform,
-) -> DetectorHistogram3D:
+class EventProjector:
     """
-    Compute 3D (spatial, tof) histogram from detector data.
+    Projects events from detector pixels to screen coordinates.
 
-    This is the expensive computation that should only happen once.
-    Both cumulative and window accumulators will use this result.
+    Reuses Histogrammer's coordinate infrastructure (including noise replicas)
+    but bins events instead of histogramming counts, preserving TOF information.
+
+    Parameters
+    ----------
+    coords:
+        Projected coordinates for each detector pixel, with shape
+        (replica, detector_number). Created by make_xy_plane_coords or
+        make_cylinder_mantle_coords.
+    edges:
+        Bin edges for screen coordinates, keyed by dimension name.
+    """
+
+    def __init__(self, coords: sc.DataGroup, edges: sc.DataGroup) -> None:
+        self._coords = coords
+        self._edges = edges
+        self._replica_dim = 'replica'
+        self._replicas = coords.sizes.get(self._replica_dim, 1)
+        self._current = 0
+
+    def project_events(self, events: sc.DataArray) -> sc.DataArray:
+        """
+        Project events from detector pixels to screen coordinates.
+
+        Parameters
+        ----------
+        events:
+            Binned event data with detector pixels as the outer dimension.
+            Events should have 'event_time_offset' coordinate.
+
+        Returns
+        -------
+        :
+            Binned data with screen coordinates as outer dimensions,
+            preserving events with TOF information.
+        """
+        # Cycle through replicas for smoother visualization
+        replica = self._current % self._replicas
+        self._current += 1
+
+        # Get coords for this replica
+        replica_coords = {
+            key: self._coords[key][self._replica_dim, replica]
+            for key in self._edges.keys()
+        }
+
+        # Extract event data from bins
+        constituents = events.data.bins.constituents
+        begin = constituents['begin'].values
+        end = constituents['end'].values
+        event_table = constituents['data']
+
+        # Compute event-to-pixel mapping
+        n_events_per_pixel = end - begin
+        event_to_pixel = np.repeat(
+            np.arange(len(n_events_per_pixel)), n_events_per_pixel
+        )
+
+        # Build coordinates dict for flat events
+        event_coords = {}
+
+        # Copy existing event coordinates (event_time_offset, etc.)
+        for name in event_table.coords:
+            event_coords[name] = event_table.coords[name]
+
+        # Add screen coordinates by broadcasting from pixel to event
+        for key, coord in replica_coords.items():
+            event_coords[key] = sc.array(
+                dims=[event_table.dim],
+                values=coord.values[event_to_pixel],
+                unit=coord.unit,
+            )
+
+        # Create flat event table with screen coordinates
+        flat_events = sc.DataArray(
+            data=event_table.data,
+            coords=event_coords,
+        )
+
+        # Bin by screen coordinates (preserving events)
+        return flat_events.bin(self._edges)
+
+
+# ============================================================================
+# Providers - Event Projection
+# ============================================================================
+
+
+def make_event_projector(
+    coords: CalibratedPositionWithNoisyReplicas,
+    projection_type: ProjectionType,
+    resolution: DetectorViewResolution,
+) -> EventProjector:
+    """
+    Create an EventProjector for geometric projection.
+
+    Parameters
+    ----------
+    coords:
+        Calibrated position with noisy replicas from NeXus workflow.
+    projection_type:
+        Type of geometric projection ('xy_plane' or 'cylinder_mantle_z').
+    resolution:
+        Resolution (number of bins) for each screen dimension.
+
+    Returns
+    -------
+    :
+        EventProjector configured for the specified projection.
+    """
+    # Use existing projection functions from essreduce
+    if projection_type == 'xy_plane':
+        projected_coords = make_xy_plane_coords(coords)
+    elif projection_type == 'cylinder_mantle_z':
+        projected_coords = make_cylinder_mantle_coords(coords)
+    else:
+        raise ValueError(f"Unknown projection type: {projection_type}")
+
+    # Create bin edges from coordinates and resolution
+    edges = sc.DataGroup(
+        {
+            dim: projected_coords[dim].hist({dim: res}).coords[dim]
+            for dim, res in resolution.items()
+        }
+    )
+
+    return EventProjector(projected_coords, edges)
+
+
+def project_events_geometric(
+    raw_detector: RawDetector[SampleRun],
+    projector: EventProjector,
+) -> ScreenBinnedEvents:
+    """
+    Project events to screen coordinates using geometric projection.
 
     Parameters
     ----------
     raw_detector:
-        Detector data from GenericNeXusWorkflow. This is binned event data
-        already grouped by detector pixel.
+        Detector data with events binned by detector pixel.
+    projector:
+        EventProjector configured for geometric projection.
+
+    Returns
+    -------
+    :
+        Events binned by screen coordinates with TOF preserved.
+    """
+    return ScreenBinnedEvents(projector.project_events(raw_detector))
+
+
+def project_events_logical(
+    raw_detector: RawDetector[SampleRun],
+    transform: LogicalTransform,
+    reduction_dim: ReductionDim,
+) -> ScreenBinnedEvents:
+    """
+    Project events using logical view (reshape + optional reduction).
+
+    Parameters
+    ----------
+    raw_detector:
+        Detector data with events binned by detector pixel.
+    transform:
+        Callable that reshapes detector data (fold/slice). Must not reduce dimensions.
+    reduction_dim:
+        Dimension(s) to merge events over via bins.concat. None means no reduction.
+
+    Returns
+    -------
+    :
+        Events binned by logical coordinates with TOF preserved.
+    """
+    if transform is None:
+        return ScreenBinnedEvents(raw_detector)
+
+    # Step 1: Apply transform to reshape bin structure
+    # e.g., fold('detector_number', {'y': 100, 'x': 100})
+    transformed = transform(raw_detector)
+
+    # Step 2: Merge events along reduction dimensions (if any)
+    if reduction_dim is not None:
+        dims_to_reduce = (
+            [reduction_dim] if isinstance(reduction_dim, str) else list(reduction_dim)
+        )
+        for dim in dims_to_reduce:
+            transformed = transformed.bins.concat(dim)
+
+    return ScreenBinnedEvents(transformed)
+
+
+# ============================================================================
+# Providers - Histogram and Downstream
+# ============================================================================
+
+
+def compute_detector_histogram_3d(
+    screen_binned_events: ScreenBinnedEvents,
+    tof_bins: TOFBins,
+) -> DetectorHistogram3D:
+    """
+    Histogram TOF from screen-binned events.
+
+    Events have already been projected to screen coordinates by the projection
+    providers. This function histograms the event_time_offset (TOF) dimension.
+
+    Parameters
+    ----------
+    screen_binned_events:
+        Events binned by screen coordinates (from geometric or logical projection).
     tof_bins:
         Bin edges for time-of-flight histogramming.
-    transform:
-        Optional logical transform to reshape detector data to spatial coordinates.
 
     Returns
     -------
     :
         3D histogram with spatial dims and tof.
     """
-    data = raw_detector if transform is None else transform(raw_detector)
+    if screen_binned_events.bins is None:
+        # Already dense data (shouldn't happen in normal flow)
+        return DetectorHistogram3D(screen_binned_events)
 
-    # RawDetector from GenericNeXusWorkflow is binned by detector pixel with events
-    # containing event_time_offset (time of arrival relative to pulse).
-    # Histogram into TOF bins.
-    if data.bins is not None:
-        # Event data - histogram by event_time_offset
-        histogrammed = data.hist(event_time_offset=tof_bins)
-        # Rename to tof for consistency
-        if 'event_time_offset' in histogrammed.dims:
-            histogrammed = histogrammed.rename_dims(event_time_offset='tof')
-            if 'event_time_offset' in histogrammed.coords:
-                histogrammed.coords['tof'] = histogrammed.coords.pop(
-                    'event_time_offset'
-                )
-    else:
-        # Already dense data
-        histogrammed = data
+    # Histogram by event_time_offset
+    histogrammed = screen_binned_events.hist(event_time_offset=tof_bins)
+
+    # Rename to tof for consistency
+    if 'event_time_offset' in histogrammed.dims:
+        histogrammed = histogrammed.rename_dims(event_time_offset='tof')
+        if 'event_time_offset' in histogrammed.coords:
+            histogrammed.coords['tof'] = histogrammed.coords.pop('event_time_offset')
 
     return DetectorHistogram3D(histogrammed)
 
@@ -280,10 +501,12 @@ def create_base_workflow(
     *,
     tof_bins: sc.Variable,
     tof_slice: tuple[sc.Variable, sc.Variable] | None = None,
-    logical_transform: Callable[[sc.DataArray], sc.DataArray] | None = None,
 ) -> sciline.Pipeline:
     """
     Create the base detector view workflow using GenericNeXusWorkflow.
+
+    This creates the core workflow with histogram and downstream providers.
+    Projection providers must be added separately based on projection type.
 
     Parameters
     ----------
@@ -291,19 +514,16 @@ def create_base_workflow(
         Bin edges for TOF histogramming.
     tof_slice:
         Optional (low, high) TOF range for output image slicing.
-    logical_transform:
-        Optional transform to apply to convert detector data to logical coordinates.
-        If None, an identity transform is used.
 
     Returns
     -------
     :
-        Sciline pipeline with detector view providers.
+        Sciline pipeline with detector view providers (without projection).
     """
     # Start with GenericNeXusWorkflow for NeXus loading infrastructure
     workflow = GenericNeXusWorkflow(run_types=[SampleRun], monitor_types=[])
 
-    # Add our detector view providers
+    # Add histogram and downstream providers (shared by both projection types)
     workflow.insert(compute_detector_histogram_3d)
     workflow.insert(cumulative_histogram)
     workflow.insert(window_histogram)
@@ -315,9 +535,85 @@ def create_base_workflow(
     # Set configuration parameters
     workflow[TOFBins] = tof_bins
     workflow[TOFSlice] = tof_slice
-    workflow[LogicalTransform] = logical_transform
 
     return workflow
+
+
+def add_geometric_projection(
+    workflow: sciline.Pipeline,
+    *,
+    projection_type: Literal['xy_plane', 'cylinder_mantle_z'],
+    resolution: dict[str, int],
+    pixel_noise: Literal['cylindrical'] | sc.Variable | None = None,
+) -> None:
+    """
+    Add geometric projection providers to the workflow.
+
+    Parameters
+    ----------
+    workflow:
+        Sciline pipeline to add providers to.
+    projection_type:
+        Type of geometric projection.
+    resolution:
+        Resolution (number of bins) for each screen dimension.
+    pixel_noise:
+        Noise to add to pixel positions. Can be 'cylindrical' for cylindrical
+        detectors or a scalar variance for Gaussian noise. None disables noise.
+    """
+    # Add projection providers
+    workflow.insert(make_event_projector)
+    workflow.insert(project_events_geometric)
+
+    # Set projection configuration
+    workflow[ProjectionType] = projection_type
+    workflow[DetectorViewResolution] = resolution
+
+    # Configure noise generation
+    if pixel_noise is None:
+        workflow[PositionNoiseSigma] = sc.scalar(0.0, unit='m')
+        workflow[PositionNoiseReplicaCount] = 0
+    elif isinstance(pixel_noise, sc.Variable):
+        workflow.insert(gaussian_position_noise)
+        workflow[PositionNoiseSigma] = pixel_noise
+        workflow[PositionNoiseReplicaCount] = 4
+    elif pixel_noise == 'cylindrical':
+        workflow.insert(pixel_shape)
+        workflow.insert(pixel_cylinder_axis)
+        workflow.insert(pixel_cylinder_radius)
+        workflow.insert(position_noise_for_cylindrical_pixel)
+        workflow[PositionNoiseReplicaCount] = 4
+    else:
+        raise ValueError(f"Invalid pixel_noise: {pixel_noise}")
+
+    # Add noise replica generation for position calibration
+    workflow.insert(position_with_noisy_replicas)
+
+
+def add_logical_projection(
+    workflow: sciline.Pipeline,
+    *,
+    transform: Callable[[sc.DataArray], sc.DataArray] | None = None,
+    reduction_dim: str | list[str] | None = None,
+) -> None:
+    """
+    Add logical projection providers to the workflow.
+
+    Parameters
+    ----------
+    workflow:
+        Sciline pipeline to add providers to.
+    transform:
+        Callable that reshapes detector data (fold/slice). If None, identity.
+    reduction_dim:
+        Dimension(s) to merge events over. None means no reduction.
+    """
+    # Add projection provider
+    workflow.insert(project_events_logical)
+
+    # Set projection configuration
+    workflow[LogicalTransform] = transform
+    workflow[ReductionDim] = reduction_dim
 
 
 def create_accumulators() -> dict[type, Any]:
@@ -348,37 +644,61 @@ class DetectorViewScilineFactory:
     Sciline-based detector view workflow for accumulating detector data
     and producing cumulative and current detector images.
 
+    Supports two projection modes:
+    1. Geometric: Use projection_type + resolution for xy_plane/cylinder_mantle_z
+    2. Logical: Use logical_transform + reduction_dim for fold/slice views
+
     Parameters
     ----------
     instrument:
-        Instrument configuration (used for getting detector_number).
+        Instrument configuration.
     tof_bins:
         Default bin edges for TOF histogramming.
     nexus_filename:
         Path to the NeXus geometry file for loading detector geometry.
+    projection_type:
+        Type of geometric projection ('xy_plane' or 'cylinder_mantle_z').
+        If None, uses logical projection mode.
+    resolution:
+        Resolution (number of bins) for geometric projection screen dimensions.
+    pixel_noise:
+        Noise for geometric projection. 'cylindrical' or scalar variance.
     logical_transform:
-        Optional callable to transform detector data to logical coordinates.
+        Callable to reshape detector data for logical projection.
         Signature: (da: DataArray, source_name: str) -> DataArray.
-        If None, an identity transform is used.
+    reduction_dim:
+        Dimension(s) to merge events over for logical projection.
     """
 
     def __init__(
         self,
         *,
-        instrument: Any,  # Instrument type from config
+        instrument: Any,
         tof_bins: sc.Variable,
         nexus_filename: pathlib.Path,
+        # Geometric projection params
+        projection_type: Literal['xy_plane', 'cylinder_mantle_z'] | None = None,
+        resolution: dict[str, int] | None = None,
+        pixel_noise: Literal['cylindrical'] | sc.Variable | None = None,
+        # Logical projection params
         logical_transform: Callable[[sc.DataArray, str], sc.DataArray] | None = None,
+        reduction_dim: str | list[str] | None = None,
     ) -> None:
         self._instrument = instrument
         self._tof_bins = tof_bins
         self._nexus_filename = nexus_filename
+        # Geometric projection
+        self._projection_type = projection_type
+        self._resolution = resolution
+        self._pixel_noise = pixel_noise
+        # Logical projection
         self._logical_transform = logical_transform
+        self._reduction_dim = reduction_dim
 
     def make_workflow(
         self,
         source_name: str,
-        params: Any | None = None,  # DetectorViewParams from specs
+        params: Any | None = None,
     ) -> Any:  # StreamProcessorWorkflow
         """
         Factory method that creates a detector view workflow.
@@ -388,7 +708,7 @@ class DetectorViewScilineFactory:
         source_name:
             Name of the detector source (e.g., 'panel_0').
         params:
-            Workflow parameters (currently unused, for future extension).
+            Workflow parameters (for TOA range, etc.).
 
         Returns
         -------
@@ -396,14 +716,6 @@ class DetectorViewScilineFactory:
             StreamProcessorWorkflow wrapping the Sciline-based detector view.
         """
         from .stream_processor_workflow import StreamProcessorWorkflow
-
-        # Bind source_name to the transform if provided
-        if self._logical_transform is not None:
-
-            def bound_transform(da: sc.DataArray) -> sc.DataArray:
-                return self._logical_transform(da, source_name)
-        else:
-            bound_transform = None
 
         # Get TOF slice from params if available
         tof_slice = None
@@ -415,12 +727,36 @@ class DetectorViewScilineFactory:
         workflow = create_base_workflow(
             tof_bins=self._tof_bins,
             tof_slice=tof_slice,
-            logical_transform=bound_transform,
         )
 
         # Configure GenericNeXusWorkflow
         workflow[Filename[SampleRun]] = self._nexus_filename
         workflow[NeXusName[NXdetector]] = source_name
+
+        # Add projection based on mode
+        if self._projection_type is not None:
+            # Geometric projection mode
+            add_geometric_projection(
+                workflow,
+                projection_type=self._projection_type,
+                resolution=self._resolution or {},
+                pixel_noise=self._pixel_noise,
+            )
+        else:
+            # Logical projection mode
+            # Bind source_name to the transform if provided
+            if self._logical_transform is not None:
+
+                def bound_transform(da: sc.DataArray) -> sc.DataArray:
+                    return self._logical_transform(da, source_name)
+            else:
+                bound_transform = None
+
+            add_logical_projection(
+                workflow,
+                transform=bound_transform,
+                reduction_dim=self._reduction_dim,
+            )
 
         return StreamProcessorWorkflow(
             workflow,
