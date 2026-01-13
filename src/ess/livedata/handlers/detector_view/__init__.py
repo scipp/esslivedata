@@ -20,12 +20,9 @@ from .data_source import (
 )
 from .factory import DetectorViewScilineFactory
 from .projectors import (
-    EventProjector,
     GeometricProjector,
     LogicalProjector,
     Projector,
-    ProjectorProtocol,
-    make_event_projector,
     make_geometric_projector,
     make_logical_projector,
 )
@@ -97,7 +94,6 @@ __all__ = [
     # Factory
     'DetectorViewScilineFactory',
     # Projectors
-    'EventProjector',
     'GeometricProjector',
     # View configuration
     'GeometricViewConfig',
@@ -107,7 +103,6 @@ __all__ = [
     'NeXusDetectorSource',
     'ProjectionType',
     'Projector',
-    'ProjectorProtocol',
     'ROIPolygonMasks',
     'ROIPolygonReadback',
     'ROIPolygonRequest',
@@ -137,7 +132,6 @@ __all__ = [
     'cumulative_roi_spectra',
     'current_detector_image',
     'current_roi_spectra',
-    'make_event_projector',
     'make_geometric_projector',
     'make_logical_projector',
     'precompute_roi_polygon_masks',

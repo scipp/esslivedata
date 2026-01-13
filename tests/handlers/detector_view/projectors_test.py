@@ -1,17 +1,17 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Tests for EventProjector class."""
+"""Tests for GeometricProjector class."""
 
 import numpy as np
 import scipp as sc
 
-from ess.livedata.handlers.detector_view import EventProjector
+from ess.livedata.handlers.detector_view import GeometricProjector
 
 from .utils import make_fake_nexus_detector_data
 
 
-class TestEventProjector:
-    """Tests for EventProjector class."""
+class TestGeometricProjector:
+    """Tests for GeometricProjector class."""
 
     @staticmethod
     def make_screen_coords_and_edges(n_pixels: int, screen_shape: tuple[int, int]):
@@ -63,7 +63,7 @@ class TestEventProjector:
             screen_y=sc.linspace('screen_y', -1, screen_shape[1] + 1, 10, unit='m'),
         )
 
-        projector = EventProjector(coords, edges)
+        projector = GeometricProjector(coords, edges)
         result = projector.project_events(data)
 
         # Total events should be preserved when edges are wide enough
@@ -78,7 +78,7 @@ class TestEventProjector:
         data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
         coords, edges = self.make_screen_coords_and_edges(n_pixels, screen_shape)
 
-        projector = EventProjector(coords, edges)
+        projector = GeometricProjector(coords, edges)
         result = projector.project_events(data)
 
         assert result.bins is not None
@@ -94,7 +94,7 @@ class TestEventProjector:
         data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
         coords, edges = self.make_screen_coords_and_edges(n_pixels, screen_shape)
 
-        projector = EventProjector(coords, edges)
+        projector = GeometricProjector(coords, edges)
         result = projector.project_events(data)
 
         # Check that events have event_time_offset coordinate
@@ -108,7 +108,7 @@ class TestEventProjector:
         data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
         coords, edges = self.make_screen_coords_and_edges(n_pixels, screen_shape)
 
-        projector = EventProjector(coords, edges)
+        projector = GeometricProjector(coords, edges)
 
         # Project twice with same data
         result1 = projector.project_events(data)
