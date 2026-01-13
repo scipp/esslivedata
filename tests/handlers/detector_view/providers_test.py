@@ -165,7 +165,47 @@ class TestIdentityProviders:
 
 
 class TestLogicalProjector:
-    """Tests for LogicalProjector.project_events()."""
+    """Tests for LogicalProjector.project_events() and screen_coords."""
+
+    def test_screen_coords_returns_all_dims_without_reduction(self):
+        """Test that screen_coords contains all dims when no reduction."""
+        empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
+        transform = make_logical_transform(4, 4)
+
+        projector = make_logical_projector(
+            empty_detector, transform=transform, reduction_dim=None
+        )
+
+        screen_coords = projector.screen_coords
+        assert list(screen_coords.keys()) == ['y', 'x']
+        # Logical projections typically don't have edges
+        assert screen_coords['y'] is None
+        assert screen_coords['x'] is None
+
+    def test_screen_coords_excludes_reduced_dims(self):
+        """Test that screen_coords excludes dimensions that will be reduced."""
+        empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
+        transform = make_logical_transform(4, 4)
+
+        projector = make_logical_projector(
+            empty_detector, transform=transform, reduction_dim='y'
+        )
+
+        screen_coords = projector.screen_coords
+        assert list(screen_coords.keys()) == ['x']
+        assert 'y' not in screen_coords
+
+    def test_screen_coords_excludes_multiple_reduced_dims(self):
+        """Test that screen_coords excludes multiple reduced dimensions."""
+        empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
+        transform = make_logical_transform(4, 4)
+
+        projector = make_logical_projector(
+            empty_detector, transform=transform, reduction_dim=['y', 'x']
+        )
+
+        screen_coords = projector.screen_coords
+        assert list(screen_coords.keys()) == []
 
     def test_fold_transform(self):
         """Test that fold transform reshapes detector data."""

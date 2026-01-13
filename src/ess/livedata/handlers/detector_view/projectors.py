@@ -3,7 +3,7 @@
 """
 Projector implementations for detector view workflow.
 
-This module provides the ProjectorProtocol and concrete implementations for
+This module provides the Projector protocol and concrete implementations for
 projecting detector events from pixel coordinates to screen coordinates.
 
 Two projection strategies are supported:
@@ -16,7 +16,7 @@ Two projection strategies are supported:
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import NewType, Protocol
+from typing import Protocol
 
 import numpy as np
 import scipp as sc
@@ -31,17 +31,13 @@ from ess.reduce.nexus.types import EmptyDetector, SampleRun
 
 from .types import LogicalTransform, ProjectionType, ReductionDim
 
-# Type for Projector param in Sciline workflow
-Projector = NewType('Projector', 'ProjectorProtocol')
-"""Projector instance set as workflow param."""
 
-
-class ProjectorProtocol(Protocol):
+class Projector(Protocol):
     """Protocol for event projection strategies.
 
     All projectors must provide:
     - project_events(): Transform events from detector pixels to screen coordinates
-    - Coordinate info properties: y_dim, x_dim, y_edges, x_edges
+    - screen_coords: Dict mapping dimension names to bin edges (or None)
     """
 
     def project_events(self, events: sc.DataArray) -> sc.DataArray:
@@ -49,27 +45,21 @@ class ProjectorProtocol(Protocol):
         ...
 
     @property
-    def y_dim(self) -> str:
-        """Name of the y (vertical) screen dimension."""
-        ...
+    def screen_coords(self) -> dict[str, sc.Variable | None]:
+        """Screen coordinate bin edges, keyed by dimension name.
 
-    @property
-    def x_dim(self) -> str:
-        """Name of the x (horizontal) screen dimension."""
-        ...
+        The dict keys are dimension names in order (first key is first dim, etc.).
+        Values are bin edges for each dimension, or None if the dimension
+        has no physical coordinates (e.g., logical pixel indices).
 
-    @property
-    def y_edges(self) -> sc.Variable | None:
-        """Bin edges for y dimension. None if logical projection has no coords."""
-        ...
-
-    @property
-    def x_edges(self) -> sc.Variable | None:
-        """Bin edges for x dimension. None if logical projection has no coords."""
+        For 2D views: {'screen_y': edges, 'screen_x': edges}
+        For 1D views: {'strip': edges}
+        For logical views: {'panel': None, 'tube': None} (no coords)
+        """
         ...
 
 
-class GeometricProjector:
+class GeometricProjector(Projector):
     """
     Projects events using geometric coordinate transformation.
 
@@ -94,37 +84,10 @@ class GeometricProjector:
         self._replicas = coords.sizes.get(self._replica_dim, 1)
         self._current = 0
 
-        # Extract dimension names from edges (typically 'screen_x', 'screen_y')
-        dims = list(edges.keys())
-        if len(dims) != 2:
-            raise ValueError(f"Expected 2 spatial dims from projector, got {len(dims)}")
-        # Order: first dim is y, second is x (matching histogram convention)
-        self._y_dim, self._x_dim = dims[0], dims[1]
-
     @property
-    def y_dim(self) -> str:
-        """Name of the y (vertical) screen dimension."""
-        return self._y_dim
-
-    @property
-    def x_dim(self) -> str:
-        """Name of the x (horizontal) screen dimension."""
-        return self._x_dim
-
-    @property
-    def y_edges(self) -> sc.Variable:
-        """Bin edges for y dimension."""
-        return self._edges[self._y_dim]
-
-    @property
-    def x_edges(self) -> sc.Variable:
-        """Bin edges for x dimension."""
-        return self._edges[self._x_dim]
-
-    @property
-    def edges(self) -> sc.DataGroup:
-        """Bin edges for screen coordinates (legacy property)."""
-        return self._edges
+    def screen_coords(self) -> dict[str, sc.Variable | None]:
+        """Screen coordinate bin edges, keyed by dimension name."""
+        return {dim: self._edges[dim] for dim in self._edges.keys()}
 
     def project_events(self, events: sc.DataArray) -> sc.DataArray:
         """
@@ -201,7 +164,7 @@ class GeometricProjector:
         return flat_events.bin(self._edges)
 
 
-class LogicalProjector:
+class LogicalProjector(Projector):
     """
     Projects events using logical reshape and optional reduction.
 
@@ -214,14 +177,8 @@ class LogicalProjector:
         Callable that reshapes detector data (fold/slice). If None, identity.
     reduction_dim:
         Dimension(s) to merge events over via bins.concat. None means no reduction.
-    y_dim:
-        Name of the y (vertical) output dimension.
-    x_dim:
-        Name of the x (horizontal) output dimension.
-    y_edges:
-        Bin edges for y dimension. None if no coordinates available.
-    x_edges:
-        Bin edges for x dimension. None if no coordinates available.
+    screen_coords:
+        Dict mapping dimension names to bin edges (or None if no coords).
     """
 
     def __init__(
@@ -229,37 +186,16 @@ class LogicalProjector:
         *,
         transform: Callable[[sc.DataArray], sc.DataArray] | None,
         reduction_dim: str | list[str] | None,
-        y_dim: str,
-        x_dim: str,
-        y_edges: sc.Variable | None,
-        x_edges: sc.Variable | None,
+        screen_coords: dict[str, sc.Variable | None],
     ) -> None:
         self._transform = transform
         self._reduction_dim = reduction_dim
-        self._y_dim = y_dim
-        self._x_dim = x_dim
-        self._y_edges = y_edges
-        self._x_edges = x_edges
+        self._screen_coords = screen_coords
 
     @property
-    def y_dim(self) -> str:
-        """Name of the y (vertical) screen dimension."""
-        return self._y_dim
-
-    @property
-    def x_dim(self) -> str:
-        """Name of the x (horizontal) screen dimension."""
-        return self._x_dim
-
-    @property
-    def y_edges(self) -> sc.Variable | None:
-        """Bin edges for y dimension. None if no coordinates available."""
-        return self._y_edges
-
-    @property
-    def x_edges(self) -> sc.Variable | None:
-        """Bin edges for x dimension. None if no coordinates available."""
-        return self._x_edges
+    def screen_coords(self) -> dict[str, sc.Variable | None]:
+        """Screen coordinate bin edges, keyed by dimension name."""
+        return self._screen_coords
 
     def project_events(self, events: sc.DataArray) -> sc.DataArray:
         """
@@ -333,7 +269,7 @@ def make_geometric_projector(
         }
     )
 
-    return Projector(GeometricProjector(projected_coords, edges))
+    return GeometricProjector(projected_coords, edges)
 
 
 def make_logical_projector(
@@ -364,30 +300,30 @@ def make_logical_projector(
     else:
         transformed = transform(empty_detector)
 
-    # Extract spatial dimensions
-    dims = list(transformed.dims)
-    if len(dims) < 2:
-        raise ValueError(f"Expected at least 2 dims from transform, got {dims}")
+    # Extract spatial dimensions (all dims from transform)
+    all_dims = list(transformed.dims)
 
-    # Assume first two dims are spatial (y, x)
-    y_dim, x_dim = dims[0], dims[1]
+    # Determine which dims will remain after reduction
+    if reduction_dim is None:
+        dims_to_reduce: set[str] = set()
+    elif isinstance(reduction_dim, str):
+        dims_to_reduce = {reduction_dim}
+    else:
+        dims_to_reduce = set(reduction_dim)
 
-    # Get coordinates if available from transform
-    y_edges = transformed.coords.get(y_dim)
-    x_edges = transformed.coords.get(x_dim)
+    output_dims = [d for d in all_dims if d not in dims_to_reduce]
 
-    return Projector(
-        LogicalProjector(
-            transform=transform,
-            reduction_dim=reduction_dim,
-            y_dim=y_dim,
-            x_dim=x_dim,
-            y_edges=y_edges,
-            x_edges=x_edges,
-        )
+    # Build screen_coords dict: dimension name -> edges (or None)
+    screen_coords = {dim: transformed.coords.get(dim) for dim in output_dims}
+
+    return LogicalProjector(
+        transform=transform,
+        reduction_dim=reduction_dim,
+        screen_coords=screen_coords,
     )
 
 
 # Backwards compatibility aliases
 EventProjector = GeometricProjector
 make_event_projector = make_geometric_projector
+ProjectorProtocol = Projector

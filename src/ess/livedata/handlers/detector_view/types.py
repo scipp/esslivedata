@@ -9,7 +9,6 @@ configuration types, intermediate types, output types, and ROI types.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import NewType
 
 import scipp as sc
@@ -94,25 +93,6 @@ CumulativeROISpectra = NewType('CumulativeROISpectra', sc.DataArray)
 
 CurrentROISpectra = NewType('CurrentROISpectra', sc.DataArray)
 """ROI spectra extracted from current window histogram."""
-
-
-# ROI precomputation types (computed once from static config + ROI requests)
-@dataclass
-class ScreenCoordInfo:
-    """Coordinate information for screen (projected) dimensions.
-
-    Used for ROI precomputation - provides dimension names and bin edges
-    needed to compute ROI bounds and masks.
-    """
-
-    y_dim: str
-    """Name of the y (vertical) screen dimension."""
-    x_dim: str
-    """Name of the x (horizontal) screen dimension."""
-    y_edges: sc.Variable | None
-    """Bin edges for y dimension. None if logical projection has no coords."""
-    x_edges: sc.Variable | None
-    """Bin edges for x dimension. None if logical projection has no coords."""
 
 
 ROIRectangleBounds = NewType('ROIRectangleBounds', dict)
