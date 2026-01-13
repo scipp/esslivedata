@@ -86,6 +86,38 @@ def make_logical_transform(y_size: int, x_size: int):
     return transform
 
 
+def make_fake_empty_detector(y_size: int, x_size: int) -> sc.DataArray:
+    """Create a fake EmptyDetector for testing logical projection.
+
+    EmptyDetector is the detector structure without events, used to determine
+    output dimensions before any events arrive.
+    """
+    total_pixels = y_size * x_size
+    # Empty bins structure - same as make_fake_nexus_detector_data but with 0 events
+    begin = sc.zeros(dims=['detector_number'], shape=[total_pixels], dtype='int64')
+    begin.unit = None
+    end = begin.copy()  # Same as begin = no events
+
+    # Create empty event table
+    events = sc.DataArray(
+        data=sc.empty(dims=['event'], shape=[0], dtype='float32', unit='counts'),
+        coords={
+            'event_time_offset': sc.empty(dims=['event'], shape=[0], unit='ns'),
+        },
+    )
+
+    binned_var = sc.bins(begin=begin, end=end, dim='event', data=events)
+
+    return sc.DataArray(
+        data=binned_var,
+        coords={
+            'detector_number': sc.arange(
+                'detector_number', 1, total_pixels + 1, unit=None
+            )
+        },
+    )
+
+
 class TestWindowAccumulator:
     """Tests for WindowAccumulator that clears after finalize."""
 
@@ -665,16 +697,13 @@ class TestROISpectraProviders:
 
     def test_extract_roi_spectra_with_no_rois(self):
         """Test ROI extraction returns empty result when no ROIs configured."""
-        from ess.livedata.config.models import PolygonROI, RectangleROI
         from ess.livedata.handlers.detector_view_sciline_workflow import (
-            _extract_roi_spectra,
+            _extract_roi_spectra_precomputed,
         )
 
         histogram = self.make_histogram_3d()
-        # Use empty DataArrays (not None) since these are serialized
-        empty_rect = RectangleROI.to_concatenated_data_array({})
-        empty_poly = PolygonROI.to_concatenated_data_array({})
-        result = _extract_roi_spectra(histogram, empty_rect, empty_poly)
+        # Use empty dicts for precomputed bounds/masks
+        result = _extract_roi_spectra_precomputed(histogram, {}, {})
 
         assert result.dims == ('roi', 'tof')
         assert result.sizes['roi'] == 0
@@ -682,9 +711,9 @@ class TestROISpectraProviders:
 
     def test_extract_rectangle_roi_spectra(self):
         """Test extracting ROI spectra for rectangle ROI."""
-        from ess.livedata.config.models import ROI, Interval, PolygonROI, RectangleROI
+        from ess.livedata.config.models import Interval, RectangleROI
         from ess.livedata.handlers.detector_view_sciline_workflow import (
-            _extract_roi_spectra,
+            _extract_roi_spectra_precomputed,
         )
 
         histogram = self.make_histogram_3d()
@@ -693,10 +722,11 @@ class TestROISpectraProviders:
         roi = RectangleROI(
             x=Interval(min=0, max=5, unit='m'), y=Interval(min=0, max=5, unit='m')
         )
-        rectangle_request = ROI.to_concatenated_data_array({0: roi})
-        empty_poly = PolygonROI.to_concatenated_data_array({})
+        # Precompute bounds (as the precomputation provider would)
+        bounds = roi.get_bounds(x_dim='x', y_dim='y')
+        rectangle_bounds = {0: bounds}
 
-        result = _extract_roi_spectra(histogram, rectangle_request, empty_poly)
+        result = _extract_roi_spectra_precomputed(histogram, rectangle_bounds, {})
 
         assert result.dims == ('roi', 'tof')
         assert result.sizes['roi'] == 1
@@ -708,9 +738,9 @@ class TestROISpectraProviders:
 
     def test_extract_rectangle_roi_spectra_index_based(self):
         """Test extracting ROI spectra with index-based rectangle ROI."""
-        from ess.livedata.config.models import ROI, Interval, PolygonROI, RectangleROI
+        from ess.livedata.config.models import Interval, RectangleROI
         from ess.livedata.handlers.detector_view_sciline_workflow import (
-            _extract_roi_spectra,
+            _extract_roi_spectra_precomputed,
         )
 
         # Create histogram without physical coordinates
@@ -722,10 +752,11 @@ class TestROISpectraProviders:
         roi = RectangleROI(
             x=Interval(min=0, max=5, unit=None), y=Interval(min=0, max=5, unit=None)
         )
-        rectangle_request = ROI.to_concatenated_data_array({0: roi})
-        empty_poly = PolygonROI.to_concatenated_data_array({})
+        # Precompute bounds
+        bounds = roi.get_bounds(x_dim='x', y_dim='y')
+        rectangle_bounds = {0: bounds}
 
-        result = _extract_roi_spectra(histogram, rectangle_request, empty_poly)
+        result = _extract_roi_spectra_precomputed(histogram, rectangle_bounds, {})
 
         assert result.dims == ('roi', 'tof')
         assert result.sizes['roi'] == 1
@@ -741,9 +772,9 @@ class TestROISpectraProviders:
         detector projection creates physical coordinates but the UI sends index-based
         ROIs.
         """
-        from ess.livedata.config.models import ROI, Interval, PolygonROI, RectangleROI
+        from ess.livedata.config.models import Interval, RectangleROI
         from ess.livedata.handlers.detector_view_sciline_workflow import (
-            _extract_roi_spectra,
+            _extract_roi_spectra_precomputed,
         )
 
         # Create histogram WITH physical coordinates (meters)
@@ -759,11 +790,12 @@ class TestROISpectraProviders:
         roi = RectangleROI(
             x=Interval(min=0, max=5, unit=None), y=Interval(min=0, max=5, unit=None)
         )
-        rectangle_request = ROI.to_concatenated_data_array({0: roi})
-        empty_poly = PolygonROI.to_concatenated_data_array({})
+        # Precompute bounds
+        bounds = roi.get_bounds(x_dim='x', y_dim='y')
+        rectangle_bounds = {0: bounds}
 
         # This should NOT raise UnitError
-        result = _extract_roi_spectra(histogram, rectangle_request, empty_poly)
+        result = _extract_roi_spectra_precomputed(histogram, rectangle_bounds, {})
 
         assert result.dims == ('roi', 'tof')
         assert result.sizes['roi'] == 1
@@ -841,9 +873,9 @@ class TestROISpectraProviders:
 
     def test_extract_multiple_rectangle_rois(self):
         """Test extracting spectra for multiple rectangle ROIs."""
-        from ess.livedata.config.models import ROI, Interval, RectangleROI
+        from ess.livedata.config.models import Interval, RectangleROI
         from ess.livedata.handlers.detector_view_sciline_workflow import (
-            _extract_roi_spectra,
+            _extract_roi_spectra_precomputed,
         )
 
         histogram = self.make_histogram_3d()
@@ -855,9 +887,13 @@ class TestROISpectraProviders:
         roi1 = RectangleROI(
             x=Interval(min=5, max=10, unit='m'), y=Interval(min=5, max=10, unit='m')
         )
-        rectangle_request = ROI.to_concatenated_data_array({0: roi0, 1: roi1})
+        # Precompute bounds
+        rectangle_bounds = {
+            0: roi0.get_bounds(x_dim='x', y_dim='y'),
+            1: roi1.get_bounds(x_dim='x', y_dim='y'),
+        }
 
-        result = _extract_roi_spectra(histogram, rectangle_request, None)
+        result = _extract_roi_spectra_precomputed(histogram, rectangle_bounds, {})
 
         assert result.dims == ('roi', 'tof')
         assert result.sizes['roi'] == 2
@@ -866,18 +902,26 @@ class TestROISpectraProviders:
 
     def test_extract_polygon_roi_spectra(self):
         """Test extracting ROI spectra for polygon ROI."""
-        from ess.livedata.config.models import ROI, PolygonROI
+        from ess.livedata.config.models import PolygonROI
         from ess.livedata.handlers.detector_view_sciline_workflow import (
-            _extract_roi_spectra,
+            _compute_polygon_mask,
+            _extract_roi_spectra_precomputed,
         )
 
         histogram = self.make_histogram_3d()
 
         # Create triangle ROI in top-left corner
         roi = PolygonROI(x=[0.0, 5.0, 0.0], y=[0.0, 0.0, 5.0], x_unit='m', y_unit='m')
-        polygon_request = ROI.to_concatenated_data_array({100: roi})
 
-        result = _extract_roi_spectra(histogram, None, polygon_request)
+        # Precompute polygon mask
+        x_centers = sc.midpoints(histogram.coords['x'])
+        y_centers = sc.midpoints(histogram.coords['y'])
+        mask = _compute_polygon_mask(
+            roi, x_centers=x_centers, y_centers=y_centers, x_dim='x', y_dim='y'
+        )
+        polygon_masks = {100: mask}
+
+        result = _extract_roi_spectra_precomputed(histogram, {}, polygon_masks)
 
         assert result.dims == ('roi', 'tof')
         assert result.sizes['roi'] == 1
@@ -887,11 +931,11 @@ class TestROISpectraProviders:
 
     def test_cumulative_roi_spectra_provider(self):
         """Test cumulative_roi_spectra provider function."""
-        from ess.livedata.config.models import ROI, Interval, PolygonROI, RectangleROI
+        from ess.livedata.config.models import Interval, RectangleROI
         from ess.livedata.handlers.detector_view_sciline_workflow import (
             CumulativeHistogram,
-            ROIPolygonRequest,
-            ROIRectangleRequest,
+            ROIPolygonMasks,
+            ROIRectangleBounds,
             cumulative_roi_spectra,
         )
 
@@ -900,22 +944,21 @@ class TestROISpectraProviders:
         roi = RectangleROI(
             x=Interval(min=0, max=5, unit='m'), y=Interval(min=0, max=5, unit='m')
         )
-        rectangle_request = ROIRectangleRequest(
-            ROI.to_concatenated_data_array({0: roi})
-        )
-        polygon_request = ROIPolygonRequest(PolygonROI.to_concatenated_data_array({}))
+        # Use precomputed bounds
+        rectangle_bounds = ROIRectangleBounds({0: roi.get_bounds(x_dim='x', y_dim='y')})
+        polygon_masks = ROIPolygonMasks({})
 
-        result = cumulative_roi_spectra(histogram, rectangle_request, polygon_request)
+        result = cumulative_roi_spectra(histogram, rectangle_bounds, polygon_masks)
 
         assert result.dims == ('roi', 'tof')
         assert result.sizes['roi'] == 1
 
     def test_current_roi_spectra_provider(self):
         """Test current_roi_spectra provider function."""
-        from ess.livedata.config.models import ROI, Interval, PolygonROI, RectangleROI
+        from ess.livedata.config.models import Interval, RectangleROI
         from ess.livedata.handlers.detector_view_sciline_workflow import (
-            ROIPolygonRequest,
-            ROIRectangleRequest,
+            ROIPolygonMasks,
+            ROIRectangleBounds,
             WindowHistogram,
             current_roi_spectra,
         )
@@ -925,12 +968,11 @@ class TestROISpectraProviders:
         roi = RectangleROI(
             x=Interval(min=0, max=5, unit='m'), y=Interval(min=0, max=5, unit='m')
         )
-        rectangle_request = ROIRectangleRequest(
-            ROI.to_concatenated_data_array({0: roi})
-        )
-        polygon_request = ROIPolygonRequest(PolygonROI.to_concatenated_data_array({}))
+        # Use precomputed bounds
+        rectangle_bounds = ROIRectangleBounds({0: roi.get_bounds(x_dim='x', y_dim='y')})
+        polygon_masks = ROIPolygonMasks({})
 
-        result = current_roi_spectra(histogram, rectangle_request, polygon_request)
+        result = current_roi_spectra(histogram, rectangle_bounds, polygon_masks)
 
         assert result.dims == ('roi', 'tof')
         assert result.sizes['roi'] == 1
@@ -953,6 +995,7 @@ class TestROISpectraIntegration:
         from ess.livedata.handlers.stream_processor_workflow import (
             StreamProcessorWorkflow,
         )
+        from ess.reduce.nexus.types import EmptyDetector
 
         tof_bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
         base_workflow = create_base_workflow(tof_bins=tof_bins)
@@ -960,6 +1003,9 @@ class TestROISpectraIntegration:
         # Add logical projection with a fold transform
         transform = make_logical_transform(4, 4)
         add_logical_projection(base_workflow, transform=transform)
+
+        # Inject fake EmptyDetector for testing (normally comes from NeXus file)
+        base_workflow[EmptyDetector[SampleRun]] = make_fake_empty_detector(4, 4)
 
         from ess.livedata.config.models import PolygonROI
 
@@ -1047,12 +1093,16 @@ class TestROISpectraIntegration:
         from ess.livedata.handlers.stream_processor_workflow import (
             StreamProcessorWorkflow,
         )
+        from ess.reduce.nexus.types import EmptyDetector
 
         tof_bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
         base_workflow = create_base_workflow(tof_bins=tof_bins)
 
         transform = make_logical_transform(4, 4)
         add_logical_projection(base_workflow, transform=transform)
+
+        # Inject fake EmptyDetector for testing (normally comes from NeXus file)
+        base_workflow[EmptyDetector[SampleRun]] = make_fake_empty_detector(4, 4)
 
         from ess.livedata.config.models import PolygonROI
 
