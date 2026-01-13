@@ -1007,12 +1007,6 @@ class TestROISpectraIntegration:
         # Inject fake EmptyDetector for testing (normally comes from NeXus file)
         base_workflow[EmptyDetector[SampleRun]] = make_fake_empty_detector(4, 4)
 
-        from ess.livedata.config.models import PolygonROI
-
-        # Empty initial context for ROI requests
-        empty_rectangle = RectangleROI.to_concatenated_data_array({})
-        empty_polygon = PolygonROI.to_concatenated_data_array({})
-
         workflow = StreamProcessorWorkflow(
             base_workflow,
             dynamic_keys={'detector': RawDetector[SampleRun]},
@@ -1027,10 +1021,6 @@ class TestROISpectraIntegration:
                 'roi_spectra_current': CurrentROISpectra,
                 'roi_rectangle': ROIRectangleReadback,
                 'roi_polygon': ROIPolygonReadback,
-            },
-            initial_context={
-                ROIRectangleRequest: empty_rectangle,
-                ROIPolygonRequest: empty_polygon,
             },
             accumulators=create_accumulators(),
         )
@@ -1104,12 +1094,6 @@ class TestROISpectraIntegration:
         # Inject fake EmptyDetector for testing (normally comes from NeXus file)
         base_workflow[EmptyDetector[SampleRun]] = make_fake_empty_detector(4, 4)
 
-        from ess.livedata.config.models import PolygonROI
-
-        # Empty initial context for ROI requests
-        empty_rectangle = RectangleROI.to_concatenated_data_array({})
-        empty_polygon = PolygonROI.to_concatenated_data_array({})
-
         workflow = StreamProcessorWorkflow(
             base_workflow,
             dynamic_keys={'detector': RawDetector[SampleRun]},
@@ -1123,10 +1107,6 @@ class TestROISpectraIntegration:
                 # ROI readbacks ensure correct units from histogram coords
                 'roi_rectangle': ROIRectangleReadback,
                 'roi_polygon': ROIPolygonReadback,
-            },
-            initial_context={
-                ROIRectangleRequest: empty_rectangle,
-                ROIPolygonRequest: empty_polygon,
             },
             accumulators=create_accumulators(),
         )

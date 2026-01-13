@@ -1105,10 +1105,6 @@ def create_base_workflow(
     workflow[TOFBins] = tof_bins
     workflow[TOFSlice] = tof_slice
 
-    # Set default ROI configuration (empty DataArrays - None can't be serialized)
-    workflow[ROIRectangleRequest] = models.RectangleROI.to_concatenated_data_array({})
-    workflow[ROIPolygonRequest] = models.PolygonROI.to_concatenated_data_array({})
-
     return workflow
 
 
@@ -1347,10 +1343,6 @@ class DetectorViewScilineFactory:
                 reduction_dim=self._reduction_dim,
             )
 
-        # Create empty ROI DataArrays for initial context
-        empty_rectangle = models.RectangleROI.to_concatenated_data_array({})
-        empty_polygon = models.PolygonROI.to_concatenated_data_array({})
-
         return StreamProcessorWorkflow(
             workflow,
             # Inject preprocessor output as NeXusData; GenericNeXusWorkflow
@@ -1372,12 +1364,6 @@ class DetectorViewScilineFactory:
                 # ROI readbacks (providers ensure correct units from histogram coords)
                 'roi_rectangle': ROIRectangleReadback,
                 'roi_polygon': ROIPolygonReadback,
-            },
-            # Set initial context so finalize() returns valid values before any
-            # ROI is set
-            initial_context={
-                ROIRectangleRequest: empty_rectangle,
-                ROIPolygonRequest: empty_polygon,
             },
             accumulators=create_accumulators(),
         )
