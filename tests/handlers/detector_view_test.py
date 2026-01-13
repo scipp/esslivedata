@@ -1973,6 +1973,7 @@ class TestDetectorViewROISupportDisabled:
         # Directly add counts to the view (simpler than creating binned events)
         view._view.add_counts([0, 1, 2, 3, 4])
         view._current_start_time = 1000
+        view._current_end_time = 2000
         view._counts_total = 5
         view._counts_in_toa_range = 5
 

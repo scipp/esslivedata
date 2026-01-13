@@ -394,7 +394,7 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
             ref = data
         # Drop all coords that will be accumulated (not stored in reference)
         ref = ref.drop_coords(
-            coord for coord in self._ACCUMULATED_COORDS if coord in ref.coords
+            [coord for coord in self._ACCUMULATED_COORDS if coord in ref.coords]
         )
         self._reference = ref
 
@@ -491,7 +491,7 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         # Drop all accumulated coords for comparison
         template = new.assign(self._reference.data)
         template = template.drop_coords(
-            coord for coord in self._ACCUMULATED_COORDS if coord in template.coords
+            [coord for coord in self._ACCUMULATED_COORDS if coord in template.coords]
         )
 
         return sc.identical(self._reference, template)
