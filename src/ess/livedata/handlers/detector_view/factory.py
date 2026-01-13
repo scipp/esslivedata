@@ -9,8 +9,7 @@ workflows with configurable projection types and parameters.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any
 
 import scipp as sc
 from scippnexus import NXdetector
@@ -25,10 +24,13 @@ from .types import (
     CumulativeROISpectra,
     CurrentDetectorImage,
     CurrentROISpectra,
+    GeometricViewConfig,
+    LogicalViewConfig,
     ROIPolygonReadback,
     ROIPolygonRequest,
     ROIRectangleReadback,
     ROIRectangleRequest,
+    ViewConfig,
 )
 from .workflow import (
     add_geometric_projection,
@@ -46,9 +48,9 @@ class DetectorViewScilineFactory:
     Sciline-based detector view workflow for accumulating detector data
     and producing cumulative and current detector images.
 
-    Supports two projection modes:
-    1. Geometric: Use projection_type + resolution for xy_plane/cylinder_mantle_z
-    2. Logical: Use logical_transform + reduction_dim for fold/slice views
+    Supports two projection modes via ViewConfig:
+    1. GeometricViewConfig: For xy_plane/cylinder_mantle_z projections
+    2. LogicalViewConfig: For fold/slice transforms
 
     Parameters
     ----------
@@ -58,18 +60,9 @@ class DetectorViewScilineFactory:
         file-less startup with logical views.
     tof_bins:
         Default bin edges for TOF histogramming.
-    projection_type:
-        Type of geometric projection ('xy_plane' or 'cylinder_mantle_z').
-        If None, uses logical projection mode.
-    resolution:
-        Resolution (number of bins) for geometric projection screen dimensions.
-    pixel_noise:
-        Noise for geometric projection. 'cylindrical' or scalar variance.
-    logical_transform:
-        Callable to reshape detector data for logical projection.
-        Signature: (da: DataArray, source_name: str) -> DataArray.
-    reduction_dim:
-        Dimension(s) to merge events over for logical projection.
+    view_config:
+        View configuration. Can be a single config (applied to all sources)
+        or a dict mapping source names to configs (for per-detector settings).
     """
 
     def __init__(
@@ -77,23 +70,17 @@ class DetectorViewScilineFactory:
         *,
         data_source: DetectorDataSource,
         tof_bins: sc.Variable,
-        # Geometric projection params
-        projection_type: Literal['xy_plane', 'cylinder_mantle_z'] | None = None,
-        resolution: dict[str, int] | None = None,
-        pixel_noise: Literal['cylindrical'] | sc.Variable | None = None,
-        # Logical projection params
-        logical_transform: Callable[[sc.DataArray, str], sc.DataArray] | None = None,
-        reduction_dim: str | list[str] | None = None,
+        view_config: ViewConfig | dict[str, ViewConfig],
     ) -> None:
         self._data_source = data_source
         self._tof_bins = tof_bins
-        # Geometric projection
-        self._projection_type = projection_type
-        self._resolution = resolution
-        self._pixel_noise = pixel_noise
-        # Logical projection
-        self._logical_transform = logical_transform
-        self._reduction_dim = reduction_dim
+        self._view_config = view_config
+
+    def _get_config(self, source_name: str) -> ViewConfig:
+        """Get the view config for a given source."""
+        if isinstance(self._view_config, dict):
+            return self._view_config[source_name]
+        return self._view_config
 
     def make_workflow(
         self,
@@ -134,31 +121,33 @@ class DetectorViewScilineFactory:
         # Configure detector data source (EmptyDetector)
         self._data_source.configure_workflow(workflow, source_name)
 
-        # Add projection based on mode
-        if self._projection_type is not None:
-            # Geometric projection mode
-            add_geometric_projection(
-                workflow,
-                projection_type=self._projection_type,
-                resolution=self._resolution or {},
-                pixel_noise=self._pixel_noise,
-            )
-        else:
-            # Logical projection mode
-            # Bind source_name to the transform if provided
-            if self._logical_transform is not None:
+        # Add projection based on config type
+        config = self._get_config(source_name)
+        match config:
+            case GeometricViewConfig():
+                add_geometric_projection(
+                    workflow,
+                    projection_type=config.projection_type,
+                    resolution=config.resolution,
+                    pixel_noise=config.pixel_noise,
+                )
+            case LogicalViewConfig():
+                # Bind source_name to the transform if provided
+                if config.transform is not None:
 
-                def bound_transform(da: sc.DataArray) -> sc.DataArray:
-                    return self._logical_transform(da, source_name)
+                    def bound_transform(
+                        da: sc.DataArray, transform=config.transform
+                    ) -> sc.DataArray:
+                        return transform(da, source_name)
 
-            else:
-                bound_transform = None
+                else:
+                    bound_transform = None
 
-            add_logical_projection(
-                workflow,
-                transform=bound_transform,
-                reduction_dim=self._reduction_dim,
-            )
+                add_logical_projection(
+                    workflow,
+                    transform=bound_transform,
+                    reduction_dim=config.reduction_dim,
+                )
 
         return StreamProcessorWorkflow(
             workflow,

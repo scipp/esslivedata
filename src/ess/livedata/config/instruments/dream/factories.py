@@ -181,21 +181,43 @@ def setup_factories(instrument: Instrument) -> None:
             ),
         )
 
-    # Sciline-based detector view workflow (Phase 1: without ROI support)
+    # Sciline-based detector view workflow
     from ess.livedata.handlers.detector_view import (
         DetectorViewScilineFactory,
+        GeometricViewConfig,
         NeXusDetectorSource,
     )
     from ess.livedata.handlers.detector_view_specs import DetectorViewParams
 
-    # Create factory with wire_view transform for 2D visualization
+    # Per-detector view configuration matching the legacy DetectorProjection setup.
+    # Resolution values = base resolution * scale (8), matching _detector_projection
+    # above. Pixel noise is shared across all detectors.
+    _pixel_noise = sc.scalar(4.0, unit='mm')
     _sciline_detector_view = DetectorViewScilineFactory(
         data_source=NeXusDetectorSource(get_nexus_geometry_filename('dream-no-shape')),
         tof_bins=sc.linspace('event_time_offset', 0, 71_000_000, 101, unit='ns'),
-        # logical_transform=get_mantle_front_layer,
-        projection_type='xy_plane',
-        resolution={'y': 111, 'x': 111},
-        pixel_noise=sc.scalar(0.01, unit='m'),
+        view_config={
+            'mantle_detector': GeometricViewConfig(
+                projection_type='cylinder_mantle_z',
+                resolution={'arc_length': 80, 'z': 320},
+                pixel_noise=_pixel_noise,
+            ),
+            'endcap_backward_detector': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 240, 'x': 160},
+                pixel_noise=_pixel_noise,
+            ),
+            'endcap_forward_detector': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 160, 'x': 160},
+                pixel_noise=_pixel_noise,
+            ),
+            'high_resolution_detector': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 160, 'x': 160},
+                pixel_noise=_pixel_noise,
+            ),
+        },
     )
 
     @specs.sciline_detector_view_handle.attach_factory()

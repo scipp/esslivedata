@@ -278,15 +278,15 @@ powder_reduction_with_vanadium_handle = instrument.register_spec(
     params=PowderWorkflowParams,
 )
 
-# Register Sciline-based detector view spec (Phase 1: without ROI support)
-# Uses wire_view transform for a simple 2D visualization
+# Register Sciline-based detector view spec with per-detector geometric projections.
+# Matches the legacy DetectorProjection setup with all 4 detector banks.
 sciline_detector_view_handle = instrument.register_spec(
     namespace='data_reduction',
     name='sciline_detector_view',
     version=1,
     title='Sciline Detector View',
-    description='Sciline-based logical detector view with TOF histogramming.',
-    source_names=['endcap_backward_detector'],
+    description='Sciline-based geometric detector view with TOF histogramming.',
+    source_names=list(_projections.keys()),
     aux_sources=DetectorROIAuxSources,
     params=DetectorViewParams,
     outputs=DetectorViewOutputs,

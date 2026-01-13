@@ -56,7 +56,9 @@ from .types import (
     CurrentDetectorImage,
     CurrentROISpectra,
     DetectorHistogram3D,
+    GeometricViewConfig,
     LogicalTransform,
+    LogicalViewConfig,
     ProjectionType,
     ReductionDim,
     ROIPolygonMasks,
@@ -69,6 +71,7 @@ from .types import (
     ScreenBinnedEvents,
     TOFBins,
     TOFSlice,
+    ViewConfig,
     WindowHistogram,
 )
 from .workflow import (
@@ -96,8 +99,11 @@ __all__ = [
     # Projectors
     'EventProjector',
     'GeometricProjector',
+    # View configuration
+    'GeometricViewConfig',
     'LogicalProjector',
     'LogicalTransform',
+    'LogicalViewConfig',
     'NeXusDetectorSource',
     'ProjectionType',
     'Projector',
@@ -114,6 +120,7 @@ __all__ = [
     # Types
     'TOFBins',
     'TOFSlice',
+    'ViewConfig',
     # Workflow
     'WindowAccumulator',
     'WindowHistogram',
