@@ -7,7 +7,7 @@ import scipp as sc
 
 from ess.livedata.handlers.detector_view import (
     DetectorNumberSource,
-    DetectorViewScilineFactory,
+    DetectorViewFactory,
     LogicalViewConfig,
 )
 
@@ -152,7 +152,7 @@ def make_fake_detector_number(y_size: int, x_size: int) -> sc.Variable:
     return sc.arange('detector_number', 1, total_pixels + 1, unit=None)
 
 
-def make_test_factory(y_size: int = 4, x_size: int = 4) -> DetectorViewScilineFactory:
+def make_test_factory(y_size: int = 4, x_size: int = 4) -> DetectorViewFactory:
     """Create a DetectorViewScilineFactory configured for testing.
 
     Uses DetectorNumberSource for fast, file-less workflow creation.
@@ -162,7 +162,7 @@ def make_test_factory(y_size: int = 4, x_size: int = 4) -> DetectorViewScilineFa
     def logical_transform(da: sc.DataArray, source_name: str) -> sc.DataArray:
         return da.fold(dim='detector_number', sizes={'y': y_size, 'x': x_size})
 
-    return DetectorViewScilineFactory(
+    return DetectorViewFactory(
         data_source=DetectorNumberSource(detector_number),
         tof_bins=sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns'),
         view_config=LogicalViewConfig(transform=logical_transform),

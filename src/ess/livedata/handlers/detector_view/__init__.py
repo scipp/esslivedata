@@ -18,7 +18,7 @@ from .data_source import (
     NeXusDetectorSource,
     create_empty_detector,
 )
-from .factory import DetectorViewScilineFactory
+from .factory import DetectorViewFactory
 from .projectors import (
     GeometricProjector,
     LogicalProjector,
@@ -92,7 +92,7 @@ __all__ = [
     'DetectorHistogram3D',
     'DetectorNumberSource',
     # Factory
-    'DetectorViewScilineFactory',
+    'DetectorViewFactory',
     # Projectors
     'GeometricProjector',
     # View configuration

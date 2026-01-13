@@ -6,7 +6,7 @@ import scipp as sc
 
 from ess.livedata.handlers.detector_view import (
     DetectorNumberSource,
-    DetectorViewScilineFactory,
+    DetectorViewFactory,
     GeometricViewConfig,
     LogicalViewConfig,
 )
@@ -24,7 +24,7 @@ class TestDetectorViewScilineFactory:
         def transform(da: sc.DataArray, source_name: str) -> sc.DataArray:
             return da.fold(dim='detector_number', sizes={'y': 4, 'x': 4})
 
-        factory = DetectorViewScilineFactory(
+        factory = DetectorViewFactory(
             data_source=DetectorNumberSource(detector_number),
             tof_bins=sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns'),
             view_config=LogicalViewConfig(transform=transform),
@@ -39,7 +39,7 @@ class TestDetectorViewScilineFactory:
     def test_factory_initialization_with_geometric_config(self):
         """Test that factory can be initialized with geometric view config."""
         detector_number = make_fake_detector_number(4, 4)
-        factory = DetectorViewScilineFactory(
+        factory = DetectorViewFactory(
             data_source=DetectorNumberSource(detector_number),
             tof_bins=sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns'),
             view_config=GeometricViewConfig(
@@ -59,7 +59,7 @@ class TestDetectorViewScilineFactory:
         def transform(da: sc.DataArray, source_name: str) -> sc.DataArray:
             return da.fold(dim='detector_number', sizes={'y': 4, 'x': 4})
 
-        factory = DetectorViewScilineFactory(
+        factory = DetectorViewFactory(
             data_source=DetectorNumberSource(detector_number),
             tof_bins=sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns'),
             view_config={
