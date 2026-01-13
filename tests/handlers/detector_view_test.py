@@ -251,6 +251,69 @@ class TestDetectorViewBasics:
         result2 = view.finalize()
         assert result2['current'].coords['time'].value == 5000
 
+    def test_current_has_start_end_time_coords(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that 'current' result has start_time and end_time coords.
+
+        Delta outputs like 'current' need their own time bounds that represent
+        the period since the last finalize, not the entire job duration.
+        """
+        params = DetectorViewParams()
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # Accumulate with specific time range
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=1000, end_time=2000
+        )
+        result = view.finalize()
+
+        # Verify start_time and end_time coords are present on current
+        assert 'start_time' in result['current'].coords
+        assert 'end_time' in result['current'].coords
+        assert result['current'].coords['start_time'].value == 1000
+        assert result['current'].coords['end_time'].value == 2000
+        assert result['current'].coords['start_time'].unit == 'ns'
+        assert result['current'].coords['end_time'].unit == 'ns'
+
+        # cumulative should not have start_time or end_time coords
+        # (they will be added by Job.get() with job-level times)
+        assert 'start_time' not in result['cumulative'].coords
+        assert 'end_time' not in result['cumulative'].coords
+
+    def test_delta_outputs_track_time_since_last_finalize(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that delta outputs track time since last finalize, not job start.
+
+        This is critical for showing correct time bounds when the dashboard
+        displays the period used to compute delta outputs like 'current'.
+        """
+        params = DetectorViewParams()
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # First period: accumulate and finalize
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=1000, end_time=2000
+        )
+        result1 = view.finalize()
+        assert result1['current'].coords['start_time'].value == 1000
+        assert result1['current'].coords['end_time'].value == 2000
+
+        # Second period: new time range
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=3000, end_time=4000
+        )
+        result2 = view.finalize()
+
+        # Delta output should reflect second period's time range, NOT job start
+        assert result2['current'].coords['start_time'].value == 3000
+        assert result2['current'].coords['end_time'].value == 4000
+
     def test_finalize_without_accumulate_raises(
         self, mock_rolling_view: RollingDetectorView
     ) -> None:
@@ -459,6 +522,49 @@ class TestDetectorViewROIMechanism:
 
         # ROI cumulative should not have time coord
         assert 'time' not in result['roi_spectra_cumulative'].coords
+
+    def test_roi_current_has_start_end_time_coords(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+        standard_roi: RectangleROI,
+        standard_toa_edges: TOAEdges,
+    ) -> None:
+        """Test that ROI current results have start_time and end_time coords."""
+        params = DetectorViewParams(toa_edges=standard_toa_edges)
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        # Configure ROI
+        view.accumulate(
+            roi_to_accumulate_data(standard_roi), start_time=1000, end_time=2000
+        )
+
+        # Accumulate detector events
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=2500, end_time=3000
+        )
+
+        result = view.finalize()
+
+        # Verify start_time and end_time coords on ROI current
+        assert 'start_time' in result['roi_spectra_current'].coords
+        assert 'end_time' in result['roi_spectra_current'].coords
+        assert result['roi_spectra_current'].coords['start_time'].value == 2500
+        assert result['roi_spectra_current'].coords['end_time'].value == 3000
+
+        # Verify they match detector view current time coords
+        assert (
+            result['roi_spectra_current'].coords['start_time']
+            == result['current'].coords['start_time']
+        )
+        assert (
+            result['roi_spectra_current'].coords['end_time']
+            == result['current'].coords['end_time']
+        )
+
+        # ROI cumulative should not have start_time/end_time coords
+        assert 'start_time' not in result['roi_spectra_cumulative'].coords
+        assert 'end_time' not in result['roi_spectra_cumulative'].coords
 
     def test_roi_cumulative_accumulation(
         self,
@@ -1192,6 +1298,29 @@ class TestDetectorViewRatemeter:
         assert result['counts_total'].unit == 'counts'
         assert result['counts_in_toa_range'].unit == 'counts'
 
+    def test_counts_have_start_end_time_coords(
+        self,
+        mock_rolling_view: RollingDetectorView,
+        sample_detector_events: sc.DataArray,
+    ) -> None:
+        """Test that counts outputs have start_time and end_time coords."""
+        params = DetectorViewParams()
+        view = DetectorView(params=params, detector_view=mock_rolling_view)
+
+        view.accumulate(
+            {'detector': sample_detector_events}, start_time=1000, end_time=2000
+        )
+        result = view.finalize()
+
+        # Verify start_time and end_time coords on counts outputs
+        for key in ['counts_total', 'counts_in_toa_range']:
+            assert 'start_time' in result[key].coords, f"Missing start_time on {key}"
+            assert 'end_time' in result[key].coords, f"Missing end_time on {key}"
+            assert result[key].coords['start_time'].value == 1000
+            assert result[key].coords['end_time'].value == 2000
+            assert result[key].coords['start_time'].unit == 'ns'
+            assert result[key].coords['end_time'].unit == 'ns'
+
     def test_counts_match_total_events_without_toa_filter(
         self,
         mock_rolling_view: RollingDetectorView,
@@ -1844,6 +1973,7 @@ class TestDetectorViewROISupportDisabled:
         # Directly add counts to the view (simpler than creating binned events)
         view._view.add_counts([0, 1, 2, 3, 4])
         view._current_start_time = 1000
+        view._current_end_time = 2000
         view._counts_total = 5
         view._counts_in_toa_range = 5
 
