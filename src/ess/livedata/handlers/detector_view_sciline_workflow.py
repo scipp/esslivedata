@@ -148,14 +148,10 @@ class ScreenCoordInfo:
     """Name of the y (vertical) screen dimension."""
     x_dim: str
     """Name of the x (horizontal) screen dimension."""
-    tof_dim: str
-    """Name of the TOF dimension (always 'tof')."""
     y_edges: sc.Variable | None
     """Bin edges for y dimension. None if logical projection has no coords."""
     x_edges: sc.Variable | None
     """Bin edges for x dimension. None if logical projection has no coords."""
-    tof_edges: sc.Variable
-    """Bin edges for TOF dimension."""
 
 
 ROIRectangleBounds = NewType('ROIRectangleBounds', dict)
@@ -349,7 +345,6 @@ def make_event_projector(
 
 def screen_coord_info_geometric(
     projector: EventProjector,
-    tof_bins: TOFBins,
 ) -> ScreenCoordInfo:
     """
     Extract screen coordinate information from EventProjector.
@@ -361,8 +356,6 @@ def screen_coord_info_geometric(
     ----------
     projector:
         EventProjector with screen coordinate edges.
-    tof_bins:
-        Bin edges for TOF dimension.
 
     Returns
     -------
@@ -381,17 +374,14 @@ def screen_coord_info_geometric(
     return ScreenCoordInfo(
         y_dim=y_dim,
         x_dim=x_dim,
-        tof_dim='tof',
         y_edges=edges[y_dim],
         x_edges=edges[x_dim],
-        tof_edges=tof_bins,
     )
 
 
 def screen_coord_info_logical(
     empty_detector: EmptyDetector[SampleRun],
     transform: LogicalTransform,
-    tof_bins: TOFBins,
 ) -> ScreenCoordInfo:
     """
     Compute screen coordinate info for logical projection from empty detector structure.
@@ -407,8 +397,6 @@ def screen_coord_info_logical(
         Detector structure without neutron data.
     transform:
         Callable that reshapes detector data (fold/slice). If None, identity.
-    tof_bins:
-        Bin edges for TOF dimension.
 
     Returns
     -------
@@ -437,10 +425,8 @@ def screen_coord_info_logical(
     return ScreenCoordInfo(
         y_dim=y_dim,
         x_dim=x_dim,
-        tof_dim='tof',
         y_edges=y_edges,
         x_edges=x_edges,
-        tof_edges=tof_bins,
     )
 
 
