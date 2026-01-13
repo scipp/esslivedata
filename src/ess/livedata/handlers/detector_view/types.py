@@ -9,9 +9,64 @@ configuration types, intermediate types, output types, and ROI types.
 
 from __future__ import annotations
 
-from typing import NewType
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Literal, NewType
 
 import scipp as sc
+
+# ============================================================================
+# View Configuration Classes
+# ============================================================================
+
+
+@dataclass(frozen=True, slots=True)
+class GeometricViewConfig:
+    """
+    Configuration for geometric projection views.
+
+    Geometric projections map detector pixel positions to screen coordinates
+    using calibrated 3D positions.
+
+    Parameters
+    ----------
+    projection_type:
+        Type of geometric projection.
+    resolution:
+        Number of bins for each screen dimension (e.g., {'x': 200, 'y': 200}).
+    pixel_noise:
+        Noise to add to pixel positions. 'cylindrical' uses detector geometry,
+        a scalar Variable applies Gaussian noise, None disables noise.
+    """
+
+    projection_type: Literal['xy_plane', 'cylinder_mantle_z']
+    resolution: dict[str, int]
+    pixel_noise: Literal['cylindrical'] | sc.Variable | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LogicalViewConfig:
+    """
+    Configuration for logical projection views.
+
+    Logical projections reshape detector data using fold/slice transforms
+    without requiring calibrated positions.
+
+    Parameters
+    ----------
+    transform:
+        Callable that reshapes detector data. Signature: (da, source_name) -> da.
+        If None, uses identity transform.
+    reduction_dim:
+        Dimension(s) to merge events over after transform. None means no reduction.
+    """
+
+    transform: Callable[[sc.DataArray, str], sc.DataArray] | None = None
+    reduction_dim: str | list[str] | None = None
+
+
+ViewConfig = GeometricViewConfig | LogicalViewConfig
+"""Union type for view configuration."""
 
 # Configuration types (set once at workflow creation)
 TOFBins = NewType('TOFBins', sc.Variable)

@@ -8,6 +8,7 @@ import scipp as sc
 from ess.livedata.handlers.detector_view import (
     DetectorNumberSource,
     DetectorViewScilineFactory,
+    LogicalViewConfig,
 )
 
 
@@ -164,5 +165,5 @@ def make_test_factory(y_size: int = 4, x_size: int = 4) -> DetectorViewScilineFa
     return DetectorViewScilineFactory(
         data_source=DetectorNumberSource(detector_number),
         tof_bins=sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns'),
-        logical_transform=logical_transform,
+        view_config=LogicalViewConfig(transform=logical_transform),
     )

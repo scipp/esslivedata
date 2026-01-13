@@ -6,15 +6,63 @@ Extend the `detector_view` subpackage (in `handlers/detector_view/`) to support 
 
 ## Current State
 
-The workflow supports **one projection type at a time** via a unified projector abstraction:
-- `Projector` protocol defining the interface
-- `GeometricProjector` for xy_plane and cylinder_mantle_z projections
-- `LogicalProjector` for fold/slice transforms with optional dimension reduction
-- Single `project_events` provider that works with any projector type
+The workflow supports **one view per source** with per-detector configuration via `ViewConfig` classes:
 
-### Type System
+### View Configuration
 
-**Projector Protocol:**
+```python
+@dataclass(frozen=True, slots=True)
+class GeometricViewConfig:
+    projection_type: Literal['xy_plane', 'cylinder_mantle_z']
+    resolution: dict[str, int]
+    pixel_noise: Literal['cylindrical'] | sc.Variable | None = None
+
+@dataclass(frozen=True, slots=True)
+class LogicalViewConfig:
+    transform: Callable[[sc.DataArray, str], sc.DataArray] | None = None
+    reduction_dim: str | list[str] | None = None
+
+ViewConfig = GeometricViewConfig | LogicalViewConfig
+```
+
+### Factory API
+
+The factory accepts either a single config (applied to all sources) or a dict for per-detector settings:
+
+```python
+# Single config for all sources
+factory = DetectorViewScilineFactory(
+    data_source=NeXusDetectorSource(nexus_file),
+    tof_bins=sc.linspace('tof', 0, 1e8, 100, unit='ns'),
+    view_config=GeometricViewConfig(
+        projection_type='xy_plane',
+        resolution={'y': 200, 'x': 200},
+        pixel_noise=sc.scalar(4.0, unit='mm'),
+    ),
+)
+
+# Per-detector configs (e.g., DREAM with different detector types)
+factory = DetectorViewScilineFactory(
+    data_source=NeXusDetectorSource(nexus_file),
+    tof_bins=sc.linspace('tof', 0, 1e8, 100, unit='ns'),
+    view_config={
+        'mantle_detector': GeometricViewConfig(
+            projection_type='cylinder_mantle_z',
+            resolution={'arc_length': 80, 'z': 320},
+            pixel_noise=sc.scalar(4.0, unit='mm'),
+        ),
+        'endcap_detector': GeometricViewConfig(
+            projection_type='xy_plane',
+            resolution={'y': 240, 'x': 160},
+            pixel_noise=sc.scalar(4.0, unit='mm'),
+        ),
+    },
+)
+
+workflow = factory.make_workflow('mantle_detector')
+```
+
+### Projector Abstraction
 
 ```python
 class Projector(Protocol):
@@ -26,63 +74,19 @@ class Projector(Protocol):
 
     @property
     def screen_coords(self) -> dict[str, sc.Variable | None]:
-        """Screen coordinate bin edges, keyed by dimension name.
+        """Screen coordinate bin edges, keyed by dimension name."""
+        ...
 ```
 
-**Projector Implementations:**
-
-- `GeometricProjector`: Projects events using calibrated positions and noise replicas
-- `LogicalProjector`: Reshapes detector data using fold/slice transforms
-
-**Projector Factories (Sciline providers):**
-
-```python
-def make_geometric_projector(
-    coords: CalibratedPositionWithNoisyReplicas,
-    projection_type: ProjectionType,
-    resolution: DetectorViewResolution,
-) -> Projector: ...
-
-def make_logical_projector(
-    empty_detector: EmptyDetector[SampleRun],
-    transform: LogicalTransform,
-    reduction_dim: ReductionDim,
-) -> Projector: ...
-```
-
-### Provider Structure
-
-Single unified projection provider:
-
-```python
-def project_events(
-    raw_detector: RawDetector[SampleRun],
-    projector: Projector,
-) -> ScreenBinnedEvents:
-    """Project events to screen coordinates using the configured projector."""
-    raw_detector = sc.values(raw_detector)
-    return ScreenBinnedEvents(projector.project_events(raw_detector))
-```
-
-ROI precomputation providers take `Projector` directly:
-
-```python
-def precompute_roi_rectangle_bounds(
-    projector: Projector,
-    rectangle_request: ROIRectangleRequest,
-) -> ROIRectangleBounds: ...
-
-def precompute_roi_polygon_masks(
-    projector: Projector,
-    polygon_request: ROIPolygonRequest,
-) -> ROIPolygonMasks: ...
-```
+**Implementations:**
+- `GeometricProjector`: Projects using calibrated positions and noise replicas
+- `LogicalProjector`: Reshapes data using fold/slice transforms
 
 ## Design Approach for Multi-View
 
 **Move polymorphism from providers to params.**
 
-To support multiple views, parameterize types by `ViewType`:
+To support multiple simultaneous views of the same data:
 1. Define view type markers (e.g., `XYPlaneView`, `PanelView`)
 2. Set concrete projector instances as workflow params: `workflow[Projector[ViewType]] = ...`
 3. Keep all providers generic over `ViewType` - they delegate to the projector
@@ -125,13 +129,13 @@ The following types would become generic over `ViewType`:
 
 ## Implementation Steps
 
-### Phase 1: Type System Foundation (Future Work)
+### Phase 1: Type System Foundation
 
 1. Define `ViewType` TypeVar
 2. Define built-in view markers (`XYPlaneView`, `CylinderMantleView`)
 3. Update types to be generic over `ViewType` using `sciline.Scope`
 
-### Phase 2: Update Providers (Future Work)
+### Phase 2: Update Providers
 
 1. Update all providers to be generic over `ViewType`
 2. Example:
@@ -143,10 +147,10 @@ The following types would become generic over `ViewType`:
        ...
    ```
 
-### Phase 3: Update Factory (Future Work)
+### Phase 3: Update Factory
 
-1. Define `GeometricViewConfig` and `LogicalViewConfig` dataclasses
-2. Update factory to accept multiple view configurations
+1. Extend `ViewConfig` classes with `view_type` field for multi-view scenarios
+2. Update factory to accept list of view configurations
 3. Create per-view accumulators and target key mappings
 
 ## Module Structure
@@ -155,7 +159,7 @@ The following types would become generic over `ViewType`:
 handlers/
 ├── detector_view/
 │   ├── __init__.py           # Re-export public API
-│   ├── types.py              # Type definitions
+│   ├── types.py              # Type definitions incl. ViewConfig classes
 │   ├── projectors.py         # GeometricProjector, LogicalProjector, protocol
 │   ├── providers.py          # Sciline providers
 │   ├── roi.py                # ROI-related providers
@@ -164,24 +168,7 @@ handlers/
 │   └── factory.py            # DetectorViewScilineFactory
 ```
 
-## Example Usage
-
-### Current Single-View
-
-```python
-# Create factory with geometric projection
-factory = DetectorViewScilineFactory(
-    data_source=NeXusDetectorSource(nexus_file),
-    tof_bins=sc.linspace('tof', 0, 1e8, 100, unit='ns'),
-    projection_type='xy_plane',
-    resolution={'screen_x': 200, 'screen_y': 200},
-    pixel_noise='cylindrical',
-)
-
-workflow = factory.make_workflow('detector_panel')
-```
-
-### Future Multi-View
+## Example: Future Multi-View Usage
 
 ```python
 # Define custom logical view types
@@ -191,20 +178,18 @@ class PanelView:
 class TubeView:
     """Logical view showing detector tubes."""
 
-# Create factory with multiple views
+# Create factory with multiple views of the same data
 factory = DetectorViewScilineFactory(
     data_source=NeXusDetectorSource(nexus_file),
     tof_bins=sc.linspace('tof', 0, 1e8, 100, unit='ns'),
     views=[
         GeometricViewConfig(
             view_type=XYPlaneView,
-            name='xy_plane',
             projection_type='xy_plane',
-            resolution={'screen_x': 200, 'screen_y': 200},
+            resolution={'x': 200, 'y': 200},
         ),
         LogicalViewConfig(
             view_type=PanelView,
-            name='panel',
             transform=lambda da, src: da.fold('detector_number', {'panel': 10, 'pixel': 1000}),
         ),
     ],
@@ -212,5 +197,5 @@ factory = DetectorViewScilineFactory(
 
 # Workflow produces outputs for all views
 workflow = factory.make_workflow('detector_panel')
-# Target keys: 'xy_plane_cumulative', 'panel_cumulative', ...
+# Target keys: CumulativeDetectorImage[XYPlaneView], CumulativeDetectorImage[PanelView], ...
 ```

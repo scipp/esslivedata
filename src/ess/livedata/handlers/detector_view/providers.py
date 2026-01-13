@@ -22,6 +22,7 @@ from .types import (
     CurrentDetectorImage,
     DetectorHistogram3D,
     ScreenBinnedEvents,
+    TOFBins,
     TOFSlice,
     WindowHistogram,
 )
@@ -64,7 +65,7 @@ def project_events(
 
 def compute_detector_histogram_3d(
     screen_binned_events: ScreenBinnedEvents,
-    tof_bins: sc.Variable,
+    tof_bins: TOFBins,
 ) -> DetectorHistogram3D:
     """
     Histogram TOF from screen-binned events.
