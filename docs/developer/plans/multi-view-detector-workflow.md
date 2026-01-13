@@ -7,7 +7,7 @@ Extend the `detector_view` subpackage (in `handlers/detector_view/`) to support 
 ## Current State
 
 The workflow supports **one projection type at a time** via a unified projector abstraction:
-- `Projector` type with `ProjectorProtocol` defining the interface
+- `Projector` protocol defining the interface
 - `GeometricProjector` for xy_plane and cylinder_mantle_z projections
 - `LogicalProjector` for fold/slice transforms with optional dimension reduction
 - Single `project_events` provider that works with any projector type
@@ -17,7 +17,7 @@ The workflow supports **one projection type at a time** via a unified projector 
 **Projector Protocol:**
 
 ```python
-class ProjectorProtocol(Protocol):
+class Projector(Protocol):
     """Protocol for event projection strategies."""
 
     def project_events(self, events: sc.DataArray) -> sc.DataArray:
@@ -25,24 +25,8 @@ class ProjectorProtocol(Protocol):
         ...
 
     @property
-    def y_dim(self) -> str:
-        """Name of the y (vertical) screen dimension."""
-        ...
-
-    @property
-    def x_dim(self) -> str:
-        """Name of the x (horizontal) screen dimension."""
-        ...
-
-    @property
-    def y_edges(self) -> sc.Variable | None:
-        """Bin edges for y dimension. None if logical projection has no coords."""
-        ...
-
-    @property
-    def x_edges(self) -> sc.Variable | None:
-        """Bin edges for x dimension. None if logical projection has no coords."""
-        ...
+    def screen_coords(self) -> dict[str, sc.Variable | None]:
+        """Screen coordinate bin edges, keyed by dimension name.
 ```
 
 **Projector Implementations:**

@@ -67,7 +67,6 @@ from .types import (
     ROIRectangleRequest,
     ROISpectra,
     ScreenBinnedEvents,
-    ScreenCoordInfo,
     TOFBins,
     TOFSlice,
     WindowHistogram,
@@ -112,7 +111,6 @@ __all__ = [
     'ROISpectra',
     'ReductionDim',
     'ScreenBinnedEvents',
-    'ScreenCoordInfo',
     # Types
     'TOFBins',
     'TOFSlice',

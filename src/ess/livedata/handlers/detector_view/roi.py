@@ -58,8 +58,11 @@ def precompute_roi_rectangle_bounds(
     if rectangle_request is None or len(rectangle_request) == 0:
         return ROIRectangleBounds({})
 
-    y_dim = projector.y_dim
-    x_dim = projector.x_dim
+    screen_coords = projector.screen_coords
+    dims = list(screen_coords.keys())
+    if len(dims) < 2:
+        raise ValueError(f"Rectangle ROIs require at least 2 dimensions, got {dims}")
+    y_dim, x_dim = dims[0], dims[1]
 
     bounds_dict: dict[int, dict[str, tuple[sc.Variable, sc.Variable]]] = {}
     rois = models.ROI.from_concatenated_data_array(rectangle_request)
@@ -97,10 +100,18 @@ def precompute_roi_polygon_masks(
     if polygon_request is None or len(polygon_request) == 0:
         return ROIPolygonMasks({})
 
-    y_dim = projector.y_dim
-    x_dim = projector.x_dim
-    y_edges = projector.y_edges
-    x_edges = projector.x_edges
+    screen_coords = projector.screen_coords
+    dims = list(screen_coords.keys())
+    if len(dims) < 2:
+        raise ValueError(f"Polygon ROIs require at least 2 dimensions, got {dims}")
+    y_dim, x_dim = dims[0], dims[1]
+    y_edges = screen_coords[y_dim]
+    x_edges = screen_coords[x_dim]
+
+    if y_edges is None or x_edges is None:
+        raise ValueError(
+            "Polygon ROIs require coordinate bin edges, but projector has None"
+        )
 
     # Compute bin centers for point-in-polygon test
     x_centers = sc.midpoints(x_edges)
