@@ -119,6 +119,8 @@ def _add_time_coords(
     end_coord = sc.scalar(end_time, unit='ns')
 
     def maybe_add_coords(val: sc.DataArray) -> sc.DataArray:
+        # Skip if workflow already set time coords - we have no idea what they
+        # mean, and adding our own would create an inconsistent pair.
         if 'start_time' in val.coords or 'end_time' in val.coords:
             return val
         return val.assign_coords(start_time=start_coord, end_time=end_coord)
