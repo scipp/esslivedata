@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import scipp as sc
 
-from ess.reduce.nexus.types import EmptyDetector, RawDetector, SampleRun
+from ess.reduce.nexus.types import RawDetector, SampleRun
 
-from .projectors import EventProjector
+from .projectors import Projector
 from .types import (
     CountsInTOARange,
     CountsTotal,
@@ -21,10 +21,7 @@ from .types import (
     CumulativeHistogram,
     CurrentDetectorImage,
     DetectorHistogram3D,
-    LogicalTransform,
-    ReductionDim,
     ScreenBinnedEvents,
-    ScreenCoordInfo,
     TOFSlice,
     WindowHistogram,
 )
@@ -34,106 +31,19 @@ from .types import (
 # ============================================================================
 
 
-def screen_coord_info_geometric(
-    projector: EventProjector,
-) -> ScreenCoordInfo:
-    """
-    Extract screen coordinate information from EventProjector.
-
-    This provides the coordinate structure needed for ROI precomputation,
-    computed once from static projection configuration (not event data).
-
-    Parameters
-    ----------
-    projector:
-        EventProjector with screen coordinate edges.
-
-    Returns
-    -------
-    :
-        ScreenCoordInfo with dimension names and coordinate edges.
-    """
-    edges = projector.edges
-    # Get dimension names from the edges (typically 'screen_x', 'screen_y')
-    dims = list(edges.keys())
-    if len(dims) != 2:
-        raise ValueError(f"Expected 2 spatial dims from projector, got {len(dims)}")
-
-    # Order: first dim is y, second is x (matching histogram convention)
-    y_dim, x_dim = dims[0], dims[1]
-
-    return ScreenCoordInfo(
-        y_dim=y_dim,
-        x_dim=x_dim,
-        y_edges=edges[y_dim],
-        x_edges=edges[x_dim],
-    )
-
-
-def screen_coord_info_logical(
-    empty_detector: EmptyDetector[SampleRun],
-    transform: LogicalTransform,
-) -> ScreenCoordInfo:
-    """
-    Compute screen coordinate info for logical projection from empty detector structure.
-
-    This applies the logical transform to the detector structure (without events)
-    to determine output dimensions and coordinates. Since EmptyDetector is static
-    (derived from NeXus geometry, not event data), this allows ROI precomputation
-    to be independent of the event stream.
-
-    Parameters
-    ----------
-    empty_detector:
-        Detector structure without neutron data.
-    transform:
-        Callable that reshapes detector data (fold/slice). If None, identity.
-
-    Returns
-    -------
-    :
-        ScreenCoordInfo with dimension names and coordinate edges (if available).
-    """
-    if transform is None:
-        # No transform - use detector as-is
-        transformed = empty_detector
-    else:
-        # Apply transform to get output structure
-        transformed = transform(empty_detector)
-
-    # Extract spatial dimensions
-    dims = list(transformed.dims)
-    if len(dims) < 2:
-        raise ValueError(f"Expected at least 2 dims from transform, got {dims}")
-
-    # Assume first two dims are spatial (y, x)
-    y_dim, x_dim = dims[0], dims[1]
-
-    # Get coordinates if available from transform
-    y_edges = transformed.coords.get(y_dim)
-    x_edges = transformed.coords.get(x_dim)
-
-    return ScreenCoordInfo(
-        y_dim=y_dim,
-        x_dim=x_dim,
-        y_edges=y_edges,
-        x_edges=x_edges,
-    )
-
-
-def project_events_geometric(
+def project_events(
     raw_detector: RawDetector[SampleRun],
-    projector: EventProjector,
+    projector: Projector,
 ) -> ScreenBinnedEvents:
     """
-    Project events to screen coordinates using geometric projection.
+    Project events to screen coordinates using the configured projector.
 
     Parameters
     ----------
     raw_detector:
         Detector data with events binned by detector pixel.
     projector:
-        EventProjector configured for geometric projection.
+        Projector instance (geometric or logical).
 
     Returns
     -------
@@ -145,47 +55,6 @@ def project_events_geometric(
     # added after histogramming.
     raw_detector = sc.values(raw_detector)
     return ScreenBinnedEvents(projector.project_events(raw_detector))
-
-
-def project_events_logical(
-    raw_detector: RawDetector[SampleRun],
-    transform: LogicalTransform,
-    reduction_dim: ReductionDim,
-) -> ScreenBinnedEvents:
-    """
-    Project events using logical view (reshape + optional reduction).
-
-    Parameters
-    ----------
-    raw_detector:
-        Detector data with events binned by detector pixel.
-    transform:
-        Callable that reshapes detector data (fold/slice). Must not reduce dimensions.
-    reduction_dim:
-        Dimension(s) to merge events over via bins.concat. None means no reduction.
-
-    Returns
-    -------
-    :
-        Events binned by logical coordinates with TOF preserved.
-    """
-    raw_detector = sc.values(raw_detector)
-    if transform is None:
-        return ScreenBinnedEvents(raw_detector)
-
-    # Step 1: Apply transform to reshape bin structure
-    # e.g., fold('detector_number', {'y': 100, 'x': 100})
-    transformed = transform(raw_detector)
-
-    # Step 2: Merge events along reduction dimensions (if any)
-    if reduction_dim is not None:
-        dims_to_reduce = (
-            [reduction_dim] if isinstance(reduction_dim, str) else list(reduction_dim)
-        )
-        for dim in dims_to_reduce:
-            transformed = transformed.bins.concat(dim)
-
-    return ScreenBinnedEvents(transformed)
 
 
 # ============================================================================
@@ -252,8 +121,7 @@ def window_histogram(data: DetectorHistogram3D) -> WindowHistogram:
 
 
 def cumulative_detector_image(
-    data_3d: CumulativeHistogram,
-    tof_slice: TOFSlice,
+    data_3d: CumulativeHistogram, tof_slice: TOFSlice
 ) -> CumulativeDetectorImage:
     """
     Compute cumulative 2D detector image by summing over TOF.
@@ -274,8 +142,7 @@ def cumulative_detector_image(
 
 
 def current_detector_image(
-    data_3d: WindowHistogram,
-    tof_slice: TOFSlice,
+    data_3d: WindowHistogram, tof_slice: TOFSlice
 ) -> CurrentDetectorImage:
     """
     Compute current 2D detector image by summing over TOF.
@@ -329,8 +196,7 @@ def counts_total(data_3d: WindowHistogram) -> CountsTotal:
 
 
 def counts_in_toa_range(
-    data_3d: WindowHistogram,
-    tof_slice: TOFSlice,
+    data_3d: WindowHistogram, tof_slice: TOFSlice
 ) -> CountsInTOARange:
     """
     Compute event counts within TOA range in current window.

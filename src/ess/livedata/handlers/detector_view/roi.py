@@ -14,6 +14,7 @@ import scipp as sc
 
 from ess.livedata.config import models
 
+from .projectors import Projector
 from .types import (
     CumulativeHistogram,
     CumulativeROISpectra,
@@ -24,7 +25,6 @@ from .types import (
     ROIRectangleBounds,
     ROIRectangleReadback,
     ROIRectangleRequest,
-    ScreenCoordInfo,
     WindowHistogram,
 )
 
@@ -34,7 +34,7 @@ from .types import (
 
 
 def precompute_roi_rectangle_bounds(
-    coord_info: ScreenCoordInfo,
+    projector: Projector,
     rectangle_request: ROIRectangleRequest,
 ) -> ROIRectangleBounds:
     """
@@ -45,8 +45,8 @@ def precompute_roi_rectangle_bounds(
 
     Parameters
     ----------
-    coord_info:
-        Screen coordinate information (dimension names and edges).
+    projector:
+        Projector with screen coordinate information.
     rectangle_request:
         Rectangle ROI configuration.
 
@@ -58,8 +58,8 @@ def precompute_roi_rectangle_bounds(
     if rectangle_request is None or len(rectangle_request) == 0:
         return ROIRectangleBounds({})
 
-    y_dim = coord_info.y_dim
-    x_dim = coord_info.x_dim
+    y_dim = projector.y_dim
+    x_dim = projector.x_dim
 
     bounds_dict: dict[int, dict[str, tuple[sc.Variable, sc.Variable]]] = {}
     rois = models.ROI.from_concatenated_data_array(rectangle_request)
@@ -73,7 +73,7 @@ def precompute_roi_rectangle_bounds(
 
 
 def precompute_roi_polygon_masks(
-    coord_info: ScreenCoordInfo,
+    projector: Projector,
     polygon_request: ROIPolygonRequest,
 ) -> ROIPolygonMasks:
     """
@@ -84,8 +84,8 @@ def precompute_roi_polygon_masks(
 
     Parameters
     ----------
-    coord_info:
-        Screen coordinate information (dimension names and edges).
+    projector:
+        Projector with screen coordinate information.
     polygon_request:
         Polygon ROI configuration.
 
@@ -97,10 +97,10 @@ def precompute_roi_polygon_masks(
     if polygon_request is None or len(polygon_request) == 0:
         return ROIPolygonMasks({})
 
-    y_dim = coord_info.y_dim
-    x_dim = coord_info.x_dim
-    y_edges = coord_info.y_edges
-    x_edges = coord_info.x_edges
+    y_dim = projector.y_dim
+    x_dim = projector.x_dim
+    y_edges = projector.y_edges
+    x_edges = projector.x_edges
 
     # Compute bin centers for point-in-polygon test
     x_centers = sc.midpoints(x_edges)
