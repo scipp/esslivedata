@@ -40,7 +40,7 @@ from .workflow import (
 )
 
 
-class DetectorViewScilineFactory:
+class DetectorViewFactory:
     """
     Factory for creating Sciline-based detector view workflows.
 

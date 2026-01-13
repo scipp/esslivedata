@@ -183,7 +183,7 @@ def setup_factories(instrument: Instrument) -> None:
 
     # Sciline-based detector view workflow
     from ess.livedata.handlers.detector_view import (
-        DetectorViewScilineFactory,
+        DetectorViewFactory,
         GeometricViewConfig,
         NeXusDetectorSource,
     )
@@ -193,7 +193,7 @@ def setup_factories(instrument: Instrument) -> None:
     # Resolution values = base resolution * scale (8), matching _detector_projection
     # above. Pixel noise is shared across all detectors.
     _pixel_noise = sc.scalar(4.0, unit='mm')
-    _sciline_detector_view = DetectorViewScilineFactory(
+    _sciline_detector_view = DetectorViewFactory(
         data_source=NeXusDetectorSource(get_nexus_geometry_filename('dream-no-shape')),
         tof_bins=sc.linspace('event_time_offset', 0, 71_000_000, 101, unit='ns'),
         view_config={
