@@ -216,15 +216,15 @@ def _extract_roi_spectra_precomputed(
     Returns
     -------
     :
-        2D DataArray with dims (roi, tof) containing spectra for each ROI.
-        Returns empty DataArray with shape (0, n_tof) if no ROIs configured.
+        2D DataArray with dims (roi, spectral) containing spectra for each ROI.
+        Returns empty DataArray with shape (0, n_spectral) if no ROIs configured.
     """
-    tof_dim = 'tof' if 'tof' in histogram_3d.dims else histogram_3d.dims[-1]
-    tof_coord = histogram_3d.coords[tof_dim]
-    n_tof = histogram_3d.sizes[tof_dim]
+    spectral_dim = histogram_3d.dims[-1]
+    spectral_coord = histogram_3d.coords[spectral_dim]
+    n_spectral = histogram_3d.sizes[spectral_dim]
 
-    # Get spatial dims (all dims except tof)
-    spatial_dims = [d for d in histogram_3d.dims if d != tof_dim]
+    # Get spatial dims (all dims except spectral)
+    spatial_dims = [d for d in histogram_3d.dims if d != spectral_dim]
     if len(spatial_dims) != 2:
         raise ValueError(
             f"Expected 2 spatial dims, got {len(spatial_dims)}: {spatial_dims}"
@@ -257,10 +257,12 @@ def _extract_roi_spectra_precomputed(
     if not spectra:
         # Return empty DataArray with correct structure
         return sc.DataArray(
-            data=sc.zeros(dims=['roi', tof_dim], shape=[0, n_tof], unit='counts'),
+            data=sc.zeros(
+                dims=['roi', spectral_dim], shape=[0, n_spectral], unit='counts'
+            ),
             coords={
                 'roi': sc.array(dims=['roi'], values=[], dtype='int32'),
-                tof_dim: tof_coord,
+                spectral_dim: spectral_coord,
             },
         )
 
@@ -330,10 +332,10 @@ def _get_coord_units_from_histogram(
     """Extract coordinate units from histogram for ROI readback.
 
     Maps histogram spatial coordinate units to ROI 'x' and 'y' coordinates.
-    Assumes histogram dims are (y, x, tof) or similar with last dim being TOF.
+    Assumes histogram dims are (y, x, spectral) with last dim being spectral.
     """
-    tof_dim = 'tof' if 'tof' in histogram.dims else histogram.dims[-1]
-    spatial_dims = [d for d in histogram.dims if d != tof_dim]
+    spectral_dim = histogram.dims[-1]
+    spatial_dims = [d for d in histogram.dims if d != spectral_dim]
 
     if len(spatial_dims) != 2:
         return {'x': None, 'y': None}

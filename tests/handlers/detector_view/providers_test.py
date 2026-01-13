@@ -11,7 +11,7 @@ from ess.livedata.handlers.detector_view import (
     WindowHistogram,
     add_logical_projection,
     compute_detector_histogram_3d,
-    counts_in_toa_range,
+    counts_in_range,
     counts_total,
     create_accumulators,
     create_base_workflow,
@@ -55,25 +55,25 @@ class TestCreateBaseWorkflow:
 
     def test_creates_workflow_with_required_params(self):
         """Test workflow creation with required parameters."""
-        tof_bins = sc.linspace('tof', 0, 100000, 11, unit='ns')
-        wf = create_base_workflow(tof_bins=tof_bins)
+        bins = sc.linspace('event_time_offset', 0, 100000, 11, unit='ns')
+        wf = create_base_workflow(bins=bins)
         assert wf is not None
 
-    def test_creates_workflow_with_tof_slice(self):
-        """Test workflow creation with TOF slice parameter."""
-        tof_bins = sc.linspace('tof', 0, 100000, 11, unit='ns')
-        tof_slice = (sc.scalar(10000, unit='ns'), sc.scalar(50000, unit='ns'))
-        wf = create_base_workflow(tof_bins=tof_bins, tof_slice=tof_slice)
+    def test_creates_workflow_with_histogram_slice(self):
+        """Test workflow creation with histogram slice parameter."""
+        bins = sc.linspace('event_time_offset', 0, 100000, 11, unit='ns')
+        histogram_slice = (sc.scalar(10000, unit='ns'), sc.scalar(50000, unit='ns'))
+        wf = create_base_workflow(bins=bins, histogram_slice=histogram_slice)
         assert wf is not None
 
     def test_creates_workflow_and_add_logical_projection(self):
         """Test workflow creation with logical projection added separately."""
-        tof_bins = sc.linspace('tof', 0, 100000, 11, unit='ns')
+        bins = sc.linspace('event_time_offset', 0, 100000, 11, unit='ns')
 
         def identity(da: sc.DataArray) -> sc.DataArray:
             return da
 
-        wf = create_base_workflow(tof_bins=tof_bins)
+        wf = create_base_workflow(bins=bins)
         add_logical_projection(wf, transform=identity)
         assert wf is not None
 
@@ -97,7 +97,7 @@ class TestComputeDetectorHistogram3D:
     def test_histogram_from_screen_binned_events(self):
         """Test histogramming screen-binned events to 3D."""
         data = make_fake_nexus_detector_data(y_size=4, x_size=4)
-        tof_bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
+        bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
 
         # Use LogicalProjector with a fold transform
         transform = make_logical_transform(4, 4)
@@ -109,18 +109,19 @@ class TestComputeDetectorHistogram3D:
 
         result = compute_detector_histogram_3d(
             screen_binned_events=screen_binned,
-            tof_bins=tof_bins,
+            bins=bins,
+            event_coord='event_time_offset',
         )
 
-        assert 'tof' in result.dims
-        assert result.sizes['tof'] == 10
+        assert 'event_time_offset' in result.dims
+        assert result.sizes['event_time_offset'] == 10
         assert result.sizes['y'] == 4
         assert result.sizes['x'] == 4
 
     def test_histogram_with_reduction_dim(self):
         """Test histogramming with reduction dimension."""
         data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
-        tof_bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
+        bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
         transform = make_logical_transform(4, 4)
 
         empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
@@ -131,11 +132,12 @@ class TestComputeDetectorHistogram3D:
 
         result = compute_detector_histogram_3d(
             screen_binned_events=screen_binned,
-            tof_bins=tof_bins,
+            bins=bins,
+            event_coord='event_time_offset',
         )
 
-        # Should have x and tof dims, y was reduced
-        assert 'tof' in result.dims
+        # Should have x and event_time_offset dims, y was reduced
+        assert 'event_time_offset' in result.dims
         assert 'x' in result.dims
         assert 'y' not in result.dims
 
@@ -263,53 +265,59 @@ class TestLogicalProjector:
 class TestDetectorImageProviders:
     """Tests for detector image provider functions."""
 
-    def test_cumulative_detector_image_sums_over_tof(self):
+    def test_cumulative_detector_image_sums_over_spectral_dim(self):
         """Test that cumulative_detector_image produces 2D output."""
-        # Create 3D histogram
+        # Create 3D histogram - spectral dim is last
         data_3d = sc.DataArray(
-            sc.ones(dims=['y', 'x', 'tof'], shape=[4, 4, 10], unit='counts')
+            sc.ones(
+                dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
+            )
         )
 
         result = cumulative_detector_image(
             data_3d=CumulativeHistogram(data_3d),
-            tof_slice=None,
+            histogram_slice=None,
         )
 
         assert result.dims == ('y', 'x')
         assert result.sizes == {'y': 4, 'x': 4}
-        # Each pixel should have sum of 10 TOF bins
+        # Each pixel should have sum of 10 spectral bins
         expected = sc.full(dims=['y', 'x'], shape=[4, 4], value=10.0, unit='counts')
         assert sc.allclose(result.data, expected)
 
-    def test_current_detector_image_sums_over_tof(self):
+    def test_current_detector_image_sums_over_spectral_dim(self):
         """Test that current_detector_image produces 2D output."""
         data_3d = sc.DataArray(
-            sc.ones(dims=['y', 'x', 'tof'], shape=[4, 4, 10], unit='counts')
+            sc.ones(
+                dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
+            )
         )
 
         result = current_detector_image(
             data_3d=WindowHistogram(data_3d),
-            tof_slice=None,
+            histogram_slice=None,
         )
 
         assert result.dims == ('y', 'x')
         assert result.sizes == {'y': 4, 'x': 4}
 
-    def test_detector_image_with_tof_slice(self):
-        """Test that TOF slicing is applied correctly."""
-        # Create 3D histogram with TOF coordinate
-        tof_coord = sc.linspace('tof', 0, 100000, 11, unit='ns')
+    def test_detector_image_with_histogram_slice(self):
+        """Test that histogram slicing is applied correctly."""
+        # Create 3D histogram with coordinate
+        coord = sc.linspace('event_time_offset', 0, 100000, 11, unit='ns')
         data_3d = sc.DataArray(
-            sc.ones(dims=['y', 'x', 'tof'], shape=[4, 4, 10], unit='counts'),
-            coords={'tof': tof_coord},
+            sc.ones(
+                dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
+            ),
+            coords={'event_time_offset': coord},
         )
 
-        # Slice to first half of TOF range
-        tof_slice = (sc.scalar(0, unit='ns'), sc.scalar(50000, unit='ns'))
+        # Slice to first half
+        histogram_slice = (sc.scalar(0, unit='ns'), sc.scalar(50000, unit='ns'))
 
         result = cumulative_detector_image(
             data_3d=CumulativeHistogram(data_3d),
-            tof_slice=tof_slice,
+            histogram_slice=histogram_slice,
         )
 
         # Should only sum ~5 bins (0-50000 ns from 0-100000 ns range)
@@ -322,7 +330,9 @@ class TestCountProviders:
     def test_counts_total(self):
         """Test that counts_total sums all counts."""
         data_3d = sc.DataArray(
-            sc.ones(dims=['y', 'x', 'tof'], shape=[4, 4, 10], unit='counts')
+            sc.ones(
+                dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
+            )
         )
 
         result = counts_total(data_3d=WindowHistogram(data_3d))
@@ -330,30 +340,34 @@ class TestCountProviders:
         expected = sc.scalar(4 * 4 * 10, unit='counts', dtype='float64')
         assert sc.identical(result.data, expected)
 
-    def test_counts_in_toa_range_no_slice(self):
-        """Test counts_in_toa_range with no TOF slice."""
+    def test_counts_in_range_no_slice(self):
+        """Test counts_in_range with no slice."""
         data_3d = sc.DataArray(
-            sc.ones(dims=['y', 'x', 'tof'], shape=[4, 4, 10], unit='counts')
+            sc.ones(
+                dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
+            )
         )
 
-        result = counts_in_toa_range(data_3d=WindowHistogram(data_3d), tof_slice=None)
+        result = counts_in_range(data_3d=WindowHistogram(data_3d), histogram_slice=None)
 
         expected = sc.scalar(4 * 4 * 10, unit='counts', dtype='float64')
         assert sc.identical(result.data, expected)
 
-    def test_counts_in_toa_range_with_slice(self):
-        """Test counts_in_toa_range with TOF slice."""
-        tof_coord = sc.linspace('tof', 0, 100000, 11, unit='ns')
+    def test_counts_in_range_with_slice(self):
+        """Test counts_in_range with histogram slice."""
+        coord = sc.linspace('event_time_offset', 0, 100000, 11, unit='ns')
         data_3d = sc.DataArray(
-            sc.ones(dims=['y', 'x', 'tof'], shape=[4, 4, 10], unit='counts'),
-            coords={'tof': tof_coord},
+            sc.ones(
+                dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
+            ),
+            coords={'event_time_offset': coord},
         )
 
         # Slice to first half
-        tof_slice = (sc.scalar(0, unit='ns'), sc.scalar(50000, unit='ns'))
+        histogram_slice = (sc.scalar(0, unit='ns'), sc.scalar(50000, unit='ns'))
 
-        result = counts_in_toa_range(
-            data_3d=WindowHistogram(data_3d), tof_slice=tof_slice
+        result = counts_in_range(
+            data_3d=WindowHistogram(data_3d), histogram_slice=histogram_slice
         )
 
         # Should count approximately half the bins

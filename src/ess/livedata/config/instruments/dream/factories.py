@@ -195,7 +195,7 @@ def setup_factories(instrument: Instrument) -> None:
     _pixel_noise = sc.scalar(4.0, unit='mm')
     _sciline_detector_view = DetectorViewFactory(
         data_source=NeXusDetectorSource(get_nexus_geometry_filename('dream-no-shape')),
-        tof_bins=sc.linspace('event_time_offset', 0, 71_000_000, 101, unit='ns'),
+        bins=sc.linspace('event_time_offset', 0, 71_000_000, 101, unit='ns'),
         view_config={
             'mantle_detector': GeometricViewConfig(
                 projection_type='cylinder_mantle_z',

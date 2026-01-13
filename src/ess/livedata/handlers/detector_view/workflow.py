@@ -33,7 +33,7 @@ from ess.reduce.streaming import EternalAccumulator
 from .projectors import make_geometric_projector, make_logical_projector
 from .providers import (
     compute_detector_histogram_3d,
-    counts_in_toa_range,
+    counts_in_range,
     counts_total,
     cumulative_detector_image,
     cumulative_histogram,
@@ -51,11 +51,12 @@ from .roi import (
 )
 from .types import (
     CumulativeHistogram,
+    EventCoordName,
+    HistogramBins,
+    HistogramSlice,
     LogicalTransform,
     ProjectionType,
     ReductionDim,
-    TOFBins,
-    TOFSlice,
     WindowHistogram,
 )
 
@@ -84,8 +85,9 @@ class WindowAccumulator(EternalAccumulator):
 
 def create_base_workflow(
     *,
-    tof_bins: sc.Variable,
-    tof_slice: tuple[sc.Variable, sc.Variable] | None = None,
+    bins: sc.Variable,
+    event_coord: str = 'event_time_offset',
+    histogram_slice: tuple[sc.Variable, sc.Variable] | None = None,
 ) -> sciline.Pipeline:
     """
     Create the base detector view workflow using GenericNeXusWorkflow.
@@ -95,10 +97,12 @@ def create_base_workflow(
 
     Parameters
     ----------
-    tof_bins:
-        Bin edges for TOF histogramming.
-    tof_slice:
-        Optional (low, high) TOF range for output image slicing.
+    bins:
+        Bin edges for histogramming the event coordinate.
+    event_coord:
+        Name of the event coordinate to histogram.
+    histogram_slice:
+        Optional (low, high) range for output image slicing.
 
     Returns
     -------
@@ -118,7 +122,7 @@ def create_base_workflow(
     workflow.insert(cumulative_detector_image)
     workflow.insert(current_detector_image)
     workflow.insert(counts_total)
-    workflow.insert(counts_in_toa_range)
+    workflow.insert(counts_in_range)
 
     # Add ROI providers
     workflow.insert(cumulative_roi_spectra)
@@ -129,8 +133,9 @@ def create_base_workflow(
     workflow.insert(precompute_roi_polygon_masks)
 
     # Set configuration parameters
-    workflow[TOFBins] = tof_bins
-    workflow[TOFSlice] = tof_slice
+    workflow[HistogramBins] = bins
+    workflow[EventCoordName] = event_coord
+    workflow[HistogramSlice] = histogram_slice
 
     return workflow
 

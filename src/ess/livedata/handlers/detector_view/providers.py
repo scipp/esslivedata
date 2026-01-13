@@ -21,9 +21,10 @@ from .types import (
     CumulativeHistogram,
     CurrentDetectorImage,
     DetectorHistogram3D,
+    EventCoordName,
+    HistogramBins,
+    HistogramSlice,
     ScreenBinnedEvents,
-    TOFBins,
-    TOFSlice,
     WindowHistogram,
 )
 
@@ -65,39 +66,34 @@ def project_events(
 
 def compute_detector_histogram_3d(
     screen_binned_events: ScreenBinnedEvents,
-    tof_bins: TOFBins,
+    bins: HistogramBins,
+    event_coord: EventCoordName,
 ) -> DetectorHistogram3D:
     """
-    Histogram TOF from screen-binned events.
+    Histogram events by the specified event coordinate.
 
     Events have already been projected to screen coordinates by the projection
-    providers. This function histograms the event_time_offset (TOF) dimension.
+    providers. This function histograms the specified event coordinate dimension.
 
     Parameters
     ----------
     screen_binned_events:
         Events binned by screen coordinates (from geometric or logical projection).
-    tof_bins:
-        Bin edges for time-of-flight histogramming.
+    bins:
+        Bin edges for histogramming.
+    event_coord:
+        Name of the event coordinate to histogram.
 
     Returns
     -------
     :
-        3D histogram with spatial dims and tof.
+        3D histogram with spatial dims and the event coordinate dimension.
     """
     if screen_binned_events.bins is None:
         # Already dense data (shouldn't happen in normal flow)
         return DetectorHistogram3D(screen_binned_events)
 
-    # Histogram by event_time_offset
-    histogrammed = screen_binned_events.hist(event_time_offset=tof_bins)
-
-    # Rename to tof for consistency
-    if 'event_time_offset' in histogrammed.dims:
-        histogrammed = histogrammed.rename_dims(event_time_offset='tof')
-        if 'event_time_offset' in histogrammed.coords:
-            histogrammed.coords['tof'] = histogrammed.coords.pop('event_time_offset')
-
+    histogrammed = screen_binned_events.hist({event_coord: bins})
     return DetectorHistogram3D(histogrammed)
 
 
@@ -122,61 +118,61 @@ def window_histogram(data: DetectorHistogram3D) -> WindowHistogram:
 
 
 def cumulative_detector_image(
-    data_3d: CumulativeHistogram, tof_slice: TOFSlice
+    data_3d: CumulativeHistogram, histogram_slice: HistogramSlice
 ) -> CumulativeDetectorImage:
     """
-    Compute cumulative 2D detector image by summing over TOF.
+    Compute cumulative 2D detector image by summing over spectral dimension.
 
     Parameters
     ----------
     data_3d:
-        3D histogram (y, x, tof).
-    tof_slice:
-        Optional (low, high) TOF range for slicing. If None, sum over all TOF.
+        3D histogram (y, x, spectral).
+    histogram_slice:
+        Optional (low, high) range for slicing. If None, sum over full range.
 
     Returns
     -------
     :
         2D detector image (y, x).
     """
-    return CumulativeDetectorImage(_sum_over_tof(data_3d, tof_slice))
+    return CumulativeDetectorImage(_sum_over_spectral_dim(data_3d, histogram_slice))
 
 
 def current_detector_image(
-    data_3d: WindowHistogram, tof_slice: TOFSlice
+    data_3d: WindowHistogram, histogram_slice: HistogramSlice
 ) -> CurrentDetectorImage:
     """
-    Compute current 2D detector image by summing over TOF.
+    Compute current 2D detector image by summing over spectral dimension.
 
     Parameters
     ----------
     data_3d:
-        3D histogram (y, x, tof) for current window.
-    tof_slice:
-        Optional (low, high) TOF range for slicing. If None, sum over all TOF.
+        3D histogram (y, x, spectral) for current window.
+    histogram_slice:
+        Optional (low, high) range for slicing. If None, sum over full range.
 
     Returns
     -------
     :
         2D detector image (y, x).
     """
-    return CurrentDetectorImage(_sum_over_tof(data_3d, tof_slice))
+    return CurrentDetectorImage(_sum_over_spectral_dim(data_3d, histogram_slice))
 
 
-def _sum_over_tof(
+def _sum_over_spectral_dim(
     data_3d: sc.DataArray,
-    tof_slice: tuple[sc.Variable, sc.Variable] | None,
+    histogram_slice: tuple[sc.Variable, sc.Variable] | None,
 ) -> sc.DataArray:
-    """Sum over TOF dimension, optionally slicing first."""
-    tof_dim = 'tof' if 'tof' in data_3d.dims else data_3d.dims[-1]
+    """Sum over spectral dimension (last dim), optionally slicing first."""
+    spectral_dim = data_3d.dims[-1]
 
-    if tof_slice is not None:
-        low, high = tof_slice
-        sliced = data_3d[tof_dim, low:high]
+    if histogram_slice is not None:
+        low, high = histogram_slice
+        sliced = data_3d[spectral_dim, low:high]
     else:
         sliced = data_3d
 
-    return sliced.sum(tof_dim)
+    return sliced.sum(spectral_dim)
 
 
 def counts_total(data_3d: WindowHistogram) -> CountsTotal:
@@ -196,29 +192,29 @@ def counts_total(data_3d: WindowHistogram) -> CountsTotal:
     return CountsTotal(data_3d.sum())
 
 
-def counts_in_toa_range(
-    data_3d: WindowHistogram, tof_slice: TOFSlice
+def counts_in_range(
+    data_3d: WindowHistogram, histogram_slice: HistogramSlice
 ) -> CountsInTOARange:
     """
-    Compute event counts within TOA range in current window.
+    Compute event counts within specified range in current window.
 
     Parameters
     ----------
     data_3d:
-        3D histogram (y, x, tof) for current window.
-    tof_slice:
-        Optional (low, high) TOA range for counting. If None, counts all.
+        3D histogram (y, x, spectral) for current window.
+    histogram_slice:
+        Optional (low, high) range for counting. If None, counts all.
 
     Returns
     -------
     :
-        Counts in TOA range as 0D scalar.
+        Counts in range as 0D scalar.
     """
-    tof_dim = 'tof' if 'tof' in data_3d.dims else data_3d.dims[-1]
+    spectral_dim = data_3d.dims[-1]
 
-    if tof_slice is not None:
-        low, high = tof_slice
-        sliced = data_3d[tof_dim, low:high]
+    if histogram_slice is not None:
+        low, high = histogram_slice
+        sliced = data_3d[spectral_dim, low:high]
     else:
         sliced = data_3d
 
