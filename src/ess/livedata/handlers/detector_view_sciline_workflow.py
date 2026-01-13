@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pathlib
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Literal, NewType
 
 import numpy as np
@@ -38,6 +39,7 @@ from ess.reduce.live.raw import (
     position_with_noisy_replicas,
 )
 from ess.reduce.nexus.types import (
+    EmptyDetector,
     Filename,
     NeXusData,
     NeXusName,
@@ -133,6 +135,45 @@ CurrentROISpectra = NewType('CurrentROISpectra', sc.DataArray)
 """ROI spectra extracted from current window histogram."""
 
 
+# ROI precomputation types (computed once from static config + ROI requests)
+@dataclass
+class ScreenCoordInfo:
+    """Coordinate information for screen (projected) dimensions.
+
+    Used for ROI precomputation - provides dimension names and bin edges
+    needed to compute ROI bounds and masks.
+    """
+
+    y_dim: str
+    """Name of the y (vertical) screen dimension."""
+    x_dim: str
+    """Name of the x (horizontal) screen dimension."""
+    tof_dim: str
+    """Name of the TOF dimension (always 'tof')."""
+    y_edges: sc.Variable | None
+    """Bin edges for y dimension. None if logical projection has no coords."""
+    x_edges: sc.Variable | None
+    """Bin edges for x dimension. None if logical projection has no coords."""
+    tof_edges: sc.Variable
+    """Bin edges for TOF dimension."""
+
+
+ROIRectangleBounds = NewType('ROIRectangleBounds', dict)
+"""Precomputed bounds for rectangle ROIs.
+
+Dict mapping ROI index to bounds dict: {idx: {y_dim: (low, high), x_dim: (low, high)}}.
+Empty dict if no rectangles configured.
+"""
+
+ROIPolygonMasks = NewType('ROIPolygonMasks', dict)
+"""Precomputed boolean masks for polygon ROIs.
+
+Dict mapping ROI index to 2D mask Variable with dims (y_dim, x_dim).
+Mask is True OUTSIDE the polygon (values to exclude in sum).
+Empty dict if no polygons configured.
+"""
+
+
 # ============================================================================
 # WindowAccumulator - clears after each finalize
 # ============================================================================
@@ -179,6 +220,11 @@ class EventProjector:
         self._replica_dim = 'replica'
         self._replicas = coords.sizes.get(self._replica_dim, 1)
         self._current = 0
+
+    @property
+    def edges(self) -> sc.DataGroup:
+        """Bin edges for screen coordinates."""
+        return self._edges
 
     def project_events(self, events: sc.DataArray) -> sc.DataArray:
         """
@@ -299,6 +345,103 @@ def make_event_projector(
     )
 
     return EventProjector(projected_coords, edges)
+
+
+def screen_coord_info_geometric(
+    projector: EventProjector,
+    tof_bins: TOFBins,
+) -> ScreenCoordInfo:
+    """
+    Extract screen coordinate information from EventProjector.
+
+    This provides the coordinate structure needed for ROI precomputation,
+    computed once from static projection configuration (not event data).
+
+    Parameters
+    ----------
+    projector:
+        EventProjector with screen coordinate edges.
+    tof_bins:
+        Bin edges for TOF dimension.
+
+    Returns
+    -------
+    :
+        ScreenCoordInfo with dimension names and coordinate edges.
+    """
+    edges = projector.edges
+    # Get dimension names from the edges (typically 'screen_x', 'screen_y')
+    dims = list(edges.keys())
+    if len(dims) != 2:
+        raise ValueError(f"Expected 2 spatial dims from projector, got {len(dims)}")
+
+    # Order: first dim is y, second is x (matching histogram convention)
+    y_dim, x_dim = dims[0], dims[1]
+
+    return ScreenCoordInfo(
+        y_dim=y_dim,
+        x_dim=x_dim,
+        tof_dim='tof',
+        y_edges=edges[y_dim],
+        x_edges=edges[x_dim],
+        tof_edges=tof_bins,
+    )
+
+
+def screen_coord_info_logical(
+    empty_detector: EmptyDetector[SampleRun],
+    transform: LogicalTransform,
+    tof_bins: TOFBins,
+) -> ScreenCoordInfo:
+    """
+    Compute screen coordinate info for logical projection from empty detector structure.
+
+    This applies the logical transform to the detector structure (without events)
+    to determine output dimensions and coordinates. Since EmptyDetector is static
+    (derived from NeXus geometry, not event data), this allows ROI precomputation
+    to be independent of the event stream.
+
+    Parameters
+    ----------
+    empty_detector:
+        Detector structure without neutron data.
+    transform:
+        Callable that reshapes detector data (fold/slice). If None, identity.
+    tof_bins:
+        Bin edges for TOF dimension.
+
+    Returns
+    -------
+    :
+        ScreenCoordInfo with dimension names and coordinate edges (if available).
+    """
+    if transform is None:
+        # No transform - use detector as-is
+        transformed = empty_detector
+    else:
+        # Apply transform to get output structure
+        transformed = transform(empty_detector)
+
+    # Extract spatial dimensions
+    dims = list(transformed.dims)
+    if len(dims) < 2:
+        raise ValueError(f"Expected at least 2 dims from transform, got {dims}")
+
+    # Assume first two dims are spatial (y, x)
+    y_dim, x_dim = dims[0], dims[1]
+
+    # Get coordinates if available from transform
+    y_edges = transformed.coords.get(y_dim)
+    x_edges = transformed.coords.get(x_dim)
+
+    return ScreenCoordInfo(
+        y_dim=y_dim,
+        x_dim=x_dim,
+        tof_dim='tof',
+        y_edges=y_edges,
+        x_edges=x_edges,
+        tof_edges=tof_bins,
+    )
 
 
 def project_events_geometric(
@@ -539,26 +682,178 @@ def counts_in_toa_range(
 
 
 # ============================================================================
+# Providers - ROI Precomputation
+# ============================================================================
+
+
+def precompute_roi_rectangle_bounds(
+    coord_info: ScreenCoordInfo,
+    rectangle_request: ROIRectangleRequest,
+) -> ROIRectangleBounds:
+    """
+    Precompute bounds for rectangle ROIs.
+
+    This is computed once when ROI configuration changes, not on every data update.
+    The bounds are stored as scipp Variables for label-based slicing.
+
+    Parameters
+    ----------
+    coord_info:
+        Screen coordinate information (dimension names and edges).
+    rectangle_request:
+        Rectangle ROI configuration.
+
+    Returns
+    -------
+    :
+        Dict mapping ROI index to bounds dict for slicing.
+    """
+    if rectangle_request is None or len(rectangle_request) == 0:
+        return ROIRectangleBounds({})
+
+    y_dim = coord_info.y_dim
+    x_dim = coord_info.x_dim
+
+    bounds_dict: dict[int, dict[str, tuple[sc.Variable, sc.Variable]]] = {}
+    rois = models.ROI.from_concatenated_data_array(rectangle_request)
+
+    for idx, roi in rois.items():
+        if isinstance(roi, models.RectangleROI):
+            roi_bounds = roi.get_bounds(x_dim=x_dim, y_dim=y_dim)
+            bounds_dict[idx] = roi_bounds
+
+    return ROIRectangleBounds(bounds_dict)
+
+
+def precompute_roi_polygon_masks(
+    coord_info: ScreenCoordInfo,
+    polygon_request: ROIPolygonRequest,
+) -> ROIPolygonMasks:
+    """
+    Precompute boolean masks for polygon ROIs.
+
+    This is computed once when ROI configuration changes, not on every data update.
+    Masks are True OUTSIDE the polygon (scipp convention: True = excluded from sum).
+
+    Parameters
+    ----------
+    coord_info:
+        Screen coordinate information (dimension names and edges).
+    polygon_request:
+        Polygon ROI configuration.
+
+    Returns
+    -------
+    :
+        Dict mapping ROI index to 2D mask Variable.
+    """
+    if polygon_request is None or len(polygon_request) == 0:
+        return ROIPolygonMasks({})
+
+    y_dim = coord_info.y_dim
+    x_dim = coord_info.x_dim
+    y_edges = coord_info.y_edges
+    x_edges = coord_info.x_edges
+
+    # Compute bin centers for point-in-polygon test
+    x_centers = sc.midpoints(x_edges)
+    y_centers = sc.midpoints(y_edges)
+
+    masks_dict: dict[int, sc.Variable] = {}
+    rois = models.ROI.from_concatenated_data_array(polygon_request)
+
+    for idx, roi in rois.items():
+        if isinstance(roi, models.PolygonROI):
+            mask = _compute_polygon_mask(
+                roi, x_centers=x_centers, y_centers=y_centers, x_dim=x_dim, y_dim=y_dim
+            )
+            masks_dict[idx] = mask
+
+    return ROIPolygonMasks(masks_dict)
+
+
+def _compute_polygon_mask(
+    roi: models.PolygonROI,
+    *,
+    x_centers: sc.Variable,
+    y_centers: sc.Variable,
+    x_dim: str,
+    y_dim: str,
+) -> sc.Variable:
+    """
+    Compute boolean mask for a polygon ROI.
+
+    The mask is True OUTSIDE the polygon (values to exclude in sum).
+
+    Parameters
+    ----------
+    roi:
+        Polygon ROI with vertices.
+    x_centers:
+        Bin centers for x dimension.
+    y_centers:
+        Bin centers for y dimension.
+    x_dim:
+        Name of x dimension.
+    y_dim:
+        Name of y dimension.
+
+    Returns
+    -------
+    :
+        2D boolean mask Variable with dims (y_dim, x_dim).
+    """
+    from matplotlib.path import Path
+
+    # Get polygon vertices
+    x_vertices = roi.x
+    y_vertices = roi.y
+
+    # Convert centers to correct units if needed
+    if roi.x_unit is not None:
+        x_vals = x_centers.to(unit=roi.x_unit).values
+    else:
+        x_vals = np.arange(len(x_centers))
+
+    if roi.y_unit is not None:
+        y_vals = y_centers.to(unit=roi.y_unit).values
+    else:
+        y_vals = np.arange(len(y_centers))
+
+    # Create 2D grid of points
+    xx, yy = np.meshgrid(x_vals, y_vals)
+
+    # Point-in-polygon test
+    polygon_path = Path(list(zip(x_vertices, y_vertices, strict=True)))
+    points = np.column_stack([xx.ravel(), yy.ravel()])
+    inside_flat = polygon_path.contains_points(points)
+    inside_2d = inside_flat.reshape(xx.shape)
+
+    # Return mask as True OUTSIDE polygon (scipp mask convention: True = excluded)
+    return sc.array(dims=[y_dim, x_dim], values=~inside_2d)
+
+
+# ============================================================================
 # Providers - ROI Spectra Extraction
 # ============================================================================
 
 
-def _extract_roi_spectra(
+def _extract_roi_spectra_precomputed(
     histogram_3d: sc.DataArray,
-    rectangle_request: sc.DataArray | None,
-    polygon_request: sc.DataArray | None,
+    rectangle_bounds: dict[int, dict[str, tuple[sc.Variable, sc.Variable]]],
+    polygon_masks: dict[int, sc.Variable],
 ) -> sc.DataArray:
     """
-    Extract TOF spectra from 3D histogram for all configured ROIs.
+    Extract TOF spectra from 3D histogram using precomputed ROI data.
 
     Parameters
     ----------
     histogram_3d:
         3D histogram with dims (y, x, tof).
-    rectangle_request:
-        Concatenated DataArray with rectangle ROI definitions, or None.
-    polygon_request:
-        Concatenated DataArray with polygon ROI definitions, or None.
+    rectangle_bounds:
+        Precomputed bounds for rectangle ROIs.
+    polygon_masks:
+        Precomputed masks for polygon ROIs (True = excluded).
 
     Returns
     -------
@@ -581,27 +876,24 @@ def _extract_roi_spectra(
     spectra: list[sc.DataArray] = []
     roi_indices: list[int] = []
 
-    # Process rectangle ROIs
-    if rectangle_request is not None and len(rectangle_request) > 0:
-        rois = models.ROI.from_concatenated_data_array(rectangle_request)
-        for idx, roi in rois.items():
-            if isinstance(roi, models.RectangleROI):
-                spectrum = _extract_rectangle_spectrum(
-                    histogram_3d, roi, x_dim=x_dim, y_dim=y_dim, tof_dim=tof_dim
-                )
-                spectra.append(spectrum)
-                roi_indices.append(idx)
+    # Process rectangle ROIs using precomputed bounds
+    for idx, bounds in rectangle_bounds.items():
+        x_low, x_high = bounds[x_dim]
+        y_low, y_high = bounds[y_dim]
+        sliced = histogram_3d[y_dim, y_low:y_high][x_dim, x_low:x_high]
+        spectrum = sliced.sum(dim=[y_dim, x_dim])
+        spectra.append(spectrum)
+        roi_indices.append(idx)
 
-    # Process polygon ROIs
-    if polygon_request is not None and len(polygon_request) > 0:
-        rois = models.ROI.from_concatenated_data_array(polygon_request)
-        for idx, roi in rois.items():
-            if isinstance(roi, models.PolygonROI):
-                spectrum = _extract_polygon_spectrum(
-                    histogram_3d, roi, x_dim=x_dim, y_dim=y_dim, tof_dim=tof_dim
-                )
-                spectra.append(spectrum)
-                roi_indices.append(idx)
+    # Process polygon ROIs using precomputed masks
+    for idx, mask in polygon_masks.items():
+        # Add temporary mask to histogram, sum, then remove
+        # scipp's sum ignores masked values
+        masked = histogram_3d.copy(deep=False)
+        masked.masks['_roi_polygon'] = mask
+        spectrum = masked.sum(dim=[y_dim, x_dim])
+        spectra.append(spectrum)
+        roi_indices.append(idx)
 
     # Build output DataArray
     if not spectra:
@@ -620,101 +912,22 @@ def _extract_roi_spectra(
     return stacked
 
 
-def _extract_rectangle_spectrum(
-    histogram_3d: sc.DataArray,
-    roi: models.RectangleROI,
-    *,
-    x_dim: str,
-    y_dim: str,
-    tof_dim: str,
-) -> sc.DataArray:
-    """Extract TOF spectrum for a rectangle ROI by slicing and summing."""
-    bounds = roi.get_bounds(x_dim=x_dim, y_dim=y_dim)
-
-    # Slice the histogram by the ROI bounds
-    x_low, x_high = bounds[x_dim]
-    y_low, y_high = bounds[y_dim]
-    sliced = histogram_3d[y_dim, y_low:y_high][x_dim, x_low:x_high]
-
-    # Sum over spatial dimensions to get 1D spectrum
-    spectrum = sliced.sum(dim=[y_dim, x_dim])
-    return spectrum
-
-
-def _extract_polygon_spectrum(
-    histogram_3d: sc.DataArray,
-    roi: models.PolygonROI,
-    *,
-    x_dim: str,
-    y_dim: str,
-    tof_dim: str,
-) -> sc.DataArray:
-    """Extract TOF spectrum for a polygon ROI by masking and summing."""
-    # Get polygon vertices
-    x_vertices = roi.x
-    y_vertices = roi.y
-
-    # Get coordinate arrays for the histogram
-    x_coords = histogram_3d.coords.get(x_dim)
-    y_coords = histogram_3d.coords.get(y_dim)
-
-    # Create mask using point-in-polygon test
-    # We need to check each (y, x) bin center against the polygon
-    if x_coords is not None and y_coords is not None:
-        # Use bin centers for coordinate-based selection
-        if roi.x_unit is not None:
-            x_centers = sc.midpoints(x_coords).to(unit=roi.x_unit).values
-        else:
-            x_centers = np.arange(histogram_3d.sizes[x_dim])
-
-        if roi.y_unit is not None:
-            y_centers = sc.midpoints(y_coords).to(unit=roi.y_unit).values
-        else:
-            y_centers = np.arange(histogram_3d.sizes[y_dim])
-    else:
-        # Fallback to index-based selection
-        x_centers = np.arange(histogram_3d.sizes[x_dim])
-        y_centers = np.arange(histogram_3d.sizes[y_dim])
-
-    # Create 2D grid of points
-    xx, yy = np.meshgrid(x_centers, y_centers)
-
-    # Point-in-polygon test using matplotlib path
-    from matplotlib.path import Path
-
-    polygon_path = Path(list(zip(x_vertices, y_vertices, strict=True)))
-    points = np.column_stack([xx.ravel(), yy.ravel()])
-    mask_flat = polygon_path.contains_points(points)
-    mask_2d = mask_flat.reshape(xx.shape)
-
-    # Convert to scipp Variable and broadcast to 3D
-    mask_var = sc.array(dims=[y_dim, x_dim], values=mask_2d)
-
-    # Apply mask and sum over spatial dimensions
-    # Use where to zero out values outside the polygon
-    # Create zero with matching dtype to avoid DTypeError
-    zero = sc.zeros_like(histogram_3d)
-    masked = sc.where(mask_var, histogram_3d, zero)
-    spectrum = masked.sum(dim=[y_dim, x_dim])
-    return spectrum
-
-
 def cumulative_roi_spectra(
     data_3d: CumulativeHistogram,
-    rectangle_request: ROIRectangleRequest,
-    polygon_request: ROIPolygonRequest,
+    rectangle_bounds: ROIRectangleBounds,
+    polygon_masks: ROIPolygonMasks,
 ) -> CumulativeROISpectra:
     """
-    Extract ROI spectra from cumulative histogram.
+    Extract ROI spectra from cumulative histogram using precomputed ROI data.
 
     Parameters
     ----------
     data_3d:
         Cumulative 3D histogram (y, x, tof).
-    rectangle_request:
-        Rectangle ROI configuration, or None.
-    polygon_request:
-        Polygon ROI configuration, or None.
+    rectangle_bounds:
+        Precomputed bounds for rectangle ROIs.
+    polygon_masks:
+        Precomputed masks for polygon ROIs.
 
     Returns
     -------
@@ -722,26 +935,26 @@ def cumulative_roi_spectra(
         ROI spectra with dims (roi, tof).
     """
     return CumulativeROISpectra(
-        _extract_roi_spectra(data_3d, rectangle_request, polygon_request)
+        _extract_roi_spectra_precomputed(data_3d, rectangle_bounds, polygon_masks)
     )
 
 
 def current_roi_spectra(
     data_3d: WindowHistogram,
-    rectangle_request: ROIRectangleRequest,
-    polygon_request: ROIPolygonRequest,
+    rectangle_bounds: ROIRectangleBounds,
+    polygon_masks: ROIPolygonMasks,
 ) -> CurrentROISpectra:
     """
-    Extract ROI spectra from current window histogram.
+    Extract ROI spectra from current window histogram using precomputed ROI data.
 
     Parameters
     ----------
     data_3d:
         Current window 3D histogram (y, x, tof).
-    rectangle_request:
-        Rectangle ROI configuration, or None.
-    polygon_request:
-        Polygon ROI configuration, or None.
+    rectangle_bounds:
+        Precomputed bounds for rectangle ROIs.
+    polygon_masks:
+        Precomputed masks for polygon ROIs.
 
     Returns
     -------
@@ -749,7 +962,7 @@ def current_roi_spectra(
         ROI spectra with dims (roi, tof).
     """
     return CurrentROISpectra(
-        _extract_roi_spectra(data_3d, rectangle_request, polygon_request)
+        _extract_roi_spectra_precomputed(data_3d, rectangle_bounds, polygon_masks)
     )
 
 
@@ -925,6 +1138,13 @@ def add_geometric_projection(
     workflow.insert(make_event_projector)
     workflow.insert(project_events_geometric)
 
+    # Add screen coordinate info provider (used for ROI precomputation)
+    workflow.insert(screen_coord_info_geometric)
+
+    # Add ROI precomputation providers (depend on ScreenCoordInfo)
+    workflow.insert(precompute_roi_rectangle_bounds)
+    workflow.insert(precompute_roi_polygon_masks)
+
     # Set projection configuration
     workflow[ProjectionType] = projection_type
     workflow[DetectorViewResolution] = resolution
@@ -970,6 +1190,15 @@ def add_logical_projection(
     """
     # Add projection provider
     workflow.insert(project_events_logical)
+
+    # Add screen coordinate info provider (derived from EmptyDetector + transform)
+    # Since EmptyDetector is static (from NeXus geometry), ROI precomputation
+    # is independent of the event stream - same structure as geometric projection.
+    workflow.insert(screen_coord_info_logical)
+
+    # Add ROI precomputation providers (depend on ScreenCoordInfo)
+    workflow.insert(precompute_roi_rectangle_bounds)
+    workflow.insert(precompute_roi_polygon_masks)
 
     # Set projection configuration
     workflow[LogicalTransform] = transform
