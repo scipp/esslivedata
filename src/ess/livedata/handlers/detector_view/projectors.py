@@ -321,9 +321,3 @@ def make_logical_projector(
         reduction_dim=reduction_dim,
         screen_coords=screen_coords,
     )
-
-
-# Backwards compatibility aliases
-EventProjector = GeometricProjector
-make_event_projector = make_geometric_projector
-ProjectorProtocol = Projector
