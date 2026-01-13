@@ -1203,6 +1203,107 @@ def create_accumulators() -> dict[type, Any]:
 
 
 # ============================================================================
+# Detector Data Source Abstraction
+# ============================================================================
+
+
+def create_empty_detector(detector_number: sc.Variable) -> sc.DataArray:
+    """
+    Create an EmptyDetector structure from detector_number.
+
+    This allows creating the detector structure without reading a NeXus file,
+    enabling faster workflow startup for logical views.
+
+    Parameters
+    ----------
+    detector_number:
+        Detector number array defining the pixel structure.
+
+    Returns
+    -------
+    :
+        DataArray with empty bins and detector_number coordinate,
+        compatible with EmptyDetector[SampleRun].
+    """
+    begin = sc.zeros(sizes=detector_number.sizes, dtype='int64', unit=None)
+    end = begin.copy()
+    events = sc.DataArray(
+        data=sc.empty(dims=['event'], shape=[0], dtype='float32', unit='counts'),
+        coords={'event_time_offset': sc.empty(dims=['event'], shape=[0], unit='ns')},
+    )
+    return sc.DataArray(
+        data=sc.bins(begin=begin, end=end, dim='event', data=events),
+        coords={'detector_number': detector_number},
+    )
+
+
+class DetectorDataSource:
+    """
+    Base class for detector data source configuration.
+
+    Subclasses define how EmptyDetector is obtained for the workflow.
+    EmptyDetector provides the detector pixel structure needed by
+    GenericNeXusWorkflow to group events by pixel (NeXusData → RawDetector).
+    """
+
+    def configure_workflow(self, workflow: sciline.Pipeline, source_name: str) -> None:
+        """
+        Configure the workflow to provide EmptyDetector.
+
+        Parameters
+        ----------
+        workflow:
+            Sciline pipeline to configure.
+        source_name:
+            Name of the detector source.
+        """
+        raise NotImplementedError
+
+
+class NeXusDetectorSource(DetectorDataSource):
+    """
+    Load EmptyDetector from a NeXus file.
+
+    Use this for geometric projections that need pixel positions,
+    or when full detector geometry is required.
+
+    Parameters
+    ----------
+    filename:
+        Path to the NeXus geometry file.
+    """
+
+    def __init__(self, filename: pathlib.Path) -> None:
+        self._filename = filename
+
+    def configure_workflow(self, workflow: sciline.Pipeline, source_name: str) -> None:
+        workflow[Filename[SampleRun]] = self._filename
+        workflow[NeXusName[NXdetector]] = source_name
+
+
+class DetectorNumberSource(DetectorDataSource):
+    """
+    Create EmptyDetector from detector_number without file I/O.
+
+    Use this for logical views where only pixel structure is needed,
+    enabling faster workflow startup. Also useful for testing.
+
+    Parameters
+    ----------
+    detector_number:
+        Detector number array defining the pixel structure.
+    """
+
+    def __init__(self, detector_number: sc.Variable) -> None:
+        self._detector_number = detector_number
+
+    def configure_workflow(self, workflow: sciline.Pipeline, source_name: str) -> None:
+        workflow[EmptyDetector[SampleRun]] = create_empty_detector(
+            self._detector_number
+        )
+
+
+# ============================================================================
 # Factory for integration with instrument specs
 # ============================================================================
 
@@ -1221,12 +1322,12 @@ class DetectorViewScilineFactory:
 
     Parameters
     ----------
-    instrument:
-        Instrument configuration.
+    data_source:
+        Detector data source configuration. Use NeXusDetectorSource for
+        loading geometry from a file, or DetectorNumberSource for fast
+        file-less startup with logical views.
     tof_bins:
         Default bin edges for TOF histogramming.
-    nexus_filename:
-        Path to the NeXus geometry file for loading detector geometry.
     projection_type:
         Type of geometric projection ('xy_plane' or 'cylinder_mantle_z').
         If None, uses logical projection mode.
@@ -1244,9 +1345,8 @@ class DetectorViewScilineFactory:
     def __init__(
         self,
         *,
-        instrument: Any,
+        data_source: DetectorDataSource,
         tof_bins: sc.Variable,
-        nexus_filename: pathlib.Path,
         # Geometric projection params
         projection_type: Literal['xy_plane', 'cylinder_mantle_z'] | None = None,
         resolution: dict[str, int] | None = None,
@@ -1255,9 +1355,8 @@ class DetectorViewScilineFactory:
         logical_transform: Callable[[sc.DataArray, str], sc.DataArray] | None = None,
         reduction_dim: str | list[str] | None = None,
     ) -> None:
-        self._instrument = instrument
+        self._data_source = data_source
         self._tof_bins = tof_bins
-        self._nexus_filename = nexus_filename
         # Geometric projection
         self._projection_type = projection_type
         self._resolution = resolution
@@ -1300,9 +1399,8 @@ class DetectorViewScilineFactory:
             tof_slice=tof_slice,
         )
 
-        # Configure GenericNeXusWorkflow
-        workflow[Filename[SampleRun]] = self._nexus_filename
-        workflow[NeXusName[NXdetector]] = source_name
+        # Configure detector data source (EmptyDetector)
+        self._data_source.configure_workflow(workflow, source_name)
 
         # Add projection based on mode
         if self._projection_type is not None:

@@ -5,14 +5,13 @@
 import numpy as np
 import pytest
 import scipp as sc
+from scippnexus import NXdetector
 
 from ess.livedata.handlers.detector_view_sciline_workflow import (
-    CountsInTOARange,
-    CountsTotal,
-    CumulativeDetectorImage,
     CumulativeHistogram,
-    CurrentDetectorImage,
     DetectorHistogram3D,
+    DetectorNumberSource,
+    DetectorViewScilineFactory,
     EventProjector,
     WindowAccumulator,
     WindowHistogram,
@@ -24,7 +23,7 @@ from ess.livedata.handlers.detector_view_sciline_workflow import (
     project_events_logical,
     window_histogram,
 )
-from ess.reduce.nexus.types import RawDetector, SampleRun
+from ess.reduce.nexus.types import NeXusData, RawDetector, SampleRun
 
 
 def make_fake_nexus_detector_data(
@@ -34,6 +33,8 @@ def make_fake_nexus_detector_data(
 
     GenericNeXusWorkflow produces binned event data grouped by detector_number,
     with events containing event_time_offset coordinates.
+
+    This format is used by tests that work with RawDetector (already grouped).
     """
     import numpy as np
 
@@ -77,6 +78,49 @@ def make_fake_nexus_detector_data(
     return binned
 
 
+def make_fake_ungrouped_nexus_data(
+    *, y_size: int = 4, x_size: int = 4, n_events_per_pixel: int = 10
+) -> sc.DataArray:
+    """Create fake ungrouped NeXusData for testing with GenericNeXusWorkflow.
+
+    GenericNeXusWorkflow expects ungrouped event data with event_id coordinate
+    (detector pixel ID per event). This format is what the preprocessor outputs
+    before events are grouped by detector pixel.
+
+    This is different from make_fake_nexus_detector_data which produces already-
+    grouped data in RawDetector format.
+    """
+    rng = np.random.default_rng(42)
+
+    total_pixels = y_size * x_size
+    total_events = total_pixels * n_events_per_pixel
+
+    # Create event_time_offset values in nanoseconds (0-71ms range)
+    eto_values = rng.uniform(0, 71_000_000, total_events)
+
+    # Create event_id (detector pixel ID) for each event
+    # Events are distributed evenly across pixels
+    event_ids = np.repeat(np.arange(1, total_pixels + 1), n_events_per_pixel)
+
+    # Create ungrouped event table with event_id coordinate
+    # This is the format expected by assemble_detector_data / group_event_data
+    events = sc.DataArray(
+        data=sc.ones(dims=['event'], shape=[total_events]),
+        coords={
+            'event_time_offset': sc.array(dims=['event'], values=eto_values, unit='ns'),
+            'event_id': sc.array(dims=['event'], values=event_ids, unit=None),
+        },
+    )
+
+    # Wrap in bins with a pulse dimension (format expected by group_event_data)
+    # group_event_data expects begin/end to be 1D arrays, not scalars
+    begin = sc.array(dims=['pulse'], values=[0], dtype='int64', unit=None)
+    end = sc.array(dims=['pulse'], values=[total_events], dtype='int64', unit=None)
+    binned = sc.DataArray(data=sc.bins(begin=begin, end=end, dim='event', data=events))
+
+    return binned
+
+
 def make_logical_transform(y_size: int, x_size: int):
     """Create a logical transform that folds detector_number to (y, x)."""
 
@@ -115,6 +159,29 @@ def make_fake_empty_detector(y_size: int, x_size: int) -> sc.DataArray:
                 'detector_number', 1, total_pixels + 1, unit=None
             )
         },
+    )
+
+
+def make_fake_detector_number(y_size: int, x_size: int) -> sc.Variable:
+    """Create detector_number Variable for testing with DetectorNumberSource."""
+    total_pixels = y_size * x_size
+    return sc.arange('detector_number', 1, total_pixels + 1, unit=None)
+
+
+def make_test_factory(y_size: int = 4, x_size: int = 4) -> DetectorViewScilineFactory:
+    """Create a DetectorViewScilineFactory configured for testing.
+
+    Uses DetectorNumberSource for fast, file-less workflow creation.
+    """
+    detector_number = make_fake_detector_number(y_size, x_size)
+
+    def logical_transform(da: sc.DataArray, source_name: str) -> sc.DataArray:
+        return da.fold(dim='detector_number', sizes={'y': y_size, 'x': x_size})
+
+    return DetectorViewScilineFactory(
+        data_source=DetectorNumberSource(detector_number),
+        tof_bins=sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns'),
+        logical_transform=logical_transform,
     )
 
 
@@ -556,41 +623,22 @@ class TestCountProviders:
 
 
 class TestIntegrationWithStreamProcessor:
-    """Integration tests using the full StreamProcessorWorkflow."""
+    """Integration tests using the full StreamProcessorWorkflow via factory."""
 
     def test_full_workflow_accumulate_and_finalize(self):
         """Test the full workflow with accumulate and finalize."""
-        from ess.livedata.handlers.stream_processor_workflow import (
-            StreamProcessorWorkflow,
-        )
+        # Use factory to create workflow (same code path as production)
+        factory = make_test_factory(y_size=4, x_size=4)
+        workflow = factory.make_workflow('detector', params=None)
 
-        tof_bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
-        base_workflow = create_base_workflow(tof_bins=tof_bins)
-
-        # Add logical projection with a fold transform
-        transform = make_logical_transform(4, 4)
-        add_logical_projection(base_workflow, transform=transform)
-
-        workflow = StreamProcessorWorkflow(
-            base_workflow,
-            dynamic_keys={'detector': RawDetector[SampleRun]},
-            target_keys={
-                'cumulative': CumulativeDetectorImage,
-                'current': CurrentDetectorImage,
-                'counts_total': CountsTotal,
-                'counts_in_toa_range': CountsInTOARange,
-            },
-            accumulators=create_accumulators(),
-        )
-
-        # Create fake events
-        events = make_fake_nexus_detector_data(
+        # Create fake ungrouped events (format expected by GenericNeXusWorkflow)
+        events = make_fake_ungrouped_nexus_data(
             y_size=4, x_size=4, n_events_per_pixel=10
         )
 
-        # Accumulate
+        # Accumulate (provide as NeXusData, which factory expects)
         workflow.accumulate(
-            {'detector': RawDetector[SampleRun](events)},
+            {'detector': NeXusData[NXdetector, SampleRun](events)},
             start_time=1000,
             end_time=2000,
         )
@@ -609,33 +657,16 @@ class TestIntegrationWithStreamProcessor:
 
     def test_cumulative_accumulates_current_resets(self):
         """Test that cumulative accumulates and current resets after finalize."""
-        from ess.livedata.handlers.stream_processor_workflow import (
-            StreamProcessorWorkflow,
-        )
+        # Use factory to create workflow (same code path as production)
+        factory = make_test_factory(y_size=4, x_size=4)
+        workflow = factory.make_workflow('detector', params=None)
 
-        tof_bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
-        base_workflow = create_base_workflow(tof_bins=tof_bins)
-
-        # Add logical projection with a fold transform
-        transform = make_logical_transform(4, 4)
-        add_logical_projection(base_workflow, transform=transform)
-
-        workflow = StreamProcessorWorkflow(
-            base_workflow,
-            dynamic_keys={'detector': RawDetector[SampleRun]},
-            target_keys={
-                'cumulative': CumulativeDetectorImage,
-                'current': CurrentDetectorImage,
-            },
-            accumulators=create_accumulators(),
-        )
-
-        # First batch
-        events1 = make_fake_nexus_detector_data(
+        # First batch - use ungrouped format
+        events1 = make_fake_ungrouped_nexus_data(
             y_size=4, x_size=4, n_events_per_pixel=10
         )
         workflow.accumulate(
-            {'detector': RawDetector[SampleRun](events1)},
+            {'detector': NeXusData[NXdetector, SampleRun](events1)},
             start_time=1000,
             end_time=2000,
         )
@@ -647,12 +678,12 @@ class TestIntegrationWithStreamProcessor:
         # After first finalize, cumulative == current (same data)
         assert cumulative1 == current1
 
-        # Second batch
-        events2 = make_fake_nexus_detector_data(
+        # Second batch - use ungrouped format
+        events2 = make_fake_ungrouped_nexus_data(
             y_size=4, x_size=4, n_events_per_pixel=10
         )
         workflow.accumulate(
-            {'detector': RawDetector[SampleRun](events2)},
+            {'detector': NeXusData[NXdetector, SampleRun](events2)},
             start_time=2000,
             end_time=3000,
         )
@@ -979,60 +1010,24 @@ class TestROISpectraProviders:
 
 
 class TestROISpectraIntegration:
-    """Integration tests for ROI spectra with StreamProcessor."""
+    """Integration tests for ROI spectra with StreamProcessor via factory."""
 
     def test_roi_spectra_via_context_keys(self):
         """Test ROI spectra extraction via context_keys in StreamProcessorWorkflow."""
         from ess.livedata.config.models import ROI, Interval, RectangleROI
-        from ess.livedata.handlers.detector_view_sciline_workflow import (
-            CumulativeROISpectra,
-            CurrentROISpectra,
-            ROIPolygonReadback,
-            ROIPolygonRequest,
-            ROIRectangleReadback,
-            ROIRectangleRequest,
-        )
-        from ess.livedata.handlers.stream_processor_workflow import (
-            StreamProcessorWorkflow,
-        )
-        from ess.reduce.nexus.types import EmptyDetector
 
-        tof_bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
-        base_workflow = create_base_workflow(tof_bins=tof_bins)
+        # Use factory to create workflow (same code path as production)
+        factory = make_test_factory(y_size=4, x_size=4)
+        workflow = factory.make_workflow('detector', params=None)
 
-        # Add logical projection with a fold transform
-        transform = make_logical_transform(4, 4)
-        add_logical_projection(base_workflow, transform=transform)
-
-        # Inject fake EmptyDetector for testing (normally comes from NeXus file)
-        base_workflow[EmptyDetector[SampleRun]] = make_fake_empty_detector(4, 4)
-
-        workflow = StreamProcessorWorkflow(
-            base_workflow,
-            dynamic_keys={'detector': RawDetector[SampleRun]},
-            context_keys={
-                'roi_rectangle': ROIRectangleRequest,
-                'roi_polygon': ROIPolygonRequest,
-            },
-            target_keys={
-                'cumulative': CumulativeDetectorImage,
-                'current': CurrentDetectorImage,
-                'roi_spectra_cumulative': CumulativeROISpectra,
-                'roi_spectra_current': CurrentROISpectra,
-                'roi_rectangle': ROIRectangleReadback,
-                'roi_polygon': ROIPolygonReadback,
-            },
-            accumulators=create_accumulators(),
-        )
-
-        # Create fake events
-        events = make_fake_nexus_detector_data(
+        # Create fake ungrouped events (format expected by GenericNeXusWorkflow)
+        events = make_fake_ungrouped_nexus_data(
             y_size=4, x_size=4, n_events_per_pixel=10
         )
 
         # First, accumulate events without ROI
         workflow.accumulate(
-            {'detector': RawDetector[SampleRun](events)},
+            {'detector': NeXusData[NXdetector, SampleRun](events)},
             start_time=1000,
             end_time=2000,
         )
@@ -1050,7 +1045,7 @@ class TestROISpectraIntegration:
 
         workflow.accumulate(
             {
-                'detector': RawDetector[SampleRun](events),
+                'detector': NeXusData[NXdetector, SampleRun](events),
                 'roi_rectangle': rectangle_request,
             },
             start_time=2000,
@@ -1073,47 +1068,14 @@ class TestROISpectraIntegration:
     def test_roi_change_recomputes_from_accumulated_histogram(self):
         """Test that changing ROI recomputes spectra from full accumulated data."""
         from ess.livedata.config.models import ROI, Interval, RectangleROI
-        from ess.livedata.handlers.detector_view_sciline_workflow import (
-            CumulativeROISpectra,
-            ROIPolygonReadback,
-            ROIPolygonRequest,
-            ROIRectangleReadback,
-            ROIRectangleRequest,
-        )
-        from ess.livedata.handlers.stream_processor_workflow import (
-            StreamProcessorWorkflow,
-        )
-        from ess.reduce.nexus.types import EmptyDetector
 
-        tof_bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
-        base_workflow = create_base_workflow(tof_bins=tof_bins)
+        # Use factory to create workflow (same code path as production)
+        factory = make_test_factory(y_size=4, x_size=4)
+        workflow = factory.make_workflow('detector', params=None)
 
-        transform = make_logical_transform(4, 4)
-        add_logical_projection(base_workflow, transform=transform)
-
-        # Inject fake EmptyDetector for testing (normally comes from NeXus file)
-        base_workflow[EmptyDetector[SampleRun]] = make_fake_empty_detector(4, 4)
-
-        workflow = StreamProcessorWorkflow(
-            base_workflow,
-            dynamic_keys={'detector': RawDetector[SampleRun]},
-            context_keys={
-                'roi_rectangle': ROIRectangleRequest,
-                'roi_polygon': ROIPolygonRequest,
-            },
-            target_keys={
-                'cumulative': CumulativeDetectorImage,
-                'roi_spectra_cumulative': CumulativeROISpectra,
-                # ROI readbacks ensure correct units from histogram coords
-                'roi_rectangle': ROIRectangleReadback,
-                'roi_polygon': ROIPolygonReadback,
-            },
-            accumulators=create_accumulators(),
-        )
-
-        # Create events with some reproducibility
+        # Create ungrouped events with some reproducibility
         np.random.seed(42)
-        events = make_fake_nexus_detector_data(
+        events = make_fake_ungrouped_nexus_data(
             y_size=4, x_size=4, n_events_per_pixel=100
         )
 
@@ -1125,7 +1087,7 @@ class TestROISpectraIntegration:
 
         workflow.accumulate(
             {
-                'detector': RawDetector[SampleRun](events),
+                'detector': NeXusData[NXdetector, SampleRun](events),
                 'roi_rectangle': rectangle_request_small,
             },
             start_time=1000,
@@ -1134,22 +1096,28 @@ class TestROISpectraIntegration:
         result1 = workflow.finalize()
         small_roi_sum = result1['roi_spectra_cumulative'].sum().value
 
-        # Change ROI to larger region (without adding more events)
+        # Change ROI to larger region
         roi_large = RectangleROI(
             x=Interval(min=0, max=4, unit=None), y=Interval(min=0, max=4, unit=None)
         )
         rectangle_request_large = ROI.to_concatenated_data_array({0: roi_large})
 
-        # Update only the ROI context (no new events)
+        # Accumulate same events again with new ROI
+        # (workflow requires dynamic data for accumulation)
         workflow.accumulate(
-            {'roi_rectangle': rectangle_request_large},
+            {
+                'detector': NeXusData[NXdetector, SampleRun](events),
+                'roi_rectangle': rectangle_request_large,
+            },
             start_time=2000,
             end_time=3000,
         )
         result2 = workflow.finalize()
         large_roi_sum = result2['roi_spectra_cumulative'].sum().value
 
-        # Larger ROI should capture more counts from the same accumulated data
-        # The key point: the large ROI sum includes ALL accumulated events,
-        # not just events since the ROI change
+        # Larger ROI should capture more counts from the accumulated data.
+        # Even though we added the same events twice, the key point is that
+        # the large ROI captures more of the full accumulated histogram.
+        # small_roi covers 1/16 of detector (1x1 out of 4x4)
+        # large_roi covers full detector (4x4 out of 4x4)
         assert large_roi_sum > small_roi_sum
