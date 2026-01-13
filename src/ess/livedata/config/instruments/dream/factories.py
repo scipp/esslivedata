@@ -182,7 +182,7 @@ def setup_factories(instrument: Instrument) -> None:
         )
 
     # Sciline-based detector view workflow (Phase 1: without ROI support)
-    from ess.livedata.handlers.detector_view_sciline_workflow import (
+    from ess.livedata.handlers.detector_view_sciline import (
         DetectorViewScilineFactory,
         NeXusDetectorSource,
     )

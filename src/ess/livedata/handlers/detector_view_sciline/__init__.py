@@ -1,17 +1,47 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-Backwards compatibility module for detector_view_sciline_workflow.
+Detector view workflow - Sciline-based detector data visualization.
 
-This module has been refactored into a subpackage:
-ess.livedata.handlers.detector_view_sciline
+This package implements a modular detector view workflow using Sciline,
+providing event-based projection of detector data to screen coordinates while
+preserving TOF information for flexible histogramming.
 
-All functionality is now available from that subpackage and its modules.
-This module remains for backwards compatibility.
+Supports two projection modes:
+1. Geometric projections (xy_plane, cylinder_mantle_z) using calibrated coordinates
+2. Logical views (fold/slice transforms with optional reduction)
 """
 
-# Re-export everything from the new subpackage for backwards compatibility
-from .detector_view_sciline import (
+from .data_source import (
+    DetectorDataSource,
+    DetectorNumberSource,
+    NeXusDetectorSource,
+    create_empty_detector,
+)
+from .factory import DetectorViewScilineFactory
+from .projectors import EventProjector, make_event_projector
+from .providers import (
+    compute_detector_histogram_3d,
+    counts_in_toa_range,
+    counts_total,
+    cumulative_detector_image,
+    cumulative_histogram,
+    current_detector_image,
+    project_events_geometric,
+    project_events_logical,
+    screen_coord_info_geometric,
+    screen_coord_info_logical,
+    window_histogram,
+)
+from .roi import (
+    cumulative_roi_spectra,
+    current_roi_spectra,
+    precompute_roi_polygon_masks,
+    precompute_roi_rectangle_bounds,
+    roi_polygon_readback,
+    roi_rectangle_readback,
+)
+from .types import (
     CountsInTOARange,
     CountsTotal,
     CumulativeDetectorImage,
@@ -19,13 +49,8 @@ from .detector_view_sciline import (
     CumulativeROISpectra,
     CurrentDetectorImage,
     CurrentROISpectra,
-    DetectorDataSource,
     DetectorHistogram3D,
-    DetectorNumberSource,
-    DetectorViewScilineFactory,
-    EventProjector,
     LogicalTransform,
-    NeXusDetectorSource,
     ProjectionType,
     ReductionDim,
     ROIPolygonMasks,
@@ -39,31 +64,14 @@ from .detector_view_sciline import (
     ScreenCoordInfo,
     TOFBins,
     TOFSlice,
-    WindowAccumulator,
     WindowHistogram,
+)
+from .workflow import (
+    WindowAccumulator,
     add_geometric_projection,
     add_logical_projection,
-    compute_detector_histogram_3d,
-    counts_in_toa_range,
-    counts_total,
     create_accumulators,
     create_base_workflow,
-    create_empty_detector,
-    cumulative_detector_image,
-    cumulative_histogram,
-    cumulative_roi_spectra,
-    current_detector_image,
-    current_roi_spectra,
-    make_event_projector,
-    precompute_roi_polygon_masks,
-    precompute_roi_rectangle_bounds,
-    project_events_geometric,
-    project_events_logical,
-    roi_polygon_readback,
-    roi_rectangle_readback,
-    screen_coord_info_geometric,
-    screen_coord_info_logical,
-    window_histogram,
 )
 
 __all__ = [
@@ -74,10 +82,13 @@ __all__ = [
     'CumulativeROISpectra',
     'CurrentDetectorImage',
     'CurrentROISpectra',
+    # Data sources
     'DetectorDataSource',
     'DetectorHistogram3D',
     'DetectorNumberSource',
+    # Factory
     'DetectorViewScilineFactory',
+    # Projectors
     'EventProjector',
     'LogicalTransform',
     'NeXusDetectorSource',
@@ -92,8 +103,10 @@ __all__ = [
     'ReductionDim',
     'ScreenBinnedEvents',
     'ScreenCoordInfo',
+    # Types
     'TOFBins',
     'TOFSlice',
+    # Workflow
     'WindowAccumulator',
     'WindowHistogram',
     'add_geometric_projection',
@@ -111,11 +124,13 @@ __all__ = [
     'current_roi_spectra',
     'make_event_projector',
     'precompute_roi_polygon_masks',
+    # ROI providers
     'precompute_roi_rectangle_bounds',
     'project_events_geometric',
     'project_events_logical',
     'roi_polygon_readback',
     'roi_rectangle_readback',
+    # Providers
     'screen_coord_info_geometric',
     'screen_coord_info_logical',
     'window_histogram',
