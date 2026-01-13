@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import NewType
+from typing import TYPE_CHECKING, NewType
 from uuid import UUID
 
 import pydantic
@@ -38,6 +38,9 @@ from .config_store import ConfigStore
 from .configuration_adapter import ConfigurationState
 from .pending_command_tracker import PendingCommandTracker
 from .workflow_configuration_adapter import WorkflowConfigurationAdapter
+
+if TYPE_CHECKING:
+    from ess.livedata.config import Instrument
 
 SourceName = str
 SubscriptionId = NewType('SubscriptionId', UUID)
@@ -129,6 +132,7 @@ class JobOrchestrator:
         command_service: CommandService,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         config_store: ConfigStore | None = None,
+        instrument_config: Instrument | None = None,
     ) -> None:
         """
         Initialize the job orchestrator.
@@ -142,10 +146,13 @@ class JobOrchestrator:
         config_store
             Optional store for persisting workflow configurations across sessions.
             Orchestrator loads configs on init and persists on commit.
+        instrument_config
+            Optional instrument configuration for source metadata lookup.
         """
         self._command_service = command_service
         self._workflow_registry = workflow_registry
         self._config_store = config_store
+        self._instrument_config = instrument_config
         self._logger = logging.getLogger(__name__)
 
         # Command acknowledgement tracking
@@ -572,6 +579,16 @@ class JobOrchestrator:
         """
         return self._workflow_registry
 
+    def get_source_title(self, source_name: str) -> str:
+        """Get display title for a source name.
+
+        Falls back to the source name if no instrument config is available
+        or no title is defined for the source.
+        """
+        if self._instrument_config is not None:
+            return self._instrument_config.get_source_title(source_name)
+        return source_name
+
     def create_workflow_adapter(
         self,
         workflow_id: WorkflowId,
@@ -652,6 +669,7 @@ class JobOrchestrator:
             config_state,
             start_callback,
             initial_source_names=initial_source_names,
+            instrument_config=self._instrument_config,
         )
 
     def _get_reference_config(

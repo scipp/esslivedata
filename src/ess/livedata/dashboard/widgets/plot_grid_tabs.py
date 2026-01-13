@@ -328,6 +328,7 @@ class PlotGridTabs:
             success_callback=wrapped_on_success,
             cancel_callback=self._cleanup_modal,
             initial_config=initial_config,
+            instrument_config=self._orchestrator.instrument_config,
         )
 
         # Add modal to container so it renders
@@ -506,7 +507,9 @@ class PlotGridTabs:
 
             # Get display info for this layer
             title, description = get_plot_cell_display_info(
-                config, self._workflow_registry
+                config,
+                self._workflow_registry,
+                get_source_title=self._orchestrator.get_source_title,
             )
 
             # Add state info to description
