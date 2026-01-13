@@ -5,7 +5,7 @@
 import numpy as np
 import scipp as sc
 
-from ess.livedata.handlers.detector_view_sciline import EventProjector
+from ess.livedata.handlers.detector_view import EventProjector
 
 from .utils import make_fake_nexus_detector_data
 
