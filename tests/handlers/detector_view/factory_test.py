@@ -26,7 +26,7 @@ class TestDetectorViewScilineFactory:
 
         factory = DetectorViewFactory(
             data_source=DetectorNumberSource(detector_number),
-            tof_bins=sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns'),
+            bins=sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns'),
             view_config=LogicalViewConfig(transform=transform),
         )
 
@@ -41,7 +41,7 @@ class TestDetectorViewScilineFactory:
         detector_number = make_fake_detector_number(4, 4)
         factory = DetectorViewFactory(
             data_source=DetectorNumberSource(detector_number),
-            tof_bins=sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns'),
+            bins=sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns'),
             view_config=GeometricViewConfig(
                 projection_type='xy_plane',
                 resolution={'x': 100, 'y': 100},
@@ -61,7 +61,7 @@ class TestDetectorViewScilineFactory:
 
         factory = DetectorViewFactory(
             data_source=DetectorNumberSource(detector_number),
-            tof_bins=sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns'),
+            bins=sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns'),
             view_config={
                 'source_a': LogicalViewConfig(transform=transform),
                 'source_b': GeometricViewConfig(

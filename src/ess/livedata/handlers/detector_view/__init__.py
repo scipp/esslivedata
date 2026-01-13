@@ -5,7 +5,10 @@ Detector view workflow - Sciline-based detector data visualization.
 
 This package implements a modular detector view workflow using Sciline,
 providing event-based projection of detector data to screen coordinates while
-preserving TOF information for flexible histogramming.
+preserving event coordinate information for flexible histogramming.
+
+The workflow is dimension-agnostic: it can histogram any event coordinate
+(e.g., event_time_offset, wavelength) specified via EventCoordName.
 
 Supports two projection modes:
 1. Geometric projections (xy_plane, cylinder_mantle_z) using calibrated coordinates
@@ -28,7 +31,7 @@ from .projectors import (
 )
 from .providers import (
     compute_detector_histogram_3d,
-    counts_in_toa_range,
+    counts_in_range,
     counts_total,
     cumulative_detector_image,
     cumulative_histogram,
@@ -53,7 +56,10 @@ from .types import (
     CurrentDetectorImage,
     CurrentROISpectra,
     DetectorHistogram3D,
+    EventCoordName,
     GeometricViewConfig,
+    HistogramBins,
+    HistogramSlice,
     LogicalTransform,
     LogicalViewConfig,
     ProjectionType,
@@ -66,8 +72,6 @@ from .types import (
     ROIRectangleRequest,
     ROISpectra,
     ScreenBinnedEvents,
-    TOFBins,
-    TOFSlice,
     ViewConfig,
     WindowHistogram,
 )
@@ -93,10 +97,14 @@ __all__ = [
     'DetectorNumberSource',
     # Factory
     'DetectorViewFactory',
+    # Types - configuration
+    'EventCoordName',
     # Projectors
     'GeometricProjector',
     # View configuration
     'GeometricViewConfig',
+    'HistogramBins',
+    'HistogramSlice',
     'LogicalProjector',
     'LogicalTransform',
     'LogicalViewConfig',
@@ -112,9 +120,6 @@ __all__ = [
     'ROISpectra',
     'ReductionDim',
     'ScreenBinnedEvents',
-    # Types
-    'TOFBins',
-    'TOFSlice',
     'ViewConfig',
     # Workflow
     'WindowAccumulator',
@@ -122,7 +127,7 @@ __all__ = [
     'add_geometric_projection',
     'add_logical_projection',
     'compute_detector_histogram_3d',
-    'counts_in_toa_range',
+    'counts_in_range',
     'counts_total',
     'create_accumulators',
     'create_base_workflow',

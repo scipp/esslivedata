@@ -69,12 +69,15 @@ ViewConfig = GeometricViewConfig | LogicalViewConfig
 """Union type for view configuration."""
 
 # Configuration types (set once at workflow creation)
-TOFBins = NewType('TOFBins', sc.Variable)
-"""Bin edges for time-of-flight histogramming."""
+EventCoordName = NewType('EventCoordName', str)
+"""Name of the event coordinate to histogram (e.g., 'event_time_offset',
+'wavelength')."""
 
-# Optional TOF range for slicing output images
-TOFSlice = NewType('TOFSlice', tuple[sc.Variable, sc.Variable] | None)
-"""Optional (low, high) TOF range for detector image slicing. None means all TOF."""
+HistogramBins = NewType('HistogramBins', sc.Variable)
+"""Bin edges for histogramming the event coordinate."""
+
+HistogramSlice = NewType('HistogramSlice', tuple[sc.Variable, sc.Variable] | None)
+"""Optional (low, high) range for slicing output images. None means full range."""
 
 # Logical transform configuration
 LogicalTransform = NewType(
@@ -96,11 +99,13 @@ ProjectionType = NewType(
 
 # Intermediate types for event projection
 ScreenBinnedEvents = NewType('ScreenBinnedEvents', sc.DataArray)
-"""Events binned by screen coordinates (screen_y, screen_x) with TOF preserved."""
+"""Events binned by screen coordinates (screen_y, screen_x) with event
+coordinate preserved."""
 
 # Shared intermediate - computed once, then split for accumulation
 DetectorHistogram3D = NewType('DetectorHistogram3D', sc.DataArray)
-"""3D histogram with dims (y, x, tof) - computed once, shared by accumulators."""
+"""3D histogram with dims (y, x, event_coord) - computed once, shared by
+accumulators."""
 
 # Accumulated data types - use different types for different accumulator behavior
 CumulativeHistogram = NewType('CumulativeHistogram', sc.DataArray)
@@ -138,7 +143,7 @@ ROIPolygonReadback = NewType('ROIPolygonReadback', sc.DataArray)
 
 # ROI output types
 ROISpectra = NewType('ROISpectra', sc.DataArray)
-"""TOF spectra for ROIs with dims (roi, tof).
+"""Spectra for ROIs with dims (roi, spectral_dim).
 
 Computed from histogram, not accumulated.
 """
