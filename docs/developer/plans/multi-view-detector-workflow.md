@@ -2,7 +2,7 @@
 
 ## Goal
 
-Extend `detector_view_sciline_workflow.py` to support multiple simultaneous views of the same detector data. For example: one geometric projection (xy_plane) and two logical views (panel fold, tube fold).
+Extend the `detector_view` subpackage (in `handlers/detector_view/`) to support multiple simultaneous views of the same detector data. For example: one geometric projection (xy_plane) and two logical views (panel fold, tube fold).
 
 ## Current State
 

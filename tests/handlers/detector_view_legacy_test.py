@@ -12,7 +12,7 @@ import scipp as sc
 
 from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
 from ess.livedata.handlers.accumulators import GroupIntoPixels
-from ess.livedata.handlers.detector_view import (
+from ess.livedata.handlers.detector_view_legacy import (
     DetectorView,
     DetectorViewParams,
 )

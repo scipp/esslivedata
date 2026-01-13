@@ -20,7 +20,7 @@ from .accumulators import (
     GroupIntoPixels,
     LatestValueHandler,
 )
-from .detector_view import DetectorView, DetectorViewParams
+from .detector_view_legacy import DetectorView, DetectorViewParams
 
 ProjectionType = Literal['xy_plane', 'cylinder_mantle_z']
 

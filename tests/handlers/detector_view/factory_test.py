@@ -4,7 +4,7 @@
 
 import scipp as sc
 
-from ess.livedata.handlers.detector_view_sciline import (
+from ess.livedata.handlers.detector_view import (
     DetectorNumberSource,
     DetectorViewScilineFactory,
 )

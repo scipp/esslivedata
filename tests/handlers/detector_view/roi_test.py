@@ -6,7 +6,7 @@ import numpy as np
 import scipp as sc
 
 from ess.livedata.config.models import ROI, Interval, PolygonROI, RectangleROI
-from ess.livedata.handlers.detector_view_sciline import (
+from ess.livedata.handlers.detector_view import (
     CumulativeHistogram,
     ROIPolygonMasks,
     ROIRectangleBounds,
@@ -46,7 +46,7 @@ class TestROISpectraProviders:
 
     def test_extract_roi_spectra_with_no_rois(self):
         """Test ROI extraction returns empty result when no ROIs configured."""
-        from ess.livedata.handlers.detector_view_sciline.roi import (
+        from ess.livedata.handlers.detector_view.roi import (
             _extract_roi_spectra_precomputed,
         )
 
@@ -60,7 +60,7 @@ class TestROISpectraProviders:
 
     def test_extract_rectangle_roi_spectra(self):
         """Test extracting ROI spectra for rectangle ROI."""
-        from ess.livedata.handlers.detector_view_sciline.roi import (
+        from ess.livedata.handlers.detector_view.roi import (
             _extract_roi_spectra_precomputed,
         )
 
@@ -86,7 +86,7 @@ class TestROISpectraProviders:
 
     def test_extract_rectangle_roi_spectra_index_based(self):
         """Test extracting ROI spectra with index-based rectangle ROI."""
-        from ess.livedata.handlers.detector_view_sciline.roi import (
+        from ess.livedata.handlers.detector_view.roi import (
             _extract_roi_spectra_precomputed,
         )
 
@@ -119,7 +119,7 @@ class TestROISpectraProviders:
         detector projection creates physical coordinates but the UI sends index-based
         ROIs.
         """
-        from ess.livedata.handlers.detector_view_sciline.roi import (
+        from ess.livedata.handlers.detector_view.roi import (
             _extract_roi_spectra_precomputed,
         )
 
@@ -155,7 +155,7 @@ class TestROISpectraProviders:
         The readback provider should create empty DataArrays with units from
         the histogram coordinates, so the frontend knows what units to use.
         """
-        from ess.livedata.handlers.detector_view_sciline import ROIRectangleRequest
+        from ess.livedata.handlers.detector_view import ROIRectangleRequest
 
         # Create histogram WITH physical coordinates (meters)
         data = sc.ones(dims=['y', 'x', 'tof'], shape=[10, 10, 5], unit='counts')
@@ -180,7 +180,7 @@ class TestROISpectraProviders:
 
     def test_roi_rectangle_readback_passes_through_nonempty(self):
         """Test that non-empty ROI readback passes through request unchanged."""
-        from ess.livedata.handlers.detector_view_sciline import ROIRectangleRequest
+        from ess.livedata.handlers.detector_view import ROIRectangleRequest
 
         # Create histogram with meters
         data = sc.ones(dims=['y', 'x', 'tof'], shape=[10, 10, 5], unit='counts')
@@ -208,7 +208,7 @@ class TestROISpectraProviders:
 
     def test_extract_multiple_rectangle_rois(self):
         """Test extracting spectra for multiple rectangle ROIs."""
-        from ess.livedata.handlers.detector_view_sciline.roi import (
+        from ess.livedata.handlers.detector_view.roi import (
             _extract_roi_spectra_precomputed,
         )
 
@@ -236,7 +236,7 @@ class TestROISpectraProviders:
 
     def test_extract_polygon_roi_spectra(self):
         """Test extracting ROI spectra for polygon ROI."""
-        from ess.livedata.handlers.detector_view_sciline.roi import (
+        from ess.livedata.handlers.detector_view.roi import (
             _compute_polygon_mask,
             _extract_roi_spectra_precomputed,
         )
