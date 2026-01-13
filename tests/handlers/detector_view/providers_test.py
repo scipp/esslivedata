@@ -18,12 +18,15 @@ from ess.livedata.handlers.detector_view import (
     cumulative_detector_image,
     cumulative_histogram,
     current_detector_image,
-    project_events_logical,
+    make_logical_projector,
     window_histogram,
 )
-from ess.reduce.nexus.types import RawDetector, SampleRun
 
-from .utils import make_fake_nexus_detector_data, make_logical_transform
+from .utils import (
+    make_fake_empty_detector,
+    make_fake_nexus_detector_data,
+    make_logical_transform,
+)
 
 
 class TestWindowAccumulator:
@@ -96,13 +99,13 @@ class TestComputeDetectorHistogram3D:
         data = make_fake_nexus_detector_data(y_size=4, x_size=4)
         tof_bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
 
-        # Use project_events_logical with a fold transform
+        # Use LogicalProjector with a fold transform
         transform = make_logical_transform(4, 4)
-        screen_binned = project_events_logical(
-            raw_detector=RawDetector[SampleRun](data),
-            transform=transform,
-            reduction_dim=None,
+        empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
+        projector = make_logical_projector(
+            empty_detector, transform=transform, reduction_dim=None
         )
+        screen_binned = projector.project_events(sc.values(data))
 
         result = compute_detector_histogram_3d(
             screen_binned_events=screen_binned,
@@ -120,12 +123,11 @@ class TestComputeDetectorHistogram3D:
         tof_bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
         transform = make_logical_transform(4, 4)
 
-        # Reduce along y dimension
-        screen_binned = project_events_logical(
-            raw_detector=RawDetector[SampleRun](data),
-            transform=transform,
-            reduction_dim='y',
+        empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
+        projector = make_logical_projector(
+            empty_detector, transform=transform, reduction_dim='y'
         )
+        screen_binned = projector.project_events(sc.values(data))
 
         result = compute_detector_histogram_3d(
             screen_binned_events=screen_binned,
@@ -162,32 +164,19 @@ class TestIdentityProviders:
         assert sc.identical(result, data_3d)
 
 
-class TestProjectEventsLogical:
-    """Tests for project_events_logical provider."""
-
-    def test_no_transform_returns_raw_data(self):
-        """Test that None transform returns input unchanged."""
-        data = make_fake_nexus_detector_data(y_size=4, x_size=4)
-
-        result = project_events_logical(
-            raw_detector=RawDetector[SampleRun](data),
-            transform=None,
-            reduction_dim=None,
-        )
-
-        # ScreenBinnedEvents is a NewType wrapping DataArray, compare directly
-        assert sc.identical(result, data)
+class TestLogicalProjector:
+    """Tests for LogicalProjector.project_events()."""
 
     def test_fold_transform(self):
         """Test that fold transform reshapes detector data."""
         data = make_fake_nexus_detector_data(y_size=4, x_size=4)
         transform = make_logical_transform(4, 4)
 
-        result = project_events_logical(
-            raw_detector=RawDetector[SampleRun](data),
-            transform=transform,
-            reduction_dim=None,
+        empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
+        projector = make_logical_projector(
+            empty_detector, transform=transform, reduction_dim=None
         )
+        result = projector.project_events(sc.values(data))
 
         assert 'y' in result.dims
         assert 'x' in result.dims
@@ -200,12 +189,11 @@ class TestProjectEventsLogical:
         data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
         transform = make_logical_transform(4, 4)
 
-        # Reduce along y dimension
-        result = project_events_logical(
-            raw_detector=RawDetector[SampleRun](data),
-            transform=transform,
-            reduction_dim='y',
+        empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
+        projector = make_logical_projector(
+            empty_detector, transform=transform, reduction_dim='y'
         )
+        result = projector.project_events(sc.values(data))
 
         # y dimension should be reduced
         assert 'y' not in result.dims
@@ -219,12 +207,11 @@ class TestProjectEventsLogical:
         data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
         transform = make_logical_transform(4, 4)
 
-        # Reduce along both y and x
-        result = project_events_logical(
-            raw_detector=RawDetector[SampleRun](data),
-            transform=transform,
-            reduction_dim=['y', 'x'],
+        empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
+        projector = make_logical_projector(
+            empty_detector, transform=transform, reduction_dim=['y', 'x']
         )
+        result = projector.project_events(sc.values(data))
 
         # Both dimensions should be reduced - result is scalar with all events
         assert 'y' not in result.dims

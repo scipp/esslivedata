@@ -19,7 +19,16 @@ from .data_source import (
     create_empty_detector,
 )
 from .factory import DetectorViewScilineFactory
-from .projectors import EventProjector, make_event_projector
+from .projectors import (
+    EventProjector,
+    GeometricProjector,
+    LogicalProjector,
+    Projector,
+    ProjectorProtocol,
+    make_event_projector,
+    make_geometric_projector,
+    make_logical_projector,
+)
 from .providers import (
     compute_detector_histogram_3d,
     counts_in_toa_range,
@@ -27,10 +36,7 @@ from .providers import (
     cumulative_detector_image,
     cumulative_histogram,
     current_detector_image,
-    project_events_geometric,
-    project_events_logical,
-    screen_coord_info_geometric,
-    screen_coord_info_logical,
+    project_events,
     window_histogram,
 )
 from .roi import (
@@ -90,9 +96,13 @@ __all__ = [
     'DetectorViewScilineFactory',
     # Projectors
     'EventProjector',
+    'GeometricProjector',
+    'LogicalProjector',
     'LogicalTransform',
     'NeXusDetectorSource',
     'ProjectionType',
+    'Projector',
+    'ProjectorProtocol',
     'ROIPolygonMasks',
     'ROIPolygonReadback',
     'ROIPolygonRequest',
@@ -123,15 +133,14 @@ __all__ = [
     'current_detector_image',
     'current_roi_spectra',
     'make_event_projector',
+    'make_geometric_projector',
+    'make_logical_projector',
     'precompute_roi_polygon_masks',
     # ROI providers
     'precompute_roi_rectangle_bounds',
-    'project_events_geometric',
-    'project_events_logical',
+    'project_events',
     'roi_polygon_readback',
     'roi_rectangle_readback',
     # Providers
-    'screen_coord_info_geometric',
-    'screen_coord_info_logical',
     'window_histogram',
 ]

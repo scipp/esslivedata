@@ -30,7 +30,7 @@ from ess.reduce.nexus.types import SampleRun
 from ess.reduce.nexus.workflow import GenericNeXusWorkflow
 from ess.reduce.streaming import EternalAccumulator
 
-from .projectors import make_event_projector
+from .projectors import make_geometric_projector, make_logical_projector
 from .providers import (
     compute_detector_histogram_3d,
     counts_in_toa_range,
@@ -38,10 +38,7 @@ from .providers import (
     cumulative_detector_image,
     cumulative_histogram,
     current_detector_image,
-    project_events_geometric,
-    project_events_logical,
-    screen_coord_info_geometric,
-    screen_coord_info_logical,
+    project_events,
     window_histogram,
 )
 from .roi import (
@@ -93,8 +90,8 @@ def create_base_workflow(
     """
     Create the base detector view workflow using GenericNeXusWorkflow.
 
-    This creates the core workflow with histogram and downstream providers.
-    Projection providers must be added separately based on projection type.
+    This creates the core workflow with all providers. The Projector param
+    must be set separately via add_geometric_projection or add_logical_projection.
 
     Parameters
     ----------
@@ -106,12 +103,15 @@ def create_base_workflow(
     Returns
     -------
     :
-        Sciline pipeline with detector view providers (without projection).
+        Sciline pipeline with detector view providers.
     """
     # Start with GenericNeXusWorkflow for NeXus loading infrastructure
     workflow = GenericNeXusWorkflow(run_types=[SampleRun], monitor_types=[])
 
-    # Add histogram and downstream providers (shared by both projection types)
+    # Add projection provider (unified for geometric and logical)
+    workflow.insert(project_events)
+
+    # Add histogram and downstream providers
     workflow.insert(compute_detector_histogram_3d)
     workflow.insert(cumulative_histogram)
     workflow.insert(window_histogram)
@@ -125,6 +125,8 @@ def create_base_workflow(
     workflow.insert(current_roi_spectra)
     workflow.insert(roi_rectangle_readback)
     workflow.insert(roi_polygon_readback)
+    workflow.insert(precompute_roi_rectangle_bounds)
+    workflow.insert(precompute_roi_polygon_masks)
 
     # Set configuration parameters
     workflow[TOFBins] = tof_bins
@@ -141,12 +143,15 @@ def add_geometric_projection(
     pixel_noise: Literal['cylindrical'] | sc.Variable | None = None,
 ) -> None:
     """
-    Add geometric projection providers to the workflow.
+    Configure the workflow for geometric projection.
+
+    This adds the geometric projector provider which creates a projector
+    based on calibrated pixel positions.
 
     Parameters
     ----------
     workflow:
-        Sciline pipeline to add providers to.
+        Sciline pipeline to configure.
     projection_type:
         Type of geometric projection.
     resolution:
@@ -155,16 +160,8 @@ def add_geometric_projection(
         Noise to add to pixel positions. Can be 'cylindrical' for cylindrical
         detectors or a scalar variance for Gaussian noise. None disables noise.
     """
-    # Add projection providers
-    workflow.insert(make_event_projector)
-    workflow.insert(project_events_geometric)
-
-    # Add screen coordinate info provider (used for ROI precomputation)
-    workflow.insert(screen_coord_info_geometric)
-
-    # Add ROI precomputation providers (depend on ScreenCoordInfo)
-    workflow.insert(precompute_roi_rectangle_bounds)
-    workflow.insert(precompute_roi_polygon_masks)
+    # Add geometric projector provider
+    workflow.insert(make_geometric_projector)
 
     # Set projection configuration
     workflow[ProjectionType] = projection_type
@@ -198,28 +195,22 @@ def add_logical_projection(
     reduction_dim: str | list[str] | None = None,
 ) -> None:
     """
-    Add logical projection providers to the workflow.
+    Configure the workflow for logical projection.
+
+    This adds the logical projector provider which creates a projector
+    based on fold/slice transforms.
 
     Parameters
     ----------
     workflow:
-        Sciline pipeline to add providers to.
+        Sciline pipeline to configure.
     transform:
         Callable that reshapes detector data (fold/slice). If None, identity.
     reduction_dim:
         Dimension(s) to merge events over. None means no reduction.
     """
-    # Add projection provider
-    workflow.insert(project_events_logical)
-
-    # Add screen coordinate info provider (derived from EmptyDetector + transform)
-    # Since EmptyDetector is static (from NeXus geometry), ROI precomputation
-    # is independent of the event stream - same structure as geometric projection.
-    workflow.insert(screen_coord_info_logical)
-
-    # Add ROI precomputation providers (depend on ScreenCoordInfo)
-    workflow.insert(precompute_roi_rectangle_bounds)
-    workflow.insert(precompute_roi_polygon_masks)
+    # Add logical projector provider
+    workflow.insert(make_logical_projector)
 
     # Set projection configuration
     workflow[LogicalTransform] = transform
