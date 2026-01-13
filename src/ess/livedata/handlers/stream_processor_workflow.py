@@ -30,7 +30,6 @@ class StreamProcessorWorkflow(Workflow):
         dynamic_keys: dict[str, sciline.typing.Key],
         context_keys: dict[str, sciline.typing.Key] | None = None,
         target_keys: dict[str, sciline.typing.Key],
-        initial_context: dict[sciline.typing.Key, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         self._dynamic_keys = dynamic_keys
@@ -43,10 +42,6 @@ class StreamProcessorWorkflow(Workflow):
             target_keys=tuple(self._target_keys.values()),
             **kwargs,
         )
-        # Set initial context values (e.g., empty defaults) so finalize() works
-        # before any context has been explicitly set via accumulate().
-        if initial_context:
-            self._stream_processor.set_context(initial_context)
 
     def accumulate(
         self, data: dict[str, Any], *, start_time: int, end_time: int
