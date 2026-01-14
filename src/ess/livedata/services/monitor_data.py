@@ -5,7 +5,7 @@ from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.streams import get_stream_mapping
-from ess.livedata.handlers import monitor_data_handler
+from ess.livedata.handlers.data_reduction_handler import ReductionHandlerFactory
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
 
@@ -23,9 +23,7 @@ def make_monitor_service_builder(
     instrument_obj = instrument_registry[instrument]
     instrument_obj.load_factories()
     service_name = 'monitor_data'
-    preprocessor_factory = monitor_data_handler.MonitorHandlerFactory(
-        instrument=instrument_obj
-    )
+    preprocessor_factory = ReductionHandlerFactory(instrument=instrument_obj)
     return DataServiceBuilder(
         instrument=instrument,
         name=service_name,

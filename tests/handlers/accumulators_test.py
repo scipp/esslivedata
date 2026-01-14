@@ -1,19 +1,16 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
-import numpy as np
 import pytest
 import scipp as sc
 from streaming_data_types import logdata_f144
 
 from ess.livedata.core.handler import Accumulator
 from ess.livedata.handlers.accumulators import (
-    CollectTOA,
     Cumulative,
     GroupIntoPixels,
     LatestValue,
     LatestValueHandler,
     LogData,
-    MonitorEvents,
     NullAccumulator,
 )
 from ess.livedata.handlers.to_nxevent_data import DetectorEvents, ToNXevent_data
@@ -299,128 +296,6 @@ class TestCumulative:
         cumulative.add(2, da2)  # Different shape, should reset
         result = cumulative.get()
         assert sc.identical(result.data, da2.data)
-
-
-class TestCollectTOA:
-    def test_get_before_add_returns_empty_array(self) -> None:
-        collector = CollectTOA()
-        result = collector.get()
-        assert isinstance(result, np.ndarray)
-        assert len(result) == 0
-
-    def test_add_single_chunk(self) -> None:
-        collector = CollectTOA()
-        events = MonitorEvents(time_of_arrival=[100, 200, 300], unit='ns')
-
-        collector.add(0, events)
-        result = collector.get()
-
-        assert isinstance(result, np.ndarray)
-        np.testing.assert_array_equal(result, [100, 200, 300])
-
-    def test_add_multiple_chunks(self) -> None:
-        collector = CollectTOA()
-        events1 = MonitorEvents(time_of_arrival=[100, 200], unit='ns')
-        events2 = MonitorEvents(time_of_arrival=[300, 400, 500], unit='ns')
-        events3 = MonitorEvents(time_of_arrival=[600], unit='ns')
-
-        collector.add(0, events1)
-        collector.add(1, events2)
-        collector.add(2, events3)
-        result = collector.get()
-
-        np.testing.assert_array_equal(result, [100, 200, 300, 400, 500, 600])
-
-    def test_raises_if_unit_is_not_ns(self) -> None:
-        collector = CollectTOA()
-        events = MonitorEvents(time_of_arrival=[100, 200], unit='ms')
-
-        with pytest.raises(ValueError, match="Expected unit 'ns', got 'ms'"):
-            collector.add(0, events)
-
-    def test_add_empty_chunk(self) -> None:
-        collector = CollectTOA()
-        events = MonitorEvents(time_of_arrival=[], unit='ns')
-
-        collector.add(0, events)
-        result = collector.get()
-
-        assert isinstance(result, np.ndarray)
-        assert len(result) == 0
-
-    def test_mixed_empty_and_non_empty_chunks(self) -> None:
-        collector = CollectTOA()
-        events1 = MonitorEvents(time_of_arrival=[], unit='ns')
-        events2 = MonitorEvents(time_of_arrival=[100, 200], unit='ns')
-        events3 = MonitorEvents(time_of_arrival=[], unit='ns')
-        events4 = MonitorEvents(time_of_arrival=[300], unit='ns')
-
-        collector.add(0, events1)
-        collector.add(1, events2)
-        collector.add(2, events3)
-        collector.add(3, events4)
-        result = collector.get()
-
-        np.testing.assert_array_equal(result, [100, 200, 300])
-
-    def test_clear(self) -> None:
-        collector = CollectTOA()
-        events = MonitorEvents(time_of_arrival=[100, 200, 300], unit='ns')
-
-        collector.add(0, events)
-        collector.clear()
-        result = collector.get()
-
-        assert len(result) == 0
-
-    def test_get_clears_chunks(self) -> None:
-        collector = CollectTOA()
-        events = MonitorEvents(time_of_arrival=[100, 200], unit='ns')
-
-        collector.add(0, events)
-        first_result = collector.get()
-        np.testing.assert_array_equal(first_result, [100, 200])
-
-        # After get(), should be empty
-        second_result = collector.get()
-        assert len(second_result) == 0
-
-    def test_preserves_data_types(self) -> None:
-        # Note this is the current behavior, but not a requirement. In fact we may want
-        # to only allow int types for time of arrival.
-        collector = CollectTOA()
-        # Test with different input types
-        events_int = MonitorEvents(time_of_arrival=[100, 200], unit='ns')
-        events_float = MonitorEvents(time_of_arrival=[300.5, 400.7], unit='ns')
-
-        collector.add(0, events_int)
-        collector.add(1, events_float)
-        result = collector.get()
-
-        # Should concatenate properly regardless of input types
-        expected = np.array([100, 200, 300.5, 400.7])
-        np.testing.assert_array_equal(result, expected)
-
-    def test_timestamp_parameter_is_ignored(self) -> None:
-        collector = CollectTOA()
-        events = MonitorEvents(time_of_arrival=[100, 200], unit='ns')
-
-        # Timestamp should not affect the result
-        collector.add(12345, events)
-        result = collector.get()
-
-        np.testing.assert_array_equal(result, [100, 200])
-
-    def test_large_data_handling(self) -> None:
-        collector = CollectTOA()
-        # Test with larger arrays to ensure concatenation works properly
-        large_array = list(range(1000))
-        events = MonitorEvents(time_of_arrival=large_array, unit='ns')
-
-        collector.add(0, events)
-        result = collector.get()
-
-        np.testing.assert_array_equal(result, large_array)
 
 
 class TestGroupIntoPixels:
