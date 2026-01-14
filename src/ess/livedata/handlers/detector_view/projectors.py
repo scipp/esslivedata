@@ -27,45 +27,24 @@ from ess.reduce.live.raw import (
     make_cylinder_mantle_coords,
     make_xy_plane_coords,
 )
-from ess.reduce.nexus.types import EmptyDetector, SampleRun
 
-from .types import LogicalTransform, ProjectionType, ReductionDim
+from .types import LogicalTransform, ProjectionType, ReductionDim, ScreenMetadata
 
 
 class Projector(Protocol):
     """Protocol for event projection strategies.
 
-    All projectors must provide:
-    - project_events(): Transform events from detector pixels to screen coordinates
-    - screen_coords: Dict mapping dimension names to bin edges/centers (or None)
-    - sizes: Dict mapping dimension names to number of bins
+    Projectors transform events from detector pixels to screen coordinates.
+    Screen metadata (coords, sizes) is obtained separately via get_screen_metadata
+    provider to make dependencies explicit in the Sciline DAG.
     """
 
     def project_events(self, events: sc.DataArray) -> sc.DataArray:
         """Project events from detector pixels to screen coordinates."""
         ...
 
-    @property
-    def screen_coords(self) -> dict[str, sc.Variable | None]:
-        """Screen coordinate bin edges or centers, keyed by dimension name.
 
-        The dict keys are dimension names in order (first key is first dim, etc.).
-        Values are bin edges/centers for each dimension, or None if the dimension
-        has no physical coordinates (e.g., logical pixel indices).
-
-        For 2D views: {'screen_y': edges, 'screen_x': edges}
-        For 1D views: {'strip': edges}
-        For logical views: {'panel': None, 'tube': None} (no coords)
-        """
-        ...
-
-    @property
-    def sizes(self) -> dict[str, int]:
-        """Number of bins for each screen dimension."""
-        ...
-
-
-class GeometricProjector(Projector):
+class GeometricProjector:
     """
     Projects events using geometric coordinate transformation.
 
@@ -89,16 +68,15 @@ class GeometricProjector(Projector):
         self._replica_dim = 'replica'
         self._replicas = coords.sizes.get(self._replica_dim, 1)
         self._current = 0
+        self._screen_metadata = ScreenMetadata(
+            coords={dim: edges[dim] for dim in edges.keys()},
+            sizes={dim: len(edges[dim]) - 1 for dim in edges.keys()},
+        )
 
     @property
-    def screen_coords(self) -> dict[str, sc.Variable | None]:
-        """Screen coordinate bin edges, keyed by dimension name."""
-        return {dim: self._edges[dim] for dim in self._edges.keys()}
-
-    @property
-    def sizes(self) -> dict[str, int]:
-        """Number of bins for each screen dimension."""
-        return {dim: len(self._edges[dim]) - 1 for dim in self._edges.keys()}
+    def screen_metadata(self) -> ScreenMetadata:
+        """Screen metadata with coordinate bin edges and sizes."""
+        return self._screen_metadata
 
     def project_events(self, events: sc.DataArray) -> sc.DataArray:
         """
@@ -175,7 +153,7 @@ class GeometricProjector(Projector):
         return flat_events.bin(self._edges)
 
 
-class LogicalProjector(Projector):
+class LogicalProjector:
     """
     Projects events using logical reshape and optional reduction.
 
@@ -188,10 +166,6 @@ class LogicalProjector(Projector):
         Callable that reshapes detector data (fold/slice). If None, identity.
     reduction_dim:
         Dimension(s) to merge events over via bins.concat. None means no reduction.
-    screen_coords:
-        Dict mapping dimension names to bin edges (or None if no coords).
-    sizes:
-        Dict mapping dimension names to number of bins.
     """
 
     def __init__(
@@ -199,23 +173,44 @@ class LogicalProjector(Projector):
         *,
         transform: Callable[[sc.DataArray], sc.DataArray] | None,
         reduction_dim: str | list[str] | None,
-        screen_coords: dict[str, sc.Variable | None],
-        sizes: dict[str, int],
     ) -> None:
         self._transform = transform
         self._reduction_dim = reduction_dim
-        self._screen_coords = screen_coords
-        self._sizes = sizes
 
-    @property
-    def screen_coords(self) -> dict[str, sc.Variable | None]:
-        """Screen coordinate bin edges, keyed by dimension name."""
-        return self._screen_coords
+    def _get_output_dims(self, all_dims: tuple[str, ...]) -> list[str]:
+        """Determine output dimensions after reduction."""
+        if self._reduction_dim is None:
+            dims_to_reduce: set[str] = set()
+        elif isinstance(self._reduction_dim, str):
+            dims_to_reduce = {self._reduction_dim}
+        else:
+            dims_to_reduce = set(self._reduction_dim)
+        return [d for d in all_dims if d not in dims_to_reduce]
 
-    @property
-    def sizes(self) -> dict[str, int]:
-        """Number of bins for each screen dimension."""
-        return self._sizes
+    def get_screen_metadata(self, empty_detector: sc.DataArray) -> ScreenMetadata:
+        """
+        Compute screen metadata by applying transform to detector structure.
+
+        Parameters
+        ----------
+        empty_detector:
+            Detector structure without events.
+
+        Returns
+        -------
+        :
+            Screen metadata with output dimensions and coordinates.
+        """
+        if self._transform is None:
+            transformed = empty_detector
+        else:
+            transformed = self._transform(empty_detector)
+
+        output_dims = self._get_output_dims(transformed.dims)
+        return ScreenMetadata(
+            coords={dim: transformed.coords.get(dim) for dim in output_dims},
+            sizes={dim: transformed.sizes[dim] for dim in output_dims},
+        )
 
     def project_events(self, events: sc.DataArray) -> sc.DataArray:
         """
@@ -293,7 +288,6 @@ def make_geometric_projector(
 
 
 def make_logical_projector(
-    empty_detector: EmptyDetector[SampleRun],
     transform: LogicalTransform,
     reduction_dim: ReductionDim,
 ) -> Projector:
@@ -302,8 +296,6 @@ def make_logical_projector(
 
     Parameters
     ----------
-    empty_detector:
-        Detector structure without events (used to compute output dimensions).
     transform:
         Callable that reshapes detector data (fold/slice). If None, identity.
     reduction_dim:
@@ -314,34 +306,4 @@ def make_logical_projector(
     :
         Projector configured for the specified logical transform.
     """
-    # Apply transform to get output structure
-    if transform is None:
-        transformed = empty_detector
-    else:
-        transformed = transform(empty_detector)
-
-    # Extract spatial dimensions (all dims from transform)
-    all_dims = list(transformed.dims)
-
-    # Determine which dims will remain after reduction
-    if reduction_dim is None:
-        dims_to_reduce: set[str] = set()
-    elif isinstance(reduction_dim, str):
-        dims_to_reduce = {reduction_dim}
-    else:
-        dims_to_reduce = set(reduction_dim)
-
-    output_dims = [d for d in all_dims if d not in dims_to_reduce]
-
-    # Build screen_coords dict: dimension name -> edges (or None)
-    screen_coords = {dim: transformed.coords.get(dim) for dim in output_dims}
-
-    # Build sizes dict: dimension name -> number of bins
-    sizes = {dim: transformed.sizes[dim] for dim in output_dims}
-
-    return LogicalProjector(
-        transform=transform,
-        reduction_dim=reduction_dim,
-        screen_coords=screen_coords,
-        sizes=sizes,
-    )
+    return LogicalProjector(transform=transform, reduction_dim=reduction_dim)

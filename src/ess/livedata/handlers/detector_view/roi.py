@@ -14,7 +14,6 @@ import scipp as sc
 
 from ess.livedata.config import models
 
-from .projectors import Projector
 from .types import (
     CumulativeHistogram,
     CumulativeROISpectra,
@@ -25,12 +24,13 @@ from .types import (
     ROIRectangleBounds,
     ROIRectangleReadback,
     ROIRectangleRequest,
+    ScreenMetadata,
     WindowHistogram,
 )
 
 
 def precompute_roi_rectangle_bounds(
-    projector: Projector,
+    screen_metadata: ScreenMetadata,
     rectangle_request: ROIRectangleRequest,
 ) -> ROIRectangleBounds:
     """
@@ -41,8 +41,8 @@ def precompute_roi_rectangle_bounds(
 
     Parameters
     ----------
-    projector:
-        Projector with screen coordinate information.
+    screen_metadata:
+        Screen metadata with coordinate information.
     rectangle_request:
         Rectangle ROI configuration.
 
@@ -54,8 +54,7 @@ def precompute_roi_rectangle_bounds(
     if rectangle_request is None or len(rectangle_request) == 0:
         return ROIRectangleBounds({})
 
-    screen_coords = projector.screen_coords
-    dims = list(screen_coords.keys())
+    dims = list(screen_metadata.coords.keys())
     if len(dims) < 2:
         raise ValueError(f"Rectangle ROIs require at least 2 dimensions, got {dims}")
     y_dim, x_dim = dims[0], dims[1]
@@ -109,7 +108,7 @@ def _get_bin_centers(
 
 
 def precompute_roi_polygon_masks(
-    projector: Projector,
+    screen_metadata: ScreenMetadata,
     polygon_request: ROIPolygonRequest,
 ) -> ROIPolygonMasks:
     """
@@ -120,8 +119,8 @@ def precompute_roi_polygon_masks(
 
     Parameters
     ----------
-    projector:
-        Projector with screen coordinate information.
+    screen_metadata:
+        Screen metadata with coordinate information.
     polygon_request:
         Polygon ROI configuration.
 
@@ -133,8 +132,8 @@ def precompute_roi_polygon_masks(
     if polygon_request is None or len(polygon_request) == 0:
         return ROIPolygonMasks({})
 
-    screen_coords = projector.screen_coords
-    sizes = projector.sizes
+    screen_coords = screen_metadata.coords
+    sizes = screen_metadata.sizes
     dims = list(screen_coords.keys())
     if len(dims) < 2:
         raise ValueError(f"Polygon ROIs require at least 2 dimensions, got {dims}")

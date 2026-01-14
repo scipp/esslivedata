@@ -101,10 +101,7 @@ class TestComputeDetectorHistogram3D:
 
         # Use LogicalProjector with a fold transform
         transform = make_logical_transform(4, 4)
-        empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
-        projector = make_logical_projector(
-            empty_detector, transform=transform, reduction_dim=None
-        )
+        projector = make_logical_projector(transform=transform, reduction_dim=None)
         screen_binned = projector.project_events(sc.values(data))
 
         result = compute_detector_histogram_3d(
@@ -124,10 +121,7 @@ class TestComputeDetectorHistogram3D:
         bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
         transform = make_logical_transform(4, 4)
 
-        empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
-        projector = make_logical_projector(
-            empty_detector, transform=transform, reduction_dim='y'
-        )
+        projector = make_logical_projector(transform=transform, reduction_dim='y')
         screen_binned = projector.project_events(sc.values(data))
 
         result = compute_detector_histogram_3d(
@@ -167,57 +161,53 @@ class TestIdentityProviders:
 
 
 class TestLogicalProjector:
-    """Tests for LogicalProjector.project_events() and screen_coords."""
+    """Tests for LogicalProjector.project_events() and get_screen_metadata()."""
 
-    def test_screen_coords_returns_all_dims_without_reduction(self):
-        """Test that screen_coords contains all dims when no reduction."""
+    def test_get_screen_metadata_returns_all_dims_without_reduction(self):
+        """Test that get_screen_metadata contains all dims when no reduction."""
         empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
         transform = make_logical_transform(4, 4)
 
-        projector = make_logical_projector(
-            empty_detector, transform=transform, reduction_dim=None
-        )
+        projector = make_logical_projector(transform=transform, reduction_dim=None)
 
-        screen_coords = projector.screen_coords
-        assert list(screen_coords.keys()) == ['y', 'x']
+        metadata = projector.get_screen_metadata(empty_detector)
+        assert list(metadata.coords.keys()) == ['y', 'x']
         # Logical projections typically don't have edges
-        assert screen_coords['y'] is None
-        assert screen_coords['x'] is None
+        assert metadata.coords['y'] is None
+        assert metadata.coords['x'] is None
+        assert metadata.sizes == {'y': 4, 'x': 4}
 
-    def test_screen_coords_excludes_reduced_dims(self):
-        """Test that screen_coords excludes dimensions that will be reduced."""
+    def test_get_screen_metadata_excludes_reduced_dims(self):
+        """Test that get_screen_metadata excludes dimensions that will be reduced."""
+        empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
+        transform = make_logical_transform(4, 4)
+
+        projector = make_logical_projector(transform=transform, reduction_dim='y')
+
+        metadata = projector.get_screen_metadata(empty_detector)
+        assert list(metadata.coords.keys()) == ['x']
+        assert 'y' not in metadata.coords
+        assert metadata.sizes == {'x': 4}
+
+    def test_get_screen_metadata_excludes_multiple_reduced_dims(self):
+        """Test that get_screen_metadata excludes multiple reduced dimensions."""
         empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
         transform = make_logical_transform(4, 4)
 
         projector = make_logical_projector(
-            empty_detector, transform=transform, reduction_dim='y'
+            transform=transform, reduction_dim=['y', 'x']
         )
 
-        screen_coords = projector.screen_coords
-        assert list(screen_coords.keys()) == ['x']
-        assert 'y' not in screen_coords
-
-    def test_screen_coords_excludes_multiple_reduced_dims(self):
-        """Test that screen_coords excludes multiple reduced dimensions."""
-        empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
-        transform = make_logical_transform(4, 4)
-
-        projector = make_logical_projector(
-            empty_detector, transform=transform, reduction_dim=['y', 'x']
-        )
-
-        screen_coords = projector.screen_coords
-        assert list(screen_coords.keys()) == []
+        metadata = projector.get_screen_metadata(empty_detector)
+        assert list(metadata.coords.keys()) == []
+        assert metadata.sizes == {}
 
     def test_fold_transform(self):
         """Test that fold transform reshapes detector data."""
         data = make_fake_nexus_detector_data(y_size=4, x_size=4)
         transform = make_logical_transform(4, 4)
 
-        empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
-        projector = make_logical_projector(
-            empty_detector, transform=transform, reduction_dim=None
-        )
+        projector = make_logical_projector(transform=transform, reduction_dim=None)
         result = projector.project_events(sc.values(data))
 
         assert 'y' in result.dims
@@ -231,10 +221,7 @@ class TestLogicalProjector:
         data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
         transform = make_logical_transform(4, 4)
 
-        empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
-        projector = make_logical_projector(
-            empty_detector, transform=transform, reduction_dim='y'
-        )
+        projector = make_logical_projector(transform=transform, reduction_dim='y')
         result = projector.project_events(sc.values(data))
 
         # y dimension should be reduced
@@ -249,9 +236,8 @@ class TestLogicalProjector:
         data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
         transform = make_logical_transform(4, 4)
 
-        empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
         projector = make_logical_projector(
-            empty_detector, transform=transform, reduction_dim=['y', 'x']
+            transform=transform, reduction_dim=['y', 'x']
         )
         result = projector.project_events(sc.values(data))
 
