@@ -28,10 +28,6 @@ from .types import (
     WindowHistogram,
 )
 
-# ============================================================================
-# Providers - ROI Precomputation
-# ============================================================================
-
 
 def precompute_roi_rectangle_bounds(
     projector: Projector,
@@ -189,11 +185,6 @@ def _compute_polygon_mask(
 
     # Return mask as True OUTSIDE polygon (scipp mask convention: True = excluded)
     return sc.array(dims=[y_dim, x_dim], values=~inside_2d)
-
-
-# ============================================================================
-# Providers - ROI Spectra Extraction
-# ============================================================================
 
 
 def _extract_roi_spectra_precomputed(

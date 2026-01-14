@@ -60,10 +60,6 @@ from .types import (
     WindowHistogram,
 )
 
-# ============================================================================
-# WindowAccumulator - clears after each finalize
-# ============================================================================
-
 
 class WindowAccumulator(EternalAccumulator):
     """
@@ -76,11 +72,6 @@ class WindowAccumulator(EternalAccumulator):
     def on_finalize(self) -> None:
         """Clear accumulated value after finalize retrieves it."""
         self.clear()
-
-
-# ============================================================================
-# Workflow Construction
-# ============================================================================
 
 
 def create_base_workflow(
