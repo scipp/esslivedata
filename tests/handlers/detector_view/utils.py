@@ -164,6 +164,5 @@ def make_test_factory(y_size: int = 4, x_size: int = 4) -> DetectorViewFactory:
 
     return DetectorViewFactory(
         data_source=DetectorNumberSource(detector_number),
-        bins=sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns'),
         view_config=LogicalViewConfig(transform=logical_transform),
     )

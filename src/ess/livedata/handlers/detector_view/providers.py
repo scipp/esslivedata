@@ -28,10 +28,6 @@ from .types import (
     WindowHistogram,
 )
 
-# ============================================================================
-# Providers - Event Projection
-# ============================================================================
-
 
 def project_events(
     raw_detector: RawDetector[SampleRun],
@@ -57,11 +53,6 @@ def project_events(
     # added after histogramming.
     raw_detector = sc.values(raw_detector)
     return ScreenBinnedEvents(projector.project_events(raw_detector))
-
-
-# ============================================================================
-# Providers - Histogram and Downstream
-# ============================================================================
 
 
 def compute_detector_histogram_3d(
