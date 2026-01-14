@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """This file contains utilities for creating plots in the dashboard."""
 
+import time
 from abc import ABC, abstractmethod
 from typing import Any, cast
 
@@ -26,6 +27,56 @@ from .plot_params import (
     TickParams,
 )
 from .scipp_to_holoviews import to_holoviews
+
+
+def _format_time_ns(ns: int) -> str:
+    """Format nanoseconds since epoch as HH:MM:SS.s in local time (0.1s precision)."""
+    from datetime import UTC, datetime
+
+    dt = datetime.fromtimestamp(ns / 1e9, tz=UTC).astimezone()
+    return f"{dt.strftime('%H:%M:%S')}.{dt.microsecond // 100000}"
+
+
+def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
+    """
+    Compute time interval and lag from start_time/end_time coordinates.
+
+    Returns a formatted string like "12:34:56 - 12:35:02 (Lag: 2.3s)" or None
+    if no timing coordinates are found. Uses the earliest start_time and
+    latest end_time across all DataArrays to show the full data range.
+    Lag is computed from the earliest end_time (oldest data) to show worst-case
+    staleness.
+    """
+    now_ns = time.time_ns()
+    min_start: int | None = None
+    min_end: int | None = None
+    max_end: int | None = None
+
+    for da in data.values():
+        if 'start_time' in da.coords:
+            start_ns = da.coords['start_time'].value
+            if min_start is None or start_ns < min_start:
+                min_start = start_ns
+        if 'end_time' in da.coords:
+            end_ns = da.coords['end_time'].value
+            if min_end is None or end_ns < min_end:
+                min_end = end_ns
+            if max_end is None or end_ns > max_end:
+                max_end = end_ns
+
+    if min_end is None:
+        return None
+
+    # Use min_end for lag (oldest data = maximum lag)
+    lag_s = (now_ns - min_end) / 1e9
+
+    if min_start is not None and max_end is not None:
+        start_str = _format_time_ns(min_start)
+        end_str = _format_time_ns(max_end)
+        return f'{start_str} - {end_str} (Lag: {lag_s:.1f}s)'
+    else:
+        end_str = _format_time_ns(min_end)
+        return f'{end_str} (Lag: {lag_s:.1f}s)'
 
 
 class Plotter(ABC):
@@ -245,14 +296,22 @@ class Plotter(ABC):
         plots = [self._apply_generic_options(p) for p in plots]
 
         if self.layout_params.combine_mode == 'overlay':
-            return hv.Overlay(plots).opts(shared_axes=True)
-        if len(plots) == 1:
-            return plots[0]
-        return (
-            hv.Layout(plots)
-            .opts(shared_axes=False)
-            .cols(self.layout_params.layout_columns)
-        )
+            result = hv.Overlay(plots).opts(shared_axes=True)
+        elif len(plots) == 1:
+            result = plots[0]
+        else:
+            result = (
+                hv.Layout(plots)
+                .opts(shared_axes=False)
+                .cols(self.layout_params.layout_columns)
+            )
+
+        # Add time interval and lag indicator as plot title
+        time_info = _compute_time_info(data)
+        if time_info is not None:
+            result = result.opts(title=time_info, fontsize={'title': '10pt'})
+
+        return result
 
     def _apply_generic_options(self, plot_element: hv.Element) -> hv.Element:
         """Apply generic options like aspect ratio to a plot element."""

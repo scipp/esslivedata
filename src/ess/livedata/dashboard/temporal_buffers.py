@@ -291,10 +291,15 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
     Validates that non-time coords and masks remain constant across all added data.
     """
 
+    # Coordinates that should be accumulated per-item rather than stored as scalars
+    _ACCUMULATED_COORDS = ('time', 'start_time', 'end_time')
+
     def __init__(self) -> None:
         """Initialize empty temporal buffer."""
         self._data_buffer: VariableBuffer | None = None
         self._time_buffer: VariableBuffer | None = None
+        self._start_time_buffer: VariableBuffer | None = None
+        self._end_time_buffer: VariableBuffer | None = None
         self._reference: sc.DataArray | None = None
         self._max_memory: int | None = None
         self._required_timespan: float = 0.0
@@ -332,6 +337,12 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         if not self._time_buffer.append(data.coords['time']):
             raise RuntimeError("Time buffer append failed unexpectedly")
 
+        # Append start_time and end_time if present
+        if self._start_time_buffer is not None and 'start_time' in data.coords:
+            self._start_time_buffer.append(data.coords['start_time'])
+        if self._end_time_buffer is not None and 'end_time' in data.coords:
+            self._end_time_buffer.append(data.coords['end_time'])
+
     def get(self) -> sc.DataArray | None:
         """Return the complete buffer."""
         if self._data_buffer is None:
@@ -344,6 +355,12 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         coords = {'time': time_coord}
         coords.update(self._reference.coords)
 
+        # Add accumulated start_time and end_time as 1-D coords
+        if self._start_time_buffer is not None:
+            coords['start_time'] = self._start_time_buffer.get()
+        if self._end_time_buffer is not None:
+            coords['end_time'] = self._end_time_buffer.get()
+
         masks = dict(self._reference.masks)
 
         return sc.DataArray(data=data_var, coords=coords, masks=masks)
@@ -352,6 +369,8 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         """Clear all buffered data."""
         self._data_buffer = None
         self._time_buffer = None
+        self._start_time_buffer = None
+        self._end_time_buffer = None
         self._reference = None
 
     def set_required_timespan(self, seconds: float) -> None:
@@ -368,11 +387,16 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
 
     def _initialize_buffers(self, data: sc.DataArray) -> None:
         """Initialize buffers with first data, storing reference metadata."""
-        # Store reference as slice at time=0 without time coord
+        # Store reference as slice at time=0 without accumulated coords
         if 'time' in data.dims:
-            self._reference = data['time', 0].drop_coords('time')
+            ref = data['time', 0]
         else:
-            self._reference = data.drop_coords('time')
+            ref = data
+        # Drop all coords that will be accumulated (not stored in reference)
+        ref = ref.drop_coords(
+            [coord for coord in self._ACCUMULATED_COORDS if coord in ref.coords]
+        )
+        self._reference = ref
 
         # Calculate max_capacity from memory limit
         if 'time' in data.dims:
@@ -393,6 +417,25 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
             data=data.coords['time'], max_capacity=max_capacity, concat_dim='time'
         )
 
+        # Create buffers for start_time and end_time if present
+        if 'start_time' in data.coords:
+            self._start_time_buffer = VariableBuffer(
+                data=data.coords['start_time'],
+                max_capacity=max_capacity,
+                concat_dim='time',
+            )
+        else:
+            self._start_time_buffer = None
+
+        if 'end_time' in data.coords:
+            self._end_time_buffer = VariableBuffer(
+                data=data.coords['end_time'],
+                max_capacity=max_capacity,
+                concat_dim='time',
+            )
+        else:
+            self._end_time_buffer = None
+
     def _trim_to_timespan(self, new_data: sc.DataArray) -> None:
         """Trim buffer to keep only data within required timespan."""
         if self._required_timespan < 0:
@@ -401,8 +444,7 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         if self._required_timespan == 0.0:
             # Keep only the latest value - drop all existing data
             drop_count = self._data_buffer.size
-            self._data_buffer.drop(drop_count)
-            self._time_buffer.drop(drop_count)
+            self._drop_from_all_buffers(drop_count)
             return
 
         # Get latest time from new data
@@ -425,9 +467,17 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
             # Find first True index
             drop_count = int(keep_mask.values.argmax())
 
-        # Trim both buffers by same amount to keep them in sync
+        # Trim all buffers by same amount to keep them in sync
+        self._drop_from_all_buffers(drop_count)
+
+    def _drop_from_all_buffers(self, drop_count: int) -> None:
+        """Drop data from all buffers to keep them in sync."""
         self._data_buffer.drop(drop_count)
         self._time_buffer.drop(drop_count)
+        if self._start_time_buffer is not None:
+            self._start_time_buffer.drop(drop_count)
+        if self._end_time_buffer is not None:
+            self._end_time_buffer.drop(drop_count)
 
     def _metadata_matches(self, data: sc.DataArray) -> bool:
         """Check if incoming data's metadata matches stored reference metadata."""
@@ -438,6 +488,10 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
             new = data
 
         # Create template with reference data but incoming metadata
-        template = new.assign(self._reference.data).drop_coords('time')
+        # Drop all accumulated coords for comparison
+        template = new.assign(self._reference.data)
+        template = template.drop_coords(
+            [coord for coord in self._ACCUMULATED_COORDS if coord in template.coords]
+        )
 
         return sc.identical(self._reference, template)
