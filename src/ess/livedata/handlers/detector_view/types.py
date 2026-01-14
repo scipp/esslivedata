@@ -17,6 +17,28 @@ import scipp as sc
 
 
 @dataclass(frozen=True, slots=True)
+class ScreenMetadata:
+    """
+    Screen coordinate metadata for ROI computation.
+
+    This holds the output dimension information needed by ROI providers to
+    precompute bounds and masks. It is separate from the Projector to make
+    dependencies explicit in the Sciline DAG.
+
+    Parameters
+    ----------
+    coords:
+        Dimension name to bin edges/centers mapping. Values are None for
+        logical dimensions without physical coordinates.
+    sizes:
+        Dimension name to number of bins mapping.
+    """
+
+    coords: dict[str, sc.Variable | None]
+    sizes: dict[str, int]
+
+
+@dataclass(frozen=True, slots=True)
 class GeometricViewConfig:
     """
     Configuration for geometric projection views.

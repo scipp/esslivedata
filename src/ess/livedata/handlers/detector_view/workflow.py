@@ -26,11 +26,16 @@ from ess.reduce.live.raw import (
     position_noise_for_cylindrical_pixel,
     position_with_noisy_replicas,
 )
-from ess.reduce.nexus.types import SampleRun
+from ess.reduce.nexus.types import EmptyDetector, SampleRun
 from ess.reduce.nexus.workflow import GenericNeXusWorkflow
 from ess.reduce.streaming import EternalAccumulator
 
-from .projectors import make_geometric_projector, make_logical_projector
+from .projectors import (
+    GeometricProjector,
+    Projector,
+    make_geometric_projector,
+    make_logical_projector,
+)
 from .providers import (
     compute_detector_histogram_3d,
     counts_in_range,
@@ -57,6 +62,7 @@ from .types import (
     LogicalTransform,
     ProjectionType,
     ReductionDim,
+    ScreenMetadata,
     WindowHistogram,
 )
 
@@ -72,6 +78,33 @@ class WindowAccumulator(EternalAccumulator):
     def on_finalize(self) -> None:
         """Clear accumulated value after finalize retrieves it."""
         self.clear()
+
+
+def get_screen_metadata(
+    projector: Projector,
+    empty_detector: EmptyDetector[SampleRun],
+) -> ScreenMetadata:
+    """
+    Extract screen metadata from projector.
+
+    For GeometricProjector, metadata is stored at construction time.
+    For LogicalProjector, metadata is computed from the empty detector.
+
+    Parameters
+    ----------
+    projector:
+        The projector instance.
+    empty_detector:
+        Detector structure without events (used by LogicalProjector).
+
+    Returns
+    -------
+    :
+        Screen metadata with output dimensions and coordinates.
+    """
+    if isinstance(projector, GeometricProjector):
+        return projector.screen_metadata
+    return projector.get_screen_metadata(empty_detector)
 
 
 def create_base_workflow(
@@ -105,6 +138,9 @@ def create_base_workflow(
 
     # Add projection provider (unified for geometric and logical)
     workflow.insert(project_events)
+
+    # Add screen metadata provider (bridges projector to ROI providers)
+    workflow.insert(get_screen_metadata)
 
     # Add histogram and downstream providers
     workflow.insert(compute_detector_histogram_3d)

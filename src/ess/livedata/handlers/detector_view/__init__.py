@@ -72,6 +72,7 @@ from .types import (
     ROIRectangleRequest,
     ROISpectra,
     ScreenBinnedEvents,
+    ScreenMetadata,
     ViewConfig,
     WindowHistogram,
 )
@@ -81,6 +82,7 @@ from .workflow import (
     add_logical_projection,
     create_accumulators,
     create_base_workflow,
+    get_screen_metadata,
 )
 
 __all__ = [
@@ -120,6 +122,7 @@ __all__ = [
     'ROISpectra',
     'ReductionDim',
     'ScreenBinnedEvents',
+    'ScreenMetadata',
     'ViewConfig',
     # Workflow
     'WindowAccumulator',
@@ -137,6 +140,7 @@ __all__ = [
     'cumulative_roi_spectra',
     'current_detector_image',
     'current_roi_spectra',
+    'get_screen_metadata',
     'make_geometric_projector',
     'make_logical_projector',
     'precompute_roi_polygon_masks',

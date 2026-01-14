@@ -3,7 +3,7 @@
 """Tests for ROI (Region of Interest) extraction in detector view workflow.
 
 These tests verify the end-to-end behavior of ROI extraction:
-given a projector, histogram, and ROI configuration, the correct
+given screen metadata, histogram, and ROI configuration, the correct
 spectra are extracted. Tests are decoupled from internal provider
 structure to allow implementation flexibility.
 """
@@ -22,42 +22,12 @@ from ess.livedata.handlers.detector_view.roi import (
 from ess.livedata.handlers.detector_view.types import (
     ROIPolygonRequest,
     ROIRectangleRequest,
+    ScreenMetadata,
 )
 
 
-class FakeProjector:
-    """Fake projector for testing ROI extraction.
-
-    Provides screen_coords and sizes needed by ROI precomputation.
-    """
-
-    def __init__(
-        self,
-        screen_coords: dict[str, sc.Variable | None],
-        sizes: dict[str, int] | None = None,
-    ) -> None:
-        self._screen_coords = screen_coords
-        # Infer sizes from coords if not provided
-        if sizes is not None:
-            self._sizes = sizes
-        else:
-            self._sizes = {}
-            for dim, coord in screen_coords.items():
-                if coord is not None:
-                    # Assume edges: n+1 edges -> n bins
-                    self._sizes[dim] = len(coord) - 1
-
-    @property
-    def screen_coords(self) -> dict[str, sc.Variable | None]:
-        return self._screen_coords
-
-    @property
-    def sizes(self) -> dict[str, int]:
-        return self._sizes
-
-
 def extract_roi_spectra(
-    projector: FakeProjector,
+    screen_metadata: ScreenMetadata,
     histogram: sc.DataArray,
     rectangle_request: sc.DataArray | None = None,
     polygon_request: sc.DataArray | None = None,
@@ -70,8 +40,8 @@ def extract_roi_spectra(
 
     Parameters
     ----------
-    projector:
-        Projector with screen coordinates.
+    screen_metadata:
+        Screen metadata with coordinates and sizes.
     histogram:
         3D histogram (y, x, spectral).
     rectangle_request:
@@ -93,41 +63,44 @@ def extract_roi_spectra(
         ROIPolygonRequest(polygon_request) if polygon_request is not None else None
     )
 
-    bounds = precompute_roi_rectangle_bounds(projector, rect_req)
-    masks = precompute_roi_polygon_masks(projector, poly_req)
+    bounds = precompute_roi_rectangle_bounds(screen_metadata, rect_req)
+    masks = precompute_roi_polygon_masks(screen_metadata, poly_req)
     return _extract_roi_spectra_precomputed(histogram, bounds, masks)
 
 
-def make_projector_with_edges(
+def make_screen_metadata_with_edges(
     y_range: tuple[float, float] = (0.0, 10.0),
     x_range: tuple[float, float] = (0.0, 10.0),
     n_bins: int = 10,
     unit: str = 'm',
-) -> FakeProjector:
-    """Create a projector with bin edge coordinates."""
+) -> ScreenMetadata:
+    """Create screen metadata with bin edge coordinates."""
     y_edges = sc.linspace('y', y_range[0], y_range[1], n_bins + 1, unit=unit)
     x_edges = sc.linspace('x', x_range[0], x_range[1], n_bins + 1, unit=unit)
-    return FakeProjector({'y': y_edges, 'x': x_edges})
+    return ScreenMetadata(
+        coords={'y': y_edges, 'x': x_edges},
+        sizes={'y': n_bins, 'x': n_bins},
+    )
 
 
-def make_projector_with_centers(
+def make_screen_metadata_with_centers(
     y_range: tuple[float, float] = (0.5, 9.5),
     x_range: tuple[float, float] = (0.5, 9.5),
     n_bins: int = 10,
     unit: str = 'm',
-) -> FakeProjector:
-    """Create a projector with bin center coordinates."""
+) -> ScreenMetadata:
+    """Create screen metadata with bin center coordinates."""
     y_centers = sc.linspace('y', y_range[0], y_range[1], n_bins, unit=unit)
     x_centers = sc.linspace('x', x_range[0], x_range[1], n_bins, unit=unit)
-    return FakeProjector(
-        {'y': y_centers, 'x': x_centers}, sizes={'y': n_bins, 'x': n_bins}
+    return ScreenMetadata(
+        coords={'y': y_centers, 'x': x_centers},
+        sizes={'y': n_bins, 'x': n_bins},
     )
 
 
-def make_projector_with_none_coords(sizes: dict[str, int]) -> FakeProjector:
-    """Create a projector with None coordinates (logical view)."""
-    screen_coords = {dim: None for dim in sizes}
-    return FakeProjector(screen_coords, sizes=sizes)
+def make_screen_metadata_with_none_coords(sizes: dict[str, int]) -> ScreenMetadata:
+    """Create screen metadata with None coordinates (logical view)."""
+    return ScreenMetadata(coords={dim: None for dim in sizes}, sizes=sizes)
 
 
 def make_uniform_histogram(
@@ -153,7 +126,7 @@ class TestRectangleROIExtraction:
 
     def test_rectangle_with_physical_coords(self):
         """Rectangle ROI with physical coordinates extracts correct counts."""
-        projector = make_projector_with_edges()
+        metadata = make_screen_metadata_with_edges()
         histogram = make_uniform_histogram(value=1.0)
 
         # Rectangle covering indices 2-4 in both dims (3x3 = 9 pixels)
@@ -165,7 +138,7 @@ class TestRectangleROIExtraction:
         )
         request = RectangleROI.to_concatenated_data_array({0: roi})
 
-        result = extract_roi_spectra(projector, histogram, rectangle_request=request)
+        result = extract_roi_spectra(metadata, histogram, rectangle_request=request)
 
         assert result.dims == ('roi', 'tof')
         assert result.sizes['roi'] == 1
@@ -174,7 +147,7 @@ class TestRectangleROIExtraction:
 
     def test_rectangle_with_index_bounds(self):
         """Rectangle ROI with index bounds (no units) works."""
-        projector = make_projector_with_edges()
+        metadata = make_screen_metadata_with_edges()
         histogram = make_uniform_histogram(value=1.0)
 
         # Index-based rectangle: indices 0-4 in both dims (5x5 = 25 pixels)
@@ -184,7 +157,7 @@ class TestRectangleROIExtraction:
         )
         request = RectangleROI.to_concatenated_data_array({0: roi})
 
-        result = extract_roi_spectra(projector, histogram, rectangle_request=request)
+        result = extract_roi_spectra(metadata, histogram, rectangle_request=request)
 
         assert result.sizes['roi'] == 1
         # 5x5 = 25 pixels
@@ -192,7 +165,7 @@ class TestRectangleROIExtraction:
 
     def test_rectangle_with_none_coords_projector(self):
         """Rectangle ROI works with projector that has None coordinates."""
-        projector = make_projector_with_none_coords({'y': 10, 'x': 10})
+        metadata = make_screen_metadata_with_none_coords({'y': 10, 'x': 10})
         histogram = make_uniform_histogram(with_coords=False)
 
         # Index-based rectangle
@@ -202,7 +175,7 @@ class TestRectangleROIExtraction:
         )
         request = RectangleROI.to_concatenated_data_array({0: roi})
 
-        result = extract_roi_spectra(projector, histogram, rectangle_request=request)
+        result = extract_roi_spectra(metadata, histogram, rectangle_request=request)
 
         assert result.sizes['roi'] == 1
         # 3x3 = 9 pixels
@@ -210,7 +183,7 @@ class TestRectangleROIExtraction:
 
     def test_multiple_rectangles(self):
         """Multiple rectangle ROIs are extracted correctly."""
-        projector = make_projector_with_edges()
+        metadata = make_screen_metadata_with_edges()
         histogram = make_uniform_histogram(value=1.0)
 
         roi0 = RectangleROI(
@@ -223,7 +196,7 @@ class TestRectangleROIExtraction:
         )
         request = RectangleROI.to_concatenated_data_array({0: roi0, 1: roi1})
 
-        result = extract_roi_spectra(projector, histogram, rectangle_request=request)
+        result = extract_roi_spectra(metadata, histogram, rectangle_request=request)
 
         assert result.sizes['roi'] == 2
         assert list(result.coords['roi'].values) == [0, 1]
@@ -237,7 +210,7 @@ class TestPolygonROIExtraction:
 
     def test_polygon_with_bin_edges(self):
         """Polygon ROI with bin edge coordinates extracts correct counts."""
-        projector = make_projector_with_edges()
+        metadata = make_screen_metadata_with_edges()
         histogram = make_uniform_histogram(value=1.0)
 
         # Square polygon covering bins 2-4 in both dims (3x3 = 9 pixels)
@@ -251,7 +224,7 @@ class TestPolygonROIExtraction:
         )
         request = PolygonROI.to_concatenated_data_array({0: roi})
 
-        result = extract_roi_spectra(projector, histogram, polygon_request=request)
+        result = extract_roi_spectra(metadata, histogram, polygon_request=request)
 
         assert result.dims == ('roi', 'tof')
         assert result.sizes['roi'] == 1
@@ -264,7 +237,7 @@ class TestPolygonROIExtraction:
         This tests that the code correctly handles coordinates that are
         already bin centers, without incorrectly calling sc.midpoints().
         """
-        projector = make_projector_with_centers()
+        metadata = make_screen_metadata_with_centers()
         histogram = make_uniform_histogram(value=1.0)
 
         # Square polygon: same logic as bin_edges test
@@ -276,7 +249,7 @@ class TestPolygonROIExtraction:
         )
         request = PolygonROI.to_concatenated_data_array({0: roi})
 
-        result = extract_roi_spectra(projector, histogram, polygon_request=request)
+        result = extract_roi_spectra(metadata, histogram, polygon_request=request)
 
         assert result.sizes['roi'] == 1
         # With centers at 0.5, 1.5, ..., 9.5, bins with centers 2.5, 3.5, 4.5
@@ -289,7 +262,7 @@ class TestPolygonROIExtraction:
         When projector returns None for coordinates, index-based polygon
         ROIs should work by synthesizing integer indices.
         """
-        projector = make_projector_with_none_coords({'y': 10, 'x': 10})
+        metadata = make_screen_metadata_with_none_coords({'y': 10, 'x': 10})
         histogram = make_uniform_histogram(with_coords=False)
 
         # Index-based square polygon covering indices 2-4
@@ -303,7 +276,7 @@ class TestPolygonROIExtraction:
         )
         request = PolygonROI.to_concatenated_data_array({0: roi})
 
-        result = extract_roi_spectra(projector, histogram, polygon_request=request)
+        result = extract_roi_spectra(metadata, histogram, polygon_request=request)
 
         assert result.sizes['roi'] == 1
         # 3x3 = 9 pixels (indices 2, 3, 4 in both dimensions)
@@ -311,7 +284,7 @@ class TestPolygonROIExtraction:
 
     def test_triangle_polygon_extracts_correct_region(self):
         """Triangle polygon extracts only the correct pixels."""
-        projector = make_projector_with_edges()
+        metadata = make_screen_metadata_with_edges()
 
         # Histogram where each pixel has value = y_index
         data = np.zeros((10, 10, 3))
@@ -336,7 +309,7 @@ class TestPolygonROIExtraction:
         )
         request = PolygonROI.to_concatenated_data_array({0: roi})
 
-        result = extract_roi_spectra(projector, histogram, polygon_request=request)
+        result = extract_roi_spectra(metadata, histogram, polygon_request=request)
 
         # The triangle covers approximately half the pixels
         # Exact count depends on point-in-polygon for centers on the diagonal
@@ -351,7 +324,7 @@ class TestMixedROIExtraction:
 
     def test_rectangles_and_polygons_together(self):
         """Both rectangle and polygon ROIs can be extracted together."""
-        projector = make_projector_with_edges()
+        metadata = make_screen_metadata_with_edges()
         histogram = make_uniform_histogram(value=1.0)
 
         rect_roi = RectangleROI(
@@ -369,7 +342,7 @@ class TestMixedROIExtraction:
         poly_request = PolygonROI.to_concatenated_data_array({100: poly_roi})
 
         result = extract_roi_spectra(
-            projector,
+            metadata,
             histogram,
             rectangle_request=rect_request,
             polygon_request=poly_request,
@@ -387,10 +360,10 @@ class TestEmptyROIRequests:
 
     def test_no_rois_returns_empty_spectra(self):
         """Empty ROI requests return empty spectra array."""
-        projector = make_projector_with_edges()
+        metadata = make_screen_metadata_with_edges()
         histogram = make_uniform_histogram()
 
-        result = extract_roi_spectra(projector, histogram)
+        result = extract_roi_spectra(metadata, histogram)
 
         assert result.dims == ('roi', 'tof')
         assert result.sizes['roi'] == 0
@@ -398,26 +371,24 @@ class TestEmptyROIRequests:
 
     def test_empty_rectangle_request(self):
         """Empty rectangle request is handled correctly."""
-        projector = make_projector_with_edges()
+        metadata = make_screen_metadata_with_edges()
         histogram = make_uniform_histogram()
 
         empty_request = RectangleROI.to_concatenated_data_array({})
 
         result = extract_roi_spectra(
-            projector, histogram, rectangle_request=empty_request
+            metadata, histogram, rectangle_request=empty_request
         )
 
         assert result.sizes['roi'] == 0
 
     def test_empty_polygon_request(self):
         """Empty polygon request is handled correctly."""
-        projector = make_projector_with_edges()
+        metadata = make_screen_metadata_with_edges()
         histogram = make_uniform_histogram()
 
         empty_request = PolygonROI.to_concatenated_data_array({})
 
-        result = extract_roi_spectra(
-            projector, histogram, polygon_request=empty_request
-        )
+        result = extract_roi_spectra(metadata, histogram, polygon_request=empty_request)
 
         assert result.sizes['roi'] == 0
