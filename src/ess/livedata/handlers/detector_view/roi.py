@@ -347,48 +347,47 @@ def current_roi_spectra(
     )
 
 
-def _get_coord_units_from_histogram(
-    histogram: sc.DataArray,
+def _get_coord_units_from_screen_metadata(
+    screen_metadata: ScreenMetadata,
 ) -> dict[str, sc.Unit | None]:
-    """Extract coordinate units from histogram for ROI readback.
+    """Extract coordinate units from screen metadata for ROI readback.
 
-    Maps histogram spatial coordinate units to ROI 'x' and 'y' coordinates.
-    Assumes histogram dims are (y, x, spectral) with last dim being spectral.
+    Maps screen coordinate units to ROI 'x' and 'y' coordinates.
     """
-    spectral_dim = histogram.dims[-1]
-    spatial_dims = [d for d in histogram.dims if d != spectral_dim]
-
-    if len(spatial_dims) != 2:
+    dims = list(screen_metadata.coords.keys())
+    if len(dims) < 2:
         return {'x': None, 'y': None}
 
-    y_dim, x_dim = spatial_dims
+    y_dim, x_dim = dims[0], dims[1]
 
-    def get_unit_for_dim(dim: str) -> sc.Unit | None:
-        coord = histogram.coords.get(dim)
+    def get_unit(coord: sc.Variable | None) -> sc.Unit | None:
         if coord is not None:
             return coord.unit
         return None
 
-    return {'x': get_unit_for_dim(x_dim), 'y': get_unit_for_dim(y_dim)}
+    return {
+        'x': get_unit(screen_metadata.coords[x_dim]),
+        'y': get_unit(screen_metadata.coords[y_dim]),
+    }
 
 
 def roi_rectangle_readback(
     request: ROIRectangleRequest,
-    histogram: CumulativeHistogram,
+    screen_metadata: ScreenMetadata,
 ) -> ROIRectangleReadback:
     """
     Produce ROI rectangle readback with correct coordinate units.
 
     If request has ROIs, returns them unchanged. If empty, creates empty
-    DataArray with coordinate units from the histogram so the frontend
+    DataArray with coordinate units from screen metadata so the frontend
     knows what units to use when creating ROIs.
 
     Parameters
     ----------
     request:
         ROI rectangle request from context.
-    histogram:
-        Cumulative histogram with coordinate units.
+    screen_metadata:
+        Screen metadata with coordinate units.
 
     Returns
     -------
@@ -398,7 +397,7 @@ def roi_rectangle_readback(
     if request is not None and len(request) > 0:
         return ROIRectangleReadback(request)
 
-    coord_units = _get_coord_units_from_histogram(histogram)
+    coord_units = _get_coord_units_from_screen_metadata(screen_metadata)
     return ROIRectangleReadback(
         models.RectangleROI.to_concatenated_data_array({}, coord_units=coord_units)
     )
@@ -406,21 +405,21 @@ def roi_rectangle_readback(
 
 def roi_polygon_readback(
     request: ROIPolygonRequest,
-    histogram: CumulativeHistogram,
+    screen_metadata: ScreenMetadata,
 ) -> ROIPolygonReadback:
     """
     Produce ROI polygon readback with correct coordinate units.
 
     If request has ROIs, returns them unchanged. If empty, creates empty
-    DataArray with coordinate units from the histogram so the frontend
+    DataArray with coordinate units from screen metadata so the frontend
     knows what units to use when creating ROIs.
 
     Parameters
     ----------
     request:
         ROI polygon request from context.
-    histogram:
-        Cumulative histogram with coordinate units.
+    screen_metadata:
+        Screen metadata with coordinate units.
 
     Returns
     -------
@@ -430,7 +429,7 @@ def roi_polygon_readback(
     if request is not None and len(request) > 0:
         return ROIPolygonReadback(request)
 
-    coord_units = _get_coord_units_from_histogram(histogram)
+    coord_units = _get_coord_units_from_screen_metadata(screen_metadata)
     return ROIPolygonReadback(
         models.PolygonROI.to_concatenated_data_array({}, coord_units=coord_units)
     )
