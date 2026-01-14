@@ -77,7 +77,8 @@ from .types import (
     WindowHistogram,
 )
 from .workflow import (
-    WindowAccumulator,
+    NoCopyAccumulator,
+    NoCopyWindowAccumulator,
     add_geometric_projection,
     add_logical_projection,
     create_accumulators,
@@ -111,6 +112,9 @@ __all__ = [
     'LogicalTransform',
     'LogicalViewConfig',
     'NeXusDetectorSource',
+    # Accumulators
+    'NoCopyAccumulator',
+    'NoCopyWindowAccumulator',
     'ProjectionType',
     'Projector',
     'ROIPolygonMasks',
@@ -125,7 +129,6 @@ __all__ = [
     'ScreenMetadata',
     'ViewConfig',
     # Workflow
-    'WindowAccumulator',
     'WindowHistogram',
     'add_geometric_projection',
     'add_logical_projection',

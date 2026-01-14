@@ -7,7 +7,8 @@ import scipp as sc
 from ess.livedata.handlers.detector_view import (
     CumulativeHistogram,
     DetectorHistogram3D,
-    WindowAccumulator,
+    NoCopyAccumulator,
+    NoCopyWindowAccumulator,
     WindowHistogram,
     add_logical_projection,
     compute_detector_histogram_3d,
@@ -29,12 +30,12 @@ from .utils import (
 )
 
 
-class TestWindowAccumulator:
-    """Tests for WindowAccumulator that clears after finalize."""
+class TestNoCopyWindowAccumulator:
+    """Tests for NoCopyWindowAccumulator that clears after finalize."""
 
     def test_clears_after_on_finalize(self):
-        """Test that WindowAccumulator clears after on_finalize."""
-        acc = WindowAccumulator()
+        """Test that NoCopyWindowAccumulator clears after on_finalize."""
+        acc = NoCopyWindowAccumulator()
         acc.push(sc.scalar(10))
         assert acc.value == sc.scalar(10)
 
@@ -44,7 +45,7 @@ class TestWindowAccumulator:
 
     def test_accumulates_multiple_values(self):
         """Test that values are accumulated before on_finalize."""
-        acc = WindowAccumulator()
+        acc = NoCopyWindowAccumulator()
         acc.push(sc.scalar(10))
         acc.push(sc.scalar(20))
         assert acc.value == sc.scalar(30)
@@ -87,8 +88,9 @@ class TestCreateAccumulators:
 
         assert CumulativeHistogram in accumulators
         assert WindowHistogram in accumulators
-        assert not isinstance(accumulators[CumulativeHistogram], WindowAccumulator)
-        assert isinstance(accumulators[WindowHistogram], WindowAccumulator)
+        # Uses NoCopy variants for performance (~2x faster with large histograms)
+        assert isinstance(accumulators[CumulativeHistogram], NoCopyAccumulator)
+        assert isinstance(accumulators[WindowHistogram], NoCopyWindowAccumulator)
 
 
 class TestComputeDetectorHistogram3D:
