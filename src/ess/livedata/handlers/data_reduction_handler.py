@@ -6,7 +6,7 @@ import scipp as sc
 
 from ..core.handler import Accumulator, JobBasedPreprocessorFactoryBase
 from ..core.message import StreamId, StreamKind
-from .accumulators import Cumulative, DetectorEvents, LatestValueHandler
+from .accumulators import Cumulative, DetectorEvents
 from .to_nxevent_data import ToNXevent_data
 from .to_nxlog import ToNXlog
 
@@ -30,7 +30,5 @@ class ReductionHandlerFactory(
                 return ToNXevent_data()
             case StreamKind.AREA_DETECTOR:
                 return Cumulative(clear_on_get=True)
-            case StreamKind.LIVEDATA_ROI:
-                return LatestValueHandler()
             case _:
                 return None

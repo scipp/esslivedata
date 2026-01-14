@@ -7,13 +7,20 @@ from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.streams import get_stream_mapping
-from ess.livedata.handlers.detector_data_handler import DetectorHandlerFactory
+from ess.livedata.handlers.detector_data_handler import (
+    DetectorHandlerFactory,
+    ScilineDetectorHandlerFactory,
+)
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
 
 
 def make_detector_service_builder(
-    *, instrument: str, dev: bool = True, log_level: int = logging.INFO
+    *,
+    instrument: str,
+    dev: bool = True,
+    log_level: int = logging.INFO,
+    no_legacy: bool = False,
 ) -> DataServiceBuilder:
     stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
     adapter = (
@@ -27,7 +34,10 @@ def make_detector_service_builder(
     instrument_obj = instrument_registry[instrument]
     instrument_obj.load_factories()
     service_name = 'detector_data'
-    preprocessor_factory = DetectorHandlerFactory(instrument=instrument_obj)
+    if no_legacy:
+        preprocessor_factory = ScilineDetectorHandlerFactory(instrument=instrument_obj)
+    else:
+        preprocessor_factory = DetectorHandlerFactory(instrument=instrument_obj)
     return DataServiceBuilder(
         instrument=instrument,
         name=service_name,
@@ -40,6 +50,12 @@ def make_detector_service_builder(
 def main() -> NoReturn:
     runner = DataServiceRunner(
         pretty_name='Detector Data', make_builder=make_detector_service_builder
+    )
+    runner.parser.add_argument(
+        '--no-legacy',
+        action='store_true',
+        default=False,
+        help='Use new Sciline-based detector view workflow instead of legacy',
     )
     runner.run()
 

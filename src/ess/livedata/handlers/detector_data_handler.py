@@ -21,6 +21,7 @@ from .accumulators import (
     LatestValueHandler,
 )
 from .detector_view_legacy import DetectorView, DetectorViewParams
+from .to_nxevent_data import ToNXevent_data
 
 ProjectionType = Literal['xy_plane', 'cylinder_mantle_z']
 
@@ -200,7 +201,10 @@ class DetectorHandlerFactory(
     JobBasedPreprocessorFactoryBase[DetectorEvents, sc.DataArray]
 ):
     """
-    Factory for detector data handlers.
+    Factory for detector data handlers (legacy mode).
+
+    Uses GroupIntoPixels preprocessor which groups events by detector pixel.
+    This is used with the legacy DetectorView workflow.
 
     Handlers are created based on the instrument name in the message key which should
     identify the detector name. Depending on the configured detector views a NeXus file
@@ -216,6 +220,37 @@ class DetectorHandlerFactory(
                     return None
                 detector_number = self._instrument.get_detector_number(key.name)
                 return GroupIntoPixels(detector_number=detector_number)
+            case StreamKind.AREA_DETECTOR:
+                return Cumulative(clear_on_get=True)
+            case StreamKind.LIVEDATA_ROI:
+                return LatestValueHandler()
+            case _:
+                return None
+
+
+class ScilineDetectorHandlerFactory(
+    JobBasedPreprocessorFactoryBase[DetectorEvents, sc.DataArray]
+):
+    """
+    Factory for detector data handlers (Sciline workflow mode).
+
+    Uses ToNXevent_data preprocessor which outputs ungrouped events in NeXusData format.
+    This is used with the new Sciline-based detector view workflow which groups events
+    internally via GenericNeXusWorkflow.
+
+    Handlers are created based on the instrument name in the message key which should
+    identify the detector name. Depending on the configured detector views a NeXus file
+    with geometry information may be required to setup the view. Currently the NeXus
+    files are always obtained via Pooch.
+    """
+
+    def make_preprocessor(self, key: StreamId) -> Accumulator | None:
+        match key.kind:
+            case StreamKind.DETECTOR_EVENTS:
+                # Skip detectors that are not configured
+                if key.name not in self._instrument.detector_names:
+                    return None
+                return ToNXevent_data()
             case StreamKind.AREA_DETECTOR:
                 return Cumulative(clear_on_get=True)
             case StreamKind.LIVEDATA_ROI:
