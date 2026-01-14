@@ -58,10 +58,6 @@ class DetectorViewFactory:
         Detector data source configuration. Use NeXusDetectorSource for
         loading geometry from a file, or DetectorNumberSource for fast
         file-less startup with logical views.
-    bins:
-        Bin edges for histogramming the event coordinate.
-    event_coord:
-        Name of the event coordinate to histogram.
     view_config:
         View configuration. Can be a single config (applied to all sources)
         or a dict mapping source names to configs (for per-detector settings).
@@ -71,13 +67,9 @@ class DetectorViewFactory:
         self,
         *,
         data_source: DetectorDataSource,
-        bins: sc.Variable,
-        event_coord: str = 'event_time_offset',
         view_config: ViewConfig | dict[str, ViewConfig],
     ) -> None:
         self._data_source = data_source
-        self._bins = bins
-        self._event_coord = event_coord
         self._view_config = view_config
 
     def _get_config(self, source_name: str) -> ViewConfig:
@@ -99,7 +91,7 @@ class DetectorViewFactory:
         source_name:
             Name of the detector source (e.g., 'panel_0').
         params:
-            Workflow parameters (for TOA range, etc.).
+            Workflow parameters (DetectorViewParams or similar with toa_edges).
 
         Returns
         -------
@@ -110,16 +102,25 @@ class DetectorViewFactory:
             StreamProcessorWorkflow,
         )
 
+        if params is None:
+            raise ValueError("params is required (must have toa_edges)")
+
+        # Get histogram bins from params
+        bins = params.toa_edges.get_edges()
+
+        # Event coordinate to histogram - currently always event_time_offset
+        # Future: could be extended via params to support wavelength, etc.
+        event_coord = 'event_time_offset'
+
         # Get histogram slice from params if available
         histogram_slice = None
-        if params is not None and hasattr(params, 'toa_range'):
-            if params.toa_range.enabled:
-                histogram_slice = params.toa_range.range_ns
+        if hasattr(params, 'toa_range') and params.toa_range.enabled:
+            histogram_slice = params.toa_range.range_ns
 
         # Create base workflow
         workflow = create_base_workflow(
-            bins=self._bins,
-            event_coord=self._event_coord,
+            bins=bins,
+            event_coord=event_coord,
             histogram_slice=histogram_slice,
         )
 
