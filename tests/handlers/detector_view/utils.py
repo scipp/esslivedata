@@ -166,3 +166,10 @@ def make_test_factory(y_size: int = 4, x_size: int = 4) -> DetectorViewFactory:
         data_source=DetectorNumberSource(detector_number),
         view_config=LogicalViewConfig(transform=logical_transform),
     )
+
+
+def make_test_params():
+    """Create minimal DetectorViewParams for testing."""
+    from ess.livedata.handlers.detector_view_specs import DetectorViewParams
+
+    return DetectorViewParams()

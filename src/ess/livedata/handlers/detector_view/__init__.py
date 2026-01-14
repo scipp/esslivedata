@@ -31,6 +31,7 @@ from .projectors import (
 )
 from .providers import (
     compute_detector_histogram_3d,
+    compute_pixel_weights,
     counts_in_range,
     counts_total,
     cumulative_detector_image,
@@ -62,6 +63,7 @@ from .types import (
     HistogramSlice,
     LogicalTransform,
     LogicalViewConfig,
+    PixelWeights,
     ProjectionType,
     ReductionDim,
     ROIPolygonMasks,
@@ -73,6 +75,7 @@ from .types import (
     ROISpectra,
     ScreenBinnedEvents,
     ScreenMetadata,
+    UsePixelWeighting,
     ViewConfig,
     WindowHistogram,
 )
@@ -115,6 +118,8 @@ __all__ = [
     # Accumulators
     'NoCopyAccumulator',
     'NoCopyWindowAccumulator',
+    # Pixel weighting
+    'PixelWeights',
     'ProjectionType',
     'Projector',
     'ROIPolygonMasks',
@@ -127,12 +132,14 @@ __all__ = [
     'ReductionDim',
     'ScreenBinnedEvents',
     'ScreenMetadata',
+    'UsePixelWeighting',
     'ViewConfig',
     # Workflow
     'WindowHistogram',
     'add_geometric_projection',
     'add_logical_projection',
     'compute_detector_histogram_3d',
+    'compute_pixel_weights',
     'counts_in_range',
     'counts_total',
     'create_accumulators',
