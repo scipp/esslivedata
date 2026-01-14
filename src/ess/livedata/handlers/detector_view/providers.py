@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import scipp as sc
 
-from ess.reduce.nexus.types import RawDetector, SampleRun
+from ess.reduce.nexus.types import EmptyDetector, RawDetector, SampleRun
 
-from .projectors import Projector
+from .projectors import GeometricProjector, LogicalProjector, Projector
 from .types import (
     CountsInTOARange,
     CountsTotal,
@@ -24,7 +24,9 @@ from .types import (
     EventCoordName,
     HistogramBins,
     HistogramSlice,
+    PixelWeights,
     ScreenBinnedEvents,
+    UsePixelWeighting,
     WindowHistogram,
 )
 
@@ -53,6 +55,36 @@ def project_events(
     # added after histogramming.
     raw_detector = sc.values(raw_detector)
     return ScreenBinnedEvents(projector.project_events(raw_detector))
+
+
+def compute_pixel_weights(
+    projector: Projector,
+    empty_detector: EmptyDetector[SampleRun],
+) -> PixelWeights:
+    """
+    Compute pixel weights for normalizing screen pixels.
+
+    Returns the number of detector pixels contributing to each screen pixel.
+    Used to normalize output images when pixel weighting is enabled.
+
+    Parameters
+    ----------
+    projector:
+        Projector instance (geometric or logical).
+    empty_detector:
+        Empty detector structure (used by logical projector for shape info).
+
+    Returns
+    -------
+    :
+        2D array of weights matching screen dimensions.
+    """
+    if isinstance(projector, GeometricProjector):
+        return PixelWeights(projector.compute_weights())
+    elif isinstance(projector, LogicalProjector):
+        return PixelWeights(projector.compute_weights(empty_detector))
+    else:
+        raise TypeError(f"Unknown projector type: {type(projector)}")
 
 
 def compute_detector_histogram_3d(
@@ -109,7 +141,10 @@ def window_histogram(data: DetectorHistogram3D) -> WindowHistogram:
 
 
 def cumulative_detector_image(
-    data_3d: CumulativeHistogram, histogram_slice: HistogramSlice
+    data_3d: CumulativeHistogram,
+    histogram_slice: HistogramSlice,
+    weights: PixelWeights,
+    use_weighting: UsePixelWeighting,
 ) -> CumulativeDetectorImage:
     """
     Compute cumulative 2D detector image by summing over spectral dimension.
@@ -120,17 +155,27 @@ def cumulative_detector_image(
         3D histogram (y, x, spectral).
     histogram_slice:
         Optional (low, high) range for slicing. If None, sum over full range.
+    weights:
+        Pixel weights for normalization.
+    use_weighting:
+        Whether to apply pixel weighting.
 
     Returns
     -------
     :
         2D detector image (y, x).
     """
-    return CumulativeDetectorImage(_sum_over_spectral_dim(data_3d, histogram_slice))
+    image = _sum_over_spectral_dim(data_3d, histogram_slice)
+    if use_weighting:
+        image = image / weights
+    return CumulativeDetectorImage(image)
 
 
 def current_detector_image(
-    data_3d: WindowHistogram, histogram_slice: HistogramSlice
+    data_3d: WindowHistogram,
+    histogram_slice: HistogramSlice,
+    weights: PixelWeights,
+    use_weighting: UsePixelWeighting,
 ) -> CurrentDetectorImage:
     """
     Compute current 2D detector image by summing over spectral dimension.
@@ -141,13 +186,20 @@ def current_detector_image(
         3D histogram (y, x, spectral) for current window.
     histogram_slice:
         Optional (low, high) range for slicing. If None, sum over full range.
+    weights:
+        Pixel weights for normalization.
+    use_weighting:
+        Whether to apply pixel weighting.
 
     Returns
     -------
     :
         2D detector image (y, x).
     """
-    return CurrentDetectorImage(_sum_over_spectral_dim(data_3d, histogram_slice))
+    image = _sum_over_spectral_dim(data_3d, histogram_slice)
+    if use_weighting:
+        image = image / weights
+    return CurrentDetectorImage(image)
 
 
 def _sum_over_spectral_dim(

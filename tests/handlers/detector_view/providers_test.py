@@ -9,6 +9,8 @@ from ess.livedata.handlers.detector_view import (
     DetectorHistogram3D,
     NoCopyAccumulator,
     NoCopyWindowAccumulator,
+    PixelWeights,
+    UsePixelWeighting,
     WindowHistogram,
     add_logical_projection,
     compute_detector_histogram_3d,
@@ -261,10 +263,13 @@ class TestDetectorImageProviders:
                 dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
             )
         )
+        weights = PixelWeights(sc.ones(dims=['y', 'x'], shape=[4, 4], dtype='float32'))
 
         result = cumulative_detector_image(
             data_3d=CumulativeHistogram(data_3d),
             histogram_slice=None,
+            weights=weights,
+            use_weighting=UsePixelWeighting(False),
         )
 
         assert result.dims == ('y', 'x')
@@ -280,10 +285,13 @@ class TestDetectorImageProviders:
                 dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
             )
         )
+        weights = PixelWeights(sc.ones(dims=['y', 'x'], shape=[4, 4], dtype='float32'))
 
         result = current_detector_image(
             data_3d=WindowHistogram(data_3d),
             histogram_slice=None,
+            weights=weights,
+            use_weighting=UsePixelWeighting(False),
         )
 
         assert result.dims == ('y', 'x')
@@ -299,6 +307,7 @@ class TestDetectorImageProviders:
             ),
             coords={'event_time_offset': coord},
         )
+        weights = PixelWeights(sc.ones(dims=['y', 'x'], shape=[4, 4], dtype='float32'))
 
         # Slice to first half
         histogram_slice = (sc.scalar(0, unit='ns'), sc.scalar(50000, unit='ns'))
@@ -306,6 +315,8 @@ class TestDetectorImageProviders:
         result = cumulative_detector_image(
             data_3d=CumulativeHistogram(data_3d),
             histogram_slice=histogram_slice,
+            weights=weights,
+            use_weighting=UsePixelWeighting(False),
         )
 
         # Should only sum ~5 bins (0-50000 ns from 0-100000 ns range)

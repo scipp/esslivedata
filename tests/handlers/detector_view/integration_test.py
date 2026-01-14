@@ -9,7 +9,7 @@ from scippnexus import NXdetector
 from ess.livedata.config.models import ROI, Interval, RectangleROI
 from ess.reduce.nexus.types import NeXusData, SampleRun
 
-from .utils import make_fake_ungrouped_nexus_data, make_test_factory
+from .utils import make_fake_ungrouped_nexus_data, make_test_factory, make_test_params
 
 
 @pytest.mark.slow
@@ -20,7 +20,7 @@ class TestIntegrationWithStreamProcessor:
         """Test the full workflow with accumulate and finalize."""
         # Use factory to create workflow (same code path as production)
         factory = make_test_factory(y_size=4, x_size=4)
-        workflow = factory.make_workflow('detector', params=None)
+        workflow = factory.make_workflow('detector', params=make_test_params())
 
         # Create fake ungrouped events (format expected by GenericNeXusWorkflow)
         events = make_fake_ungrouped_nexus_data(
@@ -50,7 +50,7 @@ class TestIntegrationWithStreamProcessor:
         """Test that cumulative accumulates and current resets after finalize."""
         # Use factory to create workflow (same code path as production)
         factory = make_test_factory(y_size=4, x_size=4)
-        workflow = factory.make_workflow('detector', params=None)
+        workflow = factory.make_workflow('detector', params=make_test_params())
 
         # First batch - use ungrouped format
         events1 = make_fake_ungrouped_nexus_data(
@@ -98,7 +98,7 @@ class TestROISpectraIntegration:
         """Test ROI spectra extraction via context_keys in StreamProcessorWorkflow."""
         # Use factory to create workflow (same code path as production)
         factory = make_test_factory(y_size=4, x_size=4)
-        workflow = factory.make_workflow('detector', params=None)
+        workflow = factory.make_workflow('detector', params=make_test_params())
 
         # Create fake ungrouped events (format expected by GenericNeXusWorkflow)
         events = make_fake_ungrouped_nexus_data(
@@ -149,7 +149,7 @@ class TestROISpectraIntegration:
         """Test that changing ROI recomputes spectra from full accumulated data."""
         # Use factory to create workflow (same code path as production)
         factory = make_test_factory(y_size=4, x_size=4)
-        workflow = factory.make_workflow('detector', params=None)
+        workflow = factory.make_workflow('detector', params=make_test_params())
 
         # Create ungrouped events with some reproducibility
         np.random.seed(42)

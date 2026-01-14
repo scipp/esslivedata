@@ -152,6 +152,26 @@ class GeometricProjector:
         # Bin by screen coordinates (preserving events)
         return flat_events.bin(self._edges)
 
+    def compute_weights(self) -> sc.DataArray:
+        """
+        Compute pixel weights by histogramming ones through all replicas.
+
+        Returns the number of detector pixels contributing to each screen bin,
+        averaged over all noise replicas. Used to normalize screen pixels when
+        pixel weighting is enabled.
+
+        Returns
+        -------
+        :
+            2D array with shape matching screen dimensions, containing the
+            average number of detector pixels per screen bin.
+        """
+        n_pixels = self._coords.sizes['detector_number']
+        ones = sc.ones(dims=['detector_number'], shape=[n_pixels], dtype='float32')
+        replicated = sc.concat([ones] * self._replicas, dim=self._replica_dim)
+        da = sc.DataArray(replicated, coords=self._coords).flatten(to='_')
+        return da.hist(self._edges) / self._replicas
+
 
 class LogicalProjector:
     """
@@ -244,6 +264,39 @@ class LogicalProjector:
                 result = result.bins.concat(dim)
 
         return result
+
+    def compute_weights(self, empty_detector: sc.DataArray) -> sc.DataArray:
+        """
+        Compute pixel weights for logical projection.
+
+        Returns the number of detector pixels contributing to each output pixel.
+        For logical views without reduction, this is 1 everywhere. With reduction,
+        it equals the number of pixels summed over.
+
+        Parameters
+        ----------
+        empty_detector:
+            Detector structure without events (used to determine input shape).
+
+        Returns
+        -------
+        :
+            Array with shape matching output dimensions, containing the
+            number of detector pixels per output pixel.
+        """
+        ones = sc.DataArray(
+            sc.ones(sizes=empty_detector.sizes, dtype='float32', unit=None)
+        )
+        if self._transform is not None:
+            ones = self._transform(ones)
+        if self._reduction_dim is not None:
+            dims_to_reduce = (
+                [self._reduction_dim]
+                if isinstance(self._reduction_dim, str)
+                else list(self._reduction_dim)
+            )
+            ones = ones.sum(dims_to_reduce)
+        return ones
 
 
 def make_geometric_projector(

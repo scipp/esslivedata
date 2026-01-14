@@ -145,6 +145,18 @@ CountsTotal = NewType('CountsTotal', sc.DataArray)
 CountsInTOARange = NewType('CountsInTOARange', sc.DataArray)
 """Event counts within configured TOA range as 0D scalar (from current window)."""
 
+# Pixel weighting types
+PixelWeights = NewType('PixelWeights', sc.DataArray)
+"""Weights for normalizing screen pixels by detector pixel contribution.
+
+2D array with shape matching screen dimensions. Each value represents the
+number of detector pixels contributing to that screen pixel, used as divisor
+when pixel weighting is enabled.
+"""
+
+UsePixelWeighting = NewType('UsePixelWeighting', bool)
+"""Whether to apply pixel weighting to output images."""
+
 # ROI configuration types (context keys - updated less frequently than events)
 ROIRectangleRequest = NewType('ROIRectangleRequest', sc.DataArray)
 """ROI rectangle configuration as concatenated DataArray (empty if no ROIs)."""

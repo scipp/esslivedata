@@ -30,6 +30,7 @@ from .types import (
     ROIPolygonRequest,
     ROIRectangleReadback,
     ROIRectangleRequest,
+    UsePixelWeighting,
     ViewConfig,
 )
 from .workflow import (
@@ -105,17 +106,24 @@ class DetectorViewFactory:
         if params is None:
             raise ValueError("params is required (must have toa_edges)")
 
-        # Get histogram bins from params
-        bins = params.toa_edges.get_edges()
-
         # Event coordinate to histogram - currently always event_time_offset
         # Future: could be extended via params to support wavelength, etc.
         event_coord = 'event_time_offset'
+
+        # Get histogram bins from params and rename dimension to match event_coord
+        # Also convert to nanoseconds to match event_time_offset unit
+        bins = params.toa_edges.get_edges()
+        bins = bins.rename_dims({bins.dim: event_coord}).to(unit='ns')
 
         # Get histogram slice from params if available
         histogram_slice = None
         if hasattr(params, 'toa_range') and params.toa_range.enabled:
             histogram_slice = params.toa_range.range_ns
+
+        # Get pixel weighting setting from params
+        use_pixel_weighting = False
+        if hasattr(params, 'pixel_weighting') and params.pixel_weighting.enabled:
+            use_pixel_weighting = True
 
         # Create base workflow
         workflow = create_base_workflow(
@@ -126,6 +134,9 @@ class DetectorViewFactory:
 
         # Configure detector data source (EmptyDetector)
         self._data_source.configure_workflow(workflow, source_name)
+
+        # Set pixel weighting configuration
+        workflow[UsePixelWeighting] = use_pixel_weighting
 
         # Add projection based on config type
         config = self._get_config(source_name)

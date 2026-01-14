@@ -38,6 +38,7 @@ from .projectors import (
 )
 from .providers import (
     compute_detector_histogram_3d,
+    compute_pixel_weights,
     counts_in_range,
     counts_total,
     cumulative_detector_image,
@@ -63,6 +64,7 @@ from .types import (
     ProjectionType,
     ReductionDim,
     ScreenMetadata,
+    UsePixelWeighting,
     WindowHistogram,
 )
 
@@ -162,6 +164,10 @@ def create_base_workflow(
 
     # Add screen metadata provider (bridges projector to ROI providers)
     workflow.insert(get_screen_metadata)
+
+    # Add pixel weighting provider
+    workflow.insert(compute_pixel_weights)
+    workflow[UsePixelWeighting] = False  # Default: disabled
 
     # Add histogram and downstream providers
     workflow.insert(compute_detector_histogram_3d)
