@@ -7,10 +7,7 @@ from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.streams import get_stream_mapping
-from ess.livedata.handlers.detector_data_handler import (
-    DetectorHandlerFactory,
-    ScilineDetectorHandlerFactory,
-)
+from ess.livedata.handlers.detector_data_handler import DetectorHandlerFactory
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
 
@@ -34,10 +31,9 @@ def make_detector_service_builder(
     instrument_obj = instrument_registry[instrument]
     instrument_obj.load_factories()
     service_name = 'detector_data'
-    if no_legacy:
-        preprocessor_factory = ScilineDetectorHandlerFactory(instrument=instrument_obj)
-    else:
-        preprocessor_factory = DetectorHandlerFactory(instrument=instrument_obj)
+    preprocessor_factory = DetectorHandlerFactory(
+        instrument=instrument_obj, ungrouped_events=no_legacy
+    )
     return DataServiceBuilder(
         instrument=instrument,
         name=service_name,
