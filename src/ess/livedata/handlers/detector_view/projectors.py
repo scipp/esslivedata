@@ -37,7 +37,8 @@ class Projector(Protocol):
 
     All projectors must provide:
     - project_events(): Transform events from detector pixels to screen coordinates
-    - screen_coords: Dict mapping dimension names to bin edges (or None)
+    - screen_coords: Dict mapping dimension names to bin edges/centers (or None)
+    - sizes: Dict mapping dimension names to number of bins
     """
 
     def project_events(self, events: sc.DataArray) -> sc.DataArray:
@@ -46,16 +47,21 @@ class Projector(Protocol):
 
     @property
     def screen_coords(self) -> dict[str, sc.Variable | None]:
-        """Screen coordinate bin edges, keyed by dimension name.
+        """Screen coordinate bin edges or centers, keyed by dimension name.
 
         The dict keys are dimension names in order (first key is first dim, etc.).
-        Values are bin edges for each dimension, or None if the dimension
+        Values are bin edges/centers for each dimension, or None if the dimension
         has no physical coordinates (e.g., logical pixel indices).
 
         For 2D views: {'screen_y': edges, 'screen_x': edges}
         For 1D views: {'strip': edges}
         For logical views: {'panel': None, 'tube': None} (no coords)
         """
+        ...
+
+    @property
+    def sizes(self) -> dict[str, int]:
+        """Number of bins for each screen dimension."""
         ...
 
 
@@ -88,6 +94,11 @@ class GeometricProjector(Projector):
     def screen_coords(self) -> dict[str, sc.Variable | None]:
         """Screen coordinate bin edges, keyed by dimension name."""
         return {dim: self._edges[dim] for dim in self._edges.keys()}
+
+    @property
+    def sizes(self) -> dict[str, int]:
+        """Number of bins for each screen dimension."""
+        return {dim: len(self._edges[dim]) - 1 for dim in self._edges.keys()}
 
     def project_events(self, events: sc.DataArray) -> sc.DataArray:
         """
@@ -179,6 +190,8 @@ class LogicalProjector(Projector):
         Dimension(s) to merge events over via bins.concat. None means no reduction.
     screen_coords:
         Dict mapping dimension names to bin edges (or None if no coords).
+    sizes:
+        Dict mapping dimension names to number of bins.
     """
 
     def __init__(
@@ -187,15 +200,22 @@ class LogicalProjector(Projector):
         transform: Callable[[sc.DataArray], sc.DataArray] | None,
         reduction_dim: str | list[str] | None,
         screen_coords: dict[str, sc.Variable | None],
+        sizes: dict[str, int],
     ) -> None:
         self._transform = transform
         self._reduction_dim = reduction_dim
         self._screen_coords = screen_coords
+        self._sizes = sizes
 
     @property
     def screen_coords(self) -> dict[str, sc.Variable | None]:
         """Screen coordinate bin edges, keyed by dimension name."""
         return self._screen_coords
+
+    @property
+    def sizes(self) -> dict[str, int]:
+        """Number of bins for each screen dimension."""
+        return self._sizes
 
     def project_events(self, events: sc.DataArray) -> sc.DataArray:
         """
@@ -316,8 +336,12 @@ def make_logical_projector(
     # Build screen_coords dict: dimension name -> edges (or None)
     screen_coords = {dim: transformed.coords.get(dim) for dim in output_dims}
 
+    # Build sizes dict: dimension name -> number of bins
+    sizes = {dim: transformed.sizes[dim] for dim in output_dims}
+
     return LogicalProjector(
         transform=transform,
         reduction_dim=reduction_dim,
         screen_coords=screen_coords,
+        sizes=sizes,
     )

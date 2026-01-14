@@ -71,6 +71,43 @@ def precompute_roi_rectangle_bounds(
     return ROIRectangleBounds(bounds_dict)
 
 
+def _get_bin_centers(
+    coord: sc.Variable | None, dim: str, expected_size: int
+) -> sc.Variable:
+    """
+    Get bin centers from coordinate, handling edges, centers, and None.
+
+    Parameters
+    ----------
+    coord:
+        Coordinate variable (edges, centers, or None).
+    dim:
+        Dimension name.
+    expected_size:
+        Expected number of bins.
+
+    Returns
+    -------
+    :
+        Bin centers as a 1D Variable.
+    """
+    if coord is None:
+        # Synthesize integer indices for logical views
+        return sc.arange(dim, expected_size, dtype='float64')
+
+    if len(coord) == expected_size + 1:
+        # Edges: compute midpoints
+        return sc.midpoints(coord)
+    elif len(coord) == expected_size:
+        # Already centers: use as-is
+        return coord
+    else:
+        raise ValueError(
+            f"Coordinate for '{dim}' has unexpected length {len(coord)}. "
+            f"Expected {expected_size} (centers) or {expected_size + 1} (edges)."
+        )
+
+
 def precompute_roi_polygon_masks(
     projector: Projector,
     polygon_request: ROIPolygonRequest,
@@ -97,21 +134,15 @@ def precompute_roi_polygon_masks(
         return ROIPolygonMasks({})
 
     screen_coords = projector.screen_coords
+    sizes = projector.sizes
     dims = list(screen_coords.keys())
     if len(dims) < 2:
         raise ValueError(f"Polygon ROIs require at least 2 dimensions, got {dims}")
     y_dim, x_dim = dims[0], dims[1]
-    y_edges = screen_coords[y_dim]
-    x_edges = screen_coords[x_dim]
 
-    if y_edges is None or x_edges is None:
-        raise ValueError(
-            "Polygon ROIs require coordinate bin edges, but projector has None"
-        )
-
-    # Compute bin centers for point-in-polygon test
-    x_centers = sc.midpoints(x_edges)
-    y_centers = sc.midpoints(y_edges)
+    # Get bin centers, handling edges, centers, and None coordinates
+    y_centers = _get_bin_centers(screen_coords[y_dim], y_dim, sizes[y_dim])
+    x_centers = _get_bin_centers(screen_coords[x_dim], x_dim, sizes[x_dim])
 
     masks_dict: dict[int, sc.Variable] = {}
     rois = models.ROI.from_concatenated_data_array(polygon_request)
