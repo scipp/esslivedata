@@ -177,5 +177,12 @@ class DetectorViewFactory:
                 'roi_rectangle': ROIRectangleReadback,
                 'roi_polygon': ROIPolygonReadback,
             },
+            # Window outputs get time, start_time, end_time coords
+            window_outputs=(
+                'current',
+                'counts_total',
+                'counts_in_toa_range',
+                'roi_spectra_current',
+            ),
             accumulators=create_accumulators(),
         )
