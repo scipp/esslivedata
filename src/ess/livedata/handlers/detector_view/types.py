@@ -15,10 +15,6 @@ from typing import Literal, NewType
 
 import scipp as sc
 
-# ============================================================================
-# View Configuration Classes
-# ============================================================================
-
 
 @dataclass(frozen=True, slots=True)
 class GeometricViewConfig:
