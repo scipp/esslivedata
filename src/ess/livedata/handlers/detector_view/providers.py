@@ -103,7 +103,7 @@ def window_histogram(data: DetectorHistogram3D) -> WindowHistogram:
     Identity transform for window accumulation.
 
     This allows the histogram to be computed once and accumulated with
-    WindowAccumulator (clears after finalize).
+    NoCopyWindowAccumulator (clears after finalize).
     """
     return WindowHistogram(data)
 
