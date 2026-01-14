@@ -12,6 +12,10 @@ from typing import Any, Generic, Protocol, TypeVar
 import pydantic
 import scipp as sc
 
+from .correlation_plotter import (
+    CorrelationHistogram1dPlotter,
+    CorrelationHistogram2dPlotter,
+)
 from .extractors import FullHistoryExtractor, UpdateExtractor
 from .plots import (
     BarsPlotter,
@@ -343,6 +347,42 @@ plotter_registry.register_plotter(
     ),
     data_requirements=DataRequirements(min_dims=2, max_dims=2, multiple_datasets=False),
     factory=Overlay1DPlotter.from_params,
+)
+
+
+plotter_registry.register_plotter(
+    name='correlation_histogram_1d',
+    title='Correlation Histogram 1D',
+    description=(
+        'Create a 1D histogram correlating the selected timeseries against another '
+        'timeseries axis. Useful for visualizing how data varies with a parameter '
+        'like temperature or motor position.'
+    ),
+    data_requirements=DataRequirements(
+        min_dims=0,
+        max_dims=0,
+        multiple_datasets=True,
+        required_extractor=FullHistoryExtractor,
+    ),
+    factory=CorrelationHistogram1dPlotter.from_params,
+)
+
+
+plotter_registry.register_plotter(
+    name='correlation_histogram_2d',
+    title='Correlation Histogram 2D',
+    description=(
+        'Create a 2D histogram correlating the selected timeseries against two '
+        'timeseries axes. Useful for visualizing how data varies with two parameters '
+        'simultaneously.'
+    ),
+    data_requirements=DataRequirements(
+        min_dims=0,
+        max_dims=0,
+        multiple_datasets=True,
+        required_extractor=FullHistoryExtractor,
+    ),
+    factory=CorrelationHistogram2dPlotter.from_params,
 )
 
 

@@ -21,12 +21,21 @@ from typing import TYPE_CHECKING, Any
 import panel as pn
 import pydantic
 
-from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
+from ess.livedata.config.workflow_spec import (
+    WorkflowId,
+    WorkflowSpec,
+    find_timeseries_outputs,
+)
+from ess.livedata.dashboard.correlation_plotter import CORRELATION_HISTOGRAM_PLOTTERS
+from ess.livedata.dashboard.data_roles import PRIMARY, X_AXIS, Y_AXIS
 
 if TYPE_CHECKING:
     from ess.livedata.config import Instrument
 from ess.livedata.dashboard.plot_configuration_adapter import PlotConfigurationAdapter
-from ess.livedata.dashboard.plot_orchestrator import PlotConfig
+from ess.livedata.dashboard.plot_orchestrator import (
+    DataSourceConfig,
+    PlotConfig,
+)
 from ess.livedata.dashboard.plotting import PlotterSpec
 
 from .configuration_widget import ConfigurationPanel
@@ -50,6 +59,32 @@ _NO_TRANSITION_CSS = """
 """
 
 
+def _inject_axis_source_names(
+    params: pydantic.BaseModel, axis_sources: dict[str, DataSourceConfig]
+) -> pydantic.BaseModel:
+    """Inject axis source names into correlation histogram params for display.
+
+    Updates the bins.x_axis_source and bins.y_axis_source fields with
+    the source names from axis_sources, so they appear in the UI as labels.
+    """
+    if not hasattr(params, 'bins'):
+        return params
+
+    bins = params.bins
+    updates: dict[str, str] = {}
+
+    if X_AXIS in axis_sources and axis_sources[X_AXIS].source_names:
+        updates['x_axis_source'] = axis_sources[X_AXIS].source_names[0]
+    if Y_AXIS in axis_sources and axis_sources[Y_AXIS].source_names:
+        updates['y_axis_source'] = axis_sources[Y_AXIS].source_names[0]
+
+    if not updates:
+        return params
+
+    new_bins = bins.model_copy(update=updates)
+    return params.model_copy(update={'bins': new_bins})
+
+
 @dataclass
 class OutputSelection:
     """Output from output selection step."""
@@ -65,6 +100,7 @@ class PlotterSelection:
     workflow_id: WorkflowId
     output_name: str
     plot_name: str
+    axis_sources: dict[str, DataSourceConfig] | None = None
 
 
 class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
@@ -454,6 +490,12 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         self._radio_group: pn.widgets.RadioButtonGroup | None = None
         self._content_container = pn.Column(sizing_mode='stretch_width')
 
+        # Correlation axis selection state
+        self._selected_axis_sources: dict[str, DataSourceConfig] = {}
+        self._axis_selectors_container = pn.Column(sizing_mode='stretch_width')
+        self._axis_selectors: dict[str, pn.widgets.Select] = {}
+        self._available_timeseries: list[tuple[WorkflowId, str, str]] | None = None
+
     @property
     def name(self) -> str:
         """Display name for this step."""
@@ -465,17 +507,41 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         return "Choose the type of plot you want to create."
 
     def is_valid(self) -> bool:
-        """Step is valid when a plotter has been selected."""
-        return self._selected_plot_name is not None
+        """Step is valid when a plotter has been selected.
+
+        For correlation histogram plotters, also requires axis selection.
+        """
+        if self._selected_plot_name is None:
+            return False
+        # For correlation histograms, require axis selection
+        if self._selected_plot_name in CORRELATION_HISTOGRAM_PLOTTERS:
+            required_roles = self._get_required_axis_roles()
+            return all(role in self._selected_axis_sources for role in required_roles)
+        return True
+
+    def _get_required_axis_roles(self) -> list[str]:
+        """Get the required axis roles for the selected plotter."""
+        if self._selected_plot_name == 'correlation_histogram_1d':
+            return [X_AXIS]
+        elif self._selected_plot_name == 'correlation_histogram_2d':
+            return [X_AXIS, Y_AXIS]
+        return []
 
     def commit(self) -> PlotterSelection | None:
         """Commit the workflow, output, and selected plotter."""
         if self._output_selection is None or self._selected_plot_name is None:
             return None
+        # Include axis sources for correlation histogram plotters
+        axis_sources = (
+            self._selected_axis_sources.copy()
+            if self._selected_plot_name in CORRELATION_HISTOGRAM_PLOTTERS
+            else None
+        )
         return PlotterSelection(
             workflow_id=self._output_selection.workflow_id,
             output_name=self._output_selection.output_name,
             plot_name=self._selected_plot_name,
+            axis_sources=axis_sources,
         )
 
     def render_content(self) -> pn.Column:
@@ -585,7 +651,10 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         # Initialize with the selected value
         if initial_value is not None:
             self._selected_plot_name = initial_value
-            self._notify_ready_changed(True)
+            # Show axis selection for correlation histogram plotters
+            if initial_value in CORRELATION_HISTOGRAM_PLOTTERS:
+                self._update_axis_selection()
+            self._notify_ready_changed(self.is_valid())
 
     def _make_unique_title_mapping(
         self, available_plots: dict[str, PlotterSpec]
@@ -612,10 +681,125 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         """Handle plotter selection change."""
         if event.new is not None:
             self._selected_plot_name = event.new
-            self._notify_ready_changed(True)
+            # Show axis selection for correlation histogram plotters
+            if self._selected_plot_name in CORRELATION_HISTOGRAM_PLOTTERS:
+                self._update_axis_selection()
+            else:
+                self._hide_axis_selection()
+            self._notify_ready_changed(self.is_valid())
         else:
             self._selected_plot_name = None
+            self._hide_axis_selection()
             self._notify_ready_changed(False)
+
+    def _get_available_timeseries(self) -> list[tuple[WorkflowId, str, str]]:
+        """Get available timeseries outputs from workflow registry (cached)."""
+        if self._available_timeseries is None:
+            self._available_timeseries = find_timeseries_outputs(
+                self._workflow_registry
+            )
+        return self._available_timeseries
+
+    def _update_axis_selection(self) -> None:
+        """Create/update axis selection dropdowns for correlation histograms."""
+        self._axis_selectors_container.clear()
+        self._axis_selectors.clear()
+        self._selected_axis_sources.clear()
+
+        required_roles = self._get_required_axis_roles()
+        if not required_roles:
+            return
+
+        available_timeseries = self._get_available_timeseries()
+        if not available_timeseries:
+            self._axis_selectors_container.append(
+                pn.pane.Markdown("*No timeseries available for correlation.*")
+            )
+            return
+
+        # Build options: display name -> (workflow_id, source_name, output_name)
+        options: dict[str, tuple[WorkflowId, str, str]] = {}
+        for workflow_id, source_name, output_name in available_timeseries:
+            # Get human-readable title from workflow spec
+            spec = self._workflow_registry.get(workflow_id)
+            workflow_title = spec.title if spec else workflow_id.name
+            display_name = f"{workflow_title}: {source_name}"
+            if output_name != 'delta':  # Only show output name if not the default
+                display_name = f"{display_name} ({output_name})"
+            options[display_name] = (workflow_id, source_name, output_name)
+
+        # Map roles to display labels
+        role_labels = {X_AXIS: 'X-Axis', Y_AXIS: 'Y-Axis'}
+        if len(required_roles) == 1:
+            role_labels[X_AXIS] = 'Correlation Axis'
+
+        # Get initial axis sources from edit mode config (if any)
+        initial_axis_sources: dict[str, DataSourceConfig] = {}
+        if self._initial_config is not None:
+            for role in [X_AXIS, Y_AXIS]:
+                if role in self._initial_config.data_sources:
+                    initial_axis_sources[role] = self._initial_config.data_sources[role]
+
+        for role in required_roles:
+            label = role_labels.get(role, role)
+            # Find initial value for this axis from edit mode config
+            initial_value = None
+            if role in initial_axis_sources:
+                initial_ds = initial_axis_sources[role]
+                # Find matching option in dropdown
+                for wf_id, src_name, out_name in options.values():
+                    if (
+                        wf_id == initial_ds.workflow_id
+                        and src_name in initial_ds.source_names
+                        and out_name == initial_ds.output_name
+                    ):
+                        initial_value = (wf_id, src_name, out_name)
+                        break
+
+            selector = pn.widgets.Select(
+                name=f'{label} (correlate against)',
+                options={'Select...': None, **options},
+                value=initial_value,
+                sizing_mode='stretch_width',
+            )
+            selector.param.watch(
+                lambda event, r=role: self._on_axis_selection_change(event, r), 'value'
+            )
+            self._axis_selectors[role] = selector
+            self._axis_selectors_container.append(selector)
+
+            # If we have an initial value, add it to selected axes
+            if initial_value is not None:
+                workflow_id, source_name, output_name = initial_value
+                self._selected_axis_sources[role] = DataSourceConfig(
+                    workflow_id=workflow_id,
+                    source_names=[source_name],
+                    output_name=output_name,
+                )
+
+        # Add the container to the content if not already there
+        if self._axis_selectors_container not in self._content_container:
+            self._content_container.append(self._axis_selectors_container)
+
+    def _hide_axis_selection(self) -> None:
+        """Hide axis selection dropdowns."""
+        self._axis_selectors_container.clear()
+        self._axis_selectors.clear()
+        self._selected_axis_sources.clear()
+
+    def _on_axis_selection_change(self, event, role: str) -> None:
+        """Handle axis selection change."""
+        value = event.new
+        if value is not None and isinstance(value, tuple):
+            workflow_id, source_name, output_name = value
+            self._selected_axis_sources[role] = DataSourceConfig(
+                workflow_id=workflow_id,
+                source_names=[source_name],
+                output_name=output_name,
+            )
+        elif role in self._selected_axis_sources:
+            del self._selected_axis_sources[role]
+        self._notify_ready_changed(self.is_valid())
 
 
 class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]):
@@ -710,10 +894,17 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             self._plotter_selection = input_data
         elif self._initial_config is not None:
             # Fall back to initial config when jumping to this step
+            # Extract axis sources directly from the data_sources dict
+            axis_sources = {
+                role: ds
+                for role, ds in self._initial_config.data_sources.items()
+                if role in (X_AXIS, Y_AXIS)
+            }
             self._plotter_selection = PlotterSelection(
                 workflow_id=self._initial_config.workflow_id,
                 output_name=self._initial_config.output_name,
                 plot_name=self._initial_config.plot_name,
+                axis_sources=axis_sources if axis_sources else None,
             )
 
         if self._plotter_selection is None:
@@ -777,6 +968,21 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
                 ),
             )
             initial_source_names = self._initial_config.source_names
+        elif (
+            self._plotter_selection.plot_name in CORRELATION_HISTOGRAM_PLOTTERS
+            and self._plotter_selection.axis_sources
+        ):
+            # For new correlation histograms, pre-populate axis source names
+            from ess.livedata.dashboard.configuration_adapter import ConfigurationState
+
+            axis_sources = self._plotter_selection.axis_sources
+            bins_params: dict[str, str] = {}
+            if X_AXIS in axis_sources and axis_sources[X_AXIS].source_names:
+                bins_params['x_axis_source'] = axis_sources[X_AXIS].source_names[0]
+            if Y_AXIS in axis_sources and axis_sources[Y_AXIS].source_names:
+                bins_params['y_axis_source'] = axis_sources[Y_AXIS].source_names[0]
+            if bins_params:
+                config_state = ConfigurationState(params={'bins': bins_params})
 
         config_adapter = PlotConfigurationAdapter(
             plot_spec=plot_spec,
@@ -796,18 +1002,33 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         self, selected_sources: list[str], params: pydantic.BaseModel | dict[str, Any]
     ) -> None:
         """Callback from adapter - store result for commit() to return."""
-        from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig
-
         if self._plotter_selection is None:
             return
-        # Create PlotConfig with data_sources list (single data source)
-        data_source = DataSourceConfig(
+
+        # Create primary data source
+        primary_source = DataSourceConfig(
             workflow_id=self._plotter_selection.workflow_id,
             source_names=selected_sources,
             output_name=self._plotter_selection.output_name,
         )
+
+        # Build data_sources dict with primary and optional axis sources
+        data_sources: dict[str, DataSourceConfig] = {PRIMARY: primary_source}
+
+        # Get axis sources for correlation histograms
+        axis_sources = self._plotter_selection.axis_sources or {}
+
+        # For correlation histograms, add axis sources and inject names into params
+        if (
+            self._plotter_selection.plot_name in CORRELATION_HISTOGRAM_PLOTTERS
+            and axis_sources
+        ):
+            data_sources.update(axis_sources)
+            if isinstance(params, pydantic.BaseModel):
+                params = _inject_axis_source_names(params, axis_sources)
+
         self._last_config_result = PlotConfig(
-            data_sources=[data_source],
+            data_sources=data_sources,
             plot_name=self._plotter_selection.plot_name,
             params=params,
         )

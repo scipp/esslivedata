@@ -4,72 +4,75 @@
 Utilities for connecting subscribers to :py:class:`DataService`
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from typing import Any, Generic, TypeVar
 
 from ess.livedata.config.workflow_spec import ResultKey
 
 from .data_service import DataService
-from .data_subscriber import DataSubscriber, MergingStreamAssembler, Pipe
-from .extractors import UpdateExtractor
+from .data_subscriber import DataSubscriber, Pipe
 
 P = TypeVar('P', bound=Pipe)
 
 
 class StreamManager(Generic[P]):
-    """Base class for managing data streams."""
+    """Manages data streams connecting DataService to plotting pipes."""
 
     def __init__(
         self,
         *,
         data_service: DataService,
-        pipe_factory: Callable[[dict[ResultKey, Any]], P],
+        pipe_factory: Callable[[Any], P],
     ):
         self.data_service = data_service
         self._pipe_factory = pipe_factory
 
-    def make_merging_stream(
+    def make_stream(
         self,
-        keys: Sequence[ResultKey] | dict[ResultKey, UpdateExtractor],
-        assembler_factory: Callable[[set[ResultKey]], Any] = MergingStreamAssembler,
+        keys_by_role: dict[str, list[ResultKey]],
         on_first_data: Callable[[P], None] | None = None,
+        extractors: dict[ResultKey, Any] | None = None,
     ) -> P:
         """
-        Create a merging stream for the given result keys.
+        Create a stream for the given result keys organized by role.
 
         The pipe is created lazily on first trigger with correctly extracted data.
+        Assembly format depends on role count:
+        - Single role: flat dict[ResultKey, data] (standard plotters)
+        - Multiple roles: dict[str, dict[ResultKey, data]] (correlation plotters)
 
         Parameters
         ----------
-        keys:
-            Either a sequence of result keys (uses LatestValueExtractor for all)
-            or a dict mapping keys to their specific UpdateExtractor instances.
-        assembler_factory:
-            Optional callable that creates an assembler from a set of keys.
-            Use functools.partial to bind additional arguments (e.g., filter_fn).
-        on_first_data:
+        keys_by_role
+            Dict mapping role names to lists of ResultKeys. For standard plots,
+            this is {"primary": [keys...]}. For correlation plots, includes
+            additional roles like "x_axis", "y_axis".
+        on_first_data
             Optional callback invoked when first data arrives with the created pipe.
-            Called after pipe creation with non-empty data.
+            Called when at least one key from each role has data.
+        extractors
+            Optional dict mapping keys to UpdateExtractor instances. If not
+            provided, uses LatestValueExtractor for all keys.
 
         Returns
         -------
         :
-            A pipe that will receive merged data updates for the given keys.
+            A pipe that will receive assembled data updates.
         """
         from .extractors import LatestValueExtractor
 
-        if isinstance(keys, dict):
-            # Dict provided: keys are dict keys, extractors are dict values
-            keys_set = set(keys.keys())
-            extractors = keys
-        else:
-            # Sequence provided: use default LatestValueExtractor for all keys
-            keys_set = set(keys)
-            extractors = {key: LatestValueExtractor() for key in keys_set}
+        # Flatten keys
+        all_keys = [key for keys in keys_by_role.values() for key in keys]
 
-        assembler = assembler_factory(keys_set)
+        # Use provided extractors or create default
+        if extractors is None:
+            extractors = {key: LatestValueExtractor() for key in all_keys}
+
         subscriber = DataSubscriber(
-            assembler, self._pipe_factory, extractors, on_first_data
+            keys_by_role=keys_by_role,
+            pipe_factory=self._pipe_factory,
+            extractors=extractors,
+            on_first_data=on_first_data,
         )
         self.data_service.register_subscriber(subscriber)
         return subscriber.pipe

@@ -20,7 +20,6 @@ from ess.livedata.config.workflow_spec import (
 )
 
 from .configuration_adapter import ConfigurationState
-from .correlation_histogram import CorrelationHistogramController, make_workflow_spec
 from .data_service import DataService
 from .job_orchestrator import JobOrchestrator
 from .workflow_configuration_adapter import WorkflowConfigurationAdapter
@@ -54,7 +53,6 @@ class WorkflowController:
         job_orchestrator: JobOrchestrator,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         data_service: DataService[ResultKey, object] | None = None,
-        correlation_histogram_controller: CorrelationHistogramController | None = None,
         instrument_config: Instrument | None = None,
     ) -> None:
         """
@@ -68,8 +66,6 @@ class WorkflowController:
             Registry of available workflows and their specifications.
         data_service
             Optional data service for cleaning up workflow data keys.
-        correlation_histogram_controller
-            Optional controller for correlation histogram workflows.
         instrument_config
             Optional instrument configuration for source metadata lookup.
         """
@@ -79,13 +75,6 @@ class WorkflowController:
 
         # Extend registry with correlation histogram specs if controller provided
         self._workflow_registry = dict(workflow_registry)
-        self._correlation_histogram_controller = correlation_histogram_controller
-        if correlation_histogram_controller is not None:
-            correlation_1d_spec = make_workflow_spec(1)
-            correlation_2d_spec = make_workflow_spec(2)
-            self._workflow_registry[correlation_1d_spec.get_id()] = correlation_1d_spec
-            self._workflow_registry[correlation_2d_spec.get_id()] = correlation_2d_spec
-
         self._data_service = data_service
 
     def start_workflow(
@@ -162,18 +151,6 @@ class WorkflowController:
         if spec is None:
             raise ValueError(f'Workflow {workflow_id} not found')
 
-        # Handle correlation histogram workflows specially
-        if (
-            self._correlation_histogram_controller is not None
-            and spec.namespace == 'correlation'
-            and spec.name.startswith('correlation_histogram_')
-        ):
-            if spec.name == 'correlation_histogram_1d':
-                return self._correlation_histogram_controller.create_1d_config()
-            elif spec.name == 'correlation_histogram_2d':
-                return self._correlation_histogram_controller.create_2d_config()
-
-        # Handle regular workflows
         persistent_config = self.get_workflow_config(workflow_id)
 
         # Determine initial source names from staged config if available

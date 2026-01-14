@@ -7,6 +7,7 @@ import pytest
 
 from ess.livedata.config.grid_template import GridSpec, load_raw_grid_templates
 from ess.livedata.config.workflow_spec import WorkflowId
+from ess.livedata.dashboard.data_roles import PRIMARY
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
     DataSourceConfig,
@@ -28,13 +29,13 @@ def _make_plot_cell(
 ) -> PlotCell:
     """Create a PlotCell with the given geometry."""
     config = PlotConfig(
-        data_sources=[
-            DataSourceConfig(
+        data_sources={
+            PRIMARY: DataSourceConfig(
                 workflow_id=WorkflowId.from_string('test/ns/wf/1'),
                 output_name='output',
                 source_names=['source1'],
             )
-        ],
+        },
         plot_name='lines',
         params=EmptyParams(),
     )

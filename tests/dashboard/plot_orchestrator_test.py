@@ -156,18 +156,20 @@ class FakePlottingController:
         """Return all recorded pipeline setup calls."""
         return self._pipeline_setups.copy()
 
-    def setup_data_pipeline(
+    def setup_pipeline(
         self,
-        job_number,
-        workflow_id,
-        source_names: list[str],
-        output_name: str | None,
+        keys_by_role,
         plot_name: str,
-        params: dict,
+        params,
         on_first_data,
     ):
-        """Set up data pipeline using real StreamManager."""
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
+        """Set up data pipeline using real StreamManager (unified interface)."""
+        from ess.livedata.dashboard.data_roles import PRIMARY
+
+        # Extract source_names and output_name from primary keys for assertions
+        primary_keys = keys_by_role.get(PRIMARY, [])
+        source_names = [key.job_id.source_name for key in primary_keys]
+        output_name = primary_keys[0].output_name if primary_keys else None
 
         # Record the call for assertions
         self._pipeline_setups.append(
@@ -178,18 +180,11 @@ class FakePlottingController:
             }
         )
 
-        # Build result keys (same as real PlottingController)
-        keys = [
-            ResultKey(
-                workflow_id=workflow_id,
-                job_id=JobId(job_number=job_number, source_name=source_name),
-                output_name=output_name,
-            )
-            for source_name in source_names
-        ]
-
         # Use real StreamManager for subscription (avoids duplicating logic)
-        self._stream_manager.make_merging_stream(keys, on_first_data=on_first_data)
+        self._stream_manager.make_stream(
+            keys_by_role,
+            on_first_data=on_first_data,
+        )
 
     def create_plot_from_pipeline(
         self,
@@ -224,6 +219,8 @@ def make_plot_config(
     params=None,
 ):
     """Helper to create a PlotConfig with a single data source."""
+    from ess.livedata.dashboard.data_roles import PRIMARY
+
     if source_names is None:
         source_names = ['source1', 'source2']
     if params is None:
@@ -234,7 +231,7 @@ def make_plot_config(
         output_name=output_name,
     )
     return PlotConfig(
-        data_sources=[data_source],
+        data_sources={PRIMARY: data_source},
         plot_name=plot_name,
         params=params,
     )
@@ -1790,13 +1787,15 @@ class TestPlotConfigIsStatic:
         self, workflow_id
     ):
         """Static overlay marker: single data source with empty source_names."""
+        from ess.livedata.dashboard.data_roles import PRIMARY
+
         data_source = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=[],  # Empty source_names = static
             output_name='My Custom Overlay',
         )
         config = PlotConfig(
-            data_sources=[data_source],
+            data_sources={PRIMARY: data_source},
             plot_name='rectangles',
             params=FakePlotParams(),
         )
@@ -1806,22 +1805,24 @@ class TestPlotConfigIsStatic:
         self, workflow_id
     ):
         """Normal plot: single data source with actual source_names."""
+        from ess.livedata.dashboard.data_roles import PRIMARY
+
         data_source = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=['source1'],
             output_name='result',
         )
         config = PlotConfig(
-            data_sources=[data_source],
+            data_sources={PRIMARY: data_source},
             plot_name='test_plot',
             params=FakePlotParams(),
         )
         assert config.is_static() is False
 
     def test_is_static_returns_false_for_empty_data_sources(self, workflow_id):
-        """Edge case: empty data_sources list is not static (invalid config)."""
+        """Edge case: empty data_sources dict is not static (invalid config)."""
         config = PlotConfig(
-            data_sources=[],
+            data_sources={},
             plot_name='test_plot',
             params=FakePlotParams(),
         )
@@ -1829,6 +1830,8 @@ class TestPlotConfigIsStatic:
 
     def test_is_static_returns_false_for_multiple_data_sources(self, workflow_id):
         """Future correlation histograms: multiple data sources are not static."""
+        from ess.livedata.dashboard.data_roles import PRIMARY, X_AXIS
+
         data_source1 = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=[],
@@ -1840,7 +1843,7 @@ class TestPlotConfigIsStatic:
             output_name='output2',
         )
         config = PlotConfig(
-            data_sources=[data_source1, data_source2],
+            data_sources={PRIMARY: data_source1, X_AXIS: data_source2},
             plot_name='test_plot',
             params=FakePlotParams(),
         )
@@ -1848,13 +1851,15 @@ class TestPlotConfigIsStatic:
 
     def test_static_config_can_access_output_name(self, workflow_id):
         """Static overlay's output_name holds the user's custom name."""
+        from ess.livedata.dashboard.data_roles import PRIMARY
+
         data_source = DataSourceConfig(
             workflow_id=workflow_id,
             source_names=[],
             output_name='My Rectangles',
         )
         config = PlotConfig(
-            data_sources=[data_source],
+            data_sources={PRIMARY: data_source},
             plot_name='rectangles',
             params=FakePlotParams(),
         )

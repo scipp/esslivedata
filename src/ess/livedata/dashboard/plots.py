@@ -369,6 +369,8 @@ class LinePlotter(Plotter):
         self,
         scale_opts: PlotScaleParams,
         tick_params: TickParams | None = None,
+        *,
+        as_histogram: bool = False,
         **kwargs,
     ):
         """
@@ -380,10 +382,14 @@ class LinePlotter(Plotter):
             Scaling options for axes.
         tick_params:
             Tick configuration parameters.
+        as_histogram:
+            If True, preserve bin edges and render as step-style histogram.
+            If False (default), convert bin edges to midpoints for smooth curves.
         **kwargs:
             Additional keyword arguments passed to the base class.
         """
         super().__init__(**kwargs)
+        self._as_histogram = as_histogram
         self._base_opts: dict[str, Any] = {
             'logx': True if scale_opts.x_scale == PlotScale.log else False,
             'logy': True if scale_opts.y_scale == PlotScale.log else False,
@@ -393,21 +399,29 @@ class LinePlotter(Plotter):
     @classmethod
     def from_params(cls, params: PlotParams1d):
         """Create LinePlotter from PlotParams1d."""
+        from .plot_params import Curve1dRenderMode
+
         return cls(
             grow_threshold=0.1,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
+            as_histogram=params.curve.mode == Curve1dRenderMode.histogram,
         )
 
-    def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Curve:
-        """Create a line plot from a scipp DataArray."""
-        da = self._convert_bin_edges_to_midpoints(data)
+    def plot(
+        self, data: sc.DataArray, data_key: ResultKey, **kwargs
+    ) -> hv.Curve | hv.Histogram:
+        """Create a line or histogram plot from a scipp DataArray."""
+        if self._as_histogram:
+            da = data
+        else:
+            da = self._convert_bin_edges_to_midpoints(data)
         framewise = self._update_autoscaler_and_get_framewise(da, data_key)
 
-        curve = to_holoviews(da)
-        return curve.opts(framewise=framewise, **self._base_opts)
+        plot = to_holoviews(da)
+        return plot.opts(framewise=framewise, **self._base_opts)
 
 
 class ImagePlotter(Plotter):
