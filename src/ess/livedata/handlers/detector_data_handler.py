@@ -201,16 +201,28 @@ class DetectorHandlerFactory(
     JobBasedPreprocessorFactoryBase[DetectorEvents, sc.DataArray]
 ):
     """
-    Factory for detector data handlers (legacy mode).
-
-    Uses GroupIntoPixels preprocessor which groups events by detector pixel.
-    This is used with the legacy DetectorView workflow.
+    Factory for detector data handlers.
 
     Handlers are created based on the instrument name in the message key which should
     identify the detector name. Depending on the configured detector views a NeXus file
     with geometry information may be required to setup the view. Currently the NeXus
     files are always obtained via Pooch.
+
+    Parameters
+    ----------
+    instrument:
+        The instrument configuration.
+    ungrouped_events:
+        If True, use ToNXevent_data preprocessor which outputs ungrouped events
+        in NeXusData format (for Sciline workflows). If False (default), use
+        GroupIntoPixels which groups events by detector pixel (for legacy workflows).
     """
+
+    def __init__(
+        self, *, instrument: Instrument, ungrouped_events: bool = False
+    ) -> None:
+        super().__init__(instrument=instrument)
+        self._ungrouped_events = ungrouped_events
 
     def make_preprocessor(self, key: StreamId) -> Accumulator | None:
         match key.kind:
@@ -218,39 +230,10 @@ class DetectorHandlerFactory(
                 # Skip detectors that are not configured
                 if key.name not in self._instrument.detector_names:
                     return None
+                if self._ungrouped_events:
+                    return ToNXevent_data()
                 detector_number = self._instrument.get_detector_number(key.name)
                 return GroupIntoPixels(detector_number=detector_number)
-            case StreamKind.AREA_DETECTOR:
-                return Cumulative(clear_on_get=True)
-            case StreamKind.LIVEDATA_ROI:
-                return LatestValueHandler()
-            case _:
-                return None
-
-
-class ScilineDetectorHandlerFactory(
-    JobBasedPreprocessorFactoryBase[DetectorEvents, sc.DataArray]
-):
-    """
-    Factory for detector data handlers (Sciline workflow mode).
-
-    Uses ToNXevent_data preprocessor which outputs ungrouped events in NeXusData format.
-    This is used with the new Sciline-based detector view workflow which groups events
-    internally via GenericNeXusWorkflow.
-
-    Handlers are created based on the instrument name in the message key which should
-    identify the detector name. Depending on the configured detector views a NeXus file
-    with geometry information may be required to setup the view. Currently the NeXus
-    files are always obtained via Pooch.
-    """
-
-    def make_preprocessor(self, key: StreamId) -> Accumulator | None:
-        match key.kind:
-            case StreamKind.DETECTOR_EVENTS:
-                # Skip detectors that are not configured
-                if key.name not in self._instrument.detector_names:
-                    return None
-                return ToNXevent_data()
             case StreamKind.AREA_DETECTOR:
                 return Cumulative(clear_on_get=True)
             case StreamKind.LIVEDATA_ROI:
