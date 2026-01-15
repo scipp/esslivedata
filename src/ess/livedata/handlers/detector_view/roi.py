@@ -15,17 +15,16 @@ import scipp as sc
 from ess.livedata.config import models
 
 from .types import (
-    CumulativeHistogram,
-    CumulativeROISpectra,
-    CurrentROISpectra,
+    AccumulationMode,
+    Histogram3D,
     ROIPolygonMasks,
     ROIPolygonReadback,
     ROIPolygonRequest,
     ROIRectangleBounds,
     ROIRectangleReadback,
     ROIRectangleRequest,
+    ROISpectra,
     ScreenMetadata,
-    WindowHistogram,
 )
 
 
@@ -293,18 +292,23 @@ def _extract_roi_spectra_precomputed(
     return stacked
 
 
-def cumulative_roi_spectra(
-    data_3d: CumulativeHistogram,
+def roi_spectra(
+    data_3d: Histogram3D[AccumulationMode],
     rectangle_bounds: ROIRectangleBounds,
     polygon_masks: ROIPolygonMasks,
-) -> CumulativeROISpectra:
+) -> ROISpectra[AccumulationMode]:
     """
-    Extract ROI spectra from cumulative histogram using precomputed ROI data.
+    Extract ROI spectra from histogram using precomputed ROI data.
+
+    This generic provider works for both accumulation modes:
+
+    - ROISpectra[Cumulative]: Extracted from cumulative histogram
+    - ROISpectra[Window]: Extracted from current window histogram
 
     Parameters
     ----------
     data_3d:
-        Cumulative 3D histogram (y, x, tof).
+        3D histogram (y, x, tof).
     rectangle_bounds:
         Precomputed bounds for rectangle ROIs.
     polygon_masks:
@@ -315,34 +319,7 @@ def cumulative_roi_spectra(
     :
         ROI spectra with dims (roi, tof).
     """
-    return CumulativeROISpectra(
-        _extract_roi_spectra_precomputed(data_3d, rectangle_bounds, polygon_masks)
-    )
-
-
-def current_roi_spectra(
-    data_3d: WindowHistogram,
-    rectangle_bounds: ROIRectangleBounds,
-    polygon_masks: ROIPolygonMasks,
-) -> CurrentROISpectra:
-    """
-    Extract ROI spectra from current window histogram using precomputed ROI data.
-
-    Parameters
-    ----------
-    data_3d:
-        Current window 3D histogram (y, x, tof).
-    rectangle_bounds:
-        Precomputed bounds for rectangle ROIs.
-    polygon_masks:
-        Precomputed masks for polygon ROIs.
-
-    Returns
-    -------
-    :
-        ROI spectra with dims (roi, tof).
-    """
-    return CurrentROISpectra(
+    return ROISpectra[AccumulationMode](
         _extract_roi_spectra_precomputed(data_3d, rectangle_bounds, polygon_masks)
     )
 

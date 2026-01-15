@@ -5,24 +5,23 @@
 import scipp as sc
 
 from ess.livedata.handlers.detector_view import (
-    CumulativeHistogram,
+    Cumulative,
     DetectorHistogram3D,
+    Histogram3D,
     NoCopyAccumulator,
     NoCopyWindowAccumulator,
     PixelWeights,
     UsePixelWeighting,
-    WindowHistogram,
+    Window,
     add_logical_projection,
     compute_detector_histogram_3d,
     counts_in_range,
     counts_total,
     create_accumulators,
     create_base_workflow,
-    cumulative_detector_image,
-    cumulative_histogram,
-    current_detector_image,
+    detector_image,
+    histogram_3d,
     make_logical_projector,
-    window_histogram,
 )
 
 from .utils import (
@@ -88,11 +87,11 @@ class TestCreateAccumulators:
         """Test that correct accumulator types are created."""
         accumulators = create_accumulators()
 
-        assert CumulativeHistogram in accumulators
-        assert WindowHistogram in accumulators
+        assert Histogram3D[Cumulative] in accumulators
+        assert Histogram3D[Window] in accumulators
         # Uses NoCopy variants for performance (~2x faster with large histograms)
-        assert isinstance(accumulators[CumulativeHistogram], NoCopyAccumulator)
-        assert isinstance(accumulators[WindowHistogram], NoCopyWindowAccumulator)
+        assert isinstance(accumulators[Histogram3D[Cumulative]], NoCopyAccumulator)
+        assert isinstance(accumulators[Histogram3D[Window]], NoCopyWindowAccumulator)
 
 
 class TestComputeDetectorHistogram3D:
@@ -162,26 +161,16 @@ class TestComputeDetectorHistogram3D:
         assert sc.allclose(result.coords['time_of_arrival'], bins)
 
 
-class TestIdentityProviders:
-    """Tests for cumulative_histogram and window_histogram identity providers."""
+class TestHistogram3DProvider:
+    """Tests for the histogram_3d generic provider."""
 
-    def test_cumulative_histogram_identity(self):
-        """Test that cumulative_histogram returns input unchanged."""
+    def test_histogram_3d_identity(self):
+        """Test that histogram_3d returns input unchanged."""
         data_3d = sc.DataArray(
             sc.ones(dims=['y', 'x', 'tof'], shape=[4, 4, 10], unit='counts')
         )
 
-        result = cumulative_histogram(DetectorHistogram3D(data_3d))
-
-        assert sc.identical(result, data_3d)
-
-    def test_window_histogram_identity(self):
-        """Test that window_histogram returns input unchanged."""
-        data_3d = sc.DataArray(
-            sc.ones(dims=['y', 'x', 'tof'], shape=[4, 4, 10], unit='counts')
-        )
-
-        result = window_histogram(DetectorHistogram3D(data_3d))
+        result = histogram_3d(DetectorHistogram3D(data_3d))
 
         assert sc.identical(result, data_3d)
 
@@ -275,10 +264,10 @@ class TestLogicalProjector:
 
 
 class TestDetectorImageProviders:
-    """Tests for detector image provider functions."""
+    """Tests for detector_image generic provider function."""
 
-    def test_cumulative_detector_image_sums_over_spectral_dim(self):
-        """Test that cumulative_detector_image produces 2D output."""
+    def test_detector_image_sums_over_spectral_dim(self):
+        """Test that detector_image produces 2D output."""
         # Create 3D histogram - spectral dim is last
         data_3d = sc.DataArray(
             sc.ones(
@@ -287,8 +276,8 @@ class TestDetectorImageProviders:
         )
         weights = PixelWeights(sc.ones(dims=['y', 'x'], shape=[4, 4], dtype='float32'))
 
-        result = cumulative_detector_image(
-            data_3d=CumulativeHistogram(data_3d),
+        result = detector_image(
+            data_3d=Histogram3D[Cumulative](data_3d),
             histogram_slice=None,
             weights=weights,
             use_weighting=UsePixelWeighting(False),
@@ -299,25 +288,6 @@ class TestDetectorImageProviders:
         # Each pixel should have sum of 10 spectral bins
         expected = sc.full(dims=['y', 'x'], shape=[4, 4], value=10.0, unit='counts')
         assert sc.allclose(result.data, expected)
-
-    def test_current_detector_image_sums_over_spectral_dim(self):
-        """Test that current_detector_image produces 2D output."""
-        data_3d = sc.DataArray(
-            sc.ones(
-                dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
-            )
-        )
-        weights = PixelWeights(sc.ones(dims=['y', 'x'], shape=[4, 4], dtype='float32'))
-
-        result = current_detector_image(
-            data_3d=WindowHistogram(data_3d),
-            histogram_slice=None,
-            weights=weights,
-            use_weighting=UsePixelWeighting(False),
-        )
-
-        assert result.dims == ('y', 'x')
-        assert result.sizes == {'y': 4, 'x': 4}
 
     def test_detector_image_with_histogram_slice(self):
         """Test that histogram slicing is applied correctly."""
@@ -334,8 +304,8 @@ class TestDetectorImageProviders:
         # Slice to first half
         histogram_slice = (sc.scalar(0, unit='ns'), sc.scalar(50000, unit='ns'))
 
-        result = cumulative_detector_image(
-            data_3d=CumulativeHistogram(data_3d),
+        result = detector_image(
+            data_3d=Histogram3D[Window](data_3d),
             histogram_slice=histogram_slice,
             weights=weights,
             use_weighting=UsePixelWeighting(False),
@@ -356,7 +326,7 @@ class TestCountProviders:
             )
         )
 
-        result = counts_total(data_3d=WindowHistogram(data_3d))
+        result = counts_total(data_3d=Histogram3D[Window](data_3d))
 
         expected = sc.scalar(4 * 4 * 10, unit='counts', dtype='float64')
         assert sc.identical(result.data, expected)
@@ -369,7 +339,9 @@ class TestCountProviders:
             )
         )
 
-        result = counts_in_range(data_3d=WindowHistogram(data_3d), histogram_slice=None)
+        result = counts_in_range(
+            data_3d=Histogram3D[Window](data_3d), histogram_slice=None
+        )
 
         expected = sc.scalar(4 * 4 * 10, unit='counts', dtype='float64')
         assert sc.identical(result.data, expected)
@@ -388,7 +360,7 @@ class TestCountProviders:
         histogram_slice = (sc.scalar(0, unit='ns'), sc.scalar(50000, unit='ns'))
 
         result = counts_in_range(
-            data_3d=WindowHistogram(data_3d), histogram_slice=histogram_slice
+            data_3d=Histogram3D[Window](data_3d), histogram_slice=histogram_slice
         )
 
         # Should count approximately half the bins

@@ -15,19 +15,19 @@ from ess.reduce.nexus.types import EmptyDetector, RawDetector, SampleRun
 
 from .projectors import GeometricProjector, LogicalProjector, Projector
 from .types import (
+    AccumulationMode,
     CountsInTOARange,
     CountsTotal,
-    CumulativeDetectorImage,
-    CumulativeHistogram,
-    CurrentDetectorImage,
     DetectorHistogram3D,
+    DetectorImage,
     EventCoordName,
+    Histogram3D,
     HistogramBins,
     HistogramSlice,
     PixelWeights,
     ScreenBinnedEvents,
     UsePixelWeighting,
-    WindowHistogram,
+    Window,
 )
 
 
@@ -126,34 +126,34 @@ def compute_detector_histogram_3d(
     return DetectorHistogram3D(histogrammed)
 
 
-def cumulative_histogram(data: DetectorHistogram3D) -> CumulativeHistogram:
+def histogram_3d(data: DetectorHistogram3D) -> Histogram3D[AccumulationMode]:
     """
-    Identity transform for cumulative accumulation.
+    Route histogram to accumulation-mode-specific accumulator.
 
-    This allows the histogram to be computed once and accumulated with
-    EternalAccumulator.
+    This generic provider allows the histogram to be computed once and
+    accumulated differently based on the accumulation mode type parameter:
+
+    - Histogram3D[Cumulative]: Uses EternalAccumulator (accumulates forever)
+    - Histogram3D[Window]: Uses NoCopyWindowAccumulator (clears after finalize)
+
+    Sciline instantiates this provider for each concrete type parameter.
     """
-    return CumulativeHistogram(data)
+    return Histogram3D[AccumulationMode](data)
 
 
-def window_histogram(data: DetectorHistogram3D) -> WindowHistogram:
-    """
-    Identity transform for window accumulation.
-
-    This allows the histogram to be computed once and accumulated with
-    NoCopyWindowAccumulator (clears after finalize).
-    """
-    return WindowHistogram(data)
-
-
-def cumulative_detector_image(
-    data_3d: CumulativeHistogram,
+def detector_image(
+    data_3d: Histogram3D[AccumulationMode],
     histogram_slice: HistogramSlice,
     weights: PixelWeights,
     use_weighting: UsePixelWeighting,
-) -> CumulativeDetectorImage:
+) -> DetectorImage[AccumulationMode]:
     """
-    Compute cumulative 2D detector image by summing over spectral dimension.
+    Compute 2D detector image by summing over spectral dimension.
+
+    This generic provider works for both accumulation modes:
+
+    - DetectorImage[Cumulative]: Summed over all accumulated data
+    - DetectorImage[Window]: Current window only (since last finalize)
 
     Parameters
     ----------
@@ -174,38 +174,7 @@ def cumulative_detector_image(
     image = _sum_over_spectral_dim(data_3d, histogram_slice)
     if use_weighting:
         image = image / weights
-    return CumulativeDetectorImage(image)
-
-
-def current_detector_image(
-    data_3d: WindowHistogram,
-    histogram_slice: HistogramSlice,
-    weights: PixelWeights,
-    use_weighting: UsePixelWeighting,
-) -> CurrentDetectorImage:
-    """
-    Compute current 2D detector image by summing over spectral dimension.
-
-    Parameters
-    ----------
-    data_3d:
-        3D histogram (y, x, spectral) for current window.
-    histogram_slice:
-        Optional (low, high) range for slicing. If None, sum over full range.
-    weights:
-        Pixel weights for normalization.
-    use_weighting:
-        Whether to apply pixel weighting.
-
-    Returns
-    -------
-    :
-        2D detector image (y, x).
-    """
-    image = _sum_over_spectral_dim(data_3d, histogram_slice)
-    if use_weighting:
-        image = image / weights
-    return CurrentDetectorImage(image)
+    return DetectorImage[AccumulationMode](image)
 
 
 def _sum_over_spectral_dim(
@@ -224,7 +193,7 @@ def _sum_over_spectral_dim(
     return sliced.sum(spectral_dim)
 
 
-def counts_total(data_3d: WindowHistogram) -> CountsTotal:
+def counts_total(data_3d: Histogram3D[Window]) -> CountsTotal:
     """
     Compute total event counts in current window.
 
@@ -242,7 +211,7 @@ def counts_total(data_3d: WindowHistogram) -> CountsTotal:
 
 
 def counts_in_range(
-    data_3d: WindowHistogram, histogram_slice: HistogramSlice
+    data_3d: Histogram3D[Window], histogram_slice: HistogramSlice
 ) -> CountsInTOARange:
     """
     Compute event counts within specified range in current window.
