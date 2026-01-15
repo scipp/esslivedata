@@ -14,6 +14,7 @@ from io import StringIO
 import panel as pn
 import yaml
 
+from ...config.grid_template import GridSpec
 from ...config.workflow_spec import WorkflowId, WorkflowSpec
 from ..buttons import ButtonStyles, create_download_button, create_tool_button
 from ..plot_orchestrator import (
@@ -154,10 +155,10 @@ class PlotGridManager:
         self._workflow_registry = workflow_registry
         templates = orchestrator.get_available_templates()
         self._templates = {t.name: t for t in templates}
-        self._selected_template = None
+        self._selected_template: GridSpec | None = None
         # Remember template selection when switching to Upload mode
         self._remembered_template_name: str = _NO_TEMPLATE
-        self._remembered_template_object = None
+        self._remembered_template_object: GridSpec | None = None
 
         # Mode selector (Template or Upload)
         self._mode_selector = pn.widgets.RadioButtonGroup(
