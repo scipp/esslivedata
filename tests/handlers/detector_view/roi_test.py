@@ -358,37 +358,30 @@ class TestMixedROIExtraction:
 class TestEmptyROIRequests:
     """Tests for empty or None ROI requests."""
 
-    def test_no_rois_returns_empty_spectra(self):
-        """Empty ROI requests return empty spectra array."""
+    def test_empty_roi_requests_return_empty_spectra(self):
+        """Empty ROI requests return empty spectra.
+
+        Covers None, empty rectangle, and empty polygon requests.
+        """
         metadata = make_screen_metadata_with_edges()
         histogram = make_uniform_histogram()
 
-        result = extract_roi_spectra(metadata, histogram)
+        # No ROI requests at all
+        result_none = extract_roi_spectra(metadata, histogram)
+        assert result_none.dims == ('roi', 'tof')
+        assert result_none.sizes['roi'] == 0
+        assert result_none.sizes['tof'] == 3
 
-        assert result.dims == ('roi', 'tof')
-        assert result.sizes['roi'] == 0
-        assert result.sizes['tof'] == 3
-
-    def test_empty_rectangle_request(self):
-        """Empty rectangle request is handled correctly."""
-        metadata = make_screen_metadata_with_edges()
-        histogram = make_uniform_histogram()
-
-        empty_request = RectangleROI.to_concatenated_data_array({})
-
-        result = extract_roi_spectra(
-            metadata, histogram, rectangle_request=empty_request
+        # Empty rectangle request
+        empty_rect = RectangleROI.to_concatenated_data_array({})
+        result_rect = extract_roi_spectra(
+            metadata, histogram, rectangle_request=empty_rect
         )
+        assert result_rect.sizes['roi'] == 0
 
-        assert result.sizes['roi'] == 0
-
-    def test_empty_polygon_request(self):
-        """Empty polygon request is handled correctly."""
-        metadata = make_screen_metadata_with_edges()
-        histogram = make_uniform_histogram()
-
-        empty_request = PolygonROI.to_concatenated_data_array({})
-
-        result = extract_roi_spectra(metadata, histogram, polygon_request=empty_request)
-
-        assert result.sizes['roi'] == 0
+        # Empty polygon request
+        empty_poly = PolygonROI.to_concatenated_data_array({})
+        result_poly = extract_roi_spectra(
+            metadata, histogram, polygon_request=empty_poly
+        )
+        assert result_poly.sizes['roi'] == 0

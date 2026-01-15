@@ -196,8 +196,10 @@ class TestWindowOutputs:
 
         return sciline.Pipeline([process_current, process_cumulative])
 
-    def test_window_output_has_time_coords(self, dataarray_workflow):
-        """Test that window outputs have time, start_time, end_time coords."""
+    def test_window_output_has_time_coords_with_correct_values(
+        self, dataarray_workflow
+    ):
+        """Test that window outputs have time coords with correct values."""
         from ess.reduce.streaming import EternalAccumulator
 
         workflow = StreamProcessorWorkflow(
@@ -218,37 +220,14 @@ class TestWindowOutputs:
         )
         result = workflow.finalize()
 
-        # Window output should have time coords
-        assert 'time' in result['current'].coords
-        assert 'start_time' in result['current'].coords
-        assert 'end_time' in result['current'].coords
-
-        # Non-window output should not have time coords
-        assert 'time' not in result['cumulative'].coords
-
-    def test_time_coords_have_correct_values(self, dataarray_workflow):
-        """Test that time coords have correct values from accumulate calls."""
-        from ess.reduce.streaming import EternalAccumulator
-
-        workflow = StreamProcessorWorkflow(
-            dataarray_workflow,
-            dynamic_keys={'input': InputData},
-            target_keys={'current': CurrentOutput},
-            window_outputs=['current'],
-            accumulators={CurrentOutput: EternalAccumulator(preprocess=None)},
-        )
-
-        workflow.accumulate(
-            {'input': sc.DataArray(sc.scalar(1.0))},
-            start_time=1000,
-            end_time=2000,
-        )
-        result = workflow.finalize()
-
+        # Window output should have time coords with correct values
         assert result['current'].coords['time'].value == 1000
         assert result['current'].coords['start_time'].value == 1000
         assert result['current'].coords['end_time'].value == 2000
         assert result['current'].coords['time'].unit == 'ns'
+
+        # Non-window output should not have time coords
+        assert 'time' not in result['cumulative'].coords
 
     def test_time_coord_tracks_first_accumulate(self, dataarray_workflow):
         """Test that start_time uses first accumulate, end_time uses last."""
@@ -280,8 +259,8 @@ class TestWindowOutputs:
         assert result['current'].coords['start_time'].value == 1000
         assert result['current'].coords['end_time'].value == 4000
 
-    def test_time_coords_reset_after_finalize(self, dataarray_workflow):
-        """Test that time tracking resets after finalize."""
+    def test_time_tracking_resets_after_finalize_and_clear(self, dataarray_workflow):
+        """Test that time tracking resets after finalize() and clear()."""
         from ess.reduce.streaming import EternalAccumulator
 
         workflow = StreamProcessorWorkflow(
@@ -301,7 +280,7 @@ class TestWindowOutputs:
         result1 = workflow.finalize()
         assert result1['current'].coords['start_time'].value == 1000
 
-        # Second period - time should reset
+        # After finalize, time should reset
         workflow.accumulate(
             {'input': sc.DataArray(sc.scalar(1.0))},
             start_time=5000,
@@ -310,30 +289,17 @@ class TestWindowOutputs:
         result2 = workflow.finalize()
         assert result2['current'].coords['start_time'].value == 5000
 
-    def test_clear_resets_time_tracking(self, dataarray_workflow):
-        """Test that clear() resets time tracking."""
-        from ess.reduce.streaming import EternalAccumulator
-
-        workflow = StreamProcessorWorkflow(
-            dataarray_workflow,
-            dynamic_keys={'input': InputData},
-            target_keys={'current': CurrentOutput},
-            window_outputs=['current'],
-            accumulators={CurrentOutput: EternalAccumulator(preprocess=None)},
-        )
-
+        # After clear, time should also reset
         workflow.accumulate(
             {'input': sc.DataArray(sc.scalar(1.0))},
-            start_time=1000,
-            end_time=2000,
+            start_time=7000,
+            end_time=8000,
         )
         workflow.clear()
-
-        # After clear, new accumulate should set new start_time
         workflow.accumulate(
             {'input': sc.DataArray(sc.scalar(1.0))},
             start_time=9000,
             end_time=10000,
         )
-        result = workflow.finalize()
-        assert result['current'].coords['start_time'].value == 9000
+        result3 = workflow.finalize()
+        assert result3['current'].coords['start_time'].value == 9000

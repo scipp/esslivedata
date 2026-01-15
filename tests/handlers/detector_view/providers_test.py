@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for Sciline provider functions."""
 
+import pytest
 import scipp as sc
 
 from ess.livedata.handlers.detector_view import (
@@ -53,29 +54,26 @@ class TestNoCopyWindowAccumulator:
 class TestCreateBaseWorkflow:
     """Tests for create_base_workflow function."""
 
-    def test_creates_workflow_with_required_params(self):
-        """Test workflow creation with required parameters."""
+    def test_creates_workflow_with_various_configurations(self):
+        """Test workflow creation with different parameter combinations."""
         bins = sc.linspace('event_time_offset', 0, 100000, 11, unit='ns')
-        wf = create_base_workflow(bins=bins)
-        assert wf is not None
 
-    def test_creates_workflow_with_histogram_slice(self):
-        """Test workflow creation with histogram slice parameter."""
-        bins = sc.linspace('event_time_offset', 0, 100000, 11, unit='ns')
+        # With required params only
+        wf1 = create_base_workflow(bins=bins)
+        assert wf1 is not None
+
+        # With histogram slice
         histogram_slice = (sc.scalar(10000, unit='ns'), sc.scalar(50000, unit='ns'))
-        wf = create_base_workflow(bins=bins, histogram_slice=histogram_slice)
-        assert wf is not None
+        wf2 = create_base_workflow(bins=bins, histogram_slice=histogram_slice)
+        assert wf2 is not None
 
-    def test_creates_workflow_and_add_logical_projection(self):
-        """Test workflow creation with logical projection added separately."""
-        bins = sc.linspace('event_time_offset', 0, 100000, 11, unit='ns')
-
+        # With logical projection added
         def identity(da: sc.DataArray) -> sc.DataArray:
             return da
 
-        wf = create_base_workflow(bins=bins)
-        add_logical_projection(wf, transform=identity)
-        assert wf is not None
+        wf3 = create_base_workflow(bins=bins)
+        add_logical_projection(wf3, transform=identity)
+        assert wf3 is not None
 
 
 class TestComputeDetectorHistogram3D:
@@ -162,44 +160,32 @@ class TestHistogram3DProvider:
 class TestLogicalProjector:
     """Tests for LogicalProjector.project_events() and get_screen_metadata()."""
 
-    def test_get_screen_metadata_returns_all_dims_without_reduction(self):
-        """Test that get_screen_metadata contains all dims when no reduction."""
-        empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
-        transform = make_logical_transform(4, 4)
-
-        projector = make_logical_projector(transform=transform, reduction_dim=None)
-
-        metadata = projector.get_screen_metadata(empty_detector)
-        assert list(metadata.coords.keys()) == ['y', 'x']
-        # Logical projections typically don't have edges
-        assert metadata.coords['y'] is None
-        assert metadata.coords['x'] is None
-        assert metadata.sizes == {'y': 4, 'x': 4}
-
-    def test_get_screen_metadata_excludes_reduced_dims(self):
-        """Test that get_screen_metadata excludes dimensions that will be reduced."""
-        empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
-        transform = make_logical_transform(4, 4)
-
-        projector = make_logical_projector(transform=transform, reduction_dim='y')
-
-        metadata = projector.get_screen_metadata(empty_detector)
-        assert list(metadata.coords.keys()) == ['x']
-        assert 'y' not in metadata.coords
-        assert metadata.sizes == {'x': 4}
-
-    def test_get_screen_metadata_excludes_multiple_reduced_dims(self):
-        """Test that get_screen_metadata excludes multiple reduced dimensions."""
+    @pytest.mark.parametrize(
+        ('reduction_dim', 'expected_coords', 'expected_sizes'),
+        [
+            (None, ['y', 'x'], {'y': 4, 'x': 4}),
+            ('y', ['x'], {'x': 4}),
+            (['y', 'x'], [], {}),
+        ],
+        ids=['no_reduction', 'single_reduction', 'multiple_reduction'],
+    )
+    def test_get_screen_metadata_excludes_reduced_dims(
+        self, reduction_dim, expected_coords, expected_sizes
+    ):
+        """Test that get_screen_metadata excludes reduced dimensions."""
         empty_detector = make_fake_empty_detector(y_size=4, x_size=4)
         transform = make_logical_transform(4, 4)
 
         projector = make_logical_projector(
-            transform=transform, reduction_dim=['y', 'x']
+            transform=transform, reduction_dim=reduction_dim
         )
 
         metadata = projector.get_screen_metadata(empty_detector)
-        assert list(metadata.coords.keys()) == []
-        assert metadata.sizes == {}
+        assert list(metadata.coords.keys()) == expected_coords
+        assert metadata.sizes == expected_sizes
+        # Logical projections typically don't have edges
+        for coord in expected_coords:
+            assert metadata.coords[coord] is None
 
     def test_fold_transform(self):
         """Test that fold transform reshapes detector data."""
@@ -315,23 +301,8 @@ class TestCountProviders:
         expected = sc.scalar(4 * 4 * 10, unit='counts', dtype='float64')
         assert sc.identical(result.data, expected)
 
-    def test_counts_in_range_no_slice(self):
-        """Test counts_in_range with no slice."""
-        data_3d = sc.DataArray(
-            sc.ones(
-                dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
-            )
-        )
-
-        result = counts_in_range(
-            data_3d=Histogram3D[Current](data_3d), histogram_slice=None
-        )
-
-        expected = sc.scalar(4 * 4 * 10, unit='counts', dtype='float64')
-        assert sc.identical(result.data, expected)
-
-    def test_counts_in_range_with_slice(self):
-        """Test counts_in_range with histogram slice."""
+    def test_counts_in_range_with_and_without_slice(self):
+        """Test counts_in_range with and without histogram slice."""
         coord = sc.linspace('event_time_offset', 0, 100000, 11, unit='ns')
         data_3d = sc.DataArray(
             sc.ones(
@@ -340,12 +311,17 @@ class TestCountProviders:
             coords={'event_time_offset': coord},
         )
 
-        # Slice to first half
-        histogram_slice = (sc.scalar(0, unit='ns'), sc.scalar(50000, unit='ns'))
+        # Without slice - should count all bins
+        result_no_slice = counts_in_range(
+            data_3d=Histogram3D[Current](data_3d), histogram_slice=None
+        )
+        expected_all = sc.scalar(4 * 4 * 10, unit='counts', dtype='float64')
+        assert sc.identical(result_no_slice.data, expected_all)
 
-        result = counts_in_range(
+        # With slice to first half - should count approximately half
+        histogram_slice = (sc.scalar(0, unit='ns'), sc.scalar(50000, unit='ns'))
+        result_sliced = counts_in_range(
             data_3d=Histogram3D[Current](data_3d), histogram_slice=histogram_slice
         )
-
-        # Should count approximately half the bins
-        assert result.dims == ()
+        assert result_sliced.dims == ()
+        assert result_sliced.data < expected_all
