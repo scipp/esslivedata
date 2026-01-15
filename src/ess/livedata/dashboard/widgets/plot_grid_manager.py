@@ -202,19 +202,12 @@ class PlotGridManager:
         self._file_input = pn.widgets.FileInput(
             accept='.yaml,.yml',
             sizing_mode='stretch_width',
+            visible=False,
         )
         self._file_input.param.watch(self._on_file_uploaded, 'value')
         # Pending upload: parsed cells from uploaded file, used like template cells
         self._pending_upload_cells: Sequence[PlotCell] | None = None
-        self._upload_error_pane = pn.pane.HTML('', sizing_mode='stretch_width')
-
-        # Container for file input (for show/hide)
-        self._upload_container = pn.Column(
-            self._file_input,
-            self._upload_error_pane,
-            sizing_mode='stretch_width',
-            visible=False,
-        )
+        self._pending_upload_filename: str | None = None
 
         # Grid preview container (always shown)
         # Fixed dimensions prevent layout jumps when content is replaced
@@ -253,7 +246,7 @@ class PlotGridManager:
         source_row = pn.Column(
             self._mode_selector,
             self._template_container,
-            self._upload_container,
+            self._file_input,
             sizing_mode='stretch_width',
         )
 
@@ -297,15 +290,20 @@ class PlotGridManager:
             sizing_mode='stretch_both',
         )
 
-    def _reset_to_defaults(self) -> None:
-        """Reset form inputs to default state (no template or upload)."""
-        self._selected_template = None
-        self._pending_upload_cells = None
+    def _reset_form_fields(self) -> None:
+        """Reset form inputs to default values."""
         self._title_input.value = 'New Grid'
         self._nrows_input.value = 3
         self._ncols_input.value = 3
         self._nrows_input.start = 2
         self._ncols_input.start = 2
+
+    def _reset_to_defaults(self) -> None:
+        """Reset all state to defaults (template, upload, and form)."""
+        self._selected_template = None
+        self._pending_upload_cells = None
+        self._pending_upload_filename = None
+        self._reset_form_fields()
 
     def _get_source_indicator_html(self) -> str:
         """Generate HTML for the source indicator based on current state."""
@@ -319,7 +317,7 @@ class PlotGridManager:
                 color = '#757575'  # Gray
         else:  # Upload mode
             if self._pending_upload_cells is not None:
-                source = 'Uploaded configuration'
+                source = f'Uploaded: {self._pending_upload_filename}'
                 color = '#388e3c'  # Green
             else:
                 source = 'No file uploaded'
@@ -492,22 +490,23 @@ class PlotGridManager:
     def _on_mode_changed(self, event) -> None:
         """Handle mode switch between Template and Upload."""
         mode = event.new
-        if mode == _MODE_TEMPLATE:
-            # Switching to Template mode: restore remembered template, hide upload
-            self._template_container.visible = True
-            self._upload_container.visible = False
-            # Restore the remembered template selection (both selector and object)
-            self._template_selector.value = self._remembered_template_name
-            self._selected_template = self._remembered_template_object
-        else:
-            # Switching to Upload mode: remember current template, show upload
-            self._remembered_template_name = self._template_selector.value
-            self._remembered_template_object = self._selected_template
-            self._template_container.visible = False
-            self._upload_container.visible = True
-            # Clear template selection (upload takes precedence in this mode)
-            self._selected_template = None
-        self._update_preview()
+        with pn.io.hold():
+            if mode == _MODE_TEMPLATE:
+                # Switching to Template mode: restore remembered template, hide upload
+                self._template_container.visible = True
+                self._file_input.visible = False
+                # Restore the remembered template selection (both selector and object)
+                self._template_selector.value = self._remembered_template_name
+                self._selected_template = self._remembered_template_object
+            else:
+                # Switching to Upload mode: remember current template, show upload
+                self._remembered_template_name = self._template_selector.value
+                self._remembered_template_object = self._selected_template
+                self._template_container.visible = False
+                self._file_input.visible = True
+                # Clear template selection (upload takes precedence in this mode)
+                self._selected_template = None
+            self._update_preview()
 
     def _on_template_selected(self, event) -> None:
         """Handle template selection change."""
@@ -515,7 +514,7 @@ class PlotGridManager:
 
         if template_name == _NO_TEMPLATE:
             self._selected_template = None
-            self._reset_to_defaults()
+            self._reset_form_fields()
             self._update_preview()
             return
 
@@ -558,7 +557,8 @@ class PlotGridManager:
         self._remembered_template_name = _NO_TEMPLATE
         self._remembered_template_object = None
         self._pending_upload_cells = None
-        self._file_input.value = None
+        self._pending_upload_filename = None
+        self._file_input.clear()
         self._reset_to_defaults()
         self._update_preview()
 
@@ -608,7 +608,8 @@ class PlotGridManager:
         if event.new is None:
             return
 
-        self._upload_error_pane.object = ''
+        # Capture filename before clearing the widget
+        filename = self._file_input.filename
 
         try:
             content = event.new.decode('utf-8')
@@ -620,13 +621,18 @@ class PlotGridManager:
 
             # Parse cells from the uploaded config
             parsed_cells: list[PlotCell] = []
-            for raw_cell in raw_config.get('cells', []):
-                cell = self._orchestrator.parse_raw_cell(raw_cell)
-                if cell is not None:
-                    parsed_cells.append(cell)
+            for i, raw_cell in enumerate(raw_config.get('cells', [])):
+                try:
+                    cell = self._orchestrator.parse_raw_cell(raw_cell)
+                    if cell is not None:
+                        parsed_cells.append(cell)
+                except (KeyError, TypeError, ValueError) as e:
+                    self._show_upload_error(f'Invalid cell {i + 1}: {e}')
+                    return
 
-            # Store parsed cells and populate form fields
+            # Store parsed cells and filename, populate form fields
             self._pending_upload_cells = parsed_cells
+            self._pending_upload_filename = filename
             # Populate form fields from uploaded config
             self._title_input.value = raw_config.get('title', 'Uploaded Grid')
             self._nrows_input.value = raw_config.get('nrows', 3)
@@ -638,13 +644,14 @@ class PlotGridManager:
 
         except yaml.YAMLError as e:
             self._show_upload_error(f'YAML parse error: {e}')
+        finally:
+            # Clear file input so the same file can be re-uploaded
+            self._file_input.clear()
 
     def _show_upload_error(self, message: str) -> None:
-        """Display an upload error message."""
-        self._upload_error_pane.object = (
-            f'<div style="color: #dc3545; font-size: 12px; margin-top: 5px;">'
-            f'{message}</div>'
-        )
+        """Display an upload error notification."""
+        if pn.state.notifications is not None:
+            pn.state.notifications.error(message, duration=5000)
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events."""

@@ -354,27 +354,55 @@ class TestGridUpload:
         # Template should be cleared when in Upload mode
         assert grid_manager._selected_template is None
 
-    def test_upload_invalid_yaml_shows_error(self, grid_manager):
-        """Test that invalid YAML shows error message."""
+    def test_upload_invalid_yaml_does_not_update_form(self, grid_manager):
+        """Test that invalid YAML does not update form fields."""
         invalid_yaml = b"title: [unbalanced bracket"
+        original_title = grid_manager._title_input.value
 
         class FakeEvent:
             new = invalid_yaml
 
+        # Should not raise, error handled gracefully
         grid_manager._on_file_uploaded(FakeEvent())
 
-        assert 'YAML parse error' in grid_manager._upload_error_pane.object
+        # Form should remain unchanged
+        assert grid_manager._title_input.value == original_title
+        assert grid_manager._pending_upload_cells is None
 
-    def test_upload_non_dict_shows_error(self, grid_manager):
-        """Test that non-dict YAML shows error."""
+    def test_upload_non_dict_does_not_update_form(self, grid_manager):
+        """Test that non-dict YAML does not update form fields."""
         yaml_content = b"- item1\n- item2"
+        original_title = grid_manager._title_input.value
 
         class FakeEvent:
             new = yaml_content
 
+        # Should not raise, error handled gracefully
         grid_manager._on_file_uploaded(FakeEvent())
 
-        assert 'expected YAML dictionary' in grid_manager._upload_error_pane.object
+        # Form should remain unchanged
+        assert grid_manager._title_input.value == original_title
+        assert grid_manager._pending_upload_cells is None
+
+    def test_upload_invalid_cell_does_not_update_form(self, grid_manager):
+        """Test that cell with missing geometry does not update form fields."""
+        yaml_content = b"""
+title: Test Grid
+cells:
+  - config:
+      workflow_id: test
+"""  # Missing 'geometry' field
+        original_title = grid_manager._title_input.value
+
+        class FakeEvent:
+            new = yaml_content
+
+        # Should not raise, error handled gracefully
+        grid_manager._on_file_uploaded(FakeEvent())
+
+        # Form should remain unchanged (error occurred before form update)
+        assert grid_manager._title_input.value == original_title
+        assert grid_manager._pending_upload_cells is None
 
     def test_upload_uses_defaults_for_missing_fields(self, grid_manager):
         """Test that missing fields use sensible defaults."""
@@ -446,27 +474,6 @@ class TestGridUpload:
         assert grid_manager._pending_upload_cells is None
         assert len(plot_orchestrator.get_all_grids()) == 0
 
-    def test_upload_clears_previous_error(self, grid_manager):
-        """Test that successful upload clears previous error message."""
-        from ess.livedata.dashboard.widgets.plot_grid_manager import _MODE_UPLOAD
-
-        # Switch to Upload mode
-        grid_manager._mode_selector.value = _MODE_UPLOAD
-
-        # First upload invalid YAML to set error
-        class FakeEvent1:
-            new = b"invalid: [yaml"
-
-        grid_manager._on_file_uploaded(FakeEvent1())
-        assert grid_manager._upload_error_pane.object != ''
-
-        # Then upload valid YAML
-        class FakeEvent2:
-            new = b"title: Valid\nnrows: 2\nncols: 2\ncells: []"
-
-        grid_manager._on_file_uploaded(FakeEvent2())
-        assert grid_manager._upload_error_pane.object == ''
-
     def test_add_grid_clears_pending_upload(self, grid_manager, plot_orchestrator):
         """Test that Add Grid clears the pending upload state."""
         from ess.livedata.dashboard.widgets.plot_grid_manager import _MODE_UPLOAD
@@ -506,10 +513,11 @@ class TestGridUpload:
         class FakeEvent:
             new = yaml_content
 
+        grid_manager._file_input.filename = 'test_config.yaml'
         grid_manager._on_file_uploaded(FakeEvent())
 
-        # Should now show uploaded configuration
-        assert 'Uploaded configuration' in grid_manager._source_indicator.object
+        # Should now show uploaded filename
+        assert 'Uploaded: test_config.yaml' in grid_manager._source_indicator.object
 
 
 class TestModeSwitch:
@@ -522,7 +530,7 @@ class TestModeSwitch:
         # Start in Template mode (default)
         assert grid_manager._mode_selector.value == _MODE_TEMPLATE
         assert grid_manager._template_container.visible is True
-        assert grid_manager._upload_container.visible is False
+        assert grid_manager._file_input.visible is False
 
     def test_mode_switch_shows_upload_in_upload_mode(self, grid_manager):
         """Test that file input is visible in Upload mode."""
@@ -532,7 +540,7 @@ class TestModeSwitch:
         grid_manager._mode_selector.value = _MODE_UPLOAD
 
         assert grid_manager._template_container.visible is False
-        assert grid_manager._upload_container.visible is True
+        assert grid_manager._file_input.visible is True
 
     def test_mode_switch_remembers_template_selection(self, grid_manager):
         """Test that switching to Upload mode remembers the template selection."""
@@ -571,8 +579,9 @@ class TestModeSwitch:
         class FakeEvent:
             new = yaml_content
 
+        grid_manager._file_input.filename = 'test.yaml'
         grid_manager._on_file_uploaded(FakeEvent())
-        assert 'Uploaded configuration' in grid_manager._source_indicator.object
+        assert 'Uploaded: test.yaml' in grid_manager._source_indicator.object
 
         # Switch back to Template mode
         grid_manager._mode_selector.value = _MODE_TEMPLATE
