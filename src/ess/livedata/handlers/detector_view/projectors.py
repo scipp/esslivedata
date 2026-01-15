@@ -69,13 +69,13 @@ class GeometricProjector:
         self._replicas = coords.sizes.get(self._replica_dim, 1)
         self._current = 0
         self._screen_metadata = ScreenMetadata(
-            coords={dim: edges[dim] for dim in edges.keys()},
+            coords={dim: sc.midpoints(edges[dim]) for dim in edges.keys()},
             sizes={dim: len(edges[dim]) - 1 for dim in edges.keys()},
         )
 
     @property
     def screen_metadata(self) -> ScreenMetadata:
-        """Screen metadata with coordinate bin edges and sizes."""
+        """Screen metadata with coordinate bin centers and sizes."""
         return self._screen_metadata
 
     def project_events(self, events: sc.DataArray) -> sc.DataArray:
@@ -227,8 +227,17 @@ class LogicalProjector:
             transformed = self._transform(empty_detector)
 
         output_dims = self._get_output_dims(transformed.dims)
+
+        def get_bin_centers(dim: str) -> sc.Variable | None:
+            coord = transformed.coords.get(dim)
+            if coord is None:
+                return None
+            if transformed.coords.is_edges(dim):
+                return sc.midpoints(coord)
+            return coord
+
         return ScreenMetadata(
-            coords={dim: transformed.coords.get(dim) for dim in output_dims},
+            coords={dim: get_bin_centers(dim) for dim in output_dims},
             sizes={dim: transformed.sizes[dim] for dim in output_dims},
         )
 
