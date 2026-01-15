@@ -203,26 +203,17 @@ def detector_image(
     :
         2D detector image.
     """
-    image = _sum_over_spectral_dim(histogram, histogram_slice)
+    spectral_dim = histogram.dims[-1]
+    if histogram_slice is not None:
+        low, high = histogram_slice
+        sliced = histogram[spectral_dim, low:high]
+    else:
+        sliced = histogram
+    image = sliced.sum(spectral_dim)
+
     if use_weighting:
         image = image / weights
     return DetectorImage[AccumulationMode](image)
-
-
-def _sum_over_spectral_dim(
-    data_3d: sc.DataArray,
-    histogram_slice: tuple[sc.Variable, sc.Variable] | None,
-) -> sc.DataArray:
-    """Sum over spectral dimension (last dim), optionally slicing first."""
-    spectral_dim = data_3d.dims[-1]
-
-    if histogram_slice is not None:
-        low, high = histogram_slice
-        sliced = data_3d[spectral_dim, low:high]
-    else:
-        sliced = data_3d
-
-    return sliced.sum(spectral_dim)
 
 
 def counts_total(histogram: AccumulatedHistogram[Current]) -> CountsTotal:

@@ -15,9 +15,9 @@ import scipp as sc
 
 from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
 from ess.livedata.handlers.detector_view.roi import (
-    _extract_roi_spectra_precomputed,
     precompute_roi_polygon_masks,
     precompute_roi_rectangle_bounds,
+    roi_spectra,
 )
 from ess.livedata.handlers.detector_view.types import (
     ROIPolygonRequest,
@@ -65,7 +65,7 @@ def extract_roi_spectra(
 
     bounds = precompute_roi_rectangle_bounds(screen_metadata, rect_req)
     masks = precompute_roi_polygon_masks(screen_metadata, poly_req)
-    return _extract_roi_spectra_precomputed(histogram, bounds, masks)
+    return roi_spectra(histogram, bounds, masks)
 
 
 def make_screen_metadata_from_edges(
