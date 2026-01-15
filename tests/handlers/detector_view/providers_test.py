@@ -6,13 +6,13 @@ import scipp as sc
 
 from ess.livedata.handlers.detector_view import (
     Cumulative,
+    Current,
     DetectorHistogram3D,
     Histogram3D,
     NoCopyAccumulator,
     NoCopyWindowAccumulator,
     PixelWeights,
     UsePixelWeighting,
-    Window,
     add_logical_projection,
     compute_detector_histogram_3d,
     counts_in_range,
@@ -88,10 +88,10 @@ class TestCreateAccumulators:
         accumulators = create_accumulators()
 
         assert Histogram3D[Cumulative] in accumulators
-        assert Histogram3D[Window] in accumulators
+        assert Histogram3D[Current] in accumulators
         # Uses NoCopy variants for performance (~2x faster with large histograms)
         assert isinstance(accumulators[Histogram3D[Cumulative]], NoCopyAccumulator)
-        assert isinstance(accumulators[Histogram3D[Window]], NoCopyWindowAccumulator)
+        assert isinstance(accumulators[Histogram3D[Current]], NoCopyWindowAccumulator)
 
 
 class TestComputeDetectorHistogram3D:
@@ -305,7 +305,7 @@ class TestDetectorImageProviders:
         histogram_slice = (sc.scalar(0, unit='ns'), sc.scalar(50000, unit='ns'))
 
         result = detector_image(
-            data_3d=Histogram3D[Window](data_3d),
+            data_3d=Histogram3D[Current](data_3d),
             histogram_slice=histogram_slice,
             weights=weights,
             use_weighting=UsePixelWeighting(False),
@@ -326,7 +326,7 @@ class TestCountProviders:
             )
         )
 
-        result = counts_total(data_3d=Histogram3D[Window](data_3d))
+        result = counts_total(data_3d=Histogram3D[Current](data_3d))
 
         expected = sc.scalar(4 * 4 * 10, unit='counts', dtype='float64')
         assert sc.identical(result.data, expected)
@@ -340,7 +340,7 @@ class TestCountProviders:
         )
 
         result = counts_in_range(
-            data_3d=Histogram3D[Window](data_3d), histogram_slice=None
+            data_3d=Histogram3D[Current](data_3d), histogram_slice=None
         )
 
         expected = sc.scalar(4 * 4 * 10, unit='counts', dtype='float64')
@@ -360,7 +360,7 @@ class TestCountProviders:
         histogram_slice = (sc.scalar(0, unit='ns'), sc.scalar(50000, unit='ns'))
 
         result = counts_in_range(
-            data_3d=Histogram3D[Window](data_3d), histogram_slice=histogram_slice
+            data_3d=Histogram3D[Current](data_3d), histogram_slice=histogram_slice
         )
 
         # Should count approximately half the bins

@@ -54,6 +54,7 @@ from .roi import (
 )
 from .types import (
     Cumulative,
+    Current,
     EventCoordName,
     Histogram3D,
     HistogramBins,
@@ -63,7 +64,6 @@ from .types import (
     ReductionDim,
     ScreenMetadata,
     UsePixelWeighting,
-    Window,
 )
 
 
@@ -285,5 +285,5 @@ def create_accumulators() -> dict[type, Any]:
     """
     return {
         Histogram3D[Cumulative]: NoCopyAccumulator(),
-        Histogram3D[Window]: NoCopyWindowAccumulator(),
+        Histogram3D[Current]: NoCopyWindowAccumulator(),
     }

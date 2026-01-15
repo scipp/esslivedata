@@ -18,9 +18,10 @@ from ess.reduce.nexus.types import NeXusData, SampleRun
 
 from .data_source import DetectorDataSource
 from .types import (
-    CountsInTOARange,
+    CountsInRange,
     CountsTotal,
     Cumulative,
+    Current,
     DetectorImage,
     GeometricViewConfig,
     LogicalViewConfig,
@@ -31,7 +32,6 @@ from .types import (
     ROISpectra,
     UsePixelWeighting,
     ViewConfig,
-    Window,
 )
 from .workflow import (
     add_geometric_projection,
@@ -178,12 +178,12 @@ class DetectorViewFactory:
             },
             target_keys={
                 'cumulative': DetectorImage[Cumulative],
-                'current': DetectorImage[Window],
+                'current': DetectorImage[Current],
                 'counts_total': CountsTotal,
-                'counts_in_toa_range': CountsInTOARange,
+                'counts_in_toa_range': CountsInRange,
                 # ROI spectra (extracted from accumulated histograms)
                 'roi_spectra_cumulative': ROISpectra[Cumulative],
-                'roi_spectra_current': ROISpectra[Window],
+                'roi_spectra_current': ROISpectra[Current],
                 # ROI readbacks (providers ensure correct units from histogram coords)
                 'roi_rectangle': ROIRectangleReadback,
                 'roi_polygon': ROIPolygonReadback,
