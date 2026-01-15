@@ -12,7 +12,6 @@ from ess.reduce.nexus.types import NeXusData, SampleRun
 from .utils import make_fake_ungrouped_nexus_data, make_test_factory, make_test_params
 
 
-@pytest.mark.slow
 class TestIntegrationWithStreamProcessor:
     """Integration tests using the full StreamProcessorWorkflow via factory."""
 
@@ -90,7 +89,6 @@ class TestIntegrationWithStreamProcessor:
         assert current2 == pytest.approx(current1, rel=0.1)
 
 
-@pytest.mark.slow
 class TestROISpectraIntegration:
     """Integration tests for ROI spectra with StreamProcessor via factory."""
 
