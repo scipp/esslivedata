@@ -116,7 +116,13 @@ def compute_detector_histogram_3d(
         # Already dense data (shouldn't happen in normal flow)
         return DetectorHistogram3D(screen_binned_events)
 
-    histogrammed = screen_binned_events.hist({event_coord: bins})
+    # Convert bins to ns and rename dimension to match event_coord for histogramming.
+    # Then restore user's original dimension name and unit for output.
+    output_dim = bins.dim
+    bins_ns = bins.to(unit='ns').rename_dims({output_dim: event_coord})
+    histogrammed = screen_binned_events.hist({event_coord: bins_ns})
+    histogrammed = histogrammed.rename_dims({event_coord: output_dim})
+    histogrammed.coords[output_dim] = bins
     return DetectorHistogram3D(histogrammed)
 
 
