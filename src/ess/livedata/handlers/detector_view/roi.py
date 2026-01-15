@@ -185,82 +185,6 @@ def _compute_polygon_mask(
     return sc.array(dims=[y_dim, x_dim], values=~inside_2d)
 
 
-def _extract_roi_spectra_precomputed(
-    histogram: sc.DataArray,
-    rectangle_bounds: dict[int, dict[str, tuple[sc.Variable, sc.Variable]]],
-    polygon_masks: dict[int, sc.Variable],
-) -> sc.DataArray:
-    """
-    Extract spectra from histogram using precomputed ROI data.
-
-    Parameters
-    ----------
-    histogram:
-        Histogram with screen dims and spectral dim.
-    rectangle_bounds:
-        Precomputed bounds for rectangle ROIs.
-    polygon_masks:
-        Precomputed masks for polygon ROIs (True = excluded).
-
-    Returns
-    -------
-    :
-        2D DataArray with dims (roi, spectral) containing spectra for each ROI.
-        Returns empty DataArray with shape (0, n_spectral) if no ROIs configured.
-    """
-    spectral_dim = histogram.dims[-1]
-    spectral_coord = histogram.coords[spectral_dim]
-    n_spectral = histogram.sizes[spectral_dim]
-
-    # Get spatial dims (all dims except spectral)
-    spatial_dims = [d for d in histogram.dims if d != spectral_dim]
-    if len(spatial_dims) != 2:
-        raise ValueError(
-            f"Expected 2 spatial dims, got {len(spatial_dims)}: {spatial_dims}"
-        )
-    y_dim, x_dim = spatial_dims
-
-    spectra: list[sc.DataArray] = []
-    roi_indices: list[int] = []
-
-    # Process rectangle ROIs using precomputed bounds
-    for idx, bounds in rectangle_bounds.items():
-        x_low, x_high = bounds[x_dim]
-        y_low, y_high = bounds[y_dim]
-        sliced = histogram[y_dim, y_low:y_high][x_dim, x_low:x_high]
-        spectrum = sliced.sum(dim=[y_dim, x_dim])
-        spectra.append(spectrum)
-        roi_indices.append(idx)
-
-    # Process polygon ROIs using precomputed masks
-    for idx, mask in polygon_masks.items():
-        # Add temporary mask to histogram, sum, then remove
-        # scipp's sum ignores masked values
-        masked = histogram.copy(deep=False)
-        masked.masks['_roi_polygon'] = mask
-        spectrum = masked.sum(dim=[y_dim, x_dim])
-        spectra.append(spectrum)
-        roi_indices.append(idx)
-
-    # Build output DataArray
-    if not spectra:
-        # Return empty DataArray with correct structure
-        return sc.DataArray(
-            data=sc.zeros(
-                dims=['roi', spectral_dim], shape=[0, n_spectral], unit='counts'
-            ),
-            coords={
-                'roi': sc.array(dims=['roi'], values=[], dtype='int32'),
-                spectral_dim: spectral_coord,
-            },
-        )
-
-    # Stack spectra along roi dimension
-    stacked = sc.concat(spectra, dim='roi')
-    stacked.coords['roi'] = sc.array(dims=['roi'], values=roi_indices, dtype='int32')
-    return stacked
-
-
 def roi_spectra(
     histogram: AccumulatedHistogram[AccumulationMode],
     rectangle_bounds: ROIRectangleBounds,
@@ -288,9 +212,58 @@ def roi_spectra(
     :
         ROI spectra with dims (roi, spectral).
     """
-    return ROISpectra[AccumulationMode](
-        _extract_roi_spectra_precomputed(histogram, rectangle_bounds, polygon_masks)
-    )
+    spectral_dim = histogram.dims[-1]
+    spectral_coord = histogram.coords[spectral_dim]
+    n_spectral = histogram.sizes[spectral_dim]
+
+    # Get spatial dims (all dims except spectral)
+    spatial_dims = [d for d in histogram.dims if d != spectral_dim]
+    if len(spatial_dims) != 2:
+        raise ValueError(
+            f"Expected 2 spatial dims, got {len(spatial_dims)}: {spatial_dims}"
+        )
+    y_dim, x_dim = spatial_dims
+
+    spectra: list[sc.DataArray] = []
+    roi_indices: list[int] = []
+
+    # Process rectangle ROIs using precomputed bounds
+    for idx, bounds in rectangle_bounds.items():
+        x_low, x_high = bounds[x_dim]
+        y_low, y_high = bounds[y_dim]
+        sliced = histogram[y_dim, y_low:y_high][x_dim, x_low:x_high]
+        spectrum = sliced.sum(dim=[y_dim, x_dim])
+        spectra.append(spectrum)
+        roi_indices.append(idx)
+
+    # Process polygon ROIs using precomputed masks
+    for idx, mask in polygon_masks.items():
+        # scipp's sum ignores masked values
+        masked = histogram.copy(deep=False)
+        masked.masks['_roi_polygon'] = mask
+        spectrum = masked.sum(dim=[y_dim, x_dim])
+        spectra.append(spectrum)
+        roi_indices.append(idx)
+
+    # Build output DataArray
+    if not spectra:
+        # Return empty DataArray with correct structure
+        return ROISpectra[AccumulationMode](
+            sc.DataArray(
+                data=sc.zeros(
+                    dims=['roi', spectral_dim], shape=[0, n_spectral], unit='counts'
+                ),
+                coords={
+                    'roi': sc.array(dims=['roi'], values=[], dtype='int32'),
+                    spectral_dim: spectral_coord,
+                },
+            )
+        )
+
+    # Stack spectra along roi dimension
+    stacked = sc.concat(spectra, dim='roi')
+    stacked.coords['roi'] = sc.array(dims=['roi'], values=roi_indices, dtype='int32')
+    return ROISpectra[AccumulationMode](stacked)
 
 
 def _get_coord_units_from_screen_metadata(
