@@ -59,6 +59,7 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.spectroscopy.types import (
         InstrumentAngle,
         PreopenNeXusFile,
+        ProtonCharge,
         SampleAngle,
         TimeOfFlightLookupTableFilename,
     )
@@ -131,6 +132,8 @@ def setup_factories(instrument: Instrument) -> None:
         workflow[Filename[SampleRun]] = fname
         workflow[TimeOfFlightLookupTableFilename] = tof_lookup_table_simulation()
         workflow[PreopenNeXusFile] = PreopenNeXusFile(True)
+        # ProtonCharge is not used in streaming normalization, set to 1
+        workflow[ProtonCharge[SampleRun]] = sc.scalar(1.0, unit='microampere*hour')
         return workflow
 
     def _get_q_cut_workflow() -> sciline.Pipeline:
