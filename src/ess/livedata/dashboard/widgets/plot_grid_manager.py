@@ -14,7 +14,6 @@ from io import StringIO
 import panel as pn
 import yaml
 
-from ...config.grid_template import GridSpec
 from ...config.workflow_spec import WorkflowId, WorkflowSpec
 from ..buttons import ButtonStyles, create_download_button, create_tool_button
 from ..plot_orchestrator import (
@@ -28,6 +27,10 @@ from .plot_widgets import get_workflow_display_info
 
 # Sentinel value for "no template selected" in the dropdown
 _NO_TEMPLATE = "-- No template --"
+
+# Mode options for the source selector
+_MODE_TEMPLATE = "Template"
+_MODE_UPLOAD = "Upload"
 
 # Colors for template preview cells (cycle through these)
 _CELL_COLORS = [
@@ -152,18 +155,32 @@ class PlotGridManager:
         templates = orchestrator.get_available_templates()
         self._templates = {t.name: t for t in templates}
         self._selected_template = None
-        # Flag to suppress redundant preview updates during batch operations
-        self._suppress_preview_update = False
+        # Remember template selection when switching to Upload mode
+        self._remembered_template_name: str = _NO_TEMPLATE
+        self._remembered_template_object = None
 
-        # Template selector (only shown if templates available)
+        # Mode selector (Template or Upload)
+        self._mode_selector = pn.widgets.RadioButtonGroup(
+            name='Source',
+            options=[_MODE_TEMPLATE, _MODE_UPLOAD],
+            value=_MODE_TEMPLATE,
+            button_type='default',
+        )
+        self._mode_selector.param.watch(self._on_mode_changed, 'value')
+
+        # Template selector (visible in Template mode)
         template_options = [_NO_TEMPLATE, *self._templates.keys()]
         self._template_selector = pn.widgets.Select(
             name='Template',
             options=template_options,
             value=_NO_TEMPLATE,
-            visible=bool(templates),
         )
         self._template_selector.param.watch(self._on_template_selected, 'value')
+
+        # Container for template selector (for show/hide)
+        self._template_container = pn.Column(
+            self._template_selector, sizing_mode='stretch_width'
+        )
 
         # Input fields for new grid
         self._title_input = pn.widgets.TextInput(
@@ -179,6 +196,24 @@ class PlotGridManager:
         # Add grid button
         self._add_button = pn.widgets.Button(name='Add Grid', button_type='primary')
         self._add_button.on_click(self._on_add_grid)
+
+        # Upload configuration section (visible in Upload mode)
+        self._file_input = pn.widgets.FileInput(
+            accept='.yaml,.yml',
+            sizing_mode='stretch_width',
+        )
+        self._file_input.param.watch(self._on_file_uploaded, 'value')
+        # Pending upload: parsed cells from uploaded file, used like template cells
+        self._pending_upload_cells: Sequence[PlotCell] | None = None
+        self._upload_error_pane = pn.pane.HTML('', sizing_mode='stretch_width')
+
+        # Container for file input (for show/hide)
+        self._upload_container = pn.Column(
+            self._file_input,
+            self._upload_error_pane,
+            sizing_mode='stretch_width',
+            visible=False,
+        )
 
         # Grid preview container (always shown)
         # Fixed dimensions prevent layout jumps when content is replaced
@@ -203,13 +238,26 @@ class PlotGridManager:
             )
         )
 
+        # Source indicator shows what the preview is displaying
+        self._source_indicator = pn.pane.HTML(
+            self._get_source_indicator_html(),
+            sizing_mode='stretch_width',
+        )
+
         # Initialize grid list and preview
         self._update_grid_list()
         self._update_preview()
 
+        # Source selection row with mode switch and conditional content
+        source_row = pn.Column(
+            self._mode_selector,
+            self._template_container,
+            self._upload_container,
+            sizing_mode='stretch_width',
+        )
+
         # Form column (left side) - fixed width
         form_column = pn.Column(
-            self._template_selector,
             self._title_input,
             self._nrows_input,
             self._ncols_input,
@@ -218,12 +266,19 @@ class PlotGridManager:
             sizing_mode='fixed',
         )
 
+        # Preview column with source indicator
+        preview_column = pn.Column(
+            self._source_indicator,
+            self._grid_preview,
+            sizing_mode='fixed',
+            width=424,
+        )
+
         # Row containing form and preview side by side
-        # Spacer stretches to push preview to the right
         form_row = pn.Row(
             form_column,
             pn.Spacer(sizing_mode='stretch_width'),
-            self._grid_preview,
+            preview_column,
             sizing_mode='stretch_width',
             align='start',
         )
@@ -232,7 +287,8 @@ class PlotGridManager:
         # IMPORTANT: Use stretch_both to match PlotGrid tab sizing. This ensures
         # Panel's Tabs widget properly handles height when tabs are added/removed.
         self._widget = pn.Column(
-            pn.pane.Markdown('## Add New Grid'),
+            source_row,
+            pn.layout.Divider(),
             form_row,
             pn.layout.Divider(),
             pn.pane.Markdown('## Existing Grids'),
@@ -241,20 +297,60 @@ class PlotGridManager:
         )
 
     def _reset_to_defaults(self) -> None:
-        """Reset form inputs to default state (no template selected)."""
+        """Reset form inputs to default state (no template or upload)."""
         self._selected_template = None
+        self._pending_upload_cells = None
         self._title_input.value = 'New Grid'
         self._nrows_input.value = 3
         self._ncols_input.value = 3
         self._nrows_input.start = 2
         self._ncols_input.start = 2
 
+    def _get_source_indicator_html(self) -> str:
+        """Generate HTML for the source indicator based on current state."""
+        mode = self._mode_selector.value
+        if mode == _MODE_TEMPLATE:
+            if self._selected_template is not None:
+                source = f'Template: {self._selected_template.name}'
+                color = '#1976d2'  # Blue
+            else:
+                source = 'Empty grid'
+                color = '#757575'  # Gray
+        else:  # Upload mode
+            if self._pending_upload_cells is not None:
+                source = 'Uploaded configuration'
+                color = '#388e3c'  # Green
+            else:
+                source = 'No file uploaded'
+                color = '#757575'  # Gray
+        return (
+            f'<div style="font-size: 12px; color: {color}; '
+            f'margin-bottom: 5px; font-weight: 500;">'
+            f'Preview: {source}</div>'
+        )
+
+    def _update_source_indicator(self) -> None:
+        """Update the source indicator display."""
+        self._source_indicator.object = self._get_source_indicator_html()
+
     def _update_preview(self) -> None:
-        """Update the grid preview based on current state."""
+        """Update the grid preview and source indicator based on current state."""
+        # Update the source indicator text
+        self._update_source_indicator()
+
+        # Determine cells to show based on current mode
+        mode = self._mode_selector.value
+        if mode == _MODE_TEMPLATE and self._selected_template is not None:
+            cells = self._selected_template.cells
+        elif mode == _MODE_UPLOAD and self._pending_upload_cells is not None:
+            cells = self._pending_upload_cells
+        else:
+            cells = ()
+
         preview = self._create_grid_preview(
             nrows=self._nrows_input.value,
             ncols=self._ncols_input.value,
-            template=self._selected_template,
+            cells=cells,
         )
         # Atomic replacement avoids layout jumps from separate clear+append
         self._grid_preview.objects = [preview]
@@ -263,13 +359,13 @@ class PlotGridManager:
         self,
         nrows: int,
         ncols: int,
-        template: GridSpec | None,
+        cells: Sequence[PlotCell],
     ) -> pn.Column:
         """
         Create a visual preview of the grid layout.
 
         Shows a mini grid with colored boxes representing each cell,
-        labeled with the workflow name if a template is selected.
+        labeled with the workflow name if cells are provided.
 
         Parameters
         ----------
@@ -277,15 +373,14 @@ class PlotGridManager:
             Number of rows in the grid.
         ncols
             Number of columns in the grid.
-        template
-            Optional template to show cells from.
+        cells
+            Cells to show in the preview (from template or uploaded config).
 
         Returns
         -------
         :
             Panel Column containing the preview.
         """
-        cells: Sequence[PlotCell] = template.cells if template else ()
 
         # Fixed preview size - cells scale to fit
         preview_width = 400
@@ -391,33 +486,48 @@ class PlotGridManager:
 
     def _on_grid_size_changed(self, event) -> None:
         """Handle rows/cols input change."""
-        # Skip if we're in a batch operation that will update preview at the end
-        if not self._suppress_preview_update:
-            self._update_preview()
+        self._update_preview()
+
+    def _on_mode_changed(self, event) -> None:
+        """Handle mode switch between Template and Upload."""
+        mode = event.new
+        if mode == _MODE_TEMPLATE:
+            # Switching to Template mode: restore remembered template, hide upload
+            self._template_container.visible = True
+            self._upload_container.visible = False
+            # Restore the remembered template selection (both selector and object)
+            self._template_selector.value = self._remembered_template_name
+            self._selected_template = self._remembered_template_object
+        else:
+            # Switching to Upload mode: remember current template, show upload
+            self._remembered_template_name = self._template_selector.value
+            self._remembered_template_object = self._selected_template
+            self._template_container.visible = False
+            self._upload_container.visible = True
+            # Clear template selection (upload takes precedence in this mode)
+            self._selected_template = None
+        self._update_preview()
 
     def _on_template_selected(self, event) -> None:
         """Handle template selection change."""
         template_name = event.new
-        # Batch widget updates and suppress redundant preview updates
-        self._suppress_preview_update = True
-        try:
-            with pn.io.hold():
-                if template_name == _NO_TEMPLATE:
-                    self._reset_to_defaults()
-                else:
-                    template = self._templates[template_name]
-                    self._selected_template = template
-                    # Populate widgets with template values
-                    self._title_input.value = template.title
-                    self._nrows_input.value = template.nrows
-                    self._ncols_input.value = template.ncols
-                    # Set minimum to prevent shrinking below what cells require
-                    self._nrows_input.start = template.min_rows
-                    self._ncols_input.start = template.min_cols
 
-                self._update_preview()
-        finally:
-            self._suppress_preview_update = False
+        if template_name == _NO_TEMPLATE:
+            self._selected_template = None
+            self._reset_to_defaults()
+            self._update_preview()
+            return
+
+        template = self._templates[template_name]
+        self._selected_template = template
+        # Populate widgets with template values
+        self._title_input.value = template.title
+        self._nrows_input.value = template.nrows
+        self._ncols_input.value = template.ncols
+        # Set minimum to prevent shrinking below what cells require
+        self._nrows_input.start = template.min_rows
+        self._ncols_input.start = template.min_cols
+        self._update_preview()
 
     def _on_add_grid(self, event) -> None:
         """Handle add grid button click."""
@@ -427,23 +537,29 @@ class PlotGridManager:
             ncols=self._ncols_input.value,
         )
 
-        # Add template cells if a template is selected
-        if self._selected_template:
-            for cell in self._selected_template.cells:
-                cell_id = self._orchestrator.add_cell(grid_id, cell.geometry)
-                for layer in cell.layers:
-                    self._orchestrator.add_layer(cell_id, layer.config)
+        # Determine cells to add based on current mode
+        mode = self._mode_selector.value
+        if mode == _MODE_TEMPLATE and self._selected_template:
+            cells_to_add = self._selected_template.cells
+        elif mode == _MODE_UPLOAD and self._pending_upload_cells:
+            cells_to_add = self._pending_upload_cells
+        else:
+            cells_to_add = ()
 
-        # Reset inputs and template selection
-        # Batch widget updates and suppress redundant preview updates
-        self._suppress_preview_update = True
-        try:
-            with pn.io.hold():
-                self._template_selector.value = _NO_TEMPLATE
-                self._reset_to_defaults()
-                self._update_preview()
-        finally:
-            self._suppress_preview_update = False
+        for cell in cells_to_add:
+            cell_id = self._orchestrator.add_cell(grid_id, cell.geometry)
+            for layer in cell.layers:
+                self._orchestrator.add_layer(cell_id, layer.config)
+
+        # Reset to Template mode with no template selected
+        self._mode_selector.value = _MODE_TEMPLATE
+        self._template_selector.value = _NO_TEMPLATE
+        self._remembered_template_name = _NO_TEMPLATE
+        self._remembered_template_object = None
+        self._pending_upload_cells = None
+        self._file_input.value = None
+        self._reset_to_defaults()
+        self._update_preview()
 
     def _on_grid_created(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Handle grid creation from orchestrator."""
@@ -485,6 +601,49 @@ class PlotGridManager:
             return sio
 
         return callback
+
+    def _on_file_uploaded(self, event) -> None:
+        """Handle file upload - populates form and preview for user confirmation."""
+        if event.new is None:
+            return
+
+        self._upload_error_pane.object = ''
+
+        try:
+            content = event.new.decode('utf-8')
+            raw_config = yaml.safe_load(content)
+
+            if not isinstance(raw_config, dict):
+                self._show_upload_error('Invalid format: expected YAML dictionary')
+                return
+
+            # Parse cells from the uploaded config
+            parsed_cells: list[PlotCell] = []
+            for raw_cell in raw_config.get('cells', []):
+                cell = self._orchestrator.parse_raw_cell(raw_cell)
+                if cell is not None:
+                    parsed_cells.append(cell)
+
+            # Store parsed cells and populate form fields
+            self._pending_upload_cells = parsed_cells
+            # Populate form fields from uploaded config
+            self._title_input.value = raw_config.get('title', 'Uploaded Grid')
+            self._nrows_input.value = raw_config.get('nrows', 3)
+            self._ncols_input.value = raw_config.get('ncols', 3)
+            # Reset row/col minimums (uploads don't enforce minimums)
+            self._nrows_input.start = 2
+            self._ncols_input.start = 2
+            self._update_preview()
+
+        except yaml.YAMLError as e:
+            self._show_upload_error(f'YAML parse error: {e}')
+
+    def _show_upload_error(self, message: str) -> None:
+        """Display an upload error message."""
+        self._upload_error_pane.object = (
+            f'<div style="color: #dc3545; font-size: 12px; margin-top: 5px;">'
+            f'{message}</div>'
+        )
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events."""
