@@ -41,23 +41,21 @@ from .providers import (
     compute_pixel_weights,
     counts_in_range,
     counts_total,
-    cumulative_detector_image,
-    cumulative_histogram,
-    current_detector_image,
+    detector_image,
+    histogram_3d,
     project_events,
-    window_histogram,
 )
 from .roi import (
-    cumulative_roi_spectra,
-    current_roi_spectra,
     precompute_roi_polygon_masks,
     precompute_roi_rectangle_bounds,
     roi_polygon_readback,
     roi_rectangle_readback,
+    roi_spectra,
 )
 from .types import (
-    CumulativeHistogram,
+    Cumulative,
     EventCoordName,
+    Histogram3D,
     HistogramBins,
     HistogramSlice,
     LogicalTransform,
@@ -65,7 +63,7 @@ from .types import (
     ReductionDim,
     ScreenMetadata,
     UsePixelWeighting,
-    WindowHistogram,
+    Window,
 )
 
 
@@ -169,18 +167,15 @@ def create_base_workflow(
     workflow.insert(compute_pixel_weights)
     workflow[UsePixelWeighting] = False  # Default: disabled
 
-    # Add histogram and downstream providers
+    # Add histogram and downstream providers (generic providers for both modes)
     workflow.insert(compute_detector_histogram_3d)
-    workflow.insert(cumulative_histogram)
-    workflow.insert(window_histogram)
-    workflow.insert(cumulative_detector_image)
-    workflow.insert(current_detector_image)
+    workflow.insert(histogram_3d)
+    workflow.insert(detector_image)
     workflow.insert(counts_total)
     workflow.insert(counts_in_range)
 
-    # Add ROI providers
-    workflow.insert(cumulative_roi_spectra)
-    workflow.insert(current_roi_spectra)
+    # Add ROI providers (generic provider for both modes)
+    workflow.insert(roi_spectra)
     workflow.insert(roi_rectangle_readback)
     workflow.insert(roi_polygon_readback)
     workflow.insert(precompute_roi_rectangle_bounds)
@@ -286,9 +281,9 @@ def create_accumulators() -> dict[type, Any]:
     Returns
     -------
     :
-        Dict mapping accumulator types to accumulator instances.
+        Dict mapping histogram types to accumulator instances.
     """
     return {
-        CumulativeHistogram: NoCopyAccumulator(),
-        WindowHistogram: NoCopyWindowAccumulator(),
+        Histogram3D[Cumulative]: NoCopyAccumulator(),
+        Histogram3D[Window]: NoCopyWindowAccumulator(),
     }

@@ -20,18 +20,18 @@ from .data_source import DetectorDataSource
 from .types import (
     CountsInTOARange,
     CountsTotal,
-    CumulativeDetectorImage,
-    CumulativeROISpectra,
-    CurrentDetectorImage,
-    CurrentROISpectra,
+    Cumulative,
+    DetectorImage,
     GeometricViewConfig,
     LogicalViewConfig,
     ROIPolygonReadback,
     ROIPolygonRequest,
     ROIRectangleReadback,
     ROIRectangleRequest,
+    ROISpectra,
     UsePixelWeighting,
     ViewConfig,
+    Window,
 )
 from .workflow import (
     add_geometric_projection,
@@ -177,13 +177,13 @@ class DetectorViewFactory:
                 'roi_polygon': ROIPolygonRequest,
             },
             target_keys={
-                'cumulative': CumulativeDetectorImage,
-                'current': CurrentDetectorImage,
+                'cumulative': DetectorImage[Cumulative],
+                'current': DetectorImage[Window],
                 'counts_total': CountsTotal,
                 'counts_in_toa_range': CountsInTOARange,
                 # ROI spectra (extracted from accumulated histograms)
-                'roi_spectra_cumulative': CumulativeROISpectra,
-                'roi_spectra_current': CurrentROISpectra,
+                'roi_spectra_cumulative': ROISpectra[Cumulative],
+                'roi_spectra_current': ROISpectra[Window],
                 # ROI readbacks (providers ensure correct units from histogram coords)
                 'roi_rectangle': ROIRectangleReadback,
                 'roi_polygon': ROIPolygonReadback,

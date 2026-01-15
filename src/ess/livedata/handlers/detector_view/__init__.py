@@ -34,31 +34,27 @@ from .providers import (
     compute_pixel_weights,
     counts_in_range,
     counts_total,
-    cumulative_detector_image,
-    cumulative_histogram,
-    current_detector_image,
+    detector_image,
+    histogram_3d,
     project_events,
-    window_histogram,
 )
 from .roi import (
-    cumulative_roi_spectra,
-    current_roi_spectra,
     precompute_roi_polygon_masks,
     precompute_roi_rectangle_bounds,
     roi_polygon_readback,
     roi_rectangle_readback,
+    roi_spectra,
 )
 from .types import (
+    AccumulationMode,
     CountsInTOARange,
     CountsTotal,
-    CumulativeDetectorImage,
-    CumulativeHistogram,
-    CumulativeROISpectra,
-    CurrentDetectorImage,
-    CurrentROISpectra,
+    Cumulative,
     DetectorHistogram3D,
+    DetectorImage,
     EventCoordName,
     GeometricViewConfig,
+    Histogram3D,
     HistogramBins,
     HistogramSlice,
     LogicalTransform,
@@ -77,7 +73,7 @@ from .types import (
     ScreenMetadata,
     UsePixelWeighting,
     ViewConfig,
-    WindowHistogram,
+    Window,
 )
 from .workflow import (
     NoCopyAccumulator,
@@ -90,16 +86,16 @@ from .workflow import (
 )
 
 __all__ = [
+    # Accumulation mode types
+    'AccumulationMode',
+    # Output types
     'CountsInTOARange',
     'CountsTotal',
-    'CumulativeDetectorImage',
-    'CumulativeHistogram',
-    'CumulativeROISpectra',
-    'CurrentDetectorImage',
-    'CurrentROISpectra',
+    'Cumulative',
     # Data sources
     'DetectorDataSource',
     'DetectorHistogram3D',
+    'DetectorImage',
     'DetectorNumberSource',
     # Factory
     'DetectorViewFactory',
@@ -109,6 +105,7 @@ __all__ = [
     'GeometricProjector',
     # View configuration
     'GeometricViewConfig',
+    'Histogram3D',
     'HistogramBins',
     'HistogramSlice',
     'LogicalProjector',
@@ -134,10 +131,11 @@ __all__ = [
     'ScreenMetadata',
     'UsePixelWeighting',
     'ViewConfig',
-    # Workflow
-    'WindowHistogram',
+    'Window',
+    # Workflow construction
     'add_geometric_projection',
     'add_logical_projection',
+    # Providers
     'compute_detector_histogram_3d',
     'compute_pixel_weights',
     'counts_in_range',
@@ -145,20 +143,17 @@ __all__ = [
     'create_accumulators',
     'create_base_workflow',
     'create_empty_detector',
-    'cumulative_detector_image',
-    'cumulative_histogram',
-    'cumulative_roi_spectra',
-    'current_detector_image',
-    'current_roi_spectra',
+    'detector_image',
     'get_screen_metadata',
+    'histogram_3d',
+    # Projector factories
     'make_geometric_projector',
     'make_logical_projector',
-    'precompute_roi_polygon_masks',
     # ROI providers
+    'precompute_roi_polygon_masks',
     'precompute_roi_rectangle_bounds',
     'project_events',
     'roi_polygon_readback',
     'roi_rectangle_readback',
-    # Providers
-    'window_histogram',
+    'roi_spectra',
 ]

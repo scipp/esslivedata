@@ -11,9 +11,23 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, NewType
+from typing import Literal, NewType, TypeVar
 
+import sciline
 import scipp as sc
+
+
+# Accumulation mode marker types
+class Window:
+    """Marker type for window accumulation (clears after finalize)."""
+
+
+class Cumulative:
+    """Marker type for cumulative accumulation (accumulates forever)."""
+
+
+AccumulationMode = TypeVar('AccumulationMode', Window, Cumulative)
+"""Type variable for accumulation mode, constrained to Window or Cumulative."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,19 +139,30 @@ DetectorHistogram3D = NewType('DetectorHistogram3D', sc.DataArray)
 """3D histogram with dims (y, x, event_coord) - computed once, shared by
 accumulators."""
 
-# Accumulated data types - use different types for different accumulator behavior
-CumulativeHistogram = NewType('CumulativeHistogram', sc.DataArray)
-"""3D histogram accumulated forever (EternalAccumulator)."""
 
-WindowHistogram = NewType('WindowHistogram', sc.DataArray)
-"""3D histogram for current window (clears after finalize)."""
+# Generic accumulated data types - parametrized by accumulation mode
+class Histogram3D(
+    sciline.Scope[AccumulationMode, sc.DataArray],
+    sc.DataArray,  # type: ignore[misc]
+):
+    """3D histogram parametrized by accumulation mode.
 
-# Output types
-CumulativeDetectorImage = NewType('CumulativeDetectorImage', sc.DataArray)
-"""2D detector image summed over all accumulated data."""
+    - Histogram3D[Cumulative]: Accumulated forever (EternalAccumulator)
+    - Histogram3D[Window]: Current window only (clears after finalize)
+    """
 
-CurrentDetectorImage = NewType('CurrentDetectorImage', sc.DataArray)
-"""2D detector image for the current window (since last finalize)."""
+
+# Generic output types - parametrized by accumulation mode
+class DetectorImage(
+    sciline.Scope[AccumulationMode, sc.DataArray],
+    sc.DataArray,  # type: ignore[misc]
+):
+    """2D detector image parametrized by accumulation mode.
+
+    - DetectorImage[Cumulative]: Summed over all accumulated data
+    - DetectorImage[Window]: Current window only (since last finalize)
+    """
+
 
 CountsTotal = NewType('CountsTotal', sc.DataArray)
 """Total event counts as 0D scalar (from current window)."""
@@ -171,18 +196,19 @@ ROIRectangleReadback = NewType('ROIRectangleReadback', sc.DataArray)
 ROIPolygonReadback = NewType('ROIPolygonReadback', sc.DataArray)
 """ROI polygon readback with coordinate units from histogram."""
 
+
 # ROI output types
-ROISpectra = NewType('ROISpectra', sc.DataArray)
-"""Spectra for ROIs with dims (roi, spectral_dim).
+class ROISpectra(
+    sciline.Scope[AccumulationMode, sc.DataArray],
+    sc.DataArray,  # type: ignore[misc]
+):
+    """ROI spectra parametrized by accumulation mode.
 
-Computed from histogram, not accumulated.
-"""
+    Spectra for ROIs with dims (roi, spectral_dim).
 
-CumulativeROISpectra = NewType('CumulativeROISpectra', sc.DataArray)
-"""ROI spectra extracted from cumulative histogram."""
-
-CurrentROISpectra = NewType('CurrentROISpectra', sc.DataArray)
-"""ROI spectra extracted from current window histogram."""
+    - ROISpectra[Cumulative]: Extracted from cumulative histogram
+    - ROISpectra[Window]: Extracted from current window histogram
+    """
 
 
 ROIRectangleBounds = NewType('ROIRectangleBounds', dict)
