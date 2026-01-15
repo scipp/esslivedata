@@ -9,9 +9,13 @@ workflows with configurable projection types and parameters.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 import scipp as sc
+
+if TYPE_CHECKING:
+    from ..detector_view_specs import DetectorViewParams
+    from ..stream_processor_workflow import StreamProcessorWorkflow
 from scippnexus import NXdetector
 
 from ess.reduce.nexus.types import NeXusData, SampleRun
@@ -84,8 +88,8 @@ class DetectorViewFactory:
     def make_workflow(
         self,
         source_name: str,
-        params: Any | None = None,
-    ) -> Any:  # StreamProcessorWorkflow
+        params: DetectorViewParams,
+    ) -> StreamProcessorWorkflow:
         """
         Factory method that creates a detector view workflow.
 
@@ -94,7 +98,7 @@ class DetectorViewFactory:
         source_name:
             Name of the detector source (e.g., 'panel_0').
         params:
-            Workflow parameters (DetectorViewParams or similar with toa_edges).
+            Workflow parameters containing toa_edges and optional toa_range.
 
         Returns
         -------
@@ -105,9 +109,6 @@ class DetectorViewFactory:
             StreamProcessorWorkflow,
         )
 
-        if params is None:
-            raise ValueError("params is required (must have toa_edges)")
-
         # Event coordinate to histogram - currently always event_time_offset.
         # This is the coordinate name in the event data; the output dimension name
         # comes from the bins (time_of_arrival with user's preferred unit).
@@ -117,15 +118,13 @@ class DetectorViewFactory:
         # (time_of_arrival) - provider converts to ns for histogramming then restores.
         bins = params.toa_edges.get_edges()
 
-        # Get histogram slice from params if available
-        histogram_slice = None
-        if hasattr(params, 'toa_range') and params.toa_range.enabled:
-            histogram_slice = params.toa_range.range_ns
+        # Get histogram slice from params if enabled
+        histogram_slice = (
+            params.toa_range.range_ns if params.toa_range.enabled else None
+        )
 
         # Get pixel weighting setting from params
-        use_pixel_weighting = False
-        if hasattr(params, 'pixel_weighting') and params.pixel_weighting.enabled:
-            use_pixel_weighting = True
+        use_pixel_weighting = params.pixel_weighting.enabled
 
         # Create base workflow
         workflow = create_base_workflow(
