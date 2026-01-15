@@ -27,6 +27,7 @@ from .types import (
     HistogramSlice,
     PixelWeights,
     ScreenBinnedEvents,
+    ScreenMetadata,
     UsePixelWeighting,
 )
 
@@ -85,6 +86,33 @@ def compute_pixel_weights(
         return PixelWeights(projector.compute_weights(empty_detector))
     else:
         raise TypeError(f"Unknown projector type: {type(projector)}")
+
+
+def get_screen_metadata(
+    projector: Projector,
+    empty_detector: EmptyDetector[SampleRun],
+) -> ScreenMetadata:
+    """
+    Extract screen metadata from projector.
+
+    For GeometricProjector, metadata is stored at construction time.
+    For LogicalProjector, metadata is computed from the empty detector.
+
+    Parameters
+    ----------
+    projector:
+        The projector instance.
+    empty_detector:
+        Detector structure without events (used by LogicalProjector).
+
+    Returns
+    -------
+    :
+        Screen metadata with output dimensions and coordinates.
+    """
+    if isinstance(projector, GeometricProjector):
+        return projector.screen_metadata
+    return projector.get_screen_metadata(empty_detector)
 
 
 def compute_detector_histogram(
