@@ -5,22 +5,26 @@
 import pytest
 import scipp as sc
 
-from ess.livedata.handlers.detector_view import (
+from ess.livedata.handlers.detector_view.projectors import make_logical_projector
+from ess.livedata.handlers.detector_view.providers import (
+    compute_detector_histogram_3d,
+    counts_in_range,
+    counts_total,
+    detector_image,
+    histogram_3d,
+)
+from ess.livedata.handlers.detector_view.types import (
     Cumulative,
     Current,
     DetectorHistogram3D,
     Histogram3D,
-    NoCopyWindowAccumulator,
     PixelWeights,
     UsePixelWeighting,
+)
+from ess.livedata.handlers.detector_view.workflow import (
+    NoCopyWindowAccumulator,
     add_logical_projection,
-    compute_detector_histogram_3d,
-    counts_in_range,
-    counts_total,
     create_base_workflow,
-    detector_image,
-    histogram_3d,
-    make_logical_projector,
 )
 
 from .utils import (

@@ -5,11 +5,9 @@
 import numpy as np
 import scipp as sc
 
-from ess.livedata.handlers.detector_view import (
-    DetectorNumberSource,
-    DetectorViewFactory,
-    LogicalViewConfig,
-)
+from ess.livedata.handlers.detector_view.data_source import DetectorNumberSource
+from ess.livedata.handlers.detector_view.factory import DetectorViewFactory
+from ess.livedata.handlers.detector_view.types import LogicalViewConfig
 
 
 def make_fake_nexus_detector_data(
