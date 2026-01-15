@@ -281,7 +281,7 @@ powder_reduction_with_vanadium_handle = instrument.register_spec(
 # Register Sciline-based detector view spec with per-detector geometric projections.
 # Matches the legacy DetectorProjection setup with all 4 detector banks.
 sciline_detector_view_handle = instrument.register_spec(
-    namespace='data_reduction',
+    namespace='detector_data',
     name='sciline_detector_view',
     version=1,
     title='Sciline Detector View',
