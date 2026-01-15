@@ -18,7 +18,7 @@ import scipp as sc
 
 
 # Accumulation mode marker types
-class Window:
+class Current:
     """Marker type for window accumulation (clears after finalize)."""
 
 
@@ -26,7 +26,7 @@ class Cumulative:
     """Marker type for cumulative accumulation (accumulates forever)."""
 
 
-AccumulationMode = TypeVar('AccumulationMode', Window, Cumulative)
+AccumulationMode = TypeVar('AccumulationMode', Current, Cumulative)
 """Type variable for accumulation mode, constrained to Window or Cumulative."""
 
 
@@ -167,8 +167,8 @@ class DetectorImage(
 CountsTotal = NewType('CountsTotal', sc.DataArray)
 """Total event counts as 0D scalar (from current window)."""
 
-CountsInTOARange = NewType('CountsInTOARange', sc.DataArray)
-"""Event counts within configured TOA range as 0D scalar (from current window)."""
+CountsInRange = NewType('CountsInRange', sc.DataArray)
+"""Event counts within configured range as 0D scalar (from current window)."""
 
 # Pixel weighting types
 PixelWeights = NewType('PixelWeights', sc.DataArray)

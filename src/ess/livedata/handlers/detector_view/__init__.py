@@ -47,9 +47,10 @@ from .roi import (
 )
 from .types import (
     AccumulationMode,
-    CountsInTOARange,
+    CountsInRange,
     CountsTotal,
     Cumulative,
+    Current,
     DetectorHistogram3D,
     DetectorImage,
     EventCoordName,
@@ -73,7 +74,6 @@ from .types import (
     ScreenMetadata,
     UsePixelWeighting,
     ViewConfig,
-    Window,
 )
 from .workflow import (
     NoCopyAccumulator,
@@ -89,9 +89,10 @@ __all__ = [
     # Accumulation mode types
     'AccumulationMode',
     # Output types
-    'CountsInTOARange',
+    'CountsInRange',
     'CountsTotal',
     'Cumulative',
+    'Current',
     # Data sources
     'DetectorDataSource',
     'DetectorHistogram3D',
@@ -131,7 +132,6 @@ __all__ = [
     'ScreenMetadata',
     'UsePixelWeighting',
     'ViewConfig',
-    'Window',
     # Workflow construction
     'add_geometric_projection',
     'add_logical_projection',

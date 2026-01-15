@@ -16,8 +16,9 @@ from ess.reduce.nexus.types import EmptyDetector, RawDetector, SampleRun
 from .projectors import GeometricProjector, LogicalProjector, Projector
 from .types import (
     AccumulationMode,
-    CountsInTOARange,
+    CountsInRange,
     CountsTotal,
+    Current,
     DetectorHistogram3D,
     DetectorImage,
     EventCoordName,
@@ -27,7 +28,6 @@ from .types import (
     PixelWeights,
     ScreenBinnedEvents,
     UsePixelWeighting,
-    Window,
 )
 
 
@@ -193,7 +193,7 @@ def _sum_over_spectral_dim(
     return sliced.sum(spectral_dim)
 
 
-def counts_total(data_3d: Histogram3D[Window]) -> CountsTotal:
+def counts_total(data_3d: Histogram3D[Current]) -> CountsTotal:
     """
     Compute total event counts in current window.
 
@@ -211,8 +211,8 @@ def counts_total(data_3d: Histogram3D[Window]) -> CountsTotal:
 
 
 def counts_in_range(
-    data_3d: Histogram3D[Window], histogram_slice: HistogramSlice
-) -> CountsInTOARange:
+    data_3d: Histogram3D[Current], histogram_slice: HistogramSlice
+) -> CountsInRange:
     """
     Compute event counts within specified range in current window.
 
@@ -236,4 +236,4 @@ def counts_in_range(
     else:
         sliced = data_3d
 
-    return CountsInTOARange(sliced.sum())
+    return CountsInRange(sliced.sum())
