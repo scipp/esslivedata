@@ -135,20 +135,20 @@ ScreenBinnedEvents = NewType('ScreenBinnedEvents', sc.DataArray)
 coordinate preserved."""
 
 # Shared intermediate - computed once, then split for accumulation
-DetectorHistogram3D = NewType('DetectorHistogram3D', sc.DataArray)
-"""3D histogram with dims (y, x, event_coord) - computed once, shared by
+DetectorHistogram = NewType('DetectorHistogram', sc.DataArray)
+"""Histogram with screen dims + event coordinate - computed once, shared by
 accumulators."""
 
 
 # Generic accumulated data types - parametrized by accumulation mode
-class Histogram3D(
+class AccumulatedHistogram(
     sciline.Scope[AccumulationMode, sc.DataArray],
     sc.DataArray,  # type: ignore[misc]
 ):
-    """3D histogram parametrized by accumulation mode.
+    """Histogram parametrized by accumulation mode.
 
-    - Histogram3D[Cumulative]: Accumulated forever (EternalAccumulator)
-    - Histogram3D[Window]: Current window only (clears after finalize)
+    - AccumulatedHistogram[Cumulative]: Accumulated forever (EternalAccumulator)
+    - AccumulatedHistogram[Current]: Current window only (clears after finalize)
     """
 
 

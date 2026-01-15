@@ -22,13 +22,13 @@ from ess.reduce.nexus.types import NeXusData, SampleRun
 
 from .data_source import DetectorDataSource
 from .types import (
+    AccumulatedHistogram,
     CountsInRange,
     CountsTotal,
     Cumulative,
     Current,
     DetectorImage,
     GeometricViewConfig,
-    Histogram3D,
     LogicalViewConfig,
     ROIPolygonReadback,
     ROIPolygonRequest,
@@ -197,7 +197,7 @@ class DetectorViewFactory:
                 'roi_spectra_current',
             ),
             accumulators={
-                Histogram3D[Cumulative]: NoCopyAccumulator(),
-                Histogram3D[Current]: NoCopyWindowAccumulator(),
+                AccumulatedHistogram[Cumulative]: NoCopyAccumulator(),
+                AccumulatedHistogram[Current]: NoCopyWindowAccumulator(),
             },
         )

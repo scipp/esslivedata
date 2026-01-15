@@ -7,17 +7,17 @@ import scipp as sc
 
 from ess.livedata.handlers.detector_view.projectors import make_logical_projector
 from ess.livedata.handlers.detector_view.providers import (
-    compute_detector_histogram_3d,
+    accumulated_histogram,
+    compute_detector_histogram,
     counts_in_range,
     counts_total,
     detector_image,
-    histogram_3d,
 )
 from ess.livedata.handlers.detector_view.types import (
+    AccumulatedHistogram,
     Cumulative,
     Current,
-    DetectorHistogram3D,
-    Histogram3D,
+    DetectorHistogram,
     PixelWeights,
     UsePixelWeighting,
 )
@@ -80,11 +80,11 @@ class TestCreateBaseWorkflow:
         assert wf3 is not None
 
 
-class TestComputeDetectorHistogram3D:
-    """Tests for compute_detector_histogram_3d function."""
+class TestComputeDetectorHistogram:
+    """Tests for compute_detector_histogram function."""
 
     def test_histogram_from_screen_binned_events(self):
-        """Test histogramming screen-binned events to 3D."""
+        """Test histogramming screen-binned events."""
         data = make_fake_nexus_detector_data(y_size=4, x_size=4)
         bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
 
@@ -93,7 +93,7 @@ class TestComputeDetectorHistogram3D:
         projector = make_logical_projector(transform=transform, reduction_dim=None)
         screen_binned = projector.project_events(sc.values(data))
 
-        result = compute_detector_histogram_3d(
+        result = compute_detector_histogram(
             screen_binned_events=screen_binned,
             bins=bins,
             event_coord='event_time_offset',
@@ -113,7 +113,7 @@ class TestComputeDetectorHistogram3D:
         projector = make_logical_projector(transform=transform, reduction_dim='y')
         screen_binned = projector.project_events(sc.values(data))
 
-        result = compute_detector_histogram_3d(
+        result = compute_detector_histogram(
             screen_binned_events=screen_binned,
             bins=bins,
             event_coord='event_time_offset',
@@ -134,7 +134,7 @@ class TestComputeDetectorHistogram3D:
         projector = make_logical_projector(transform=transform, reduction_dim=None)
         screen_binned = projector.project_events(sc.values(data))
 
-        result = compute_detector_histogram_3d(
+        result = compute_detector_histogram(
             screen_binned_events=screen_binned,
             bins=bins,
             event_coord='event_time_offset',
@@ -147,18 +147,18 @@ class TestComputeDetectorHistogram3D:
         assert sc.allclose(result.coords['time_of_arrival'], bins)
 
 
-class TestHistogram3DProvider:
-    """Tests for the histogram_3d generic provider."""
+class TestAccumulatedHistogramProvider:
+    """Tests for the accumulated_histogram generic provider."""
 
-    def test_histogram_3d_identity(self):
-        """Test that histogram_3d returns input unchanged."""
-        data_3d = sc.DataArray(
+    def test_accumulated_histogram_identity(self):
+        """Test that accumulated_histogram returns input unchanged."""
+        data = sc.DataArray(
             sc.ones(dims=['y', 'x', 'tof'], shape=[4, 4, 10], unit='counts')
         )
 
-        result = histogram_3d(DetectorHistogram3D(data_3d))
+        result = accumulated_histogram(DetectorHistogram(data))
 
-        assert sc.identical(result, data_3d)
+        assert sc.identical(result, data)
 
 
 class TestLogicalProjector:
@@ -242,8 +242,8 @@ class TestDetectorImageProviders:
 
     def test_detector_image_sums_over_spectral_dim(self):
         """Test that detector_image produces 2D output."""
-        # Create 3D histogram - spectral dim is last
-        data_3d = sc.DataArray(
+        # Create histogram - spectral dim is last
+        data = sc.DataArray(
             sc.ones(
                 dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
             )
@@ -251,7 +251,7 @@ class TestDetectorImageProviders:
         weights = PixelWeights(sc.ones(dims=['y', 'x'], shape=[4, 4], dtype='float32'))
 
         result = detector_image(
-            data_3d=Histogram3D[Cumulative](data_3d),
+            histogram=AccumulatedHistogram[Cumulative](data),
             histogram_slice=None,
             weights=weights,
             use_weighting=UsePixelWeighting(False),
@@ -265,9 +265,9 @@ class TestDetectorImageProviders:
 
     def test_detector_image_with_histogram_slice(self):
         """Test that histogram slicing is applied correctly."""
-        # Create 3D histogram with coordinate
+        # Create histogram with coordinate
         coord = sc.linspace('event_time_offset', 0, 100000, 11, unit='ns')
-        data_3d = sc.DataArray(
+        data = sc.DataArray(
             sc.ones(
                 dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
             ),
@@ -279,7 +279,7 @@ class TestDetectorImageProviders:
         histogram_slice = (sc.scalar(0, unit='ns'), sc.scalar(50000, unit='ns'))
 
         result = detector_image(
-            data_3d=Histogram3D[Current](data_3d),
+            histogram=AccumulatedHistogram[Current](data),
             histogram_slice=histogram_slice,
             weights=weights,
             use_weighting=UsePixelWeighting(False),
@@ -294,13 +294,13 @@ class TestCountProviders:
 
     def test_counts_total(self):
         """Test that counts_total sums all counts."""
-        data_3d = sc.DataArray(
+        data = sc.DataArray(
             sc.ones(
                 dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
             )
         )
 
-        result = counts_total(data_3d=Histogram3D[Current](data_3d))
+        result = counts_total(histogram=AccumulatedHistogram[Current](data))
 
         expected = sc.scalar(4 * 4 * 10, unit='counts', dtype='float64')
         assert sc.identical(result.data, expected)
@@ -308,7 +308,7 @@ class TestCountProviders:
     def test_counts_in_range_with_and_without_slice(self):
         """Test counts_in_range with and without histogram slice."""
         coord = sc.linspace('event_time_offset', 0, 100000, 11, unit='ns')
-        data_3d = sc.DataArray(
+        data = sc.DataArray(
             sc.ones(
                 dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
             ),
@@ -317,7 +317,7 @@ class TestCountProviders:
 
         # Without slice - should count all bins
         result_no_slice = counts_in_range(
-            data_3d=Histogram3D[Current](data_3d), histogram_slice=None
+            histogram=AccumulatedHistogram[Current](data), histogram_slice=None
         )
         expected_all = sc.scalar(4 * 4 * 10, unit='counts', dtype='float64')
         assert sc.identical(result_no_slice.data, expected_all)
@@ -325,7 +325,8 @@ class TestCountProviders:
         # With slice to first half - should count approximately half
         histogram_slice = (sc.scalar(0, unit='ns'), sc.scalar(50000, unit='ns'))
         result_sliced = counts_in_range(
-            data_3d=Histogram3D[Current](data_3d), histogram_slice=histogram_slice
+            histogram=AccumulatedHistogram[Current](data),
+            histogram_slice=histogram_slice,
         )
         assert result_sliced.dims == ()
         assert result_sliced.data < expected_all

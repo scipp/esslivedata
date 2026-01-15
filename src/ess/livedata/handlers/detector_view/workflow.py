@@ -37,12 +37,12 @@ from .projectors import (
     make_logical_projector,
 )
 from .providers import (
-    compute_detector_histogram_3d,
+    accumulated_histogram,
+    compute_detector_histogram,
     compute_pixel_weights,
     counts_in_range,
     counts_total,
     detector_image,
-    histogram_3d,
     project_events,
 )
 from .roi import (
@@ -165,8 +165,8 @@ def create_base_workflow(
     workflow[UsePixelWeighting] = False  # Default: disabled
 
     # Add histogram and downstream providers (generic providers for both modes)
-    workflow.insert(compute_detector_histogram_3d)
-    workflow.insert(histogram_3d)
+    workflow.insert(compute_detector_histogram)
+    workflow.insert(accumulated_histogram)
     workflow.insert(detector_image)
     workflow.insert(counts_total)
     workflow.insert(counts_in_range)
