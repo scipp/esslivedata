@@ -15,14 +15,14 @@ from ess.reduce.nexus.types import EmptyDetector, RawDetector, SampleRun
 
 from .projectors import GeometricProjector, LogicalProjector, Projector
 from .types import (
+    AccumulatedHistogram,
     AccumulationMode,
     CountsInRange,
     CountsTotal,
     Current,
-    DetectorHistogram3D,
+    DetectorHistogram,
     DetectorImage,
     EventCoordName,
-    Histogram3D,
     HistogramBins,
     HistogramSlice,
     PixelWeights,
@@ -87,11 +87,11 @@ def compute_pixel_weights(
         raise TypeError(f"Unknown projector type: {type(projector)}")
 
 
-def compute_detector_histogram_3d(
+def compute_detector_histogram(
     screen_binned_events: ScreenBinnedEvents,
     bins: HistogramBins,
     event_coord: EventCoordName,
-) -> DetectorHistogram3D:
+) -> DetectorHistogram:
     """
     Histogram events by the specified event coordinate.
 
@@ -110,11 +110,11 @@ def compute_detector_histogram_3d(
     Returns
     -------
     :
-        3D histogram with spatial dims and the event coordinate dimension.
+        Histogram with spatial dims and the event coordinate dimension.
     """
     if screen_binned_events.bins is None:
         # Already dense data (shouldn't happen in normal flow)
-        return DetectorHistogram3D(screen_binned_events)
+        return DetectorHistogram(screen_binned_events)
 
     # Convert bins to ns and rename dimension to match event_coord for histogramming.
     # Then restore user's original dimension name and unit for output.
@@ -123,26 +123,30 @@ def compute_detector_histogram_3d(
     histogrammed = screen_binned_events.hist({event_coord: bins_ns})
     histogrammed = histogrammed.rename_dims({event_coord: output_dim})
     histogrammed.coords[output_dim] = bins
-    return DetectorHistogram3D(histogrammed)
+    return DetectorHistogram(histogrammed)
 
 
-def histogram_3d(data: DetectorHistogram3D) -> Histogram3D[AccumulationMode]:
+def accumulated_histogram(
+    data: DetectorHistogram,
+) -> AccumulatedHistogram[AccumulationMode]:
     """
     Route histogram to accumulation-mode-specific accumulator.
 
     This generic provider allows the histogram to be computed once and
     accumulated differently based on the accumulation mode type parameter:
 
-    - Histogram3D[Cumulative]: Uses EternalAccumulator (accumulates forever)
-    - Histogram3D[Window]: Uses NoCopyWindowAccumulator (clears after finalize)
+    - AccumulatedHistogram[Cumulative]: Uses EternalAccumulator
+      (accumulates forever)
+    - AccumulatedHistogram[Current]: Uses NoCopyWindowAccumulator
+      (clears after finalize)
 
     Sciline instantiates this provider for each concrete type parameter.
     """
-    return Histogram3D[AccumulationMode](data)
+    return AccumulatedHistogram[AccumulationMode](data)
 
 
 def detector_image(
-    data_3d: Histogram3D[AccumulationMode],
+    histogram: AccumulatedHistogram[AccumulationMode],
     histogram_slice: HistogramSlice,
     weights: PixelWeights,
     use_weighting: UsePixelWeighting,
@@ -153,12 +157,12 @@ def detector_image(
     This generic provider works for both accumulation modes:
 
     - DetectorImage[Cumulative]: Summed over all accumulated data
-    - DetectorImage[Window]: Current window only (since last finalize)
+    - DetectorImage[Current]: Current window only (since last finalize)
 
     Parameters
     ----------
-    data_3d:
-        3D histogram (y, x, spectral).
+    histogram:
+        Histogram with screen dims and spectral dim.
     histogram_slice:
         Optional (low, high) range for slicing. If None, sum over full range.
     weights:
@@ -169,9 +173,9 @@ def detector_image(
     Returns
     -------
     :
-        2D detector image (y, x).
+        2D detector image.
     """
-    image = _sum_over_spectral_dim(data_3d, histogram_slice)
+    image = _sum_over_spectral_dim(histogram, histogram_slice)
     if use_weighting:
         image = image / weights
     return DetectorImage[AccumulationMode](image)
@@ -193,33 +197,33 @@ def _sum_over_spectral_dim(
     return sliced.sum(spectral_dim)
 
 
-def counts_total(data_3d: Histogram3D[Current]) -> CountsTotal:
+def counts_total(histogram: AccumulatedHistogram[Current]) -> CountsTotal:
     """
     Compute total event counts in current window.
 
     Parameters
     ----------
-    data_3d:
-        3D histogram (y, x, tof) for current window.
+    histogram:
+        Histogram for current window.
 
     Returns
     -------
     :
         Total counts as 0D scalar.
     """
-    return CountsTotal(data_3d.sum())
+    return CountsTotal(histogram.sum())
 
 
 def counts_in_range(
-    data_3d: Histogram3D[Current], histogram_slice: HistogramSlice
+    histogram: AccumulatedHistogram[Current], histogram_slice: HistogramSlice
 ) -> CountsInRange:
     """
     Compute event counts within specified range in current window.
 
     Parameters
     ----------
-    data_3d:
-        3D histogram (y, x, spectral) for current window.
+    histogram:
+        Histogram for current window.
     histogram_slice:
         Optional (low, high) range for counting. If None, counts all.
 
@@ -228,12 +232,12 @@ def counts_in_range(
     :
         Counts in range as 0D scalar.
     """
-    spectral_dim = data_3d.dims[-1]
+    spectral_dim = histogram.dims[-1]
 
     if histogram_slice is not None:
         low, high = histogram_slice
-        sliced = data_3d[spectral_dim, low:high]
+        sliced = histogram[spectral_dim, low:high]
     else:
-        sliced = data_3d
+        sliced = histogram
 
     return CountsInRange(sliced.sum())

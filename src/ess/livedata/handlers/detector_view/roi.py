@@ -15,8 +15,8 @@ import scipp as sc
 from ess.livedata.config import models
 
 from .types import (
+    AccumulatedHistogram,
     AccumulationMode,
-    Histogram3D,
     ROIPolygonMasks,
     ROIPolygonReadback,
     ROIPolygonRequest,
@@ -217,17 +217,17 @@ def _compute_polygon_mask(
 
 
 def _extract_roi_spectra_precomputed(
-    histogram_3d: sc.DataArray,
+    histogram: sc.DataArray,
     rectangle_bounds: dict[int, dict[str, tuple[sc.Variable, sc.Variable]]],
     polygon_masks: dict[int, sc.Variable],
 ) -> sc.DataArray:
     """
-    Extract TOF spectra from 3D histogram using precomputed ROI data.
+    Extract spectra from histogram using precomputed ROI data.
 
     Parameters
     ----------
-    histogram_3d:
-        3D histogram with dims (y, x, tof).
+    histogram:
+        Histogram with screen dims and spectral dim.
     rectangle_bounds:
         Precomputed bounds for rectangle ROIs.
     polygon_masks:
@@ -239,12 +239,12 @@ def _extract_roi_spectra_precomputed(
         2D DataArray with dims (roi, spectral) containing spectra for each ROI.
         Returns empty DataArray with shape (0, n_spectral) if no ROIs configured.
     """
-    spectral_dim = histogram_3d.dims[-1]
-    spectral_coord = histogram_3d.coords[spectral_dim]
-    n_spectral = histogram_3d.sizes[spectral_dim]
+    spectral_dim = histogram.dims[-1]
+    spectral_coord = histogram.coords[spectral_dim]
+    n_spectral = histogram.sizes[spectral_dim]
 
     # Get spatial dims (all dims except spectral)
-    spatial_dims = [d for d in histogram_3d.dims if d != spectral_dim]
+    spatial_dims = [d for d in histogram.dims if d != spectral_dim]
     if len(spatial_dims) != 2:
         raise ValueError(
             f"Expected 2 spatial dims, got {len(spatial_dims)}: {spatial_dims}"
@@ -258,7 +258,7 @@ def _extract_roi_spectra_precomputed(
     for idx, bounds in rectangle_bounds.items():
         x_low, x_high = bounds[x_dim]
         y_low, y_high = bounds[y_dim]
-        sliced = histogram_3d[y_dim, y_low:y_high][x_dim, x_low:x_high]
+        sliced = histogram[y_dim, y_low:y_high][x_dim, x_low:x_high]
         spectrum = sliced.sum(dim=[y_dim, x_dim])
         spectra.append(spectrum)
         roi_indices.append(idx)
@@ -267,7 +267,7 @@ def _extract_roi_spectra_precomputed(
     for idx, mask in polygon_masks.items():
         # Add temporary mask to histogram, sum, then remove
         # scipp's sum ignores masked values
-        masked = histogram_3d.copy(deep=False)
+        masked = histogram.copy(deep=False)
         masked.masks['_roi_polygon'] = mask
         spectrum = masked.sum(dim=[y_dim, x_dim])
         spectra.append(spectrum)
@@ -293,7 +293,7 @@ def _extract_roi_spectra_precomputed(
 
 
 def roi_spectra(
-    data_3d: Histogram3D[AccumulationMode],
+    histogram: AccumulatedHistogram[AccumulationMode],
     rectangle_bounds: ROIRectangleBounds,
     polygon_masks: ROIPolygonMasks,
 ) -> ROISpectra[AccumulationMode]:
@@ -303,12 +303,12 @@ def roi_spectra(
     This generic provider works for both accumulation modes:
 
     - ROISpectra[Cumulative]: Extracted from cumulative histogram
-    - ROISpectra[Window]: Extracted from current window histogram
+    - ROISpectra[Current]: Extracted from current window histogram
 
     Parameters
     ----------
-    data_3d:
-        3D histogram (y, x, tof).
+    histogram:
+        Histogram with screen dims and spectral dim.
     rectangle_bounds:
         Precomputed bounds for rectangle ROIs.
     polygon_masks:
@@ -317,10 +317,10 @@ def roi_spectra(
     Returns
     -------
     :
-        ROI spectra with dims (roi, tof).
+        ROI spectra with dims (roi, spectral).
     """
     return ROISpectra[AccumulationMode](
-        _extract_roi_spectra_precomputed(data_3d, rectangle_bounds, polygon_masks)
+        _extract_roi_spectra_precomputed(histogram, rectangle_bounds, polygon_masks)
     )
 
 
