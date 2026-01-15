@@ -69,43 +69,6 @@ def precompute_roi_rectangle_bounds(
     return ROIRectangleBounds(bounds_dict)
 
 
-def _get_bin_centers(
-    coord: sc.Variable | None, dim: str, expected_size: int
-) -> sc.Variable:
-    """
-    Get bin centers from coordinate, handling edges, centers, and None.
-
-    Parameters
-    ----------
-    coord:
-        Coordinate variable (edges, centers, or None).
-    dim:
-        Dimension name.
-    expected_size:
-        Expected number of bins.
-
-    Returns
-    -------
-    :
-        Bin centers as a 1D Variable.
-    """
-    if coord is None:
-        # Synthesize integer indices for logical views
-        return sc.arange(dim, expected_size, dtype='float64')
-
-    if len(coord) == expected_size + 1:
-        # Edges: compute midpoints
-        return sc.midpoints(coord)
-    elif len(coord) == expected_size:
-        # Already centers: use as-is
-        return coord
-    else:
-        raise ValueError(
-            f"Coordinate for '{dim}' has unexpected length {len(coord)}. "
-            f"Expected {expected_size} (centers) or {expected_size + 1} (edges)."
-        )
-
-
 def precompute_roi_polygon_masks(
     screen_metadata: ScreenMetadata,
     polygon_request: ROIPolygonRequest,
@@ -138,9 +101,15 @@ def precompute_roi_polygon_masks(
         raise ValueError(f"Polygon ROIs require at least 2 dimensions, got {dims}")
     y_dim, x_dim = dims[0], dims[1]
 
-    # Get bin centers, handling edges, centers, and None coordinates
-    y_centers = _get_bin_centers(screen_coords[y_dim], y_dim, sizes[y_dim])
-    x_centers = _get_bin_centers(screen_coords[x_dim], x_dim, sizes[x_dim])
+    # ScreenMetadata guarantees bin centers; synthesize indices for logical views (None)
+    y_coord = screen_coords[y_dim]
+    x_coord = screen_coords[x_dim]
+    y_centers = (
+        sc.arange(y_dim, sizes[y_dim], dtype='float64') if y_coord is None else y_coord
+    )
+    x_centers = (
+        sc.arange(x_dim, sizes[x_dim], dtype='float64') if x_coord is None else x_coord
+    )
 
     masks_dict: dict[int, sc.Variable] = {}
     rois = models.ROI.from_concatenated_data_array(polygon_request)

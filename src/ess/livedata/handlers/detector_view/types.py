@@ -42,8 +42,9 @@ class ScreenMetadata:
     Parameters
     ----------
     coords:
-        Dimension name to bin edges/centers mapping. Values are None for
-        logical dimensions without physical coordinates.
+        Dimension name to bin centers mapping. Values are None for logical
+        dimensions without physical coordinates. Coordinates are always
+        bin centers, never edges - conversion happens at construction time.
     sizes:
         Dimension name to number of bins mapping.
     """

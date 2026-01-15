@@ -68,17 +68,17 @@ def extract_roi_spectra(
     return _extract_roi_spectra_precomputed(histogram, bounds, masks)
 
 
-def make_screen_metadata_with_edges(
+def make_screen_metadata_from_edges(
     y_range: tuple[float, float] = (0.0, 10.0),
     x_range: tuple[float, float] = (0.0, 10.0),
     n_bins: int = 10,
     unit: str = 'm',
 ) -> ScreenMetadata:
-    """Create screen metadata with bin edge coordinates."""
+    """Create screen metadata from bin edges, storing centers as projectors do."""
     y_edges = sc.linspace('y', y_range[0], y_range[1], n_bins + 1, unit=unit)
     x_edges = sc.linspace('x', x_range[0], x_range[1], n_bins + 1, unit=unit)
     return ScreenMetadata(
-        coords={'y': y_edges, 'x': x_edges},
+        coords={'y': sc.midpoints(y_edges), 'x': sc.midpoints(x_edges)},
         sizes={'y': n_bins, 'x': n_bins},
     )
 
@@ -126,7 +126,7 @@ class TestRectangleROIExtraction:
 
     def test_rectangle_with_physical_coords(self):
         """Rectangle ROI with physical coordinates extracts correct counts."""
-        metadata = make_screen_metadata_with_edges()
+        metadata = make_screen_metadata_from_edges()
         histogram = make_uniform_histogram(value=1.0)
 
         # Rectangle covering indices 2-4 in both dims (3x3 = 9 pixels)
@@ -147,7 +147,7 @@ class TestRectangleROIExtraction:
 
     def test_rectangle_with_index_bounds(self):
         """Rectangle ROI with index bounds (no units) works."""
-        metadata = make_screen_metadata_with_edges()
+        metadata = make_screen_metadata_from_edges()
         histogram = make_uniform_histogram(value=1.0)
 
         # Index-based rectangle: indices 0-4 in both dims (5x5 = 25 pixels)
@@ -183,7 +183,7 @@ class TestRectangleROIExtraction:
 
     def test_multiple_rectangles(self):
         """Multiple rectangle ROIs are extracted correctly."""
-        metadata = make_screen_metadata_with_edges()
+        metadata = make_screen_metadata_from_edges()
         histogram = make_uniform_histogram(value=1.0)
 
         roi0 = RectangleROI(
@@ -210,7 +210,7 @@ class TestPolygonROIExtraction:
 
     def test_polygon_with_bin_edges(self):
         """Polygon ROI with bin edge coordinates extracts correct counts."""
-        metadata = make_screen_metadata_with_edges()
+        metadata = make_screen_metadata_from_edges()
         histogram = make_uniform_histogram(value=1.0)
 
         # Square polygon covering bins 2-4 in both dims (3x3 = 9 pixels)
@@ -284,7 +284,7 @@ class TestPolygonROIExtraction:
 
     def test_triangle_polygon_extracts_correct_region(self):
         """Triangle polygon extracts only the correct pixels."""
-        metadata = make_screen_metadata_with_edges()
+        metadata = make_screen_metadata_from_edges()
 
         # Histogram where each pixel has value = y_index
         data = np.zeros((10, 10, 3))
@@ -324,7 +324,7 @@ class TestMixedROIExtraction:
 
     def test_rectangles_and_polygons_together(self):
         """Both rectangle and polygon ROIs can be extracted together."""
-        metadata = make_screen_metadata_with_edges()
+        metadata = make_screen_metadata_from_edges()
         histogram = make_uniform_histogram(value=1.0)
 
         rect_roi = RectangleROI(
@@ -363,7 +363,7 @@ class TestEmptyROIRequests:
 
         Covers None, empty rectangle, and empty polygon requests.
         """
-        metadata = make_screen_metadata_with_edges()
+        metadata = make_screen_metadata_from_edges()
         histogram = make_uniform_histogram()
 
         # No ROI requests at all
