@@ -139,6 +139,28 @@ class TestComputeDetectorHistogram3D:
         assert 'x' in result.dims
         assert 'y' not in result.dims
 
+    def test_histogram_preserves_user_dim_and_unit(self):
+        """Test that output has user's dimension name and unit."""
+        data = make_fake_nexus_detector_data(y_size=4, x_size=4)
+        # Bins with user's dimension name (time_of_arrival) and unit (ms)
+        bins = sc.linspace('time_of_arrival', 0, 71, 11, unit='ms')
+
+        transform = make_logical_transform(4, 4)
+        projector = make_logical_projector(transform=transform, reduction_dim=None)
+        screen_binned = projector.project_events(sc.values(data))
+
+        result = compute_detector_histogram_3d(
+            screen_binned_events=screen_binned,
+            bins=bins,
+            event_coord='event_time_offset',
+        )
+
+        # Output should have user's dimension name and unit
+        assert 'time_of_arrival' in result.dims
+        assert 'event_time_offset' not in result.dims
+        assert result.coords['time_of_arrival'].unit == 'ms'
+        assert sc.allclose(result.coords['time_of_arrival'], bins)
+
 
 class TestIdentityProviders:
     """Tests for cumulative_histogram and window_histogram identity providers."""

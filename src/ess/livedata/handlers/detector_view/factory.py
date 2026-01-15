@@ -106,14 +106,14 @@ class DetectorViewFactory:
         if params is None:
             raise ValueError("params is required (must have toa_edges)")
 
-        # Event coordinate to histogram - currently always event_time_offset
-        # Future: could be extended via params to support wavelength, etc.
+        # Event coordinate to histogram - currently always event_time_offset.
+        # This is the coordinate name in the event data; the output dimension name
+        # comes from the bins (time_of_arrival with user's preferred unit).
         event_coord = 'event_time_offset'
 
-        # Get histogram bins from params and rename dimension to match event_coord
-        # Also convert to nanoseconds to match event_time_offset unit
+        # Get histogram bins from params. Keep user's unit and dimension name
+        # (time_of_arrival) - provider converts to ns for histogramming then restores.
         bins = params.toa_edges.get_edges()
-        bins = bins.rename_dims({bins.dim: event_coord}).to(unit='ns')
 
         # Get histogram slice from params if available
         histogram_slice = None
