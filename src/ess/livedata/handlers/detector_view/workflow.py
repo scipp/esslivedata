@@ -10,7 +10,7 @@ workflow for detector view data reduction.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Literal
 
 import sciline
 import scipp as sc
@@ -53,10 +53,7 @@ from .roi import (
     roi_spectra,
 )
 from .types import (
-    Cumulative,
-    Current,
     EventCoordName,
-    Histogram3D,
     HistogramBins,
     HistogramSlice,
     LogicalTransform,
@@ -269,21 +266,3 @@ def add_logical_projection(
     # Set projection configuration
     workflow[LogicalTransform] = transform
     workflow[ReductionDim] = reduction_dim
-
-
-def create_accumulators() -> dict[type, Any]:
-    """
-    Create the accumulator configuration for StreamProcessor.
-
-    Uses NoCopyAccumulator variants for ~2x performance improvement by
-    eliminating deepcopy overhead on large histograms.
-
-    Returns
-    -------
-    :
-        Dict mapping histogram types to accumulator instances.
-    """
-    return {
-        Histogram3D[Cumulative]: NoCopyAccumulator(),
-        Histogram3D[Current]: NoCopyWindowAccumulator(),
-    }

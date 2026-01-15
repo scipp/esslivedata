@@ -24,6 +24,7 @@ from .types import (
     Current,
     DetectorImage,
     GeometricViewConfig,
+    Histogram3D,
     LogicalViewConfig,
     ROIPolygonReadback,
     ROIPolygonRequest,
@@ -34,9 +35,10 @@ from .types import (
     ViewConfig,
 )
 from .workflow import (
+    NoCopyAccumulator,
+    NoCopyWindowAccumulator,
     add_geometric_projection,
     add_logical_projection,
-    create_accumulators,
     create_base_workflow,
 )
 
@@ -195,5 +197,8 @@ class DetectorViewFactory:
                 'counts_in_toa_range',
                 'roi_spectra_current',
             ),
-            accumulators=create_accumulators(),
+            accumulators={
+                Histogram3D[Cumulative]: NoCopyAccumulator(),
+                Histogram3D[Current]: NoCopyWindowAccumulator(),
+            },
         )

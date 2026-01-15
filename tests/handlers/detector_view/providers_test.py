@@ -9,7 +9,6 @@ from ess.livedata.handlers.detector_view import (
     Current,
     DetectorHistogram3D,
     Histogram3D,
-    NoCopyAccumulator,
     NoCopyWindowAccumulator,
     PixelWeights,
     UsePixelWeighting,
@@ -17,7 +16,6 @@ from ess.livedata.handlers.detector_view import (
     compute_detector_histogram_3d,
     counts_in_range,
     counts_total,
-    create_accumulators,
     create_base_workflow,
     detector_image,
     histogram_3d,
@@ -78,20 +76,6 @@ class TestCreateBaseWorkflow:
         wf = create_base_workflow(bins=bins)
         add_logical_projection(wf, transform=identity)
         assert wf is not None
-
-
-class TestCreateAccumulators:
-    """Tests for create_accumulators function."""
-
-    def test_creates_correct_accumulator_types(self):
-        """Test that correct accumulator types are created."""
-        accumulators = create_accumulators()
-
-        assert Histogram3D[Cumulative] in accumulators
-        assert Histogram3D[Current] in accumulators
-        # Uses NoCopy variants for performance (~2x faster with large histograms)
-        assert isinstance(accumulators[Histogram3D[Cumulative]], NoCopyAccumulator)
-        assert isinstance(accumulators[Histogram3D[Current]], NoCopyWindowAccumulator)
 
 
 class TestComputeDetectorHistogram3D:

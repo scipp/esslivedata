@@ -80,7 +80,6 @@ from .workflow import (
     NoCopyWindowAccumulator,
     add_geometric_projection,
     add_logical_projection,
-    create_accumulators,
     create_base_workflow,
     get_screen_metadata,
 )
@@ -140,7 +139,6 @@ __all__ = [
     'compute_pixel_weights',
     'counts_in_range',
     'counts_total',
-    'create_accumulators',
     'create_base_workflow',
     'create_empty_detector',
     'detector_image',
