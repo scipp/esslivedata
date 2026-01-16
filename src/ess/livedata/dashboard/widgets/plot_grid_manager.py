@@ -484,30 +484,31 @@ class PlotGridManager:
     def _on_mode_changed(self, event) -> None:
         """Handle mode switch between Template and Upload."""
         mode = event.new
-        self._template_selector.visible = mode == _MODE_TEMPLATE
-        self._file_input.visible = mode == _MODE_UPLOAD
-        self._update_preview()
+        with pn.io.hold():
+            self._template_selector.visible = mode == _MODE_TEMPLATE
+            self._file_input.visible = mode == _MODE_UPLOAD
+            self._update_preview()
 
     def _on_template_selected(self, event) -> None:
         """Handle template selection change."""
         template_name = event.new
+        with pn.io.hold():
+            if template_name == _NO_TEMPLATE:
+                self._selected_template = None
+                self._reset_form_fields()
+                self._update_preview()
+                return
 
-        if template_name == _NO_TEMPLATE:
-            self._selected_template = None
-            self._reset_form_fields()
+            template = self._templates[template_name]
+            self._selected_template = template
+            # Populate widgets with template values
+            self._title_input.value = template.title
+            self._nrows_input.value = template.nrows
+            self._ncols_input.value = template.ncols
+            # Set minimum to prevent shrinking below what cells require
+            self._nrows_input.start = template.min_rows
+            self._ncols_input.start = template.min_cols
             self._update_preview()
-            return
-
-        template = self._templates[template_name]
-        self._selected_template = template
-        # Populate widgets with template values
-        self._title_input.value = template.title
-        self._nrows_input.value = template.nrows
-        self._ncols_input.value = template.ncols
-        # Set minimum to prevent shrinking below what cells require
-        self._nrows_input.start = template.min_rows
-        self._ncols_input.start = template.min_cols
-        self._update_preview()
 
     def _on_add_grid(self, event) -> None:
         """Handle add grid button click."""
@@ -532,13 +533,14 @@ class PlotGridManager:
                 self._orchestrator.add_layer(cell_id, layer.config)
 
         # Reset to Template mode with no template selected
-        self._mode_selector.value = _MODE_TEMPLATE
-        self._template_selector.value = _NO_TEMPLATE
-        self._pending_upload_cells = None
-        self._pending_upload_filename = None
-        self._file_input.clear()
-        self._reset_to_defaults()
-        self._update_preview()
+        with pn.io.hold():
+            self._mode_selector.value = _MODE_TEMPLATE
+            self._template_selector.value = _NO_TEMPLATE
+            self._pending_upload_cells = None
+            self._pending_upload_filename = None
+            self._file_input.clear()
+            self._reset_to_defaults()
+            self._update_preview()
 
     def _on_grid_created(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Handle grid creation from orchestrator."""
@@ -611,14 +613,15 @@ class PlotGridManager:
             # Store parsed cells and filename, populate form fields
             self._pending_upload_cells = parsed_cells
             self._pending_upload_filename = filename
-            # Populate form fields from uploaded config
-            self._title_input.value = raw_config.get('title', 'Uploaded Grid')
-            self._nrows_input.value = raw_config.get('nrows', 3)
-            self._ncols_input.value = raw_config.get('ncols', 3)
-            # Reset row/col minimums (uploads don't enforce minimums)
-            self._nrows_input.start = 2
-            self._ncols_input.start = 2
-            self._update_preview()
+            with pn.io.hold():
+                # Populate form fields from uploaded config
+                self._title_input.value = raw_config.get('title', 'Uploaded Grid')
+                self._nrows_input.value = raw_config.get('nrows', 3)
+                self._ncols_input.value = raw_config.get('ncols', 3)
+                # Reset row/col minimums (uploads don't enforce minimums)
+                self._nrows_input.start = 2
+                self._ncols_input.start = 2
+                self._update_preview()
 
         except yaml.YAMLError as e:
             self._show_upload_error(f'YAML parse error: {e}')
