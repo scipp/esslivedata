@@ -198,9 +198,14 @@ class PlotGridManager:
             visible=False,
         )
         self._file_input.param.watch(self._on_file_uploaded, 'value')
-        # Pending upload: parsed cells from uploaded file, used like template cells
+        # Pending upload state: parsed cells and grid config from uploaded file
         self._pending_upload_cells: Sequence[PlotCell] | None = None
         self._pending_upload_filename: str | None = None
+        self._pending_upload_title: str | None = None
+        self._pending_upload_nrows: int | None = None
+        self._pending_upload_ncols: int | None = None
+        self._pending_upload_min_rows: int = 2
+        self._pending_upload_min_cols: int = 2
 
         # Grid preview container (always shown)
         # Fixed dimensions prevent layout jumps when content is replaced
@@ -487,6 +492,22 @@ class PlotGridManager:
         with pn.io.hold():
             self._template_selector.visible = mode == _MODE_TEMPLATE
             self._file_input.visible = mode == _MODE_UPLOAD
+            # Restore form fields from the active source
+            if mode == _MODE_TEMPLATE:
+                if self._selected_template is not None:
+                    self._title_input.value = self._selected_template.title
+                    self._nrows_input.value = self._selected_template.nrows
+                    self._ncols_input.value = self._selected_template.ncols
+                    self._nrows_input.start = self._selected_template.min_rows
+                    self._ncols_input.start = self._selected_template.min_cols
+                else:
+                    self._reset_form_fields()
+            elif mode == _MODE_UPLOAD and self._pending_upload_cells is not None:
+                self._title_input.value = self._pending_upload_title
+                self._nrows_input.value = self._pending_upload_nrows
+                self._ncols_input.value = self._pending_upload_ncols
+                self._nrows_input.start = self._pending_upload_min_rows
+                self._ncols_input.start = self._pending_upload_min_cols
             self._update_preview()
 
     def _on_template_selected(self, event) -> None:
@@ -538,6 +559,11 @@ class PlotGridManager:
             self._template_selector.value = _NO_TEMPLATE
             self._pending_upload_cells = None
             self._pending_upload_filename = None
+            self._pending_upload_title = None
+            self._pending_upload_nrows = None
+            self._pending_upload_ncols = None
+            self._pending_upload_min_rows = 2
+            self._pending_upload_min_cols = 2
             self._file_input.clear()
             self._reset_to_defaults()
             self._update_preview()
@@ -610,23 +636,25 @@ class PlotGridManager:
                     self._show_upload_error(f'Invalid cell {i + 1}: {e}')
                     return
 
-            # Store parsed cells and filename, populate form fields
+            # Store parsed cells and config values from uploaded file
             self._pending_upload_cells = parsed_cells
             self._pending_upload_filename = filename
+            self._pending_upload_title = raw_config.get('title', 'Uploaded Grid')
+            self._pending_upload_nrows = raw_config.get('nrows', 3)
+            self._pending_upload_ncols = raw_config.get('ncols', 3)
             # Compute minimum grid size from cell geometries
-            min_rows = max(
+            self._pending_upload_min_rows = max(
                 (c.geometry.row + c.geometry.row_span for c in parsed_cells), default=2
             )
-            min_cols = max(
+            self._pending_upload_min_cols = max(
                 (c.geometry.col + c.geometry.col_span for c in parsed_cells), default=2
             )
             with pn.io.hold():
-                # Populate form fields from uploaded config
-                self._title_input.value = raw_config.get('title', 'Uploaded Grid')
-                self._nrows_input.value = raw_config.get('nrows', 3)
-                self._ncols_input.value = raw_config.get('ncols', 3)
-                self._nrows_input.start = min_rows
-                self._ncols_input.start = min_cols
+                self._title_input.value = self._pending_upload_title
+                self._nrows_input.value = self._pending_upload_nrows
+                self._ncols_input.value = self._pending_upload_ncols
+                self._nrows_input.start = self._pending_upload_min_rows
+                self._ncols_input.start = self._pending_upload_min_cols
                 self._update_preview()
 
         except yaml.YAMLError as e:
