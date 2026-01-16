@@ -324,7 +324,7 @@ class PlotGridManager:
         return (
             f'<div style="font-size: 12px; color: {color}; '
             f'margin-bottom: 5px; font-weight: 500;">'
-            f'Preview: {source}</div>'
+            f'{source}</div>'
         )
 
     def _update_source_indicator(self) -> None:
