@@ -336,24 +336,6 @@ class TestGridUpload:
         assert grid.nrows == 4
         assert grid.ncols == 5
 
-    def test_switching_to_upload_mode_clears_template_selection(self, grid_manager):
-        """Test that switching to Upload mode clears the active template."""
-        from ess.livedata.dashboard.widgets.plot_grid_manager import (
-            _MODE_UPLOAD,
-        )
-
-        # First set a template (simulate by setting internal state)
-        grid_manager._selected_template = object()  # Any truthy value
-
-        # Switch to Upload mode
-        class ModeEvent:
-            new = _MODE_UPLOAD
-
-        grid_manager._on_mode_changed(ModeEvent())
-
-        # Template should be cleared when in Upload mode
-        assert grid_manager._selected_template is None
-
     def test_upload_invalid_yaml_does_not_update_form(self, grid_manager):
         """Test that invalid YAML does not update form fields."""
         invalid_yaml = b"title: [unbalanced bracket"
@@ -542,26 +524,22 @@ class TestModeSwitch:
         assert grid_manager._template_selector.visible is False
         assert grid_manager._file_input.visible is True
 
-    def test_mode_switch_remembers_template_selection(self, grid_manager):
-        """Test that switching to Upload mode remembers the template selection."""
+    def test_mode_switch_preserves_template_selection(self, grid_manager):
+        """Test that switching modes preserves the template selection."""
         from ess.livedata.dashboard.widgets.plot_grid_manager import (
             _MODE_TEMPLATE,
             _MODE_UPLOAD,
         )
 
-        # Select a template (if available) or just use the current value
+        # Record initial state
         initial_template_name = grid_manager._template_selector.value
         initial_template_object = grid_manager._selected_template
 
-        # Switch to Upload mode
+        # Switch to Upload mode and back
         grid_manager._mode_selector.value = _MODE_UPLOAD
-        assert grid_manager._remembered_template_name == initial_template_name
-        assert grid_manager._remembered_template_object == initial_template_object
-
-        # Switch back to Template mode
         grid_manager._mode_selector.value = _MODE_TEMPLATE
 
-        # Template selection should be restored
+        # Template selection should be preserved
         assert grid_manager._template_selector.value == initial_template_name
         assert grid_manager._selected_template == initial_template_object
 

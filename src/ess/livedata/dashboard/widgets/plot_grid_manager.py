@@ -156,9 +156,6 @@ class PlotGridManager:
         templates = orchestrator.get_available_templates()
         self._templates = {t.name: t for t in templates}
         self._selected_template: GridSpec | None = None
-        # Remember template selection when switching to Upload mode
-        self._remembered_template_name: str = _NO_TEMPLATE
-        self._remembered_template_object: GridSpec | None = None
 
         # Mode selector (Template or Upload)
         self._mode_selector = pn.widgets.RadioButtonGroup(
@@ -487,23 +484,9 @@ class PlotGridManager:
     def _on_mode_changed(self, event) -> None:
         """Handle mode switch between Template and Upload."""
         mode = event.new
-        with pn.io.hold():
-            if mode == _MODE_TEMPLATE:
-                # Switching to Template mode: restore remembered template, hide upload
-                self._template_selector.visible = True
-                self._file_input.visible = False
-                # Restore the remembered template selection (both selector and object)
-                self._template_selector.value = self._remembered_template_name
-                self._selected_template = self._remembered_template_object
-            else:
-                # Switching to Upload mode: remember current template, show upload
-                self._remembered_template_name = self._template_selector.value
-                self._remembered_template_object = self._selected_template
-                self._template_selector.visible = False
-                self._file_input.visible = True
-                # Clear template selection (upload takes precedence in this mode)
-                self._selected_template = None
-            self._update_preview()
+        self._template_selector.visible = mode == _MODE_TEMPLATE
+        self._file_input.visible = mode == _MODE_UPLOAD
+        self._update_preview()
 
     def _on_template_selected(self, event) -> None:
         """Handle template selection change."""
@@ -551,8 +534,6 @@ class PlotGridManager:
         # Reset to Template mode with no template selected
         self._mode_selector.value = _MODE_TEMPLATE
         self._template_selector.value = _NO_TEMPLATE
-        self._remembered_template_name = _NO_TEMPLATE
-        self._remembered_template_object = None
         self._pending_upload_cells = None
         self._pending_upload_filename = None
         self._file_input.clear()
