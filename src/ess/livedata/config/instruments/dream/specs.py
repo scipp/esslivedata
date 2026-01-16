@@ -91,12 +91,12 @@ instrument.add_logical_view(
 )
 
 # Mapping of detector names to their projection types
-# (excluding sans_detector which has no geometry)
 _projections: dict[str, str] = {
     'mantle_detector': 'cylinder_mantle_z',
     'endcap_backward_detector': 'xy_plane',
     'endcap_forward_detector': 'xy_plane',
     'high_resolution_detector': 'xy_plane',
+    'sans_detector': 'xy_plane',
 }
 
 # Register unified detector projection spec

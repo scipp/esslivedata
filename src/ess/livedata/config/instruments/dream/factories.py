@@ -50,6 +50,7 @@ def setup_factories(instrument: Instrument) -> None:
             'endcap_backward_detector': {'y': 30, 'x': 20},
             'endcap_forward_detector': {'y': 20, 'x': 20},
             'high_resolution_detector': {'y': 20, 'x': 20},
+            'sans_detector': {'y': 20, 'x': 20},
         },
         resolution_scale=8,
     )
