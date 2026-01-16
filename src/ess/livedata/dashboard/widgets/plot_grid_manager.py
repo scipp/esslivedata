@@ -265,6 +265,7 @@ class PlotGridManager:
         )
 
         # Row containing form and preview side by side
+        # Spacer stretches to push preview to the right
         form_row = pn.Row(
             form_column,
             pn.Spacer(sizing_mode='stretch_width'),
