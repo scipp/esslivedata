@@ -14,7 +14,7 @@ detector_fakes = {
     'endcap_backward_detector': (71618, 229376),
     'endcap_forward_detector': (1, 71680),
     'high_resolution_detector': (1122337, 1523680),  # Note: Not consecutive!
-    'sans_detector': (0, 0),  # TODO
+    'sans_detector': (720929, 1122272),
 }
 
 
