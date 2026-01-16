@@ -613,14 +613,20 @@ class PlotGridManager:
             # Store parsed cells and filename, populate form fields
             self._pending_upload_cells = parsed_cells
             self._pending_upload_filename = filename
+            # Compute minimum grid size from cell geometries
+            min_rows = max(
+                (c.geometry.row + c.geometry.row_span for c in parsed_cells), default=2
+            )
+            min_cols = max(
+                (c.geometry.col + c.geometry.col_span for c in parsed_cells), default=2
+            )
             with pn.io.hold():
                 # Populate form fields from uploaded config
                 self._title_input.value = raw_config.get('title', 'Uploaded Grid')
                 self._nrows_input.value = raw_config.get('nrows', 3)
                 self._ncols_input.value = raw_config.get('ncols', 3)
-                # Reset row/col minimums (uploads don't enforce minimums)
-                self._nrows_input.start = 2
-                self._ncols_input.start = 2
+                self._nrows_input.start = min_rows
+                self._ncols_input.start = min_cols
                 self._update_preview()
 
         except yaml.YAMLError as e:
