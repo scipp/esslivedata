@@ -247,9 +247,9 @@ def _all_coords_evenly_spaced(data: sc.DataArray) -> bool:
         if coord is None:
             # Missing coordinates are treated as evenly spaced (dummy coords)
             continue
-        # Single-element coordinates are trivially evenly spaced
+        # Empty or single-element coordinates are trivially evenly spaced
         # (sc.islinspace returns False for them)
-        if len(coord) == 1:
+        if len(coord) <= 1:
             continue
         if not sc.islinspace(coord):
             return False

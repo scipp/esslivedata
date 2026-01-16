@@ -654,3 +654,47 @@ class TestToHoloviews:
         renderer = BokehRenderer.instance()
         bokeh_plot = renderer.get_plot(result)
         assert bokeh_plot is not None
+
+
+class TestAllCoordsEvenlySpaced:
+    def test_returns_true_for_evenly_spaced_coords(self):
+        data = sc.DataArray(
+            sc.zeros(dims=['x', 'y'], shape=[3, 4]),
+            coords={
+                'x': sc.linspace('x', 0, 10, 3),
+                'y': sc.linspace('y', 0, 20, 4),
+            },
+        )
+        assert scipp_to_holoviews._all_coords_evenly_spaced(data) is True
+
+    def test_returns_false_for_unevenly_spaced_coords(self):
+        data = sc.DataArray(
+            sc.zeros(dims=['x', 'y'], shape=[3, 4]),
+            coords={
+                'x': sc.array(dims=['x'], values=[0, 1, 5]),  # not evenly spaced
+                'y': sc.linspace('y', 0, 20, 4),
+            },
+        )
+        assert scipp_to_holoviews._all_coords_evenly_spaced(data) is False
+
+    def test_returns_true_for_missing_coords(self):
+        data = sc.DataArray(sc.zeros(dims=['x', 'y'], shape=[3, 4]))
+        assert scipp_to_holoviews._all_coords_evenly_spaced(data) is True
+
+    def test_returns_true_for_single_element_coord(self):
+        data = sc.DataArray(
+            sc.zeros(dims=['x', 'y'], shape=[1, 4]),
+            coords={
+                'x': sc.array(dims=['x'], values=[5.0]),
+                'y': sc.linspace('y', 0, 20, 4),
+            },
+        )
+        assert scipp_to_holoviews._all_coords_evenly_spaced(data) is True
+
+    def test_returns_true_for_empty_coord(self):
+        """Empty coordinates should be treated as trivially evenly spaced."""
+        data = sc.DataArray(
+            sc.zeros(dims=['x', 'y', 'z'], shape=[0, 0, 0]),
+            coords={'z': sc.arange('z', 0, unit='ms')},
+        )
+        assert scipp_to_holoviews._all_coords_evenly_spaced(data) is True
