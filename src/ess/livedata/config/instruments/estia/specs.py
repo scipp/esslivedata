@@ -30,7 +30,7 @@ instrument.add_logical_view(
     description='Counts folded into strip, blade, and wire dimensions',
     source_names=['multiblade_detector'],
     transform=get_multiblade_view,
-    roi_support=True,
+    roi_support=False,
     output_ndim=3,
 )
 
