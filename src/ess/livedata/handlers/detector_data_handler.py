@@ -20,7 +20,8 @@ from .accumulators import (
     GroupIntoPixels,
     LatestValueHandler,
 )
-from .detector_view import DetectorView, DetectorViewParams
+from .detector_view_legacy import DetectorView, DetectorViewParams
+from .to_nxevent_data import ToNXevent_data
 
 ProjectionType = Literal['xy_plane', 'cylinder_mantle_z']
 
@@ -206,7 +207,22 @@ class DetectorHandlerFactory(
     identify the detector name. Depending on the configured detector views a NeXus file
     with geometry information may be required to setup the view. Currently the NeXus
     files are always obtained via Pooch.
+
+    Parameters
+    ----------
+    instrument:
+        The instrument configuration.
+    ungrouped_events:
+        If True, use ToNXevent_data preprocessor which outputs ungrouped events
+        in NeXusData format (for Sciline workflows). If False (default), use
+        GroupIntoPixels which groups events by detector pixel (for legacy workflows).
     """
+
+    def __init__(
+        self, *, instrument: Instrument, ungrouped_events: bool = False
+    ) -> None:
+        super().__init__(instrument=instrument)
+        self._ungrouped_events = ungrouped_events
 
     def make_preprocessor(self, key: StreamId) -> Accumulator | None:
         match key.kind:
@@ -214,6 +230,8 @@ class DetectorHandlerFactory(
                 # Skip detectors that are not configured
                 if key.name not in self._instrument.detector_names:
                     return None
+                if self._ungrouped_events:
+                    return ToNXevent_data()
                 detector_number = self._instrument.get_detector_number(key.name)
                 return GroupIntoPixels(detector_number=detector_number)
             case StreamKind.AREA_DETECTOR:

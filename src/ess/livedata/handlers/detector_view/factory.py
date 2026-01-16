@@ -1,0 +1,203 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""
+Factory for detector view Sciline workflow creation.
+
+This module provides the DetectorViewScilineFactory for creating detector view
+workflows with configurable projection types and parameters.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import scipp as sc
+
+if TYPE_CHECKING:
+    from ..detector_view_specs import DetectorViewParams
+    from ..stream_processor_workflow import StreamProcessorWorkflow
+from scippnexus import NXdetector
+
+from ess.reduce.nexus.types import NeXusData, SampleRun
+
+from .data_source import DetectorDataSource
+from .types import (
+    AccumulatedHistogram,
+    CountsInRange,
+    CountsTotal,
+    Cumulative,
+    Current,
+    DetectorImage,
+    GeometricViewConfig,
+    LogicalViewConfig,
+    ROIPolygonReadback,
+    ROIPolygonRequest,
+    ROIRectangleReadback,
+    ROIRectangleRequest,
+    ROISpectra,
+    UsePixelWeighting,
+    ViewConfig,
+)
+from .workflow import (
+    NoCopyAccumulator,
+    NoCopyWindowAccumulator,
+    add_geometric_projection,
+    add_logical_projection,
+    create_base_workflow,
+)
+
+
+class DetectorViewFactory:
+    """
+    Factory for creating Sciline-based detector view workflows.
+
+    This factory creates StreamProcessorWorkflow instances that use the
+    Sciline-based detector view workflow for accumulating detector data
+    and producing cumulative and current detector images.
+
+    Supports two projection modes via ViewConfig:
+    1. GeometricViewConfig: For xy_plane/cylinder_mantle_z projections
+    2. LogicalViewConfig: For fold/slice transforms
+
+    Parameters
+    ----------
+    data_source:
+        Detector data source configuration. Use NeXusDetectorSource for
+        loading geometry from a file, or DetectorNumberSource for fast
+        file-less startup with logical views.
+    view_config:
+        View configuration. Can be a single config (applied to all sources)
+        or a dict mapping source names to configs (for per-detector settings).
+    """
+
+    def __init__(
+        self,
+        *,
+        data_source: DetectorDataSource,
+        view_config: ViewConfig | dict[str, ViewConfig],
+    ) -> None:
+        self._data_source = data_source
+        self._view_config = view_config
+
+    def _get_config(self, source_name: str) -> ViewConfig:
+        """Get the view config for a given source."""
+        if isinstance(self._view_config, dict):
+            return self._view_config[source_name]
+        return self._view_config
+
+    def make_workflow(
+        self,
+        source_name: str,
+        params: DetectorViewParams,
+    ) -> StreamProcessorWorkflow:
+        """
+        Factory method that creates a detector view workflow.
+
+        Parameters
+        ----------
+        source_name:
+            Name of the detector source (e.g., 'panel_0').
+        params:
+            Workflow parameters containing toa_edges and optional toa_range.
+
+        Returns
+        -------
+        :
+            StreamProcessorWorkflow wrapping the Sciline-based detector view.
+        """
+        from ess.livedata.handlers.stream_processor_workflow import (
+            StreamProcessorWorkflow,
+        )
+
+        # Event coordinate to histogram - currently always event_time_offset.
+        # This is the coordinate name in the event data; the output dimension name
+        # comes from the bins (time_of_arrival with user's preferred unit).
+        event_coord = 'event_time_offset'
+
+        # Get histogram bins from params. Keep user's unit and dimension name
+        # (time_of_arrival) - provider converts to ns for histogramming then restores.
+        bins = params.toa_edges.get_edges()
+
+        # Get histogram slice from params if enabled
+        histogram_slice = (
+            params.toa_range.range_ns if params.toa_range.enabled else None
+        )
+
+        # Get pixel weighting setting from params
+        use_pixel_weighting = params.pixel_weighting.enabled
+
+        # Create base workflow
+        workflow = create_base_workflow(
+            bins=bins,
+            event_coord=event_coord,
+            histogram_slice=histogram_slice,
+        )
+
+        # Configure detector data source (EmptyDetector)
+        self._data_source.configure_workflow(workflow, source_name)
+
+        # Set pixel weighting configuration
+        workflow[UsePixelWeighting] = use_pixel_weighting
+
+        # Add projection based on config type
+        config = self._get_config(source_name)
+        match config:
+            case GeometricViewConfig():
+                add_geometric_projection(
+                    workflow,
+                    projection_type=config.projection_type,
+                    resolution=config.resolution,
+                    pixel_noise=config.pixel_noise,
+                )
+            case LogicalViewConfig():
+                # Bind source_name to the transform if provided
+                if config.transform is not None:
+
+                    def bound_transform(
+                        da: sc.DataArray, transform=config.transform
+                    ) -> sc.DataArray:
+                        return transform(da, source_name)
+
+                else:
+                    bound_transform = None
+
+                add_logical_projection(
+                    workflow,
+                    transform=bound_transform,
+                    reduction_dim=config.reduction_dim,
+                )
+
+        return StreamProcessorWorkflow(
+            workflow,
+            # Inject preprocessor output as NeXusData; GenericNeXusWorkflow
+            # providers will group events by pixel to produce RawDetector.
+            dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},
+            # ROI configuration comes from auxiliary streams, updated less frequently
+            context_keys={
+                'roi_rectangle': ROIRectangleRequest,
+                'roi_polygon': ROIPolygonRequest,
+            },
+            target_keys={
+                'cumulative': DetectorImage[Cumulative],
+                'current': DetectorImage[Current],
+                'counts_total': CountsTotal,
+                'counts_in_toa_range': CountsInRange,
+                # ROI spectra (extracted from accumulated histograms)
+                'roi_spectra_cumulative': ROISpectra[Cumulative],
+                'roi_spectra_current': ROISpectra[Current],
+                # ROI readbacks (providers ensure correct units from histogram coords)
+                'roi_rectangle': ROIRectangleReadback,
+                'roi_polygon': ROIPolygonReadback,
+            },
+            # Window outputs get time, start_time, end_time coords
+            window_outputs=(
+                'current',
+                'counts_total',
+                'counts_in_toa_range',
+                'roi_spectra_current',
+            ),
+            accumulators={
+                AccumulatedHistogram[Cumulative]: NoCopyAccumulator(),
+                AccumulatedHistogram[Current]: NoCopyWindowAccumulator(),
+            },
+        )

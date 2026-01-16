@@ -135,7 +135,7 @@ class TestDetectorLogicalView:
 
         view = factory.make_view('test_detector', DetectorViewParams())
 
-        from ess.livedata.handlers.detector_view import DetectorView
+        from ess.livedata.handlers.detector_view_legacy import DetectorView
 
         assert isinstance(view, DetectorView)
 
@@ -209,7 +209,7 @@ class TestDetectorLogicalViewWithReduction:
 
         view = factory.make_view('test_detector', DetectorViewParams())
 
-        from ess.livedata.handlers.detector_view import DetectorView
+        from ess.livedata.handlers.detector_view_legacy import DetectorView
 
         assert isinstance(view, DetectorView)
 

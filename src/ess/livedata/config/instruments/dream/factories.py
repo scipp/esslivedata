@@ -179,3 +179,48 @@ def setup_factories(instrument: Instrument) -> None:
                 powder.types.WavelengthMonitor[SampleRun, powder.types.CaveMonitor],
             ),
         )
+
+    # Sciline-based detector view workflow
+    from ess.livedata.handlers.detector_view import (
+        DetectorViewFactory,
+        GeometricViewConfig,
+        NeXusDetectorSource,
+    )
+    from ess.livedata.handlers.detector_view_specs import DetectorViewParams
+
+    # Per-detector view configuration matching the legacy DetectorProjection setup.
+    # Resolution values = base resolution * scale (8), matching _detector_projection
+    # above. Pixel noise is shared across all detectors.
+    _pixel_noise = sc.scalar(4.0, unit='mm')
+    _sciline_detector_view = DetectorViewFactory(
+        data_source=NeXusDetectorSource(get_nexus_geometry_filename('dream-no-shape')),
+        view_config={
+            'mantle_detector': GeometricViewConfig(
+                projection_type='cylinder_mantle_z',
+                resolution={'arc_length': 80, 'z': 320},
+                pixel_noise=_pixel_noise,
+            ),
+            'endcap_backward_detector': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 240, 'x': 160},
+                pixel_noise=_pixel_noise,
+            ),
+            'endcap_forward_detector': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 160, 'x': 160},
+                pixel_noise=_pixel_noise,
+            ),
+            'high_resolution_detector': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 160, 'x': 160},
+                pixel_noise=_pixel_noise,
+            ),
+        },
+    )
+
+    @specs.sciline_detector_view_handle.attach_factory()
+    def _sciline_detector_view_factory(
+        source_name: str, params: DetectorViewParams
+    ) -> StreamProcessorWorkflow:
+        """Factory for Sciline-based detector view workflow."""
+        return _sciline_detector_view.make_workflow(source_name, params)

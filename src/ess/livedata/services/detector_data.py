@@ -13,7 +13,11 @@ from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
 
 
 def make_detector_service_builder(
-    *, instrument: str, dev: bool = True, log_level: int = logging.INFO
+    *,
+    instrument: str,
+    dev: bool = True,
+    log_level: int = logging.INFO,
+    no_legacy: bool = False,
 ) -> DataServiceBuilder:
     stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
     adapter = (
@@ -27,7 +31,9 @@ def make_detector_service_builder(
     instrument_obj = instrument_registry[instrument]
     instrument_obj.load_factories()
     service_name = 'detector_data'
-    preprocessor_factory = DetectorHandlerFactory(instrument=instrument_obj)
+    preprocessor_factory = DetectorHandlerFactory(
+        instrument=instrument_obj, ungrouped_events=no_legacy
+    )
     return DataServiceBuilder(
         instrument=instrument,
         name=service_name,
@@ -40,6 +46,12 @@ def make_detector_service_builder(
 def main() -> NoReturn:
     runner = DataServiceRunner(
         pretty_name='Detector Data', make_builder=make_detector_service_builder
+    )
+    runner.parser.add_argument(
+        '--no-legacy',
+        action='store_true',
+        default=False,
+        help='Use new Sciline-based detector view workflow instead of legacy',
     )
     runner.run()
 
