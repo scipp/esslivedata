@@ -276,3 +276,317 @@ class TestGridDownload:
 
         with pytest.raises(KeyError):
             plot_orchestrator.serialize_grid(fake_grid_id)
+
+
+class TestGridUpload:
+    """Tests for grid config upload functionality.
+
+    Upload follows a preview-based flow:
+    1. User uploads file -> form fields populated, preview shown
+    2. User clicks "Add Grid" -> grid is created
+    """
+
+    def test_upload_populates_form_fields(self, grid_manager):
+        """Test that uploading a file populates form fields."""
+        yaml_content = b"title: Uploaded Grid\nnrows: 4\nncols: 5\ncells: []"
+
+        class FakeEvent:
+            new = yaml_content
+
+        grid_manager._on_file_uploaded(FakeEvent())
+
+        # Form fields should be populated
+        assert grid_manager._title_input.value == 'Uploaded Grid'
+        assert grid_manager._nrows_input.value == 4
+        assert grid_manager._ncols_input.value == 5
+
+    def test_upload_sets_pending_cells(self, grid_manager):
+        """Test that upload stores parsed cells for later creation."""
+        yaml_content = b"title: Test\nnrows: 2\nncols: 2\ncells: []"
+
+        class FakeEvent:
+            new = yaml_content
+
+        grid_manager._on_file_uploaded(FakeEvent())
+
+        # Pending cells should be set (empty list for this config)
+        assert grid_manager._pending_upload_cells is not None
+        assert grid_manager._pending_upload_cells == []
+
+    def test_upload_then_add_grid_creates_grid(self, grid_manager, plot_orchestrator):
+        """Test that uploading then clicking Add Grid creates the grid."""
+        yaml_content = b"title: Uploaded Grid\nnrows: 4\nncols: 5\ncells: []"
+
+        class FakeEvent:
+            new = yaml_content
+
+        grid_manager._on_file_uploaded(FakeEvent())
+
+        # No grid created yet - just preview
+        assert len(plot_orchestrator.get_all_grids()) == 0
+
+        # Simulate clicking Add Grid
+        grid_manager._on_add_grid(None)
+
+        # Now grid should be created
+        grids = plot_orchestrator.get_all_grids()
+        assert len(grids) == 1
+        grid = next(iter(grids.values()))
+        assert grid.title == 'Uploaded Grid'
+        assert grid.nrows == 4
+        assert grid.ncols == 5
+
+    def test_upload_invalid_yaml_does_not_update_form(self, grid_manager):
+        """Test that invalid YAML does not update form fields."""
+        invalid_yaml = b"title: [unbalanced bracket"
+        original_title = grid_manager._title_input.value
+
+        class FakeEvent:
+            new = invalid_yaml
+
+        # Should not raise, error handled gracefully
+        grid_manager._on_file_uploaded(FakeEvent())
+
+        # Form should remain unchanged
+        assert grid_manager._title_input.value == original_title
+        assert grid_manager._pending_upload_cells is None
+
+    def test_upload_non_dict_does_not_update_form(self, grid_manager):
+        """Test that non-dict YAML does not update form fields."""
+        yaml_content = b"- item1\n- item2"
+        original_title = grid_manager._title_input.value
+
+        class FakeEvent:
+            new = yaml_content
+
+        # Should not raise, error handled gracefully
+        grid_manager._on_file_uploaded(FakeEvent())
+
+        # Form should remain unchanged
+        assert grid_manager._title_input.value == original_title
+        assert grid_manager._pending_upload_cells is None
+
+    def test_upload_invalid_cell_does_not_update_form(self, grid_manager):
+        """Test that cell with missing geometry does not update form fields."""
+        yaml_content = b"""
+title: Test Grid
+cells:
+  - config:
+      workflow_id: test
+"""  # Missing 'geometry' field
+        original_title = grid_manager._title_input.value
+
+        class FakeEvent:
+            new = yaml_content
+
+        # Should not raise, error handled gracefully
+        grid_manager._on_file_uploaded(FakeEvent())
+
+        # Form should remain unchanged (error occurred before form update)
+        assert grid_manager._title_input.value == original_title
+        assert grid_manager._pending_upload_cells is None
+
+    def test_upload_uses_defaults_for_missing_fields(self, grid_manager):
+        """Test that missing fields use sensible defaults."""
+        from ess.livedata.dashboard.widgets.plot_grid_manager import _MODE_UPLOAD
+
+        # Switch to Upload mode first
+        grid_manager._mode_selector.value = _MODE_UPLOAD
+
+        yaml_content = b"cells: []"  # Missing title, nrows, ncols
+
+        class FakeEvent:
+            new = yaml_content
+
+        grid_manager._on_file_uploaded(FakeEvent())
+
+        # Defaults should be applied
+        assert grid_manager._title_input.value == 'Uploaded Grid'
+        assert grid_manager._nrows_input.value == 3
+        assert grid_manager._ncols_input.value == 3
+
+    def test_upload_triggers_lifecycle_on_add(
+        self, plot_orchestrator, workflow_registry
+    ):
+        """Test that Add Grid after upload triggers lifecycle callback."""
+        from ess.livedata.dashboard.widgets.plot_grid_manager import _MODE_UPLOAD
+
+        created_grids = []
+
+        # Subscribe to lifecycle events
+        plot_orchestrator.subscribe_to_lifecycle(
+            on_grid_created=lambda grid_id, config: created_grids.append(
+                (grid_id, config)
+            ),
+        )
+
+        manager = PlotGridManager(
+            orchestrator=plot_orchestrator, workflow_registry=workflow_registry
+        )
+
+        # Switch to Upload mode
+        manager._mode_selector.value = _MODE_UPLOAD
+
+        yaml_content = b"title: Sync Test\nnrows: 2\nncols: 2\ncells: []"
+
+        class FakeEvent:
+            new = yaml_content
+
+        manager._on_file_uploaded(FakeEvent())
+
+        # No callback yet - grid not created
+        assert len(created_grids) == 0
+
+        # Now click Add Grid
+        manager._on_add_grid(None)
+
+        # Lifecycle callback should have been called
+        assert len(created_grids) == 1
+        assert created_grids[0][1].title == 'Sync Test'
+
+    def test_upload_none_value_is_ignored(self, grid_manager, plot_orchestrator):
+        """Test that None value (cleared file input) is ignored."""
+
+        class FakeEvent:
+            new = None
+
+        grid_manager._on_file_uploaded(FakeEvent())
+
+        # Nothing should change
+        assert grid_manager._pending_upload_cells is None
+        assert len(plot_orchestrator.get_all_grids()) == 0
+
+    def test_add_grid_clears_pending_upload(self, grid_manager, plot_orchestrator):
+        """Test that Add Grid clears the pending upload state."""
+        from ess.livedata.dashboard.widgets.plot_grid_manager import _MODE_UPLOAD
+
+        # Switch to Upload mode
+        grid_manager._mode_selector.value = _MODE_UPLOAD
+
+        yaml_content = b"title: Test\nnrows: 2\nncols: 2\ncells: []"
+
+        class FakeEvent:
+            new = yaml_content
+
+        grid_manager._on_file_uploaded(FakeEvent())
+        assert grid_manager._pending_upload_cells is not None
+
+        # Click Add Grid
+        grid_manager._on_add_grid(None)
+
+        # Pending upload should be cleared
+        assert grid_manager._pending_upload_cells is None
+
+    def test_source_indicator_shows_uploaded_configuration(self, grid_manager):
+        """Test that source indicator updates when file is uploaded in Upload mode."""
+        from ess.livedata.dashboard.widgets.plot_grid_manager import _MODE_UPLOAD
+
+        # Initially should show empty grid (in Template mode)
+        assert 'Empty grid' in grid_manager._source_indicator.object
+
+        # Switch to Upload mode
+        grid_manager._mode_selector.value = _MODE_UPLOAD
+        # Before upload, shows "No file uploaded"
+        assert 'No file uploaded' in grid_manager._source_indicator.object
+
+        # Upload a file
+        yaml_content = b"title: Test\nnrows: 2\nncols: 2\ncells: []"
+
+        class FakeEvent:
+            new = yaml_content
+
+        grid_manager._file_input.filename = 'test_config.yaml'
+        grid_manager._on_file_uploaded(FakeEvent())
+
+        # Should now show uploaded filename
+        assert 'Uploaded: test_config.yaml' in grid_manager._source_indicator.object
+
+
+class TestModeSwitch:
+    """Tests for the mode switch (Template/Upload) functionality."""
+
+    def test_mode_switch_shows_template_selector_in_template_mode(self, grid_manager):
+        """Test that template selector is visible in Template mode."""
+        from ess.livedata.dashboard.widgets.plot_grid_manager import _MODE_TEMPLATE
+
+        # Start in Template mode (default)
+        assert grid_manager._mode_selector.value == _MODE_TEMPLATE
+        assert grid_manager._template_selector.visible is True
+        assert grid_manager._file_input.visible is False
+
+    def test_mode_switch_shows_upload_in_upload_mode(self, grid_manager):
+        """Test that file input is visible in Upload mode."""
+        from ess.livedata.dashboard.widgets.plot_grid_manager import _MODE_UPLOAD
+
+        # Switch to Upload mode
+        grid_manager._mode_selector.value = _MODE_UPLOAD
+
+        assert grid_manager._template_selector.visible is False
+        assert grid_manager._file_input.visible is True
+
+    def test_mode_switch_preserves_template_selection(self, grid_manager):
+        """Test that switching modes preserves the template selection."""
+        from ess.livedata.dashboard.widgets.plot_grid_manager import (
+            _MODE_TEMPLATE,
+            _MODE_UPLOAD,
+        )
+
+        # Record initial state
+        initial_template_name = grid_manager._template_selector.value
+        initial_template_object = grid_manager._selected_template
+
+        # Switch to Upload mode and back
+        grid_manager._mode_selector.value = _MODE_UPLOAD
+        grid_manager._mode_selector.value = _MODE_TEMPLATE
+
+        # Template selection should be preserved
+        assert grid_manager._template_selector.value == initial_template_name
+        assert grid_manager._selected_template == initial_template_object
+
+    def test_switching_to_template_mode_clears_upload_from_preview(self, grid_manager):
+        """Test that switching to Template mode shows template preview, not upload."""
+        from ess.livedata.dashboard.widgets.plot_grid_manager import (
+            _MODE_TEMPLATE,
+            _MODE_UPLOAD,
+        )
+
+        # Switch to Upload mode and upload a file
+        grid_manager._mode_selector.value = _MODE_UPLOAD
+        yaml_content = b"title: Test\nnrows: 2\nncols: 2\ncells: []"
+
+        class FakeEvent:
+            new = yaml_content
+
+        grid_manager._file_input.filename = 'test.yaml'
+        grid_manager._on_file_uploaded(FakeEvent())
+        assert 'Uploaded: test.yaml' in grid_manager._source_indicator.object
+
+        # Switch back to Template mode
+        grid_manager._mode_selector.value = _MODE_TEMPLATE
+
+        # Should show empty grid (no template selected)
+        assert 'Empty grid' in grid_manager._source_indicator.object
+
+    def test_add_grid_resets_to_template_mode(self, grid_manager, plot_orchestrator):
+        """Test that Add Grid resets the UI to Template mode."""
+        from ess.livedata.dashboard.widgets.plot_grid_manager import (
+            _MODE_TEMPLATE,
+            _MODE_UPLOAD,
+        )
+
+        # Switch to Upload mode and upload
+        grid_manager._mode_selector.value = _MODE_UPLOAD
+        yaml_content = b"title: Test\nnrows: 2\nncols: 2\ncells: []"
+
+        class FakeEvent:
+            new = yaml_content
+
+        grid_manager._on_file_uploaded(FakeEvent())
+
+        # Click Add Grid
+        grid_manager._on_add_grid(None)
+
+        # Should be back in Template mode with defaults
+        assert grid_manager._mode_selector.value == _MODE_TEMPLATE
+        assert grid_manager._pending_upload_cells is None
+        assert grid_manager._title_input.value == 'New Grid'
