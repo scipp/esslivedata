@@ -175,13 +175,9 @@ class PlotGridManager:
             name='Template',
             options=template_options,
             value=_NO_TEMPLATE,
+            sizing_mode='stretch_width',
         )
         self._template_selector.param.watch(self._on_template_selected, 'value')
-
-        # Container for template selector (for show/hide)
-        self._template_container = pn.Column(
-            self._template_selector, sizing_mode='stretch_width'
-        )
 
         # Input fields for new grid
         self._title_input = pn.widgets.TextInput(
@@ -245,7 +241,7 @@ class PlotGridManager:
         # Source selection row with mode switch and conditional content
         source_row = pn.Column(
             self._mode_selector,
-            self._template_container,
+            self._template_selector,
             self._file_input,
             sizing_mode='stretch_width',
         )
@@ -493,7 +489,7 @@ class PlotGridManager:
         with pn.io.hold():
             if mode == _MODE_TEMPLATE:
                 # Switching to Template mode: restore remembered template, hide upload
-                self._template_container.visible = True
+                self._template_selector.visible = True
                 self._file_input.visible = False
                 # Restore the remembered template selection (both selector and object)
                 self._template_selector.value = self._remembered_template_name
@@ -502,7 +498,7 @@ class PlotGridManager:
                 # Switching to Upload mode: remember current template, show upload
                 self._remembered_template_name = self._template_selector.value
                 self._remembered_template_object = self._selected_template
-                self._template_container.visible = False
+                self._template_selector.visible = False
                 self._file_input.visible = True
                 # Clear template selection (upload takes precedence in this mode)
                 self._selected_template = None

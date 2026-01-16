@@ -529,7 +529,7 @@ class TestModeSwitch:
 
         # Start in Template mode (default)
         assert grid_manager._mode_selector.value == _MODE_TEMPLATE
-        assert grid_manager._template_container.visible is True
+        assert grid_manager._template_selector.visible is True
         assert grid_manager._file_input.visible is False
 
     def test_mode_switch_shows_upload_in_upload_mode(self, grid_manager):
@@ -539,7 +539,7 @@ class TestModeSwitch:
         # Switch to Upload mode
         grid_manager._mode_selector.value = _MODE_UPLOAD
 
-        assert grid_manager._template_container.visible is False
+        assert grid_manager._template_selector.visible is False
         assert grid_manager._file_input.visible is True
 
     def test_mode_switch_remembers_template_selection(self, grid_manager):
