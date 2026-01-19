@@ -15,6 +15,55 @@ from .utils import make_fake_ungrouped_nexus_data, make_test_factory, make_test_
 class TestIntegrationWithStreamProcessor:
     """Integration tests using the full StreamProcessorWorkflow via factory."""
 
+    def test_window_outputs_have_time_coords(self):
+        """Test that window outputs have time, start_time, end_time coords.
+
+        The factory configures current, counts_total, counts_in_toa_range, and
+        roi_spectra_current as window outputs. These should have time coords;
+        cumulative outputs should NOT have them (added later by Job).
+        """
+        factory = make_test_factory(y_size=4, x_size=4)
+        workflow = factory.make_workflow('detector', params=make_test_params())
+
+        events = make_fake_ungrouped_nexus_data(
+            y_size=4, x_size=4, n_events_per_pixel=10
+        )
+
+        # Add an ROI so roi_spectra outputs are non-empty
+        roi = RectangleROI(
+            x=Interval(min=0, max=2, unit=None), y=Interval(min=0, max=2, unit=None)
+        )
+        rectangle_request = ROI.to_concatenated_data_array({0: roi})
+
+        workflow.accumulate(
+            {
+                'detector': NeXusData[NXdetector, SampleRun](events),
+                'roi_rectangle': rectangle_request,
+            },
+            start_time=1000,
+            end_time=2000,
+        )
+        result = workflow.finalize()
+
+        # Window outputs should have time coords
+        for key in ('current', 'counts_total', 'counts_in_toa_range'):
+            assert 'time' in result[key].coords, f"{key} missing 'time' coord"
+            assert 'start_time' in result[key].coords, f"{key} missing 'start_time'"
+            assert 'end_time' in result[key].coords, f"{key} missing 'end_time'"
+            assert result[key].coords['time'].value == 1000
+            assert result[key].coords['start_time'].value == 1000
+            assert result[key].coords['end_time'].value == 2000
+            assert result[key].coords['time'].unit == 'ns'
+
+        # ROI spectra current should also have time coords
+        assert 'time' in result['roi_spectra_current'].coords
+        assert result['roi_spectra_current'].coords['time'].value == 1000
+
+        # Cumulative outputs should NOT have time coords
+        assert 'time' not in result['cumulative'].coords
+        assert 'start_time' not in result['cumulative'].coords
+        assert 'time' not in result['roi_spectra_cumulative'].coords
+
     def test_full_workflow_accumulate_and_finalize(self):
         """Test the full workflow with accumulate and finalize."""
         # Use factory to create workflow (same code path as production)
@@ -197,3 +246,185 @@ class TestROISpectraIntegration:
         # small_roi covers 1/16 of detector (1x1 out of 4x4)
         # large_roi covers full detector (4x4 out of 4x4)
         assert large_roi_sum > small_roi_sum
+
+    def test_roi_readback_is_always_published(self):
+        """Test that ROI readback is published on every finalize when ROI is set.
+
+        The current implementation always publishes readbacks when ROIs are
+        configured, regardless of whether they changed. This simplifies the
+        implementation and ensures downstream consumers always have current state.
+        """
+        factory = make_test_factory(y_size=4, x_size=4)
+        workflow = factory.make_workflow('detector', params=make_test_params())
+
+        events = make_fake_ungrouped_nexus_data(
+            y_size=4, x_size=4, n_events_per_pixel=10
+        )
+
+        roi = RectangleROI(
+            x=Interval(min=1.0, max=3.0, unit=None),
+            y=Interval(min=1.0, max=3.0, unit=None),
+        )
+        rectangle_request = ROI.to_concatenated_data_array({0: roi})
+
+        # First accumulate with ROI
+        workflow.accumulate(
+            {
+                'detector': NeXusData[NXdetector, SampleRun](events),
+                'roi_rectangle': rectangle_request,
+            },
+            start_time=1000,
+            end_time=2000,
+        )
+        result1 = workflow.finalize()
+
+        # Readback should be published
+        assert 'roi_rectangle' in result1
+
+        # Verify readback round-trips correctly
+        readback = result1['roi_rectangle']
+        recovered_rois = ROI.from_concatenated_data_array(readback)
+        assert 0 in recovered_rois
+        assert recovered_rois[0].x.min == 1.0
+        assert recovered_rois[0].x.max == 3.0
+
+        # Second accumulate with SAME ROI (unchanged)
+        workflow.accumulate(
+            {
+                'detector': NeXusData[NXdetector, SampleRun](events),
+                'roi_rectangle': rectangle_request,
+            },
+            start_time=2000,
+            end_time=3000,
+        )
+        result2 = workflow.finalize()
+
+        # Readback is still published (current behavior: always publish)
+        assert 'roi_rectangle' in result2
+
+    def test_stacked_spectra_sorted_by_roi_index(self):
+        """Test that ROI spectra are sorted by index in the output.
+
+        When multiple ROIs are configured with non-contiguous indices,
+        the stacked output should have them sorted by index.
+        """
+        factory = make_test_factory(y_size=4, x_size=4)
+        workflow = factory.make_workflow('detector', params=make_test_params())
+
+        events = make_fake_ungrouped_nexus_data(
+            y_size=4, x_size=4, n_events_per_pixel=10
+        )
+
+        # Create ROIs with indices 5 and 2 (out of order)
+        roi_5 = RectangleROI(
+            x=Interval(min=0, max=2, unit=None), y=Interval(min=0, max=2, unit=None)
+        )
+        roi_2 = RectangleROI(
+            x=Interval(min=2, max=4, unit=None), y=Interval(min=2, max=4, unit=None)
+        )
+        rectangle_request = ROI.to_concatenated_data_array({5: roi_5, 2: roi_2})
+
+        workflow.accumulate(
+            {
+                'detector': NeXusData[NXdetector, SampleRun](events),
+                'roi_rectangle': rectangle_request,
+            },
+            start_time=1000,
+            end_time=2000,
+        )
+        result = workflow.finalize()
+
+        stacked = result['roi_spectra_current']
+
+        # Should have 2 ROIs
+        assert stacked.sizes['roi'] == 2
+
+        # ROI indices should be sorted: [2, 5] not [5, 2]
+        roi_indices = list(stacked.coords['roi'].values)
+        assert roi_indices == [
+            2,
+            5,
+        ], f"Expected sorted indices [2, 5], got {roi_indices}"
+
+
+class TestUnitHandling:
+    """Tests for unit handling in detector view workflow."""
+
+    def test_toa_edges_with_microsecond_units(self):
+        """Test that TOA edges in microseconds work correctly.
+
+        The workflow should handle unit conversion internally and produce
+        output with the user-specified unit.
+        """
+        from ess.livedata.handlers.detector_view_specs import DetectorViewParams
+        from ess.livedata.parameter_models import TimeUnit, TOAEdges
+
+        # Create params with microsecond TOA edges
+        # Events have event_time_offset in nanoseconds (0-71ms = 0-71000 us)
+        params = DetectorViewParams(
+            toa_edges=TOAEdges(start=0.0, stop=80000.0, num_bins=10, unit=TimeUnit.US)
+        )
+
+        factory = make_test_factory(y_size=4, x_size=4)
+        workflow = factory.make_workflow('detector', params=params)
+
+        events = make_fake_ungrouped_nexus_data(
+            y_size=4, x_size=4, n_events_per_pixel=10
+        )
+
+        workflow.accumulate(
+            {'detector': NeXusData[NXdetector, SampleRun](events)},
+            start_time=1000,
+            end_time=2000,
+        )
+        result = workflow.finalize()
+
+        # Output should have events binned
+        assert result['current'].sum().value > 0
+
+        # Verify the output has the expected histogram dimension
+        # (time_of_arrival from the edges, projected down to 2D for detector image)
+        assert result['current'].dims == ('y', 'x')
+
+    def test_roi_spectra_output_structure(self):
+        """Test that ROI spectra output has correct structure and units.
+
+        The output should be a 2D DataArray with dims (roi, toa_dim) and
+        have the correct coordinates and unit.
+        """
+        factory = make_test_factory(y_size=4, x_size=4)
+        workflow = factory.make_workflow('detector', params=make_test_params())
+
+        events = make_fake_ungrouped_nexus_data(
+            y_size=4, x_size=4, n_events_per_pixel=10
+        )
+
+        roi = RectangleROI(
+            x=Interval(min=0, max=2, unit=None), y=Interval(min=0, max=2, unit=None)
+        )
+        rectangle_request = ROI.to_concatenated_data_array({0: roi})
+
+        workflow.accumulate(
+            {
+                'detector': NeXusData[NXdetector, SampleRun](events),
+                'roi_rectangle': rectangle_request,
+            },
+            start_time=1000,
+            end_time=2000,
+        )
+        result = workflow.finalize()
+
+        spectra = result['roi_spectra_current']
+
+        # Should be 2D: (roi, spectral_dim)
+        assert spectra.ndim == 2
+        assert 'roi' in spectra.dims
+
+        # Should have roi coordinate
+        assert 'roi' in spectra.coords
+
+        # Second dimension should be time_of_arrival (the spectral dimension)
+        assert 'time_of_arrival' in spectra.dims
+
+        # Data should have a unit (dimensionless from histogram)
+        assert spectra.data.unit is not None
