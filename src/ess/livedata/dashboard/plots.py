@@ -27,14 +27,7 @@ from .plot_params import (
     TickParams,
 )
 from .scipp_to_holoviews import to_holoviews
-
-
-def _format_time_ns(ns: int) -> str:
-    """Format nanoseconds since epoch as HH:MM:SS.s in local time (0.1s precision)."""
-    from datetime import UTC, datetime
-
-    dt = datetime.fromtimestamp(ns / 1e9, tz=UTC).astimezone()
-    return f"{dt.strftime('%H:%M:%S')}.{dt.microsecond // 100000}"
+from .time_utils import format_time_ns_local
 
 
 def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
@@ -71,11 +64,11 @@ def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
     lag_s = (now_ns - min_end) / 1e9
 
     if min_start is not None and max_end is not None:
-        start_str = _format_time_ns(min_start)
-        end_str = _format_time_ns(max_end)
+        start_str = format_time_ns_local(min_start)
+        end_str = format_time_ns_local(max_end)
         return f'{start_str} - {end_str} (Lag: {lag_s:.1f}s)'
     else:
-        end_str = _format_time_ns(min_end)
+        end_str = format_time_ns_local(min_end)
         return f'{end_str} (Lag: {lag_s:.1f}s)'
 
 
