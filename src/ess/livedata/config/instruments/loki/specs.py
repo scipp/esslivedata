@@ -38,24 +38,27 @@ class LokiAuxSources(AuxSourcesBase):
     )
 
 
-def _make_1d_template() -> sc.DataArray:
+def _make_1d_q_template() -> sc.DataArray:
     """Create an empty 1D template for I(Q) output."""
     return sc.DataArray(
-        sc.zeros(dims=['Q'], shape=[0], unit='1/cm'),
+        sc.zeros(dims=['Q'], shape=[0], unit='dimensionless'),
         coords={'Q': sc.arange('Q', 0, unit='1/angstrom')},
     )
 
 
-def _make_0d_template() -> sc.DataArray:
-    """Create an empty 0D template for scalar output."""
-    return sc.DataArray(sc.scalar(0.0, unit='dimensionless'))
+def _make_1d_wavelength_template() -> sc.DataArray:
+    """Create an empty 1D template for wavelength-binned output."""
+    return sc.DataArray(
+        sc.zeros(dims=['wavelength'], shape=[0], unit='dimensionless'),
+        coords={'wavelength': sc.arange('wavelength', 0, unit='angstrom')},
+    )
 
 
 class IofQOutputs(WorkflowOutputsBase):
     """Outputs for the basic I(Q) workflow."""
 
     i_of_q: sc.DataArray = pydantic.Field(
-        default_factory=_make_1d_template,
+        default_factory=_make_1d_q_template,
         title='I(Q)',
         description='Scattered intensity as a function of momentum transfer Q.',
     )
@@ -65,7 +68,7 @@ class IofQWithTransmissionOutputs(IofQOutputs):
     """Outputs for I(Q) workflow with transmission from current run."""
 
     transmission_fraction: sc.DataArray = pydantic.Field(
-        default_factory=_make_0d_template,
+        default_factory=_make_1d_wavelength_template,
         title='Transmission Fraction',
         description='Sample transmission fraction calculated from current run.',
     )

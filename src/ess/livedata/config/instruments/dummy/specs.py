@@ -19,10 +19,7 @@ class TotalCountsOutputs(WorkflowOutputsBase):
     """Outputs for the total counts workflow."""
 
     total_counts: sc.DataArray = pydantic.Field(
-        default_factory=lambda: sc.DataArray(
-            sc.scalar(0, unit='counts'),
-            coords={'time': sc.scalar(0, unit='ns')},
-        ),
+        default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts')),
         title='Total Counts',
         description='Sum of all detector counts.',
     )

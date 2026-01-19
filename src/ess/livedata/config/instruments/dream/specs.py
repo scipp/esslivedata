@@ -196,7 +196,7 @@ class PowderReductionOutputs(WorkflowOutputsBase):
 
     focussed_data_dspacing: sc.DataArray = pydantic.Field(
         default_factory=lambda: sc.DataArray(
-            sc.zeros(dims=['dspacing'], shape=[0], unit='counts'),
+            sc.zeros(dims=['dspacing'], shape=[0], unit='dimensionless'),
             coords={'dspacing': sc.arange('dspacing', 0, unit='angstrom')},
         ),
         title='I(d)',
@@ -204,7 +204,9 @@ class PowderReductionOutputs(WorkflowOutputsBase):
     )
     focussed_data_dspacing_two_theta: sc.DataArray = pydantic.Field(
         default_factory=lambda: sc.DataArray(
-            sc.zeros(dims=['dspacing', 'two_theta'], shape=[0, 0], unit='counts'),
+            sc.zeros(
+                dims=['dspacing', 'two_theta'], shape=[0, 0], unit='dimensionless'
+            ),
             coords={
                 'dspacing': sc.arange('dspacing', 0, unit='angstrom'),
                 'two_theta': sc.arange('two_theta', 0, unit='rad'),
