@@ -163,6 +163,7 @@ class DetectorViewFactory:
                     resolution=config.resolution,
                     pixel_noise=config.pixel_noise,
                 )
+                roi_support = True  # Geometric views always support ROI
             case LogicalViewConfig():
                 # Bind source_name to the transform if provided
                 if config.transform is not None:
@@ -180,36 +181,53 @@ class DetectorViewFactory:
                     transform=bound_transform,
                     reduction_dim=config.reduction_dim,
                 )
+                roi_support = config.roi_support
+
+        # Build target keys - conditionally include ROI outputs
+        target_keys: dict[str, type] = {
+            'cumulative': DetectorImage[Cumulative],
+            'current': DetectorImage[Current],
+            'counts_total': CountsTotal,
+            'counts_in_toa_range': CountsInRange,
+        }
+        context_keys: dict[str, type] = {}
+        window_outputs = (
+            'current',
+            'counts_total',
+            'counts_in_toa_range',
+        )
+
+        if roi_support:
+            # Add ROI-related outputs only when supported
+            target_keys.update(
+                {
+                    'roi_spectra_cumulative': ROISpectra[Cumulative],
+                    'roi_spectra_current': ROISpectra[Current],
+                    'roi_rectangle': ROIRectangleReadback,
+                    'roi_polygon': ROIPolygonReadback,
+                }
+            )
+            context_keys.update(
+                {
+                    'roi_rectangle': ROIRectangleRequest,
+                    'roi_polygon': ROIPolygonRequest,
+                }
+            )
+            window_outputs = (
+                'current',
+                'counts_total',
+                'counts_in_toa_range',
+                'roi_spectra_current',
+            )
 
         return StreamProcessorWorkflow(
             workflow,
             # Inject preprocessor output as NeXusData; GenericNeXusWorkflow
             # providers will group events by pixel to produce RawDetector.
             dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},
-            # ROI configuration comes from auxiliary streams, updated less frequently
-            context_keys={
-                'roi_rectangle': ROIRectangleRequest,
-                'roi_polygon': ROIPolygonRequest,
-            },
-            target_keys={
-                'cumulative': DetectorImage[Cumulative],
-                'current': DetectorImage[Current],
-                'counts_total': CountsTotal,
-                'counts_in_toa_range': CountsInRange,
-                # ROI spectra (extracted from accumulated histograms)
-                'roi_spectra_cumulative': ROISpectra[Cumulative],
-                'roi_spectra_current': ROISpectra[Current],
-                # ROI readbacks (providers ensure correct units from histogram coords)
-                'roi_rectangle': ROIRectangleReadback,
-                'roi_polygon': ROIPolygonReadback,
-            },
-            # Window outputs get time, start_time, end_time coords
-            window_outputs=(
-                'current',
-                'counts_total',
-                'counts_in_toa_range',
-                'roi_spectra_current',
-            ),
+            context_keys=context_keys,
+            target_keys=target_keys,
+            window_outputs=window_outputs,
             accumulators={
                 AccumulatedHistogram[Cumulative]: NoCopyAccumulator(),
                 AccumulatedHistogram[Current]: NoCopyWindowAccumulator(),

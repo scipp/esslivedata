@@ -101,10 +101,14 @@ class LogicalViewConfig:
         If None, uses identity transform.
     reduction_dim:
         Dimension(s) to merge events over after transform. None means no reduction.
+    roi_support:
+        Whether ROI selection is supported. If False, ROI-related outputs are
+        excluded from the workflow. Typically False for 1D views.
     """
 
     transform: Callable[[sc.DataArray, str], sc.DataArray] | None = None
     reduction_dim: str | list[str] | None = None
+    roi_support: bool = True
 
 
 ViewConfig = GeometricViewConfig | LogicalViewConfig

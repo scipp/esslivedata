@@ -419,6 +419,7 @@ class Instrument:
                 view_config = ScilineLogicalViewConfig(
                     transform=config.transform,
                     reduction_dim=config.reduction_dim,
+                    roi_support=config.roi_support,
                 )
                 # Create factory with InstrumentDetectorSource for dynamic lookup
                 factory = DetectorViewFactory(

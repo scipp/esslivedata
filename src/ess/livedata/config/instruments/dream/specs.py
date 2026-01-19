@@ -83,6 +83,7 @@ instrument.add_logical_view(
     ],
     transform=get_wire_view,
     roi_support=False,
+    reduction_dim='strip',
 )
 instrument.add_logical_view(
     name='strip_view',
@@ -92,6 +93,7 @@ instrument.add_logical_view(
     transform=get_strip_view,
     output_ndim=1,
     roi_support=False,
+    reduction_dim='other',
 )
 
 # Mapping of detector names to their projection types
