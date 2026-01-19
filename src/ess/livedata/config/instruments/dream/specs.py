@@ -17,7 +17,6 @@ from ess.livedata.handlers.detector_view_specs import (
     DetectorROIAuxSources,
     DetectorViewOutputs,
     DetectorViewParams,
-    register_detector_view_spec,
 )
 
 from .views import get_mantle_front_layer, get_strip_view, get_wire_view
@@ -104,12 +103,6 @@ _projections: dict[str, str] = {
     'sans_detector': 'xy_plane',
 }
 
-# Register unified detector projection spec
-projection_handle = register_detector_view_spec(
-    instrument=instrument,
-    projection=_projections,
-)
-
 
 # Pydantic models for DREAM workflows
 class InstrumentConfigurationEnum(StrEnum):
@@ -161,6 +154,25 @@ class DreamDetectorViewParams(DetectorViewParams):
         description="Chopper configuration for TOF mode lookup table selection.",
         default_factory=InstrumentConfiguration,
     )
+
+
+# Register detector projection spec with DreamDetectorViewParams for TOF mode.
+# Replaces both the legacy DetectorProjection and the Sciline detector view
+# registrations.
+projection_handle = instrument.register_spec(
+    namespace='detector_data',
+    name='detector_projection',
+    version=1,
+    title='Detector Projection',
+    description=(
+        'Projection of detector banks onto 2D planes. '
+        'Uses the appropriate projection for each detector.'
+    ),
+    source_names=list(_projections.keys()),
+    aux_sources=DetectorROIAuxSources,
+    params=DreamDetectorViewParams,
+    outputs=DetectorViewOutputs,
+)
 
 
 class DreamAuxSources(AuxSourcesBase):
@@ -286,19 +298,4 @@ powder_reduction_with_vanadium_handle = instrument.register_spec(
     aux_sources=DreamAuxSources,
     outputs=PowderReductionWithVanadiumOutputs,
     params=PowderWorkflowParams,
-)
-
-# Register Sciline-based detector view spec with per-detector geometric projections.
-# Matches the legacy DetectorProjection setup with all 4 detector banks.
-# Uses DreamDetectorViewParams to include chopper settings for TOF mode.
-sciline_detector_view_handle = instrument.register_spec(
-    namespace='detector_data',
-    name='sciline_detector_view',
-    version=1,
-    title='Sciline Detector View',
-    description='Sciline-based geometric detector view with TOA/TOF histogramming.',
-    source_names=list(_projections.keys()),
-    aux_sources=DetectorROIAuxSources,
-    params=DreamDetectorViewParams,
-    outputs=DetectorViewOutputs,
 )

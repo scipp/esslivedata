@@ -9,18 +9,16 @@ workflows with configurable projection types and parameters.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import scipp as sc
-
-if TYPE_CHECKING:
-    from ..detector_view_specs import DetectorViewParams
-    from ..stream_processor_workflow import StreamProcessorWorkflow
 from scippnexus import NXdetector
 
 from ess.reduce.nexus.types import NeXusData, SampleRun
 from ess.reduce.time_of_flight.types import TofLookupTableFilename
 
+# Import types unconditionally for runtime type hint resolution
+# (used by workflow_factory.attach_factory to inspect parameter types)
+from ..detector_view_specs import DetectorViewParams
+from ..stream_processor_workflow import StreamProcessorWorkflow
 from .data_source import DetectorDataSource, DetectorNumberSource
 from .types import (
     AccumulatedHistogram,
@@ -111,10 +109,6 @@ class DetectorViewFactory:
         :
             StreamProcessorWorkflow wrapping the Sciline-based detector view.
         """
-        from ess.livedata.handlers.stream_processor_workflow import (
-            StreamProcessorWorkflow,
-        )
-
         mode = params.coordinate_mode.mode
 
         # Validate TOF/wavelength mode requirements

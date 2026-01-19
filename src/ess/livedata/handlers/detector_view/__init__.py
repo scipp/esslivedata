@@ -15,13 +15,15 @@ Supports two projection modes:
 2. Logical views (fold/slice transforms with optional reduction)
 """
 
-from .data_source import NeXusDetectorSource
+from .data_source import InstrumentDetectorSource, NeXusDetectorSource
 from .factory import DetectorViewFactory
-from .types import CoordinateMode, GeometricViewConfig
+from .types import CoordinateMode, GeometricViewConfig, LogicalViewConfig
 
 __all__ = [
     'CoordinateMode',
     'DetectorViewFactory',
     'GeometricViewConfig',
+    'InstrumentDetectorSource',
+    'LogicalViewConfig',
     'NeXusDetectorSource',
 ]

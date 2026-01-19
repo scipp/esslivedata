@@ -16,9 +16,11 @@ def setup_factories(instrument: Instrument) -> None:
 
     import ess.loki.live  # noqa: F401
     from ess import loki
-    from ess.livedata.handlers.detector_data_handler import (
-        DetectorProjection,
-        get_nexus_geometry_filename,
+    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
+    from ess.livedata.handlers.detector_view import (
+        DetectorViewFactory,
+        GeometricViewConfig,
+        NeXusDetectorSource,
     )
     from ess.livedata.handlers.stream_processor_workflow import (
         StreamProcessorWorkflow,
@@ -39,27 +41,62 @@ def setup_factories(instrument: Instrument) -> None:
     _base_workflow = loki.live._configured_Larmor_AgBeh_workflow()
     _base_workflow[Filename[SampleRun]] = get_nexus_geometry_filename('loki')
 
-    _xy_projection = DetectorProjection(
-        instrument=instrument,
-        projection='xy_plane',
-        pixel_noise='cylindrical',
-        resolution={
-            'loki_detector_0': {'y': 12, 'x': 12},
+    # Sciline-based detector view with XY projection for all detector banks.
+    # Resolution values = base resolution * scale (12), matching the legacy setup.
+    _xy_projection = DetectorViewFactory(
+        data_source=NeXusDetectorSource(get_nexus_geometry_filename('loki')),
+        view_config={
+            'loki_detector_0': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 144, 'x': 144},
+                pixel_noise='cylindrical',
+            ),
             # First window frame
-            'loki_detector_1': {'y': 3, 'x': 9},
-            'loki_detector_2': {'y': 9, 'x': 3},
-            'loki_detector_3': {'y': 3, 'x': 9},
-            'loki_detector_4': {'y': 9, 'x': 3},
+            'loki_detector_1': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 36, 'x': 108},
+                pixel_noise='cylindrical',
+            ),
+            'loki_detector_2': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 108, 'x': 36},
+                pixel_noise='cylindrical',
+            ),
+            'loki_detector_3': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 36, 'x': 108},
+                pixel_noise='cylindrical',
+            ),
+            'loki_detector_4': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 108, 'x': 36},
+                pixel_noise='cylindrical',
+            ),
             # Second window frame
-            'loki_detector_5': {'y': 3, 'x': 9},
-            'loki_detector_6': {'y': 9, 'x': 3},
-            'loki_detector_7': {'y': 3, 'x': 9},
-            'loki_detector_8': {'y': 9, 'x': 3},
+            'loki_detector_5': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 36, 'x': 108},
+                pixel_noise='cylindrical',
+            ),
+            'loki_detector_6': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 108, 'x': 36},
+                pixel_noise='cylindrical',
+            ),
+            'loki_detector_7': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 36, 'x': 108},
+                pixel_noise='cylindrical',
+            ),
+            'loki_detector_8': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 108, 'x': 36},
+                pixel_noise='cylindrical',
+            ),
         },
-        resolution_scale=12,
     )
 
-    specs.xy_projection_handle.attach_factory()(_xy_projection.make_view)
+    specs.xy_projection_handle.attach_factory()(_xy_projection.make_workflow)
 
     def _transmission_from_current_run(
         data: sans_types.CorrectedMonitor[SampleRun, sans_types.MonitorType],
