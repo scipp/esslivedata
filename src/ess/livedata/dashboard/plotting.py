@@ -390,6 +390,19 @@ plotter_registry.register_plotter(
 _register_static_plotters()
 
 
+# Maps base plotter name -> list of (required_output_name, overlay_plotter_name)
+# Each tuple specifies: which workflow output is required, and which plotter to use
+# Note: rectangles_request uses roi_rectangle output (not a separate output)
+OVERLAY_PATTERNS: dict[str, list[tuple[str, str]]] = {
+    'image': [
+        ('roi_rectangle', 'rectangles_readback'),
+        ('roi_rectangle', 'rectangles_request'),
+        ('roi_polygon', 'polygons_readback'),
+        ('roi_polygon', 'polygons_request'),
+    ],
+}
+
+
 # ROI data requirements (shared between readback and request plotters)
 _RECTANGLE_ROI_REQUIREMENTS: dict = {
     'min_dims': 1,
