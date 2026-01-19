@@ -1203,6 +1203,31 @@ class TestJobManager:
         assert statuses[0].warning_message is not None
         assert "invalid_output" in statuses[0].warning_message
 
+        # Now fix the processor to return valid data (no None values)
+        processor.data = {
+            "valid_output": sc.DataArray(sc.scalar(2.0)),
+            "other_output": sc.DataArray(sc.scalar(3.0)),
+        }
+
+        # Push more data to trigger recomputation
+        more_data = WorkflowData(
+            start_time=201,
+            end_time=300,
+            data={StreamId(name="test_source"): sc.scalar(24.0)},
+        )
+        manager.push_data(more_data)
+
+        results = manager.compute_results()
+        assert len(results) == 1
+        assert results[0].error_message is None
+        assert results[0].warning_message is None  # Warning should be cleared
+
+        # Job status should be back to active
+        statuses = manager.get_all_job_statuses()
+        assert len(statuses) == 1
+        assert statuses[0].state == JobState.active
+        assert statuses[0].warning_message is None
+
     def test_successful_jobs_will_not_compute_again_without_new_primary_data(
         self, fake_job_factory
     ):
