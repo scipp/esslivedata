@@ -33,9 +33,18 @@ from .types import (
 )
 
 
-def project_events_toa(
-    raw_detector: RawDetector[SampleRun],
-    projector: Projector,
+def _project_detector(
+    detector: sc.DataArray, projector: Projector
+) -> ScreenBinnedEvents:
+    # TODO Can we modify the provider in ess.reduce to not add variances in the first
+    # place (optionally)? This is wasteful here, if variances are needed they can be
+    # added after histogramming.
+    detector = sc.values(detector)
+    return ScreenBinnedEvents(projector.project_events(detector))
+
+
+def project_raw_detector(
+    raw_detector: RawDetector[SampleRun], projector: Projector
 ) -> ScreenBinnedEvents:
     """
     Project TOA events to screen coordinates.
@@ -52,16 +61,11 @@ def project_events_toa(
     :
         Events binned by screen coordinates with event_time_offset preserved.
     """
-    # TODO Can we modify the provider in ess.reduce to not add variances in the first
-    # place (optionally)? This is wasteful here, if variances are needed they can be
-    # added after histogramming.
-    raw_detector = sc.values(raw_detector)
-    return ScreenBinnedEvents(projector.project_events(raw_detector))
+    return _project_detector(raw_detector, projector)
 
 
-def project_events_tof(
-    tof_detector: TofDetector[SampleRun],
-    projector: Projector,
+def project_tof_detector(
+    tof_detector: TofDetector[SampleRun], projector: Projector
 ) -> ScreenBinnedEvents:
     """
     Project TOF events to screen coordinates.
@@ -78,8 +82,7 @@ def project_events_tof(
     :
         Events binned by screen coordinates with tof preserved.
     """
-    tof_detector = sc.values(tof_detector)
-    return ScreenBinnedEvents(projector.project_events(tof_detector))
+    return _project_detector(tof_detector, projector)
 
 
 def compute_pixel_weights(

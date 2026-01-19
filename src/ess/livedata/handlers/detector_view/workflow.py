@@ -40,8 +40,8 @@ from .providers import (
     counts_total,
     detector_image,
     get_screen_metadata,
-    project_events_toa,
-    project_events_tof,
+    project_raw_detector,
+    project_tof_detector,
 )
 from .roi import (
     precompute_roi_polygon_masks,
@@ -132,10 +132,10 @@ def create_base_workflow(
     # Select base workflow and projection provider based on coordinate mode
     if coordinate_mode == 'toa':
         workflow = GenericNeXusWorkflow(run_types=[SampleRun], monitor_types=[])
-        workflow.insert(project_events_toa)
+        workflow.insert(project_raw_detector)
     elif coordinate_mode == 'tof':
         workflow = GenericTofWorkflow(run_types=[SampleRun], monitor_types=[])
-        workflow.insert(project_events_tof)
+        workflow.insert(project_tof_detector)
     elif coordinate_mode == 'wavelength':
         # Future: would use WavelengthDetector-based provider
         raise NotImplementedError("wavelength mode is not yet implemented")
