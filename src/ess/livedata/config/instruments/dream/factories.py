@@ -232,7 +232,7 @@ def setup_factories(instrument: Instrument) -> None:
             # Convert enum to DREAM InstrumentConfiguration and get filename
             config = getattr(
                 dream.InstrumentConfiguration,
-                params.chopper_settings.configuration.value,
+                params.instrument_configuration.value.value,
             )
             tof_lookup_table_filename = _get_lookup_table_filename_from_configuration(
                 config

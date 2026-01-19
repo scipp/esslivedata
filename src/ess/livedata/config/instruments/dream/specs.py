@@ -153,23 +153,13 @@ class InstrumentConfiguration(pydantic.BaseModel):
         return self
 
 
-class DreamChopperSettings(pydantic.BaseModel):
-    """DREAM chopper configuration for TOF lookup table selection."""
-
-    configuration: InstrumentConfigurationEnum = pydantic.Field(
-        title="Instrument Configuration",
-        description="Chopper configuration determining TOF lookup table.",
-        default=InstrumentConfigurationEnum.high_flux_BC240,
-    )
-
-
 class DreamDetectorViewParams(DetectorViewParams):
     """DREAM-specific detector view parameters with chopper settings."""
 
-    chopper_settings: DreamChopperSettings = pydantic.Field(
-        title="Chopper Settings",
-        description="DREAM chopper configuration for TOF mode.",
-        default_factory=DreamChopperSettings,
+    instrument_configuration: InstrumentConfiguration = pydantic.Field(
+        title="Instrument Configuration",
+        description="Chopper configuration for TOF mode lookup table selection.",
+        default_factory=InstrumentConfiguration,
     )
 
 
