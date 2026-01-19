@@ -29,6 +29,7 @@ from ess.reduce.live.raw import (
 from ess.reduce.nexus.types import SampleRun
 from ess.reduce.nexus.workflow import GenericNeXusWorkflow
 from ess.reduce.streaming import EternalAccumulator
+from ess.reduce.time_of_flight import GenericTofWorkflow
 
 from .projectors import make_geometric_projector, make_logical_projector
 from .providers import (
@@ -39,7 +40,8 @@ from .providers import (
     counts_total,
     detector_image,
     get_screen_metadata,
-    project_events,
+    project_events_toa,
+    project_events_tof,
 )
 from .roi import (
     precompute_roi_polygon_masks,
@@ -49,6 +51,7 @@ from .roi import (
     roi_spectra,
 )
 from .types import (
+    CoordinateMode,
     EventCoordName,
     HistogramBins,
     HistogramSlice,
@@ -98,9 +101,10 @@ def create_base_workflow(
     bins: sc.Variable,
     event_coord: str = 'event_time_offset',
     histogram_slice: tuple[sc.Variable, sc.Variable] | None = None,
+    coordinate_mode: CoordinateMode = 'toa',
 ) -> sciline.Pipeline:
     """
-    Create the base detector view workflow using GenericNeXusWorkflow.
+    Create the base detector view workflow.
 
     This creates the core workflow with all providers. The Projector param
     must be set separately via add_geometric_projection or add_logical_projection.
@@ -113,17 +117,30 @@ def create_base_workflow(
         Name of the event coordinate to histogram.
     histogram_slice:
         Optional (low, high) range for output image slicing.
+    coordinate_mode:
+        Coordinate system for event data:
+        - 'toa': Time-of-arrival (uses GenericNeXusWorkflow, RawDetector)
+        - 'tof': Time-of-flight (uses GenericTofWorkflow, TofDetector)
+        - 'wavelength': Wavelength (uses GenericTofWorkflow, WavelengthDetector)
+        For 'tof' and 'wavelength', caller must configure lookup table provider.
 
     Returns
     -------
     :
         Sciline pipeline with detector view providers.
     """
-    # Start with GenericNeXusWorkflow for NeXus loading infrastructure
-    workflow = GenericNeXusWorkflow(run_types=[SampleRun], monitor_types=[])
-
-    # Add projection provider (unified for geometric and logical)
-    workflow.insert(project_events)
+    # Select base workflow and projection provider based on coordinate mode
+    if coordinate_mode == 'toa':
+        workflow = GenericNeXusWorkflow(run_types=[SampleRun], monitor_types=[])
+        workflow.insert(project_events_toa)
+    elif coordinate_mode == 'tof':
+        workflow = GenericTofWorkflow(run_types=[SampleRun], monitor_types=[])
+        workflow.insert(project_events_tof)
+    elif coordinate_mode == 'wavelength':
+        # Future: would use WavelengthDetector-based provider
+        raise NotImplementedError("wavelength mode is not yet implemented")
+    else:
+        raise ValueError(f"Unknown coordinate_mode: {coordinate_mode}")
 
     # Add screen metadata provider (bridges projector to ROI providers)
     workflow.insert(get_screen_metadata)

@@ -19,8 +19,9 @@ if TYPE_CHECKING:
 from scippnexus import NXdetector
 
 from ess.reduce.nexus.types import NeXusData, SampleRun
+from ess.reduce.time_of_flight.types import TofLookupTableFilename
 
-from .data_source import DetectorDataSource
+from .data_source import DetectorDataSource, DetectorNumberSource
 from .types import (
     AccumulatedHistogram,
     CountsInRange,
@@ -89,6 +90,7 @@ class DetectorViewFactory:
         self,
         source_name: str,
         params: DetectorViewParams,
+        tof_lookup_table_filename: str | None = None,
     ) -> StreamProcessorWorkflow:
         """
         Factory method that creates a detector view workflow.
@@ -98,7 +100,11 @@ class DetectorViewFactory:
         source_name:
             Name of the detector source (e.g., 'panel_0').
         params:
-            Workflow parameters containing toa_edges and optional toa_range.
+            Workflow parameters containing coordinate mode, edges, and ranges.
+        tof_lookup_table_filename:
+            Path to TOF lookup table file. Required for 'tof' and 'wavelength'
+            coordinate modes. The caller (instrument factory) is responsible
+            for resolving this from instrument-specific params.
 
         Returns
         -------
@@ -109,29 +115,43 @@ class DetectorViewFactory:
             StreamProcessorWorkflow,
         )
 
-        # Event coordinate to histogram - currently always event_time_offset.
-        # This is the coordinate name in the event data; the output dimension name
-        # comes from the bins (time_of_arrival with user's preferred unit).
-        event_coord = 'event_time_offset'
+        mode = params.coordinate_mode.mode
 
-        # Get histogram bins from params. Keep user's unit and dimension name
-        # (time_of_arrival) - provider converts to ns for histogramming then restores.
-        bins = params.toa_edges.get_edges()
+        # Validate TOF/wavelength mode requirements
+        if mode in ('tof', 'wavelength'):
+            if tof_lookup_table_filename is None:
+                raise ValueError(f"{mode} mode requires tof_lookup_table_filename")
+            if isinstance(self._data_source, DetectorNumberSource):
+                raise ValueError(
+                    f"{mode} mode requires geometry for Ltotal computation; "
+                    "use NeXusDetectorSource instead of DetectorNumberSource"
+                )
 
-        # Get histogram slice from params if enabled
-        histogram_slice = (
-            params.toa_range.range_ns if params.toa_range.enabled else None
-        )
+        # Get mode-specific event coordinate
+        event_coord = {
+            'toa': 'event_time_offset',
+            'tof': 'tof',
+            'wavelength': 'wavelength',
+        }[mode]
+
+        # Get active edges and range for current mode
+        bins = params.get_active_edges()
+        histogram_slice = params.get_active_range()
 
         # Get pixel weighting setting from params
         use_pixel_weighting = params.pixel_weighting.enabled
 
-        # Create base workflow
+        # Create base workflow with appropriate mode
         workflow = create_base_workflow(
             bins=bins,
             event_coord=event_coord,
             histogram_slice=histogram_slice,
+            coordinate_mode=mode,
         )
+
+        # Set lookup table filename for TOF/wavelength modes
+        if mode in ('tof', 'wavelength'):
+            workflow[TofLookupTableFilename] = tof_lookup_table_filename
 
         # Configure detector data source (EmptyDetector)
         self._data_source.configure_workflow(workflow, source_name)

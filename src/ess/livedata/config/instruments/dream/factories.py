@@ -182,12 +182,14 @@ def setup_factories(instrument: Instrument) -> None:
         )
 
     # Sciline-based detector view workflow
+    from ess.dream.workflows import _get_lookup_table_filename_from_configuration
     from ess.livedata.handlers.detector_view import (
         DetectorViewFactory,
         GeometricViewConfig,
         NeXusDetectorSource,
     )
-    from ess.livedata.handlers.detector_view_specs import DetectorViewParams
+
+    from .specs import DreamDetectorViewParams
 
     # Per-detector view configuration matching the legacy DetectorProjection setup.
     # Resolution values = base resolution * scale (8), matching _detector_projection
@@ -221,7 +223,21 @@ def setup_factories(instrument: Instrument) -> None:
 
     @specs.sciline_detector_view_handle.attach_factory()
     def _sciline_detector_view_factory(
-        source_name: str, params: DetectorViewParams
+        source_name: str, params: DreamDetectorViewParams
     ) -> StreamProcessorWorkflow:
         """Factory for Sciline-based detector view workflow."""
-        return _sciline_detector_view.make_workflow(source_name, params)
+        # Resolve lookup table filename from DREAM-specific params for TOF modes
+        tof_lookup_table_filename = None
+        if params.coordinate_mode.mode in ('tof', 'wavelength'):
+            # Convert enum to DREAM InstrumentConfiguration and get filename
+            config = getattr(
+                dream.InstrumentConfiguration,
+                params.chopper_settings.configuration.value,
+            )
+            tof_lookup_table_filename = _get_lookup_table_filename_from_configuration(
+                config
+            )
+
+        return _sciline_detector_view.make_workflow(
+            source_name, params, tof_lookup_table_filename=tof_lookup_table_filename
+        )

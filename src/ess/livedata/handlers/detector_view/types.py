@@ -16,6 +16,15 @@ from typing import Literal, NewType, TypeVar
 import sciline
 import scipp as sc
 
+# Coordinate mode for detector view workflow
+CoordinateMode = Literal['toa', 'tof', 'wavelength']
+"""Coordinate mode for detector view workflow.
+
+- 'toa': Time-of-arrival (uses GenericNeXusWorkflow, RawDetector)
+- 'tof': Time-of-flight (uses GenericTofWorkflow, TofDetector)
+- 'wavelength': Wavelength (uses GenericTofWorkflow, WavelengthDetector) - future
+"""
+
 
 # Accumulation mode marker types
 class Current:

@@ -17,9 +17,10 @@ Supports two projection modes:
 
 from .data_source import NeXusDetectorSource
 from .factory import DetectorViewFactory
-from .types import GeometricViewConfig
+from .types import CoordinateMode, GeometricViewConfig
 
 __all__ = [
+    'CoordinateMode',
     'DetectorViewFactory',
     'GeometricViewConfig',
     'NeXusDetectorSource',

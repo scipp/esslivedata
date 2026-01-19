@@ -12,6 +12,7 @@ from __future__ import annotations
 import scipp as sc
 
 from ess.reduce.nexus.types import EmptyDetector, RawDetector, SampleRun
+from ess.reduce.time_of_flight.types import TofDetector
 
 from .projectors import GeometricProjector, LogicalProjector, Projector
 from .types import (
@@ -32,30 +33,53 @@ from .types import (
 )
 
 
-def project_events(
+def project_events_toa(
     raw_detector: RawDetector[SampleRun],
     projector: Projector,
 ) -> ScreenBinnedEvents:
     """
-    Project events to screen coordinates using the configured projector.
+    Project TOA events to screen coordinates.
 
     Parameters
     ----------
     raw_detector:
-        Detector data with events binned by detector pixel.
+        Detector data with events binned by detector pixel (event_time_offset coord).
     projector:
         Projector instance (geometric or logical).
 
     Returns
     -------
     :
-        Events binned by screen coordinates with TOF preserved.
+        Events binned by screen coordinates with event_time_offset preserved.
     """
     # TODO Can we modify the provider in ess.reduce to not add variances in the first
     # place (optionally)? This is wasteful here, if variances are needed they can be
     # added after histogramming.
     raw_detector = sc.values(raw_detector)
     return ScreenBinnedEvents(projector.project_events(raw_detector))
+
+
+def project_events_tof(
+    tof_detector: TofDetector[SampleRun],
+    projector: Projector,
+) -> ScreenBinnedEvents:
+    """
+    Project TOF events to screen coordinates.
+
+    Parameters
+    ----------
+    tof_detector:
+        Detector data with events binned by detector pixel (tof coord).
+    projector:
+        Projector instance (geometric or logical).
+
+    Returns
+    -------
+    :
+        Events binned by screen coordinates with tof preserved.
+    """
+    tof_detector = sc.values(tof_detector)
+    return ScreenBinnedEvents(projector.project_events(tof_detector))
 
 
 def compute_pixel_weights(

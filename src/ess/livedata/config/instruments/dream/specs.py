@@ -153,6 +153,26 @@ class InstrumentConfiguration(pydantic.BaseModel):
         return self
 
 
+class DreamChopperSettings(pydantic.BaseModel):
+    """DREAM chopper configuration for TOF lookup table selection."""
+
+    configuration: InstrumentConfigurationEnum = pydantic.Field(
+        title="Instrument Configuration",
+        description="Chopper configuration determining TOF lookup table.",
+        default=InstrumentConfigurationEnum.high_flux_BC240,
+    )
+
+
+class DreamDetectorViewParams(DetectorViewParams):
+    """DREAM-specific detector view parameters with chopper settings."""
+
+    chopper_settings: DreamChopperSettings = pydantic.Field(
+        title="Chopper Settings",
+        description="DREAM chopper configuration for TOF mode.",
+        default_factory=DreamChopperSettings,
+    )
+
+
 class DreamAuxSources(AuxSourcesBase):
     """Auxiliary source names for DREAM powder workflows."""
 
@@ -280,14 +300,15 @@ powder_reduction_with_vanadium_handle = instrument.register_spec(
 
 # Register Sciline-based detector view spec with per-detector geometric projections.
 # Matches the legacy DetectorProjection setup with all 4 detector banks.
+# Uses DreamDetectorViewParams to include chopper settings for TOF mode.
 sciline_detector_view_handle = instrument.register_spec(
     namespace='detector_data',
     name='sciline_detector_view',
     version=1,
     title='Sciline Detector View',
-    description='Sciline-based geometric detector view with TOF histogramming.',
+    description='Sciline-based geometric detector view with TOA/TOF histogramming.',
     source_names=list(_projections.keys()),
     aux_sources=DetectorROIAuxSources,
-    params=DetectorViewParams,
+    params=DreamDetectorViewParams,
     outputs=DetectorViewOutputs,
 )
