@@ -15,7 +15,7 @@ import pytest
 
 from ess.livedata.config.instrument import instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
-from ess.livedata.config.workflow_spec import DefaultOutputs, WorkflowConfig, WorkflowId
+from ess.livedata.config.workflow_spec import WorkflowConfig, WorkflowId
 from ess.livedata.dashboard.plotting import plotter_registry
 from ess.livedata.dashboard.workflow_configuration_adapter import (
     WorkflowConfigurationAdapter,
@@ -259,10 +259,6 @@ def test_workflow_output_has_compatible_plotter(
     """
     instrument = instrument_registry[instrument_name]
     spec = instrument.workflow_factory[workflow_id]
-
-    # Skip workflows using DefaultOutputs - they haven't defined proper outputs yet
-    if spec.outputs is DefaultOutputs:
-        pytest.skip("Workflow uses DefaultOutputs (no custom output model defined)")
 
     template = spec.get_output_template(output_name)
     if template is None:
