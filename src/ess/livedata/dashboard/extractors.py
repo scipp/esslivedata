@@ -9,6 +9,7 @@ from typing import Any
 import scipp as sc
 
 from .plot_params import WindowAggregation
+from .time_utils import get_local_timezone_offset_ns
 
 
 def _extract_time_bounds_as_scalars(data: sc.DataArray) -> dict[str, sc.Variable]:
@@ -88,16 +89,24 @@ class LatestValueExtractor(UpdateExtractor):
 
 def _ensure_datetime_coord(data: sc.DataArray, dim: str = 'time') -> sc.DataArray:
     """
-    Convert int64 time coordinate to datetime64 for proper axis rendering.
+    Convert int64 time coordinate to datetime64 in local time for axis rendering.
 
     Bokeh requires datetime64 dtype to render human-readable datetime axes.
     Int64 nanoseconds are displayed as raw numbers (e.g., 1.733e18).
+
+    The datetime values are shifted by the local timezone offset so that
+    Bokeh displays them as local time rather than UTC.
     """
     if dim not in data.coords:
         return data
     coord = data.coords[dim]
     if coord.dtype == sc.DType.int64 and coord.unit in ('ns', 'us', 'ms', 's'):
         datetime_coord = sc.epoch(unit=coord.unit) + coord
+        # Shift by local timezone offset so Bokeh displays local time
+        tz_offset = sc.scalar(get_local_timezone_offset_ns(), unit='ns').to(
+            unit=coord.unit, dtype='int64'
+        )
+        datetime_coord = datetime_coord + tz_offset
         return data.assign_coords({dim: datetime_coord})
     return data
 
