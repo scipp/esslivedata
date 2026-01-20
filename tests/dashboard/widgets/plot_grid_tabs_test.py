@@ -4,7 +4,6 @@ import holoviews as hv
 import panel as pn
 import pytest
 
-from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.plot_orchestrator import PlotOrchestrator
@@ -47,104 +46,49 @@ def plotting_controller(job_service, stream_manager):
 
 
 @pytest.fixture
-def fake_data_service():
-    """Create a fake DataService."""
-    from ess.livedata.dashboard.data_service import DataService
-
-    return DataService()
-
-
-@pytest.fixture
-def fake_job_service():
-    """Create a fake JobService."""
-    from ess.livedata.dashboard.job_service import JobService
-
-    return JobService()
-
-
-@pytest.fixture
-def plot_orchestrator(plotting_controller, job_orchestrator, fake_data_service):
+def plot_orchestrator(plotting_controller, job_orchestrator, data_service):
     """Create a PlotOrchestrator for testing."""
     return PlotOrchestrator(
         plotting_controller=plotting_controller,
         job_orchestrator=job_orchestrator,
-        data_service=fake_data_service,
+        data_service=data_service,
         instrument='dummy',
     )
 
 
 @pytest.fixture
-def workflow_registry():
-    """Create a minimal workflow registry for testing."""
-    # Create a simple test workflow spec
-    from pydantic import BaseModel, Field
-
-    class TestOutputs(BaseModel):
-        test_output: str = Field(title="Test Output")
-
-    workflow_id = WorkflowId(
-        instrument='test', namespace='data_reduction', name='test_workflow', version=1
-    )
-
-    workflow_spec = WorkflowSpec(
-        instrument='test',
-        namespace='data_reduction',
-        name='test_workflow',
-        version=1,
-        title='Test Workflow',
-        description='A test workflow',
-        source_names=['source1', 'source2'],
-        outputs=TestOutputs,
-        params=None,
-    )
-
-    return {workflow_id: workflow_spec}
-
-
-@pytest.fixture
-def command_service():
-    """Create a CommandService for testing."""
-    from ess.livedata.dashboard.command_service import CommandService
-    from ess.livedata.fakes import FakeMessageSink
-
-    return CommandService(sink=FakeMessageSink())
-
-
-@pytest.fixture
-def job_controller(command_service, fake_job_service):
+def job_controller(command_service, job_service):
     """Create a JobController for testing."""
     from ess.livedata.dashboard.job_controller import JobController
 
-    return JobController(command_service=command_service, job_service=fake_job_service)
+    return JobController(command_service=command_service, job_service=job_service)
 
 
 @pytest.fixture
-def job_status_widget(fake_job_service, job_controller):
+def job_status_widget(job_service, job_controller):
     """Create a JobStatusListWidget for testing."""
-    return JobStatusListWidget(
-        job_service=fake_job_service, job_controller=job_controller
-    )
+    return JobStatusListWidget(job_service=job_service, job_controller=job_controller)
 
 
 @pytest.fixture
-def workflow_controller(job_orchestrator, workflow_registry, fake_data_service):
+def workflow_controller(job_orchestrator, workflow_registry, data_service):
     """Create a WorkflowController for testing."""
     from ess.livedata.dashboard.workflow_controller import WorkflowController
 
     return WorkflowController(
         job_orchestrator=job_orchestrator,
         workflow_registry=workflow_registry,
-        data_service=fake_data_service,
+        data_service=data_service,
         correlation_histogram_controller=None,
     )
 
 
 @pytest.fixture
-def workflow_status_widget(job_orchestrator, fake_job_service):
+def workflow_status_widget(job_orchestrator, job_service):
     """Create a WorkflowStatusListWidget for testing."""
     return WorkflowStatusListWidget(
         orchestrator=job_orchestrator,
-        job_service=fake_job_service,
+        job_service=job_service,
     )
 
 
@@ -261,27 +205,27 @@ class TestGridTabManagement:
         plot_orchestrator,
         workflow_registry,
         plotting_controller,
-        fake_job_service,
+        job_service,
         job_controller,
         job_orchestrator,
     ):
         """Test that multiple widgets sharing same orchestrator stay in sync."""
         # Create separate job status widgets for each instance
         job_status_widget1 = JobStatusListWidget(
-            job_service=fake_job_service, job_controller=job_controller
+            job_service=job_service, job_controller=job_controller
         )
         job_status_widget2 = JobStatusListWidget(
-            job_service=fake_job_service, job_controller=job_controller
+            job_service=job_service, job_controller=job_controller
         )
 
         # Create separate workflow status widgets for each instance
         workflow_status_widget1 = WorkflowStatusListWidget(
             orchestrator=job_orchestrator,
-            job_service=fake_job_service,
+            job_service=job_service,
         )
         workflow_status_widget2 = WorkflowStatusListWidget(
             orchestrator=job_orchestrator,
-            job_service=fake_job_service,
+            job_service=job_service,
         )
 
         widget1 = PlotGridTabs(
@@ -357,23 +301,27 @@ class TestShutdown:
 class TestOverlayFiltering:
     """Tests for overlay suggestion filtering."""
 
+    class MockConfig:
+        """Simple test double for PlotConfig."""
+
+        def __init__(self, plot_name):
+            self.plot_name = plot_name
+
+    class MockLayer:
+        """Simple test double for a layer with config."""
+
+        def __init__(self, plot_name):
+            self.config = TestOverlayFiltering.MockConfig(plot_name)
+
     def test_existing_overlays_filtered_from_suggestions(self):
         """Test that overlays already in the cell are not suggested again."""
         # Simulate the filtering logic used in _create_layer_toolbars
         # This tests the filtering independently of the full widget setup
 
         # Mock cell layers: image + rectangles_readback already added
-        class MockConfig:
-            def __init__(self, plot_name):
-                self.plot_name = plot_name
-
-        class MockLayer:
-            def __init__(self, plot_name):
-                self.config = MockConfig(plot_name)
-
         cell_layers = [
-            MockLayer('image'),
-            MockLayer('rectangles_readback'),
+            self.MockLayer('image'),
+            self.MockLayer('rectangles_readback'),
         ]
 
         # Collect existing plotter names (same as in _create_layer_toolbars)
@@ -400,17 +348,8 @@ class TestOverlayFiltering:
 
     def test_no_overlays_filtered_when_none_exist(self):
         """Test that all overlays are available when none have been added."""
-
-        class MockConfig:
-            def __init__(self, plot_name):
-                self.plot_name = plot_name
-
-        class MockLayer:
-            def __init__(self, plot_name):
-                self.config = MockConfig(plot_name)
-
         # Only image layer exists
-        cell_layers = [MockLayer('image')]
+        cell_layers = [self.MockLayer('image')]
         existing_plotter_names = {layer.config.plot_name for layer in cell_layers}
 
         available_overlays_for_image = [
@@ -429,20 +368,11 @@ class TestOverlayFiltering:
 
     def test_all_overlays_filtered_when_all_exist(self):
         """Test that no overlays suggested when all have been added."""
-
-        class MockConfig:
-            def __init__(self, plot_name):
-                self.plot_name = plot_name
-
-        class MockLayer:
-            def __init__(self, plot_name):
-                self.config = MockConfig(plot_name)
-
         # All layers exist
         cell_layers = [
-            MockLayer('image'),
-            MockLayer('rectangles_readback'),
-            MockLayer('polygons_readback'),
+            self.MockLayer('image'),
+            self.MockLayer('rectangles_readback'),
+            self.MockLayer('polygons_readback'),
         ]
         existing_plotter_names = {layer.config.plot_name for layer in cell_layers}
 
