@@ -26,7 +26,6 @@ class LogProducerWidget:
                 kafka_config=load_config(namespace=config_names.kafka_upstream),
                 instrument=instrument,
                 serializer=serialize_dataarray_to_f144,
-                logger=logger,
             )
         )
 

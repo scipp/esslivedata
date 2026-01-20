@@ -2,11 +2,12 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-import logging
 import time
 import uuid
 from collections import defaultdict
 from typing import Any, Generic
+
+import structlog
 
 from ..handlers.config_handler import ConfigProcessor
 from .handler import Accumulator, PreprocessorFactory
@@ -26,6 +27,8 @@ from .message import (
 )
 from .message_batcher import MessageBatch, MessageBatcher, SimpleMessageBatcher
 
+logger = structlog.get_logger(__name__)
+
 
 class MessagePreprocessor(Generic[Tin, Tout]):
     """Message preprocessor that handles batches of messages."""
@@ -33,10 +36,8 @@ class MessagePreprocessor(Generic[Tin, Tout]):
     def __init__(
         self,
         factory: PreprocessorFactory[Tin, Tout],
-        logger: logging.Logger | None = None,
     ) -> None:
         self._factory = factory
-        self._logger = logger or logging.getLogger(__name__)
         self._accumulators: dict[StreamId, Accumulator[Tin, Tout]] = {}
 
     def _get_accumulator(self, key: StreamId) -> Accumulator[Tin, Tout] | None:
@@ -69,12 +70,12 @@ class MessagePreprocessor(Generic[Tin, Tout]):
         for key, messages in messages_by_key.items():
             accumulator = self._get_accumulator(key)
             if accumulator is None:
-                self._logger.debug('No preprocessor for key %s, skipping messages', key)
+                logger.debug('no_preprocessor', stream_id=str(key))
                 continue
             try:
                 data[key] = self._preprocess_stream(messages, accumulator)
             except Exception:
-                self._logger.exception('Error pre-processing messages for key %s', key)
+                logger.exception('preprocessing_error', stream_id=str(key))
         return WorkflowData(
             start_time=batch.start_time, end_time=batch.end_time, data=data
         )
@@ -84,18 +85,14 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
     def __init__(
         self,
         *,
-        logger: logging.Logger | None = None,
         source: MessageSource[Message[Tin]],
         sink: MessageSink[Tout],
         preprocessor_factory: PreprocessorFactory[Tin, Tout],
         message_batcher: MessageBatcher | None = None,
     ) -> None:
-        self._logger = logger or logging.getLogger(__name__)
         self._source = source
         self._sink = sink
-        self._message_preprocessor = MessagePreprocessor(
-            factory=preprocessor_factory, logger=self._logger
-        )
+        self._message_preprocessor = MessagePreprocessor(factory=preprocessor_factory)
         instrument = preprocessor_factory.instrument
         self._job_manager = JobManager(job_factory=JobFactory(instrument=instrument))
         self._job_manager_adapter = JobManagerAdapter(job_manager=self._job_manager)
@@ -116,12 +113,19 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._service_error: str | None = None
         self._has_processed_first_batch = False
 
+        # Metrics tracking (Plan §6.2)
+        self._metrics_interval = 30_000_000_000  # 30 seconds in nanoseconds
+        self._last_metrics_time: int | None = None
+        self._batches_processed = 0
+        self._empty_batches = 0
+        self._errors_since_last_metrics = 0
+
     def process(self) -> None:
         # Transition from starting to running on first process cycle
         if not self._has_processed_first_batch:
             self._has_processed_first_batch = True
             self._service_state = ServiceState.running
-            self._logger.info('Service transitioned to running state')
+            logger.info('service_running')
 
         messages = self._source.get_messages()
         self._messages_processed += len(messages)
@@ -141,6 +145,8 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         message_batch = self._message_batcher.batch(data_messages)
         if message_batch is None:
+            self._empty_batches += 1
+            self._maybe_log_metrics()
             self._sink.publish_messages(result_messages)
             if not config_messages:
                 # Avoid busy-waiting if there is no data and no config messages.
@@ -158,7 +164,12 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         # Log any errors from data processing
         for error in job_errors:
             if error.has_error:
-                self._logger.error(self._job_manager.format_job_error(error))
+                self._errors_since_last_metrics += 1
+                logger.error(
+                    'job_data_error',
+                    job_id=str(error.job_id),
+                    error=error.error_message[:200] if error.error_message else None,
+                )
 
         # We used to compute results only after 1-N accumulation calls, reasoning that
         # processing data (partially) immediately (instead of waiting for more data)
@@ -171,14 +182,18 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         valid_results = []
         for result in results:
             if result.error_message is not None:
-                self._logger.error(
-                    'Job %s for workflow %s failed: %s',
-                    result.job_id,
-                    result.workflow_id,
-                    result.error_message,
+                self._errors_since_last_metrics += 1
+                logger.error(
+                    'job_failed',
+                    job_id=str(result.job_id),
+                    workflow_id=str(result.workflow_id),
+                    error=result.error_message[:200],
                 )
             else:
                 valid_results.append(result)
+
+        self._batches_processed += 1
+        self._maybe_log_metrics()
 
         result_messages.extend(
             [_job_result_to_message(result) for result in valid_results]
@@ -218,13 +233,37 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             error=self._service_error,
         )
 
+    def _maybe_log_metrics(self) -> None:
+        """Log processor metrics if the interval has elapsed."""
+        timestamp = time.time_ns()
+        if self._last_metrics_time is None:
+            self._last_metrics_time = timestamp
+            return
+
+        if timestamp - self._last_metrics_time >= self._metrics_interval:
+            active_jobs = len(self._job_manager.active_jobs)
+            logger.info(
+                'processor_metrics',
+                messages=self._messages_processed,
+                batches=self._batches_processed,
+                empty_batches=self._empty_batches,
+                active_jobs=active_jobs,
+                errors=self._errors_since_last_metrics,
+                interval_seconds=(timestamp - self._last_metrics_time) / 1e9,
+            )
+            # Reset counters (except messages_processed which is cumulative for service)
+            self._batches_processed = 0
+            self._empty_batches = 0
+            self._errors_since_last_metrics = 0
+            self._last_metrics_time = timestamp
+
     def shutdown(self) -> None:
         """Transition to stopping state and send heartbeat.
 
         Called by Service at the beginning of graceful shutdown to notify the
         dashboard that this worker is shutting down intentionally.
         """
-        self._logger.info('Service shutting down, sending stopping heartbeat')
+        logger.info('service_shutting_down')
         self._service_state = ServiceState.stopping
         self._send_final_heartbeat()
 
@@ -234,7 +273,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         Called by Service after worker thread has stopped to notify the
         dashboard that shutdown completed successfully.
         """
-        self._logger.info('Service stopped, sending final heartbeat')
+        logger.info('service_stopped')
         self._service_state = ServiceState.stopped
         self._send_final_heartbeat()
 
@@ -244,7 +283,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         Called by Service when an unhandled exception occurs to notify the
         dashboard that this worker encountered a fatal error.
         """
-        self._logger.error('Service error: %s', error_message)
+        logger.error('service_error', error=error_message)
         self._service_state = ServiceState.error
         self._service_error = error_message
         self._send_final_heartbeat()
@@ -258,7 +297,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         try:
             self._sink.publish_messages([message])
         except Exception:
-            self._logger.exception('Failed to send final heartbeat')
+            logger.exception('Failed to send final heartbeat')
 
 
 def _job_result_to_message(result: JobResult) -> Message:

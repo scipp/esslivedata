@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
-import logging
 import queue
 import threading
 import time
@@ -102,7 +101,6 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
         )
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
-        self._logger = logging.getLogger(__name__)
         self._started = False
         # Metrics tracking
         self._metrics_interval = 30.0
@@ -128,7 +126,7 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._consume_loop, daemon=True)
         self._thread.start()
-        self._logger.info("Background message consumption started")
+        logger.info("background_consumer_started")
 
     def stop(self) -> None:
         """Stop the background message consumption thread."""
@@ -139,9 +137,9 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=5.0)
             if self._thread.is_alive():
-                self._logger.warning("Background consumer thread did not stop cleanly")
+                logger.warning("background_consumer_stop_timeout")
         self._started = False
-        self._logger.info("Background message consumption stopped")
+        logger.info("background_consumer_stopped")
 
     def _consume_loop(self) -> None:
         """Main loop for background message consumption."""
@@ -163,9 +161,9 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
                             self._batches_dropped_since_last_metrics += 1
                             try:
                                 dropped = self._queue.get_nowait()
-                                self._logger.warning(
-                                    "Message queue full, dropped %d messages",
-                                    len(dropped),
+                                logger.warning(
+                                    "message_queue_full",
+                                    dropped_messages=len(dropped),
                                 )
                                 self._queue.put_nowait(messages)
                             except queue.Empty:
@@ -173,10 +171,10 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
                                 self._queue.put_nowait(messages)
                     self._maybe_log_metrics()
                 except Exception:
-                    self._logger.exception("Error in background message consumption")
+                    logger.exception("background_consumer_error")
                     # Continue running even if there's an error
         except Exception:
-            self._logger.exception("Fatal error in background consumer thread")
+            logger.exception("background_consumer_fatal_error")
 
     def _maybe_log_metrics(self) -> None:
         """Log metrics if the interval has elapsed."""

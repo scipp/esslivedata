@@ -55,7 +55,7 @@ class DashboardServices:
         For tests: use lambda data: None (no-op)
     transport:
         Transport instance for message sources and sinks.
-        For Kafka: DashboardKafkaTransport(instrument, dev, logger)
+        For Kafka: DashboardKafkaTransport(instrument, dev)
         For testing: NullTransport()
     config_manager:
         ConfigStoreManager instance for creating config stores.

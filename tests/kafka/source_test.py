@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
-import logging
 import time
 from queue import Queue
 
@@ -88,7 +87,7 @@ def test_limit_number_of_consumed_messages() -> None:
 
 class TestBackgroundMessageSource:
     def test_context_manager_starts_and_stops_background_consumption(
-        self, caplog: pytest.LogCaptureFixture
+        self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Test that context manager properly starts and stops background
         consumption."""
@@ -101,16 +100,15 @@ class TestBackgroundMessageSource:
         time.sleep(0.02)
         assert consumer.consume_calls == initial_calls
 
-        with caplog.at_level(logging.INFO):
-            with BackgroundMessageSource(consumer, timeout=0.01) as source:
-                # During context: consumption should be happening
-                time.sleep(0.02)
-                assert consumer.consume_calls > initial_calls
+        with BackgroundMessageSource(consumer, timeout=0.01) as source:
+            # During context: consumption should be happening
+            time.sleep(0.02)
+            assert consumer.consume_calls > initial_calls
 
-                # Should get the messages
-                messages = source.get_messages()
-                assert len(messages) == 1
-                assert messages[0].value() == b'test'
+            # Should get the messages
+            messages = source.get_messages()
+            assert len(messages) == 1
+            assert messages[0].value() == b'test'
 
         # After context: consumption should stop
         calls_at_exit = consumer.consume_calls
@@ -118,12 +116,13 @@ class TestBackgroundMessageSource:
         # Should not have made more consume calls after exit
         assert consumer.consume_calls == calls_at_exit
 
-        # Verify logging messages
-        assert "Background message consumption started" in caplog.text
-        assert "Background message consumption stopped" in caplog.text
+        # Verify logging messages (structlog writes to stdout)
+        captured = capsys.readouterr()
+        assert "background_consumer_started" in captured.out
+        assert "background_consumer_stopped" in captured.out
 
     def test_manual_start_stop_controls_background_consumption(
-        self, caplog: pytest.LogCaptureFixture
+        self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Test manual start and stop of background consumption."""
         consumer = ControllableKafkaConsumer()
@@ -135,23 +134,23 @@ class TestBackgroundMessageSource:
         assert consumer.consume_calls == initial_calls
 
         # After start: consumption begins
-        with caplog.at_level(logging.INFO):
-            source.start()
-            time.sleep(0.02)
-            calls_after_start = consumer.consume_calls
-            assert calls_after_start > initial_calls
-            assert "Background message consumption started" in caplog.text
+        source.start()
+        time.sleep(0.02)
+        calls_after_start = consumer.consume_calls
+        assert calls_after_start > initial_calls
+        captured = capsys.readouterr()
+        assert "background_consumer_started" in captured.out
 
         # After stop: consumption ends
-        with caplog.at_level(logging.INFO):
-            source.stop()
-            time.sleep(0.02)
-            calls_after_stop = consumer.consume_calls
-            # Should not have made significantly more calls after stop
-            assert (
-                calls_after_stop <= calls_after_start + 1
-            )  # Allow for one more due to timing
-            assert "Background message consumption stopped" in caplog.text
+        source.stop()
+        time.sleep(0.02)
+        calls_after_stop = consumer.consume_calls
+        # Should not have made significantly more calls after stop
+        assert (
+            calls_after_stop <= calls_after_start + 1
+        )  # Allow for one more due to timing
+        captured = capsys.readouterr()
+        assert "background_consumer_stopped" in captured.out
 
     def test_multiple_starts_are_safe(self) -> None:
         """Test that calling start multiple times doesn't cause issues."""
@@ -237,7 +236,7 @@ class TestBackgroundMessageSource:
             messages = source.get_messages()
             assert len(messages) == 0
 
-    def test_queue_overflow_behavior(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_queue_overflow_behavior(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test behavior when message queue overflows."""
         consumer = ControllableKafkaConsumer()
 
@@ -248,29 +247,22 @@ class TestBackgroundMessageSource:
         consumer.add_messages(many_messages)
 
         # Use small queue size to force overflow
-        with caplog.at_level(logging.WARNING):
-            with BackgroundMessageSource(
-                consumer, max_queue_size=2, num_messages=3, timeout=0.001
-            ) as source:
-                time.sleep(0.01)  # Let it consume and potentially overflow
+        with BackgroundMessageSource(
+            consumer, max_queue_size=2, num_messages=3, timeout=0.001
+        ) as source:
+            time.sleep(0.01)  # Let it consume and potentially overflow
 
-                # Should still be able to get some messages
-                messages = source.get_messages()
-                # Should have gotten some messages, but maybe not all due to overflow
-                assert len(messages) > 0
+            # Should still be able to get some messages
+            messages = source.get_messages()
+            # Should have gotten some messages, but maybe not all due to overflow
+            assert len(messages) > 0
 
-        # Check for overflow warning messages
-        overflow_warnings = [
-            record
-            for record in caplog.records
-            if record.levelno == logging.WARNING
-            and "Message queue full, dropped" in record.message
-        ]
-        # Should have at least one overflow warning given the setup
-        assert len(overflow_warnings) > 0
+        # Check for overflow warning messages (structlog writes to stdout)
+        captured = capsys.readouterr()
+        assert "message_queue_full" in captured.out
 
     def test_error_handling_continues_consumption(
-        self, caplog: pytest.LogCaptureFixture
+        self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Test that errors in consume don't permanently stop consumption."""
         consumer = ControllableKafkaConsumer()
@@ -279,39 +271,33 @@ class TestBackgroundMessageSource:
         consumer.should_raise = True
         consumer.exception_to_raise = RuntimeError("Test error")
 
-        with caplog.at_level(logging.ERROR):
-            with BackgroundMessageSource(consumer, timeout=0.01) as source:
-                # Wait for error to occur
-                time.sleep(0.05)
+        with BackgroundMessageSource(consumer, timeout=0.01) as source:
+            # Wait for error to occur
+            time.sleep(0.05)
 
-                # Stop raising errors and add a message
-                consumer.should_raise = False
-                consumer.add_messages(
-                    [FakeKafkaMessage(value=b'after_error', topic="topic1")]
-                )
+            # Stop raising errors and add a message
+            consumer.should_raise = False
+            consumer.add_messages(
+                [FakeKafkaMessage(value=b'after_error', topic="topic1")]
+            )
 
-                # Wait for recovery and message consumption
+            # Wait for recovery and message consumption
+            time.sleep(0.01)
+
+            # Should eventually get the message despite earlier errors
+            messages = source.get_messages()
+            # May take multiple attempts due to timing
+            for _ in range(5):
+                if messages:
+                    break
                 time.sleep(0.01)
-
-                # Should eventually get the message despite earlier errors
                 messages = source.get_messages()
-                # May take multiple attempts due to timing
-                for _ in range(5):
-                    if messages:
-                        break
-                    time.sleep(0.01)
-                    messages = source.get_messages()
 
-                assert any(msg.value() == b'after_error' for msg in messages)
+            assert any(msg.value() == b'after_error' for msg in messages)
 
-        # Verify error was logged
-        error_logs = [
-            record
-            for record in caplog.records
-            if record.levelno == logging.ERROR
-            and "Error in background message consumption" in record.message
-        ]
-        assert len(error_logs) > 0
+        # Verify error was logged (structlog writes to stdout)
+        captured = capsys.readouterr()
+        assert "background_consumer_error" in captured.out
 
     def test_no_messages_available_returns_empty_list(self) -> None:
         """Test behavior when no messages are available."""

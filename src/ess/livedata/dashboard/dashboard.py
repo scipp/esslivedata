@@ -78,9 +78,7 @@ class DashboardBase(ServiceBase, ABC):
             Transport instance
         """
         if transport == 'kafka':
-            return DashboardKafkaTransport(
-                instrument=self._instrument, dev=self._dev, logger=self._logger
-            )
+            return DashboardKafkaTransport(instrument=self._instrument, dev=self._dev)
         elif transport == 'none':
             return NullTransport()
         else:
