@@ -44,12 +44,15 @@ def _create_add_button_or_menu(
     :
         Button widget or MenuButton with overlay options.
     """
+    button_color = '#28a745'
+    hover_color = 'rgba(40, 167, 69, 0.1)'
+
     if not available_overlays or on_overlay_selected is None:
         # No overlays available - use simple button
         return create_tool_button(
             icon_name='plus',
-            button_color='#28a745',
-            hover_color='rgba(40, 167, 69, 0.1)',
+            button_color=button_color,
+            hover_color=hover_color,
             on_click_callback=on_add_callback,
         )
 
@@ -62,8 +65,6 @@ def _create_add_button_or_menu(
         overlay_map[plotter_title] = (output_name, plotter_name)
 
     # Use shared button stylesheet + menu-specific styling
-    button_color = '#28a745'
-    hover_color = 'rgba(40, 167, 69, 0.1)'
     stylesheets = create_tool_button_stylesheet(button_color, hover_color)
     stylesheets.append(
         """
