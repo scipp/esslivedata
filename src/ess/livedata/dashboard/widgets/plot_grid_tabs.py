@@ -571,6 +571,9 @@ class PlotGridTabs:
         :
             List of toolbar widgets, one per layer.
         """
+        # Collect existing plotter names to filter already-added overlays
+        existing_plotter_names = {layer.config.plot_name for layer in cell.layers}
+
         toolbars = []
         for layer in cell.layers:
             layer_id = layer.layer_id
@@ -592,8 +595,13 @@ class PlotGridTabs:
             elif state.plot is None:
                 description = f"{description}\n\nStatus: Waiting for data..."
 
-            # Get available overlays for this layer
-            available_overlays = self._get_available_overlays_for_layer(config)
+            # Get available overlays, excluding those already present in the cell
+            available_overlays = [
+                overlay
+                for overlay in self._get_available_overlays_for_layer(config)
+                if overlay[1]
+                not in existing_plotter_names  # overlay[1] is plotter_name
+            ]
 
             # Create callbacks that capture layer_id / cell_id / config
             def make_close_callback(lid: LayerId) -> Callable[[], None]:

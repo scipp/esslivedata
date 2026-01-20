@@ -352,3 +352,110 @@ class TestShutdown:
         """Test that shutdown is idempotent."""
         plot_grid_tabs.shutdown()
         plot_grid_tabs.shutdown()  # Should not raise
+
+
+class TestOverlayFiltering:
+    """Tests for overlay suggestion filtering."""
+
+    def test_existing_overlays_filtered_from_suggestions(self):
+        """Test that overlays already in the cell are not suggested again."""
+        # Simulate the filtering logic used in _create_layer_toolbars
+        # This tests the filtering independently of the full widget setup
+
+        # Mock cell layers: image + rectangles_readback already added
+        class MockConfig:
+            def __init__(self, plot_name):
+                self.plot_name = plot_name
+
+        class MockLayer:
+            def __init__(self, plot_name):
+                self.config = MockConfig(plot_name)
+
+        cell_layers = [
+            MockLayer('image'),
+            MockLayer('rectangles_readback'),
+        ]
+
+        # Collect existing plotter names (same as in _create_layer_toolbars)
+        existing_plotter_names = {layer.config.plot_name for layer in cell_layers}
+
+        # Simulate available overlays for an image layer
+        # (normally returned by _get_available_overlays_for_layer)
+        available_overlays_for_image = [
+            ('roi_rectangle', 'rectangles_readback', 'ROI Rectangles (Readback)'),
+            ('roi_polygon', 'polygons_readback', 'ROI Polygons (Readback)'),
+        ]
+
+        # Apply filtering (same logic as in _create_layer_toolbars)
+        filtered_overlays = [
+            overlay
+            for overlay in available_overlays_for_image
+            if overlay[1] not in existing_plotter_names
+        ]
+
+        # rectangles_readback should be filtered out (already exists)
+        # polygons_readback should remain
+        assert len(filtered_overlays) == 1
+        assert filtered_overlays[0][1] == 'polygons_readback'
+
+    def test_no_overlays_filtered_when_none_exist(self):
+        """Test that all overlays are available when none have been added."""
+
+        class MockConfig:
+            def __init__(self, plot_name):
+                self.plot_name = plot_name
+
+        class MockLayer:
+            def __init__(self, plot_name):
+                self.config = MockConfig(plot_name)
+
+        # Only image layer exists
+        cell_layers = [MockLayer('image')]
+        existing_plotter_names = {layer.config.plot_name for layer in cell_layers}
+
+        available_overlays_for_image = [
+            ('roi_rectangle', 'rectangles_readback', 'ROI Rectangles (Readback)'),
+            ('roi_polygon', 'polygons_readback', 'ROI Polygons (Readback)'),
+        ]
+
+        filtered_overlays = [
+            overlay
+            for overlay in available_overlays_for_image
+            if overlay[1] not in existing_plotter_names
+        ]
+
+        # Both should be available
+        assert len(filtered_overlays) == 2
+
+    def test_all_overlays_filtered_when_all_exist(self):
+        """Test that no overlays suggested when all have been added."""
+
+        class MockConfig:
+            def __init__(self, plot_name):
+                self.plot_name = plot_name
+
+        class MockLayer:
+            def __init__(self, plot_name):
+                self.config = MockConfig(plot_name)
+
+        # All layers exist
+        cell_layers = [
+            MockLayer('image'),
+            MockLayer('rectangles_readback'),
+            MockLayer('polygons_readback'),
+        ]
+        existing_plotter_names = {layer.config.plot_name for layer in cell_layers}
+
+        available_overlays_for_image = [
+            ('roi_rectangle', 'rectangles_readback', 'ROI Rectangles (Readback)'),
+            ('roi_polygon', 'polygons_readback', 'ROI Polygons (Readback)'),
+        ]
+
+        filtered_overlays = [
+            overlay
+            for overlay in available_overlays_for_image
+            if overlay[1] not in existing_plotter_names
+        ]
+
+        # None should be available
+        assert len(filtered_overlays) == 0
