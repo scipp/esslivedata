@@ -10,11 +10,11 @@ from streaming_data_types import deserialise_x5f2, serialise_x5f2
 from ess.livedata.config.workflow_spec import JobId, WorkflowId
 from ess.livedata.core.job import JobState, JobStatus
 from ess.livedata.kafka.x5f2_compat import (
-    Message,
+    JobStatusMessage,
+    JobStatusPayload,
     NicosStatus,
     ServiceId,
     StatusJSON,
-    StatusMessage,
     job_state_to_nicos_status_constant,
     job_status_to_x5f2,
     x5f2_to_job_status,
@@ -107,7 +107,7 @@ class TestMessage:
     def test_message_creation_minimal(self):
         """Test creating Message with minimal required fields."""
         job_id = JobId(source_name="test", job_number=uuid.uuid4())
-        message = Message(
+        message = JobStatusPayload(
             state=JobState.active,
             job_id=job_id,
             workflow_id="instrument/namespace/workflow/1",
@@ -124,7 +124,7 @@ class TestMessage:
     def test_message_creation_complete(self):
         """Test creating Message with all fields."""
         job_id = JobId(source_name="test", job_number=uuid.uuid4())
-        message = Message(
+        message = JobStatusPayload(
             state=JobState.warning,
             warning="Test warning",
             error="Test error",
@@ -141,7 +141,7 @@ class TestMessage:
         assert message.end_time == 2000000000
 
 
-class TestStatusMessage:
+class TestJobStatusMessage:
     def create_sample_job_status(self, **overrides):
         """Helper to create JobStatus with defaults that can be overridden."""
         defaults = {
@@ -162,9 +162,9 @@ class TestStatusMessage:
         return JobStatus(**defaults)
 
     def test_from_job_status_minimal(self):
-        """Test converting minimal JobStatus to StatusMessage."""
+        """Test converting minimal JobStatus to JobStatusMessage."""
         job_status = self.create_sample_job_status()
-        status_msg = StatusMessage.from_job_status(job_status)
+        status_msg = JobStatusMessage.from_job_status(job_status)
 
         assert status_msg.software_name == "livedata"
         assert status_msg.software_version == "0.0.0"
@@ -179,49 +179,49 @@ class TestStatusMessage:
         assert status_msg.status_json.message.workflow_id == str(job_status.workflow_id)
 
     def test_from_job_status_with_error(self):
-        """Test converting JobStatus with error to StatusMessage."""
+        """Test converting JobStatus with error to JobStatusMessage."""
         job_status = self.create_sample_job_status(
             state=JobState.error, error_message="Test error message"
         )
-        status_msg = StatusMessage.from_job_status(job_status)
+        status_msg = JobStatusMessage.from_job_status(job_status)
 
         assert status_msg.status_json.status == NicosStatus.ERROR
         assert status_msg.status_json.message.state == JobState.error
         assert status_msg.status_json.message.error == "Test error message"
 
     def test_from_job_status_with_warning(self):
-        """Test converting JobStatus with warning to StatusMessage."""
+        """Test converting JobStatus with warning to JobStatusMessage."""
         job_status = self.create_sample_job_status(
             state=JobState.warning, warning_message="Test warning message"
         )
-        status_msg = StatusMessage.from_job_status(job_status)
+        status_msg = JobStatusMessage.from_job_status(job_status)
 
         assert status_msg.status_json.status == NicosStatus.WARNING
         assert status_msg.status_json.message.state == JobState.warning
         assert status_msg.status_json.message.warning == "Test warning message"
 
     def test_from_job_status_with_times(self):
-        """Test converting JobStatus with start/end times to StatusMessage."""
+        """Test converting JobStatus with start/end times to JobStatusMessage."""
         job_status = self.create_sample_job_status(
             start_time=1000000000, end_time=2000000000
         )
-        status_msg = StatusMessage.from_job_status(job_status)
+        status_msg = JobStatusMessage.from_job_status(job_status)
 
         assert status_msg.status_json.message.start_time == 1000000000
         assert status_msg.status_json.message.end_time == 2000000000
 
     def test_to_job_status_minimal(self):
-        """Test converting minimal StatusMessage to JobStatus."""
+        """Test converting minimal JobStatusMessage to JobStatus."""
         job_id = JobId(source_name="test", job_number=uuid.uuid4())
         workflow_id = WorkflowId(
             instrument="test", namespace="ns", name="wf", version=1
         )
 
-        status_msg = StatusMessage(
+        status_msg = JobStatusMessage(
             service_id=ServiceId.from_job_id(job_id),
             status_json=StatusJSON(
                 status=NicosStatus.OK,
-                message=Message(
+                message=JobStatusPayload(
                     state=JobState.active, job_id=job_id, workflow_id=str(workflow_id)
                 ),
             ),
@@ -238,17 +238,17 @@ class TestStatusMessage:
         assert job_status.end_time is None
 
     def test_to_job_status_complete(self):
-        """Test converting complete StatusMessage to JobStatus."""
+        """Test converting complete JobStatusMessage to JobStatus."""
         job_id = JobId(source_name="test", job_number=uuid.uuid4())
         workflow_id = WorkflowId(
             instrument="test", namespace="ns", name="wf", version=1
         )
 
-        status_msg = StatusMessage(
+        status_msg = JobStatusMessage(
             service_id=ServiceId.from_job_id(job_id),
             status_json=StatusJSON(
                 status=NicosStatus.WARNING,
-                message=Message(
+                message=JobStatusPayload(
                     state=JobState.warning,
                     warning="Test warning",
                     error="Test error",
@@ -275,7 +275,7 @@ class TestStatusMessage:
         job_number = uuid.uuid4()
         service_id_str = f"detector_1:{job_number}"
 
-        # Create StatusMessage with string service_id
+        # Create JobStatusMessage with string service_id
         data = {
             "service_id": service_id_str,
             "status_json": {
@@ -288,7 +288,7 @@ class TestStatusMessage:
             },
         }
 
-        status_msg = StatusMessage.model_validate(data)
+        status_msg = JobStatusMessage.model_validate(data)
         assert isinstance(status_msg.service_id, ServiceId)
         assert status_msg.service_id.job_id.source_name == "detector_1"
         assert status_msg.service_id.job_id.job_number == job_number
@@ -296,11 +296,11 @@ class TestStatusMessage:
     def test_service_id_serialization(self):
         """Test that service_id is serialized to string format."""
         job_id = JobId(source_name="test", job_number=uuid.uuid4())
-        status_msg = StatusMessage(
+        status_msg = JobStatusMessage(
             service_id=ServiceId.from_job_id(job_id),
             status_json=StatusJSON(
                 status=NicosStatus.OK,
-                message=Message(
+                message=JobStatusPayload(
                     state=JobState.active, job_id=job_id, workflow_id="inst/ns/wf/1"
                 ),
             ),
@@ -313,7 +313,7 @@ class TestStatusMessage:
 
 
 class TestRoundTripConversion:
-    """Test round-trip conversion between JobStatus and StatusMessage."""
+    """Test round-trip conversion between JobStatus and JobStatusMessage."""
 
     def create_sample_job_status(self, **overrides):
         """Helper to create JobStatus with defaults that can be overridden."""
@@ -338,8 +338,8 @@ class TestRoundTripConversion:
         """Test round-trip conversion of minimal JobStatus."""
         original = self.create_sample_job_status()
 
-        # Convert to StatusMessage and back
-        status_msg = StatusMessage.from_job_status(original)
+        # Convert to JobStatusMessage and back
+        status_msg = JobStatusMessage.from_job_status(original)
         converted = status_msg.to_job_status()
 
         assert converted.job_id == original.job_id
@@ -355,7 +355,7 @@ class TestRoundTripConversion:
         for state in JobState:
             original = self.create_sample_job_status(state=state)
 
-            status_msg = StatusMessage.from_job_status(original)
+            status_msg = JobStatusMessage.from_job_status(original)
             converted = status_msg.to_job_status()
 
             assert converted.state == original.state, f"Failed for state {state}"
@@ -366,7 +366,7 @@ class TestRoundTripConversion:
             state=JobState.error, error_message="Critical error occurred"
         )
 
-        status_msg = StatusMessage.from_job_status(original)
+        status_msg = JobStatusMessage.from_job_status(original)
         converted = status_msg.to_job_status()
 
         assert converted.error_message == original.error_message
@@ -378,7 +378,7 @@ class TestRoundTripConversion:
             state=JobState.warning, warning_message="Warning: potential issue detected"
         )
 
-        status_msg = StatusMessage.from_job_status(original)
+        status_msg = JobStatusMessage.from_job_status(original)
         converted = status_msg.to_job_status()
 
         assert converted.warning_message == original.warning_message
@@ -392,7 +392,7 @@ class TestRoundTripConversion:
             warning_message="Warning was issued earlier",
         )
 
-        status_msg = StatusMessage.from_job_status(original)
+        status_msg = JobStatusMessage.from_job_status(original)
         converted = status_msg.to_job_status()
 
         assert converted.error_message == original.error_message
@@ -405,7 +405,7 @@ class TestRoundTripConversion:
             start_time=1000000000, end_time=2000000000
         )
 
-        status_msg = StatusMessage.from_job_status(original)
+        status_msg = JobStatusMessage.from_job_status(original)
         converted = status_msg.to_job_status()
 
         assert converted.start_time == original.start_time
@@ -421,7 +421,7 @@ class TestRoundTripConversion:
         )
         original = self.create_sample_job_status(workflow_id=workflow_id)
 
-        status_msg = StatusMessage.from_job_status(original)
+        status_msg = JobStatusMessage.from_job_status(original)
         converted = status_msg.to_job_status()
 
         assert converted.workflow_id == original.workflow_id
@@ -431,7 +431,7 @@ class TestRoundTripConversion:
         job_id = JobId(source_name="complex:source:name", job_number=uuid.uuid4())
         original = self.create_sample_job_status(job_id=job_id)
 
-        status_msg = StatusMessage.from_job_status(original)
+        status_msg = JobStatusMessage.from_job_status(original)
         converted = status_msg.to_job_status()
 
         assert converted.job_id == original.job_id
@@ -526,7 +526,7 @@ class TestX5F2Integration:
         job_status = self.create_sample_job_status()
 
         # First serialize to get reference data
-        status_msg = StatusMessage.from_job_status(job_status)
+        status_msg = JobStatusMessage.from_job_status(job_status)
         expected_data = status_msg.model_dump()
 
         # Serialize manually using streaming_data_types

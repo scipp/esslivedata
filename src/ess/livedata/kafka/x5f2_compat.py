@@ -87,10 +87,6 @@ class JobStatusPayload(pydantic.BaseModel):
     )
 
 
-# Backwards compatibility alias
-Message = JobStatusPayload
-
-
 class NicosStatus(int, Enum):
     OK = 200
     WARNING = 210
@@ -398,10 +394,6 @@ class JobStatusMessage(pydantic.BaseModel):
             start_time=message.start_time,
             end_time=message.end_time,
         )
-
-
-# Backwards compatibility alias
-StatusMessage = JobStatusMessage
 
 
 def x5f2_to_job_status(x5f2_status: bytes) -> JobStatus:
