@@ -119,7 +119,6 @@ class ReductionApp(DashboardBase):
         if self._dev:
             dev_widget = LogProducerWidget(
                 instrument=self._instrument,
-                logger=self._logger,
                 exit_stack=self._exit_stack,
             )
             dev_content = [dev_widget.panel, pn.layout.Divider()]

@@ -2,12 +2,12 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Dashboard service composition and setup."""
 
-import logging
 from collections.abc import Callable
 from contextlib import ExitStack
 from typing import Any
 
 import scipp as sc
+import structlog
 
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.grid_template import load_raw_grid_templates
@@ -29,6 +29,8 @@ from .stream_manager import StreamManager
 from .transport import Transport
 from .workflow_controller import WorkflowController
 
+logger = structlog.get_logger(__name__)
+
 
 class DashboardServices:
     """
@@ -47,8 +49,6 @@ class DashboardServices:
         Use dev mode with simplified topic structure
     exit_stack:
         ExitStack for managing resource cleanup (caller manages lifecycle)
-    logger:
-        Logger instance for logging
     pipe_factory:
         Factory function for creating pipes for StreamManager.
         For GUI: use holoviews.streams.Pipe
@@ -70,7 +70,6 @@ class DashboardServices:
         instrument: str,
         dev: bool,
         exit_stack: ExitStack,
-        logger: logging.Logger,
         pipe_factory: Callable[[Any], Any],
         transport: Transport,
         config_manager: ConfigStoreManager,
@@ -78,7 +77,6 @@ class DashboardServices:
         self._instrument = instrument
         self._dev = dev
         self._exit_stack = exit_stack
-        self._logger = logger
         self._pipe_factory = pipe_factory
         self._transport = transport
         self._config_manager = config_manager
@@ -92,7 +90,7 @@ class DashboardServices:
         self._setup_workflow_management()
         self._setup_plot_orchestrator()
 
-        self._logger.info("DashboardServices initialized for %s", instrument)
+        logger.info("DashboardServices initialized for %s", instrument)
 
     def start(self) -> None:
         """Start background tasks (e.g., message polling)."""
@@ -132,7 +130,7 @@ class DashboardServices:
 
         # Orchestrator will be wired to job_orchestrator after workflow setup
         self._transport_resources = transport_resources
-        self._logger.info("Data infrastructure setup complete")
+        logger.info("Data infrastructure setup complete")
 
     def _setup_plot_orchestrator(self) -> None:
         """Set up PlotOrchestrator for managing plot grids."""
@@ -148,7 +146,7 @@ class DashboardServices:
             raw_templates=raw_templates,
             instrument_config=self.instrument_config,
         )
-        self._logger.info("PlotOrchestrator setup complete")
+        logger.info("PlotOrchestrator setup complete")
 
     def _setup_workflow_management(self) -> None:
         """Initialize workflow controller and related components."""

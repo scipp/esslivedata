@@ -52,7 +52,6 @@ class DashboardBase(ServiceBase, ABC):
             instrument=instrument,
             dev=dev,
             exit_stack=self._exit_stack,
-            logger=self._logger,
             pipe_factory=streams.Pipe,
             transport=self._create_transport(transport),
             config_manager=config_manager,
