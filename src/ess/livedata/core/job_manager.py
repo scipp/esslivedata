@@ -386,8 +386,12 @@ class JobManager:
             else:
                 # Clear error state on successful finalization
                 self._job_error_messages.pop(job.job_id, None)
-                # Update state based on current status (may still have warnings)
-                if job.job_id in self._job_warning_messages:
+                # Track warnings from job finalization (e.g., None values in result)
+                if result.warning_message is not None:
+                    self._job_warning_messages[job.job_id] = result.warning_message
+                    self._job_states[job.job_id] = JobState.warning
+                elif job.job_id in self._job_warning_messages:
+                    # Preserve existing warnings from data processing
                     self._job_states[job.job_id] = JobState.warning
                 else:
                     self._job_states[job.job_id] = JobState.active
