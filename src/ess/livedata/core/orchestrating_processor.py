@@ -113,7 +113,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._service_error: str | None = None
         self._has_processed_first_batch = False
 
-        # Metrics tracking (Plan §6.2)
+        # Metrics tracking
         self._metrics_interval = 30_000_000_000  # 30 seconds in nanoseconds
         self._last_metrics_time: int | None = None
         self._batches_processed = 0
