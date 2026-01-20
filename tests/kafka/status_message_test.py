@@ -981,3 +981,110 @@ class TestServiceStatusX5F2Integration:
             x5f2_data = service_status_to_x5f2(original)
             converted = x5f2_to_service_status(x5f2_data)
             assert converted.state == state, f"Failed for state {state}"
+
+
+class TestX5f2ToStatusDiscriminator:
+    """Test x5f2_to_status function.
+
+    Tests the discriminator between job and service status messages.
+    """
+
+    def test_returns_job_status_for_job_message_with_message_type(self):
+        """Test that job status with message_type='job' returns JobStatus."""
+        from ess.livedata.core.job import JobStatus
+        from ess.livedata.kafka.x5f2_compat import job_status_to_x5f2, x5f2_to_status
+
+        job_status = JobStatus(
+            job_id=JobId(source_name="detector1", job_number=uuid.uuid4()),
+            workflow_id=WorkflowId(
+                instrument="test", namespace="ns", name="wf", version=1
+            ),
+            state=JobState.active,
+        )
+
+        x5f2_data = job_status_to_x5f2(job_status)
+        result = x5f2_to_status(x5f2_data)
+
+        assert isinstance(result, JobStatus)
+        assert result.job_id == job_status.job_id
+        assert result.state == job_status.state
+
+    def test_returns_job_status_for_legacy_message_without_message_type(self):
+        """Test backward compatibility of messages without message_type.
+
+        Legacy messages without message_type field should return JobStatus.
+        """
+        from ess.livedata.core.job import JobStatus
+        from ess.livedata.kafka.x5f2_compat import x5f2_to_status
+
+        job_id = JobId(source_name="detector1", job_number=uuid.uuid4())
+        workflow_id = WorkflowId(
+            instrument="test", namespace="ns", name="wf", version=1
+        )
+
+        # Manually create x5f2 data WITHOUT message_type field (legacy format)
+        status_json = json.dumps(
+            {
+                "status": 200,
+                "message": {
+                    # No message_type field - legacy format
+                    "state": "active",
+                    "warning": None,
+                    "error": None,
+                    "job_id": {
+                        "source_name": job_id.source_name,
+                        "job_number": str(job_id.job_number),
+                    },
+                    "workflow_id": str(workflow_id),
+                    "start_time": None,
+                    "end_time": None,
+                },
+            }
+        )
+
+        x5f2_data = serialise_x5f2(
+            software_name="livedata",
+            software_version="0.0.0",
+            service_id=f"{job_id.source_name}:{job_id.job_number}",
+            host_name="",
+            process_id=0,
+            update_interval=1000,
+            status_json=status_json,
+        )
+
+        result = x5f2_to_status(x5f2_data)
+
+        assert isinstance(result, JobStatus)
+        assert result.job_id == job_id
+        assert result.state == JobState.active
+
+    def test_returns_service_status_for_service_message(self):
+        """Test service status with message_type='service'.
+
+        Service messages with message_type='service' should return ServiceStatus.
+        """
+        from ess.livedata.core.job import ServiceState, ServiceStatus
+        from ess.livedata.kafka.x5f2_compat import (
+            service_status_to_x5f2,
+            x5f2_to_status,
+        )
+
+        worker_id = str(uuid.uuid4())
+        service_status = ServiceStatus(
+            instrument="dream",
+            namespace="data_reduction",
+            worker_id=worker_id,
+            state=ServiceState.running,
+            started_at=1000000000,
+            active_job_count=3,
+            messages_processed=5000,
+        )
+
+        x5f2_data = service_status_to_x5f2(service_status)
+        result = x5f2_to_status(x5f2_data)
+
+        assert isinstance(result, ServiceStatus)
+        assert result.instrument == service_status.instrument
+        assert result.namespace == service_status.namespace
+        assert result.worker_id == service_status.worker_id
+        assert result.state == service_status.state

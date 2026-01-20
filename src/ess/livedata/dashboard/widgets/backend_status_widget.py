@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import ClassVar
 
 import panel as pn
@@ -190,8 +191,6 @@ class WorkerStatusRow:
 
     def _calculate_uptime(self, started_at_ns: int) -> float:
         """Calculate uptime in seconds from started_at timestamp."""
-        import time
-
         current_time_ns = time.time_ns()
         uptime_ns = current_time_ns - started_at_ns
         return uptime_ns / 1_000_000_000
@@ -305,19 +304,24 @@ class BackendStatusWidget:
         def _span(color: str, count: int, label: str) -> str:
             return f'<span style="color: {color}">{count} {label}</span>'
 
+        colors = WorkerUIConstants.COLORS
         parts = [f"<b>{total}</b> workers"]
         if starting_count:
-            parts.append(_span("#6c757d", starting_count, "starting"))
+            parts.append(
+                _span(colors[ServiceState.starting], starting_count, "starting")
+            )
         if running_count:
-            parts.append(_span("#28a745", running_count, "running"))
+            parts.append(_span(colors[ServiceState.running], running_count, "running"))
         if stopping_count:
-            parts.append(_span("#ffc107", stopping_count, "stopping"))
+            parts.append(
+                _span(colors[ServiceState.stopping], stopping_count, "stopping")
+            )
         if stopped_count:
-            parts.append(_span("#6c757d", stopped_count, "stopped"))
+            parts.append(_span(colors[ServiceState.stopped], stopped_count, "stopped"))
         if stale_count:
-            parts.append(_span("#dc3545", stale_count, "stale"))
+            parts.append(_span(WorkerUIConstants.STALE_COLOR, stale_count, "stale"))
         if error_count:
-            parts.append(_span("#dc3545", error_count, "error"))
+            parts.append(_span(colors[ServiceState.error], error_count, "error"))
 
         return " | ".join(parts)
 
@@ -359,8 +363,9 @@ class BackendStatusWidget:
 
         # Show empty placeholder if no workers
         if not current_keys and self._empty_placeholder is None:
+            color = WorkerUIConstants.DEFAULT_COLOR
             self._empty_placeholder = pn.pane.HTML(
-                '<div style="text-align: center; padding: 20px; color: #6c757d;">'
+                f'<div style="text-align: center; padding: 20px; color: {color};">'
                 "Waiting for backend workers to connect..."
                 "</div>",
                 sizing_mode="stretch_width",

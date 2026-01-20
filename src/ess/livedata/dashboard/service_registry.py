@@ -104,22 +104,6 @@ class ServiceRegistry:
 
         return age_ns > self._heartbeat_timeout_ns
 
-    def get_workers_by_namespace(self) -> dict[str, list[ServiceStatus]]:
-        """Get workers grouped by namespace.
-
-        Returns
-        -------
-        :
-            Dictionary mapping namespace to list of worker statuses.
-        """
-        by_namespace: dict[str, list[ServiceStatus]] = {}
-        for status in self._worker_statuses.values():
-            key = f"{status.instrument}:{status.namespace}"
-            if key not in by_namespace:
-                by_namespace[key] = []
-            by_namespace[key].append(status)
-        return by_namespace
-
     def get_stale_workers(self) -> list[str]:
         """Get list of worker keys that have stale status."""
         return [key for key in self._worker_statuses if self.is_status_stale(key)]

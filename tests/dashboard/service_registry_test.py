@@ -230,47 +230,6 @@ class TestServiceRegistry:
         uptime = registry.get_worker_uptime_seconds("unknown:worker:key")
         assert uptime is None
 
-    def test_get_workers_by_namespace(self) -> None:
-        registry = ServiceRegistry(logger=logging.getLogger(__name__))
-        status1 = ServiceStatus(
-            instrument="dream",
-            namespace="ns1",
-            worker_id="worker1",
-            state=ServiceState.running,
-            started_at=1000,
-            active_job_count=2,
-            messages_processed=100,
-        )
-        status2 = ServiceStatus(
-            instrument="dream",
-            namespace="ns1",
-            worker_id="worker2",
-            state=ServiceState.running,
-            started_at=1000,
-            active_job_count=1,
-            messages_processed=50,
-        )
-        status3 = ServiceStatus(
-            instrument="dream",
-            namespace="ns2",
-            worker_id="worker3",
-            state=ServiceState.starting,
-            started_at=2000,
-            active_job_count=0,
-            messages_processed=0,
-        )
-
-        registry.status_updated(status1)
-        registry.status_updated(status2)
-        registry.status_updated(status3)
-
-        by_namespace = registry.get_workers_by_namespace()
-        # Keys are "instrument:namespace"
-        assert "dream:ns1" in by_namespace
-        assert "dream:ns2" in by_namespace
-        assert len(by_namespace["dream:ns1"]) == 2
-        assert len(by_namespace["dream:ns2"]) == 1
-
     def test_get_last_seen_seconds_ago_returns_recent_value(self) -> None:
         registry = ServiceRegistry(logger=logging.getLogger(__name__))
         status = ServiceStatus(
