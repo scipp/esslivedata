@@ -66,23 +66,59 @@ def _format_messages(count: int) -> str:
         return f"{count / 1_000_000:.1f}M"
 
 
-class WorkerStatusWidget:
-    """Widget to display the status of a single backend worker."""
+class WorkerStatusRow:
+    """Widget to display the status of a single backend worker.
 
-    def __init__(
-        self, status: ServiceStatus, is_stale: bool, uptime_seconds: float | None
-    ) -> None:
-        self._status = status
-        self._is_stale = is_stale
-        self._uptime_seconds = uptime_seconds
-        self._panel = self._create_panel()
+    Uses stable pane references that are updated in-place to avoid flicker.
+    """
 
-    def _get_status_color(self) -> str:
+    def __init__(self, status: ServiceStatus, is_stale: bool) -> None:
+        # Create stable pane references
+        self._namespace_pane = pn.pane.HTML(
+            width=WorkerUIConstants.NAMESPACE_WIDTH,
+            height=WorkerUIConstants.ROW_HEIGHT,
+            margin=WorkerUIConstants.STANDARD_MARGIN,
+        )
+        self._worker_id_pane = pn.pane.HTML(
+            width=WorkerUIConstants.WORKER_ID_WIDTH,
+            height=WorkerUIConstants.ROW_HEIGHT,
+            margin=WorkerUIConstants.STANDARD_MARGIN,
+        )
+        self._status_pane = pn.pane.HTML(
+            width=WorkerUIConstants.STATUS_WIDTH,
+            height=WorkerUIConstants.ROW_HEIGHT,
+            margin=WorkerUIConstants.STANDARD_MARGIN,
+        )
+        self._uptime_pane = pn.pane.HTML(
+            width=WorkerUIConstants.UPTIME_WIDTH,
+            height=WorkerUIConstants.ROW_HEIGHT,
+            margin=WorkerUIConstants.STANDARD_MARGIN,
+        )
+        self._stats_pane = pn.pane.HTML(
+            width=WorkerUIConstants.STATS_WIDTH,
+            height=WorkerUIConstants.ROW_HEIGHT,
+            margin=WorkerUIConstants.STANDARD_MARGIN,
+        )
+
+        self._panel = pn.Row(
+            self._namespace_pane,
+            self._worker_id_pane,
+            self._status_pane,
+            self._uptime_pane,
+            self._stats_pane,
+            styles={"border-bottom": "1px solid #dee2e6"},
+            sizing_mode="stretch_width",
+        )
+
+        # Set initial content
+        self.update(status, is_stale)
+
+    def _get_status_color(self, status: ServiceStatus, is_stale: bool) -> str:
         """Get color for worker state, considering staleness."""
-        if self._is_stale:
+        if is_stale:
             return WorkerUIConstants.STALE_COLOR
         return WorkerUIConstants.COLORS.get(
-            self._status.state, WorkerUIConstants.DEFAULT_COLOR
+            status.state, WorkerUIConstants.DEFAULT_COLOR
         )
 
     def _create_status_style(self, color: str) -> str:
@@ -93,87 +129,42 @@ class WorkerStatusWidget:
             f"font-weight: bold; font-size: 11px;"
         )
 
-    def _create_panel(self) -> pn.Row:
-        """Create the panel layout for this worker."""
-        # Namespace display
-        namespace_text = f"{self._status.instrument}:{self._status.namespace}"
-        namespace_pane = pn.pane.HTML(
-            f"<b>{namespace_text}</b>",
-            width=WorkerUIConstants.NAMESPACE_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
-            margin=WorkerUIConstants.STANDARD_MARGIN,
-        )
+    def update(self, status: ServiceStatus, is_stale: bool) -> None:
+        """Update the row content in-place."""
+        # Namespace
+        namespace_text = f"{status.instrument}:{status.namespace}"
+        self._namespace_pane.object = f"<b>{namespace_text}</b>"
 
         # Worker ID (truncated)
-        worker_id_short = self._status.worker_id[:8]
-        worker_id_pane = pn.pane.HTML(
-            f"<code>{worker_id_short}</code>",
-            width=WorkerUIConstants.WORKER_ID_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
-            margin=WorkerUIConstants.STANDARD_MARGIN,
-        )
+        worker_id_short = status.worker_id[:8]
+        self._worker_id_pane.object = f"<code>{worker_id_short}</code>"
 
         # Status indicator
-        status_color = self._get_status_color()
-        status_text = "STALE" if self._is_stale else self._status.state.value.upper()
+        status_color = self._get_status_color(status, is_stale)
+        status_text = "STALE" if is_stale else status.state.value.upper()
         status_style = self._create_status_style(status_color)
-        status_pane = pn.pane.HTML(
-            f'<div style="{status_style}">{status_text}</div>',
-            width=WorkerUIConstants.STATUS_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
-            margin=WorkerUIConstants.STANDARD_MARGIN,
-        )
+        self._status_pane.object = f'<div style="{status_style}">{status_text}</div>'
 
-        # Uptime
-        uptime_text = _format_uptime(self._uptime_seconds)
-        uptime_pane = pn.pane.HTML(
-            f"<span>Up: {uptime_text}</span>",
-            width=WorkerUIConstants.UPTIME_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
-            margin=WorkerUIConstants.STANDARD_MARGIN,
+        # Uptime - get from registry at update time
+        uptime_text = _format_uptime(
+            self._calculate_uptime(status.started_at) if status.started_at else None
         )
+        self._uptime_pane.object = f"<span>Up: {uptime_text}</span>"
 
         # Stats
-        jobs_text = f"Jobs: {self._status.active_job_count}"
-        msgs_text = f"Msgs: {_format_messages(self._status.messages_processed)}"
-        stats_pane = pn.pane.HTML(
-            f"<span>{jobs_text} | {msgs_text}</span>",
-            width=WorkerUIConstants.STATS_WIDTH,
-            height=WorkerUIConstants.ROW_HEIGHT,
-            margin=WorkerUIConstants.STANDARD_MARGIN,
-        )
+        jobs_text = f"Jobs: {status.active_job_count}"
+        msgs_text = f"Msgs: {_format_messages(status.messages_processed)}"
+        self._stats_pane.object = f"<span>{jobs_text} | {msgs_text}</span>"
 
-        # Error indicator if present
-        error_pane = None
-        if self._status.error:
-            error_style = (
-                "color: #dc3545; font-size: 11px; "
-                "white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"
-            )
-            error_text = self._status.error.split('\n')[0][:50]
-            error_pane = pn.pane.HTML(
-                f'<span style="{error_style}">{error_text}</span>',
-                margin=WorkerUIConstants.STANDARD_MARGIN,
-            )
+    def _calculate_uptime(self, started_at_ns: int) -> float:
+        """Calculate uptime in seconds from started_at timestamp."""
+        import time
 
-        row_components = [
-            namespace_pane,
-            worker_id_pane,
-            status_pane,
-            uptime_pane,
-            stats_pane,
-        ]
-        if error_pane:
-            row_components.append(error_pane)
+        current_time_ns = time.time_ns()
+        uptime_ns = current_time_ns - started_at_ns
+        return uptime_ns / 1_000_000_000
 
-        return pn.Row(
-            *row_components,
-            styles={
-                "border-bottom": "1px solid #dee2e6",
-            },
-            sizing_mode="stretch_width",
-        )
-
+    @property
     def panel(self) -> pn.Row:
         """Get the panel for this widget."""
         return self._panel
@@ -184,7 +175,8 @@ class BackendStatusWidget:
 
     def __init__(self, service_registry: ServiceRegistry) -> None:
         self._service_registry = service_registry
-        self._worker_widgets: dict[str, WorkerStatusWidget] = {}
+        self._worker_rows: dict[str, WorkerStatusRow] = {}
+        self._empty_placeholder: pn.pane.HTML | None = None
         self._setup_layout()
 
         # Subscribe to service registry updates
@@ -241,7 +233,7 @@ class BackendStatusWidget:
         self._worker_list = pn.Column(sizing_mode="stretch_width", margin=(0, 10))
 
         # Initialize with current worker statuses
-        self._rebuild_worker_list()
+        self._update_worker_list()
 
     def _format_summary(self) -> str:
         """Format the summary text."""
@@ -269,35 +261,46 @@ class BackendStatusWidget:
         """Handle worker status updates from the registry."""
         with pn.io.hold():
             self._summary.object = self._format_summary()
-            self._rebuild_worker_list()
+            self._update_worker_list()
 
-    def _rebuild_worker_list(self) -> None:
-        """Rebuild the worker list from current registry state."""
-        self._worker_list.clear()
-        self._worker_widgets.clear()
+    def _update_worker_list(self) -> None:
+        """Update the worker list, reusing existing rows where possible."""
+        current_keys = set(self._service_registry.worker_statuses.keys())
+        existing_keys = set(self._worker_rows.keys())
 
-        # Sort workers by namespace then worker_id for consistent display
-        workers = sorted(
-            self._service_registry.worker_statuses.items(),
-            key=lambda x: (x[1].instrument, x[1].namespace, x[1].worker_id),
-        )
+        # Remove rows for workers that no longer exist
+        removed_keys = existing_keys - current_keys
+        for worker_key in removed_keys:
+            row = self._worker_rows.pop(worker_key)
+            self._worker_list.remove(row.panel)
 
-        for worker_key, status in workers:
+        # Remove empty placeholder if we have workers
+        if current_keys and self._empty_placeholder is not None:
+            self._worker_list.remove(self._empty_placeholder)
+            self._empty_placeholder = None
+
+        # Update existing rows and add new ones
+        for worker_key, status in self._service_registry.worker_statuses.items():
             is_stale = self._service_registry.is_status_stale(worker_key)
-            uptime = self._service_registry.get_worker_uptime_seconds(worker_key)
-            widget = WorkerStatusWidget(status, is_stale, uptime)
-            self._worker_widgets[worker_key] = widget
-            self._worker_list.append(widget.panel())
 
-        if not workers:
-            self._worker_list.append(
-                pn.pane.HTML(
-                    '<div style="text-align: center; padding: 20px; color: #6c757d;">'
-                    "Waiting for backend workers to connect..."
-                    "</div>",
-                    sizing_mode="stretch_width",
-                )
+            if worker_key in self._worker_rows:
+                # Update existing row in-place
+                self._worker_rows[worker_key].update(status, is_stale)
+            else:
+                # Create new row
+                row = WorkerStatusRow(status, is_stale)
+                self._worker_rows[worker_key] = row
+                self._worker_list.append(row.panel)
+
+        # Show empty placeholder if no workers
+        if not current_keys and self._empty_placeholder is None:
+            self._empty_placeholder = pn.pane.HTML(
+                '<div style="text-align: center; padding: 20px; color: #6c757d;">'
+                "Waiting for backend workers to connect..."
+                "</div>",
+                sizing_mode="stretch_width",
             )
+            self._worker_list.append(self._empty_placeholder)
 
     def panel(self) -> pn.Column:
         """Get the main panel for this widget."""
