@@ -3,12 +3,14 @@
 """Service that processes detector event data into 2-D data for plotting."""
 
 import logging
+import os
 from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.handlers.detector_data_handler import DetectorHandlerFactory
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
+from ess.livedata.logging_config import configure_logging
 from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
 
 
@@ -38,6 +40,7 @@ def make_detector_service_builder(
 
 
 def main() -> NoReturn:
+    configure_logging(production=os.environ.get("LIVEDATA_ENV") == "production")
     runner = DataServiceRunner(
         pretty_name='Detector Data', make_builder=make_detector_service_builder
     )

@@ -2,7 +2,6 @@
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-import logging
 from typing import Generic, Protocol, TypeVar
 
 from ..config.instrument import Instrument
@@ -44,10 +43,7 @@ class PreprocessorFactory(Protocol, Generic[Tin, Tout]):
 class JobBasedPreprocessorFactoryBase(PreprocessorFactory[Tin, Tout]):
     """Factory base used by job-based backend services."""
 
-    def __init__(
-        self, *, instrument: Instrument, logger: logging.Logger | None = None
-    ) -> None:
-        self._logger = logger or logging.getLogger(__name__)
+    def __init__(self, *, instrument: Instrument) -> None:
         self._instrument = instrument
 
     @property

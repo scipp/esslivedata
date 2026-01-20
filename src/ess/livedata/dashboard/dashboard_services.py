@@ -107,9 +107,7 @@ class DashboardServices:
         # Set up transport and get resources
         transport_resources = self._exit_stack.enter_context(self._transport)
 
-        self.command_service = CommandService(
-            sink=transport_resources.command_sink, logger=self._logger
-        )
+        self.command_service = CommandService(sink=transport_resources.command_sink)
 
         # da00 of backend services converted to scipp.DataArray
         ScippDataService = DataService[ResultKey, sc.DataArray]
@@ -117,21 +115,18 @@ class DashboardServices:
         self.stream_manager = StreamManager(
             data_service=self.data_service, pipe_factory=self._pipe_factory
         )
-        self.job_service = JobService(logger=self._logger)
-        self.service_registry = ServiceRegistry(logger=self._logger)
+        self.job_service = JobService()
+        self.service_registry = ServiceRegistry()
         self.job_controller = JobController(
             command_service=self.command_service, job_service=self.job_service
         )
 
         # Create ROI publisher for publishing ROI updates to Kafka
-        roi_publisher = ROIPublisher(
-            sink=transport_resources.roi_sink, logger=self._logger
-        )
+        roi_publisher = ROIPublisher(sink=transport_resources.roi_sink)
 
         self.plotting_controller = PlottingController(
             job_service=self.job_service,
             stream_manager=self.stream_manager,
-            logger=self._logger,
             roi_publisher=roi_publisher,
         )
 

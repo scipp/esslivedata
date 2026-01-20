@@ -8,6 +8,8 @@ from collections.abc import Callable
 from contextlib import ExitStack
 from typing import Any, Generic, NoReturn, TypeVar
 
+import structlog
+
 from .config import config_names
 from .config.config_loader import load_config
 from .core import MessageSink, Processor
@@ -26,6 +28,8 @@ from .kafka.source import (
     MultiConsumer,
 )
 from .sinks import PlotToPngSink
+
+logger = structlog.get_logger(__name__)
 
 Traw = TypeVar("Traw")
 Tin = TypeVar("Tin")
@@ -150,6 +154,12 @@ class DataServiceBuilder(Generic[Traw, Tin, Tout]):
         resources: ExitStack | None = None,
         raise_on_adapter_error: bool = False,
     ) -> Service:
+        logger.info(
+            "service_created",
+            service=self._name,
+            instrument=self._instrument,
+            preprocessor_factory=type(self._preprocessor_factory).__name__,
+        )
         processor = self._processor_cls(
             source=source
             if self._adapter is None
@@ -199,6 +209,7 @@ class DataServiceRunner:
         self,
     ) -> NoReturn:
         args = vars(self._parser.parse_args())
+        logger.info("service_starting", **args)
         consumer_config = load_config(namespace=config_names.raw_data_consumer, env='')
         kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)
         kafka_upstream_config = load_config(namespace=config_names.kafka_upstream)

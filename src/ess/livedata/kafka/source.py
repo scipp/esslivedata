@@ -3,11 +3,16 @@
 import logging
 import queue
 import threading
+import time
 from collections.abc import Sequence
 from typing import Protocol
 
+import structlog
+
 from ..core.message import MessageSource
 from .message_adapter import KafkaMessage
+
+logger = structlog.get_logger(__name__)
 
 
 class KafkaConsumer(Protocol):
@@ -99,6 +104,11 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
         self._stop_event = threading.Event()
         self._logger = logging.getLogger(__name__)
         self._started = False
+        # Metrics tracking
+        self._metrics_interval = 30.0
+        self._last_metrics_time = 0.0
+        self._messages_consumed_since_last_metrics = 0
+        self._batches_dropped_since_last_metrics = 0
 
     def __enter__(self):
         """Enter context manager and start background consumption."""
@@ -142,13 +152,15 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
                     messages = self._consumer.consume(self._num_messages, self._timeout)
                     if not consumer_ready:
                         # First consume() completes consumer group coordination
-                        self._logger.info("Kafka consumer ready and polling")
+                        logger.info("kafka_consumer_ready")
                         consumer_ready = True
                     if messages:
+                        self._messages_consumed_since_last_metrics += len(messages)
                         try:
                             self._queue.put_nowait(messages)
                         except queue.Full:
                             # Drop oldest batch if queue is full
+                            self._batches_dropped_since_last_metrics += 1
                             try:
                                 dropped = self._queue.get_nowait()
                                 self._logger.warning(
@@ -159,11 +171,27 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
                             except queue.Empty:
                                 # Queue became empty between full check and get
                                 self._queue.put_nowait(messages)
+                    self._maybe_log_metrics()
                 except Exception:
                     self._logger.exception("Error in background message consumption")
                     # Continue running even if there's an error
         except Exception:
             self._logger.exception("Fatal error in background consumer thread")
+
+    def _maybe_log_metrics(self) -> None:
+        """Log metrics if the interval has elapsed."""
+        now = time.monotonic()
+        if now - self._last_metrics_time >= self._metrics_interval:
+            logger.info(
+                "consumer_metrics",
+                messages_consumed=self._messages_consumed_since_last_metrics,
+                queue_depth=self._queue.qsize(),
+                batches_dropped=self._batches_dropped_since_last_metrics,
+                interval_seconds=self._metrics_interval,
+            )
+            self._messages_consumed_since_last_metrics = 0
+            self._batches_dropped_since_last_metrics = 0
+            self._last_metrics_time = now
 
     def get_messages(self) -> list[KafkaMessage]:
         """Get all messages consumed since the last call."""

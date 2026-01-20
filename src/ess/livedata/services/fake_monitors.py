@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import logging
+import os
 import time
 from dataclasses import replace
 from typing import Literal, NoReturn
@@ -19,6 +20,7 @@ from ess.livedata.kafka.sink import (
     SerializationError,
     serialize_dataarray_to_da00,
 )
+from ess.livedata.logging_config import configure_logging
 
 
 class FakeMonitorSource(MessageSource[sc.Variable]):
@@ -158,6 +160,7 @@ def run_service(
 
 
 def main() -> NoReturn:
+    configure_logging(production=os.environ.get("LIVEDATA_ENV") == "production")
     parser = Service.setup_arg_parser(
         'Fake that publishes random da00 or ev44 monitor data', dev_flag=False
     )

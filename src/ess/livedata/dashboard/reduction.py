@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import argparse
+import os
 import urllib.request
 from urllib.error import URLError
 from urllib.request import urlopen
@@ -12,6 +13,7 @@ from panel.io.resources import CDN_DIST
 from panel.theme.material import Material
 
 from ess.livedata import Service
+from ess.livedata.logging_config import configure_logging
 
 from .dashboard import DashboardBase
 from .widgets.backend_status_widget import BackendStatusWidget
@@ -176,6 +178,7 @@ def get_arg_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    configure_logging(production=os.environ.get("LIVEDATA_ENV") == "production")
     parser = get_arg_parser()
     app = ReductionApp(**vars(parser.parse_args()))
     app.start(blocking=True)

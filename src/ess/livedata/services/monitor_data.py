@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
 import logging
+import os
 from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.handlers import monitor_data_handler
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
+from ess.livedata.logging_config import configure_logging
 from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
 
 
@@ -36,6 +38,7 @@ def make_monitor_service_builder(
 
 
 def main() -> NoReturn:
+    configure_logging(production=os.environ.get("LIVEDATA_ENV") == "production")
     runner = DataServiceRunner(
         pretty_name='Monitor Data', make_builder=make_monitor_service_builder
     )

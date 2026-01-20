@@ -98,12 +98,10 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         )
         instrument = preprocessor_factory.instrument
         self._job_manager = JobManager(job_factory=JobFactory(instrument=instrument))
-        self._job_manager_adapter = JobManagerAdapter(
-            job_manager=self._job_manager, logger=self._logger
-        )
+        self._job_manager_adapter = JobManagerAdapter(job_manager=self._job_manager)
         self._message_batcher = message_batcher or SimpleMessageBatcher()
         self._config_processor = ConfigProcessor(
-            job_manager_adapter=self._job_manager_adapter, logger=self._logger
+            job_manager_adapter=self._job_manager_adapter
         )
         self._last_status_update: int | None = None
         self._status_update_interval = 2_000_000_000  # 2 seconds

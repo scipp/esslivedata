@@ -7,13 +7,16 @@ Unified service for sending job commands, workflow configurations, and other
 command messages to backend services via MessageSink abstraction.
 """
 
-import logging
 import time
 from typing import Any
+
+import structlog
 
 from ess.livedata.config.models import ConfigKey
 from ess.livedata.core.message import COMMANDS_STREAM_ID, Message, MessageSink
 from ess.livedata.handlers.config_handler import ConfigUpdate
+
+logger = structlog.get_logger(__name__)
 
 
 class CommandService:
@@ -24,11 +27,8 @@ class CommandService:
     to backend services via the COMMANDS_STREAM_ID.
     """
 
-    def __init__(
-        self, sink: MessageSink[ConfigUpdate], logger: logging.Logger | None = None
-    ):
+    def __init__(self, sink: MessageSink[ConfigUpdate]):
         self._sink = sink
-        self._logger = logger or logging.getLogger(__name__)
 
     def send(self, key: ConfigKey, value: Any) -> None:
         """
@@ -68,4 +68,4 @@ class CommandService:
             for key, val in commands
         ]
         self._sink.publish_messages(messages)
-        self._logger.debug("Sent %d command(s)", len(commands))
+        logger.debug("Sent %d command(s)", len(commands))

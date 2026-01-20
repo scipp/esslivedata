@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import logging
+import os
 from typing import NoReturn
 
 import numpy as np
@@ -11,6 +12,7 @@ from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.core import IdentityProcessor
 from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_f144
+from ess.livedata.logging_config import configure_logging
 
 
 def _make_ramp(size: int) -> sc.DataArray:
@@ -46,7 +48,7 @@ class FakeLogdataSource(MessageSource[sc.DataArray]):
         # Track the current time and cycle count for each log data
         self._current_time = {name: self._time_ns() for name in self._ramp_patterns}
         # Track the last index we produced for each log
-        self._current_index = {name: 0 for name in self._ramp_patterns}
+        self._current_index = dict.fromkeys(self._ramp_patterns, 0)
         # How often to produce new data points (in seconds)
         self._interval_ns = int(1e9)  # 1 second in nanoseconds
         self._last_produce_time = self._time_ns()
@@ -139,6 +141,7 @@ def run_service(*, instrument: str, log_level: int = logging.INFO) -> NoReturn:
 
 
 def main() -> NoReturn:
+    configure_logging(production=os.environ.get("LIVEDATA_ENV") == "production")
     parser = Service.setup_arg_parser(
         'Fake that publishes f144 logdata', dev_flag=False
     )
