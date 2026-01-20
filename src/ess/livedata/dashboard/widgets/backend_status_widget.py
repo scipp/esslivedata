@@ -44,16 +44,21 @@ def _format_uptime(uptime_seconds: float | None) -> str:
         return "Unknown"
 
     if uptime_seconds < 60:
-        return f"{uptime_seconds:.0f}s"
+        value = int(uptime_seconds)
+        unit = "second" if value == 1 else "seconds"
+        return f"{value} {unit}"
     elif uptime_seconds < 3600:
-        minutes = uptime_seconds / 60
-        return f"{minutes:.1f}m"
+        value = uptime_seconds / 60
+        unit = "minute" if value == 1 else "minutes"
+        return f"{value:.1f} {unit}"
     elif uptime_seconds < 86400:
-        hours = uptime_seconds / 3600
-        return f"{hours:.1f}h"
+        value = uptime_seconds / 3600
+        unit = "hour" if value == 1 else "hours"
+        return f"{value:.1f} {unit}"
     else:
-        days = uptime_seconds / 86400
-        return f"{days:.1f}d"
+        value = uptime_seconds / 86400
+        unit = "day" if value == 1 else "days"
+        return f"{value:.1f} {unit}"
 
 
 def _format_messages(count: int) -> str:
@@ -61,7 +66,7 @@ def _format_messages(count: int) -> str:
     if count < 1000:
         return str(count)
     elif count < 1_000_000:
-        return f"{count / 1000:.1f}K"
+        return f"{count / 1000:.1f}k"
     else:
         return f"{count / 1_000_000:.1f}M"
 
