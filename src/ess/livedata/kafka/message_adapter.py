@@ -16,7 +16,7 @@ from streaming_data_types import (
 )
 from streaming_data_types.fbschemas.eventdata_ev44 import Event44Message
 
-from ess.livedata.core.job import JobStatus
+from ess.livedata.core.job import JobStatus, ServiceStatus
 
 from ..config.acknowledgement import CommandAcknowledgement
 from ..core.message import (
@@ -32,7 +32,7 @@ from ..handlers.accumulators import DetectorEvents, LogData, MonitorEvents
 from .scipp_ad00_compat import ad00_to_scipp
 from .scipp_da00_compat import da00_to_scipp
 from .stream_mapping import InputStreamKey, StreamLUT
-from .x5f2_compat import x5f2_to_job_status
+from .x5f2_compat import x5f2_to_job_status, x5f2_to_status
 
 T = TypeVar('T')
 U = TypeVar('U')
@@ -171,11 +171,30 @@ class Ev44ToMonitorEventsAdapter(
 
 
 class X5f2ToJobStatusAdapter(MessageAdapter[KafkaMessage, Message[JobStatus]]):
+    """Adapter for job status messages only (legacy, for backwards compatibility)."""
+
     def adapt(self, message: KafkaMessage) -> Message[JobStatus]:
         return Message(
             timestamp=message.timestamp()[1],
             stream=STATUS_STREAM_ID,
             value=x5f2_to_job_status(message.value()),
+        )
+
+
+class X5f2ToStatusAdapter(
+    MessageAdapter[KafkaMessage, Message[JobStatus | ServiceStatus]]
+):
+    """
+    Adapter for status messages that returns JobStatus or ServiceStatus.
+
+    Discriminates based on the `message_type` field in the x5f2 status_json.
+    """
+
+    def adapt(self, message: KafkaMessage) -> Message[JobStatus | ServiceStatus]:
+        return Message(
+            timestamp=message.timestamp()[1],
+            stream=STATUS_STREAM_ID,
+            value=x5f2_to_status(message.value()),
         )
 
 

@@ -465,3 +465,46 @@ def x5f2_to_service_status(x5f2_status: bytes) -> ServiceStatus:
         status_json=status_msg.status_json,  # Will be converted by validator
     )
     return status_message.to_service_status()
+
+
+def x5f2_to_status(x5f2_status: bytes) -> JobStatus | ServiceStatus:
+    """
+    Deserialize x5f2 status message to JobStatus or ServiceStatus.
+
+    Uses the `message_type` field in the status_json to determine the message type.
+    Messages without a `message_type` field are assumed to be job status messages
+    for backward compatibility.
+    """
+    import json
+
+    status_msg = deserialise_x5f2(x5f2_status)
+
+    # Parse status_json to check message_type
+    status_json = json.loads(status_msg.status_json)
+    message = status_json.get("message", {})
+    message_type = message.get(
+        "message_type", "job"
+    )  # Default to "job" for backwards compatibility
+
+    if message_type == "service":
+        status_message = ServiceStatusMessage(
+            software_name=status_msg.software_name,
+            software_version=status_msg.software_version,
+            service_id=status_msg.service_id,
+            host_name=status_msg.host_name,
+            process_id=status_msg.process_id,
+            update_interval=status_msg.update_interval,
+            status_json=status_msg.status_json,
+        )
+        return status_message.to_service_status()
+    else:
+        status_message = JobStatusMessage(
+            software_name=status_msg.software_name,
+            software_version=status_msg.software_version,
+            service_id=status_msg.service_id,
+            host_name=status_msg.host_name,
+            process_id=status_msg.process_id,
+            update_interval=status_msg.update_interval,
+            status_json=status_msg.status_json,
+        )
+        return status_message.to_job_status()
