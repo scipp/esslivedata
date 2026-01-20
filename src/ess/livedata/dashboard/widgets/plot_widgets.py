@@ -10,11 +10,95 @@ from typing import TYPE_CHECKING
 import panel as pn
 
 from ...config.workflow_spec import WorkflowId, WorkflowSpec
-from ..buttons import ButtonStyles, create_tool_button
+from ..buttons import ButtonStyles, create_tool_button, create_tool_button_stylesheet
+from ..icons import get_icon
 from ..plot_params import WindowMode
 
 if TYPE_CHECKING:
     from ..plot_orchestrator import PlotConfig
+
+
+_ADD_LAYER_ITEM = 'Add layer...'
+
+
+def _create_add_button_or_menu(
+    *,
+    on_add_callback: Callable[[], None],
+    on_overlay_selected: Callable[[str, str], None] | None = None,
+    available_overlays: list[tuple[str, str, str]] | None = None,
+) -> pn.widgets.Button | pn.widgets.MenuButton:
+    """
+    Create either a simple add button or a dropdown menu with overlay options.
+
+    Parameters
+    ----------
+    on_add_callback:
+        Callback when "Add layer..." is selected (opens modal).
+    on_overlay_selected:
+        Callback when an overlay is selected: (output_name, plotter_name).
+    available_overlays:
+        List of (output_name, plotter_name, plotter_title) tuples.
+
+    Returns
+    -------
+    :
+        Button widget or MenuButton with overlay options.
+    """
+    button_color = '#28a745'
+    hover_color = 'rgba(40, 167, 69, 0.1)'
+
+    if not available_overlays or on_overlay_selected is None:
+        # No overlays available - use simple button
+        return create_tool_button(
+            icon_name='plus',
+            button_color=button_color,
+            hover_color=hover_color,
+            on_click_callback=on_add_callback,
+        )
+
+    # Build menu items: "Add layer..." followed by overlay suggestions
+    items = [_ADD_LAYER_ITEM]
+    overlay_map: dict[str, tuple[str, str]] = {}
+
+    for output_name, plotter_name, plotter_title in available_overlays:
+        items.append(plotter_title)
+        overlay_map[plotter_title] = (output_name, plotter_name)
+
+    # Use shared button stylesheet + menu-specific styling
+    stylesheets = create_tool_button_stylesheet(button_color, hover_color)
+    stylesheets.append(
+        """
+        .bk-menu {
+            min-width: 200px !important;
+            right: 0 !important;
+            left: auto !important;
+        }
+        """
+    )
+
+    menu_button = pn.widgets.MenuButton(
+        name='',
+        items=items,
+        icon=get_icon('plus'),
+        icon_size='1.5em',
+        width=ButtonStyles.TOOL_BUTTON_SIZE,
+        height=ButtonStyles.TOOL_BUTTON_SIZE,
+        button_type='light',
+        sizing_mode='fixed',
+        margin=0,
+        stylesheets=stylesheets,
+    )
+
+    def on_menu_click(event: pn.param.parameterized.Event) -> None:
+        selected = event.new
+        if selected == _ADD_LAYER_ITEM:
+            on_add_callback()
+        elif selected in overlay_map:
+            output_name, plotter_name = overlay_map[selected]
+            on_overlay_selected(output_name, plotter_name)
+
+    menu_button.on_click(on_menu_click)
+    return menu_button
 
 
 def create_cell_toolbar(
@@ -22,6 +106,8 @@ def create_cell_toolbar(
     on_gear_callback: Callable[[], None],
     on_close_callback: Callable[[], None],
     on_add_callback: Callable[[], None] | None = None,
+    on_overlay_selected: Callable[[str, str], None] | None = None,
+    available_overlays: list[tuple[str, str, str]] | None = None,
     title: str | None = None,
     description: str | None = None,
     stopped: bool = False,
@@ -32,6 +118,9 @@ def create_cell_toolbar(
     The toolbar displays an optional title on the left (with tooltip for
     description) and gear/add/close buttons on the right, using flexbox layout
     to avoid overlap with Bokeh's plot toolbar.
+
+    When overlay suggestions are available, the add button becomes a dropdown
+    menu with "Add layer..." (opens modal) and direct overlay options.
 
     Parameters
     ----------
@@ -44,6 +133,14 @@ def create_cell_toolbar(
         If None, the add button is not shown. This allows the toolbar to be
         used in contexts where adding layers doesn't make sense (e.g., read-only
         views, cells with layer limits, or special cell types).
+    on_overlay_selected:
+        Optional callback when an overlay is selected from dropdown.
+        Called with (output_name, plotter_name). Required if available_overlays
+        is provided.
+    available_overlays:
+        Optional list of (output_name, plotter_name, plotter_title) tuples
+        representing available overlay options for this layer. If provided,
+        the add button becomes a dropdown menu.
     title:
         Optional title text to display on the left side of the toolbar.
     description:
@@ -62,16 +159,15 @@ def create_cell_toolbar(
         hover_color='rgba(0, 123, 255, 0.1)',
         on_click_callback=on_gear_callback,
     )
-    add_button = (
-        create_tool_button(
-            icon_name='plus',
-            button_color='#28a745',  # Green
-            hover_color='rgba(40, 167, 69, 0.1)',
-            on_click_callback=on_add_callback,
+
+    add_button: pn.widgets.Button | pn.widgets.MenuButton | None = None
+    if on_add_callback is not None:
+        add_button = _create_add_button_or_menu(
+            on_add_callback=on_add_callback,
+            on_overlay_selected=on_overlay_selected,
+            available_overlays=available_overlays,
         )
-        if on_add_callback
-        else None
-    )
+
     close_button = create_tool_button(
         icon_name='x',
         button_color=ButtonStyles.DANGER_RED,
