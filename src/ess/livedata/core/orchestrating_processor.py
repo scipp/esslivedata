@@ -127,7 +127,6 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         messages = self._source.get_messages()
         self._messages_processed += len(messages)
-        self._logger.debug('Processing %d messages', len(messages))
         config_messages: list[Message[Tin]] = []
         data_messages: list[Message[Tin]] = []
 
@@ -144,7 +143,6 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         message_batch = self._message_batcher.batch(data_messages)
         if message_batch is None:
-            self._logger.debug('No data messages to process')
             self._sink.publish_messages(result_messages)
             if not config_messages:
                 # Avoid busy-waiting if there is no data and no config messages.
@@ -152,9 +150,6 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
                 # may trigger costly workflow creation.
                 time.sleep(0.1)
             return
-        self._logger.debug(
-            'Processing batch with %d data messages', len(message_batch.messages)
-        )
 
         # Pre-process message batch
         workflow_data = self._message_preprocessor.preprocess_messages(message_batch)
