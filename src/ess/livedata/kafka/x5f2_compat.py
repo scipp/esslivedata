@@ -500,13 +500,4 @@ def x5f2_to_status(x5f2_status: bytes) -> JobStatus | ServiceStatus:
         )
         return status_message.to_service_status()
     else:
-        status_message = JobStatusMessage(
-            software_name=status_msg.software_name,
-            software_version=status_msg.software_version,
-            service_id=status_msg.service_id,
-            host_name=status_msg.host_name,
-            process_id=status_msg.process_id,
-            update_interval=status_msg.update_interval,
-            status_json=status_msg.status_json,
-        )
-        return status_message.to_job_status()
+        return x5f2_to_job_status(x5f2_status)

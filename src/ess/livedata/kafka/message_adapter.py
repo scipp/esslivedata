@@ -32,7 +32,7 @@ from ..handlers.accumulators import DetectorEvents, LogData, MonitorEvents
 from .scipp_ad00_compat import ad00_to_scipp
 from .scipp_da00_compat import da00_to_scipp
 from .stream_mapping import InputStreamKey, StreamLUT
-from .x5f2_compat import x5f2_to_job_status, x5f2_to_status
+from .x5f2_compat import x5f2_to_status
 
 T = TypeVar('T')
 U = TypeVar('U')
@@ -167,17 +167,6 @@ class Ev44ToMonitorEventsAdapter(
             timestamp=message.timestamp,
             stream=message.stream,
             value=MonitorEvents.from_ev44(message.value),
-        )
-
-
-class X5f2ToJobStatusAdapter(MessageAdapter[KafkaMessage, Message[JobStatus]]):
-    """Adapter for job status messages only (legacy, for backwards compatibility)."""
-
-    def adapt(self, message: KafkaMessage) -> Message[JobStatus]:
-        return Message(
-            timestamp=message.timestamp()[1],
-            stream=STATUS_STREAM_ID,
-            value=x5f2_to_job_status(message.value()),
         )
 
 
