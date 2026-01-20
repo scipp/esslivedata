@@ -99,6 +99,29 @@ class JobState(str, Enum):
     warning = "warning"
 
 
+class ServiceState(str, Enum):
+    """State of a backend service worker."""
+
+    starting = "starting"  # Service initializing
+    running = "running"  # Normal operation
+    stopping = "stopping"  # Graceful shutdown in progress
+    error = "error"  # Service encountered fatal error
+
+
+@dataclass
+class ServiceStatus:
+    """Complete status information for a backend service worker."""
+
+    instrument: str
+    namespace: str
+    worker_id: str  # UUID as string
+    state: ServiceState
+    started_at: int  # Nanoseconds since epoch
+    active_job_count: int
+    messages_processed: int
+    error: str | None = None
+
+
 def _add_time_coords(
     data: sc.DataGroup, start_time: int | None, end_time: int | None
 ) -> sc.DataGroup:

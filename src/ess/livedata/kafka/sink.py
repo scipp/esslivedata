@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
+import importlib.metadata
 import logging
+import os
+import socket
 from dataclasses import replace
 from types import TracebackType
 from typing import Any, Generic, Protocol, TypeVar
@@ -11,9 +14,19 @@ from streaming_data_types import dataarray_da00, logdata_f144
 
 from ..config.streams import stream_kind_to_topic
 from ..config.workflow_spec import ResultKey
+from ..core.job import ServiceStatus
 from ..core.message import STATUS_STREAM_ID, Message, MessageSink, StreamKind
 from .scipp_da00_compat import scipp_to_da00
-from .x5f2_compat import job_status_to_x5f2
+from .x5f2_compat import job_status_to_x5f2, service_status_to_x5f2
+
+
+def _get_software_version() -> str:
+    """Get the software version for x5f2 messages."""
+    try:
+        return importlib.metadata.version('esslivedata')
+    except importlib.metadata.PackageNotFoundError:
+        return '0.0.0'
+
 
 T = TypeVar("T")
 
@@ -69,6 +82,10 @@ class KafkaSink(MessageSink[T]):
         self._producer: kafka.Producer | None = None
         self._serializer = serializer
         self._instrument = instrument
+        # Cache x5f2 metadata for status messages
+        self._software_version = _get_software_version()
+        self._host_name = socket.gethostname()
+        self._process_id = os.getpid()
 
     def publish_messages(self, messages: Message[T]) -> None:
         if self._producer is None:
@@ -95,7 +112,20 @@ class KafkaSink(MessageSink[T]):
                     value = msg.value.model_dump_json().encode('utf-8')
                 elif msg.stream == STATUS_STREAM_ID:
                     key_bytes = None
-                    value = job_status_to_x5f2(msg.value)
+                    if isinstance(msg.value, ServiceStatus):
+                        value = service_status_to_x5f2(
+                            msg.value,
+                            software_version=self._software_version,
+                            host_name=self._host_name,
+                            process_id=self._process_id,
+                        )
+                    else:
+                        value = job_status_to_x5f2(
+                            msg.value,
+                            software_version=self._software_version,
+                            host_name=self._host_name,
+                            process_id=self._process_id,
+                        )
                 else:
                     key_bytes = None
                     value = self._serializer(msg)

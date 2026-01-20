@@ -580,3 +580,404 @@ class TestX5F2Integration:
         assert "state" in message
         assert "job_id" in message
         assert "workflow_id" in message
+
+
+class TestMessageTypeField:
+    """Test that message_type field is correctly included in serialized messages."""
+
+    def test_job_status_payload_has_message_type_field(self):
+        """Test that JobStatusPayload includes message_type field."""
+        from ess.livedata.kafka.x5f2_compat import JobStatusPayload
+
+        job_id = JobId(source_name="test", job_number=uuid.uuid4())
+        payload = JobStatusPayload(
+            state=JobState.active,
+            job_id=job_id,
+            workflow_id="inst/ns/wf/1",
+        )
+
+        assert payload.message_type == "job"
+
+        # Verify it's in the serialized JSON
+        data = json.loads(payload.model_dump_json())
+        assert data["message_type"] == "job"
+
+    def test_job_status_x5f2_includes_message_type(self):
+        """Test that x5f2 serialized job status includes message_type in status_json."""
+        job_status = JobStatus(
+            job_id=JobId(source_name="test", job_number=uuid.uuid4()),
+            workflow_id=WorkflowId(
+                instrument="test", namespace="ns", name="wf", version=1
+            ),
+            state=JobState.active,
+        )
+
+        x5f2_data = job_status_to_x5f2(job_status)
+        raw_data = deserialise_x5f2(x5f2_data)
+        status_json = json.loads(raw_data.status_json)
+
+        assert status_json["message"]["message_type"] == "job"
+
+
+class TestServiceStateToNicosStatus:
+    """Test ServiceState to NICOS status mapping."""
+
+    def test_all_service_states_mapped(self):
+        """Test that all ServiceState values have corresponding NicosStatus."""
+        from ess.livedata.core.job import ServiceState
+        from ess.livedata.kafka.x5f2_compat import (
+            service_state_to_nicos_status_constant,
+        )
+
+        for state in ServiceState:
+            status = service_state_to_nicos_status_constant(state)
+            assert isinstance(status, NicosStatus)
+
+    def test_specific_mappings(self):
+        """Test specific ServiceState mappings."""
+        from ess.livedata.core.job import ServiceState
+        from ess.livedata.kafka.x5f2_compat import (
+            service_state_to_nicos_status_constant,
+        )
+
+        assert (
+            service_state_to_nicos_status_constant(ServiceState.starting)
+            == NicosStatus.DISABLED
+        )
+        assert (
+            service_state_to_nicos_status_constant(ServiceState.running)
+            == NicosStatus.OK
+        )
+        assert (
+            service_state_to_nicos_status_constant(ServiceState.stopping)
+            == NicosStatus.DISABLED
+        )
+        assert (
+            service_state_to_nicos_status_constant(ServiceState.error)
+            == NicosStatus.ERROR
+        )
+
+
+class TestServiceServiceId:
+    """Test ServiceServiceId parsing and serialization."""
+
+    def test_from_string_valid_format(self):
+        """Test parsing valid service_id string."""
+        from ess.livedata.kafka.x5f2_compat import ServiceServiceId
+
+        worker_id = str(uuid.uuid4())
+        service_id_str = f"dream:data_reduction:{worker_id}"
+        service_id = ServiceServiceId.from_string(service_id_str)
+
+        assert service_id.instrument == "dream"
+        assert service_id.namespace == "data_reduction"
+        assert service_id.worker_id == worker_id
+
+    def test_from_string_invalid_format_no_colons(self):
+        """Test error handling for service_id without colons."""
+        from ess.livedata.kafka.x5f2_compat import ServiceServiceId
+
+        with pytest.raises(ValueError, match="Invalid service_id format"):
+            ServiceServiceId.from_string("invalid")
+
+    def test_from_string_invalid_uuid(self):
+        """Test error handling for invalid UUID in worker_id."""
+        from ess.livedata.kafka.x5f2_compat import ServiceServiceId
+
+        with pytest.raises(ValueError, match="Invalid service_id format"):
+            ServiceServiceId.from_string("dream:data_reduction:not-a-uuid")
+
+    def test_from_service_status(self):
+        """Test creating ServiceServiceId from ServiceStatus."""
+        from ess.livedata.core.job import ServiceState, ServiceStatus
+        from ess.livedata.kafka.x5f2_compat import ServiceServiceId
+
+        worker_id = str(uuid.uuid4())
+        status = ServiceStatus(
+            instrument="dream",
+            namespace="data_reduction",
+            worker_id=worker_id,
+            state=ServiceState.running,
+            started_at=1000000000,
+            active_job_count=3,
+            messages_processed=1000,
+        )
+        service_id = ServiceServiceId.from_service_status(status)
+
+        assert service_id.instrument == "dream"
+        assert service_id.namespace == "data_reduction"
+        assert service_id.worker_id == worker_id
+
+    def test_to_string(self):
+        """Test converting ServiceServiceId to string format."""
+        from ess.livedata.kafka.x5f2_compat import ServiceServiceId
+
+        worker_id = str(uuid.uuid4())
+        service_id = ServiceServiceId(
+            instrument="dream", namespace="data_reduction", worker_id=worker_id
+        )
+
+        expected = f"dream:data_reduction:{worker_id}"
+        assert service_id.to_string() == expected
+        assert str(service_id) == expected
+
+    def test_round_trip_string_conversion(self):
+        """Test that string conversion is reversible."""
+        from ess.livedata.kafka.x5f2_compat import ServiceServiceId
+
+        original = ServiceServiceId(
+            instrument="bifrost",
+            namespace="monitor_data",
+            worker_id=str(uuid.uuid4()),
+        )
+
+        # Convert to string and back
+        service_id_str = original.to_string()
+        parsed = ServiceServiceId.from_string(service_id_str)
+
+        assert parsed.instrument == original.instrument
+        assert parsed.namespace == original.namespace
+        assert parsed.worker_id == original.worker_id
+
+
+class TestServiceStatusPayload:
+    """Test ServiceStatusPayload model."""
+
+    def test_payload_creation(self):
+        """Test creating ServiceStatusPayload with all fields."""
+        from ess.livedata.core.job import ServiceState
+        from ess.livedata.kafka.x5f2_compat import ServiceStatusPayload
+
+        worker_id = str(uuid.uuid4())
+        payload = ServiceStatusPayload(
+            instrument="dream",
+            namespace="data_reduction",
+            worker_id=worker_id,
+            state=ServiceState.running,
+            started_at=1000000000,
+            active_job_count=5,
+            messages_processed=10000,
+            error=None,
+        )
+
+        assert payload.message_type == "service"
+        assert payload.instrument == "dream"
+        assert payload.namespace == "data_reduction"
+        assert payload.worker_id == worker_id
+        assert payload.state == ServiceState.running
+        assert payload.active_job_count == 5
+
+    def test_payload_with_error(self):
+        """Test creating ServiceStatusPayload with error."""
+        from ess.livedata.core.job import ServiceState
+        from ess.livedata.kafka.x5f2_compat import ServiceStatusPayload
+
+        payload = ServiceStatusPayload(
+            instrument="dream",
+            namespace="data_reduction",
+            worker_id=str(uuid.uuid4()),
+            state=ServiceState.error,
+            started_at=1000000000,
+            active_job_count=0,
+            messages_processed=5000,
+            error="Connection lost to Kafka",
+        )
+
+        assert payload.state == ServiceState.error
+        assert payload.error == "Connection lost to Kafka"
+
+
+class TestServiceStatusMessage:
+    """Test ServiceStatusMessage model."""
+
+    def create_sample_service_status(self, **overrides):
+        """Helper to create ServiceStatus with defaults."""
+        from ess.livedata.core.job import ServiceState, ServiceStatus
+
+        defaults = {
+            "instrument": "dream",
+            "namespace": "data_reduction",
+            "worker_id": str(uuid.uuid4()),
+            "state": ServiceState.running,
+            "started_at": 1000000000,
+            "active_job_count": 3,
+            "messages_processed": 5000,
+            "error": None,
+        }
+        defaults.update(overrides)
+        return ServiceStatus(**defaults)
+
+    def test_from_service_status(self):
+        """Test converting ServiceStatus to ServiceStatusMessage."""
+        from ess.livedata.kafka.x5f2_compat import ServiceStatusMessage
+
+        status = self.create_sample_service_status()
+        msg = ServiceStatusMessage.from_service_status(status)
+
+        assert msg.software_name == "livedata"
+        assert msg.service_id.instrument == status.instrument
+        assert msg.service_id.namespace == status.namespace
+        assert msg.service_id.worker_id == status.worker_id
+        assert msg.status_json.message.state == status.state
+        assert msg.status_json.message.active_job_count == status.active_job_count
+
+    def test_from_service_status_with_metadata(self):
+        """Test converting ServiceStatus with custom metadata."""
+        from ess.livedata.kafka.x5f2_compat import ServiceStatusMessage
+
+        status = self.create_sample_service_status()
+        msg = ServiceStatusMessage.from_service_status(
+            status,
+            software_version="1.2.3",
+            host_name="worker-01",
+            process_id=12345,
+        )
+
+        assert msg.software_version == "1.2.3"
+        assert msg.host_name == "worker-01"
+        assert msg.process_id == 12345
+
+    def test_to_service_status(self):
+        """Test converting ServiceStatusMessage to ServiceStatus."""
+        from ess.livedata.kafka.x5f2_compat import ServiceStatusMessage
+
+        original = self.create_sample_service_status()
+        msg = ServiceStatusMessage.from_service_status(original)
+        converted = msg.to_service_status()
+
+        assert converted.instrument == original.instrument
+        assert converted.namespace == original.namespace
+        assert converted.worker_id == original.worker_id
+        assert converted.state == original.state
+        assert converted.started_at == original.started_at
+        assert converted.active_job_count == original.active_job_count
+        assert converted.messages_processed == original.messages_processed
+
+
+class TestServiceStatusX5F2Integration:
+    """Test service status x5f2 serialization/deserialization."""
+
+    def create_sample_service_status(self, **overrides):
+        """Helper to create ServiceStatus with defaults."""
+        from ess.livedata.core.job import ServiceState, ServiceStatus
+
+        defaults = {
+            "instrument": "dream",
+            "namespace": "data_reduction",
+            "worker_id": str(uuid.uuid4()),
+            "state": ServiceState.running,
+            "started_at": 1000000000,
+            "active_job_count": 3,
+            "messages_processed": 5000,
+            "error": None,
+        }
+        defaults.update(overrides)
+        return ServiceStatus(**defaults)
+
+    def test_service_status_to_x5f2_produces_bytes(self):
+        """Test that service_status_to_x5f2 produces bytes."""
+        from ess.livedata.kafka.x5f2_compat import service_status_to_x5f2
+
+        status = self.create_sample_service_status()
+        x5f2_data = service_status_to_x5f2(status)
+
+        assert isinstance(x5f2_data, bytes)
+        assert len(x5f2_data) > 0
+
+    def test_service_status_x5f2_round_trip(self):
+        """Test round-trip conversion through x5f2."""
+        from ess.livedata.kafka.x5f2_compat import (
+            service_status_to_x5f2,
+            x5f2_to_service_status,
+        )
+
+        original = self.create_sample_service_status()
+        x5f2_data = service_status_to_x5f2(original)
+        converted = x5f2_to_service_status(x5f2_data)
+
+        assert converted.instrument == original.instrument
+        assert converted.namespace == original.namespace
+        assert converted.worker_id == original.worker_id
+        assert converted.state == original.state
+        assert converted.started_at == original.started_at
+        assert converted.active_job_count == original.active_job_count
+        assert converted.messages_processed == original.messages_processed
+        assert converted.error == original.error
+
+    def test_service_status_x5f2_with_error(self):
+        """Test x5f2 round-trip with error message."""
+        from ess.livedata.core.job import ServiceState
+        from ess.livedata.kafka.x5f2_compat import (
+            service_status_to_x5f2,
+            x5f2_to_service_status,
+        )
+
+        original = self.create_sample_service_status(
+            state=ServiceState.error,
+            error="Kafka connection lost",
+        )
+        x5f2_data = service_status_to_x5f2(original)
+        converted = x5f2_to_service_status(x5f2_data)
+
+        assert converted.state == ServiceState.error
+        assert converted.error == "Kafka connection lost"
+
+    def test_service_status_x5f2_with_metadata(self):
+        """Test that metadata is included in x5f2 message."""
+        from ess.livedata.kafka.x5f2_compat import service_status_to_x5f2
+
+        status = self.create_sample_service_status()
+        x5f2_data = service_status_to_x5f2(
+            status,
+            software_version="1.2.3",
+            host_name="worker-node-01.esss.se",
+            process_id=12345,
+        )
+
+        raw_data = deserialise_x5f2(x5f2_data)
+        assert raw_data.software_version == "1.2.3"
+        assert raw_data.host_name == "worker-node-01.esss.se"
+        assert raw_data.process_id == 12345
+
+    def test_service_status_x5f2_message_type_field(self):
+        """Test that message_type='service' is in the status_json."""
+        from ess.livedata.kafka.x5f2_compat import service_status_to_x5f2
+
+        status = self.create_sample_service_status()
+        x5f2_data = service_status_to_x5f2(status)
+
+        raw_data = deserialise_x5f2(x5f2_data)
+        status_json = json.loads(raw_data.status_json)
+
+        assert status_json["message"]["message_type"] == "service"
+
+    def test_service_status_x5f2_service_id_format(self):
+        """Test that service_id has the correct format."""
+        from ess.livedata.kafka.x5f2_compat import service_status_to_x5f2
+
+        status = self.create_sample_service_status(
+            instrument="dream",
+            namespace="data_reduction",
+            worker_id="7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        )
+        x5f2_data = service_status_to_x5f2(status)
+
+        raw_data = deserialise_x5f2(x5f2_data)
+        assert (
+            raw_data.service_id
+            == "dream:data_reduction:7c9e6679-7425-40de-944b-e07fc1f90ae7"
+        )
+
+    def test_service_status_x5f2_all_states(self):
+        """Test x5f2 round-trip for all ServiceState values."""
+        from ess.livedata.core.job import ServiceState
+        from ess.livedata.kafka.x5f2_compat import (
+            service_status_to_x5f2,
+            x5f2_to_service_status,
+        )
+
+        for state in ServiceState:
+            original = self.create_sample_service_status(state=state)
+            x5f2_data = service_status_to_x5f2(original)
+            converted = x5f2_to_service_status(x5f2_data)
+            assert converted.state == state, f"Failed for state {state}"
