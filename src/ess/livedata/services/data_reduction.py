@@ -3,10 +3,10 @@
 """Service that runs a data reduction workflow."""
 
 import logging
-import os
 from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
+from ess.livedata.config.environment import is_production
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.handlers.data_reduction_handler import ReductionHandlerFactory
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
@@ -41,7 +41,7 @@ def make_reduction_service_builder(
 
 
 def main() -> NoReturn:
-    configure_logging(production=os.environ.get("LIVEDATA_ENV") == "production")
+    configure_logging(production=is_production())
     runner = DataServiceRunner(
         pretty_name='Data Reduction', make_builder=make_reduction_service_builder
     )

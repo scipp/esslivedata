@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import logging
-import os
 from typing import NoReturn
 
 import numpy as np
@@ -10,6 +9,7 @@ import scipp as sc
 from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
+from ess.livedata.config.environment import is_production
 from ess.livedata.core import IdentityProcessor
 from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_f144
 from ess.livedata.logging_config import configure_logging
@@ -141,7 +141,7 @@ def run_service(*, instrument: str, log_level: int = logging.INFO) -> NoReturn:
 
 
 def main() -> NoReturn:
-    configure_logging(production=os.environ.get("LIVEDATA_ENV") == "production")
+    configure_logging(production=is_production())
     parser = Service.setup_arg_parser(
         'Fake that publishes f144 logdata', dev_flag=False
     )

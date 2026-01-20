@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import logging
-import os
 import time
 from dataclasses import replace
 from typing import Literal, NoReturn
@@ -13,6 +12,7 @@ from streaming_data_types import eventdata_ev44
 from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
+from ess.livedata.config.environment import is_production
 from ess.livedata.core import IdentityProcessor
 from ess.livedata.kafka.message_adapter import AdaptingMessageSource, MessageAdapter
 from ess.livedata.kafka.sink import (
@@ -160,7 +160,7 @@ def run_service(
 
 
 def main() -> NoReturn:
-    configure_logging(production=os.environ.get("LIVEDATA_ENV") == "production")
+    configure_logging(production=is_production())
     parser = Service.setup_arg_parser(
         'Fake that publishes random da00 or ev44 monitor data', dev_flag=False
     )

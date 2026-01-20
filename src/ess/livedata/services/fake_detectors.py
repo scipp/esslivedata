@@ -3,7 +3,6 @@
 """Fake that publishes random detector data"""
 
 import logging
-import os
 import time
 from typing import NoReturn
 
@@ -16,6 +15,7 @@ from streaming_data_types import area_detector_ad00, eventdata_ev44
 from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
+from ess.livedata.config.environment import is_production
 from ess.livedata.config.instruments import get_config
 from ess.livedata.core import IdentityProcessor
 from ess.livedata.kafka.sink import KafkaSink, SerializationError
@@ -292,7 +292,7 @@ def run_service(
 
 
 def main() -> NoReturn:
-    configure_logging(production=os.environ.get("LIVEDATA_ENV") == "production")
+    configure_logging(production=is_production())
     parser = Service.setup_arg_parser(
         'Fake that publishes random detector data', dev_flag=False
     )

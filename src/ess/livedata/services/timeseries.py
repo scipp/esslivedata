@@ -3,12 +3,12 @@
 """Service that processes logdata into timeseries for plotting."""
 
 import logging
-import os
 from collections.abc import Mapping
 from functools import partial
 from typing import Any, NoReturn
 
 from ess.livedata.config import instrument_registry
+from ess.livedata.config.environment import is_production
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.core.message_batcher import NaiveMessageBatcher
 from ess.livedata.core.orchestrating_processor import OrchestratingProcessor
@@ -59,7 +59,7 @@ def make_timeseries_service_builder(
 
 
 def main() -> NoReturn:
-    configure_logging(production=os.environ.get("LIVEDATA_ENV") == "production")
+    configure_logging(production=is_production())
     runner = DataServiceRunner(
         pretty_name='Logdata to Timeseries',
         make_builder=make_timeseries_service_builder,
