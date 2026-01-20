@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING
 import panel as pn
 
 from ...config.workflow_spec import WorkflowId, WorkflowSpec
-from ..buttons import ButtonStyles, create_tool_button
+from ..buttons import ButtonStyles, create_tool_button, create_tool_button_stylesheet
+from ..icons import get_icon
 from ..plot_params import WindowMode
 
 if TYPE_CHECKING:
@@ -60,35 +61,31 @@ def _create_add_button_or_menu(
         items.append(plotter_title)
         overlay_map[plotter_title] = (output_name, plotter_name)
 
+    # Use shared button stylesheet + menu-specific styling
+    button_color = '#28a745'
+    hover_color = 'rgba(40, 167, 69, 0.1)'
+    stylesheets = create_tool_button_stylesheet(button_color, hover_color)
+    stylesheets.append(
+        """
+        .bk-menu {
+            min-width: 200px !important;
+            right: 0 !important;
+            left: auto !important;
+        }
+        """
+    )
+
     menu_button = pn.widgets.MenuButton(
         name='',
         items=items,
-        icon='plus',
+        icon=get_icon('plus'),
         icon_size='1.5em',
         width=ButtonStyles.TOOL_BUTTON_SIZE,
         height=ButtonStyles.TOOL_BUTTON_SIZE,
         button_type='light',
         sizing_mode='fixed',
         margin=0,
-        stylesheets=[
-            """
-            button {
-                background-color: transparent !important;
-                border: none !important;
-                color: #28a745 !important;
-                padding: 0 !important;
-                margin: 0 !important;
-                display: flex !important;
-                align-items: center !important;
-                justify-content: center !important;
-                height: 100% !important;
-                width: 100% !important;
-            }
-            button:hover {
-                background-color: rgba(40, 167, 69, 0.1) !important;
-            }
-            """
-        ],
+        stylesheets=stylesheets,
     )
 
     def on_menu_click(event: pn.param.parameterized.Event) -> None:
