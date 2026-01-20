@@ -51,7 +51,6 @@ test = [
     "esssans",
     "essspectroscopy>=25.11.1",
     "holoviews",
-    "markdown-it-py==3.0.0",  # Work around myst-parser upper bound
     "panel",
     "param",
     "pytest",
