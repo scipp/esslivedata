@@ -308,10 +308,6 @@ class JobStatusJSON(pydantic.BaseModel):
     message: JobStatusPayload = pydantic.Field(description="Status message")
 
 
-# Backwards compatibility alias
-StatusJSON = JobStatusJSON
-
-
 class JobStatusMessage(pydantic.BaseModel):
     """
     Job status message model corresponding to x5f2 named tuple structure.

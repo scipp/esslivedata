@@ -8,17 +8,60 @@ import pytest
 from streaming_data_types import deserialise_x5f2, serialise_x5f2
 
 from ess.livedata.config.workflow_spec import JobId, WorkflowId
-from ess.livedata.core.job import JobState, JobStatus
+from ess.livedata.core.job import JobState, JobStatus, ServiceState, ServiceStatus
 from ess.livedata.kafka.x5f2_compat import (
+    JobStatusJSON,
     JobStatusMessage,
     JobStatusPayload,
     NicosStatus,
     ServiceId,
-    StatusJSON,
+    ServiceServiceId,
+    ServiceStatusMessage,
+    ServiceStatusPayload,
     job_state_to_nicos_status_constant,
     job_status_to_x5f2,
+    service_state_to_nicos_status_constant,
+    service_status_to_x5f2,
     x5f2_to_job_status,
+    x5f2_to_service_status,
+    x5f2_to_status,
 )
+
+
+def make_job_status(**overrides) -> JobStatus:
+    """Create a JobStatus with defaults that can be overridden."""
+    defaults = {
+        "job_id": JobId(source_name="detector_1", job_number=uuid.uuid4()),
+        "workflow_id": WorkflowId(
+            instrument="test_inst",
+            namespace="data_reduction",
+            name="test_workflow",
+            version=1,
+        ),
+        "state": JobState.active,
+        "error_message": None,
+        "warning_message": None,
+        "start_time": None,
+        "end_time": None,
+    }
+    defaults.update(overrides)
+    return JobStatus(**defaults)
+
+
+def make_service_status(**overrides) -> ServiceStatus:
+    """Create a ServiceStatus with defaults that can be overridden."""
+    defaults = {
+        "instrument": "dream",
+        "namespace": "data_reduction",
+        "worker_id": str(uuid.uuid4()),
+        "state": ServiceState.running,
+        "started_at": 1000000000,
+        "active_job_count": 3,
+        "messages_processed": 5000,
+        "error": None,
+    }
+    defaults.update(overrides)
+    return ServiceStatus(**defaults)
 
 
 class TestServiceId:
@@ -103,9 +146,9 @@ class TestJobStateToNicosStatus:
         )
 
 
-class TestMessage:
-    def test_message_creation_minimal(self):
-        """Test creating Message with minimal required fields."""
+class TestJobStatusPayload:
+    def test_payload_creation_minimal(self):
+        """Test creating JobStatusPayload with minimal required fields."""
         job_id = JobId(source_name="test", job_number=uuid.uuid4())
         message = JobStatusPayload(
             state=JobState.active,
@@ -121,8 +164,8 @@ class TestMessage:
         assert message.start_time is None
         assert message.end_time is None
 
-    def test_message_creation_complete(self):
-        """Test creating Message with all fields."""
+    def test_payload_creation_complete(self):
+        """Test creating JobStatusPayload with all fields."""
         job_id = JobId(source_name="test", job_number=uuid.uuid4())
         message = JobStatusPayload(
             state=JobState.warning,
@@ -142,28 +185,9 @@ class TestMessage:
 
 
 class TestJobStatusMessage:
-    def create_sample_job_status(self, **overrides):
-        """Helper to create JobStatus with defaults that can be overridden."""
-        defaults = {
-            "job_id": JobId(source_name="detector_1", job_number=uuid.uuid4()),
-            "workflow_id": WorkflowId(
-                instrument="test_inst",
-                namespace="data_reduction",
-                name="test_workflow",
-                version=1,
-            ),
-            "state": JobState.active,
-            "error_message": None,
-            "warning_message": None,
-            "start_time": None,
-            "end_time": None,
-        }
-        defaults.update(overrides)
-        return JobStatus(**defaults)
-
     def test_from_job_status_minimal(self):
         """Test converting minimal JobStatus to JobStatusMessage."""
-        job_status = self.create_sample_job_status()
+        job_status = make_job_status()
         status_msg = JobStatusMessage.from_job_status(job_status)
 
         assert status_msg.software_name == "livedata"
@@ -180,7 +204,7 @@ class TestJobStatusMessage:
 
     def test_from_job_status_with_error(self):
         """Test converting JobStatus with error to JobStatusMessage."""
-        job_status = self.create_sample_job_status(
+        job_status = make_job_status(
             state=JobState.error, error_message="Test error message"
         )
         status_msg = JobStatusMessage.from_job_status(job_status)
@@ -191,7 +215,7 @@ class TestJobStatusMessage:
 
     def test_from_job_status_with_warning(self):
         """Test converting JobStatus with warning to JobStatusMessage."""
-        job_status = self.create_sample_job_status(
+        job_status = make_job_status(
             state=JobState.warning, warning_message="Test warning message"
         )
         status_msg = JobStatusMessage.from_job_status(job_status)
@@ -202,9 +226,7 @@ class TestJobStatusMessage:
 
     def test_from_job_status_with_times(self):
         """Test converting JobStatus with start/end times to JobStatusMessage."""
-        job_status = self.create_sample_job_status(
-            start_time=1000000000, end_time=2000000000
-        )
+        job_status = make_job_status(start_time=1000000000, end_time=2000000000)
         status_msg = JobStatusMessage.from_job_status(job_status)
 
         assert status_msg.status_json.message.start_time == 1000000000
@@ -219,7 +241,7 @@ class TestJobStatusMessage:
 
         status_msg = JobStatusMessage(
             service_id=ServiceId.from_job_id(job_id),
-            status_json=StatusJSON(
+            status_json=JobStatusJSON(
                 status=NicosStatus.OK,
                 message=JobStatusPayload(
                     state=JobState.active, job_id=job_id, workflow_id=str(workflow_id)
@@ -246,7 +268,7 @@ class TestJobStatusMessage:
 
         status_msg = JobStatusMessage(
             service_id=ServiceId.from_job_id(job_id),
-            status_json=StatusJSON(
+            status_json=JobStatusJSON(
                 status=NicosStatus.WARNING,
                 message=JobStatusPayload(
                     state=JobState.warning,
@@ -298,7 +320,7 @@ class TestJobStatusMessage:
         job_id = JobId(source_name="test", job_number=uuid.uuid4())
         status_msg = JobStatusMessage(
             service_id=ServiceId.from_job_id(job_id),
-            status_json=StatusJSON(
+            status_json=JobStatusJSON(
                 status=NicosStatus.OK,
                 message=JobStatusPayload(
                     state=JobState.active, job_id=job_id, workflow_id="inst/ns/wf/1"
@@ -315,28 +337,9 @@ class TestJobStatusMessage:
 class TestRoundTripConversion:
     """Test round-trip conversion between JobStatus and JobStatusMessage."""
 
-    def create_sample_job_status(self, **overrides):
-        """Helper to create JobStatus with defaults that can be overridden."""
-        defaults = {
-            "job_id": JobId(source_name="detector_1", job_number=uuid.uuid4()),
-            "workflow_id": WorkflowId(
-                instrument="test_inst",
-                namespace="data_reduction",
-                name="test_workflow",
-                version=1,
-            ),
-            "state": JobState.active,
-            "error_message": None,
-            "warning_message": None,
-            "start_time": None,
-            "end_time": None,
-        }
-        defaults.update(overrides)
-        return JobStatus(**defaults)
-
     def test_round_trip_minimal_job_status(self):
         """Test round-trip conversion of minimal JobStatus."""
-        original = self.create_sample_job_status()
+        original = make_job_status()
 
         # Convert to JobStatusMessage and back
         status_msg = JobStatusMessage.from_job_status(original)
@@ -353,7 +356,7 @@ class TestRoundTripConversion:
     def test_round_trip_all_job_states(self):
         """Test round-trip conversion for all JobState values."""
         for state in JobState:
-            original = self.create_sample_job_status(state=state)
+            original = make_job_status(state=state)
 
             status_msg = JobStatusMessage.from_job_status(original)
             converted = status_msg.to_job_status()
@@ -362,7 +365,7 @@ class TestRoundTripConversion:
 
     def test_round_trip_with_error_message(self):
         """Test round-trip conversion with error message."""
-        original = self.create_sample_job_status(
+        original = make_job_status(
             state=JobState.error, error_message="Critical error occurred"
         )
 
@@ -374,7 +377,7 @@ class TestRoundTripConversion:
 
     def test_round_trip_with_warning_message(self):
         """Test round-trip conversion with warning message."""
-        original = self.create_sample_job_status(
+        original = make_job_status(
             state=JobState.warning, warning_message="Warning: potential issue detected"
         )
 
@@ -386,7 +389,7 @@ class TestRoundTripConversion:
 
     def test_round_trip_with_both_messages(self):
         """Test round-trip conversion with both error and warning messages."""
-        original = self.create_sample_job_status(
+        original = make_job_status(
             state=JobState.error,
             error_message="Error occurred",
             warning_message="Warning was issued earlier",
@@ -401,9 +404,7 @@ class TestRoundTripConversion:
 
     def test_round_trip_with_timestamps(self):
         """Test round-trip conversion with start and end times."""
-        original = self.create_sample_job_status(
-            start_time=1000000000, end_time=2000000000
-        )
+        original = make_job_status(start_time=1000000000, end_time=2000000000)
 
         status_msg = JobStatusMessage.from_job_status(original)
         converted = status_msg.to_job_status()
@@ -419,7 +420,7 @@ class TestRoundTripConversion:
             name="workflow_with_underscores",
             version=42,
         )
-        original = self.create_sample_job_status(workflow_id=workflow_id)
+        original = make_job_status(workflow_id=workflow_id)
 
         status_msg = JobStatusMessage.from_job_status(original)
         converted = status_msg.to_job_status()
@@ -429,7 +430,7 @@ class TestRoundTripConversion:
     def test_round_trip_complex_job_id(self):
         """Test round-trip conversion with complex JobId."""
         job_id = JobId(source_name="complex:source:name", job_number=uuid.uuid4())
-        original = self.create_sample_job_status(job_id=job_id)
+        original = make_job_status(job_id=job_id)
 
         status_msg = JobStatusMessage.from_job_status(original)
         converted = status_msg.to_job_status()
@@ -440,28 +441,9 @@ class TestRoundTripConversion:
 class TestX5F2Integration:
     """Test integration with x5f2 serialization/deserialization."""
 
-    def create_sample_job_status(self, **overrides):
-        """Helper to create JobStatus with defaults that can be overridden."""
-        defaults = {
-            "job_id": JobId(source_name="detector_1", job_number=uuid.uuid4()),
-            "workflow_id": WorkflowId(
-                instrument="test_inst",
-                namespace="data_reduction",
-                name="test_workflow",
-                version=1,
-            ),
-            "state": JobState.active,
-            "error_message": None,
-            "warning_message": None,
-            "start_time": None,
-            "end_time": None,
-        }
-        defaults.update(overrides)
-        return JobStatus(**defaults)
-
     def test_x5f2_round_trip_minimal(self):
         """Test round-trip conversion through x5f2 with minimal JobStatus."""
-        original = self.create_sample_job_status()
+        original = make_job_status()
 
         # Convert to x5f2 and back
         x5f2_data = job_status_to_x5f2(original)
@@ -478,7 +460,7 @@ class TestX5F2Integration:
     def test_x5f2_round_trip_all_states(self):
         """Test x5f2 round-trip for all JobState values."""
         for state in JobState:
-            original = self.create_sample_job_status(state=state)
+            original = make_job_status(state=state)
 
             x5f2_data = job_status_to_x5f2(original)
             converted = x5f2_to_job_status(x5f2_data)
@@ -487,7 +469,7 @@ class TestX5F2Integration:
 
     def test_x5f2_round_trip_with_messages(self):
         """Test x5f2 round-trip with error and warning messages."""
-        original = self.create_sample_job_status(
+        original = make_job_status(
             state=JobState.warning,
             error_message="Previous error",
             warning_message="Current warning",
@@ -502,7 +484,7 @@ class TestX5F2Integration:
 
     def test_x5f2_round_trip_with_timestamps(self):
         """Test x5f2 round-trip with timestamps."""
-        original = self.create_sample_job_status(
+        original = make_job_status(
             start_time=1640995200000000000,  # 2022-01-01 00:00:00 UTC in nanoseconds
             end_time=1640995800000000000,  # 2022-01-01 00:10:00 UTC in nanoseconds
         )
@@ -515,7 +497,7 @@ class TestX5F2Integration:
 
     def test_x5f2_serialization_is_bytes(self):
         """Test that x5f2 serialization produces bytes."""
-        job_status = self.create_sample_job_status()
+        job_status = make_job_status()
         x5f2_data = job_status_to_x5f2(job_status)
 
         assert isinstance(x5f2_data, bytes)
@@ -523,7 +505,7 @@ class TestX5F2Integration:
 
     def test_x5f2_deserialization_from_bytes(self):
         """Test that x5f2 deserialization works with raw bytes."""
-        job_status = self.create_sample_job_status()
+        job_status = make_job_status()
 
         # First serialize to get reference data
         status_msg = JobStatusMessage.from_job_status(job_status)
@@ -541,7 +523,7 @@ class TestX5F2Integration:
 
     def test_x5f2_with_unicode_messages(self):
         """Test x5f2 handling of unicode characters in messages."""
-        original = self.create_sample_job_status(
+        original = make_job_status(
             state=JobState.error,
             error_message="Error with unicode: åäö 中文 🚀",
             warning_message="Warning with unicode: ñáéíóú",
@@ -555,7 +537,7 @@ class TestX5F2Integration:
 
     def test_x5f2_data_compatibility(self):
         """Test that x5f2 data is compatible with direct streaming_data_types usage."""
-        job_status = self.create_sample_job_status(
+        job_status = make_job_status(
             state=JobState.active, start_time=1000000000, end_time=2000000000
         )
 
@@ -587,8 +569,6 @@ class TestMessageTypeField:
 
     def test_job_status_payload_has_message_type_field(self):
         """Test that JobStatusPayload includes message_type field."""
-        from ess.livedata.kafka.x5f2_compat import JobStatusPayload
-
         job_id = JobId(source_name="test", job_number=uuid.uuid4())
         payload = JobStatusPayload(
             state=JobState.active,
@@ -624,22 +604,12 @@ class TestServiceStateToNicosStatus:
 
     def test_all_service_states_mapped(self):
         """Test that all ServiceState values have corresponding NicosStatus."""
-        from ess.livedata.core.job import ServiceState
-        from ess.livedata.kafka.x5f2_compat import (
-            service_state_to_nicos_status_constant,
-        )
-
         for state in ServiceState:
             status = service_state_to_nicos_status_constant(state)
             assert isinstance(status, NicosStatus)
 
     def test_specific_mappings(self):
         """Test specific ServiceState mappings."""
-        from ess.livedata.core.job import ServiceState
-        from ess.livedata.kafka.x5f2_compat import (
-            service_state_to_nicos_status_constant,
-        )
-
         assert (
             service_state_to_nicos_status_constant(ServiceState.starting)
             == NicosStatus.DISABLED
@@ -663,8 +633,6 @@ class TestServiceServiceId:
 
     def test_from_string_valid_format(self):
         """Test parsing valid service_id string."""
-        from ess.livedata.kafka.x5f2_compat import ServiceServiceId
-
         worker_id = str(uuid.uuid4())
         service_id_str = f"dream:data_reduction:{worker_id}"
         service_id = ServiceServiceId.from_string(service_id_str)
@@ -675,23 +643,16 @@ class TestServiceServiceId:
 
     def test_from_string_invalid_format_no_colons(self):
         """Test error handling for service_id without colons."""
-        from ess.livedata.kafka.x5f2_compat import ServiceServiceId
-
         with pytest.raises(ValueError, match="Invalid service_id format"):
             ServiceServiceId.from_string("invalid")
 
     def test_from_string_invalid_uuid(self):
         """Test error handling for invalid UUID in worker_id."""
-        from ess.livedata.kafka.x5f2_compat import ServiceServiceId
-
         with pytest.raises(ValueError, match="Invalid service_id format"):
             ServiceServiceId.from_string("dream:data_reduction:not-a-uuid")
 
     def test_from_service_status(self):
         """Test creating ServiceServiceId from ServiceStatus."""
-        from ess.livedata.core.job import ServiceState, ServiceStatus
-        from ess.livedata.kafka.x5f2_compat import ServiceServiceId
-
         worker_id = str(uuid.uuid4())
         status = ServiceStatus(
             instrument="dream",
@@ -710,8 +671,6 @@ class TestServiceServiceId:
 
     def test_to_string(self):
         """Test converting ServiceServiceId to string format."""
-        from ess.livedata.kafka.x5f2_compat import ServiceServiceId
-
         worker_id = str(uuid.uuid4())
         service_id = ServiceServiceId(
             instrument="dream", namespace="data_reduction", worker_id=worker_id
@@ -723,8 +682,6 @@ class TestServiceServiceId:
 
     def test_round_trip_string_conversion(self):
         """Test that string conversion is reversible."""
-        from ess.livedata.kafka.x5f2_compat import ServiceServiceId
-
         original = ServiceServiceId(
             instrument="bifrost",
             namespace="monitor_data",
@@ -745,9 +702,6 @@ class TestServiceStatusPayload:
 
     def test_payload_creation(self):
         """Test creating ServiceStatusPayload with all fields."""
-        from ess.livedata.core.job import ServiceState
-        from ess.livedata.kafka.x5f2_compat import ServiceStatusPayload
-
         worker_id = str(uuid.uuid4())
         payload = ServiceStatusPayload(
             instrument="dream",
@@ -769,9 +723,6 @@ class TestServiceStatusPayload:
 
     def test_payload_with_error(self):
         """Test creating ServiceStatusPayload with error."""
-        from ess.livedata.core.job import ServiceState
-        from ess.livedata.kafka.x5f2_compat import ServiceStatusPayload
-
         payload = ServiceStatusPayload(
             instrument="dream",
             namespace="data_reduction",
@@ -790,28 +741,9 @@ class TestServiceStatusPayload:
 class TestServiceStatusMessage:
     """Test ServiceStatusMessage model."""
 
-    def create_sample_service_status(self, **overrides):
-        """Helper to create ServiceStatus with defaults."""
-        from ess.livedata.core.job import ServiceState, ServiceStatus
-
-        defaults = {
-            "instrument": "dream",
-            "namespace": "data_reduction",
-            "worker_id": str(uuid.uuid4()),
-            "state": ServiceState.running,
-            "started_at": 1000000000,
-            "active_job_count": 3,
-            "messages_processed": 5000,
-            "error": None,
-        }
-        defaults.update(overrides)
-        return ServiceStatus(**defaults)
-
     def test_from_service_status(self):
         """Test converting ServiceStatus to ServiceStatusMessage."""
-        from ess.livedata.kafka.x5f2_compat import ServiceStatusMessage
-
-        status = self.create_sample_service_status()
+        status = make_service_status()
         msg = ServiceStatusMessage.from_service_status(status)
 
         assert msg.software_name == "livedata"
@@ -823,9 +755,7 @@ class TestServiceStatusMessage:
 
     def test_from_service_status_with_metadata(self):
         """Test converting ServiceStatus with custom metadata."""
-        from ess.livedata.kafka.x5f2_compat import ServiceStatusMessage
-
-        status = self.create_sample_service_status()
+        status = make_service_status()
         msg = ServiceStatusMessage.from_service_status(
             status,
             software_version="1.2.3",
@@ -839,9 +769,7 @@ class TestServiceStatusMessage:
 
     def test_to_service_status(self):
         """Test converting ServiceStatusMessage to ServiceStatus."""
-        from ess.livedata.kafka.x5f2_compat import ServiceStatusMessage
-
-        original = self.create_sample_service_status()
+        original = make_service_status()
         msg = ServiceStatusMessage.from_service_status(original)
         converted = msg.to_service_status()
 
@@ -857,28 +785,9 @@ class TestServiceStatusMessage:
 class TestServiceStatusX5F2Integration:
     """Test service status x5f2 serialization/deserialization."""
 
-    def create_sample_service_status(self, **overrides):
-        """Helper to create ServiceStatus with defaults."""
-        from ess.livedata.core.job import ServiceState, ServiceStatus
-
-        defaults = {
-            "instrument": "dream",
-            "namespace": "data_reduction",
-            "worker_id": str(uuid.uuid4()),
-            "state": ServiceState.running,
-            "started_at": 1000000000,
-            "active_job_count": 3,
-            "messages_processed": 5000,
-            "error": None,
-        }
-        defaults.update(overrides)
-        return ServiceStatus(**defaults)
-
     def test_service_status_to_x5f2_produces_bytes(self):
         """Test that service_status_to_x5f2 produces bytes."""
-        from ess.livedata.kafka.x5f2_compat import service_status_to_x5f2
-
-        status = self.create_sample_service_status()
+        status = make_service_status()
         x5f2_data = service_status_to_x5f2(status)
 
         assert isinstance(x5f2_data, bytes)
@@ -886,12 +795,7 @@ class TestServiceStatusX5F2Integration:
 
     def test_service_status_x5f2_round_trip(self):
         """Test round-trip conversion through x5f2."""
-        from ess.livedata.kafka.x5f2_compat import (
-            service_status_to_x5f2,
-            x5f2_to_service_status,
-        )
-
-        original = self.create_sample_service_status()
+        original = make_service_status()
         x5f2_data = service_status_to_x5f2(original)
         converted = x5f2_to_service_status(x5f2_data)
 
@@ -906,13 +810,7 @@ class TestServiceStatusX5F2Integration:
 
     def test_service_status_x5f2_with_error(self):
         """Test x5f2 round-trip with error message."""
-        from ess.livedata.core.job import ServiceState
-        from ess.livedata.kafka.x5f2_compat import (
-            service_status_to_x5f2,
-            x5f2_to_service_status,
-        )
-
-        original = self.create_sample_service_status(
+        original = make_service_status(
             state=ServiceState.error,
             error="Kafka connection lost",
         )
@@ -924,9 +822,7 @@ class TestServiceStatusX5F2Integration:
 
     def test_service_status_x5f2_with_metadata(self):
         """Test that metadata is included in x5f2 message."""
-        from ess.livedata.kafka.x5f2_compat import service_status_to_x5f2
-
-        status = self.create_sample_service_status()
+        status = make_service_status()
         x5f2_data = service_status_to_x5f2(
             status,
             software_version="1.2.3",
@@ -941,9 +837,7 @@ class TestServiceStatusX5F2Integration:
 
     def test_service_status_x5f2_message_type_field(self):
         """Test that message_type='service' is in the status_json."""
-        from ess.livedata.kafka.x5f2_compat import service_status_to_x5f2
-
-        status = self.create_sample_service_status()
+        status = make_service_status()
         x5f2_data = service_status_to_x5f2(status)
 
         raw_data = deserialise_x5f2(x5f2_data)
@@ -953,9 +847,7 @@ class TestServiceStatusX5F2Integration:
 
     def test_service_status_x5f2_service_id_format(self):
         """Test that service_id has the correct format."""
-        from ess.livedata.kafka.x5f2_compat import service_status_to_x5f2
-
-        status = self.create_sample_service_status(
+        status = make_service_status(
             instrument="dream",
             namespace="data_reduction",
             worker_id="7c9e6679-7425-40de-944b-e07fc1f90ae7",
@@ -970,14 +862,8 @@ class TestServiceStatusX5F2Integration:
 
     def test_service_status_x5f2_all_states(self):
         """Test x5f2 round-trip for all ServiceState values."""
-        from ess.livedata.core.job import ServiceState
-        from ess.livedata.kafka.x5f2_compat import (
-            service_status_to_x5f2,
-            x5f2_to_service_status,
-        )
-
         for state in ServiceState:
-            original = self.create_sample_service_status(state=state)
+            original = make_service_status(state=state)
             x5f2_data = service_status_to_x5f2(original)
             converted = x5f2_to_service_status(x5f2_data)
             assert converted.state == state, f"Failed for state {state}"
@@ -991,9 +877,6 @@ class TestX5f2ToStatusDiscriminator:
 
     def test_returns_job_status_for_job_message_with_message_type(self):
         """Test that job status with message_type='job' returns JobStatus."""
-        from ess.livedata.core.job import JobStatus
-        from ess.livedata.kafka.x5f2_compat import job_status_to_x5f2, x5f2_to_status
-
         job_status = JobStatus(
             job_id=JobId(source_name="detector1", job_number=uuid.uuid4()),
             workflow_id=WorkflowId(
@@ -1014,9 +897,6 @@ class TestX5f2ToStatusDiscriminator:
 
         Legacy messages without message_type field should return JobStatus.
         """
-        from ess.livedata.core.job import JobStatus
-        from ess.livedata.kafka.x5f2_compat import x5f2_to_status
-
         job_id = JobId(source_name="detector1", job_number=uuid.uuid4())
         workflow_id = WorkflowId(
             instrument="test", namespace="ns", name="wf", version=1
@@ -1063,12 +943,6 @@ class TestX5f2ToStatusDiscriminator:
 
         Service messages with message_type='service' should return ServiceStatus.
         """
-        from ess.livedata.core.job import ServiceState, ServiceStatus
-        from ess.livedata.kafka.x5f2_compat import (
-            service_status_to_x5f2,
-            x5f2_to_status,
-        )
-
         worker_id = str(uuid.uuid4())
         service_status = ServiceStatus(
             instrument="dream",
