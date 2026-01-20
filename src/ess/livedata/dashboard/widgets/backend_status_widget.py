@@ -31,7 +31,7 @@ class WorkerUIConstants:
     NAMESPACE_WIDTH = 200
     WORKER_ID_WIDTH = 150
     STATUS_WIDTH = 90
-    UPTIME_WIDTH = 100
+    UPTIME_WIDTH = 120
     STATS_WIDTH = 180
     ROW_HEIGHT = 35
 
@@ -259,6 +259,7 @@ class BackendStatusWidget:
             ),
             styles={"border-bottom": "2px solid #dee2e6"},
             sizing_mode="stretch_width",
+            margin=(0, 10),
         )
 
         self._worker_list = pn.Column(sizing_mode="stretch_width", margin=(0, 10))
