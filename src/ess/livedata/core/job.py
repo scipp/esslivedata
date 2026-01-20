@@ -105,6 +105,7 @@ class ServiceState(str, Enum):
     starting = "starting"  # Service initializing
     running = "running"  # Normal operation
     stopping = "stopping"  # Graceful shutdown in progress
+    stopped = "stopped"  # Graceful shutdown completed
     error = "error"  # Service encountered fatal error
 
 

@@ -270,3 +270,51 @@ class TestServiceRegistry:
         assert "dream:ns2" in by_namespace
         assert len(by_namespace["dream:ns1"]) == 2
         assert len(by_namespace["dream:ns2"]) == 1
+
+    def test_get_last_seen_seconds_ago_returns_recent_value(self) -> None:
+        registry = ServiceRegistry(logger=logging.getLogger(__name__))
+        status = ServiceStatus(
+            instrument="dream",
+            namespace="ns1",
+            worker_id="worker1",
+            state=ServiceState.running,
+            started_at=1000,
+            active_job_count=2,
+            messages_processed=100,
+        )
+
+        registry.status_updated(status)
+
+        worker_key = make_worker_key(status)
+        last_seen = registry.get_last_seen_seconds_ago(worker_key)
+        assert last_seen is not None
+        # Should be very recent (less than 1 second)
+        assert last_seen < 1.0
+
+    def test_get_last_seen_seconds_ago_returns_none_for_unknown(self) -> None:
+        registry = ServiceRegistry(logger=logging.getLogger(__name__))
+        last_seen = registry.get_last_seen_seconds_ago("unknown:worker:key")
+        assert last_seen is None
+
+    def test_get_last_seen_seconds_ago_increases_over_time(self) -> None:
+        registry = ServiceRegistry(logger=logging.getLogger(__name__))
+        status = ServiceStatus(
+            instrument="dream",
+            namespace="ns1",
+            worker_id="worker1",
+            state=ServiceState.running,
+            started_at=1000,
+            active_job_count=2,
+            messages_processed=100,
+        )
+
+        registry.status_updated(status)
+        worker_key = make_worker_key(status)
+
+        first_check = registry.get_last_seen_seconds_ago(worker_key)
+        time.sleep(0.05)  # 50ms
+        second_check = registry.get_last_seen_seconds_ago(worker_key)
+
+        assert first_check is not None
+        assert second_check is not None
+        assert second_check > first_check

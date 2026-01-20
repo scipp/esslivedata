@@ -20,10 +20,11 @@ class WorkerUIConstants:
         ServiceState.starting: "#6c757d",  # Gray
         ServiceState.running: "#28a745",  # Green
         ServiceState.stopping: "#ffc107",  # Yellow
+        ServiceState.stopped: "#6c757d",  # Gray
         ServiceState.error: "#dc3545",  # Red
     }
     DEFAULT_COLOR = "#6c757d"
-    STALE_COLOR = "#dc3545"  # Red for stale workers
+    STALE_COLOR = "#dc3545"  # Red for unexpectedly disappeared workers
 
     # Sizes
     NAMESPACE_WIDTH = 200
@@ -38,25 +39,25 @@ class WorkerUIConstants:
     HEADER_MARGIN = (10, 10, 5, 10)
 
 
-def _format_uptime(uptime_seconds: float | None) -> str:
-    """Format uptime in human-readable form."""
-    if uptime_seconds is None:
+def _format_duration(seconds: float | None) -> str:
+    """Format a duration in human-readable form."""
+    if seconds is None:
         return "Unknown"
 
-    if uptime_seconds < 60:
-        value = int(uptime_seconds)
+    if seconds < 60:
+        value = int(seconds)
         unit = "second" if value == 1 else "seconds"
         return f"{value} {unit}"
-    elif uptime_seconds < 3600:
-        value = uptime_seconds / 60
+    elif seconds < 3600:
+        value = seconds / 60
         unit = "minute" if value == 1 else "minutes"
         return f"{value:.1f} {unit}"
-    elif uptime_seconds < 86400:
-        value = uptime_seconds / 3600
+    elif seconds < 86400:
+        value = seconds / 3600
         unit = "hour" if value == 1 else "hours"
         return f"{value:.1f} {unit}"
     else:
-        value = uptime_seconds / 86400
+        value = seconds / 86400
         unit = "day" if value == 1 else "days"
         return f"{value:.1f} {unit}"
 
@@ -77,7 +78,12 @@ class WorkerStatusRow:
     Uses stable pane references that are updated in-place to avoid flicker.
     """
 
-    def __init__(self, status: ServiceStatus, is_stale: bool) -> None:
+    def __init__(
+        self,
+        status: ServiceStatus,
+        is_stale: bool,
+        last_seen_seconds_ago: float | None = None,
+    ) -> None:
         # Create stable pane references
         self._namespace_pane = pn.pane.HTML(
             width=WorkerUIConstants.NAMESPACE_WIDTH,
@@ -116,11 +122,14 @@ class WorkerStatusRow:
         )
 
         # Set initial content
-        self.update(status, is_stale)
+        self.update(status, is_stale, last_seen_seconds_ago)
 
     def _get_status_color(self, status: ServiceStatus, is_stale: bool) -> str:
         """Get color for worker state, considering staleness."""
         if is_stale:
+            # Graceful shutdown (inferred from timed-out stopping): show gray
+            if status.state == ServiceState.stopping:
+                return WorkerUIConstants.COLORS[ServiceState.stopped]
             return WorkerUIConstants.STALE_COLOR
         return WorkerUIConstants.COLORS.get(
             status.state, WorkerUIConstants.DEFAULT_COLOR
@@ -134,7 +143,12 @@ class WorkerStatusRow:
             f"font-weight: bold; font-size: 11px;"
         )
 
-    def update(self, status: ServiceStatus, is_stale: bool) -> None:
+    def update(
+        self,
+        status: ServiceStatus,
+        is_stale: bool,
+        last_seen_seconds_ago: float | None = None,
+    ) -> None:
         """Update the row content in-place."""
         # Namespace
         namespace_text = f"{status.instrument}:{status.namespace}"
@@ -146,15 +160,28 @@ class WorkerStatusRow:
 
         # Status indicator
         status_color = self._get_status_color(status, is_stale)
-        status_text = "STALE" if is_stale else status.state.value.upper()
+        if is_stale:
+            # Distinguish graceful shutdown from unexpected disappearance
+            is_graceful = status.state == ServiceState.stopping
+            status_text = "STOPPED" if is_graceful else "STALE"
+        else:
+            status_text = status.state.value.upper()
         status_style = self._create_status_style(status_color)
         self._status_pane.object = f'<div style="{status_style}">{status_text}</div>'
 
-        # Uptime - get from registry at update time
-        uptime_text = _format_uptime(
-            self._calculate_uptime(status.started_at) if status.started_at else None
+        # Time info: show "Last seen X ago" for non-running workers, uptime otherwise
+        show_last_seen = is_stale or status.state in (
+            ServiceState.stopping,
+            ServiceState.stopped,
+            ServiceState.error,
         )
-        self._uptime_pane.object = f"<span>Up: {uptime_text}</span>"
+        if show_last_seen:
+            time_text = f"Seen: {_format_duration(last_seen_seconds_ago)} ago"
+        else:
+            started_at = status.started_at
+            uptime = self._calculate_uptime(started_at) if started_at else None
+            time_text = f"Up: {_format_duration(uptime)}"
+        self._uptime_pane.object = f"<span>{time_text}</span>"
 
         # Stats
         jobs_text = f"Jobs: {status.active_job_count}"
@@ -243,22 +270,54 @@ class BackendStatusWidget:
     def _format_summary(self) -> str:
         """Format the summary text."""
         total = len(self._service_registry.worker_statuses)
-        stale = len(self._service_registry.get_stale_workers())
 
         if total == 0:
             return "<i>No backend workers connected</i>"
 
-        status_counts: dict[ServiceState, int] = {}
-        for status in self._service_registry.worker_statuses.values():
-            status_counts[status.state] = status_counts.get(status.state, 0) + 1
+        # Count workers by display state (considering staleness)
+        starting_count = 0
+        running_count = 0
+        stopping_count = 0
+        stopped_count = 0
+        stale_count = 0
+        error_count = 0
+
+        for worker_key, status in self._service_registry.worker_statuses.items():
+            is_stale = self._service_registry.is_status_stale(worker_key)
+
+            if is_stale:
+                # Distinguish graceful shutdown from unexpected disappearance
+                if status.state in (ServiceState.stopping, ServiceState.stopped):
+                    stopped_count += 1
+                else:
+                    stale_count += 1
+            elif status.state == ServiceState.starting:
+                starting_count += 1
+            elif status.state == ServiceState.running:
+                running_count += 1
+            elif status.state == ServiceState.stopping:
+                stopping_count += 1
+            elif status.state == ServiceState.stopped:
+                stopped_count += 1
+            elif status.state == ServiceState.error:
+                error_count += 1
+
+        def _span(color: str, count: int, label: str) -> str:
+            return f'<span style="color: {color}">{count} {label}</span>'
 
         parts = [f"<b>{total}</b> workers"]
-        if running := status_counts.get(ServiceState.running, 0):
-            parts.append(f'<span style="color: #28a745">{running} running</span>')
-        if stale > 0:
-            parts.append(f'<span style="color: #dc3545">{stale} stale</span>')
-        if error := status_counts.get(ServiceState.error, 0):
-            parts.append(f'<span style="color: #dc3545">{error} error</span>')
+        if starting_count:
+            parts.append(_span("#6c757d", starting_count, "starting"))
+        if running_count:
+            parts.append(_span("#28a745", running_count, "running"))
+        if stopping_count:
+            parts.append(_span("#ffc107", stopping_count, "stopping"))
+        if stopped_count:
+            parts.append(_span("#6c757d", stopped_count, "stopped"))
+        if stale_count:
+            parts.append(_span("#dc3545", stale_count, "stale"))
+        if error_count:
+            parts.append(_span("#dc3545", error_count, "error"))
 
         return " | ".join(parts)
 
@@ -287,13 +346,14 @@ class BackendStatusWidget:
         # Update existing rows and add new ones
         for worker_key, status in self._service_registry.worker_statuses.items():
             is_stale = self._service_registry.is_status_stale(worker_key)
+            last_seen = self._service_registry.get_last_seen_seconds_ago(worker_key)
 
             if worker_key in self._worker_rows:
                 # Update existing row in-place
-                self._worker_rows[worker_key].update(status, is_stale)
+                self._worker_rows[worker_key].update(status, is_stale, last_seen)
             else:
                 # Create new row
-                row = WorkerStatusRow(status, is_stale)
+                row = WorkerStatusRow(status, is_stale, last_seen)
                 self._worker_rows[worker_key] = row
                 self._worker_list.append(row.panel)
 

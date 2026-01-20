@@ -10,8 +10,8 @@ from collections.abc import Callable
 
 from ess.livedata.core.job import ServiceStatus
 
-# Timeout threshold for considering a worker stale (60 seconds in nanoseconds)
-SERVICE_HEARTBEAT_TIMEOUT_NS = 60_000_000_000
+# Timeout threshold for considering a worker stale (30 seconds in nanoseconds)
+SERVICE_HEARTBEAT_TIMEOUT_NS = 30_000_000_000
 
 
 def make_worker_key(status: ServiceStatus) -> str:
@@ -138,3 +138,17 @@ class ServiceRegistry:
         current_time_ns = time.time_ns()
         uptime_ns = current_time_ns - status.started_at
         return uptime_ns / 1_000_000_000
+
+    def get_last_seen_seconds_ago(self, worker_key: str) -> float | None:
+        """Get how long ago the worker was last seen (in seconds).
+
+        Returns
+        -------
+        :
+            Seconds since last heartbeat, or None if worker not found.
+        """
+        if worker_key not in self._worker_timestamps:
+            return None
+        last_update = self._worker_timestamps[worker_key]
+        current_time = time.time_ns()
+        return (current_time - last_update) / 1_000_000_000

@@ -114,9 +114,17 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._worker_id = str(uuid.uuid4())
         self._started_at = time.time_ns()
         self._messages_processed = 0
-        self._service_state = ServiceState.running
+        self._service_state = ServiceState.starting
+        self._service_error: str | None = None
+        self._has_processed_first_batch = False
 
     def process(self) -> None:
+        # Transition from starting to running on first process cycle
+        if not self._has_processed_first_batch:
+            self._has_processed_first_batch = True
+            self._service_state = ServiceState.running
+            self._logger.info('Service transitioned to running state')
+
         messages = self._source.get_messages()
         self._messages_processed += len(messages)
         self._logger.debug('Processing %d messages', len(messages))
@@ -214,8 +222,50 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             started_at=self._started_at,
             active_job_count=len(job_statuses),
             messages_processed=self._messages_processed,
-            error=None,
+            error=self._service_error,
         )
+
+    def shutdown(self) -> None:
+        """Transition to stopping state and send heartbeat.
+
+        Called by Service at the beginning of graceful shutdown to notify the
+        dashboard that this worker is shutting down intentionally.
+        """
+        self._logger.info('Service shutting down, sending stopping heartbeat')
+        self._service_state = ServiceState.stopping
+        self._send_final_heartbeat()
+
+    def report_stopped(self) -> None:
+        """Transition to stopped state and send final heartbeat.
+
+        Called by Service after worker thread has stopped to notify the
+        dashboard that shutdown completed successfully.
+        """
+        self._logger.info('Service stopped, sending final heartbeat')
+        self._service_state = ServiceState.stopped
+        self._send_final_heartbeat()
+
+    def report_error(self, error_message: str) -> None:
+        """Transition to error state and send final heartbeat.
+
+        Called by Service when an unhandled exception occurs to notify the
+        dashboard that this worker encountered a fatal error.
+        """
+        self._logger.error('Service error: %s', error_message)
+        self._service_state = ServiceState.error
+        self._service_error = error_message
+        self._send_final_heartbeat()
+
+    def _send_final_heartbeat(self) -> None:
+        """Send a final service heartbeat with current state."""
+        timestamp = time.time_ns()
+        job_statuses = self._job_manager.get_all_job_statuses()
+        service_status = self._get_service_status(job_statuses)
+        message = _service_status_to_message(service_status, timestamp=timestamp)
+        try:
+            self._sink.publish_messages([message])
+        except Exception:
+            self._logger.exception('Failed to send final heartbeat')
 
 
 def _job_result_to_message(result: JobResult) -> Message:

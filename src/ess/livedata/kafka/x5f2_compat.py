@@ -130,6 +130,8 @@ def service_state_to_nicos_status_constant(state: ServiceState) -> NicosStatus:
             return NicosStatus.OK
         case ServiceState.stopping:
             return NicosStatus.DISABLED
+        case ServiceState.stopped:
+            return NicosStatus.DISABLED
         case ServiceState.error:
             return NicosStatus.ERROR
         case _:
