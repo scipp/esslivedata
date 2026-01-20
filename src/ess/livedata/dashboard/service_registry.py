@@ -8,7 +8,7 @@ import logging
 import time
 from collections.abc import Callable
 
-from ess.livedata.core.job import ServiceStatus
+from ess.livedata.core.job import ServiceState, ServiceStatus
 
 # Timeout threshold for considering a worker stale (30 seconds in nanoseconds)
 SERVICE_HEARTBEAT_TIMEOUT_NS = 30_000_000_000
@@ -85,6 +85,9 @@ class ServiceRegistry:
     def is_status_stale(self, worker_key: str) -> bool:
         """Check if a worker's status is stale (no recent heartbeat).
 
+        Workers in terminal states (stopped) are never considered stale since
+        they are not expected to send further heartbeats.
+
         Parameters
         ----------
         worker_key
@@ -93,10 +96,16 @@ class ServiceRegistry:
         Returns
         -------
         :
-            True if status is older than heartbeat timeout or doesn't exist.
+            True if status is older than heartbeat timeout and not in a
+            terminal state. False for workers in terminal states.
         """
         if worker_key not in self._worker_timestamps:
             return True
+
+        # Workers in terminal states are never stale - they stopped intentionally
+        status = self._worker_statuses.get(worker_key)
+        if status is not None and status.state == ServiceState.stopped:
+            return False
 
         last_update = self._worker_timestamps[worker_key]
         current_time = time.time_ns()

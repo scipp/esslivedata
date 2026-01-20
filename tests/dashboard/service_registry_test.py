@@ -166,6 +166,32 @@ class TestServiceRegistry:
         worker_key = make_worker_key(status)
         assert registry.is_status_stale(worker_key)
 
+    def test_is_status_stale_returns_false_for_stopped_worker(self) -> None:
+        """Stopped workers should never be considered stale."""
+        # Use a very short timeout for testing
+        registry = ServiceRegistry(
+            logger=logging.getLogger(__name__),
+            heartbeat_timeout_ns=1_000_000,  # 1 ms
+        )
+        status = ServiceStatus(
+            instrument="dream",
+            namespace="ns1",
+            worker_id="worker1",
+            state=ServiceState.stopped,  # Terminal state
+            started_at=1000,
+            active_job_count=0,
+            messages_processed=100,
+        )
+
+        registry.status_updated(status)
+
+        # Wait for the timeout to expire
+        time.sleep(0.01)  # 10ms should be enough
+
+        worker_key = make_worker_key(status)
+        # Stopped workers are never stale - they shut down intentionally
+        assert not registry.is_status_stale(worker_key)
+
     def test_get_stale_workers_returns_only_stale(self) -> None:
         # Use a very short timeout for testing
         registry = ServiceRegistry(
