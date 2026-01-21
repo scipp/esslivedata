@@ -6,11 +6,9 @@ import logging
 from typing import NoReturn
 
 from ess.livedata.config import instrument_registry
-from ess.livedata.config.environment import is_production
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.handlers.detector_data_handler import DetectorHandlerFactory
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
-from ess.livedata.logging_config import configure_logging
 from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
 
 
@@ -40,7 +38,6 @@ def make_detector_service_builder(
 
 
 def main() -> NoReturn:
-    configure_logging(production=is_production())
     runner = DataServiceRunner(
         pretty_name='Detector Data', make_builder=make_detector_service_builder
     )

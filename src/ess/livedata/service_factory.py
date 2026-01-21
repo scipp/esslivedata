@@ -27,6 +27,7 @@ from .kafka.source import (
     KafkaMessageSource,
     MultiConsumer,
 )
+from .logging_config import configure_logging
 from .sinks import PlotToPngSink
 
 logger = structlog.get_logger(__name__)
@@ -209,6 +210,17 @@ class DataServiceRunner:
         self,
     ) -> NoReturn:
         args = vars(self._parser.parse_args())
+
+        # Configure logging with parsed arguments
+        log_level = getattr(logging, args.pop('log_level'))
+        log_json_file = args.pop('log_json_file')
+        no_stdout_log = args.pop('no_stdout_log')
+        configure_logging(
+            level=log_level,
+            json_file=log_json_file,
+            disable_stdout=no_stdout_log,
+        )
+
         logger.info("service_starting", **args)
         consumer_config = load_config(namespace=config_names.raw_data_consumer, env='')
         kafka_downstream_config = load_config(namespace=config_names.kafka_downstream)

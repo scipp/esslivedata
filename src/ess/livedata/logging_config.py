@@ -4,21 +4,29 @@
 
 import logging
 import sys
+from logging.handlers import RotatingFileHandler
 
 import structlog
 
 
-def configure_logging(*, production: bool = False, level: int = logging.INFO) -> None:
+def configure_logging(
+    *,
+    level: int = logging.INFO,
+    json_file: str | None = None,
+    disable_stdout: bool = False,
+) -> None:
     """
     Configure structured logging for the application.
 
     Parameters
     ----------
-    production:
-        If True, output JSON for log aggregation. If False, use colorized
-        console output for development.
     level:
         The minimum log level to output.
+    json_file:
+        Path to write JSON-formatted logs to. If provided, creates a rotating
+        file handler (10MB max, 5 backups).
+    disable_stdout:
+        If True, disable logging to stdout.
     """
     # Shared processors for both structlog and stdlib logging
     shared_processors: list[structlog.typing.Processor] = [
@@ -30,13 +38,6 @@ def configure_logging(*, production: bool = False, level: int = logging.INFO) ->
         structlog.processors.UnicodeDecoder(),
     ]
 
-    if production:
-        # JSON output for log aggregation (Graylog, Loki, etc.)
-        renderer: structlog.typing.Processor = structlog.processors.JSONRenderer()
-    else:
-        # Pretty console output for development
-        renderer = structlog.dev.ConsoleRenderer(colors=True)
-
     structlog.configure(
         processors=[
             *shared_processors,
@@ -46,20 +47,39 @@ def configure_logging(*, production: bool = False, level: int = logging.INFO) ->
         cache_logger_on_first_use=True,
     )
 
-    # Configure stdlib logging to use structlog formatting
-    # This ensures third-party libraries also output structured logs
-    formatter = structlog.stdlib.ProcessorFormatter(
-        foreign_pre_chain=shared_processors,
-        processors=[
-            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            renderer,
-        ],
-    )
-
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(formatter)
-
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
-    root_logger.addHandler(handler)
+
+    # Add stdout handler with pretty console output (unless disabled)
+    if not disable_stdout:
+        console_renderer = structlog.dev.ConsoleRenderer(colors=True)
+        console_formatter = structlog.stdlib.ProcessorFormatter(
+            foreign_pre_chain=shared_processors,
+            processors=[
+                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                console_renderer,
+            ],
+        )
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(console_formatter)
+        root_logger.addHandler(console_handler)
+
+    # Add file handler with JSON output (if path provided)
+    if json_file is not None:
+        json_renderer = structlog.processors.JSONRenderer()
+        json_formatter = structlog.stdlib.ProcessorFormatter(
+            foreign_pre_chain=shared_processors,
+            processors=[
+                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                json_renderer,
+            ],
+        )
+        file_handler = RotatingFileHandler(
+            json_file,
+            maxBytes=10 * 1024 * 1024,  # 10 MB
+            backupCount=5,
+        )
+        file_handler.setFormatter(json_formatter)
+        root_logger.addHandler(file_handler)
+
     root_logger.setLevel(level)

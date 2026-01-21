@@ -9,7 +9,6 @@ import scipp as sc
 from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
-from ess.livedata.config.environment import is_production
 from ess.livedata.core import IdentityProcessor
 from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_f144
 from ess.livedata.logging_config import configure_logging
@@ -141,11 +140,22 @@ def run_service(*, instrument: str, log_level: int = logging.INFO) -> NoReturn:
 
 
 def main() -> NoReturn:
-    configure_logging(production=is_production())
     parser = Service.setup_arg_parser(
         'Fake that publishes f144 logdata', dev_flag=False
     )
-    run_service(**vars(parser.parse_args()))
+    args = vars(parser.parse_args())
+
+    # Configure logging with parsed arguments
+    log_level = getattr(logging, args.pop('log_level'))
+    log_json_file = args.pop('log_json_file')
+    no_stdout_log = args.pop('no_stdout_log')
+    configure_logging(
+        level=log_level,
+        json_file=log_json_file,
+        disable_stdout=no_stdout_log,
+    )
+
+    run_service(log_level=log_level, **args)
 
 
 if __name__ == "__main__":
