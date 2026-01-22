@@ -749,16 +749,8 @@ class PlotOrchestrator:
         Handle notification when all workflows for a layer are ready.
 
         Called by LayerSubscription when all data sources have running jobs.
-        Sets up the data pipeline with the unified setup_pipeline() method.
-
-        **Flow:**
-
-        1. Set up data pipeline with keys_by_role structure
-        2. on_first_data: Create plotter, compute initial state, store in
-           PlotDataService
-        3. on_data_update: Re-compute on every data change (shared, not
-           per-session)
-        4. Sessions poll PlotDataService for the pre-computed state
+        Sets up the data pipeline that computes plot state and stores it in
+        PlotDataService. Sessions poll PlotDataService for updates.
 
         Parameters
         ----------
@@ -783,92 +775,65 @@ class PlotOrchestrator:
         # Clear any previous state (e.g., from a stopped job) to start fresh
         self._layer_state.pop(layer_id, None)
 
-        # Find the layer config
         config = self.get_layer_config(layer_id)
 
-        # Plotter instance created on first data, reused for updates
-        layer_plotter: list = []  # Use list to allow assignment in nested function
-
-        def on_data_arrived(pipe) -> None:
-            """Create plotter and compute initial state when first data arrives."""
-            self._logger.debug(
-                'Data arrived for layer_id=%s, creating plotter and computing',
-                layer_id,
+        if self._plot_data_service is None:
+            self._logger.error('PlotDataService is required for layer_id=%s', layer_id)
+            self._layer_state[layer_id] = LayerState(
+                error="PlotDataService not configured"
             )
-            try:
-                if self._plot_data_service is None:
-                    raise RuntimeError(
-                        "PlotDataService is required for multi-session support"
-                    )
+            self._notify_cell_updated(
+                grid_id, cell_id, cell, *self.get_cell_state(cell_id)
+            )
+            return
 
-                plotter = self._plotting_controller.create_plotter(
-                    config.plot_name, params=config.params
-                )
-                layer_plotter.append(plotter)
+        # Create plotter eagerly - doesn't need data
+        try:
+            plotter = self._plotting_controller.create_plotter(
+                config.plot_name, params=config.params
+            )
+        except Exception:
+            error_msg = traceback.format_exc()
+            self._logger.exception('Failed to create plotter for layer_id=%s', layer_id)
+            self._layer_state[layer_id] = LayerState(error=error_msg)
+            self._notify_cell_updated(
+                grid_id, cell_id, cell, *self.get_cell_state(cell_id)
+            )
+            return
 
-                # Compute state once (shared across all sessions)
-                # Plotter.compute() returns shareable state - either HoloViews
-                # elements (most plotters) or prepared data (interactive plotters)
-                computed_state = plotter.compute(pipe.data)
-
-                # Store in PlotDataService
-                self._plot_data_service.update(
-                    StateLayerId(str(layer_id)),
-                    state=computed_state,
-                    plotter=plotter,
-                )
-
-                # Mark layer as ready (no DynamicMap yet - deferred to session)
-                self._layer_state[layer_id] = LayerState(plot=None)
-
-                # Notify - PlotGridTabs will defer actual plot creation
-                layer_states, composed = self.get_cell_state(cell_id)
-                self._notify_cell_updated(
-                    grid_id, cell_id, cell, layer_states, composed
-                )
-            except Exception:
-                error_msg = traceback.format_exc()
-                self._logger.exception(
-                    'Failed to create plot for layer_id=%s', layer_id
-                )
-                self._layer_state[layer_id] = LayerState(error=error_msg)
-                layer_states, composed = self.get_cell_state(cell_id)
-                self._notify_cell_updated(
-                    grid_id, cell_id, cell, layer_states, composed
-                )
-
-        def on_data_update(data) -> None:
-            """Re-compute plot state on every data update (shared context)."""
-            if not layer_plotter or self._plot_data_service is None:
-                return  # Not yet initialized
-
+        def on_data(data: dict) -> None:
+            """Compute plot state and store in PlotDataService."""
             # Check if layer still exists
             if layer_id not in self._layer_to_cell:
                 return
 
             try:
-                plotter = layer_plotter[0]
-                # Compute updated state (runs once, shared across all sessions)
+                # Compute state (runs once, shared across all sessions)
                 computed_state = plotter.compute(data)
 
-                # Update PlotDataService with new state
+                # Store in PlotDataService - sessions will poll for this
                 self._plot_data_service.update(
                     StateLayerId(str(layer_id)),
                     state=computed_state,
+                    plotter=plotter,
                 )
             except Exception:
+                error_msg = traceback.format_exc()
                 self._logger.exception(
-                    'Failed to update computed state for layer_id=%s', layer_id
+                    'Failed to compute state for layer_id=%s', layer_id
+                )
+                self._layer_state[layer_id] = LayerState(error=error_msg)
+                self._notify_cell_updated(
+                    grid_id, cell_id, cell, *self.get_cell_state(cell_id)
                 )
 
-        # Set up data pipeline with both callbacks
+        # Set up data pipeline - on_data will be called when data arrives
         try:
             self._plotting_controller.setup_pipeline(
                 keys_by_role=ready.keys_by_role,
                 plot_name=config.plot_name,
                 params=config.params,
-                on_first_data=on_data_arrived,
-                on_data_update=on_data_update,
+                on_data=on_data,
             )
         except Exception:
             error_msg = traceback.format_exc()
@@ -876,15 +841,9 @@ class PlotOrchestrator:
                 'Failed to set up data pipeline for layer_id=%s', layer_id
             )
             self._layer_state[layer_id] = LayerState(error=error_msg)
-            layer_states, composed = self.get_cell_state(cell_id)
-            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
-            return
-
-        # If data hasn't arrived yet (on_data_arrived not called synchronously),
-        # notify UI that layer is waiting for data
-        if layer_id not in self._layer_state:
-            layer_states, composed = self.get_cell_state(cell_id)
-            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
+            self._notify_cell_updated(
+                grid_id, cell_id, cell, *self.get_cell_state(cell_id)
+            )
 
     def _on_layer_job_stopped(self, layer_id: LayerId, job_number: JobNumber) -> None:
         """

@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from contextlib import ExitStack
 
 import panel as pn
-from holoviews import Dimension, streams
+from holoviews import Dimension
 
 from ess.livedata import ServiceBase
 
@@ -61,7 +61,6 @@ class DashboardBase(ServiceBase, ABC):
             instrument=instrument,
             dev=dev,
             exit_stack=self._exit_stack,
-            pipe_factory=streams.Pipe,
             transport=self._create_transport(transport),
             config_manager=config_manager,
         )

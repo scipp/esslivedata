@@ -124,8 +124,7 @@ class PlottingController:
         keys_by_role: dict[str, list[ResultKey]],
         plot_name: str,
         params: dict | pydantic.BaseModel,
-        on_first_data: Callable[[Any], None],
-        on_data_update: Callable[[dict[ResultKey, Any]], None] | None = None,
+        on_data: Callable[[dict[ResultKey, Any]], None],
     ) -> None:
         """
         Set up data pipeline for any plot type.
@@ -143,12 +142,9 @@ class PlottingController:
             Name of the plotter to use.
         params
             Plotter parameters as a dict or validated Pydantic model.
-        on_first_data
-            Callback when data is ready for plot creation.
-        on_data_update
-            Optional callback invoked on every data update with the assembled data.
-            Used for computing derived state (e.g., plotter.compute()) in the
-            shared context before sessions poll the result.
+        on_data
+            Callback invoked on every data update with the assembled data.
+            Called when at least one key from each role has data.
         """
         # Validate params if dict, pass through if already a model
         if isinstance(params, dict):
@@ -165,8 +161,7 @@ class PlottingController:
         extractors = create_extractors_from_params(all_keys, window, spec)
         self._stream_manager.make_stream(
             keys_by_role=keys_by_role,
-            on_first_data=on_first_data,
-            on_data_update=on_data_update,
+            on_data=on_data,
             extractors=extractors,
         )
 

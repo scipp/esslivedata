@@ -2,9 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Dashboard service composition and setup."""
 
-from collections.abc import Callable
 from contextlib import ExitStack
-from typing import Any
 
 import scipp as sc
 import structlog
@@ -50,10 +48,6 @@ class DashboardServices:
         Use dev mode with simplified topic structure
     exit_stack:
         ExitStack for managing resource cleanup (caller manages lifecycle)
-    pipe_factory:
-        Factory function for creating pipes for StreamManager.
-        For GUI: use holoviews.streams.Pipe
-        For tests: use lambda data: None (no-op)
     transport:
         Transport instance for message sources and sinks.
         For Kafka: DashboardKafkaTransport(instrument, dev)
@@ -71,14 +65,12 @@ class DashboardServices:
         instrument: str,
         dev: bool,
         exit_stack: ExitStack,
-        pipe_factory: Callable[[Any], Any],
         transport: Transport,
         config_manager: ConfigStoreManager,
     ):
         self._instrument = instrument
         self._dev = dev
         self._exit_stack = exit_stack
-        self._pipe_factory = pipe_factory
         self._transport = transport
         self._config_manager = config_manager
 
@@ -116,9 +108,7 @@ class DashboardServices:
         # da00 of backend services converted to scipp.DataArray
         ScippDataService = DataService[ResultKey, sc.DataArray]
         self.data_service = ScippDataService()
-        self.stream_manager = StreamManager(
-            data_service=self.data_service, pipe_factory=self._pipe_factory
-        )
+        self.stream_manager = StreamManager(data_service=self.data_service)
         self.job_service = JobService()
         self.service_registry = ServiceRegistry()
         self.job_controller = JobController(

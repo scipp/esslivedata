@@ -32,6 +32,7 @@ from ..plot_orchestrator import (
 )
 from ..plot_params import PlotAspectType, StretchMode
 from ..session_plot_manager import SessionPlotManager
+from ..state_stores import LayerId as StateLayerId
 from ..state_stores import PlotDataService
 from .plot_config_modal import PlotConfigModal
 from .plot_grid import GridCellStyles, PlotGrid
@@ -116,7 +117,7 @@ class PlotGridTabs:
 
         # Multi-session support: SessionPlotManager handles per-session components
         self._session_plot_manager: SessionPlotManager | None = None
-        self._pending_layer_setups: list[tuple[GridId, CellId, LayerId, PlotCell]] = []
+        self._plot_data_service: PlotDataService | None = None
 
         # Determine number of static tabs for stylesheet
         static_tab_count = 4 if backend_status_widget else 3
@@ -381,9 +382,9 @@ class PlotGridTabs:
         Creates a cell widget with per-layer toolbars and either a placeholder
         or the composed plot, then inserts it into the grid.
 
-        In multi-session mode (when plot_data_service is set), this method
-        defers plot creation to `_process_pending_setups()` which runs in
-        the correct session context.
+        This is called for config changes (layer added/removed) and error/stopped
+        state changes. Data availability is handled separately via polling in
+        `_poll_for_plot_updates()`.
 
         Parameters
         ----------
@@ -394,24 +395,13 @@ class PlotGridTabs:
         cell
             Plot cell configuration with all layers.
         layer_states
-            Per-layer runtime state (pipe, plot, error) for each layer.
+            Per-layer runtime state (error, stopped) for each layer.
         plot
             The composed plot (hv.Overlay), or None if no layers have data yet.
         """
         plot_grid = self._grid_widgets.get(grid_id)
         if plot_grid is None:
             return
-
-        # Multi-session path: record pending layer setups for SessionPlotManager
-        if self._session_plot_manager is not None:
-            for layer in cell.layers:
-                layer_id = layer.layer_id
-                if not self._session_plot_manager.has_layer(layer_id):
-                    # Record pending setup (don't create session-bound components yet)
-                    pending = (grid_id, cell_id, layer_id, cell)
-                    if pending not in self._pending_layer_setups:
-                        self._pending_layer_setups.append(pending)
-                        logger.debug("Deferred layer setup for layer_id=%s", layer_id)
 
         # Use session-local DynamicMaps if available
         session_plot = self._get_session_composed_plot(cell) if plot is None else plot
@@ -420,16 +410,7 @@ class PlotGridTabs:
         widget = self._create_cell_widget(cell_id, cell, layer_states, session_plot)
 
         # Defer insertion for plots to allow Panel to update layout sizing.
-        # When a workflow is already running with data, subscribing triggers
-        # plot creation synchronously (in subscribe_to_workflow's immediate
-        # callback path). This can cause the HoloViews pane to initialize with
-        # collapsed/default size before the grid container is properly sized,
-        # resulting in "glitched" rendering. Deferring to the next event loop
-        # iteration allows Panel to process layout updates first.
         if session_plot is not None:
-            # Schedule insertion on next event loop iteration using pn.state.execute
-            # This is more appropriate than add_periodic_callback for one-shot deferred
-            # execution and ensures proper thread safety for Bokeh model updates.
             pn.state.execute(
                 lambda g=cell.geometry: plot_grid.insert_widget_at(g, widget)
             )
@@ -519,6 +500,35 @@ class PlotGridTabs:
             margin=GridCellStyles.CELL_MARGIN,
         )
 
+    def _has_data(self, layer_id: LayerId, state: LayerState) -> bool:
+        """
+        Check if data is available for a layer.
+
+        For streaming plots, checks PlotDataService. For static plots,
+        checks LayerState.plot.
+
+        Parameters
+        ----------
+        layer_id
+            ID of the layer to check.
+        state
+            LayerState for the layer.
+
+        Returns
+        -------
+        :
+            True if data is available for this layer.
+        """
+        # Static plots store the plot directly in LayerState
+        if state.plot is not None:
+            return True
+
+        # Streaming plots store data in PlotDataService
+        if self._plot_data_service is not None:
+            return self._plot_data_service.get(StateLayerId(str(layer_id))) is not None
+
+        return False
+
     def _create_layer_toolbars(
         self,
         cell_id: CellId,
@@ -560,7 +570,7 @@ class PlotGridTabs:
                 description = f"{description}\n\nError: {state.error}"
             elif state.stopped:
                 description = f"{description}\n\nStatus: Workflow ended"
-            elif state.plot is None:
+            elif not self._has_data(layer_id, state):
                 description = f"{description}\n\nStatus: Waiting for data..."
 
             # Create callbacks that capture layer_id / cell_id
@@ -630,7 +640,7 @@ class PlotGridTabs:
             elif state.stopped:
                 status = "Workflow ended"
                 text_color = '#495057'  # Dark grey - indicates stopped state
-            elif state.plot is not None:
+            elif self._has_data(layer.layer_id, state):
                 status = "Ready"
                 text_color = '#28a745'
             else:
@@ -754,9 +764,6 @@ class PlotGridTabs:
         the session updater. Creates a SessionPlotManager for this session
         and registers handlers for periodic updates.
 
-        For late subscribers (new sessions joining when plots already exist),
-        scans existing grids for layers that need setup.
-
         Parameters
         ----------
         plot_data_service
@@ -764,41 +771,22 @@ class PlotGridTabs:
         session_updater
             This session's updater for periodic callbacks.
         """
-        # Create session-specific plot manager
+        self._plot_data_service = plot_data_service
         self._session_plot_manager = SessionPlotManager(plot_data_service)
 
-        # Register handlers for periodic updates
-        session_updater.register_custom_handler(self._process_pending_setups)
-
-        # Late subscriber support: scan for existing layers that need setup
-        for grid_id in self._grid_widgets.keys():
-            grid_config = self._orchestrator.get_grid(grid_id)
-            if grid_config is None:
-                continue
-
-            for cell_id, cell in grid_config.cells.items():
-                for layer in cell.layers:
-                    layer_id = layer.layer_id
-                    if not self._session_plot_manager.has_layer(layer_id):
-                        pending = (grid_id, cell_id, layer_id, cell)
-                        if pending not in self._pending_layer_setups:
-                            self._pending_layer_setups.append(pending)
-                            logger.debug(
-                                "Late subscriber: added pending setup for layer_id=%s",
-                                layer_id,
-                            )
+        # Register handler for periodic polling
+        session_updater.register_custom_handler(self._poll_for_plot_updates)
 
         logger.debug("Session services wired up for PlotGridTabs")
 
-    def _process_pending_setups(self) -> None:
+    def _poll_for_plot_updates(self) -> None:
         """
-        Process pending layer setups in the correct session context.
+        Poll PlotDataService for updates and set up new layers.
 
-        Called from SessionUpdater's periodic callback. Delegates to
-        SessionPlotManager to create per-session Pipes and DynamicMaps
-        for layers that have data but haven't been set up yet.
-
-        Also triggers data forwarding via SessionPlotManager.update_pipes().
+        Called from SessionUpdater's periodic callback. This method:
+        1. Forwards data updates to existing session pipes
+        2. Checks all layers in all grids for data availability
+        3. Sets up session components for layers that have data but aren't set up yet
         """
         if self._session_plot_manager is None:
             return
@@ -806,38 +794,44 @@ class PlotGridTabs:
         # Forward data updates from PlotDataService to session pipes
         self._session_plot_manager.update_pipes()
 
-        # Process pending setups
-        processed = []
-        for grid_id, cell_id, layer_id, cell in self._pending_layer_setups:
-            # Try to set up the layer via SessionPlotManager
-            dmap = self._session_plot_manager.setup_layer(layer_id)
-            if dmap is None:
-                # No data available yet, keep in pending
+        # Check all layers in all grids for setup
+        for grid_id in self._grid_widgets.keys():
+            grid_config = self._orchestrator.get_grid(grid_id)
+            if grid_config is None:
                 continue
 
-            # Layer is now set up - update widget with actual plot
-            plot_grid = self._grid_widgets.get(grid_id)
-            if plot_grid is not None:
-                layer_states, _ = self._orchestrator.get_cell_state(cell_id)
-                session_plot = self._get_session_composed_plot(cell)
+            for cell_id, cell in grid_config.cells.items():
+                cell_updated = False
 
-                if session_plot is not None:
-                    widget = self._create_cell_widget(
-                        cell_id, cell, layer_states, session_plot
-                    )
-                    # Schedule update on next event loop iteration
-                    pn.state.execute(
-                        lambda g=cell.geometry,
-                        w=widget,
-                        pg=plot_grid: pg.insert_widget_at(g, w)
-                    )
+                for layer in cell.layers:
+                    layer_id = layer.layer_id
 
-            processed.append((grid_id, cell_id, layer_id, cell))
+                    # Skip if already set up
+                    if self._session_plot_manager.has_layer(layer_id):
+                        continue
 
-        # Remove processed setups
-        for item in processed:
-            if item in self._pending_layer_setups:
-                self._pending_layer_setups.remove(item)
+                    # Try to set up the layer (checks PlotDataService internally)
+                    dmap = self._session_plot_manager.setup_layer(layer_id)
+                    if dmap is not None:
+                        cell_updated = True
+                        logger.debug("Set up session plot for layer_id=%s", layer_id)
+
+                # Update widget if any layer was newly set up
+                if cell_updated:
+                    plot_grid = self._grid_widgets.get(grid_id)
+                    if plot_grid is not None:
+                        layer_states, _ = self._orchestrator.get_cell_state(cell_id)
+                        session_plot = self._get_session_composed_plot(cell)
+
+                        if session_plot is not None:
+                            widget = self._create_cell_widget(
+                                cell_id, cell, layer_states, session_plot
+                            )
+                            pn.state.execute(
+                                lambda g=cell.geometry,
+                                w=widget,
+                                pg=plot_grid: pg.insert_widget_at(g, w)
+                            )
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events and shutdown manager."""

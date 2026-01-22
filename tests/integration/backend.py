@@ -88,7 +88,6 @@ class DashboardBackend:
             instrument=instrument,
             dev=dev,
             exit_stack=self._exit_stack,
-            pipe_factory=lambda data: None,  # No-op for tests
             transport=transport_impl,
             config_manager=self._config_manager,
         )

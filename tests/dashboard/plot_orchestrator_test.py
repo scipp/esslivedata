@@ -195,8 +195,7 @@ class FakePlottingController:
         keys_by_role,
         plot_name: str,
         params,
-        on_first_data,
-        on_data_update=None,
+        on_data,
     ):
         """Set up data pipeline using real StreamManager (unified interface)."""
         from ess.livedata.dashboard.data_roles import PRIMARY
@@ -218,8 +217,7 @@ class FakePlottingController:
         # Use real StreamManager for subscription (avoids duplicating logic)
         self._stream_manager.make_stream(
             keys_by_role,
-            on_first_data=on_first_data,
-            on_data_update=on_data_update,
+            on_data=on_data,
         )
 
     def create_plotter(
@@ -322,7 +320,7 @@ def fake_stream_manager(fake_data_service):
     """Create a real StreamManager with FakePipe factory for testing."""
     from ess.livedata.dashboard.stream_manager import StreamManager
 
-    return StreamManager(data_service=fake_data_service, pipe_factory=FakePipe)
+    return StreamManager(data_service=fake_data_service)
 
 
 @pytest.fixture
@@ -629,18 +627,21 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
         fake_plotting_controller,
         fake_data_service,
     ):
-        """Workflow commit AFTER cell added should create plot when data arrives."""
+        """Workflow commit AFTER cell added should create plotter eagerly."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         _ = add_cell_with_layer(plot_orchestrator, grid_id, plot_cell[0], plot_cell[1])
 
-        # Commit workflow (PlotOrchestrator subscribes, waiting for data)
+        # Commit workflow - plotter is created eagerly (before data arrives)
         job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
         job_number = job_ids[0].job_number
 
-        # Plot not created yet (no data)
-        assert fake_plotting_controller.call_count() == 0
+        # Plotter should be created eagerly when job is ready
+        assert fake_plotting_controller.call_count() == 1
+        calls = fake_plotting_controller.get_calls()
+        assert calls[0]['_from_create_plotter'] is True
+        assert calls[0]['plot_name'] == plot_cell[1].plot_name
 
-        # Simulate data arrival by populating JobService
+        # Simulate data arrival by populating DataService
         import scipp as sc
 
         from ess.livedata.config.workflow_spec import JobId, ResultKey
@@ -654,12 +655,8 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
-        # Now plotter should be created and stored in PlotDataService
+        # Plotter count unchanged (no new plotter created on data arrival)
         assert fake_plotting_controller.call_count() == 1
-        calls = fake_plotting_controller.get_calls()
-        # With multi-session architecture, create_plotter is called
-        assert calls[0]['_from_create_plotter'] is True
-        assert calls[0]['plot_name'] == plot_cell[1].plot_name
 
     def test_workflow_commit_before_cell_added_creates_plot_when_cell_added(
         self,
@@ -901,7 +898,7 @@ class TestLifecycleEventNotifications:
         for state in call_kwargs['layer_states'].values():
             assert state.error is None
 
-    def test_on_cell_updated_called_when_plot_created_with_plot_object(
+    def test_on_cell_updated_called_when_cell_added_not_on_data_arrival(
         self,
         plot_orchestrator,
         plot_cell,
@@ -911,7 +908,7 @@ class TestLifecycleEventNotifications:
         fake_plotting_controller,
         fake_data_service,
     ):
-        """on_cell_updated called when plot created (with plot object)."""
+        """on_cell_updated called only when cell added, not on data arrival."""
         callback = CallbackCapture()
         plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
 
@@ -922,6 +919,9 @@ class TestLifecycleEventNotifications:
 
         # Should have been called once when cell was added
         assert callback.call_count == 1
+        call_kwargs = callback.call_args[1]
+        assert call_kwargs['grid_id'] == grid_id
+        assert call_kwargs['cell_id'] == cell_id
 
         # Commit workflow
         job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
@@ -940,21 +940,9 @@ class TestLifecycleEventNotifications:
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
-        # Called 3x: add cell, commit (waiting), data arrival (plotter stored)
-        assert callback.call_count == 3
-        call_kwargs = callback.call_args[1]
-        assert call_kwargs['grid_id'] == grid_id
-        assert call_kwargs['cell_id'] == cell_id
-        # Verify cell has correct geometry and layer config
-        cell = call_kwargs['cell']
-        assert cell.geometry == plot_cell[0]
-        assert len(cell.layers) == 1
-        assert cell.layers[0].config == plot_cell[1]
-        # With multi-session architecture, plot is None (deferred to per-session)
-        assert call_kwargs['plot'] is None
-        # layer_states should have no errors
-        for state in call_kwargs['layer_states'].values():
-            assert state.error is None
+        # Still only called once (no notification on workflow commit or data arrival)
+        # Sessions poll PlotDataService directly instead
+        assert callback.call_count == 1
 
     def test_on_cell_updated_called_when_plot_fails_with_error_message(
         self,
@@ -966,7 +954,7 @@ class TestLifecycleEventNotifications:
         fake_plotting_controller,
         fake_data_service,
     ):
-        """on_cell_updated called when plot fails (with error message)."""
+        """on_cell_updated called when plot creation fails (with error message)."""
         callback = CallbackCapture()
         plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
 
@@ -975,28 +963,17 @@ class TestLifecycleEventNotifications:
             plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
         )
 
-        # Configure controller to raise exception
+        # Should have been called once when cell was added
+        assert callback.call_count == 1
+
+        # Configure controller to raise exception on create_plotter
         fake_plotting_controller.configure_to_raise(ValueError('Test error'))
 
-        # Commit workflow
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        job_number = job_ids[0].job_number
+        # Commit workflow - this triggers eager plotter creation which will fail
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
-        # Simulate data arrival for ALL sources (will trigger plot creation that fails)
-        import scipp as sc
-
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
-
-        for source_name in plot_cell[1].source_names:
-            result_key = ResultKey(
-                workflow_id=workflow_id,
-                job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell[1].output_name,
-            )
-            fake_data_service[result_key] = sc.scalar(1.0)
-
-        # Called 3x: add cell, commit (waiting), data arrival (error)
-        assert callback.call_count == 3
+        # Called 2x: add cell, plotter creation failure (error notification)
+        assert callback.call_count == 2
         call_kwargs = callback.call_args[1]
         assert call_kwargs['grid_id'] == grid_id
         assert call_kwargs['cell_id'] == cell_id
@@ -1128,27 +1105,17 @@ class TestErrorHandling:
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         add_cell_with_layer(plot_orchestrator, grid_id, plot_cell[0], plot_cell[1])
 
+        # Should have been called once when cell was added
+        assert callback.call_count == 1
+
         fake_plotting_controller.configure_to_raise(
             RuntimeError('Plot creation failed')
         )
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        job_number = job_ids[0].job_number
+        # Commit workflow - this triggers eager plotter creation which will fail
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
-        # Simulate data arrival for ALL sources (will trigger plot creation that fails)
-        import scipp as sc
-
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
-
-        for source_name in plot_cell[1].source_names:
-            result_key = ResultKey(
-                workflow_id=workflow_id,
-                job_id=JobId(source_name=source_name, job_number=job_number),
-                output_name=plot_cell[1].output_name,
-            )
-            fake_data_service[result_key] = sc.scalar(1.0)
-
-        # Called 3x: add cell, commit (waiting), data arrival (error)
-        assert callback.call_count == 3
+        # Called 2x: add cell, plotter creation failure (error notification)
+        assert callback.call_count == 2
         call_kwargs = callback.call_args[1]
         # layer_states should have error
         errors = [s.error for s in call_kwargs['layer_states'].values() if s.error]
@@ -1601,7 +1568,7 @@ class TestLateSubscriberPlotRetrieval:
 class TestSourceNameFiltering:
     """Test that plots only create when their specific source_names have data."""
 
-    def test_plot_not_created_when_job_has_different_source_names(
+    def test_plotter_created_when_workflow_commits(
         self,
         plot_orchestrator,
         workflow_id,
@@ -1611,10 +1578,11 @@ class TestSourceNameFiltering:
         fake_data_service,
     ):
         """
-        Plot should NOT be created when job exists for different source_names.
+        Plotter is created eagerly when workflow commits.
 
-        This test demonstrates the bug where a plot wanting source_A tries
-        to create when only source_B has data (same workflow, same job_number).
+        With the simplified architecture, plotter creation happens when the
+        workflow starts (job committed), not when data arrives. The data
+        pipeline handles filtering by source_name.
         """
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
 
@@ -1629,41 +1597,14 @@ class TestSourceNameFiltering:
         )
         add_cell_with_layer(plot_orchestrator, grid_id, geometry, config)
 
-        # Commit workflow (notifies the plot that workflow is running)
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        job_number = job_ids[0].job_number
+        # Commit workflow - plotter is created eagerly
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
-        # Simulate data arrival for source_B (NOT source_A)
-        import scipp as sc
-
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
-
-        result_key_B = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(source_name='source_B', job_number=job_number),
-            output_name='test_output',
-        )
-        fake_data_service[result_key_B] = sc.scalar(1.0)
-
-        # Plot should NOT be created (data is for wrong source)
-        assert (
-            fake_plotting_controller.call_count() == 0
-        ), "Plot should not be created for different source_name"
-
-        # Now simulate data arrival for source_A (the one the plot wants)
-        result_key_A = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(source_name='source_A', job_number=job_number),
-            output_name='test_output',
-        )
-        fake_data_service[result_key_A] = sc.scalar(2.0)
-
-        # NOW the plotter should be created
+        # Plotter created when workflow commits (regardless of data)
         assert (
             fake_plotting_controller.call_count() == 1
-        ), "Plotter should be created when correct source_name has data"
+        ), "Plotter should be created when workflow commits"
         calls = fake_plotting_controller.get_calls()
-        # With multi-session architecture, create_plotter is called
         assert calls[0]['_from_create_plotter'] is True
 
     def test_plot_created_progressively_as_sources_arrive(
@@ -1778,7 +1719,7 @@ class TestSourceNameFiltering:
             fake_plotting_controller.call_count() == 1
         ), "Plot should be created immediately when subscribing to running job"
 
-    def test_no_creation_when_subscribing_to_running_job_without_correct_sources(
+    def test_late_subscription_creates_plotter_immediately(
         self,
         plot_orchestrator,
         workflow_id,
@@ -1788,56 +1729,31 @@ class TestSourceNameFiltering:
         fake_data_service,
     ):
         """
-        When subscribing to already-running job, plot waits if sources missing.
+        Late subscription creates plotter immediately when workflow running.
 
-        This tests the "late subscription" path where workflow is running
-        but doesn't have data for the plot's specific source_names.
+        With eager plotter creation, subscribing to an already-running workflow
+        creates the plotter immediately. The data pipeline handles filtering
+        by source_name.
         """
         # Commit workflow FIRST
-        job_ids = commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
-        job_number = job_ids[0].job_number
-
-        # Add data for source_B (not what the plot will want)
-        import scipp as sc
-
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
-
-        result_key_B = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(source_name='source_B', job_number=job_number),
-            output_name='test_output',
-        )
-        fake_data_service[result_key_B] = sc.scalar(1.0)
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         # NOW add the plot wanting source_A (late subscription)
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
         config = make_plot_config(
             workflow_id,
-            source_names=['source_A'],  # Plot wants A, but only B exists
+            source_names=['source_A'],
             output_name='test_output',
             plot_name='test_plot',
             params=FakePlotParams(),
         )
         add_cell_with_layer(plot_orchestrator, grid_id, geometry, config)
 
-        # Plot should NOT be created (wrong source)
-        assert (
-            fake_plotting_controller.call_count() == 0
-        ), "Plot should not be created when only wrong sources exist"
-
-        # Add data for source_A (what the plot wants)
-        result_key_A = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(source_name='source_A', job_number=job_number),
-            output_name='test_output',
-        )
-        fake_data_service[result_key_A] = sc.scalar(2.0)
-
-        # NOW plot should be created
+        # Plotter is created immediately (workflow already running)
         assert (
             fake_plotting_controller.call_count() == 1
-        ), "Plot should be created when correct source arrives"
+        ), "Plotter should be created when subscribing to running workflow"
 
 
 class TestPlotConfigIsStatic:
