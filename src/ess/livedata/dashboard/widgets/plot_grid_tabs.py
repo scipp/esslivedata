@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import holoviews as hv
 import panel as pn
@@ -32,6 +32,7 @@ from ..plot_orchestrator import (
 )
 from ..plot_params import PlotAspectType, StretchMode
 from ..session_plot_manager import SessionPlotManager
+from ..session_updater import SessionUpdater
 from ..state_stores import LayerId as StateLayerId
 from ..state_stores import PlotDataService
 from .plot_config_modal import PlotConfigModal
@@ -42,9 +43,6 @@ from .plot_widgets import (
     get_plot_cell_display_info,
     get_workflow_display_info,
 )
-
-if TYPE_CHECKING:
-    from ..session_updater import SessionUpdater
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +95,10 @@ class PlotGridTabs:
         Widget for displaying workflow status and controls.
     backend_status_widget
         Optional widget for displaying backend worker status.
+    plot_data_service
+        Shared service for plot data with version tracking.
+    session_updater
+        This session's updater for periodic callbacks.
     """
 
     def __init__(
@@ -107,17 +109,20 @@ class PlotGridTabs:
         job_status_widget,
         workflow_status_widget,
         backend_status_widget=None,
+        *,
+        plot_data_service: PlotDataService,
+        session_updater: SessionUpdater,
     ) -> None:
         self._orchestrator = plot_orchestrator
         self._workflow_registry = dict(workflow_registry)
         self._plotting_controller = plotting_controller
+        self._plot_data_service = plot_data_service
 
         # Track grid widgets (insertion order determines tab position)
         self._grid_widgets: dict[GridId, PlotGrid] = {}
 
         # Multi-session support: SessionPlotManager handles per-session components
-        self._session_plot_manager: SessionPlotManager | None = None
-        self._plot_data_service: PlotDataService | None = None
+        self._session_plot_manager = SessionPlotManager(plot_data_service)
 
         # Determine number of static tabs for stylesheet
         static_tab_count = 4 if backend_status_widget else 3
@@ -206,6 +211,9 @@ class PlotGridTabs:
         # Initialize from existing grids
         for grid_id, grid_config in self._orchestrator.get_all_grids().items():
             self._add_grid_tab(grid_id, grid_config)
+
+        # Register handler for periodic polling
+        session_updater.register_custom_handler(self._poll_for_plot_updates)
 
     def _add_grid_tab(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Add a new grid tab after the Manage tab."""
@@ -751,34 +759,6 @@ class PlotGridTabs:
 
         return hv.Overlay(plots)
 
-    def set_session_services(
-        self,
-        *,
-        plot_data_service: PlotDataService,
-        session_updater: SessionUpdater,
-    ) -> None:
-        """
-        Wire up session-specific services.
-
-        Called from dashboard's `start_periodic_updates()` after creating
-        the session updater. Creates a SessionPlotManager for this session
-        and registers handlers for periodic updates.
-
-        Parameters
-        ----------
-        plot_data_service
-            Shared service for plot data with version tracking.
-        session_updater
-            This session's updater for periodic callbacks.
-        """
-        self._plot_data_service = plot_data_service
-        self._session_plot_manager = SessionPlotManager(plot_data_service)
-
-        # Register handler for periodic polling
-        session_updater.register_custom_handler(self._poll_for_plot_updates)
-
-        logger.debug("Session services wired up for PlotGridTabs")
-
     def _poll_for_plot_updates(self) -> None:
         """
         Poll PlotDataService for updates and set up new layers.
@@ -788,9 +768,6 @@ class PlotGridTabs:
         2. Checks all layers in all grids for data availability
         3. Sets up session components for layers that have data but aren't set up yet
         """
-        if self._session_plot_manager is None:
-            return
-
         # Forward data updates from PlotDataService to session pipes
         self._session_plot_manager.update_pipes()
 

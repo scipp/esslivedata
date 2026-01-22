@@ -15,6 +15,7 @@ from ess.livedata import Service
 from ess.livedata.logging_config import configure_logging
 
 from .dashboard import DashboardBase
+from .session_updater import SessionUpdater
 from .widgets.backend_status_widget import BackendStatusWidget
 from .widgets.job_status_widget import JobStatusListWidget
 from .widgets.log_producer_widget import LogProducerWidget
@@ -134,7 +135,9 @@ class ReductionApp(DashboardBase):
             reduction_widget.widget,
         )
 
-    def create_main_content(self) -> pn.viewable.Viewable:
+    def create_main_content(
+        self, session_updater: SessionUpdater
+    ) -> pn.viewable.Viewable:
         """Create the main content area with plot grid tabs."""
         job_status_widget = JobStatusListWidget(
             job_service=self._services.job_service,
@@ -150,8 +153,7 @@ class ReductionApp(DashboardBase):
             service_registry=self._services.service_registry,
         )
 
-        # Store reference for multi-session wiring in start_periodic_updates()
-        self._plot_grid_tabs = PlotGridTabs(
+        plot_grid_tabs = PlotGridTabs(
             plot_orchestrator=self._services.plot_orchestrator,
             # Temporary hack, will likely get this from JobOrchestrator, or make
             # registry more accessible.
@@ -160,9 +162,11 @@ class ReductionApp(DashboardBase):
             job_status_widget=job_status_widget,
             workflow_status_widget=workflow_status_widget,
             backend_status_widget=backend_status_widget,
+            plot_data_service=self._services.plot_data_service,
+            session_updater=session_updater,
         )
 
-        return self._plot_grid_tabs.panel
+        return plot_grid_tabs.panel
 
 
 def get_arg_parser() -> argparse.ArgumentParser:

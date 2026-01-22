@@ -9,6 +9,9 @@ from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.plot_orchestrator import PlotOrchestrator
 from ess.livedata.dashboard.plotting_controller import PlottingController
+from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
+from ess.livedata.dashboard.session_updater import SessionUpdater
+from ess.livedata.dashboard.state_stores import PlotDataService
 from ess.livedata.dashboard.stream_manager import StreamManager
 from ess.livedata.dashboard.widgets.job_status_widget import JobStatusListWidget
 from ess.livedata.dashboard.widgets.plot_grid_tabs import PlotGridTabs
@@ -149,12 +152,31 @@ def workflow_status_widget(job_orchestrator, fake_job_service):
 
 
 @pytest.fixture
+def plot_data_service():
+    """Create a PlotDataService for testing."""
+    return PlotDataService()
+
+
+@pytest.fixture
+def session_updater(plot_data_service):
+    """Create a SessionUpdater for testing."""
+    registry = SessionRegistry()
+    return SessionUpdater(
+        session_id=SessionId('test-session'),
+        session_registry=registry,
+        plot_data_service=plot_data_service,
+    )
+
+
+@pytest.fixture
 def plot_grid_tabs(
     plot_orchestrator,
     workflow_registry,
     plotting_controller,
     job_status_widget,
     workflow_status_widget,
+    plot_data_service,
+    session_updater,
 ):
     """Create a PlotGridTabs widget for testing."""
     return PlotGridTabs(
@@ -163,6 +185,8 @@ def plot_grid_tabs(
         plotting_controller=plotting_controller,
         job_status_widget=job_status_widget,
         workflow_status_widget=workflow_status_widget,
+        plot_data_service=plot_data_service,
+        session_updater=session_updater,
     )
 
 
@@ -185,6 +209,8 @@ class TestPlotGridTabsInitialization:
         plotting_controller,
         job_status_widget,
         workflow_status_widget,
+        plot_data_service,
+        session_updater,
     ):
         """Test that widget creates tabs for existing grids."""
         # Add grids before creating widget
@@ -198,6 +224,8 @@ class TestPlotGridTabsInitialization:
             plotting_controller=plotting_controller,
             job_status_widget=job_status_widget,
             workflow_status_widget=workflow_status_widget,
+            plot_data_service=plot_data_service,
+            session_updater=session_updater,
         )
 
         # Should have 5 tabs: Jobs + Workflows + Manage + 2 grids
@@ -264,8 +292,23 @@ class TestGridTabManagement:
         fake_job_service,
         job_controller,
         job_orchestrator,
+        plot_data_service,
     ):
         """Test that multiple widgets sharing same orchestrator stay in sync."""
+        # Create separate session updaters for each widget (simulating different
+        # sessions)
+        registry = SessionRegistry()
+        session_updater1 = SessionUpdater(
+            session_id=SessionId('session-1'),
+            session_registry=registry,
+            plot_data_service=plot_data_service,
+        )
+        session_updater2 = SessionUpdater(
+            session_id=SessionId('session-2'),
+            session_registry=registry,
+            plot_data_service=plot_data_service,
+        )
+
         # Create separate job status widgets for each instance
         job_status_widget1 = JobStatusListWidget(
             job_service=fake_job_service, job_controller=job_controller
@@ -290,6 +333,8 @@ class TestGridTabManagement:
             plotting_controller=plotting_controller,
             job_status_widget=job_status_widget1,
             workflow_status_widget=workflow_status_widget1,
+            plot_data_service=plot_data_service,
+            session_updater=session_updater1,
         )
         widget2 = PlotGridTabs(
             plot_orchestrator=plot_orchestrator,
@@ -297,6 +342,8 @@ class TestGridTabManagement:
             plotting_controller=plotting_controller,
             job_status_widget=job_status_widget2,
             workflow_status_widget=workflow_status_widget2,
+            plot_data_service=plot_data_service,
+            session_updater=session_updater2,
         )
 
         # Add grid via orchestrator

@@ -88,8 +88,19 @@ class DashboardBase(ServiceBase, ABC):
         pass
 
     @abstractmethod
-    def create_main_content(self) -> pn.viewable.Viewable:
-        """Override this method to create the main dashboard content."""
+    def create_main_content(
+        self, session_updater: SessionUpdater
+    ) -> pn.viewable.Viewable:
+        """
+        Override this method to create the main dashboard content.
+
+        Parameters
+        ----------
+        session_updater:
+            The session updater for this browser session. Widgets that need
+            to register handlers for periodic updates should receive this
+            in their constructor.
+        """
 
     def get_dashboard_title(self) -> str:
         """Get the dashboard title. Override for custom titles."""
@@ -107,39 +118,35 @@ class DashboardBase(ServiceBase, ABC):
         # Fallback for non-session contexts (e.g., testing)
         return SessionId('unknown')
 
-    def start_periodic_updates(self, period: int = 500) -> None:
+    def _create_session_updater(self) -> SessionUpdater:
         """
-        Start periodic updates for this session.
+        Create a SessionUpdater for the current browser session.
 
-        Each browser session gets its own independent periodic callback.
-        Callbacks are automatically cleaned up when the session ends.
-
-        Parameters
-        ----------
-        period:
-            The period in milliseconds for the periodic update step.
-            Default is 500 ms. Even if the backend produces updates, e.g., once per
-            second, this default should reduce UI lag somewhat. If there are no new
-            messages, the step function should not do anything.
+        The updater auto-registers with the session registry.
         """
-        session_id = self._get_session_id()
-        session_registry = self._services.session_registry
-
-        # Create per-session updater (auto-registers with the session registry)
-        session_updater = SessionUpdater(
-            session_id=session_id,
-            session_registry=session_registry,
+        return SessionUpdater(
+            session_id=self._get_session_id(),
+            session_registry=self._services.session_registry,
             widget_state_store=self._services.widget_state_store,
             plot_data_service=self._services.plot_data_service,
             notification_queue=self._services.notification_queue,
         )
 
-        # Wire up PlotGridTabs to session services for multi-session support
-        if hasattr(self, '_plot_grid_tabs') and self._plot_grid_tabs is not None:
-            self._plot_grid_tabs.set_session_services(
-                plot_data_service=self._services.plot_data_service,
-                session_updater=session_updater,
-            )
+    def _start_periodic_callback(
+        self, session_updater: SessionUpdater, period: int = 500
+    ) -> None:
+        """
+        Start the periodic callback for a session.
+
+        Parameters
+        ----------
+        session_updater:
+            The session updater to drive with the periodic callback.
+        period:
+            The period in milliseconds for the periodic update step.
+        """
+        session_id = session_updater.session_id
+        session_registry = self._services.session_registry
 
         def _safe_step():
             try:
@@ -147,10 +154,8 @@ class DashboardBase(ServiceBase, ABC):
             except Exception:
                 self._logger.exception("Error in periodic update step.")
 
-        # Create callback for THIS session (Panel manages per-session callbacks)
         callback = pn.state.add_periodic_callback(_safe_step, period=period)
 
-        # Register cleanup when session is destroyed
         def _cleanup_session(session_context):
             self._logger.info("Session destroyed: %s", session_id)
             session_registry.unregister(session_id)
@@ -161,8 +166,11 @@ class DashboardBase(ServiceBase, ABC):
 
     def create_layout(self) -> pn.template.MaterialTemplate:
         """Create the basic dashboard layout."""
+        # Create session updater first so widgets can register handlers
+        session_updater = self._create_session_updater()
+
         sidebar_content = self.create_sidebar_content()
-        main_content = self.create_main_content()
+        main_content = self.create_main_content(session_updater)
 
         template = pn.template.MaterialTemplate(
             title=self.get_dashboard_title(),
@@ -172,7 +180,7 @@ class DashboardBase(ServiceBase, ABC):
         )
         # Inject CSS for offline mode (replaces Material Icons font with Unicode)
         template.config.raw_css.extend(self.get_raw_css())
-        self.start_periodic_updates()
+        self._start_periodic_callback(session_updater)
         return template
 
     def get_raw_css(self) -> list[str]:
