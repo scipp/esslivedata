@@ -28,10 +28,69 @@ from ess.livedata.config.roi_names import (
     get_roi_mapper,
 )
 
-from .plots import Plotter
+from .plots import Plotter, Presenter
 from .static_plots import Color, LineDash, RectanglesCoordinates
 
 logger = structlog.get_logger(__name__)
+
+
+class ROIPresenter:
+    """
+    Presenter for ROI request plotters that creates per-session edit streams.
+
+    ROI plotters require fresh plotter instances per session because they
+    create session-bound BoxEdit/PolyDraw edit streams. This presenter
+    handles the session-specific creation.
+
+    Parameters
+    ----------
+    plotter_class:
+        The ROI plotter class to instantiate.
+    params:
+        Parameters for creating the plotter.
+    roi_publisher:
+        ROI publisher for sending updates to Kafka.
+    """
+
+    def __init__(
+        self,
+        plotter_class: type,
+        params: Any,
+        roi_publisher: ROIPublisher | None,
+    ) -> None:
+        self._plotter_class = plotter_class
+        self._params = params
+        self._roi_publisher = roi_publisher
+
+    def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
+        """
+        Create a DynamicMap with session-specific edit streams.
+
+        Creates a fresh plotter instance for this session, sets up the
+        ROI publisher, and calls plot() to create the interactive DynamicMap.
+
+        Parameters
+        ----------
+        pipe:
+            Pipe containing initial data. The pipe's data is used to extract
+            the ResultKey and DataArray for the plot() call.
+
+        Returns
+        -------
+        :
+            Interactive DynamicMap with BoxEdit/PolyDraw edit streams.
+        """
+        # Create fresh plotter instance for this session
+        plotter = self._plotter_class(self._params)
+        plotter.set_roi_publisher(self._roi_publisher)
+
+        # Extract data from pipe
+        data_key = next(iter(pipe.data.keys()))
+        data = pipe.data[data_key]
+
+        # Create interactive DynamicMap (ignores future pipe updates)
+        return plotter.plot(data, data_key)
+
 
 if TYPE_CHECKING:
     from .roi_publisher import ROIPublisher
@@ -403,6 +462,25 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
     def set_roi_publisher(self, publisher: ROIPublisher | None) -> None:
         """Set the ROI publisher for this plotter."""
         self._roi_publisher = publisher
+
+    def create_presenter(self) -> Presenter:
+        """
+        Create a Presenter for this ROI plotter.
+
+        Returns an ROIPresenter that creates fresh plotter instances per session.
+        ROI plotters need per-session instances because they create session-bound
+        BoxEdit/PolyDraw edit streams.
+
+        Returns
+        -------
+        :
+            An ROIPresenter configured with this plotter's class, params, and publisher.
+        """
+        return ROIPresenter(
+            plotter_class=type(self),
+            params=self._params,
+            roi_publisher=self._roi_publisher,
+        )
 
     @abstractmethod
     def _create_converter(self) -> ConverterType:

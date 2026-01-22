@@ -13,6 +13,7 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotGridConfig,
     PlotOrchestrator,
 )
+from ess.livedata.dashboard.state_stores import PlotDataService
 
 
 class FakePlotParams(pydantic.BaseModel):
@@ -36,6 +37,39 @@ class FakePlot:
     """Dummy plot object for testing."""
 
     pass
+
+
+class FakePlotter:
+    """Fake Plotter for testing."""
+
+    def __init__(self):
+        self.kdims = None
+        self._initialized_data = None
+
+    def initialize_from_data(self, data):
+        self._initialized_data = data
+
+    def create_presenter(self):
+        """Return a fake presenter."""
+        return FakePresenter(self)
+
+    def compute(self, data):
+        return FakePlot()
+
+    def __call__(self, data):
+        return self.compute(data)
+
+
+class FakePresenter:
+    """Fake Presenter for testing."""
+
+    def __init__(self, plotter):
+        self._plotter = plotter
+
+    def present(self, pipe):
+        import holoviews as hv
+
+        return hv.DynamicMap(self._plotter, streams=[pipe], cache_size=1)
 
 
 class CallbackCapture:
@@ -145,7 +179,7 @@ class FakePlottingController:
         self._pipeline_setups.clear()
 
     def call_count(self) -> int:
-        """Return the number of create_plot_from_pipeline calls."""
+        """Return the number of create_plotter or create_plot_from_pipeline calls."""
         return len(self._calls)
 
     def get_calls(self) -> list[dict]:
@@ -185,6 +219,23 @@ class FakePlottingController:
             keys_by_role,
             on_first_data=on_first_data,
         )
+
+    def create_plotter(
+        self,
+        plot_name: str,
+        params: dict,
+    ):
+        """Create a fake plotter, recording the call for assertions."""
+        self._calls.append(
+            {
+                'plot_name': plot_name,
+                'params': params,
+                '_from_create_plotter': True,
+            }
+        )
+        if self._should_raise:
+            raise self._exception_to_raise
+        return FakePlotter()
 
     def create_plot_from_pipeline(
         self,
@@ -294,6 +345,7 @@ def plot_orchestrator(job_orchestrator, fake_plotting_controller, fake_data_serv
         job_orchestrator=job_orchestrator,
         data_service=fake_data_service,
         instrument='dummy',
+        plot_data_service=PlotDataService(),
     )
 
 
@@ -600,11 +652,11 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
-        # Now plot should be created
+        # Now plotter should be created and stored in PlotDataService
         assert fake_plotting_controller.call_count() == 1
         calls = fake_plotting_controller.get_calls()
-        # With two-phase creation, create_plot_from_pipeline is called (not create_plot)
-        assert calls[0]['_from_pipeline'] is True
+        # With multi-session architecture, create_plotter is called
+        assert calls[0]['_from_create_plotter'] is True
         assert calls[0]['plot_name'] == plot_cell[1].plot_name
 
     def test_workflow_commit_before_cell_added_creates_plot_when_cell_added(
@@ -886,7 +938,7 @@ class TestLifecycleEventNotifications:
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
-        # Called 3x: add cell, commit (waiting), data arrival (plot created)
+        # Called 3x: add cell, commit (waiting), data arrival (plotter stored)
         assert callback.call_count == 3
         call_kwargs = callback.call_args[1]
         assert call_kwargs['grid_id'] == grid_id
@@ -896,7 +948,8 @@ class TestLifecycleEventNotifications:
         assert cell.geometry == plot_cell[0]
         assert len(cell.layers) == 1
         assert cell.layers[0].config == plot_cell[1]
-        assert call_kwargs['plot'] == fake_plotting_controller._plot_object
+        # With multi-session architecture, plot is None (deferred to per-session)
+        assert call_kwargs['plot'] is None
         # layer_states should have no errors
         for state in call_kwargs['layer_states'].values():
             assert state.error is None
@@ -1254,7 +1307,7 @@ class TestLateSubscriberPlotRetrieval:
         for state in layer_states.values():
             assert state.error is None
 
-    def test_get_cell_state_returns_plot_after_workflow_commits(
+    def test_get_cell_state_layer_ready_after_workflow_commits(
         self,
         plot_orchestrator,
         plot_cell,
@@ -1263,7 +1316,7 @@ class TestLateSubscriberPlotRetrieval:
         job_orchestrator,
         fake_data_service,
     ):
-        """get_cell_state should return plot after workflow commits."""
+        """get_cell_state should return layer ready state after workflow commits."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = add_cell_with_layer(
             plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
@@ -1286,11 +1339,11 @@ class TestLateSubscriberPlotRetrieval:
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
-        # Now get_cell_state should return the plot
+        # With multi-session architecture, plot is None (deferred to per-session)
+        # but layer_states should indicate readiness
         layer_states, plot = plot_orchestrator.get_cell_state(cell_id)
-        assert plot is not None
-        assert isinstance(plot, FakePlot)
-        # All layers should have no errors
+        assert plot is None
+        # All layers should have no errors and indicate data received
         for state in layer_states.values():
             assert state.error is None
 
@@ -1313,6 +1366,7 @@ class TestLateSubscriberPlotRetrieval:
             data_service=fake_data_service,
             instrument='dummy',
             config_store=None,
+            plot_data_service=PlotDataService(),
         )
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
@@ -1368,6 +1422,7 @@ class TestLateSubscriberPlotRetrieval:
             data_service=fake_data_service,
             instrument='dummy',
             config_store=None,
+            plot_data_service=PlotDataService(),
         )
 
         # Create grid with multiple cells
@@ -1411,11 +1466,11 @@ class TestLateSubscriberPlotRetrieval:
         grid_config = grids[grid_id]
         assert len(grid_config.cells) == 3
 
-        # Late subscriber retrieves plots for all cells via get_cell_state
+        # Late subscriber retrieves state for all cells via get_cell_state
+        # With multi-session architecture, plot is None (deferred to per-session)
         for cell_id in cell_ids:
             layer_states, plot = plot_orchestrator.get_cell_state(cell_id)
-            assert plot is not None, f"Plot should exist for cell {cell_id}"
-            assert isinstance(plot, FakePlot)
+            assert plot is None  # Deferred to per-session
             # All layers should have no errors
             for state in layer_states.values():
                 assert state.error is None
@@ -1460,9 +1515,10 @@ class TestLateSubscriberPlotRetrieval:
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
-        # Verify plot exists (get_cell_state now returns layer_states, plot)
-        _, plot1 = plot_orchestrator.get_cell_state(cell_id)
-        assert plot1 is not None
+        # Verify layer ready (with multi-session, plot is None but layer_states exist)
+        layer_states1, plot1 = plot_orchestrator.get_cell_state(cell_id)
+        assert plot1 is None  # Deferred to per-session
+        assert len(layer_states1) > 0
 
         # Update layer config while workflow is still running
         new_config = make_plot_config(
@@ -1482,11 +1538,12 @@ class TestLateSubscriberPlotRetrieval:
         )
         fake_data_service[result_key2] = sc.scalar(2.0)
 
-        # Since workflow is still running, plot should be immediately recreated
-        _, plot2 = plot_orchestrator.get_cell_state(cell_id)
-        assert plot2 is not None
+        # Since workflow is still running, plotter should be immediately recreated
+        layer_states2, plot2 = plot_orchestrator.get_cell_state(cell_id)
+        assert plot2 is None  # Deferred to per-session
+        assert len(layer_states2) > 0
 
-        # Verify plot was recreated with new config
+        # Verify plotter was recreated with new config
         assert fake_plotting_controller.call_count() == 2
         setups = fake_plotting_controller.get_pipeline_setups()
         assert setups[1]['source_names'] == ['new_source']
@@ -1524,9 +1581,10 @@ class TestLateSubscriberPlotRetrieval:
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
-        # Verify plot exists
-        _, plot = plot_orchestrator.get_cell_state(cell_id)
-        assert plot is not None
+        # Verify layer ready (with multi-session, plot is None)
+        layer_states, plot = plot_orchestrator.get_cell_state(cell_id)
+        assert plot is None  # Deferred to per-session
+        assert len(layer_states) > 0
 
         # Remove cell
         plot_orchestrator.remove_cell(cell_id)
@@ -1598,13 +1656,13 @@ class TestSourceNameFiltering:
         )
         fake_data_service[result_key_A] = sc.scalar(2.0)
 
-        # NOW the plot should be created
+        # NOW the plotter should be created
         assert (
             fake_plotting_controller.call_count() == 1
-        ), "Plot should be created when correct source_name has data"
+        ), "Plotter should be created when correct source_name has data"
         calls = fake_plotting_controller.get_calls()
-        # With two-phase creation, create_plot_from_pipeline is called
-        assert calls[0]['_from_pipeline'] is True
+        # With multi-session architecture, create_plotter is called
+        assert calls[0]['_from_create_plotter'] is True
 
     def test_plot_created_progressively_as_sources_arrive(
         self,
@@ -1650,13 +1708,13 @@ class TestSourceNameFiltering:
         )
         fake_data_service[result_key_A] = sc.scalar(1.0)
 
-        # Plot SHOULD be created with partial data (progressive plotting)
+        # Plotter SHOULD be created with partial data (progressive plotting)
         assert (
             fake_plotting_controller.call_count() == 1
-        ), "Plot should be created as soon as first source has data"
+        ), "Plotter should be created as soon as first source has data"
         calls = fake_plotting_controller.get_calls()
-        # With two-phase creation, create_plot_from_pipeline is called
-        assert calls[0]['_from_pipeline'] is True
+        # With multi-session architecture, create_plotter is called
+        assert calls[0]['_from_create_plotter'] is True
 
         # When source_B arrives, the DynamicMap will automatically update
         # (no new create_plot call needed - the existing plot subscribes to updates)

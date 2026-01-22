@@ -31,8 +31,7 @@ from ..plot_orchestrator import (
     SubscriptionId,
 )
 from ..plot_params import PlotAspectType, StretchMode
-from ..roi_request_plots import ROIPublisherAware
-from ..state_stores import LayerId as StateLayerId
+from ..session_plot_manager import SessionPlotManager
 from ..state_stores import PlotDataService
 from .plot_config_modal import PlotConfigModal
 from .plot_grid import GridCellStyles, PlotGrid
@@ -115,16 +114,9 @@ class PlotGridTabs:
         # Track grid widgets (insertion order determines tab position)
         self._grid_widgets: dict[GridId, PlotGrid] = {}
 
-        # Multi-session deferred setup infrastructure
+        # Multi-session support: SessionPlotManager handles per-session components
+        self._session_plot_manager: SessionPlotManager | None = None
         self._pending_layer_setups: list[tuple[GridId, CellId, LayerId, PlotCell]] = []
-        self._session_pipes: dict[LayerId, hv.streams.Pipe] = {}
-        self._session_dmaps: dict[LayerId, hv.DynamicMap] = {}
-        self._last_versions: dict[LayerId, int] = {}
-        self._plot_data_service: PlotDataService | None = None
-        self._session_updater: SessionUpdater | None = None
-        # Track shared pipes for data forwarding
-        self._shared_pipes: dict[LayerId, Any] = {}
-        self._last_data_ids: dict[LayerId, int] = {}  # Track data identity
 
         # Determine number of static tabs for stylesheet
         static_tab_count = 4 if backend_status_widget else 3
@@ -410,18 +402,11 @@ class PlotGridTabs:
         if plot_grid is None:
             return
 
-        # Multi-session path: check for pending layer setups in PlotDataService
-        if self._plot_data_service is not None:
+        # Multi-session path: record pending layer setups for SessionPlotManager
+        if self._session_plot_manager is not None:
             for layer in cell.layers:
                 layer_id = layer.layer_id
-                # Check if this layer has data in PlotDataService but no session DMap
-                state_layer_id = StateLayerId(str(layer_id))
-                layer_state = self._plot_data_service.get(state_layer_id)
-                if (
-                    layer_state is not None
-                    and layer_state.plotter is not None
-                    and layer_id not in self._session_dmaps
-                ):
+                if not self._session_plot_manager.has_layer(layer_id):
                     # Record pending setup (don't create session-bound components yet)
                     pending = (grid_id, cell_id, layer_id, cell)
                     if pending not in self._pending_layer_setups:
@@ -739,9 +724,12 @@ class PlotGridTabs:
         :
             Composed plot from session DMaps, or None if no DMaps available.
         """
+        if self._session_plot_manager is None:
+            return None
+
         plots = []
         for layer in cell.layers:
-            dmap = self._session_dmaps.get(layer.layer_id)
+            dmap = self._session_plot_manager.get_dmap(layer.layer_id)
             if dmap is not None:
                 plots.append(dmap)
 
@@ -763,12 +751,11 @@ class PlotGridTabs:
         Wire up session-specific services.
 
         Called from dashboard's `start_periodic_updates()` after creating
-        the session updater. Registers `_process_pending_setups()` as a
-        custom handler to run in the correct session context.
+        the session updater. Creates a SessionPlotManager for this session
+        and registers handlers for periodic updates.
 
         For late subscribers (new sessions joining when plots already exist),
-        scans existing grids for layers that have data in PlotDataService
-        and adds them to pending setups.
+        scans existing grids for layers that need setup.
 
         Parameters
         ----------
@@ -777,27 +764,14 @@ class PlotGridTabs:
         session_updater
             This session's updater for periodic callbacks.
         """
-        self._plot_data_service = plot_data_service
-        self._session_updater = session_updater
+        # Create session-specific plot manager
+        self._session_plot_manager = SessionPlotManager(plot_data_service)
+
+        # Register handlers for periodic updates
         session_updater.register_custom_handler(self._process_pending_setups)
 
-        # Late subscriber support: check for existing layers that need setup
-        self._scan_existing_layers_for_pending_setups()
-
-        logger.debug("Session services wired up for PlotGridTabs")
-
-    def _scan_existing_layers_for_pending_setups(self) -> None:
-        """
-        Scan existing grids for layers that have data but aren't set up.
-
-        Called when a new session joins after plots already exist.
-        Adds any layers with data in PlotDataService to pending setups.
-        """
-        if self._plot_data_service is None:
-            return
-
+        # Late subscriber support: scan for existing layers that need setup
         for grid_id in self._grid_widgets.keys():
-            # Get grid config from orchestrator
             grid_config = self._orchestrator.get_grid(grid_id)
             if grid_config is None:
                 continue
@@ -805,15 +779,7 @@ class PlotGridTabs:
             for cell_id, cell in grid_config.cells.items():
                 for layer in cell.layers:
                     layer_id = layer.layer_id
-                    state_layer_id = StateLayerId(str(layer_id))
-                    layer_state = self._plot_data_service.get(state_layer_id)
-
-                    # Check if this layer has data but isn't set up in this session
-                    if (
-                        layer_state is not None
-                        and layer_state.plotter is not None
-                        and layer_id not in self._session_dmaps
-                    ):
+                    if not self._session_plot_manager.has_layer(layer_id):
                         pending = (grid_id, cell_id, layer_id, cell)
                         if pending not in self._pending_layer_setups:
                             self._pending_layer_setups.append(pending)
@@ -822,143 +788,65 @@ class PlotGridTabs:
                                 layer_id,
                             )
 
+        logger.debug("Session services wired up for PlotGridTabs")
+
     def _process_pending_setups(self) -> None:
         """
         Process pending layer setups in the correct session context.
 
-        Called from SessionUpdater's periodic callback. Creates per-session
-        Pipes and DynamicMaps for layers that have data in PlotDataService
-        but haven't been set up for this session yet.
+        Called from SessionUpdater's periodic callback. Delegates to
+        SessionPlotManager to create per-session Pipes and DynamicMaps
+        for layers that have data but haven't been set up yet.
 
-        Also forwards data updates from shared pipes to session pipes.
+        Also triggers data forwarding via SessionPlotManager.update_pipes().
         """
-        if self._plot_data_service is None:
+        if self._session_plot_manager is None:
             return
 
-        # First, forward data updates from shared pipes to session pipes
-        self._forward_data_updates()
+        # Forward data updates from PlotDataService to session pipes
+        self._session_plot_manager.update_pipes()
 
         # Process pending setups
         processed = []
         for grid_id, cell_id, layer_id, cell in self._pending_layer_setups:
-            state_layer_id = StateLayerId(str(layer_id))
-            layer_state = self._plot_data_service.get(state_layer_id)
-
-            if layer_state is None or layer_state.plotter is None:
+            # Try to set up the layer via SessionPlotManager
+            dmap = self._session_plot_manager.setup_layer(layer_id)
+            if dmap is None:
+                # No data available yet, keep in pending
                 continue
 
-            # Check version to avoid re-processing
-            last_version = self._last_versions.get(layer_id, 0)
-            if layer_state.version <= last_version:
-                continue
+            # Layer is now set up - update widget with actual plot
+            plot_grid = self._grid_widgets.get(grid_id)
+            if plot_grid is not None:
+                layer_states, _ = self._orchestrator.get_cell_state(cell_id)
+                session_plot = self._get_session_composed_plot(cell)
 
-            try:
-                # Create per-session components
-                plotter = layer_state.plotter
-                initial_data = layer_state.initial_data
-                shared_pipe = layer_state.shared_pipe
-
-                # ROI plotters need special handling (they create their own DynamicMap)
-                if isinstance(plotter, ROIPublisherAware):
-                    # ROI plotters create interactive DynamicMaps with BoxEdit streams
-                    data_key = next(iter(initial_data.keys()))
-                    data = initial_data[data_key]
-                    dmap = plotter.plot(data, data_key)
-                else:
-                    # Standard plotters: create per-session Pipe and DynamicMap
-                    pipe = hv.streams.Pipe(data=initial_data)
-                    dmap = hv.DynamicMap(
-                        plotter,
-                        streams=[pipe],
-                        kdims=plotter.kdims if hasattr(plotter, 'kdims') else None,
-                        cache_size=1,
+                if session_plot is not None:
+                    widget = self._create_cell_widget(
+                        cell_id, cell, layer_states, session_plot
                     )
-                    self._session_pipes[layer_id] = pipe
+                    # Schedule update on next event loop iteration
+                    pn.state.execute(
+                        lambda g=cell.geometry,
+                        w=widget,
+                        pg=plot_grid: pg.insert_widget_at(g, w)
+                    )
 
-                    # Store shared pipe reference for data forwarding
-                    if shared_pipe is not None:
-                        self._shared_pipes[layer_id] = shared_pipe
-                        # Track current data to detect changes
-                        self._last_data_ids[layer_id] = id(shared_pipe.data)
-
-                self._session_dmaps[layer_id] = dmap
-                self._last_versions[layer_id] = layer_state.version
-
-                logger.debug(
-                    "Created session DynamicMap for layer_id=%s (version %d)",
-                    layer_id,
-                    layer_state.version,
-                )
-
-                # Update widget with actual plot
-                plot_grid = self._grid_widgets.get(grid_id)
-                if plot_grid is not None:
-                    # Get updated layer states from orchestrator
-                    layer_states, _ = self._orchestrator.get_cell_state(cell_id)
-                    session_plot = self._get_session_composed_plot(cell)
-
-                    if session_plot is not None:
-                        widget = self._create_cell_widget(
-                            cell_id, cell, layer_states, session_plot
-                        )
-                        # Schedule update on next event loop iteration
-                        plot_grid = self._grid_widgets.get(grid_id)
-                        pn.state.execute(
-                            lambda g=cell.geometry,
-                            w=widget,
-                            pg=plot_grid: pg.insert_widget_at(g, w)
-                        )
-
-                processed.append((grid_id, cell_id, layer_id, cell))
-
-            except Exception:
-                logger.exception(
-                    "Failed to create session DynamicMap for layer_id=%s", layer_id
-                )
-                processed.append((grid_id, cell_id, layer_id, cell))
+            processed.append((grid_id, cell_id, layer_id, cell))
 
         # Remove processed setups
         for item in processed:
             if item in self._pending_layer_setups:
                 self._pending_layer_setups.remove(item)
 
-    def _forward_data_updates(self) -> None:
-        """
-        Forward data updates from shared pipes to session pipes.
-
-        Checks each shared pipe for new data (by identity) and sends it to
-        the corresponding session pipe.
-        """
-        for layer_id, shared_pipe in list(self._shared_pipes.items()):
-            session_pipe = self._session_pipes.get(layer_id)
-            if session_pipe is None:
-                continue
-
-            # Check if data has changed using object identity
-            current_data = shared_pipe.data
-            current_data_id = id(current_data)
-            last_data_id = self._last_data_ids.get(layer_id, 0)
-
-            if current_data_id != last_data_id:
-                # Data has changed, forward to session pipe
-                try:
-                    session_pipe.send(current_data)
-                    self._last_data_ids[layer_id] = current_data_id
-                    logger.debug(
-                        "Forwarded data update to session pipe for layer_id=%s",
-                        layer_id,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to forward data to session pipe for layer_id=%s",
-                        layer_id,
-                    )
-
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events and shutdown manager."""
         if self._subscription_id is not None:
             self._orchestrator.unsubscribe_from_lifecycle(self._subscription_id)
             self._subscription_id = None
+        if self._session_plot_manager is not None:
+            self._session_plot_manager.cleanup()
+            self._session_plot_manager = None
         self._grid_manager.shutdown()
 
     @property

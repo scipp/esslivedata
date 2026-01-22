@@ -164,6 +164,32 @@ class PlottingController:
             extractors=extractors,
         )
 
+    def create_plotter(
+        self,
+        plot_name: str,
+        params: dict | pydantic.BaseModel,
+    ):
+        """
+        Create a plotter instance for the given name and parameters.
+
+        Parameters
+        ----------
+        plot_name:
+            The name of the plotter to create.
+        params:
+            The plotter parameters as a dict or validated Pydantic model.
+
+        Returns
+        -------
+        :
+            A Plotter instance configured with the given parameters.
+        """
+        plotter = plotter_registry.create_plotter(plot_name, params=params)
+        # ROI request plotters need the ROI publisher
+        if isinstance(plotter, ROIPublisherAware):
+            plotter.set_roi_publisher(self._roi_publisher)
+        return plotter
+
     def create_plot_from_pipeline(
         self,
         plot_name: str,
