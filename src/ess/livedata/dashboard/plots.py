@@ -2,9 +2,11 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """This file contains utilities for creating plots in the dashboard."""
 
+from __future__ import annotations
+
 import time
 from abc import ABC, abstractmethod
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import holoviews as hv
 import numpy as np
@@ -28,6 +30,52 @@ from .plot_params import (
 )
 from .scipp_to_holoviews import to_holoviews
 from .time_utils import format_time_ns_local
+
+
+class Presenter(Protocol):
+    """
+    Per-session presentation handler for two-stage plot architecture.
+
+    A Presenter is created fresh for each browser session to handle
+    session-bound components (Pipe, DynamicMap, edit streams).
+    """
+
+    def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
+        """
+        Create a DynamicMap for this session from a data pipe.
+
+        Parameters
+        ----------
+        pipe:
+            HoloViews Pipe stream that will receive PlotState updates.
+            The pipe should be created per-session.
+
+        Returns
+        -------
+        :
+            A DynamicMap that renders data from the pipe.
+        """
+        ...
+
+
+class DefaultPresenter:
+    """
+    Default presenter that wraps a Plotter for DynamicMap rendering.
+
+    Uses the plotter's compute() method as the DynamicMap callable.
+    """
+
+    def __init__(self, plotter: Plotter) -> None:
+        self._plotter = plotter
+
+    def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
+        """Create a DynamicMap wrapping the plotter's compute method."""
+        return hv.DynamicMap(
+            self._plotter.compute,
+            streams=[pipe],
+            kdims=self._plotter.kdims,
+            cache_size=1,
+        )
 
 
 def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
@@ -259,10 +307,28 @@ class Plotter(ABC):
             return (1.0, 10.0)
         return None
 
-    def __call__(
+    def compute(
         self, data: dict[ResultKey, sc.DataArray], **kwargs
     ) -> hv.Overlay | hv.Layout | hv.Element:
-        """Create one or more plots from the given data."""
+        """
+        Compute plot elements from input data.
+
+        This is Stage 1 of the two-stage plotter architecture. It transforms
+        input data into HoloViews elements that can be stored and shared
+        across sessions.
+
+        Parameters
+        ----------
+        data:
+            Dictionary mapping ResultKeys to DataArrays.
+        **kwargs:
+            Additional keyword arguments passed to plot().
+
+        Returns
+        -------
+        :
+            Combined HoloViews plot elements (Overlay, Layout, or single Element).
+        """
         plots: list[hv.Element] = []
         try:
             for data_key, da in data.items():
@@ -305,6 +371,34 @@ class Plotter(ABC):
             result = result.opts(title=time_info, fontsize={'title': '10pt'})
 
         return result
+
+    def __call__(
+        self, data: dict[ResultKey, sc.DataArray], **kwargs
+    ) -> hv.Overlay | hv.Layout | hv.Element:
+        """
+        Create plots from data (alias for compute()).
+
+        This method is provided for backwards compatibility. New code should
+        use compute() directly.
+        """
+        return self.compute(data, **kwargs)
+
+    def create_presenter(self) -> Presenter:
+        """
+        Create a Presenter for this plotter.
+
+        Stage 2 of the two-stage architecture. Returns a fresh Presenter
+        instance that can be used to create session-bound DynamicMaps.
+
+        Override this method in subclasses that need custom presenters
+        (e.g., ROI plotters with edit streams).
+
+        Returns
+        -------
+        :
+            A Presenter instance for this plotter.
+        """
+        return DefaultPresenter(self)
 
     def _apply_generic_options(self, plot_element: hv.Element) -> hv.Element:
         """Apply generic options like aspect ratio to a plot element."""

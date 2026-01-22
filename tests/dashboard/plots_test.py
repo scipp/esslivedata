@@ -1458,3 +1458,101 @@ class TestLagIndicator:
         assert 'Lag:' in opts['title']
         # Should show ~5 seconds, not ~1 second (using oldest end_time)
         assert '5.' in opts['title'] or '6.' in opts['title']
+
+
+class TestTwoStageArchitecture:
+    """Tests for the two-stage compute/present architecture."""
+
+    @pytest.fixture
+    def simple_data(self):
+        """Create simple 1D data for testing."""
+        return sc.DataArray(
+            data=sc.array(dims=['x'], values=[1.0, 2.0, 3.0]),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0])},
+        )
+
+    @pytest.fixture
+    def data_key(self):
+        """Create a test ResultKey."""
+        workflow_id = WorkflowId(
+            instrument='test_instrument',
+            namespace='test_namespace',
+            name='test_workflow',
+            version=1,
+        )
+        job_id = JobId(source_name='test_source', job_number=uuid.uuid4())
+        return ResultKey(
+            workflow_id=workflow_id, job_id=job_id, output_name='test_result'
+        )
+
+    def test_compute_returns_same_as_call(self, simple_data, data_key):
+        """Test that compute() returns the same result as __call__()."""
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        data_dict = {data_key: simple_data}
+
+        result_call = plotter(data_dict)
+        result_compute = plotter.compute(data_dict)
+
+        # Both should return equivalent results
+        assert type(result_call) is type(result_compute)
+
+    def test_create_presenter_returns_presenter(self, simple_data, data_key):
+        """Test that create_presenter() returns a Presenter."""
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+
+        presenter = plotter.create_presenter()
+
+        # Should have a present() method
+        assert hasattr(presenter, 'present')
+        assert callable(presenter.present)
+
+    def test_presenter_creates_dynamic_map(self, simple_data, data_key):
+        """Test that Presenter.present() creates a DynamicMap."""
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        data_dict = {data_key: simple_data}
+
+        presenter = plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=data_dict)
+        dmap = presenter.present(pipe)
+
+        assert isinstance(dmap, hv.DynamicMap)
+
+    def test_presenter_dynamic_map_uses_plotter_kdims(self, data_key):
+        """Test that presenter's DynamicMap uses plotter's kdims."""
+        # SlicerPlotter has kdims
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        plotter = plots.SlicerPlotter.from_params(params)
+
+        # Initialize with data to set kdims
+        data_3d = sc.DataArray(
+            sc.arange('z', 0, 5 * 8 * 10, dtype='float64').fold(
+                dim='z', sizes={'z': 5, 'y': 8, 'x': 10}
+            ),
+            coords={
+                'z': sc.linspace('z', 0, 1, 5, unit='s'),
+                'y': sc.linspace('y', 0, 1, 8, unit='m'),
+                'x': sc.linspace('x', 0, 1, 10, unit='m'),
+            },
+        )
+        data_dict = {data_key: data_3d}
+        plotter.initialize_from_data(data_dict)
+
+        presenter = plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=data_dict)
+        dmap = presenter.present(pipe)
+
+        # DynamicMap should have kdims from plotter
+        assert dmap.kdims == plotter.kdims
+
+    def test_default_presenter_renders_data(self, simple_data, data_key):
+        """Test that DefaultPresenter can render data through the pipe."""
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        data_dict = {data_key: simple_data}
+
+        presenter = plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=data_dict)
+        dmap = presenter.present(pipe)
+
+        # Get current value - should invoke compute
+        current = dmap[()]
+        assert current is not None
