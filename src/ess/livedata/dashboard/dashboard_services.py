@@ -130,27 +130,19 @@ class DashboardServices:
         logger.info("orchestrator_update_thread_stopped")
 
     def _update_loop(self) -> None:
-        """Background loop that periodically updates the orchestrator.
-
-        Uses fixed-rate scheduling to maintain consistent update intervals
-        regardless of processing time, preventing drift relative to the
-        session's periodic callbacks.
-        """
-        next_update = time.monotonic()
+        """Background loop that periodically updates the orchestrator."""
         while not self._stop_event.is_set():
+            start = time.monotonic()
             try:
                 self.orchestrator.update()
             except Exception:
                 logger.exception("orchestrator_update_error")
 
-            # Schedule next update at fixed intervals from the start
-            next_update += self._update_interval
-            sleep_time = next_update - time.monotonic()
-            if sleep_time > 0:
-                self._stop_event.wait(sleep_time)
-            else:
-                # We're behind schedule, reset to avoid permanent backlog
-                next_update = time.monotonic()
+            # Only sleep if update was quick (no work to do), to avoid busy-wait.
+            # If there was real work, loop immediately to check for more data.
+            elapsed = time.monotonic() - start
+            if elapsed < 0.01:  # < 10ms means no real work
+                self._stop_event.wait(self._update_interval)
 
     def _setup_data_infrastructure(self) -> None:
         """Set up data services, forwarder, and orchestrator."""
