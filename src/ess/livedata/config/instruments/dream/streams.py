@@ -40,12 +40,16 @@ def _make_dream_detectors() -> StreamLUT:
     }
 
 
+_monitor_names = ['monitor_bunker', 'monitor_cave']
+
 stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
-        'dream', detector_names=list(detector_fakes)
+        'dream', detector_names=list(detector_fakes), monitor_names=_monitor_names
     ),
     StreamingEnv.PROD: StreamMapping(
-        **make_common_stream_mapping_inputs(instrument='dream'),
+        **make_common_stream_mapping_inputs(
+            instrument='dream', monitor_names=_monitor_names
+        ),
         detectors=_make_dream_detectors(),
     ),
 }

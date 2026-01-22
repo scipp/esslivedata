@@ -30,7 +30,7 @@ detector_names = [
 instrument = Instrument(
     name='dream',
     detector_names=detector_names,
-    monitors=['monitor1', 'monitor2'],
+    monitors=['monitor_bunker', 'monitor_cave'],
     source_metadata={
         'mantle_detector': SourceMetadata(
             title='Mantle',
@@ -52,8 +52,8 @@ instrument = Instrument(
             title='SANS',
             description='Small-angle neutron scattering detector',
         ),
-        'monitor1': SourceMetadata(title='Monitor 1'),
-        'monitor2': SourceMetadata(title='Monitor 2'),
+        'monitor_bunker': SourceMetadata(title='Bunker Monitor'),
+        'monitor_cave': SourceMetadata(title='Cave Monitor'),
     },
 )
 
@@ -151,8 +151,8 @@ class InstrumentConfiguration(pydantic.BaseModel):
 class DreamAuxSources(AuxSourcesBase):
     """Auxiliary source names for DREAM powder workflows."""
 
-    cave_monitor: Literal['monitor1'] = pydantic.Field(
-        default='monitor1',
+    cave_monitor: Literal['monitor_cave'] = pydantic.Field(
+        default='monitor_cave',
         description='Cave monitor for normalization.',
     )
 
