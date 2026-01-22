@@ -51,6 +51,9 @@ class SessionPlotManager:
         self._pipes: dict[LayerId, hv.streams.Pipe] = {}
         self._dmaps: dict[LayerId, hv.DynamicMap] = {}
         self._last_versions: dict[LayerId, int] = {}
+        # Track shared pipes for data forwarding (streaming updates)
+        self._shared_pipes: dict[LayerId, hv.streams.Pipe] = {}
+        self._last_data_ids: dict[LayerId, int] = {}
 
     def get_dmap(self, layer_id: LayerId) -> hv.DynamicMap | None:
         """
@@ -112,6 +115,11 @@ class SessionPlotManager:
             self._dmaps[layer_id] = dmap
             self._last_versions[layer_id] = state.version
 
+            # Store shared pipe reference for data forwarding
+            if state.shared_pipe is not None:
+                self._shared_pipes[layer_id] = state.shared_pipe
+                self._last_data_ids[layer_id] = id(state.shared_pipe.data)
+
             logger.debug(
                 "Created session DynamicMap for layer_id=%s (version %d)",
                 layer_id,
@@ -129,10 +137,11 @@ class SessionPlotManager:
 
     def update_pipes(self) -> set[LayerId]:
         """
-        Poll PlotDataService and forward updates to session Pipes.
+        Forward data updates from shared pipes to session Pipes.
 
-        Checks each tracked layer for version changes and sends new data
-        to the corresponding session Pipe.
+        Checks each shared pipe for data changes (via object identity) and
+        sends new data to the corresponding session Pipe. This is how
+        streaming data updates propagate to each browser session.
 
         Returns
         -------
@@ -140,41 +149,31 @@ class SessionPlotManager:
             Set of layer IDs that received updates.
         """
         updated_layers: set[LayerId] = set()
-        updates = self._plot_data_service.get_updates_since(
-            {StateLayerId(str(k)): v for k, v in self._last_versions.items()}
-        )
 
-        for state_layer_id, state in updates.items():
-            # Convert back to LayerId (strip the StateLayerId wrapper)
-            layer_id_str = str(state_layer_id)
-            matching_layer_id = None
-            for lid in self._pipes.keys():
-                if str(lid) == layer_id_str:
-                    matching_layer_id = lid
-                    break
-
-            if matching_layer_id is None:
+        for layer_id, shared_pipe in list(self._shared_pipes.items()):
+            session_pipe = self._pipes.get(layer_id)
+            if session_pipe is None:
                 continue
 
-            pipe = self._pipes.get(matching_layer_id)
-            if pipe is None:
-                continue
+            # Check if data has changed using object identity
+            current_data = shared_pipe.data
+            current_data_id = id(current_data)
+            last_data_id = self._last_data_ids.get(layer_id, 0)
 
-            try:
-                pipe.send(state.initial_data)
-                self._last_versions[matching_layer_id] = state.version
-                updated_layers.add(matching_layer_id)
-                logger.debug(
-                    "Forwarded data update to session pipe for layer_id=%s "
-                    "(version %d)",
-                    matching_layer_id,
-                    state.version,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to forward data to session pipe for layer_id=%s",
-                    matching_layer_id,
-                )
+            if current_data_id != last_data_id:
+                try:
+                    session_pipe.send(current_data)
+                    self._last_data_ids[layer_id] = current_data_id
+                    updated_layers.add(layer_id)
+                    logger.debug(
+                        "Forwarded data update to session pipe for layer_id=%s",
+                        layer_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to forward data to session pipe for layer_id=%s",
+                        layer_id,
+                    )
 
         return updated_layers
 
@@ -188,4 +187,6 @@ class SessionPlotManager:
         self._pipes.clear()
         self._dmaps.clear()
         self._last_versions.clear()
+        self._shared_pipes.clear()
+        self._last_data_ids.clear()
         logger.debug("SessionPlotManager cleaned up")
