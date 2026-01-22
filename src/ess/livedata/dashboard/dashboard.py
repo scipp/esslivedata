@@ -14,6 +14,7 @@ from ess.livedata import ServiceBase
 from .config_store import ConfigStoreManager
 from .dashboard_services import DashboardServices
 from .kafka_transport import DashboardKafkaTransport
+from .session_registry import SessionId, SessionRegistry
 from .transport import NullTransport, Transport
 
 # Global throttling for sliders, etc.
@@ -42,7 +43,11 @@ class DashboardBase(ServiceBase, ABC):
         self._exit_stack = ExitStack()
         self._exit_stack.__enter__()
 
-        self._callback = None
+        # Session registry for tracking active browser sessions
+        self._session_registry = SessionRegistry(
+            stale_timeout_seconds=60.0,
+            on_session_cleanup=self._on_session_cleanup,
+        )
 
         # Config store manager for file-backed persistent UI state (GUI dashboards)
         config_manager = ConfigStoreManager(instrument=instrument, store_type='file')
@@ -110,9 +115,33 @@ class DashboardBase(ServiceBase, ABC):
         """Get the header background color. Override for custom colors."""
         return '#2596be'
 
+    def _get_session_id(self) -> SessionId:
+        """Get the current session ID from Panel state."""
+        session_context = pn.state.curdoc.session_context
+        if session_context is not None:
+            return SessionId(session_context.id)
+        # Fallback for non-session contexts (e.g., testing)
+        return SessionId('unknown')
+
+    def _on_session_cleanup(self, session_id: SessionId) -> None:
+        """
+        Handle cleanup when a session is removed (stale or destroyed).
+
+        Override this method in subclasses to clean up session-specific resources.
+
+        Parameters
+        ----------
+        session_id:
+            The ID of the session being cleaned up.
+        """
+        self._logger.debug("Session cleanup: %s", session_id)
+
     def start_periodic_updates(self, period: int = 500) -> None:
         """
-        Start periodic updates for the dashboard.
+        Start periodic updates for this session.
+
+        Each browser session gets its own independent periodic callback.
+        Callbacks are automatically cleaned up when the session ends.
 
         Parameters
         ----------
@@ -122,20 +151,31 @@ class DashboardBase(ServiceBase, ABC):
             second, this default should reduce UI lag somewhat. If there are no new
             messages, the step function should not do anything.
         """
-        if self._callback is not None:
-            # Callback from previous session, e.g., before reloading the page. As far as
-            # I can tell the garbage collector does clean this up eventually, but
-            # let's be explicit.
-            self._callback.stop()
+        session_id = self._get_session_id()
+        self._session_registry.register(session_id)
 
         def _safe_step():
             try:
+                # Send heartbeat to session registry
+                self._session_registry.heartbeat(session_id)
+                # Periodically check for stale sessions
+                self._session_registry.cleanup_stale_sessions()
+                # Run the actual update step
                 self._step()
             except Exception:
                 self._logger.exception("Error in periodic update step.")
 
-        self._callback = pn.state.add_periodic_callback(_safe_step, period=period)
-        self._logger.info("Periodic updates started")
+        # Create callback for THIS session (Panel manages per-session callbacks)
+        callback = pn.state.add_periodic_callback(_safe_step, period=period)
+
+        # Register cleanup when session is destroyed
+        def _cleanup_session(session_context):
+            self._logger.info("Session destroyed: %s", session_id)
+            self._session_registry.unregister(session_id)
+            callback.stop()
+
+        pn.state.on_session_destroyed(_cleanup_session)
+        self._logger.info("Periodic updates started for session %s", session_id)
 
     def create_layout(self) -> pn.template.MaterialTemplate:
         """Create the basic dashboard layout."""
