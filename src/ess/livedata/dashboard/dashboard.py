@@ -15,6 +15,7 @@ from .config_store import ConfigStoreManager
 from .dashboard_services import DashboardServices
 from .kafka_transport import DashboardKafkaTransport
 from .session_registry import SessionId, SessionRegistry
+from .session_updater import SessionUpdater
 from .transport import NullTransport, Transport
 
 # Global throttling for sliders, etc.
@@ -48,6 +49,9 @@ class DashboardBase(ServiceBase, ABC):
             stale_timeout_seconds=60.0,
             on_session_cleanup=self._on_session_cleanup,
         )
+
+        # Per-session updaters (keyed by session ID)
+        self._session_updaters: dict[SessionId, SessionUpdater] = {}
 
         # Config store manager for file-backed persistent UI state (GUI dashboards)
         config_manager = ConfigStoreManager(instrument=instrument, store_type='file')
@@ -135,6 +139,10 @@ class DashboardBase(ServiceBase, ABC):
             The ID of the session being cleaned up.
         """
         self._logger.debug("Session cleanup: %s", session_id)
+        # Clean up the session updater if it exists
+        if session_id in self._session_updaters:
+            self._session_updaters[session_id].cleanup()
+            del self._session_updaters[session_id]
 
     def start_periodic_updates(self, period: int = 500) -> None:
         """
@@ -154,13 +162,24 @@ class DashboardBase(ServiceBase, ABC):
         session_id = self._get_session_id()
         self._session_registry.register(session_id)
 
+        # Create per-session updater with shared state stores
+        session_updater = SessionUpdater(
+            session_id=session_id,
+            session_registry=self._session_registry,
+            widget_state_store=self._services.widget_state_store,
+            plot_data_service=self._services.plot_data_service,
+            notification_queue=self._services.notification_queue,
+        )
+        self._session_updaters[session_id] = session_updater
+
         def _safe_step():
             try:
-                # Send heartbeat to session registry
-                self._session_registry.heartbeat(session_id)
+                # Run the session updater's periodic update
+                # This handles heartbeats, polls for changes, and shows notifications
+                session_updater.periodic_update()
                 # Periodically check for stale sessions
                 self._session_registry.cleanup_stale_sessions()
-                # Run the actual update step
+                # Run the existing orchestrator update step
                 self._step()
             except Exception:
                 self._logger.exception("Error in periodic update step.")
@@ -172,6 +191,9 @@ class DashboardBase(ServiceBase, ABC):
         def _cleanup_session(session_context):
             self._logger.info("Session destroyed: %s", session_id)
             self._session_registry.unregister(session_id)
+            session_updater.cleanup()
+            if session_id in self._session_updaters:
+                del self._session_updaters[session_id]
             callback.stop()
 
         pn.state.on_session_destroyed(_cleanup_session)

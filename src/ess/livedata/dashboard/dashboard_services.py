@@ -25,6 +25,7 @@ from .plot_orchestrator import PlotOrchestrator
 from .plotting_controller import PlottingController
 from .roi_publisher import ROIPublisher
 from .service_registry import ServiceRegistry
+from .state_stores import NotificationQueue, PlotDataService, WidgetStateStore
 from .stream_manager import StreamManager
 from .transport import Transport
 from .workflow_controller import WorkflowController
@@ -84,6 +85,11 @@ class DashboardServices:
         # Config stores for workflow and plotter persistent UI state
         self.workflow_config_store = config_manager.get_store('workflow_configs')
         self.plotter_config_store = config_manager.get_store('plotter_configs')
+
+        # Shared state stores for multi-session support
+        self.widget_state_store = WidgetStateStore()
+        self.plot_data_service = PlotDataService()
+        self.notification_queue = NotificationQueue()
 
         # Setup all services
         self._setup_data_infrastructure()
