@@ -415,8 +415,8 @@ class RectanglesRequestPlotter(Plotter):
 | Component | Current | Proposed | Change Required |
 |-----------|---------|----------|-----------------|
 | Periodic callback | Shared (bug) | Per-session | **Fix bug** |
-| Widget state sync | Subscriptions | **Keep subscriptions** | None |
-| `pn.io.hold()` | Wraps `orchestrator.update()` | Move to per-session polling | **Move** |
+| Widget state sync | Subscriptions | Polling via WidgetStateStore | **Refactor** |
+| `pn.io.hold()` | Scattered across callbacks | Single place in SessionUpdater | **Consolidate** |
 | Plotter interface | Single `__call__` method | Two-stage `compute`/`present` | **Refactor** |
 | Plotter execution | All in PlotOrchestrator | `compute` in background, `present` per-session | **Split** |
 | Plot state storage | In DynamicMap | In PlotDataService | **New service** |
@@ -476,6 +476,269 @@ This pattern ensures:
 - Orchestrator callbacks are lightweight (just append to a list)
 - Session-bound components are created in the correct session context
 - Each session processes its own pending setups independently
+
+## Unified Polling Architecture
+
+### Why Subscriptions Are Problematic
+
+The current architecture uses subscription callbacks for cross-session state synchronization:
+
+```python
+# Current pattern in JobOrchestrator
+def _notify_staged_changed(self, workflow_id: WorkflowId) -> None:
+    for subscription_id, callbacks in self._widget_subscriptions.items():
+        if callbacks.on_staged_changed is not None:
+            callbacks.on_staged_changed(workflow_id)  # Runs in UNKNOWN context!
+```
+
+This causes several problems:
+
+1. **Wrong session context**: When Session B's periodic callback triggers `orchestrator.update()`, all subscription callbacks run in Session B's context. Session A's widget callbacks execute in Session B's Bokeh document context.
+
+2. **Scattered `pn.io.hold()`**: Every callback that updates multiple widgets must remember to wrap updates in `pn.io.hold()`. Currently there are 18+ uses scattered across the codebase.
+
+3. **Threading incompatibility**: If orchestrator processing moves to a background thread (for performance), subscription callbacks would run in the wrong thread entirely.
+
+4. **Batching lost**: Each subscription callback triggers separately, preventing efficient batching of related updates.
+
+### The Two Categories of UI Updates
+
+UI updates fall into two distinct categories:
+
+**Cross-session state** (workflow status, backend status, plot data):
+- Triggered by shared services (JobOrchestrator, DataService, etc.)
+- Must update widgets in ALL browser sessions
+- Currently uses subscriptions → problematic
+
+**Session-local state** (modal selections, expand/collapse, grid initialization):
+- Triggered by user actions in ONE session
+- Only affects that session's widgets
+- Direct widget updates → works fine, still needs local `pn.io.hold()` for batching
+
+The key insight: **cross-session state updates should use polling, not subscriptions**.
+
+### WidgetStateStore: Unified State for Widget Updates
+
+Instead of subscription callbacks, services update a shared state store:
+
+```python
+@dataclass
+class StateEntry:
+    state: Any
+    version: int
+
+class WidgetStateStore:
+    """Shared state store for all widget-relevant state changes."""
+
+    def __init__(self):
+        self._states: dict[StateKey, StateEntry] = {}
+        self._global_version = 0
+        self._lock = threading.Lock()
+        self._in_transaction = False
+
+    @contextmanager
+    def transaction(self):
+        """Batch multiple updates into a single version bump."""
+        with self._lock:
+            self._in_transaction = True
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._in_transaction = False
+                self._global_version += 1
+
+    def update(self, key: StateKey, state: Any) -> None:
+        """Called by services when state changes."""
+        with self._lock:
+            self._states[key] = StateEntry(state=state, version=self._global_version)
+            if not self._in_transaction:
+                self._global_version += 1
+
+    def get_changes_since(self, last_version: int) -> tuple[int, dict[StateKey, Any]]:
+        """Called by each session's periodic callback."""
+        with self._lock:
+            changed = {
+                k: e.state for k, e in self._states.items()
+                if e.version > last_version
+            }
+            return self._global_version, changed
+```
+
+Services use transactions to batch related updates:
+
+```python
+# In JobOrchestrator.commit_workflow()
+with self._widget_state_store.transaction():
+    self._widget_state_store.update(
+        StateKey("workflow_status", workflow_id),
+        WorkflowStatusState(is_running=True, job_number=job_set.job_number)
+    )
+    self._widget_state_store.update(
+        StateKey("staging", workflow_id),
+        StagingState(staged_jobs=state.staged_jobs)
+    )
+# Single version bump for both updates
+```
+
+### SessionUpdater: Single Entry Point for All Updates
+
+Each session has a `SessionUpdater` that polls all state stores in one place:
+
+```python
+class SessionUpdater:
+    """Per-session component that drives all widget updates."""
+
+    def __init__(
+        self,
+        session_id: str,
+        plot_data_service: PlotDataService,
+        widget_state_store: WidgetStateStore,
+        notification_queue: NotificationQueue,
+        session_registry: SessionRegistry,
+    ):
+        self._session_id = session_id
+        self._plot_data_service = plot_data_service
+        self._widget_state_store = widget_state_store
+        self._notification_queue = notification_queue
+        self._session_registry = session_registry
+
+        # Track last seen versions
+        self._last_widget_state_version = 0
+        self._last_plot_versions: dict[LayerId, int] = {}
+
+        # Widgets to update (set during session setup)
+        self._widgets: dict[str, Any] = {}
+
+    def periodic_update(self) -> None:
+        """
+        Called from this session's periodic callback.
+
+        This is THE SINGLE PLACE where cross-session state updates happen.
+        All updates are batched in one pn.io.hold() block.
+        """
+        # Heartbeat for stale session detection
+        self._session_registry.heartbeat(self._session_id)
+
+        # Collect all pending updates
+        widget_changes = self._poll_widget_state()
+        plot_updates = self._poll_plot_updates()
+        notifications = self._poll_notifications()
+
+        # Apply all updates in one batch
+        if widget_changes or plot_updates or notifications:
+            with pn.io.hold():  # ← THE SINGLE BATCHING POINT
+                self._apply_widget_state_changes(widget_changes)
+                self._apply_plot_updates(plot_updates)
+                self._show_notifications(notifications)
+
+    def _poll_widget_state(self) -> dict[StateKey, Any]:
+        """Poll WidgetStateStore for changes."""
+        new_version, changes = self._widget_state_store.get_changes_since(
+            self._last_widget_state_version
+        )
+        self._last_widget_state_version = new_version
+        return changes
+
+    def _poll_plot_updates(self) -> list[tuple[LayerId, Any]]:
+        """Poll PlotDataService for version changes."""
+        updates = []
+        for layer_id, pipe in self._session_pipes.items():
+            current_version = self._plot_data_service.get_version(layer_id)
+            if current_version > self._last_plot_versions.get(layer_id, 0):
+                layer_state = self._plot_data_service.get(layer_id)
+                if layer_state:
+                    updates.append((layer_id, layer_state.state))
+                    self._last_plot_versions[layer_id] = current_version
+        return updates
+
+    def _poll_notifications(self) -> list[NotificationEvent]:
+        """Poll NotificationQueue for new events."""
+        return self._notification_queue.get_new_events(self._session_id)
+
+    def _apply_widget_state_changes(self, changes: dict[StateKey, Any]) -> None:
+        """Dispatch state changes to appropriate widgets."""
+        for key, state in changes.items():
+            if key.type == "workflow_status":
+                self._widgets["workflow_status"].update_status(key.id, state)
+            elif key.type == "staging":
+                self._widgets["workflow_status"].update_staging(key.id, state)
+            elif key.type == "backend_status":
+                self._widgets["backend_status"].update(state)
+            # ... etc
+
+    def _apply_plot_updates(self, updates: list[tuple[LayerId, Any]]) -> None:
+        """Send new plot state to session-local pipes."""
+        for layer_id, state in updates:
+            self._session_pipes[layer_id].send(state)
+
+    def _show_notifications(self, notifications: list[NotificationEvent]) -> None:
+        """Display notifications in this session."""
+        for event in notifications:
+            if event.level == "success":
+                pn.state.notifications.success(event.message)
+            elif event.level == "error":
+                pn.state.notifications.error(event.message)
+            elif event.level == "warning":
+                pn.state.notifications.warning(event.message)
+```
+
+### Store Separation: Different Data, Same Loop
+
+The architecture uses separate stores for different data types, but polls them in the same loop:
+
+| Store | Contents | Update Frequency | Size |
+|-------|----------|------------------|------|
+| `PlotDataService` | hv.Elements per layer | High (data arrival, ~2Hz) | Large |
+| `WidgetStateStore` | Workflow status, backend status, staging | Low (user/backend events) | Small |
+| `NotificationQueue` | Transient notifications | Low (command ACKs) | Small |
+
+**Why separate stores:**
+- Plot data uses specialized versioning per-layer (not global)
+- Notifications are append-only with cursor-based consumption
+- Widget state is simple key-value with global versioning
+
+**Why same polling loop:**
+- Single `pn.io.hold()` batches all updates
+- Consistent update timing
+- Simpler mental model
+
+### Eliminating Scattered `pn.io.hold()`
+
+The polling architecture consolidates `pn.io.hold()` usage:
+
+**Before (18+ scattered uses):**
+```python
+# In BackendStatusWidget._on_status_update()
+with pn.io.hold():
+    self._summary.object = self._format_summary()
+    self._update_worker_list()
+
+# In WorkflowStatusWidget._on_staged_changed()
+with pn.io.hold():
+    self._build_widget()
+
+# In dashboard._step()
+with pn.io.hold():
+    self._services.orchestrator.update()
+
+# ... 15+ more places
+```
+
+**After (single location for cross-session updates):**
+```python
+# In SessionUpdater.periodic_update()
+if widget_changes or plot_updates or notifications:
+    with pn.io.hold():
+        self._apply_widget_state_changes(widget_changes)
+        self._apply_plot_updates(plot_updates)
+        self._show_notifications(notifications)
+```
+
+**What remains:** Session-local UI batching (e.g., "Expand All" button) still needs `pn.io.hold()` at call sites. These are:
+- Clearly local operations (user clicked in THIS session)
+- Not affected by threading/context issues
+- Natural to think about (looping over widgets)
 
 ## Session Lifecycle and Cleanup
 
@@ -637,9 +900,11 @@ Add `SessionRegistry` to track active sessions via heartbeats. Each session's pe
 
 This provides defense-in-depth for session cleanup when `on_session_destroyed` fails.
 
-### Phase 2: Notification Event Queue
+### Phase 2: State Stores (WidgetStateStore + NotificationQueue)
 
-Replace direct notification callbacks with an event queue:
+Replace subscription callbacks with polling-based state stores. This phase introduces two complementary stores:
+
+**NotificationQueue** - for transient notifications (command success/error):
 
 ```python
 @dataclass
@@ -704,14 +969,20 @@ class NotificationQueue:
                 self._events = self._events[keep_from:]
 ```
 
-Changes to JobOrchestrator:
-- Remove `on_command_success` and `on_command_error` from `WidgetLifecycleCallbacks`
-- Keep `on_staged_changed`, `on_workflow_committed`, `on_workflow_stopped` (state sync works)
-- Push notification events to queue instead of calling callbacks
-- Call `notification_queue.register_session()` when session starts
-- Call `notification_queue.unregister_session()` on session cleanup
+**WidgetStateStore** - for widget state updates (workflow status, staging, backend status):
 
-Each session's periodic callback calls `get_new_events(session_id)` and shows notifications.
+See the WidgetStateStore implementation in the "Unified Polling Architecture" section above.
+
+**Changes to JobOrchestrator:**
+- Remove `on_command_success` and `on_command_error` from `WidgetLifecycleCallbacks`
+- Remove `on_staged_changed`, `on_workflow_committed`, `on_workflow_stopped` (replaced by polling)
+- Push notification events to NotificationQueue
+- Update WidgetStateStore when workflow state changes
+- Use transactions to batch related state updates
+
+**Changes to other services:**
+- ServiceRegistry updates WidgetStateStore for backend status changes
+- PlotOrchestrator uses PlotDataService (Phase 4) for plot state
 
 ### Phase 3: Plotter/Presenter Protocol
 
@@ -828,12 +1099,20 @@ class PlotDataService:
             return data.version if data else 0
 ```
 
-### Phase 5: Restructure PlotOrchestrator and Widgets
+### Phase 5: SessionUpdater and Widget Restructuring
+
+This phase brings everything together with the unified `SessionUpdater` pattern.
+
+**SessionUpdater** (new component):
+- Single entry point for all per-session updates
+- Polls PlotDataService, WidgetStateStore, and NotificationQueue
+- Wraps all updates in a single `pn.io.hold()` block
+- See full implementation in "Unified Polling Architecture" section above
 
 **PlotOrchestrator changes:**
 - Call `plotter.compute(data)` when data arrives
 - Store result in PlotDataService
-- Notify widgets that state is available (not the DynamicMap itself)
+- Remove direct widget notification callbacks
 
 **PlotGridTabs changes:**
 - Track session-local Pipes, Presenters, and DynamicMaps per layer
@@ -933,6 +1212,13 @@ This mechanism already exists in the current implementation and continues to wor
 ### Before (Broken)
 
 ```
+Shared Services (JobOrchestrator, PlotOrchestrator, etc.)
+    └── Process data/events
+    └── Fire subscription callbacks directly
+    └── Callbacks run in UNKNOWN session context
+    └── Each callback needs pn.io.hold() (scattered)
+    └── Creates session-bound components in wrong context
+
 Singleton PlotOrchestrator
     └── Creates Plotter
     └── Calls plotter(data) → hv.Element
@@ -944,11 +1230,24 @@ Singleton PlotOrchestrator
 ### After (Fixed)
 
 ```
+Shared Services
+    └── Process data/events
+    └── Update state stores (PlotDataService, WidgetStateStore, NotificationQueue)
+    └── NO direct widget callbacks
+    └── Thread-safe writes
+
+Per-Session SessionUpdater (in periodic callback)
+    └── Polls all state stores for changes
+    └── with pn.io.hold():  # SINGLE BATCHING POINT
+        └── Apply widget state changes
+        └── Apply plot updates (pipe.send)
+        └── Show notifications
+    └── Correct session context GUARANTEED
+
 Singleton PlotOrchestrator
     └── 1 shared Plotter per layer
     └── Calls plotter.compute(data) → PlotState
     └── Stores PlotState in PlotDataService (with version)
-    └── Notifies widgets "state available" (passes plotter reference)
 
 Per-Session Widget (initial setup, once per layer)
     └── Gets PlotState from PlotDataService
@@ -956,37 +1255,49 @@ Per-Session Widget (initial setup, once per layer)
     └── Creates session-local Pipe(data=PlotState)
     └── Calls presenter.present(pipe) → session-local DynamicMap
     └── Stores presenter, pipe, dmap, version
-
-Per-Session Widget (periodic callback)
-    └── Polls PlotDataService for version changes
-    └── If changed: pipe.send(new_state)
 ```
 
 ## Summary
 
-The multi-session issues stem from session-bound components (Pipe, DynamicMap, EditStream, notifications) being created in shared singleton code. The fix introduces a **Plotter/Presenter architecture**:
+The multi-session issues stem from session-bound components (Pipe, DynamicMap, EditStream, notifications) being created in shared singleton code. The fix introduces two key architectural changes:
 
-1. **Plotter** (shared): `compute()` transforms data into shareable PlotState
-2. **Presenter** (per-session): `present()` creates session-bound DynamicMap
+### 1. Plotter/Presenter Architecture (for plots)
 
-Key design principles:
-- `plotter.compute(data)` - called on shared instance, returns PlotState
-- `plotter.create_presenter()` - factory returns fresh Presenter per session
-- `presenter.present(pipe)` - creates session-local DynamicMap
+- **Plotter** (shared): `compute()` transforms data into shareable PlotState
+- **Presenter** (per-session): `present()` creates session-bound DynamicMap
 - `DefaultPresenter` handles most plotters automatically
 - ROI plotters override `create_presenter()` for custom behavior
 
-**Critical constraint**: Session-bound components must be created in the correct session context. Orchestrator callbacks run in an unknown session context, so they must only queue setup requests. Actual setup happens in each session's periodic callback.
+### 2. Unified Polling Architecture (for all updates)
 
-**Minimal migration**: Base class `__call__` renamed to `compute()` - subclass `plot()` methods unchanged.
+- **State stores** (PlotDataService, WidgetStateStore, NotificationQueue) hold versioned state
+- **SessionUpdater** polls all stores in each session's periodic callback
+- **Single `pn.io.hold()`** batches all cross-session updates
+- Eliminates scattered `pn.io.hold()` across subscription callbacks
 
-Implementation phases:
+### Key Design Principles
+
+- **Session-bound components** must be created in the correct session context
+- **Orchestrator callbacks** only queue setup requests (don't create Pipes/DynamicMaps)
+- **Services update state stores**, not widgets directly
+- **Sessions poll for changes** in their own periodic callback
+- **Minimal migration** for plotters: rename `__call__` to `compute()`, subclass `plot()` unchanged
+
+### Benefits
+
+- Correct session context guaranteed for all widget updates
+- Thread-safe by design (services write, sessions poll)
+- Consistent batching of related updates
+- Simpler mental model (state stores + polling vs scattered subscriptions)
+
+### Implementation Phases
+
 1. Fix periodic callback bug (remove shared `self._callback`)
 1.5. Session registry and stale cleanup (defense-in-depth)
-2. Notification event queue (decouple from session context)
+2. State stores (WidgetStateStore + NotificationQueue)
 3. Plotter/Presenter protocol (two-stage architecture)
 4. PlotDataService for computed state (version-based change detection)
-5. Restructure PlotOrchestrator and widgets (deferred setup pattern)
+5. SessionUpdater and widget restructuring (unified polling)
 
 ## References
 
