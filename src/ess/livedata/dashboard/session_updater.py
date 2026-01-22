@@ -163,21 +163,20 @@ class SessionUpdater:
         plot_updates = self._poll_plot_updates()
         notifications = self._poll_notifications()
 
-        # Apply changes in a single batched update
-        if widget_changes or plot_updates or notifications:
-            with pn.io.hold():
-                self._apply_widget_state_changes(widget_changes)
-                self._apply_plot_updates(plot_updates)
-                self._show_notifications(notifications)
+        # Apply all changes in a single batched update to avoid staggered rendering
+        with pn.io.hold():
+            self._apply_widget_state_changes(widget_changes)
+            self._apply_plot_updates(plot_updates)
+            self._show_notifications(notifications)
 
-        # Run custom handlers (e.g., deferred plot setup) in correct session context
-        for handler in self._custom_handlers:
-            try:
-                handler()
-            except Exception:
-                logger.exception(
-                    "Error in custom handler for session %s", self._session_id
-                )
+            # Run custom handlers (e.g., deferred plot setup) in correct session context
+            for handler in self._custom_handlers:
+                try:
+                    handler()
+                except Exception:
+                    logger.exception(
+                        "Error in custom handler for session %s", self._session_id
+                    )
 
     def _poll_widget_state(self) -> dict[StateKey, Any]:
         """Poll WidgetStateStore for changes since last update."""
