@@ -82,6 +82,9 @@ class SessionUpdater:
         if self._notification_queue is not None:
             self._notification_queue.register_session(session_id)
 
+        # Auto-register this session with the registry
+        self._session_registry.register(session_id, self)
+
         logger.debug("SessionUpdater created for session %s", session_id)
 
     def register_widget_handler(

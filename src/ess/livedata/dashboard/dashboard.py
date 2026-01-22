@@ -125,7 +125,7 @@ class DashboardBase(ServiceBase, ABC):
         session_id = self._get_session_id()
         session_registry = self._services.session_registry
 
-        # Create per-session updater with shared state stores
+        # Create per-session updater (auto-registers with the session registry)
         session_updater = SessionUpdater(
             session_id=session_id,
             session_registry=session_registry,
@@ -133,9 +133,6 @@ class DashboardBase(ServiceBase, ABC):
             plot_data_service=self._services.plot_data_service,
             notification_queue=self._services.notification_queue,
         )
-
-        # Register session with its updater (registry handles cleanup)
-        session_registry.register(session_id, session_updater)
 
         # Wire up PlotGridTabs to session services for multi-session support
         if hasattr(self, '_plot_grid_tabs') and self._plot_grid_tabs is not None:
