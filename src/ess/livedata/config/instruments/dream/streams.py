@@ -9,6 +9,9 @@ from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
 from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
 
+# Source names matching NeXus group names (single source of truth)
+monitor_names = ['monitor_bunker', 'monitor_cave']
+
 detector_fakes = {
     'mantle_detector': (229377, 720896),
     'endcap_backward_detector': (71618, 229376),
@@ -16,6 +19,7 @@ detector_fakes = {
     'high_resolution_detector': (1122337, 1523680),  # Note: Not consecutive!
     'sans_detector': (720929, 1122272),
 }
+detector_names = list(detector_fakes)
 
 
 def _make_dream_detectors() -> StreamLUT:
@@ -40,15 +44,13 @@ def _make_dream_detectors() -> StreamLUT:
     }
 
 
-_monitor_names = ['monitor_bunker', 'monitor_cave']
-
 stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
-        'dream', detector_names=list(detector_fakes), monitor_names=_monitor_names
+        'dream', detector_names=detector_names, monitor_names=monitor_names
     ),
     StreamingEnv.PROD: StreamMapping(
         **make_common_stream_mapping_inputs(
-            instrument='dream', monitor_names=_monitor_names
+            instrument='dream', monitor_names=monitor_names
         ),
         detectors=_make_dream_detectors(),
     ),
