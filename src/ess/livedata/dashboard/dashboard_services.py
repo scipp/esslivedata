@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Dashboard service composition and setup."""
 
+import threading
 from contextlib import ExitStack
 
 import scipp as sc
@@ -83,6 +84,11 @@ class DashboardServices:
         self.plot_data_service = PlotDataService()
         self.notification_queue = NotificationQueue()
 
+        # Background update thread state
+        self._update_thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+        self._update_interval = 0.5  # seconds
+
         # Setup all services
         self._setup_data_infrastructure()
         self._setup_workflow_management()
@@ -91,12 +97,45 @@ class DashboardServices:
         logger.info("DashboardServices initialized for %s", instrument)
 
     def start(self) -> None:
-        """Start background tasks (e.g., message polling)."""
+        """Start background tasks (message polling and orchestrator updates)."""
         self._transport.start()
+        self._start_update_thread()
 
     def stop(self) -> None:
-        """Stop background tasks (e.g., message polling)."""
+        """Stop background tasks (message polling and orchestrator updates)."""
+        self._stop_update_thread()
         self._transport.stop()
+
+    def _start_update_thread(self) -> None:
+        """Start the background thread that runs orchestrator updates."""
+        if self._update_thread is not None:
+            return
+        self._stop_event.clear()
+        self._update_thread = threading.Thread(
+            target=self._update_loop, daemon=True, name="orchestrator-update"
+        )
+        self._update_thread.start()
+        logger.info("orchestrator_update_thread_started")
+
+    def _stop_update_thread(self) -> None:
+        """Stop the background orchestrator update thread."""
+        if self._update_thread is None:
+            return
+        self._stop_event.set()
+        self._update_thread.join(timeout=5.0)
+        if self._update_thread.is_alive():
+            logger.warning("orchestrator_update_thread_stop_timeout")
+        self._update_thread = None
+        logger.info("orchestrator_update_thread_stopped")
+
+    def _update_loop(self) -> None:
+        """Background loop that periodically updates the orchestrator."""
+        while not self._stop_event.is_set():
+            try:
+                self.orchestrator.update()
+            except Exception:
+                logger.exception("orchestrator_update_error")
+            self._stop_event.wait(self._update_interval)
 
     def _setup_data_infrastructure(self) -> None:
         """Set up data services, forwarder, and orchestrator."""

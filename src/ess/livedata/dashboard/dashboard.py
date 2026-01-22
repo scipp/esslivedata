@@ -100,16 +100,6 @@ class DashboardBase(ServiceBase, ABC):
     def create_main_content(self) -> pn.viewable.Viewable:
         """Override this method to create the main dashboard content."""
 
-    def _step(self):
-        """Step function for periodic updates."""
-        # We use hold() to ensure that the UI does not update repeatedly when multiple
-        # messages are processed in a single step. This is important to avoid, e.g.,
-        # multiple lines in the same plot, or different plots updating in short
-        # succession, which is visually distracting.
-        # Furthermore, this improves performance by reducing the number of re-renders.
-        with pn.io.hold():
-            self._services.orchestrator.update()
-
     def get_dashboard_title(self) -> str:
         """Get the dashboard title. Override for custom titles."""
         return f"{self._instrument.upper()} — Live Data"
@@ -185,8 +175,6 @@ class DashboardBase(ServiceBase, ABC):
                 session_updater.periodic_update()
                 # Periodically check for stale sessions
                 self._session_registry.cleanup_stale_sessions()
-                # Run the existing orchestrator update step
-                self._step()
             except Exception:
                 self._logger.exception("Error in periodic update step.")
 
