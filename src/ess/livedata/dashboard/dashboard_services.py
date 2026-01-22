@@ -3,6 +3,7 @@
 """Dashboard service composition and setup."""
 
 import threading
+import time
 from contextlib import ExitStack
 
 import scipp as sc
@@ -87,7 +88,7 @@ class DashboardServices:
         # Background update thread state
         self._update_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
-        self._update_interval = 0.5  # seconds
+        self._update_interval = 0.2  # seconds
 
         # Setup all services
         self._setup_data_infrastructure()
@@ -129,13 +130,27 @@ class DashboardServices:
         logger.info("orchestrator_update_thread_stopped")
 
     def _update_loop(self) -> None:
-        """Background loop that periodically updates the orchestrator."""
+        """Background loop that periodically updates the orchestrator.
+
+        Uses fixed-rate scheduling to maintain consistent update intervals
+        regardless of processing time, preventing drift relative to the
+        session's periodic callbacks.
+        """
+        next_update = time.monotonic()
         while not self._stop_event.is_set():
             try:
                 self.orchestrator.update()
             except Exception:
                 logger.exception("orchestrator_update_error")
-            self._stop_event.wait(self._update_interval)
+
+            # Schedule next update at fixed intervals from the start
+            next_update += self._update_interval
+            sleep_time = next_update - time.monotonic()
+            if sleep_time > 0:
+                self._stop_event.wait(sleep_time)
+            else:
+                # We're behind schedule, reset to avoid permanent backlog
+                next_update = time.monotonic()
 
     def _setup_data_infrastructure(self) -> None:
         """Set up data services, forwarder, and orchestrator."""
