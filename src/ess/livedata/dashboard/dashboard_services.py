@@ -151,6 +151,7 @@ class DashboardServices:
             config_store=plot_config_store,
             raw_templates=raw_templates,
             instrument_config=self.instrument_config,
+            plot_data_service=self.plot_data_service,
         )
         logger.info("PlotOrchestrator setup complete")
 
@@ -166,6 +167,7 @@ class DashboardServices:
             workflow_registry=self.processor_factory,
             config_store=self.workflow_config_store,
             instrument_config=self.instrument_config,
+            notification_queue=self.notification_queue,
         )
         self.workflow_controller = WorkflowController(
             job_orchestrator=self.job_orchestrator,

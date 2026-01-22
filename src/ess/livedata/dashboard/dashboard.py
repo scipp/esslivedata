@@ -172,6 +172,13 @@ class DashboardBase(ServiceBase, ABC):
         )
         self._session_updaters[session_id] = session_updater
 
+        # Wire up PlotGridTabs to session services for multi-session support
+        if hasattr(self, '_plot_grid_tabs') and self._plot_grid_tabs is not None:
+            self._plot_grid_tabs.set_session_services(
+                plot_data_service=self._services.plot_data_service,
+                session_updater=session_updater,
+            )
+
         def _safe_step():
             try:
                 # Run the session updater's periodic update

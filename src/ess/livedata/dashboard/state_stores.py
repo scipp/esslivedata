@@ -330,10 +330,22 @@ class NotificationQueue:
 
 @dataclass
 class PlotLayerState:
-    """State for a single plot layer with version tracking."""
+    """State for a single plot layer with version tracking.
+
+    Stores the computed plot state along with references needed for
+    per-session component creation:
+
+    - state: The computed HoloViews elements from plotter.compute()
+    - plotter: Reference to the Plotter instance for create_presenter()
+    - initial_data: Data for initializing per-session Pipes
+    - shared_pipe: Reference to the shared Pipe for forwarding data updates
+    """
 
     state: Any  # The PlotState (computed result from plotter.compute())
     version: int = 0
+    plotter: Any = None  # Reference to Plotter for create_presenter()
+    initial_data: Any = None  # Data for initializing per-session Pipes
+    shared_pipe: Any = None  # Reference to shared Pipe for data updates
 
 
 LayerId = NewType('LayerId', str)
@@ -353,7 +365,15 @@ class PlotDataService:
         self._layers: dict[LayerId, PlotLayerState] = {}
         self._lock = threading.Lock()
 
-    def update(self, layer_id: LayerId, state: Any) -> None:
+    def update(
+        self,
+        layer_id: LayerId,
+        state: Any,
+        *,
+        plotter: Any = None,
+        initial_data: Any = None,
+        shared_pipe: Any = None,
+    ) -> None:
         """
         Update state for a layer.
 
@@ -363,15 +383,31 @@ class PlotDataService:
             Layer ID to update.
         state:
             New computed plot state.
+        plotter:
+            Optional plotter instance for per-session presenter creation.
+        initial_data:
+            Optional initial data for per-session Pipe initialization.
+        shared_pipe:
+            Optional reference to the shared Pipe for forwarding data updates.
         """
         with self._lock:
             if layer_id in self._layers:
                 current = self._layers[layer_id]
                 self._layers[layer_id] = PlotLayerState(
-                    state=state, version=current.version + 1
+                    state=state,
+                    version=current.version + 1,
+                    plotter=plotter,
+                    initial_data=initial_data,
+                    shared_pipe=shared_pipe,
                 )
             else:
-                self._layers[layer_id] = PlotLayerState(state=state, version=1)
+                self._layers[layer_id] = PlotLayerState(
+                    state=state,
+                    version=1,
+                    plotter=plotter,
+                    initial_data=initial_data,
+                    shared_pipe=shared_pipe,
+                )
             logger.debug(
                 "Updated plot state for %s at version %d",
                 layer_id,

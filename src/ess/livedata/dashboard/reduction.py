@@ -150,7 +150,8 @@ class ReductionApp(DashboardBase):
             service_registry=self._services.service_registry,
         )
 
-        plot_grid_tabs = PlotGridTabs(
+        # Store reference for multi-session wiring in start_periodic_updates()
+        self._plot_grid_tabs = PlotGridTabs(
             plot_orchestrator=self._services.plot_orchestrator,
             # Temporary hack, will likely get this from JobOrchestrator, or make
             # registry more accessible.
@@ -161,7 +162,7 @@ class ReductionApp(DashboardBase):
             backend_status_widget=backend_status_widget,
         )
 
-        return plot_grid_tabs.panel
+        return self._plot_grid_tabs.panel
 
 
 def get_arg_parser() -> argparse.ArgumentParser:

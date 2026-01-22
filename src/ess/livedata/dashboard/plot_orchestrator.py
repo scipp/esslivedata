@@ -32,6 +32,8 @@ from .data_service import DataService
 from .job_orchestrator import WorkflowCallbacks
 from .layer_subscription import LayerSubscription, SubscriptionReady
 from .plotting_controller import PlottingController
+from .state_stores import LayerId as StateLayerId
+from .state_stores import PlotDataService
 
 if TYPE_CHECKING:
     import holoviews as hv
@@ -276,6 +278,7 @@ class PlotOrchestrator:
         config_store: ConfigStore | None = None,
         raw_templates: Sequence[dict[str, Any]] = (),
         instrument_config: Instrument | None = None,
+        plot_data_service: PlotDataService | None = None,
     ) -> None:
         """
         Initialize the plot orchestrator.
@@ -297,6 +300,10 @@ class PlotOrchestrator:
             during initialization and made available via get_available_templates().
         instrument_config
             Optional instrument configuration for source metadata lookup.
+        plot_data_service
+            Optional service for storing plot state for multi-session support.
+            When provided, plot state is stored here instead of creating
+            session-bound DynamicMaps directly.
         """
         self._plotting_controller = plotting_controller
         self._job_orchestrator = job_orchestrator
@@ -304,6 +311,7 @@ class PlotOrchestrator:
         self._instrument = instrument
         self._instrument_config = instrument_config
         self._config_store = config_store
+        self._plot_data_service = plot_data_service
         self._logger = logging.getLogger(__name__)
 
         self._grids: dict[GridId, PlotGridConfig] = {}
@@ -786,21 +794,51 @@ class PlotOrchestrator:
                 'Data arrived for layer_id=%s, creating plot',
                 layer_id,
             )
-            # Create the plot with the now-populated pipe
             try:
-                plot = self._plotting_controller.create_plot_from_pipeline(
-                    plot_name=config.plot_name,
-                    params=config.params,
-                    pipe=pipe,
-                )
-                # Store layer state
-                self._layer_state[layer_id] = LayerState(plot=plot)
+                # Multi-session path: store plotter and data for per-session creation
+                if self._plot_data_service is not None:
+                    from .plotting import plotter_registry
 
-                # Compose and notify
-                layer_states, composed = self.get_cell_state(cell_id)
-                self._notify_cell_updated(
-                    grid_id, cell_id, cell, layer_states, composed
-                )
+                    plotter = plotter_registry.create_plotter(
+                        config.plot_name, params=config.params
+                    )
+                    # Initialize plotter with data if supported
+                    if hasattr(plotter, 'initialize_from_data'):
+                        plotter.initialize_from_data(pipe.data)
+
+                    # Store in PlotDataService for per-session DynamicMap creation
+                    # Include shared_pipe reference for forwarding data updates
+                    self._plot_data_service.update(
+                        StateLayerId(str(layer_id)),
+                        state=None,  # Computed state placeholder
+                        plotter=plotter,
+                        initial_data=pipe.data,
+                        shared_pipe=pipe,  # Store pipe for data forwarding
+                    )
+
+                    # Mark layer as ready (no DynamicMap yet - deferred to session)
+                    self._layer_state[layer_id] = LayerState(plot=None)
+
+                    # Notify - PlotGridTabs will defer actual plot creation
+                    layer_states, composed = self.get_cell_state(cell_id)
+                    self._notify_cell_updated(
+                        grid_id, cell_id, cell, layer_states, composed
+                    )
+                else:
+                    # Legacy path: create DynamicMap directly
+                    plot = self._plotting_controller.create_plot_from_pipeline(
+                        plot_name=config.plot_name,
+                        params=config.params,
+                        pipe=pipe,
+                    )
+                    # Store layer state
+                    self._layer_state[layer_id] = LayerState(plot=plot)
+
+                    # Compose and notify
+                    layer_states, composed = self.get_cell_state(cell_id)
+                    self._notify_cell_updated(
+                        grid_id, cell_id, cell, layer_states, composed
+                    )
             except Exception:
                 error_msg = traceback.format_exc()
                 self._logger.exception(

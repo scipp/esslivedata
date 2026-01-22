@@ -76,6 +76,7 @@ class SessionUpdater:
         # Callbacks for applying updates
         self._widget_change_handlers: dict[StateKey, Callable[[Any], None]] = {}
         self._plot_update_handlers: dict[LayerId, Callable[[PlotLayerState], None]] = {}
+        self._custom_handlers: list[Callable[[], None]] = []
 
         # Register with notification queue
         if self._notification_queue is not None:
@@ -127,6 +128,26 @@ class SessionUpdater:
         self._plot_update_handlers.pop(layer_id, None)
         self._last_plot_versions.pop(layer_id, None)
 
+    def register_custom_handler(self, handler: Callable[[], None]) -> None:
+        """
+        Register a custom handler to be called during periodic updates.
+
+        Custom handlers are called in the correct session context during
+        the periodic update cycle. Use this for processing pending setups
+        or other session-specific work.
+
+        Parameters
+        ----------
+        handler:
+            Callback to invoke during periodic updates.
+        """
+        self._custom_handlers.append(handler)
+
+    def unregister_custom_handler(self, handler: Callable[[], None]) -> None:
+        """Unregister a custom handler."""
+        if handler in self._custom_handlers:
+            self._custom_handlers.remove(handler)
+
     def periodic_update(self) -> None:
         """
         Called from this session's periodic callback.
@@ -148,6 +169,15 @@ class SessionUpdater:
                 self._apply_widget_state_changes(widget_changes)
                 self._apply_plot_updates(plot_updates)
                 self._show_notifications(notifications)
+
+        # Run custom handlers (e.g., deferred plot setup) in correct session context
+        for handler in self._custom_handlers:
+            try:
+                handler()
+            except Exception:
+                logger.exception(
+                    "Error in custom handler for session %s", self._session_id
+                )
 
     def _poll_widget_state(self) -> dict[StateKey, Any]:
         """Poll WidgetStateStore for changes since last update."""
@@ -244,6 +274,7 @@ class SessionUpdater:
         self._widget_change_handlers.clear()
         self._plot_update_handlers.clear()
         self._last_plot_versions.clear()
+        self._custom_handlers.clear()
 
         logger.debug("SessionUpdater cleaned up for session %s", self._session_id)
 
