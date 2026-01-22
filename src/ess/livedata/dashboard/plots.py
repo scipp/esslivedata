@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Protocol, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import holoviews as hv
 import numpy as np
@@ -30,6 +31,22 @@ from .plot_params import (
 )
 from .scipp_to_holoviews import to_holoviews
 from .time_utils import format_time_ns_local
+
+if TYPE_CHECKING:
+    pass
+
+
+@dataclass
+class SlicerState:
+    """
+    State for SlicerPresenter - the result of SlicerPlotter.compute().
+
+    Contains 3D data and pre-computed color limits for consistent color
+    scale across all slices.
+    """
+
+    data: dict[ResultKey, sc.DataArray]
+    clim: tuple[float, float] | None = None
 
 
 class Presenter(Protocol):
@@ -60,22 +77,138 @@ class Presenter(Protocol):
 
 class DefaultPresenter:
     """
-    Default presenter that wraps a Plotter for DynamicMap rendering.
+    Default presenter for standard plotters.
 
-    Uses the plotter's compute() method as the DynamicMap callable.
+    Pipe receives pre-computed HoloViews elements from PlotDataService.
+    DynamicMap just passes through the data - no computation per-session.
+
+    Plotters requiring interactive controls (kdims) must override
+    create_presenter() to return a custom Presenter.
     """
 
-    def __init__(self, plotter: Plotter) -> None:
+    def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
+        """Create a DynamicMap that passes through pre-computed elements."""
+
+        def passthrough(data):
+            return data
+
+        return hv.DynamicMap(passthrough, streams=[pipe], cache_size=1)
+
+
+class SlicerPresenter:
+    """
+    Per-session presenter for SlicerPlotter.
+
+    Handles interactive slicing with kdims for mode selection, dimension
+    selection, and slice position sliders. Each browser session gets its
+    own SlicerPresenter instance with session-bound components.
+    """
+
+    def __init__(self, plotter: SlicerPlotter) -> None:
         self._plotter = plotter
+        self._kdims: list[hv.Dimension] | None = None
 
     def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
-        """Create a DynamicMap wrapping the plotter's compute method."""
-        return hv.DynamicMap(
-            self._plotter.compute,
-            streams=[pipe],
-            kdims=self._plotter.kdims,
-            cache_size=1,
+        """
+        Create a DynamicMap with interactive slicing controls.
+
+        Parameters
+        ----------
+        pipe:
+            HoloViews Pipe that receives SlicerState updates.
+
+        Returns
+        -------
+        :
+            DynamicMap with kdims for mode/dimension/slice selection.
+        """
+        # Initialize kdims from the initial state in the pipe
+        if self._kdims is None and pipe.data is not None:
+            self._initialize_kdims(pipe.data)
+
+        def render(mode: str, slice_dim: str, *, data: SlicerState = None, **kwargs):
+            """Render a slice using the plotter's render_slice method.
+
+            The `data` keyword argument is provided by the Pipe stream.
+            The `mode`, `slice_dim`, and other slider kwargs come from kdims.
+            """
+            if data is None or not data.data:
+                return hv.Text(0.5, 0.5, 'No data')
+
+            # Get first data item (SlicerPlotter expects single data source)
+            array_data = next(iter(data.data.values()))
+            return self._plotter.render_slice(
+                array_data, data.clim, mode=mode, slice_dim=slice_dim, **kwargs
+            )
+
+        return hv.DynamicMap(render, streams=[pipe], kdims=self._kdims, cache_size=1)
+
+    def _initialize_kdims(self, state: SlicerState) -> None:
+        """
+        Initialize kdims from the SlicerState data.
+
+        Creates interactive dimensions for mode selection, dimension
+        selection, and per-dimension slice position sliders.
+        """
+        if not state.data:
+            return
+
+        first_data = next(iter(state.data.values()))
+
+        if first_data.ndim != 3:
+            raise ValueError(f"Expected 3D data, got {first_data.ndim}D")
+
+        dim_names = list(first_data.dims)
+
+        # Mode selector: slice or flatten
+        mode_selector = hv.Dimension(
+            'mode',
+            values=['slice', 'flatten'],
+            default='slice',
+            label='Mode',
         )
+
+        # Dimension selector
+        dim_selector = hv.Dimension(
+            'slice_dim',
+            values=dim_names,
+            default=dim_names[0],
+            label='Slice Dimension',
+        )
+
+        # Create sliders for each dimension
+        sliders = []
+        for dim_name in dim_names:
+            if (
+                coord := first_data.coords.get(dim_name)
+            ) is not None and coord.ndim == 1:
+                # Use coordinate values for the slider
+                if first_data.coords.is_edges(dim_name):
+                    coord_values = sc.midpoints(coord, dim=dim_name).values
+                else:
+                    coord_values = coord.values
+                sliders.append(
+                    hv.Dimension(
+                        f'{dim_name}_value',
+                        values=coord_values,
+                        default=coord_values[0],
+                        label=dim_name,
+                        unit=str(coord.unit),
+                    )
+                )
+            else:
+                # Fall back to integer indices
+                size = first_data.sizes[dim_name]
+                sliders.append(
+                    hv.Dimension(
+                        f'{dim_name}_index',
+                        range=(0, size - 1),
+                        default=0,
+                        label=f'{dim_name} index',
+                    )
+                )
+
+        self._kdims = [mode_selector, dim_selector, *sliders]
 
 
 def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
@@ -398,7 +531,7 @@ class Plotter(ABC):
         :
             A Presenter instance for this plotter.
         """
-        return DefaultPresenter(self)
+        return DefaultPresenter()
 
     def _apply_generic_options(self, plot_element: hv.Element) -> hv.Element:
         """Apply generic options like aspect ratio to a plot element."""
@@ -415,34 +548,6 @@ class Plotter(ABC):
         if data_key not in self.autoscalers:
             self.autoscalers[data_key] = Autoscaler(**self.autoscaler_kwargs)
         return self.autoscalers[data_key].update_bounds(data, coord_data=coord_data)
-
-    def initialize_from_data(self, data: dict[ResultKey, sc.DataArray]) -> None:
-        """
-        Initialize plotter state from initial data.
-
-        Called before creating the DynamicMap to allow plotters to
-        inspect the data and set up interactive dimensions.
-
-        Parameters
-        ----------
-        data:
-            Initial data dictionary.
-        """
-        # Default implementation does nothing; subclasses can override
-        return
-
-    @property
-    def kdims(self) -> list[hv.Dimension] | None:
-        """
-        Return key dimensions for interactive widgets.
-
-        Returns
-        -------
-        :
-            List of HoloViews Dimension objects for creating interactive widgets,
-            or None if the plotter doesn't require interactive dimensions.
-        """
-        return None
 
     @abstractmethod
     def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> Any:
@@ -568,7 +673,12 @@ class ImagePlotter(Plotter):
 
 
 class SlicerPlotter(Plotter):
-    """Plotter for 3D data with interactive slicing or flattening."""
+    """Plotter for 3D data with interactive slicing or flattening.
+
+    Uses two-stage architecture:
+    - compute(): Prepares 3D data with pre-computed color bounds (shared)
+    - SlicerPresenter: Handles interactive slicing per-session
+    """
 
     def __init__(
         self,
@@ -590,11 +700,7 @@ class SlicerPlotter(Plotter):
         """
         super().__init__(**kwargs)
         self._scale_opts = scale_opts
-        self._kdims: list[hv.Dimension] | None = None
         self._base_opts = self._make_2d_base_opts(scale_opts, tick_params)
-        self._last_slice_dim: str | None = None
-        self._last_slice_idx: int | float | None = None
-        self._last_mode: str | None = None
 
     @classmethod
     def from_params(cls, params: PlotParams3d):
@@ -607,110 +713,80 @@ class SlicerPlotter(Plotter):
             aspect_params=params.plot_aspect,
         )
 
-    def initialize_from_data(self, data: dict[ResultKey, sc.DataArray]) -> None:
+    def compute(self, data: dict[ResultKey, sc.DataArray], **kwargs) -> SlicerState:
         """
-        Initialize the slicer from initial data.
+        Prepare 3D data for slicing with pre-computed color bounds.
 
-        Creates kdims from the first data array.
+        This is Stage 1 of the two-stage architecture. The result is stored
+        in PlotDataService and shared across all browser sessions.
 
         Parameters
         ----------
         data:
-            Dictionary of initial data arrays.
-        """
-        if not data:
-            raise ValueError("No data provided to initialize_from_data")
-        # Get first data array to create kdims
-        first_data = next(iter(data.values()))
-
-        if first_data.ndim != 3:
-            raise ValueError(f"Expected 3D data, got {first_data.ndim}D")
-
-        # Create kdims from the data
-        dim_names = list(first_data.dims)
-
-        # Mode selector: slice or flatten
-        mode_selector = hv.Dimension(
-            'mode',
-            values=['slice', 'flatten'],
-            default='slice',
-            label='Mode',
-        )
-
-        # Create dimension selector with actual dimension names
-        dim_selector = hv.Dimension(
-            'slice_dim',
-            values=dim_names,
-            default=dim_names[0],
-            label='Slice Dimension',
-        )
-
-        # Create 3 sliders, one for each dimension
-        sliders = []
-        for dim_name in dim_names:
-            if (
-                coord := first_data.coords.get(dim_name)
-            ) is not None and coord.ndim == 1:
-                # Use coordinate values for the slider
-                # For bin-edge coordinates, use midpoints
-                if first_data.coords.is_edges(dim_name):
-                    coord_values = sc.midpoints(coord, dim=dim_name).values
-                else:
-                    coord_values = coord.values
-                sliders.append(
-                    hv.Dimension(
-                        f'{dim_name}_value',
-                        values=coord_values,
-                        default=coord_values[0],
-                        label=dim_name,
-                        unit=str(coord.unit),
-                    )
-                )
-            else:
-                # Fall back to integer indices
-                size = first_data.sizes[dim_name]
-                sliders.append(
-                    hv.Dimension(
-                        f'{dim_name}_index',
-                        range=(0, size - 1),
-                        default=0,
-                        label=f'{dim_name} index',
-                    )
-                )
-
-        self._kdims = [mode_selector, dim_selector, *sliders]
-
-    @property
-    def kdims(self) -> list[hv.Dimension] | None:
-        """
-        Return kdims for interactive widgets: 1 dimension selector + 3 sliders.
+            Dictionary of 3D DataArrays.
+        **kwargs:
+            Unused (required by base class signature).
 
         Returns
         -------
         :
-            List containing 4 HoloViews Dimensions (selector + 3 sliders),
-            or None if not yet initialized.
+            SlicerState containing the data and pre-computed color limits.
         """
-        return self._kdims
+        del kwargs  # Unused for SlicerPlotter
+        clim = self._compute_global_clim(data)
+        return SlicerState(data=data, clim=clim)
 
-    def plot(
+    def _compute_global_clim(
+        self, data: dict[ResultKey, sc.DataArray]
+    ) -> tuple[float, float] | None:
+        """Compute global color limits from all 3D data for consistent color scale."""
+        use_log_scale = self._scale_opts.color_scale == PlotScale.log
+
+        all_values = []
+        for da in data.values():
+            values = da.values.flatten()
+            if use_log_scale:
+                # For log scale, only consider positive values
+                values = values[values > 0]
+            else:
+                values = values[np.isfinite(values)]
+            if len(values) > 0:
+                all_values.append(values)
+
+        if not all_values:
+            return None
+
+        combined = np.concatenate(all_values)
+        if len(combined) == 0:
+            return None
+
+        return (float(np.nanmin(combined)), float(np.nanmax(combined)))
+
+    def create_presenter(self) -> SlicerPresenter:
+        """Create a SlicerPresenter for per-session rendering."""
+        return SlicerPresenter(self)
+
+    def render_slice(
         self,
         data: sc.DataArray,
-        data_key: ResultKey,
+        clim: tuple[float, float] | None,
         *,
         mode: str = 'slice',
         slice_dim: str = '',
         **kwargs,
     ) -> hv.Image:
         """
-        Create a 2D image from 3D data by slicing or flattening.
+        Render a single 2D slice from 3D data.
+
+        This method is called by SlicerPresenter per-session. It does not
+        modify any shared state (no autoscaler updates).
 
         Parameters
         ----------
         data:
             3D DataArray to process.
-        data_key:
-            Key identifying this data.
+        clim:
+            Pre-computed color limits for consistent color scale.
         mode:
             Either 'slice' to select a single slice, or 'flatten' to concatenate
             two dimensions into one.
@@ -735,33 +811,26 @@ class SlicerPlotter(Plotter):
         use_log_scale = self._scale_opts.color_scale == PlotScale.log
         plot_data = self._prepare_2d_image_data(plot_data, use_log_scale)
 
-        # Detect if mode or displayed dimensions changed
-        mode_changed = self._last_mode is not None and self._last_mode != mode
-        dim_changed = (
-            self._last_slice_dim is not None and self._last_slice_dim != slice_dim
-        )
-        self._last_mode = mode
-        self._last_slice_dim = slice_dim
-
-        # Update autoscaler: use 3D data for value (color) bounds to ensure
-        # consistent color scale, but use 2D plot_data for coordinate (axis) bounds
-        # so we properly track ranges even with 2D coords (which become 1D
-        # after slicing).
-        framewise = self._update_autoscaler_and_get_framewise(
-            data, data_key, coord_data=plot_data
-        )
-
-        # Force rescale if mode or displayed dimensions changed
-        if mode_changed or dim_changed:
-            framewise = True
-
         image = to_holoviews(plot_data)
         opts = dict(self._base_opts)
-        opts['framewise'] = framewise
-        # Set explicit clim for log scale when data is all NaN to avoid HoloViews error
-        if use_log_scale and (clim := self._get_log_scale_clim(plot_data)) is not None:
+        # Always use framewise=True for interactive slicing
+        opts['framewise'] = True
+        # Use pre-computed clim for consistent color scale across slices
+        if clim is not None:
             opts['clim'] = clim
         return image.opts(**opts)
+
+    def plot(
+        self,
+        data: sc.DataArray,
+        data_key: ResultKey,
+        **kwargs,
+    ) -> hv.Image:
+        """Not used - SlicerPlotter uses compute() + SlicerPresenter."""
+        raise NotImplementedError(
+            "SlicerPlotter uses two-stage architecture. "
+            "Call compute() then use SlicerPresenter."
+        )
 
     def _slice_data(
         self, data: sc.DataArray, slice_dim: str, kwargs: dict

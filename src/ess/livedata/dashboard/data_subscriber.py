@@ -69,6 +69,7 @@ class DataSubscriber(DataServiceSubscriber[ResultKey], Generic[P]):
         pipe_factory: Callable[[Any], P],
         extractors: Mapping[ResultKey, UpdateExtractor],
         on_first_data: Callable[[P], None] | None = None,
+        on_data_update: Callable[[dict[ResultKey, Any]], None] | None = None,
     ) -> None:
         """
         Initialize the subscriber.
@@ -85,6 +86,10 @@ class DataSubscriber(DataServiceSubscriber[ResultKey], Generic[P]):
             Mapping from keys to their UpdateExtractor instances.
         on_first_data:
             Optional callback invoked when first data arrives with the created pipe.
+        on_data_update:
+            Optional callback invoked on every data update with the assembled data.
+            Used for computing derived state (e.g., plotter.compute()) in the
+            shared context before sessions poll the result.
         """
         self._keys_by_role = keys_by_role
         self._all_keys = {key for keys in keys_by_role.values() for key in keys}
@@ -97,6 +102,7 @@ class DataSubscriber(DataServiceSubscriber[ResultKey], Generic[P]):
         self._pipe: P | None = None
         self._extractors = extractors
         self._on_first_data = on_first_data
+        self._on_data_update = on_data_update
         self._first_data_callback_invoked = False
 
         # Initialize parent class to cache keys
@@ -160,6 +166,12 @@ class DataSubscriber(DataServiceSubscriber[ResultKey], Generic[P]):
         else:
             # Subsequent triggers - send to existing pipe
             self._pipe.send(assembled_data)
+
+        # Invoke on_data_update callback on every trigger when we have data
+        # and are ready. This is used to compute derived state (plotter.compute())
+        # in the shared context.
+        if data and self._on_data_update and self._is_ready(set(data.keys())):
+            self._on_data_update(assembled_data)
 
         # Invoke first-data callback when we have actual data for the first time
         # AND the ready_condition is satisfied (at least one key from each role).

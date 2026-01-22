@@ -37,7 +37,7 @@ class SessionPlotManager:
     Each browser session gets its own SessionPlotManager instance. The manager:
     1. Tracks which layers have been set up for this session
     2. Creates session-bound Pipes and DynamicMaps on demand
-    3. Forwards data updates from PlotDataService to session Pipes
+    3. Polls PlotDataService for updates and forwards to session Pipes
 
     Parameters
     ----------
@@ -51,9 +51,6 @@ class SessionPlotManager:
         self._pipes: dict[LayerId, hv.streams.Pipe] = {}
         self._dmaps: dict[LayerId, hv.DynamicMap] = {}
         self._last_versions: dict[LayerId, int] = {}
-        # Track shared pipes for data forwarding (streaming updates)
-        self._shared_pipes: dict[LayerId, hv.streams.Pipe] = {}
-        self._last_data_ids: dict[LayerId, int] = {}
 
     def get_dmap(self, layer_id: LayerId) -> hv.DynamicMap | None:
         """
@@ -107,18 +104,16 @@ class SessionPlotManager:
         try:
             # Use Presenter pattern - plotter creates appropriate presenter
             presenter = state.plotter.create_presenter()
-            pipe = hv.streams.Pipe(data=state.initial_data)
+
+            # Create session-bound Pipe with initial state
+            # (either pre-computed HoloViews elements or raw data for kdims plotters)
+            pipe = hv.streams.Pipe(data=state.state)
             dmap = presenter.present(pipe)
 
             self._presenters[layer_id] = presenter
             self._pipes[layer_id] = pipe
             self._dmaps[layer_id] = dmap
             self._last_versions[layer_id] = state.version
-
-            # Store shared pipe reference for data forwarding
-            if state.shared_pipe is not None:
-                self._shared_pipes[layer_id] = state.shared_pipe
-                self._last_data_ids[layer_id] = id(state.shared_pipe.data)
 
             logger.debug(
                 "Created session DynamicMap for layer_id=%s (version %d)",
@@ -137,11 +132,11 @@ class SessionPlotManager:
 
     def update_pipes(self) -> set[LayerId]:
         """
-        Forward data updates from shared pipes to session Pipes.
+        Poll PlotDataService for updates and forward to session Pipes.
 
-        Checks each shared pipe for data changes (via object identity) and
-        sends new data to the corresponding session Pipe. This is how
-        streaming data updates propagate to each browser session.
+        Checks each tracked layer for version changes and sends new state
+        to the corresponding session Pipe. This is how plot updates
+        propagate to each browser session.
 
         Returns
         -------
@@ -150,28 +145,31 @@ class SessionPlotManager:
         """
         updated_layers: set[LayerId] = set()
 
-        for layer_id, shared_pipe in list(self._shared_pipes.items()):
-            session_pipe = self._pipes.get(layer_id)
-            if session_pipe is None:
+        for layer_id, session_pipe in list(self._pipes.items()):
+            state_layer_id = StateLayerId(str(layer_id))
+            state = self._plot_data_service.get(state_layer_id)
+
+            if state is None:
                 continue
 
-            # Check if data has changed using object identity
-            current_data = shared_pipe.data
-            current_data_id = id(current_data)
-            last_data_id = self._last_data_ids.get(layer_id, 0)
-
-            if current_data_id != last_data_id:
+            # Check if version has changed
+            last_version = self._last_versions.get(layer_id, 0)
+            if state.version > last_version:
                 try:
-                    session_pipe.send(current_data)
-                    self._last_data_ids[layer_id] = current_data_id
+                    # Send updated state to session pipe
+                    session_pipe.send(state.state)
+                    self._last_versions[layer_id] = state.version
                     updated_layers.add(layer_id)
                     logger.debug(
-                        "Forwarded data update to session pipe for layer_id=%s",
+                        "Forwarded state update to session pipe for layer_id=%s "
+                        "(version %d -> %d)",
                         layer_id,
+                        last_version,
+                        state.version,
                     )
                 except Exception:
                     logger.exception(
-                        "Failed to forward data to session pipe for layer_id=%s",
+                        "Failed to forward state to session pipe for layer_id=%s",
                         layer_id,
                     )
 
@@ -187,6 +185,4 @@ class SessionPlotManager:
         self._pipes.clear()
         self._dmaps.clear()
         self._last_versions.clear()
-        self._shared_pipes.clear()
-        self._last_data_ids.clear()
         logger.debug("SessionPlotManager cleaned up")

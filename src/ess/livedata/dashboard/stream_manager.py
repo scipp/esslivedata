@@ -31,6 +31,7 @@ class StreamManager(Generic[P]):
         self,
         keys_by_role: dict[str, list[ResultKey]],
         on_first_data: Callable[[P], None] | None = None,
+        on_data_update: Callable[[dict[ResultKey, Any]], None] | None = None,
         extractors: dict[ResultKey, Any] | None = None,
     ) -> P:
         """
@@ -50,6 +51,10 @@ class StreamManager(Generic[P]):
         on_first_data
             Optional callback invoked when first data arrives with the created pipe.
             Called when at least one key from each role has data.
+        on_data_update
+            Optional callback invoked on every data update with the assembled data.
+            Used for computing derived state (e.g., plotter.compute()) in the
+            shared context before sessions poll the result.
         extractors
             Optional dict mapping keys to UpdateExtractor instances. If not
             provided, uses LatestValueExtractor for all keys.
@@ -73,6 +78,7 @@ class StreamManager(Generic[P]):
             pipe_factory=self._pipe_factory,
             extractors=extractors,
             on_first_data=on_first_data,
+            on_data_update=on_data_update,
         )
         self.data_service.register_subscriber(subscriber)
         return subscriber.pipe

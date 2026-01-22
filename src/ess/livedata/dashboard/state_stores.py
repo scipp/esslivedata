@@ -337,15 +337,11 @@ class PlotLayerState:
 
     - state: The computed HoloViews elements from plotter.compute()
     - plotter: Reference to the Plotter instance for create_presenter()
-    - initial_data: Data for initializing per-session Pipes
-    - shared_pipe: Reference to the shared Pipe for forwarding data updates
     """
 
-    state: Any  # The PlotState (computed result from plotter.compute())
+    state: Any  # The computed HoloViews elements from plotter.compute()
     version: int = 0
     plotter: Any = None  # Reference to Plotter for create_presenter()
-    initial_data: Any = None  # Data for initializing per-session Pipes
-    shared_pipe: Any = None  # Reference to shared Pipe for data updates
 
 
 LayerId = NewType('LayerId', str)
@@ -371,8 +367,6 @@ class PlotDataService:
         state: Any,
         *,
         plotter: Any = None,
-        initial_data: Any = None,
-        shared_pipe: Any = None,
     ) -> None:
         """
         Update state for a layer.
@@ -382,31 +376,26 @@ class PlotDataService:
         layer_id:
             Layer ID to update.
         state:
-            New computed plot state.
+            New computed plot state (HoloViews elements from plotter.compute()).
         plotter:
             Optional plotter instance for per-session presenter creation.
-        initial_data:
-            Optional initial data for per-session Pipe initialization.
-        shared_pipe:
-            Optional reference to the shared Pipe for forwarding data updates.
+            Only needs to be provided on first update.
         """
         with self._lock:
             if layer_id in self._layers:
                 current = self._layers[layer_id]
+                # Preserve plotter reference if not provided on update
+                effective_plotter = plotter if plotter is not None else current.plotter
                 self._layers[layer_id] = PlotLayerState(
                     state=state,
                     version=current.version + 1,
-                    plotter=plotter,
-                    initial_data=initial_data,
-                    shared_pipe=shared_pipe,
+                    plotter=effective_plotter,
                 )
             else:
                 self._layers[layer_id] = PlotLayerState(
                     state=state,
                     version=1,
                     plotter=plotter,
-                    initial_data=initial_data,
-                    shared_pipe=shared_pipe,
                 )
             logger.debug(
                 "Updated plot state for %s at version %d",

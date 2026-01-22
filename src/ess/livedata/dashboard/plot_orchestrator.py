@@ -754,12 +754,11 @@ class PlotOrchestrator:
         **Flow:**
 
         1. Set up data pipeline with keys_by_role structure
-        2. If data already exists in DataService and all roles have data:
-           - on_first_data fires immediately -> plot created -> state stored
-           - Compose and notify
-        3. If no data yet or not all roles have data:
-           - Notify UI that layer is "waiting for data"
-           - Later when data arrives, on_first_data fires
+        2. on_first_data: Create plotter, compute initial state, store in
+           PlotDataService
+        3. on_data_update: Re-compute on every data change (shared, not
+           per-session)
+        4. Sessions poll PlotDataService for the pre-computed state
 
         Parameters
         ----------
@@ -787,10 +786,13 @@ class PlotOrchestrator:
         # Find the layer config
         config = self.get_layer_config(layer_id)
 
+        # Plotter instance created on first data, reused for updates
+        layer_plotter: list = []  # Use list to allow assignment in nested function
+
         def on_data_arrived(pipe) -> None:
-            """Create plot when first data arrives for the pipeline."""
+            """Create plotter and compute initial state when first data arrives."""
             self._logger.debug(
-                'Data arrived for layer_id=%s, creating plot',
+                'Data arrived for layer_id=%s, creating plotter and computing',
                 layer_id,
             )
             try:
@@ -802,18 +804,18 @@ class PlotOrchestrator:
                 plotter = self._plotting_controller.create_plotter(
                     config.plot_name, params=config.params
                 )
-                # Initialize plotter with data if supported
-                if hasattr(plotter, 'initialize_from_data'):
-                    plotter.initialize_from_data(pipe.data)
+                layer_plotter.append(plotter)
 
-                # Store in PlotDataService for per-session DynamicMap creation
-                # Include shared_pipe reference for forwarding data updates
+                # Compute state once (shared across all sessions)
+                # Plotter.compute() returns shareable state - either HoloViews
+                # elements (most plotters) or prepared data (interactive plotters)
+                computed_state = plotter.compute(pipe.data)
+
+                # Store in PlotDataService
                 self._plot_data_service.update(
                     StateLayerId(str(layer_id)),
-                    state=None,  # Computed state placeholder
+                    state=computed_state,
                     plotter=plotter,
-                    initial_data=pipe.data,
-                    shared_pipe=pipe,  # Store pipe for data forwarding
                 )
 
                 # Mark layer as ready (no DynamicMap yet - deferred to session)
@@ -835,13 +837,38 @@ class PlotOrchestrator:
                     grid_id, cell_id, cell, layer_states, composed
                 )
 
-        # Set up data pipeline with callback using the unified interface
+        def on_data_update(data) -> None:
+            """Re-compute plot state on every data update (shared context)."""
+            if not layer_plotter or self._plot_data_service is None:
+                return  # Not yet initialized
+
+            # Check if layer still exists
+            if layer_id not in self._layer_to_cell:
+                return
+
+            try:
+                plotter = layer_plotter[0]
+                # Compute updated state (runs once, shared across all sessions)
+                computed_state = plotter.compute(data)
+
+                # Update PlotDataService with new state
+                self._plot_data_service.update(
+                    StateLayerId(str(layer_id)),
+                    state=computed_state,
+                )
+            except Exception:
+                self._logger.exception(
+                    'Failed to update computed state for layer_id=%s', layer_id
+                )
+
+        # Set up data pipeline with both callbacks
         try:
             self._plotting_controller.setup_pipeline(
                 keys_by_role=ready.keys_by_role,
                 plot_name=config.plot_name,
                 params=config.params,
                 on_first_data=on_data_arrived,
+                on_data_update=on_data_update,
             )
         except Exception:
             error_msg = traceback.format_exc()
