@@ -7,9 +7,11 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import NewType
+from typing import TYPE_CHECKING, NewType
+
+if TYPE_CHECKING:
+    from .session_updater import SessionUpdater
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,7 @@ class SessionInfo:
 
     session_id: SessionId
     last_heartbeat: float = field(default_factory=time.monotonic)
+    updater: SessionUpdater | None = None
 
 
 class SessionRegistry:
@@ -43,7 +46,6 @@ class SessionRegistry:
         self,
         *,
         stale_timeout_seconds: float = 60.0,
-        on_session_cleanup: Callable[[SessionId], None] | None = None,
     ) -> None:
         """
         Initialize the session registry.
@@ -53,48 +55,64 @@ class SessionRegistry:
         stale_timeout_seconds:
             Seconds since last heartbeat before a session is considered stale.
             Default is 60 seconds.
-        on_session_cleanup:
-            Optional callback invoked when a stale session is cleaned up.
-            Receives the session ID of the cleaned-up session.
         """
         self._stale_timeout = stale_timeout_seconds
-        self._on_session_cleanup = on_session_cleanup
         self._sessions: dict[SessionId, SessionInfo] = {}
         self._lock = threading.Lock()
 
-    def register(self, session_id: SessionId) -> None:
+    def register(
+        self, session_id: SessionId, updater: SessionUpdater | None = None
+    ) -> None:
         """
-        Register a new session.
+        Register a new session with its updater.
 
         Parameters
         ----------
         session_id:
             Unique identifier for the session (typically from curdoc session).
+        updater:
+            The SessionUpdater instance for this session.
         """
         with self._lock:
             if session_id in self._sessions:
                 logger.debug(
                     "Session %s already registered, updating heartbeat", session_id
                 )
+                # Update the updater if provided
+                if updater is not None:
+                    self._sessions[session_id].updater = updater
+                self._sessions[session_id].last_heartbeat = time.monotonic()
             else:
                 logger.info("Registered new session: %s", session_id)
-            self._sessions[session_id] = SessionInfo(session_id=session_id)
+                self._sessions[session_id] = SessionInfo(
+                    session_id=session_id, updater=updater
+                )
 
     def unregister(self, session_id: SessionId) -> None:
         """
         Unregister a session explicitly.
 
-        Called when pn.state.on_session_destroyed() fires.
+        Called when pn.state.on_session_destroyed() fires. Cleans up the
+        session's updater if one was registered.
 
         Parameters
         ----------
         session_id:
             Session ID to unregister.
         """
+        updater = None
         with self._lock:
             if session_id in self._sessions:
+                updater = self._sessions[session_id].updater
                 del self._sessions[session_id]
                 logger.info("Unregistered session: %s", session_id)
+
+        # Clean up updater outside lock to avoid potential deadlocks
+        if updater is not None:
+            try:
+                updater.cleanup()
+            except Exception:
+                logger.exception("Error cleaning up updater for session %s", session_id)
 
     def heartbeat(self, session_id: SessionId) -> None:
         """
@@ -128,12 +146,12 @@ class SessionRegistry:
             List of session IDs that were cleaned up.
         """
         now = time.monotonic()
-        stale_sessions: list[SessionId] = []
+        stale_sessions: list[tuple[SessionId, SessionUpdater | None]] = []
 
         with self._lock:
             for session_id, info in list(self._sessions.items()):
                 if now - info.last_heartbeat > self._stale_timeout:
-                    stale_sessions.append(session_id)
+                    stale_sessions.append((session_id, info.updater))
                     del self._sessions[session_id]
                     logger.warning(
                         "Cleaned up stale session: %s (no heartbeat for %.1f seconds)",
@@ -141,17 +159,17 @@ class SessionRegistry:
                         now - info.last_heartbeat,
                     )
 
-        # Invoke cleanup callback outside lock to avoid deadlocks
-        if self._on_session_cleanup is not None:
-            for session_id in stale_sessions:
+        # Clean up updaters outside lock to avoid potential deadlocks
+        for session_id, updater in stale_sessions:
+            if updater is not None:
                 try:
-                    self._on_session_cleanup(session_id)
+                    updater.cleanup()
                 except Exception:
                     logger.exception(
-                        "Error in session cleanup callback for %s", session_id
+                        "Error cleaning up updater for stale session %s", session_id
                     )
 
-        return stale_sessions
+        return [session_id for session_id, _ in stale_sessions]
 
     def get_active_sessions(self) -> list[SessionId]:
         """

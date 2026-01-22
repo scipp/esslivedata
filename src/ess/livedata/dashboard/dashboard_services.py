@@ -25,6 +25,7 @@ from .plot_orchestrator import PlotOrchestrator
 from .plotting_controller import PlottingController
 from .roi_publisher import ROIPublisher
 from .service_registry import ServiceRegistry
+from .session_registry import SessionRegistry
 from .state_stores import NotificationQueue, PlotDataService, WidgetStateStore
 from .stream_manager import StreamManager
 from .transport import Transport
@@ -85,6 +86,9 @@ class DashboardServices:
         self.plot_data_service = PlotDataService()
         self.notification_queue = NotificationQueue()
 
+        # Session registry for tracking active browser sessions
+        self.session_registry = SessionRegistry(stale_timeout_seconds=60.0)
+
         # Background update thread state
         self._update_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -135,6 +139,7 @@ class DashboardServices:
             start = time.monotonic()
             try:
                 self.orchestrator.update()
+                self.session_registry.cleanup_stale_sessions()
             except Exception:
                 logger.exception("orchestrator_update_error")
 

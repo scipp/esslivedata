@@ -7,6 +7,19 @@ import time
 from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 
 
+class FakeSessionUpdater:
+    """Fake updater for testing cleanup behavior."""
+
+    def __init__(self, *, raise_on_cleanup: bool = False):
+        self.cleanup_called = False
+        self._raise_on_cleanup = raise_on_cleanup
+
+    def cleanup(self) -> None:
+        self.cleanup_called = True
+        if self._raise_on_cleanup:
+            raise ValueError("Cleanup error")
+
+
 class TestSessionRegistry:
     def test_register_new_session(self):
         registry = SessionRegistry()
@@ -101,44 +114,42 @@ class TestSessionRegistry:
         assert not registry.is_active(stale_session)
         assert registry.is_active(active_session)
 
-    def test_cleanup_callback_invoked(self):
-        cleaned_sessions = []
-
-        def on_cleanup(session_id: SessionId) -> None:
-            cleaned_sessions.append(session_id)
-
-        registry = SessionRegistry(
-            stale_timeout_seconds=0.01, on_session_cleanup=on_cleanup
-        )
+    def test_stale_cleanup_calls_updater_cleanup(self):
+        registry = SessionRegistry(stale_timeout_seconds=0.01)
         session_id = SessionId('session-1')
-        registry.register(session_id)
+        updater = FakeSessionUpdater()
+        registry.register(session_id, updater)
 
         time.sleep(0.02)
         registry.cleanup_stale_sessions()
 
-        assert cleaned_sessions == [session_id]
+        assert updater.cleanup_called
 
-    def test_cleanup_callback_error_does_not_stop_other_cleanups(self):
-        cleaned_sessions = []
+    def test_unregister_calls_updater_cleanup(self):
+        registry = SessionRegistry()
+        session_id = SessionId('session-1')
+        updater = FakeSessionUpdater()
+        registry.register(session_id, updater)
 
-        def on_cleanup(session_id: SessionId) -> None:
-            if session_id == SessionId('error'):
-                raise ValueError("Cleanup error")
-            cleaned_sessions.append(session_id)
+        registry.unregister(session_id)
 
-        registry = SessionRegistry(
-            stale_timeout_seconds=0.01, on_session_cleanup=on_cleanup
-        )
-        registry.register(SessionId('error'))
-        registry.register(SessionId('ok'))
+        assert updater.cleanup_called
+
+    def test_cleanup_error_does_not_stop_other_cleanups(self):
+        registry = SessionRegistry(stale_timeout_seconds=0.01)
+        error_updater = FakeSessionUpdater(raise_on_cleanup=True)
+        ok_updater = FakeSessionUpdater()
+        registry.register(SessionId('error'), error_updater)
+        registry.register(SessionId('ok'), ok_updater)
 
         time.sleep(0.02)
         stale = registry.cleanup_stale_sessions()
 
         # Both sessions should be cleaned up from registry
         assert len(stale) == 2
-        # Only 'ok' session should have callback executed successfully
-        assert cleaned_sessions == [SessionId('ok')]
+        # Both updaters should have cleanup called (even though one raised)
+        assert error_updater.cleanup_called
+        assert ok_updater.cleanup_called
 
     def test_get_active_sessions_returns_copy(self):
         registry = SessionRegistry()

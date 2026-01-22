@@ -14,7 +14,7 @@ from ess.livedata import ServiceBase
 from .config_store import ConfigStoreManager
 from .dashboard_services import DashboardServices
 from .kafka_transport import DashboardKafkaTransport
-from .session_registry import SessionId, SessionRegistry
+from .session_registry import SessionId
 from .session_updater import SessionUpdater
 from .transport import NullTransport, Transport
 
@@ -44,19 +44,10 @@ class DashboardBase(ServiceBase, ABC):
         self._exit_stack = ExitStack()
         self._exit_stack.__enter__()
 
-        # Session registry for tracking active browser sessions
-        self._session_registry = SessionRegistry(
-            stale_timeout_seconds=60.0,
-            on_session_cleanup=self._on_session_cleanup,
-        )
-
-        # Per-session updaters (keyed by session ID)
-        self._session_updaters: dict[SessionId, SessionUpdater] = {}
-
         # Config store manager for file-backed persistent UI state (GUI dashboards)
         config_manager = ConfigStoreManager(instrument=instrument, store_type='file')
 
-        # Setup all dashboard services
+        # Setup all dashboard services (includes session registry)
         self._services = DashboardServices(
             instrument=instrument,
             dev=dev,
@@ -116,23 +107,6 @@ class DashboardBase(ServiceBase, ABC):
         # Fallback for non-session contexts (e.g., testing)
         return SessionId('unknown')
 
-    def _on_session_cleanup(self, session_id: SessionId) -> None:
-        """
-        Handle cleanup when a session is removed (stale or destroyed).
-
-        Override this method in subclasses to clean up session-specific resources.
-
-        Parameters
-        ----------
-        session_id:
-            The ID of the session being cleaned up.
-        """
-        self._logger.debug("Session cleanup: %s", session_id)
-        # Clean up the session updater if it exists
-        if session_id in self._session_updaters:
-            self._session_updaters[session_id].cleanup()
-            del self._session_updaters[session_id]
-
     def start_periodic_updates(self, period: int = 500) -> None:
         """
         Start periodic updates for this session.
@@ -149,17 +123,19 @@ class DashboardBase(ServiceBase, ABC):
             messages, the step function should not do anything.
         """
         session_id = self._get_session_id()
-        self._session_registry.register(session_id)
+        session_registry = self._services.session_registry
 
         # Create per-session updater with shared state stores
         session_updater = SessionUpdater(
             session_id=session_id,
-            session_registry=self._session_registry,
+            session_registry=session_registry,
             widget_state_store=self._services.widget_state_store,
             plot_data_service=self._services.plot_data_service,
             notification_queue=self._services.notification_queue,
         )
-        self._session_updaters[session_id] = session_updater
+
+        # Register session with its updater (registry handles cleanup)
+        session_registry.register(session_id, session_updater)
 
         # Wire up PlotGridTabs to session services for multi-session support
         if hasattr(self, '_plot_grid_tabs') and self._plot_grid_tabs is not None:
@@ -170,11 +146,7 @@ class DashboardBase(ServiceBase, ABC):
 
         def _safe_step():
             try:
-                # Run the session updater's periodic update
-                # This handles heartbeats, polls for changes, and shows notifications
                 session_updater.periodic_update()
-                # Periodically check for stale sessions
-                self._session_registry.cleanup_stale_sessions()
             except Exception:
                 self._logger.exception("Error in periodic update step.")
 
@@ -184,10 +156,7 @@ class DashboardBase(ServiceBase, ABC):
         # Register cleanup when session is destroyed
         def _cleanup_session(session_context):
             self._logger.info("Session destroyed: %s", session_id)
-            self._session_registry.unregister(session_id)
-            session_updater.cleanup()
-            if session_id in self._session_updaters:
-                del self._session_updaters[session_id]
+            session_registry.unregister(session_id)
             callback.stop()
 
         pn.state.on_session_destroyed(_cleanup_session)
