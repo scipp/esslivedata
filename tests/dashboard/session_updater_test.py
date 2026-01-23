@@ -10,8 +10,6 @@ from ess.livedata.dashboard.state_stores import (
     NotificationQueue,
     NotificationType,
     PlotDataService,
-    StateKey,
-    WidgetStateStore,
 )
 
 
@@ -27,30 +25,6 @@ class TestSessionUpdater:
         updater.periodic_update()
 
         assert registry.is_active(session_id)
-
-    def test_polls_widget_state_changes(self):
-        session_id = SessionId('session-1')
-        registry = SessionRegistry()
-        store = WidgetStateStore()
-
-        updater = SessionUpdater(
-            session_id=session_id,
-            session_registry=registry,
-            widget_state_store=store,
-        )
-
-        # Register handler
-        received_values = []
-        key = StateKey('test-key')
-        updater.register_widget_handler(key, lambda v: received_values.append(v))
-
-        # Update store
-        store.update(key, 'test-value')
-
-        # Poll should pick up change
-        updater.periodic_update()
-
-        assert received_values == ['test-value']
 
     def test_polls_plot_updates(self):
         session_id = SessionId('session-1')
@@ -97,58 +71,6 @@ class TestSessionUpdater:
         notifications = updater._poll_notifications()
         assert len(notifications) == 1
         assert notifications[0].message == 'Test'
-
-    def test_only_notifies_registered_handlers(self):
-        session_id = SessionId('session-1')
-        registry = SessionRegistry()
-        store = WidgetStateStore()
-
-        updater = SessionUpdater(
-            session_id=session_id,
-            session_registry=registry,
-            widget_state_store=store,
-        )
-
-        # Register handler for one key
-        received_values = []
-        key1 = StateKey('watched')
-        key2 = StateKey('unwatched')
-        updater.register_widget_handler(key1, lambda v: received_values.append(v))
-
-        # Update both keys
-        store.update(key1, 'watched-value')
-        store.update(key2, 'unwatched-value')
-
-        # Only watched key should trigger handler
-        updater.periodic_update()
-
-        assert received_values == ['watched-value']
-
-    def test_unregister_widget_handler(self):
-        session_id = SessionId('session-1')
-        registry = SessionRegistry()
-        store = WidgetStateStore()
-
-        updater = SessionUpdater(
-            session_id=session_id,
-            session_registry=registry,
-            widget_state_store=store,
-        )
-
-        received_values = []
-        key = StateKey('test-key')
-        updater.register_widget_handler(key, lambda v: received_values.append(v))
-
-        # Unregister
-        updater.unregister_widget_handler(key)
-
-        # Update store
-        store.update(key, 'test-value')
-
-        # Poll should not invoke handler
-        updater.periodic_update()
-
-        assert received_values == []
 
     def test_unregister_plot_handler(self):
         session_id = SessionId('session-1')
@@ -197,40 +119,6 @@ class TestSessionUpdater:
         queue.push(NotificationEvent(message='After cleanup'))
         notifications = queue.get_new_events(session_id)
         assert notifications == []
-
-    def test_handler_error_does_not_stop_other_handlers(self):
-        session_id = SessionId('session-1')
-        registry = SessionRegistry()
-        store = WidgetStateStore()
-
-        updater = SessionUpdater(
-            session_id=session_id,
-            session_registry=registry,
-            widget_state_store=store,
-        )
-
-        received_values = []
-
-        def error_handler(v):
-            raise ValueError("Handler error")
-
-        def ok_handler(v):
-            received_values.append(v)
-
-        key1 = StateKey('error-key')
-        key2 = StateKey('ok-key')
-        updater.register_widget_handler(key1, error_handler)
-        updater.register_widget_handler(key2, ok_handler)
-
-        # Update both
-        with store.transaction():
-            store.update(key1, 'error-value')
-            store.update(key2, 'ok-value')
-
-        # Poll should still invoke ok_handler despite error_handler raising
-        updater.periodic_update()
-
-        assert received_values == ['ok-value']
 
     def test_session_id_property(self):
         session_id = SessionId('test-session')

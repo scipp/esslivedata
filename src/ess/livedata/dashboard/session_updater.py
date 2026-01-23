@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any
 
 import panel as pn
 
@@ -24,8 +23,6 @@ from .state_stores import (
     NotificationType,
     PlotDataService,
     PlotLayerState,
-    StateKey,
-    WidgetStateStore,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,9 +33,12 @@ class SessionUpdater:
     Per-session component that drives all widget updates.
 
     Each browser session creates its own SessionUpdater instance. The updater
-    polls shared services (WidgetStateStore, PlotDataService, NotificationQueue)
-    in its periodic callback, ensuring all session-bound components are created
-    and updated in the correct session context.
+    polls shared services (PlotDataService, NotificationQueue) in its periodic
+    callback, ensuring all session-bound components are created and updated
+    in the correct session context.
+
+    Note: Widget state synchronization uses direct callbacks (WidgetLifecycleCallbacks)
+    rather than polling, since the callback mechanism works correctly for widgets.
 
     Parameters
     ----------
@@ -46,8 +46,6 @@ class SessionUpdater:
         Unique identifier for this session.
     session_registry:
         Registry for session heartbeats and tracking.
-    widget_state_store:
-        Shared store for widget state changes.
     plot_data_service:
         Shared service for plot data with version tracking.
     notification_queue:
@@ -59,22 +57,18 @@ class SessionUpdater:
         *,
         session_id: SessionId,
         session_registry: SessionRegistry,
-        widget_state_store: WidgetStateStore | None = None,
         plot_data_service: PlotDataService | None = None,
         notification_queue: NotificationQueue | None = None,
     ) -> None:
         self._session_id = session_id
         self._session_registry = session_registry
-        self._widget_state_store = widget_state_store
         self._plot_data_service = plot_data_service
         self._notification_queue = notification_queue
 
         # Version tracking for polling
-        self._last_widget_version = 0
         self._last_plot_versions: dict[LayerId, int] = {}
 
         # Callbacks for applying updates
-        self._widget_change_handlers: dict[StateKey, Callable[[Any], None]] = {}
         self._plot_update_handlers: dict[LayerId, Callable[[PlotLayerState], None]] = {}
         self._custom_handlers: list[Callable[[], None]] = []
 
@@ -86,25 +80,6 @@ class SessionUpdater:
         self._session_registry.register(session_id, self)
 
         logger.debug("SessionUpdater created for session %s", session_id)
-
-    def register_widget_handler(
-        self, key: StateKey, handler: Callable[[Any], None]
-    ) -> None:
-        """
-        Register a handler for widget state changes.
-
-        Parameters
-        ----------
-        key:
-            State key to watch.
-        handler:
-            Callback to invoke when state changes.
-        """
-        self._widget_change_handlers[key] = handler
-
-    def unregister_widget_handler(self, key: StateKey) -> None:
-        """Unregister a widget state handler."""
-        self._widget_change_handlers.pop(key, None)
 
     def register_plot_handler(
         self, layer_id: LayerId, handler: Callable[[PlotLayerState], None]
@@ -162,13 +137,11 @@ class SessionUpdater:
         self._session_registry.heartbeat(self._session_id)
 
         # Poll for changes
-        widget_changes = self._poll_widget_state()
         plot_updates = self._poll_plot_updates()
         notifications = self._poll_notifications()
 
         # Apply all changes in a single batched update to avoid staggered rendering
         with pn.io.hold():
-            self._apply_widget_state_changes(widget_changes)
             self._apply_plot_updates(plot_updates)
             self._show_notifications(notifications)
 
@@ -180,19 +153,6 @@ class SessionUpdater:
                     logger.exception(
                         "Error in custom handler for session %s", self._session_id
                     )
-
-    def _poll_widget_state(self) -> dict[StateKey, Any]:
-        """Poll WidgetStateStore for changes since last update."""
-        if self._widget_state_store is None:
-            return {}
-
-        current_version, changes = self._widget_state_store.get_changes_since(
-            self._last_widget_version
-        )
-        self._last_widget_version = current_version
-
-        # Filter to only keys we have handlers for
-        return {k: v for k, v in changes.items() if k in self._widget_change_handlers}
 
     def _poll_plot_updates(self) -> dict[LayerId, PlotLayerState]:
         """Poll PlotDataService for updated layers."""
@@ -214,20 +174,6 @@ class SessionUpdater:
             return []
 
         return self._notification_queue.get_new_events(self._session_id)
-
-    def _apply_widget_state_changes(self, changes: dict[StateKey, Any]) -> None:
-        """Apply widget state changes by invoking registered handlers."""
-        for key, value in changes.items():
-            handler = self._widget_change_handlers.get(key)
-            if handler is not None:
-                try:
-                    handler(value)
-                except Exception:
-                    logger.exception(
-                        "Error in widget handler for %s in session %s",
-                        key,
-                        self._session_id,
-                    )
 
     def _apply_plot_updates(self, updates: dict[LayerId, PlotLayerState]) -> None:
         """Apply plot updates by invoking registered handlers."""
@@ -273,7 +219,6 @@ class SessionUpdater:
         if self._notification_queue is not None:
             self._notification_queue.unregister_session(self._session_id)
 
-        self._widget_change_handlers.clear()
         self._plot_update_handlers.clear()
         self._last_plot_versions.clear()
         self._custom_handlers.clear()

@@ -3,9 +3,12 @@
 """
 State stores for multi-session synchronization.
 
-These stores replace direct subscription callbacks with a polling model,
-ensuring each session's periodic callback accesses state in the correct
-session context.
+These stores provide polling-based access to shared state, ensuring each
+session's periodic callback accesses state in the correct session context.
+
+Note: Widget state synchronization uses direct callbacks (WidgetLifecycleCallbacks)
+rather than polling, since the callback mechanism works correctly for widgets.
+Only notifications and plot data use polling stores.
 """
 
 from __future__ import annotations
@@ -13,17 +16,13 @@ from __future__ import annotations
 import logging
 import threading
 from collections import deque
-from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Generic, NewType, TypeVar
+from typing import Any, NewType
 
 from .session_registry import SessionId
 
 logger = logging.getLogger(__name__)
-
-StateKey = NewType('StateKey', str)
-T = TypeVar('T')
 
 
 class NotificationType(Enum):
@@ -42,160 +41,6 @@ class NotificationEvent:
     message: str
     notification_type: NotificationType = NotificationType.INFO
     duration: int = 3000  # milliseconds
-
-
-@dataclass
-class VersionedState(Generic[T]):
-    """State value with version tracking."""
-
-    value: T
-    version: int
-
-
-class WidgetStateStore:
-    """
-    Key-value store for widget state with global versioning.
-
-    Services update state here; each session polls for changes in its
-    periodic callback. Global versioning allows efficient "what changed
-    since last poll" queries.
-
-    Thread-safe: can be called from background threads and periodic callbacks.
-    """
-
-    def __init__(self) -> None:
-        self._state: dict[StateKey, VersionedState[Any]] = {}
-        self._version = 0
-        self._lock = threading.Lock()
-        self._in_transaction = False
-        self._transaction_updates: dict[StateKey, Any] = {}
-
-    def update(self, key: StateKey, state: Any) -> None:
-        """
-        Update state for a key.
-
-        Parameters
-        ----------
-        key:
-            State key to update.
-        state:
-            New state value.
-        """
-        if self._in_transaction:
-            self._transaction_updates[key] = state
-            return
-
-        with self._lock:
-            self._version += 1
-            self._state[key] = VersionedState(value=state, version=self._version)
-            logger.debug("Updated state for %s at version %d", key, self._version)
-
-    def get(self, key: StateKey) -> Any | None:
-        """
-        Get current state for a key.
-
-        Parameters
-        ----------
-        key:
-            State key to retrieve.
-
-        Returns
-        -------
-        :
-            Current state value, or None if not set.
-        """
-        with self._lock:
-            if key in self._state:
-                return self._state[key].value
-            return None
-
-    def get_version(self, key: StateKey) -> int:
-        """
-        Get version for a specific key.
-
-        Parameters
-        ----------
-        key:
-            State key to check.
-
-        Returns
-        -------
-        :
-            Version number, or 0 if key doesn't exist.
-        """
-        with self._lock:
-            if key in self._state:
-                return self._state[key].version
-            return 0
-
-    def get_changes_since(self, last_version: int) -> tuple[int, dict[StateKey, Any]]:
-        """
-        Get all state changes since a given version.
-
-        Parameters
-        ----------
-        last_version:
-            Version to check changes from.
-
-        Returns
-        -------
-        :
-            Tuple of (current_version, changes_dict). The changes_dict contains
-            only keys whose version is greater than last_version.
-        """
-        with self._lock:
-            changes: dict[StateKey, Any] = {}
-            for key, versioned in self._state.items():
-                if versioned.version > last_version:
-                    changes[key] = versioned.value
-            return self._version, changes
-
-    @property
-    def current_version(self) -> int:
-        """Current global version number."""
-        with self._lock:
-            return self._version
-
-    @contextmanager
-    def transaction(self):
-        """
-        Batch multiple updates into a single version bump.
-
-        Use this when updating multiple related keys to ensure
-        consumers see them as a single atomic update.
-
-        Example
-        -------
-        >>> with store.transaction():
-        ...     store.update(StateKey("key1"), value1)
-        ...     store.update(StateKey("key2"), value2)
-        """
-        self._in_transaction = True
-        self._transaction_updates = {}
-        try:
-            yield
-        finally:
-            # Apply all updates with a single version bump
-            with self._lock:
-                if self._transaction_updates:
-                    self._version += 1
-                    for key, value in self._transaction_updates.items():
-                        self._state[key] = VersionedState(
-                            value=value, version=self._version
-                        )
-                    logger.debug(
-                        "Committed transaction with %d updates at version %d",
-                        len(self._transaction_updates),
-                        self._version,
-                    )
-            self._in_transaction = False
-            self._transaction_updates = {}
-
-    def clear(self) -> None:
-        """Clear all state. Mainly useful for testing."""
-        with self._lock:
-            self._state.clear()
-            self._version = 0
 
 
 @dataclass
