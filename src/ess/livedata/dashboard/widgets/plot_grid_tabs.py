@@ -397,7 +397,10 @@ class PlotGridTabs:
         if plot_grid is None:
             return
 
-        # Get session-local composed plot if data is available
+        # Get session-local composed plot if data is available.
+        # Note: When config changes, update_layer_config() creates a new layer_id.
+        # The old layer_id is orphaned and cleaned up by update_pipes().
+        # New layer_ids have no cache, so fresh components are created naturally.
         session_plot = self._get_session_composed_plot(cell)
 
         # Create widget with toolbars and content

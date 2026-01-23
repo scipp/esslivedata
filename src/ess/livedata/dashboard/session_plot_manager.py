@@ -129,6 +129,23 @@ class SessionPlotManager:
             )
             return None
 
+    def invalidate_layer(self, layer_id: LayerId) -> None:
+        """
+        Remove cached components for a layer.
+
+        Called when a layer is no longer in PlotDataService (orphaned).
+
+        Parameters
+        ----------
+        layer_id:
+            Layer ID to invalidate.
+        """
+        self._presenters.pop(layer_id, None)
+        self._pipes.pop(layer_id, None)
+        self._dmaps.pop(layer_id, None)
+        self._last_versions.pop(layer_id, None)
+        logger.debug("Invalidated session cache for layer_id=%s", layer_id)
+
     def update_pipes(self) -> set[LayerId]:
         """
         Poll PlotDataService for updates and forward to session Pipes.
@@ -137,12 +154,23 @@ class SessionPlotManager:
         to the corresponding session Pipe. This is how plot updates
         propagate to each browser session.
 
+        Also cleans up orphaned layers - when update_layer_config() replaces
+        a layer with a new layer_id, the old layer_id is removed from
+        PlotDataService and becomes orphaned in the session cache.
+
         Returns
         -------
         :
             Set of layer IDs that received updates.
         """
         updated_layers: set[LayerId] = set()
+
+        # Clean up orphaned layers no longer in PlotDataService.
+        # When update_layer_config() creates a new layer_id, the old one
+        # is removed from PlotDataService. We detect and clean up here.
+        for layer_id in list(self._dmaps.keys()):
+            if self._plot_data_service.get(layer_id) is None:
+                self.invalidate_layer(layer_id)
 
         for layer_id, session_pipe in list(self._pipes.items()):
             state = self._plot_data_service.get(layer_id)

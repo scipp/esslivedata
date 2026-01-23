@@ -516,10 +516,12 @@ class PlotOrchestrator:
 
     def update_layer_config(self, layer_id: LayerId, new_config: PlotConfig) -> None:
         """
-        Update a layer's configuration and resubscribe to workflow.
+        Update a layer's configuration by replacing with a new layer.
 
-        When the workflow is next committed, the layer will be recreated
-        with the new configuration.
+        Creates a new layer with a fresh layer_id, which naturally invalidates
+        any cached session state (DynamicMaps, Presenters) since they're keyed
+        by layer_id. The old layer_id entries in session caches become orphaned
+        and are cleaned up when sessions detect they're no longer in PlotDataService.
 
         Parameters
         ----------
@@ -532,23 +534,31 @@ class PlotOrchestrator:
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
-        # Find and update the layer
-        updated_layer: Layer | None = None
+        # Generate new layer_id - this naturally invalidates session caches
+        new_layer_id = LayerId(uuid4())
+
+        # Find and replace the layer with new identity
+        layer_index: int | None = None
         for i, layer in enumerate(cell.layers):
             if layer.layer_id == layer_id:
-                updated_layer = Layer(layer_id=layer_id, config=new_config)
-                cell.layers[i] = updated_layer
+                layer_index = i
                 break
 
-        if updated_layer is None:
+        if layer_index is None:
             raise KeyError(f'Layer {layer_id} not found in cell {cell_id}')
 
-        # Unsubscribe from old workflow notifications and clear state
-        # (keep layer_to_cell mapping since layer is still in the cell)
-        self._unsubscribe_and_cleanup_layer(layer_id, remove_from_cell_mapping=False)
+        # Fully clean up old layer (including cell mapping)
+        self._unsubscribe_and_cleanup_layer(layer_id, remove_from_cell_mapping=True)
 
-        # Re-subscribe to workflow
-        self._subscribe_layer(grid_id, cell_id, updated_layer)
+        # Create new layer with new identity
+        new_layer = Layer(layer_id=new_layer_id, config=new_config)
+        cell.layers[layer_index] = new_layer
+
+        # Set up mapping for new layer
+        self._layer_to_cell[new_layer_id] = cell_id
+
+        # Subscribe new layer to workflow
+        self._subscribe_layer(grid_id, cell_id, new_layer)
 
     def _remove_cell_and_cleanup(
         self, grid_id: GridId, cell_id: CellId, cell: PlotCell

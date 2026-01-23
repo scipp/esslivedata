@@ -548,15 +548,15 @@ class TestCellManagement:
     def test_update_layer_config_changes_the_config(
         self, plot_orchestrator, plot_cell, plot_config, workflow_id
     ):
-        """Update layer config changes the config."""
+        """Update layer config replaces the layer with a new layer_id."""
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = add_cell_with_layer(
             plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
         )
 
-        # Get the layer_id from the cell
+        # Get the original layer_id from the cell
         grid = plot_orchestrator.get_grid(grid_id)
-        layer_id = grid.cells[cell_id].layers[0].layer_id
+        old_layer_id = grid.cells[cell_id].layers[0].layer_id
 
         new_config = make_plot_config(
             workflow_id,
@@ -565,9 +565,14 @@ class TestCellManagement:
             plot_name='new_plot',
             params=FakePlotParams(new_param='new_value'),
         )
-        plot_orchestrator.update_layer_config(layer_id, new_config)
+        plot_orchestrator.update_layer_config(old_layer_id, new_config)
 
-        retrieved_config = plot_orchestrator.get_layer_config(layer_id)
+        # After update, the layer has a NEW layer_id (this invalidates session caches)
+        grid = plot_orchestrator.get_grid(grid_id)
+        new_layer_id = grid.cells[cell_id].layers[0].layer_id
+        assert new_layer_id != old_layer_id
+
+        retrieved_config = plot_orchestrator.get_layer_config(new_layer_id)
         assert retrieved_config == new_config
         assert retrieved_config.output_name == 'new_output'
 
