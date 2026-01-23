@@ -98,7 +98,9 @@ class SessionPlotManager:
         # Get data from shared service
         state_layer_id = StateLayerId(str(layer_id))
         state = self._plot_data_service.get(state_layer_id)
-        if state is None or state.plotter is None:
+        # Need plotter (for create_presenter) and state (computed data) to set up.
+        # state.state can be None if waiting for data or after an error.
+        if state is None or state.plotter is None or state.state is None:
             return None
 
         try:
