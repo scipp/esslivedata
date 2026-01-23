@@ -327,6 +327,11 @@ class TestSlicerPlotter:
         params.plot_scale.color_scale = PlotScale.linear
         return slicer.SlicerPlotter.from_params(params)
 
+    @pytest.fixture
+    def slicer_presenter(self, slicer_plotter):
+        """Create SlicerPresenter for testing render_slice."""
+        return slicer_plotter.create_presenter()
+
     def test_initialization(self, slicer_plotter):
         """Test that SlicerPlotter initializes correctly."""
         # Uses base class autoscalers dict (initialized lazily)
@@ -335,12 +340,15 @@ class TestSlicerPlotter:
     # === Stage 1: compute() tests ===
 
     def test_compute_returns_slicer_state(self, slicer_plotter, data_3d, data_key):
-        """Test that compute() returns a SlicerState with data and clim."""
+        """Test that compute() returns a SlicerState with prepared data and clim."""
         data_dict = {data_key: data_3d}
         result = slicer_plotter.compute(data_dict)
 
         assert isinstance(result, slicer.SlicerState)
-        assert result.data == data_dict
+        # Data should have same keys
+        assert set(result.data.keys()) == set(data_dict.keys())
+        # Data should be prepared (converted to float64)
+        assert result.data[data_key].dtype == 'float64'
         assert result.clim is not None  # Should have computed clim
 
     def test_compute_calculates_global_clim(self, data_3d, data_key):
@@ -370,12 +378,12 @@ class TestSlicerPlotter:
         assert result.clim is not None
         assert result.clim[0] > 0
 
-    # === Stage 2: render_slice() tests ===
+    # === Stage 2: render_slice() tests (on SlicerPresenter) ===
 
-    def test_render_slice_slices_3d_data(self, slicer_plotter, data_3d):
+    def test_render_slice_slices_3d_data(self, slicer_presenter, data_3d):
         """Test that render_slice correctly slices 3D data."""
         z_value = float(data_3d.coords['z'].values[0])
-        result = slicer_plotter.render_slice(
+        result = slicer_presenter.render_slice(
             data_3d, clim=None, slice_dim='z', z_value=z_value
         )
 
@@ -388,14 +396,15 @@ class TestSlicerPlotter:
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         params.plot_scale.color_scale = PlotScale.linear
         plotter = slicer.SlicerPlotter.from_params(params)
+        presenter = plotter.create_presenter()
 
         z_value_0 = float(data_3d.coords['z'].values[0])
-        result_0 = plotter.render_slice(
+        result_0 = presenter.render_slice(
             data_3d, clim=None, slice_dim='z', z_value=z_value_0
         )
 
         z_value_2 = float(data_3d.coords['z'].values[2])
-        result_2 = plotter.render_slice(
+        result_2 = presenter.render_slice(
             data_3d, clim=None, slice_dim='z', z_value=z_value_2
         )
 
@@ -405,11 +414,11 @@ class TestSlicerPlotter:
 
     @pytest.mark.parametrize('slice_dim', ['z', 'y', 'x'])
     def test_render_slice_along_different_dimensions(
-        self, slicer_plotter, data_3d, slice_dim
+        self, slicer_presenter, data_3d, slice_dim
     ):
         """Test slicing along different dimensions."""
         slice_value = float(data_3d.coords[slice_dim].values[0])
-        result = slicer_plotter.render_slice(
+        result = slicer_presenter.render_slice(
             data_3d,
             clim=None,
             slice_dim=slice_dim,
@@ -420,11 +429,11 @@ class TestSlicerPlotter:
         expected = data_3d[slice_dim, 0]
         np.testing.assert_allclose(result.data['values'], expected.values)
 
-    def test_render_slice_uses_provided_clim(self, slicer_plotter, data_3d):
+    def test_render_slice_uses_provided_clim(self, slicer_presenter, data_3d):
         """Test that render_slice uses the provided clim for consistent color scale."""
         clim = (10.0, 100.0)
         z_value = float(data_3d.coords['z'].values[0])
-        result = slicer_plotter.render_slice(
+        result = slicer_presenter.render_slice(
             data_3d, clim=clim, slice_dim='z', z_value=z_value
         )
 
@@ -432,10 +441,10 @@ class TestSlicerPlotter:
         plot_opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
         assert plot_opts.get('clim') == clim
 
-    def test_render_slice_framewise_always_true(self, slicer_plotter, data_3d):
+    def test_render_slice_framewise_always_true(self, slicer_presenter, data_3d):
         """Test that render_slice always sets framewise=True."""
         z_value = float(data_3d.coords['z'].values[0])
-        result = slicer_plotter.render_slice(
+        result = slicer_presenter.render_slice(
             data_3d, clim=None, slice_dim='z', z_value=z_value
         )
 
@@ -447,26 +456,28 @@ class TestSlicerPlotter:
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         params.plot_scale.color_scale = PlotScale.linear
         plotter = slicer.SlicerPlotter.from_params(params)
+        presenter = plotter.create_presenter()
 
         # Original data is (z:5, y:8, x:10)
         # Keep x: flatten z,y -> (40, 10)
-        result = plotter.render_slice(data_3d, clim=None, mode='flatten', slice_dim='x')
+        result = presenter.render_slice(
+            data_3d, clim=None, mode='flatten', slice_dim='x'
+        )
         assert isinstance(result, hv.Image | hv.QuadMesh)
         assert result.data['values'].shape == (40, 10)
 
-    def test_render_slice_log_scale_masks_zeros(self, data_3d):
-        """Test that log scale masks zeros in render_slice."""
+    def test_compute_log_scale_masks_zeros(self, data_3d, data_key):
+        """Test that log scale masks zeros in compute()."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         params.plot_scale.color_scale = PlotScale.log
         plotter = slicer.SlicerPlotter.from_params(params)
 
-        z_value = float(data_3d.coords['z'].values[0])
-        result = plotter.render_slice(
-            data_3d, clim=None, slice_dim='z', z_value=z_value
-        )
+        data_dict = {data_key: data_3d}
+        result = plotter.compute(data_dict)
 
-        # First value (0) should be NaN in log scale
-        assert np.isnan(result.data['values'][0, 0])
+        # First value (0) should be NaN in log scale (data_3d starts at 0 from arange)
+        prepared_data = result.data[data_key]
+        assert np.isnan(prepared_data.values[0, 0, 0])
 
     # === SlicerPresenter tests ===
 

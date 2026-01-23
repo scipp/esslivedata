@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import time
-from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import holoviews as hv
@@ -137,7 +136,7 @@ def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
         return f'{end_str} (Lag: {lag_s:.1f}s)'
 
 
-class Plotter(ABC):
+class Plotter:
     """
     Base class for plots that support autoscaling.
     """
@@ -433,9 +432,15 @@ class Plotter(ABC):
             self.autoscalers[data_key] = Autoscaler(**self.autoscaler_kwargs)
         return self.autoscalers[data_key].update_bounds(data, coord_data=coord_data)
 
-    @abstractmethod
     def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> Any:
-        """Create a plot from the given data. Must be implemented by subclasses."""
+        """Create a plot from the given data.
+
+        Override this method for plotters that use the default compute() flow.
+        Plotters that override compute() entirely don't need to implement this.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement plot() or override compute()"
+        )
 
 
 class LinePlotter(Plotter):

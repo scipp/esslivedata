@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import holoviews as hv
 import numpy as np
@@ -16,9 +16,6 @@ from ess.livedata.config.workflow_spec import ResultKey
 from .plot_params import PlotParams3d, PlotScale, PlotScaleParams2d, TickParams
 from .plots import Plotter
 from .scipp_to_holoviews import to_holoviews
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass
@@ -43,8 +40,8 @@ class SlicerPresenter:
     own SlicerPresenter instance with session-bound components.
     """
 
-    def __init__(self, plotter: SlicerPlotter) -> None:
-        self._plotter = plotter
+    def __init__(self, base_opts: dict[str, Any]) -> None:
+        self._base_opts = base_opts
         self._kdims: list[hv.Dimension] | None = None
 
     def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
@@ -66,7 +63,7 @@ class SlicerPresenter:
             self._initialize_kdims(pipe.data)
 
         def render(mode: str, slice_dim: str, *, data: SlicerState = None, **kwargs):
-            """Render a slice using the plotter's render_slice method.
+            """Render a slice based on current kdim selections.
 
             The `data` keyword argument is provided by the Pipe stream.
             The `mode`, `slice_dim`, and other slider kwargs come from kdims.
@@ -74,9 +71,9 @@ class SlicerPresenter:
             if data is None or not data.data:
                 return hv.Text(0.5, 0.5, 'No data')
 
-            # Get first data item (SlicerPlotter expects single data source)
+            # Get first data item (expects single data source)
             array_data = next(iter(data.data.values()))
-            return self._plotter.render_slice(
+            return self.render_slice(
                 array_data, data.clim, mode=mode, slice_dim=slice_dim, **kwargs
             )
 
@@ -149,6 +146,98 @@ class SlicerPresenter:
 
         self._kdims = [mode_selector, dim_selector, *sliders]
 
+    def render_slice(
+        self,
+        data: sc.DataArray,
+        clim: tuple[float, float] | None,
+        *,
+        mode: str = 'slice',
+        slice_dim: str = '',
+        **kwargs,
+    ) -> hv.Image:
+        """
+        Render a single 2D slice from prepared 3D data.
+
+        Parameters
+        ----------
+        data:
+            Prepared 3D DataArray (dtype conversion and log masking already applied
+            in compute()).
+        clim:
+            Pre-computed color limits for consistent color scale.
+        mode:
+            Either 'slice' to select a single slice, or 'flatten' to concatenate
+            two dimensions into one.
+        slice_dim:
+            For 'slice' mode: dimension to slice along (removes this dimension).
+            For 'flatten' mode: dimension to keep (the other two are flattened).
+        **kwargs:
+            For 'slice' mode: '{slice_dim}_value' (coordinate) or
+            '{slice_dim}_index' (integer) for the slice position.
+
+        Returns
+        -------
+        :
+            A HoloViews Image element showing the 2D result.
+        """
+        if mode == 'flatten':
+            plot_data = self._flatten_outer_dims(data, keep_dim=slice_dim)
+        else:
+            plot_data = self._slice_data(data, slice_dim, kwargs)
+
+        image = to_holoviews(plot_data)
+        opts: dict[str, Any] = dict(self._base_opts)
+        # Always use framewise=True for interactive slicing
+        opts['framewise'] = True
+        # Use pre-computed clim for consistent color scale across slices
+        if clim is not None:
+            opts['clim'] = clim
+        return image.opts(**opts)
+
+    def _slice_data(
+        self, data: sc.DataArray, slice_dim: str, kwargs: dict
+    ) -> sc.DataArray:
+        """Slice 3D data along the specified dimension."""
+        # Determine if we're using coordinate values or integer indices
+        if (coord_value := kwargs.get(f'{slice_dim}_value')) is not None:
+            coord = data.coords[slice_dim]
+            slice_idx = sc.scalar(coord_value, unit=coord.unit)
+        else:
+            slice_idx = kwargs.get(f'{slice_dim}_index', 0)
+        return data[slice_dim, slice_idx]
+
+    def _flatten_outer_dims(self, data: sc.DataArray, keep_dim: str) -> sc.DataArray:
+        """Flatten two dimensions, keeping the specified dimension separate.
+
+        Parameters
+        ----------
+        data:
+            3D DataArray to flatten.
+        keep_dim:
+            Dimension to keep (not flatten). The other two dimensions will be
+            flattened together.
+        """
+        dims = list(data.dims)
+        flatten_dims = [d for d in dims if d != keep_dim]
+
+        # Transpose so keep_dim is last (required for flatten to work on
+        # adjacent dims)
+        new_order = [*flatten_dims, keep_dim]
+        if dims != new_order:
+            data = data.transpose(new_order)
+
+        # Conditionally use the inner of the flattened dims as output dim name. It might
+        # seem natural to use something like flat_dim = '/'.join(flatten_dims) instead,
+        # but in practice that causes more trouble, since we lose connection to
+        # the relevant coords.
+        if (
+            coord := data.coords.get(flatten_dims[1])
+        ) is not None and coord.dims == flatten_dims:
+            flat_dim = flatten_dims[1]
+        else:
+            flat_dim = '/'.join(flatten_dims)
+        return data.flatten(dims=flatten_dims, to=flat_dim)
+
 
 class SlicerPlotter(Plotter):
     """Plotter for 3D data with interactive slicing or flattening.
@@ -198,6 +287,9 @@ class SlicerPlotter(Plotter):
         This is Stage 1 of the two-stage architecture. The result is stored
         in PlotDataService and shared across all browser sessions.
 
+        Performs dtype conversion and log-scale masking on the full 3D data
+        so that render_slice only needs to slice and convert to HoloViews.
+
         Parameters
         ----------
         data:
@@ -208,11 +300,16 @@ class SlicerPlotter(Plotter):
         Returns
         -------
         :
-            SlicerState containing the data and pre-computed color limits.
+            SlicerState containing prepared data and pre-computed color limits.
         """
         del kwargs  # Unused for SlicerPlotter
         clim = self._compute_global_clim(data)
-        return SlicerState(data=data, clim=clim)
+        # Pre-prepare 3D data (dtype conversion + log masking)
+        use_log_scale = self._scale_opts.color_scale == PlotScale.log
+        prepared_data = {
+            k: self._prepare_2d_image_data(v, use_log_scale) for k, v in data.items()
+        }
+        return SlicerState(data=prepared_data, clim=clim)
 
     def _compute_global_clim(
         self, data: dict[ResultKey, sc.DataArray]
@@ -242,114 +339,4 @@ class SlicerPlotter(Plotter):
 
     def create_presenter(self) -> SlicerPresenter:
         """Create a SlicerPresenter for per-session rendering."""
-        return SlicerPresenter(self)
-
-    def render_slice(
-        self,
-        data: sc.DataArray,
-        clim: tuple[float, float] | None,
-        *,
-        mode: str = 'slice',
-        slice_dim: str = '',
-        **kwargs,
-    ) -> hv.Image:
-        """
-        Render a single 2D slice from 3D data.
-
-        This method is called by SlicerPresenter per-session. It does not
-        modify any shared state (no autoscaler updates).
-
-        Parameters
-        ----------
-        data:
-            3D DataArray to process.
-        clim:
-            Pre-computed color limits for consistent color scale.
-        mode:
-            Either 'slice' to select a single slice, or 'flatten' to concatenate
-            two dimensions into one.
-        slice_dim:
-            For 'slice' mode: dimension to slice along (removes this dimension).
-            For 'flatten' mode: dimension to keep (the other two are flattened).
-        **kwargs:
-            For 'slice' mode: '{slice_dim}_value' (coordinate) or
-            '{slice_dim}_index' (integer) for the slice position.
-
-        Returns
-        -------
-        :
-            A HoloViews Image element showing the 2D result.
-        """
-        if mode == 'flatten':
-            plot_data = self._flatten_outer_dims(data, keep_dim=slice_dim)
-        else:
-            plot_data = self._slice_data(data, slice_dim, kwargs)
-
-        # Prepare data with appropriate dtype and log scale masking
-        use_log_scale = self._scale_opts.color_scale == PlotScale.log
-        plot_data = self._prepare_2d_image_data(plot_data, use_log_scale)
-
-        image = to_holoviews(plot_data)
-        opts: dict[str, Any] = dict(self._base_opts)
-        # Always use framewise=True for interactive slicing
-        opts['framewise'] = True
-        # Use pre-computed clim for consistent color scale across slices
-        if clim is not None:
-            opts['clim'] = clim
-        return image.opts(**opts)
-
-    def plot(
-        self,
-        data: sc.DataArray,
-        data_key: ResultKey,
-        **kwargs,
-    ) -> hv.Image:
-        """Not used - SlicerPlotter uses compute() + SlicerPresenter."""
-        raise NotImplementedError(
-            "SlicerPlotter uses two-stage architecture. "
-            "Call compute() then use SlicerPresenter."
-        )
-
-    def _slice_data(
-        self, data: sc.DataArray, slice_dim: str, kwargs: dict
-    ) -> sc.DataArray:
-        """Slice 3D data along the specified dimension."""
-        # Determine if we're using coordinate values or integer indices
-        if (coord_value := kwargs.get(f'{slice_dim}_value')) is not None:
-            coord = data.coords[slice_dim]
-            slice_idx = sc.scalar(coord_value, unit=coord.unit)
-        else:
-            slice_idx = kwargs.get(f'{slice_dim}_index', 0)
-        return data[slice_dim, slice_idx]
-
-    def _flatten_outer_dims(self, data: sc.DataArray, keep_dim: str) -> sc.DataArray:
-        """Flatten two dimensions, keeping the specified dimension separate.
-
-        Parameters
-        ----------
-        data:
-            3D DataArray to flatten.
-        keep_dim:
-            Dimension to keep (not flatten). The other two dimensions will be
-            flattened together.
-        """
-        dims = list(data.dims)
-        flatten_dims = [d for d in dims if d != keep_dim]
-
-        # Transpose so keep_dim is last (required for flatten to work on
-        # adjacent dims)
-        new_order = [*flatten_dims, keep_dim]
-        if dims != new_order:
-            data = data.transpose(new_order)
-
-        # Conditionally use the inner of the flattened dims as output dim name. It might
-        # seem natural to use something like flat_dim = '/'.join(flatten_dims) instead,
-        # but in practice that causes more trouble, since we lose connection to
-        # the relevant coords.
-        if (
-            coord := data.coords.get(flatten_dims[1])
-        ) is not None and coord.dims == flatten_dims:
-            flat_dim = flatten_dims[1]
-        else:
-            flat_dim = '/'.join(flatten_dims)
-        return data.flatten(dims=flatten_dims, to=flat_dim)
+        return SlicerPresenter(base_opts=self._base_opts)
