@@ -17,7 +17,6 @@ import panel as pn
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
-from ..plot_data_service import LayerId as StateLayerId
 from ..plot_data_service import PlotDataService, PlotLayerState
 from ..plot_orchestrator import (
     CellGeometry,
@@ -448,9 +447,7 @@ class PlotGridTabs:
             Dict mapping layer IDs to their PlotLayerState (or None if not in service).
         """
         return {
-            layer.layer_id: self._plot_data_service.get(
-                StateLayerId(str(layer.layer_id))
-            )
+            layer.layer_id: self._plot_data_service.get(layer.layer_id)
             for layer in cell.layers
         }
 
@@ -535,7 +532,7 @@ class PlotGridTabs:
         :
             True if data is available for this layer.
         """
-        layer_state = self._plot_data_service.get(StateLayerId(str(layer_id)))
+        layer_state = self._plot_data_service.get(layer_id)
         return layer_state is not None and layer_state.state is not None
 
     def _create_layer_toolbars(

@@ -13,6 +13,7 @@ import logging
 import threading
 from dataclasses import dataclass
 from typing import Any, NewType
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ class PlotLayerState:
     stopped: bool = False  # True if workflow ended
 
 
-LayerId = NewType('LayerId', str)
+LayerId = NewType('LayerId', UUID)
 
 
 class PlotDataService:

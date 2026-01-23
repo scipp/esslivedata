@@ -31,8 +31,7 @@ from .data_roles import PRIMARY
 from .data_service import DataService
 from .job_orchestrator import WorkflowCallbacks
 from .layer_subscription import LayerSubscription, SubscriptionReady
-from .plot_data_service import LayerId as StateLayerId
-from .plot_data_service import PlotDataService
+from .plot_data_service import LayerId, PlotDataService
 from .plotting_controller import PlottingController
 
 if TYPE_CHECKING:
@@ -41,7 +40,6 @@ if TYPE_CHECKING:
 SubscriptionId = NewType('SubscriptionId', UUID)
 GridId = NewType('GridId', UUID)
 CellId = NewType('CellId', UUID)
-LayerId = NewType('LayerId', UUID)
 
 
 class JobOrchestratorProtocol(Protocol):
@@ -596,7 +594,7 @@ class PlotOrchestrator:
             del self._layer_subscriptions[layer_id]
         # Clean up from PlotDataService
         if self._plot_data_service is not None:
-            self._plot_data_service.remove(StateLayerId(str(layer_id)))
+            self._plot_data_service.remove(layer_id)
         if remove_from_cell_mapping:
             self._layer_to_cell.pop(layer_id, None)
 
@@ -681,7 +679,6 @@ class PlotOrchestrator:
         layer_id = layer.layer_id
         config = layer.config
         cell = self._grids[grid_id].cells[cell_id]
-        state_layer_id = StateLayerId(str(layer_id))
 
         if self._plot_data_service is None:
             self._logger.error('PlotDataService is required for layer_id=%s', layer_id)
@@ -697,7 +694,7 @@ class PlotOrchestrator:
             plot = plotter.create_static_plot()
             # Store static plot in PlotDataService (plotter has create_presenter())
             self._plot_data_service.update(
-                state_layer_id,
+                layer_id,
                 state=plot,
                 plotter=plotter,
             )
@@ -706,7 +703,7 @@ class PlotOrchestrator:
             self._logger.exception(
                 'Failed to create static plot for layer_id=%s', layer_id
             )
-            self._plot_data_service.set_error(state_layer_id, error_msg)
+            self._plot_data_service.set_error(layer_id, error_msg)
 
         self._notify_cell_updated(grid_id, cell_id, cell)
 
@@ -743,7 +740,6 @@ class PlotOrchestrator:
             return
 
         cell = self._grids[grid_id].cells[cell_id]
-        state_layer_id = StateLayerId(str(layer_id))
         config = self.get_layer_config(layer_id)
 
         if self._plot_data_service is None:
@@ -751,7 +747,7 @@ class PlotOrchestrator:
             return
 
         # Create entry in "waiting" state (clears any previous error/stopped state)
-        self._plot_data_service.create_entry(state_layer_id)
+        self._plot_data_service.create_entry(layer_id)
 
         # Create plotter eagerly - doesn't need data
         try:
@@ -761,7 +757,7 @@ class PlotOrchestrator:
         except Exception:
             error_msg = traceback.format_exc()
             self._logger.exception('Failed to create plotter for layer_id=%s', layer_id)
-            self._plot_data_service.set_error(state_layer_id, error_msg)
+            self._plot_data_service.set_error(layer_id, error_msg)
             self._notify_cell_updated(grid_id, cell_id, cell)
             return
 
@@ -777,7 +773,7 @@ class PlotOrchestrator:
 
                 # Store in PlotDataService - sessions will poll for this
                 self._plot_data_service.update(
-                    state_layer_id,
+                    layer_id,
                     state=computed_state,
                     plotter=plotter,
                 )
@@ -786,7 +782,7 @@ class PlotOrchestrator:
                 self._logger.exception(
                     'Failed to compute state for layer_id=%s', layer_id
                 )
-                self._plot_data_service.set_error(state_layer_id, error_msg)
+                self._plot_data_service.set_error(layer_id, error_msg)
                 self._notify_cell_updated(grid_id, cell_id, cell)
 
         # Set up data pipeline - on_data will be called when data arrives
@@ -802,7 +798,7 @@ class PlotOrchestrator:
             self._logger.exception(
                 'Failed to set up data pipeline for layer_id=%s', layer_id
             )
-            self._plot_data_service.set_error(state_layer_id, error_msg)
+            self._plot_data_service.set_error(layer_id, error_msg)
             self._notify_cell_updated(grid_id, cell_id, cell)
 
     def _on_layer_job_stopped(self, layer_id: LayerId, job_number: JobNumber) -> None:
@@ -839,7 +835,7 @@ class PlotOrchestrator:
 
         # Mark as stopped in PlotDataService
         if self._plot_data_service is not None:
-            self._plot_data_service.set_stopped(StateLayerId(str(layer_id)))
+            self._plot_data_service.set_stopped(layer_id)
 
         # Notify UI of the state change
         self._notify_cell_updated(grid_id, cell_id, cell)

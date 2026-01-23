@@ -983,10 +983,8 @@ class TestLifecycleEventNotifications:
         assert len(cell.layers) == 1
         assert cell.layers[0].config == plot_cell[1]
         # Error is stored in PlotDataService
-        from ess.livedata.dashboard.plot_data_service import LayerId as StateLayerId
-
         layer_id = cell.layers[0].layer_id
-        state = plot_data_service.get(StateLayerId(str(layer_id)))
+        state = plot_data_service.get(layer_id)
         assert state is not None
         assert state.error is not None
         assert 'Test error' in state.error
@@ -1124,11 +1122,9 @@ class TestErrorHandling:
         # Called 2x: add cell, plotter creation failure (error notification)
         assert callback.call_count == 2
         # Error is stored in PlotDataService
-        from ess.livedata.dashboard.plot_data_service import LayerId as StateLayerId
-
         cell = plot_orchestrator.get_cell(cell_id)
         layer_id = cell.layers[0].layer_id
-        state = plot_data_service.get(StateLayerId(str(layer_id)))
+        state = plot_data_service.get(layer_id)
         assert state is not None
         assert state.error is not None
         assert 'Plot creation failed' in state.error
@@ -1295,8 +1291,6 @@ class TestCellRetrieval:
         plot_data_service,
     ):
         """PlotDataService should have data after workflow commits and data arrives."""
-        from ess.livedata.dashboard.plot_data_service import LayerId as StateLayerId
-
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = add_cell_with_layer(
             plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
@@ -1323,7 +1317,7 @@ class TestCellRetrieval:
             fake_data_service[result_key] = sc.scalar(1.0)
 
         # PlotDataService should have data for the layer
-        state = plot_data_service.get(StateLayerId(str(layer_id)))
+        state = plot_data_service.get(layer_id)
         assert state is not None
         assert state.state is not None  # Has computed data
         assert state.error is None
@@ -1337,8 +1331,6 @@ class TestCellRetrieval:
         fake_stream_manager,
     ):
         """PlotDataService should have error when plot creation fails."""
-        from ess.livedata.dashboard.plot_data_service import LayerId as StateLayerId
-
         # Create plotting controller configured to fail
         failing_controller = FakePlottingController(stream_manager=fake_stream_manager)
         failing_controller.configure_to_raise(ValueError("Plot creation failed"))
@@ -1371,7 +1363,7 @@ class TestCellRetrieval:
         commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
         # PlotDataService should have error for the layer
-        state = plot_data_service.get(StateLayerId(str(layer_id)))
+        state = plot_data_service.get(layer_id)
         assert state is not None
         assert state.error is not None
         assert "Plot creation failed" in state.error
@@ -1389,8 +1381,6 @@ class TestCellRetrieval:
         Simulate late subscriber scenario: plots exist, new UI component
         initializes and retrieves grid config and plot state from PlotDataService.
         """
-        from ess.livedata.dashboard.plot_data_service import LayerId as StateLayerId
-
         plot_data_service = PlotDataService()
         plot_orchestrator = PlotOrchestrator(
             plotting_controller=fake_plotting_controller,
@@ -1446,7 +1436,7 @@ class TestCellRetrieval:
         for cell_id in cell_ids:
             cell = plot_orchestrator.get_cell(cell_id)
             for layer in cell.layers:
-                state = plot_data_service.get(StateLayerId(str(layer.layer_id)))
+                state = plot_data_service.get(layer.layer_id)
                 assert state is not None
                 assert state.error is None
                 assert state.state is not None  # Has computed data
@@ -1465,8 +1455,6 @@ class TestCellRetrieval:
         """
         When layer config is updated and workflow is running, plotter is recreated.
         """
-        from ess.livedata.dashboard.plot_data_service import LayerId as StateLayerId
-
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = add_cell_with_layer(
             plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
@@ -1495,7 +1483,7 @@ class TestCellRetrieval:
             fake_data_service[result_key] = sc.scalar(1.0)
 
         # Verify layer has data in PlotDataService
-        state1 = plot_data_service.get(StateLayerId(str(layer_id)))
+        state1 = plot_data_service.get(layer_id)
         assert state1 is not None
         assert state1.state is not None
 
@@ -1534,8 +1522,6 @@ class TestCellRetrieval:
         plot_data_service,
     ):
         """PlotDataService should be cleaned up when cell is removed."""
-        from ess.livedata.dashboard.plot_data_service import LayerId as StateLayerId
-
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = add_cell_with_layer(
             plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
@@ -1562,7 +1548,7 @@ class TestCellRetrieval:
             fake_data_service[result_key] = sc.scalar(1.0)
 
         # Verify layer has data in PlotDataService
-        state = plot_data_service.get(StateLayerId(str(layer_id)))
+        state = plot_data_service.get(layer_id)
         assert state is not None
         assert state.state is not None
 
@@ -1570,7 +1556,7 @@ class TestCellRetrieval:
         plot_orchestrator.remove_cell(cell_id)
 
         # PlotDataService should no longer have the layer
-        assert plot_data_service.get(StateLayerId(str(layer_id))) is None
+        assert plot_data_service.get(layer_id) is None
 
         # get_cell should raise KeyError since cell doesn't exist
         import pytest

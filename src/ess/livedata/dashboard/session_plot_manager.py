@@ -20,11 +20,9 @@ from typing import TYPE_CHECKING
 
 import holoviews as hv
 
-from .plot_data_service import LayerId as StateLayerId
-from .plot_data_service import PlotDataService
+from .plot_data_service import LayerId, PlotDataService
 
 if TYPE_CHECKING:
-    from .plot_orchestrator import LayerId
     from .plots import Presenter
 
 logger = logging.getLogger(__name__)
@@ -96,8 +94,7 @@ class SessionPlotManager:
             return self._dmaps[layer_id]
 
         # Get data from shared service
-        state_layer_id = StateLayerId(str(layer_id))
-        state = self._plot_data_service.get(state_layer_id)
+        state = self._plot_data_service.get(layer_id)
         # Need plotter (for create_presenter) and state (computed data) to set up.
         # state.state can be None if waiting for data or after an error.
         if state is None or state.plotter is None or state.state is None:
@@ -148,8 +145,7 @@ class SessionPlotManager:
         updated_layers: set[LayerId] = set()
 
         for layer_id, session_pipe in list(self._pipes.items()):
-            state_layer_id = StateLayerId(str(layer_id))
-            state = self._plot_data_service.get(state_layer_id)
+            state = self._plot_data_service.get(layer_id)
 
             if state is None:
                 continue
