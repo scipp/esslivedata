@@ -20,12 +20,12 @@ from .notification_queue import (
     NotificationQueue,
     NotificationType,
 )
-from .session_registry import SessionId, SessionRegistry
-from .state_stores import (
+from .plot_data_service import (
     LayerId,
     PlotDataService,
     PlotLayerState,
 )
+from .session_registry import SessionId, SessionRegistry
 
 logger = logging.getLogger(__name__)
 

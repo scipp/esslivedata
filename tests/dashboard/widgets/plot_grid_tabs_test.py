@@ -7,11 +7,11 @@ import pytest
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
+from ess.livedata.dashboard.plot_data_service import PlotDataService
 from ess.livedata.dashboard.plot_orchestrator import PlotOrchestrator
 from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
-from ess.livedata.dashboard.state_stores import PlotDataService
 from ess.livedata.dashboard.stream_manager import StreamManager
 from ess.livedata.dashboard.widgets.job_status_widget import JobStatusListWidget
 from ess.livedata.dashboard.widgets.plot_grid_tabs import PlotGridTabs

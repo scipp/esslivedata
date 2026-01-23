@@ -7,12 +7,12 @@ from ess.livedata.dashboard.notification_queue import (
     NotificationQueue,
     NotificationType,
 )
-from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
-from ess.livedata.dashboard.session_updater import SessionUpdater
-from ess.livedata.dashboard.state_stores import (
+from ess.livedata.dashboard.plot_data_service import (
     LayerId,
     PlotDataService,
 )
+from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
+from ess.livedata.dashboard.session_updater import SessionUpdater
 
 
 class TestSessionUpdater:

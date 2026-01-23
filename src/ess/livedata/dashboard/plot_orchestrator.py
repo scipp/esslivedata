@@ -31,9 +31,9 @@ from .data_roles import PRIMARY
 from .data_service import DataService
 from .job_orchestrator import WorkflowCallbacks
 from .layer_subscription import LayerSubscription, SubscriptionReady
+from .plot_data_service import LayerId as StateLayerId
+from .plot_data_service import PlotDataService
 from .plotting_controller import PlottingController
-from .state_stores import LayerId as StateLayerId
-from .state_stores import PlotDataService
 
 if TYPE_CHECKING:
     from ess.livedata.config import Instrument

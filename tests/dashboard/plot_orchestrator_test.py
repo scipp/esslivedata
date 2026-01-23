@@ -5,6 +5,7 @@ import uuid
 import pydantic
 import pytest
 
+from ess.livedata.dashboard.plot_data_service import PlotDataService
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
     DataSourceConfig,
@@ -13,7 +14,6 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotGridConfig,
     PlotOrchestrator,
 )
-from ess.livedata.dashboard.state_stores import PlotDataService
 
 
 class FakePlotParams(pydantic.BaseModel):
@@ -983,7 +983,7 @@ class TestLifecycleEventNotifications:
         assert len(cell.layers) == 1
         assert cell.layers[0].config == plot_cell[1]
         # Error is stored in PlotDataService
-        from ess.livedata.dashboard.state_stores import LayerId as StateLayerId
+        from ess.livedata.dashboard.plot_data_service import LayerId as StateLayerId
 
         layer_id = cell.layers[0].layer_id
         state = plot_data_service.get(StateLayerId(str(layer_id)))
@@ -1124,7 +1124,7 @@ class TestErrorHandling:
         # Called 2x: add cell, plotter creation failure (error notification)
         assert callback.call_count == 2
         # Error is stored in PlotDataService
-        from ess.livedata.dashboard.state_stores import LayerId as StateLayerId
+        from ess.livedata.dashboard.plot_data_service import LayerId as StateLayerId
 
         cell = plot_orchestrator.get_cell(cell_id)
         layer_id = cell.layers[0].layer_id
@@ -1295,7 +1295,7 @@ class TestCellRetrieval:
         plot_data_service,
     ):
         """PlotDataService should have data after workflow commits and data arrives."""
-        from ess.livedata.dashboard.state_stores import LayerId as StateLayerId
+        from ess.livedata.dashboard.plot_data_service import LayerId as StateLayerId
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = add_cell_with_layer(
@@ -1337,7 +1337,7 @@ class TestCellRetrieval:
         fake_stream_manager,
     ):
         """PlotDataService should have error when plot creation fails."""
-        from ess.livedata.dashboard.state_stores import LayerId as StateLayerId
+        from ess.livedata.dashboard.plot_data_service import LayerId as StateLayerId
 
         # Create plotting controller configured to fail
         failing_controller = FakePlottingController(stream_manager=fake_stream_manager)
@@ -1389,7 +1389,7 @@ class TestCellRetrieval:
         Simulate late subscriber scenario: plots exist, new UI component
         initializes and retrieves grid config and plot state from PlotDataService.
         """
-        from ess.livedata.dashboard.state_stores import LayerId as StateLayerId
+        from ess.livedata.dashboard.plot_data_service import LayerId as StateLayerId
 
         plot_data_service = PlotDataService()
         plot_orchestrator = PlotOrchestrator(
@@ -1465,7 +1465,7 @@ class TestCellRetrieval:
         """
         When layer config is updated and workflow is running, plotter is recreated.
         """
-        from ess.livedata.dashboard.state_stores import LayerId as StateLayerId
+        from ess.livedata.dashboard.plot_data_service import LayerId as StateLayerId
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = add_cell_with_layer(
@@ -1534,7 +1534,7 @@ class TestCellRetrieval:
         plot_data_service,
     ):
         """PlotDataService should be cleaned up when cell is removed."""
-        from ess.livedata.dashboard.state_stores import LayerId as StateLayerId
+        from ess.livedata.dashboard.plot_data_service import LayerId as StateLayerId
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
         cell_id = add_cell_with_layer(

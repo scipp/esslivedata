@@ -17,6 +17,8 @@ import panel as pn
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
+from ..plot_data_service import LayerId as StateLayerId
+from ..plot_data_service import PlotDataService, PlotLayerState
 from ..plot_orchestrator import (
     CellGeometry,
     CellId,
@@ -31,8 +33,6 @@ from ..plot_orchestrator import (
 from ..plot_params import PlotAspectType, StretchMode
 from ..session_plot_manager import SessionPlotManager
 from ..session_updater import SessionUpdater
-from ..state_stores import LayerId as StateLayerId
-from ..state_stores import PlotDataService, PlotLayerState
 from .plot_config_modal import PlotConfigModal
 from .plot_grid import GridCellStyles, PlotGrid
 from .plot_grid_manager import PlotGridManager

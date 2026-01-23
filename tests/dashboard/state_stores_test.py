@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for PlotDataService."""
 
-from ess.livedata.dashboard.state_stores import (
+from ess.livedata.dashboard.plot_data_service import (
     LayerId,
     PlotDataService,
 )

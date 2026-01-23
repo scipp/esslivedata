@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING
 
 import holoviews as hv
 
-from .state_stores import LayerId as StateLayerId
-from .state_stores import PlotDataService
+from .plot_data_service import LayerId as StateLayerId
+from .plot_data_service import PlotDataService
 
 if TYPE_CHECKING:
     from .plot_orchestrator import LayerId
