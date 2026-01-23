@@ -108,7 +108,7 @@ class TestTimeseriesTimeInfo:
         extracted_data = extractor.extract(buffered_data)
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
-        result = plotter({data_key: extracted_data})
+        result = plotter.compute({data_key: extracted_data})
 
         title = _extract_title(result)
         assert 'Lag:' in title
@@ -147,7 +147,7 @@ class TestTimeseriesTimeInfo:
         extracted_data = extractor.extract(buffered_data)
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
-        result = plotter({data_key: extracted_data})
+        result = plotter.compute({data_key: extracted_data})
 
         title = _extract_title(result)
         # Extractor computes min/max of start_time/end_time
@@ -191,7 +191,7 @@ class TestWindowedTimeInfo:
         extracted_data = extractor.extract(buffered_data)
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
-        result = plotter({data_key: extracted_data})
+        result = plotter.compute({data_key: extracted_data})
 
         title = _extract_title(result)
         assert 'Lag:' in title
@@ -220,7 +220,7 @@ class TestTimeInfoBaseline:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
-        result = plotter({data_key: data})
+        result = plotter.compute({data_key: data})
 
         title = _extract_title(result)
         assert 'Lag:' in title
@@ -239,7 +239,7 @@ class TestTimeInfoEdgeCases:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
-        result = plotter({data_key: data})
+        result = plotter.compute({data_key: data})
 
         title = _extract_title(result)
         assert 'Lag:' not in title
@@ -258,5 +258,5 @@ class TestTimeInfoEdgeCases:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
-        result = plotter({data_key: data})  # Should not raise
+        result = plotter.compute({data_key: data})  # Should not raise
         assert isinstance(_extract_title(result), str)

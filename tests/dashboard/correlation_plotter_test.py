@@ -128,7 +128,7 @@ class TestCorrelationHistogramPlotter:
         }
 
         with pytest.raises(ValueError, match="at least one data source"):
-            plotter(data)
+            plotter.compute(data)
 
     def test_raises_when_axis_data_missing(self):
         """Should raise ValueError when required axis data is missing."""
@@ -143,7 +143,7 @@ class TestCorrelationHistogramPlotter:
         }
 
         with pytest.raises(ValueError, match=f"role '{X_AXIS}'"):
-            plotter(data)
+            plotter.compute(data)
 
     def test_works_with_single_axis(self):
         """Should work with a single axis (1D histogram)."""
@@ -160,7 +160,7 @@ class TestCorrelationHistogramPlotter:
             X_AXIS: {_make_result_key('position'): axis_data},
         }
 
-        result = plotter(data)
+        result = plotter.compute(data)
         assert result is not None
 
     def test_works_with_multiple_axes(self):
@@ -187,7 +187,7 @@ class TestCorrelationHistogramPlotter:
             Y_AXIS: {_make_result_key('temperature'): y_axis},
         }
 
-        result = plotter(data)
+        result = plotter.compute(data)
         assert result is not None
 
     def test_handles_data_before_axis_range(self):
@@ -210,7 +210,7 @@ class TestCorrelationHistogramPlotter:
         }
 
         # Should not raise
-        result = plotter(data)
+        result = plotter.compute(data)
         assert result is not None
 
 

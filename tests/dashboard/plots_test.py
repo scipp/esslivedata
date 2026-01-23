@@ -663,7 +663,7 @@ class TestPlotterLabelChanges:
         plotter = plots.LinePlotter.from_params(PlotParams1d())
         data_dict = {data_key_with_output_name: simple_data}
 
-        result = plotter(data_dict)
+        result = plotter.compute(data_dict)
 
         # Result should have label that includes output_name
         # Label format: "detector/roi_current_0"
@@ -727,7 +727,7 @@ class TestPlotterOverlayMode:
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {data_key_1: simple_data_1}
 
-        result = plotter(data_dict)
+        result = plotter.compute(data_dict)
 
         # Should return Overlay, not raw Curve
         assert isinstance(result, hv.Overlay)
@@ -744,7 +744,7 @@ class TestPlotterOverlayMode:
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {data_key_1: simple_data_1, data_key_2: simple_data_2}
 
-        result = plotter(data_dict)
+        result = plotter.compute(data_dict)
 
         # Should return Overlay
         assert isinstance(result, hv.Overlay)
@@ -761,7 +761,7 @@ class TestPlotterOverlayMode:
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {data_key_1: simple_data_1}
 
-        result = plotter(data_dict)
+        result = plotter.compute(data_dict)
 
         # Should return raw Curve, not Overlay
         assert isinstance(result, hv.Curve)
@@ -774,7 +774,7 @@ class TestPlotterOverlayMode:
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {}
 
-        result = plotter(data_dict)
+        result = plotter.compute(data_dict)
 
         # With overlay mode and empty data, returns Overlay containing Text
         assert isinstance(result, hv.Overlay)
@@ -792,7 +792,7 @@ class TestPlotterOverlayMode:
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {}
 
-        result = plotter(data_dict)
+        result = plotter.compute(data_dict)
 
         # With layout mode and empty data, returns Text directly
         assert isinstance(result, hv.Text)
@@ -914,7 +914,7 @@ class TestBarsPlotter:
             key2: sc.DataArray(sc.scalar(20.0, unit='counts')),
         }
 
-        result = plotter(data)
+        result = plotter.compute(data)
         # With layout mode and 2 sources, should return Layout
         assert isinstance(result, hv.Layout)
         assert len(result) == 2
@@ -1281,17 +1281,6 @@ class TestTwoStageArchitecture:
         return ResultKey(
             workflow_id=workflow_id, job_id=job_id, output_name='test_result'
         )
-
-    def test_compute_returns_same_as_call(self, simple_data, data_key):
-        """Test that compute() returns the same result as __call__()."""
-        plotter = plots.LinePlotter.from_params(PlotParams1d())
-        data_dict = {data_key: simple_data}
-
-        result_call = plotter(data_dict)
-        result_compute = plotter.compute(data_dict)
-
-        # Both should return equivalent results
-        assert type(result_call) is type(result_compute)
 
     def test_create_presenter_returns_presenter(self, simple_data, data_key):
         """Test that create_presenter() returns a Presenter."""

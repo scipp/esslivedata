@@ -385,17 +385,6 @@ class Plotter:
 
         return result
 
-    def __call__(
-        self, data: dict[ResultKey, sc.DataArray], **kwargs
-    ) -> hv.Overlay | hv.Layout | hv.Element:
-        """
-        Create plots from data (alias for compute()).
-
-        This method is provided for backwards compatibility. New code should
-        use compute() directly.
-        """
-        return self.compute(data, **kwargs)
-
     def create_presenter(self) -> Presenter:
         """
         Create a Presenter for this plotter.
