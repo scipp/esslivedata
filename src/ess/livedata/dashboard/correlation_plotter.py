@@ -28,7 +28,7 @@ from .plot_params import (
     PlotDisplayParams1d,
     PlotDisplayParams2d,
 )
-from .plots import ImagePlotter, LinePlotter
+from .plots import ImagePlotter, LinePlotter, Presenter
 
 
 class NormalizationParams(pydantic.BaseModel):
@@ -189,7 +189,7 @@ class CorrelationHistogramPlotter:
     def initialize_from_data(self, data: dict[str, Any]) -> None:
         """No-op: histogram edges are computed dynamically on each call."""
 
-    def __call__(self, data: dict[str, Any]) -> Any:
+    def compute(self, data: dict[str, Any]) -> Any:
         """Compute histograms for all data sources and render.
 
         Parameters
@@ -238,7 +238,11 @@ class CorrelationHistogramPlotter:
             else:
                 histograms[key] = dependent.hist(bin_spec)
 
-        return self._renderer(histograms)
+        return self._renderer.compute(histograms)
+
+    def create_presenter(self) -> Presenter:
+        """Create a Presenter by delegating to the renderer."""
+        return self._renderer.create_presenter()
 
 
 class CorrelationHistogram1dPlotter(CorrelationHistogramPlotter):

@@ -1177,7 +1177,7 @@ class TestLagIndicator:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
-        result = plotter({data_key: data})
+        result = plotter.compute({data_key: data})
 
         # Check that title contains time range and lag
         opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
@@ -1197,7 +1197,7 @@ class TestLagIndicator:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
-        result = plotter({data_key: data})
+        result = plotter.compute({data_key: data})
 
         # Check that no title is set (or title doesn't contain Lag)
         opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
@@ -1247,7 +1247,7 @@ class TestLagIndicator:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
-        result = plotter({data_key1: data1, data_key2: data2})
+        result = plotter.compute({data_key1: data1, data_key2: data2})
 
         # Check that lag is approximately 5 seconds (the older data)
         opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
