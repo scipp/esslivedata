@@ -11,7 +11,7 @@ import scipp as sc
 from holoviews.plotting.bokeh import BokehRenderer
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
-from ess.livedata.dashboard import plots
+from ess.livedata.dashboard import plots, slicer
 from ess.livedata.dashboard.plot_params import (
     PlotParams1d,
     PlotParams2d,
@@ -325,7 +325,7 @@ class TestSlicerPlotter:
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         # Use linear scale to avoid NaN masking of zeros in tests
         params.plot_scale.color_scale = PlotScale.linear
-        return plots.SlicerPlotter.from_params(params)
+        return slicer.SlicerPlotter.from_params(params)
 
     def test_initialization(self, slicer_plotter):
         """Test that SlicerPlotter initializes correctly."""
@@ -339,7 +339,7 @@ class TestSlicerPlotter:
         data_dict = {data_key: data_3d}
         result = slicer_plotter.compute(data_dict)
 
-        assert isinstance(result, plots.SlicerState)
+        assert isinstance(result, slicer.SlicerState)
         assert result.data == data_dict
         assert result.clim is not None  # Should have computed clim
 
@@ -347,7 +347,7 @@ class TestSlicerPlotter:
         """Test that compute() pre-calculates color limits from the full 3D data."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         params.plot_scale.color_scale = PlotScale.linear
-        plotter = plots.SlicerPlotter.from_params(params)
+        plotter = slicer.SlicerPlotter.from_params(params)
 
         data_dict = {data_key: data_3d}
         result = plotter.compute(data_dict)
@@ -361,7 +361,7 @@ class TestSlicerPlotter:
         """Test that log scale clim excludes zero and negative values."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         params.plot_scale.color_scale = PlotScale.log
-        plotter = plots.SlicerPlotter.from_params(params)
+        plotter = slicer.SlicerPlotter.from_params(params)
 
         data_dict = {data_key: data_3d}
         result = plotter.compute(data_dict)
@@ -387,7 +387,7 @@ class TestSlicerPlotter:
         """Test that different slice positions produce different results."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         params.plot_scale.color_scale = PlotScale.linear
-        plotter = plots.SlicerPlotter.from_params(params)
+        plotter = slicer.SlicerPlotter.from_params(params)
 
         z_value_0 = float(data_3d.coords['z'].values[0])
         result_0 = plotter.render_slice(
@@ -446,7 +446,7 @@ class TestSlicerPlotter:
         """Test that flatten mode works in render_slice."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         params.plot_scale.color_scale = PlotScale.linear
-        plotter = plots.SlicerPlotter.from_params(params)
+        plotter = slicer.SlicerPlotter.from_params(params)
 
         # Original data is (z:5, y:8, x:10)
         # Keep x: flatten z,y -> (40, 10)
@@ -458,7 +458,7 @@ class TestSlicerPlotter:
         """Test that log scale masks zeros in render_slice."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         params.plot_scale.color_scale = PlotScale.log
-        plotter = plots.SlicerPlotter.from_params(params)
+        plotter = slicer.SlicerPlotter.from_params(params)
 
         z_value = float(data_3d.coords['z'].values[0])
         result = plotter.render_slice(
@@ -473,7 +473,7 @@ class TestSlicerPlotter:
     def test_create_presenter_returns_slicer_presenter(self, slicer_plotter):
         """Test that create_presenter returns a SlicerPresenter."""
         presenter = slicer_plotter.create_presenter()
-        assert isinstance(presenter, plots.SlicerPresenter)
+        assert isinstance(presenter, slicer.SlicerPresenter)
 
     def test_presenter_initializes_kdims_from_state(
         self, slicer_plotter, data_3d, data_key
@@ -1308,7 +1308,7 @@ class TestTwoStageArchitecture:
     def test_slicer_presenter_creates_kdims_from_state(self, data_key):
         """Test that SlicerPresenter creates kdims from SlicerState."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
-        plotter = plots.SlicerPlotter.from_params(params)
+        plotter = slicer.SlicerPlotter.from_params(params)
 
         # Create 3D data
         data_3d = sc.DataArray(
@@ -1325,7 +1325,7 @@ class TestTwoStageArchitecture:
 
         # Compute returns SlicerState
         state = plotter.compute(data_dict)
-        assert isinstance(state, plots.SlicerState)
+        assert isinstance(state, slicer.SlicerState)
 
         # Presenter creates DynamicMap with kdims
         presenter = plotter.create_presenter()
