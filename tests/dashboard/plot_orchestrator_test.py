@@ -179,7 +179,7 @@ class FakePlottingController:
         self._pipeline_setups.clear()
 
     def call_count(self) -> int:
-        """Return the number of create_plotter or create_plot_from_pipeline calls."""
+        """Return the number of create_plotter calls."""
         return len(self._calls)
 
     def get_calls(self) -> list[dict]:
@@ -236,24 +236,6 @@ class FakePlottingController:
         if self._should_raise:
             raise self._exception_to_raise
         return FakePlotter()
-
-    def create_plot_from_pipeline(
-        self,
-        plot_name: str,
-        params: dict,
-        pipe,
-    ):
-        """Create a fake plot, recording the call for assertions."""
-        self._calls.append(
-            {
-                'plot_name': plot_name,
-                'params': params,
-                '_from_pipeline': True,
-            }
-        )
-        if self._should_raise:
-            raise self._exception_to_raise
-        return self._plot_object
 
 
 @pytest.fixture
