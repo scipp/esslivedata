@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import Any, Protocol, cast
 
 import holoviews as hv
 import numpy as np
@@ -28,9 +28,6 @@ from .plot_params import (
 )
 from .scipp_to_holoviews import to_holoviews
 from .time_utils import format_time_ns_local
-
-if TYPE_CHECKING:
-    pass
 
 
 class Presenter(Protocol):
