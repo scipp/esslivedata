@@ -40,8 +40,9 @@ class SlicerPresenter:
     own SlicerPresenter instance with session-bound components.
     """
 
-    def __init__(self, base_opts: dict[str, Any]) -> None:
+    def __init__(self, base_opts: dict[str, Any], sizing_opts: dict[str, Any]) -> None:
         self._base_opts = base_opts
+        self._sizing_opts = sizing_opts
         self._kdims: list[hv.Dimension] | None = None
 
     def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
@@ -186,7 +187,7 @@ class SlicerPresenter:
             plot_data = self._slice_data(data, slice_dim, kwargs)
 
         image = to_holoviews(plot_data)
-        opts: dict[str, Any] = dict(self._base_opts)
+        opts: dict[str, Any] = {**self._base_opts, **self._sizing_opts}
         # Always use framewise=True for interactive slicing
         opts['framewise'] = True
         # Use pre-computed clim for consistent color scale across slices
@@ -339,4 +340,4 @@ class SlicerPlotter(Plotter):
 
     def create_presenter(self) -> SlicerPresenter:
         """Create a SlicerPresenter for per-session rendering."""
-        return SlicerPresenter(base_opts=self._base_opts)
+        return SlicerPresenter(base_opts=self._base_opts, sizing_opts=self._sizing_opts)
