@@ -24,13 +24,18 @@ class PlotLayerState:
     Stores the computed plot state along with references needed for
     per-session component creation:
 
-    - state: The computed HoloViews elements from plotter.compute()
+    - state: The computed HoloViews elements from plotter.compute(), or None if
+      waiting for data or failed
     - plotter: Reference to the Plotter instance for create_presenter()
+    - error: Error message if the layer failed (mutually exclusive with state)
+    - stopped: True if the workflow ended and no more data is expected
     """
 
-    state: Any  # The computed HoloViews elements from plotter.compute()
+    state: Any | None = None  # Computed HoloViews elements, or None if waiting/failed
     version: int = 0
     plotter: Any = None  # Reference to Plotter for create_presenter()
+    error: str | None = None  # Error message if failed
+    stopped: bool = False  # True if workflow ended
 
 
 LayerId = NewType('LayerId', str)
@@ -165,6 +170,106 @@ class PlotDataService:
             if layer_id in self._layers:
                 del self._layers[layer_id]
                 logger.debug("Removed plot state for %s", layer_id)
+
+    def create_entry(
+        self,
+        layer_id: LayerId,
+        *,
+        plotter: Any = None,
+    ) -> None:
+        """
+        Create an initial entry for a layer in "waiting" state.
+
+        Creates the entry only if it doesn't already exist. Use this when
+        setting up a layer before data arrives.
+
+        Parameters
+        ----------
+        layer_id:
+            Layer ID to create entry for.
+        plotter:
+            Optional plotter instance for per-session presenter creation.
+        """
+        with self._lock:
+            if layer_id not in self._layers:
+                self._layers[layer_id] = PlotLayerState(
+                    state=None,
+                    version=1,
+                    plotter=plotter,
+                )
+                logger.debug("Created initial entry for %s", layer_id)
+
+    def set_error(self, layer_id: LayerId, error_msg: str) -> None:
+        """
+        Set error state for a layer.
+
+        Clears any existing state and sets the error message. Bumps the version
+        so sessions see the change.
+
+        Parameters
+        ----------
+        layer_id:
+            Layer ID to update.
+        error_msg:
+            Error message to display.
+        """
+        with self._lock:
+            current = self._layers.get(layer_id)
+            if current is not None:
+                self._layers[layer_id] = PlotLayerState(
+                    state=None,
+                    version=current.version + 1,
+                    plotter=current.plotter,
+                    error=error_msg,
+                    stopped=current.stopped,
+                )
+            else:
+                self._layers[layer_id] = PlotLayerState(
+                    state=None,
+                    version=1,
+                    error=error_msg,
+                )
+            logger.debug(
+                "Set error for %s at version %d",
+                layer_id,
+                self._layers[layer_id].version,
+            )
+
+    def set_stopped(self, layer_id: LayerId) -> None:
+        """
+        Mark a layer as stopped.
+
+        Sets the stopped flag to indicate the workflow has ended and no more
+        data is expected. Bumps the version so sessions see the change.
+
+        Parameters
+        ----------
+        layer_id:
+            Layer ID to update.
+        """
+        with self._lock:
+            current = self._layers.get(layer_id)
+            if current is not None:
+                self._layers[layer_id] = PlotLayerState(
+                    state=current.state,
+                    version=current.version + 1,
+                    plotter=current.plotter,
+                    error=current.error,
+                    stopped=True,
+                )
+                logger.debug(
+                    "Set stopped for %s at version %d",
+                    layer_id,
+                    self._layers[layer_id].version,
+                )
+            else:
+                # Create entry if it doesn't exist
+                self._layers[layer_id] = PlotLayerState(
+                    state=None,
+                    version=1,
+                    stopped=True,
+                )
+                logger.debug("Created stopped entry for %s", layer_id)
 
     def clear(self) -> None:
         """Clear all state. Mainly useful for testing."""

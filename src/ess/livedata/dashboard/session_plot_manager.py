@@ -49,24 +49,24 @@ class SessionPlotManager:
         self._plot_data_service = plot_data_service
         self._presenters: dict[LayerId, Presenter] = {}
         self._pipes: dict[LayerId, hv.streams.Pipe] = {}
-        self._dmaps: dict[LayerId, hv.DynamicMap] = {}
+        self._dmaps: dict[LayerId, hv.DynamicMap | hv.Element] = {}
         self._last_versions: dict[LayerId, int] = {}
 
-    def get_dmap(self, layer_id: LayerId) -> hv.DynamicMap | None:
+    def get_dmap(self, layer_id: LayerId) -> hv.DynamicMap | hv.Element | None:
         """
-        Get existing DynamicMap for a layer, or None if not yet created.
+        Get existing DynamicMap or Element for a layer, or None if not yet created.
 
-        Use `setup_layer` to create DynamicMaps for new layers.
+        Use `setup_layer` to create DynamicMaps/Elements for new layers.
 
         Parameters
         ----------
         layer_id:
-            Layer ID to get DynamicMap for.
+            Layer ID to get DynamicMap/Element for.
 
         Returns
         -------
         :
-            The session's DynamicMap for this layer, or None if not set up.
+            The session's DynamicMap or Element for this layer, or None if not set up.
         """
         return self._dmaps.get(layer_id)
 
@@ -74,11 +74,11 @@ class SessionPlotManager:
         """Check if a layer has been set up for this session."""
         return layer_id in self._dmaps
 
-    def setup_layer(self, layer_id: LayerId) -> hv.DynamicMap | None:
+    def setup_layer(self, layer_id: LayerId) -> hv.DynamicMap | hv.Element | None:
         """
         Set up a layer for this session if data is available.
 
-        Creates session-bound Pipe and DynamicMap using the Presenter pattern.
+        Creates session-bound Pipe and DynamicMap/Element using the Presenter pattern.
         Returns immediately if the layer is already set up.
 
         Parameters
@@ -89,7 +89,7 @@ class SessionPlotManager:
         Returns
         -------
         :
-            The newly created DynamicMap, or None if no data available yet.
+            The newly created DynamicMap or Element, or None if no data available yet.
         """
         # Already set up
         if layer_id in self._dmaps:

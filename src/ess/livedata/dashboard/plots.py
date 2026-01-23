@@ -57,9 +57,9 @@ class Presenter(Protocol):
     session-bound components (Pipe, DynamicMap, edit streams).
     """
 
-    def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
+    def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap | hv.Element:
         """
-        Create a DynamicMap for this session from a data pipe.
+        Create a DynamicMap or Element for this session from a data pipe.
 
         Parameters
         ----------
@@ -70,7 +70,8 @@ class Presenter(Protocol):
         Returns
         -------
         :
-            A DynamicMap that renders data from the pipe.
+            A DynamicMap that renders data from the pipe, or an hv.Element
+            for static plots.
         """
         ...
 
@@ -93,6 +94,20 @@ class DefaultPresenter:
             return data
 
         return hv.DynamicMap(passthrough, streams=[pipe], cache_size=1)
+
+
+class StaticPresenter:
+    """
+    Presenter for static plots that returns the element directly.
+
+    Static plots (rectangles, lines, etc.) don't need DynamicMaps since their
+    content doesn't change. The pipe.data contains the pre-computed hv.Element
+    which is returned as-is.
+    """
+
+    def present(self, pipe: hv.streams.Pipe) -> hv.Element:
+        """Return the static element from the pipe data."""
+        return pipe.data
 
 
 class SlicerPresenter:

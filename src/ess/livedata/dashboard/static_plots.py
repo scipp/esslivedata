@@ -79,6 +79,12 @@ class StaticPlotter(ABC):
     def create_static_plot(self) -> hv.Element:
         """Create a plot element from the stored params."""
 
+    def create_presenter(self):
+        """Create a StaticPresenter for this plotter."""
+        from .plots import StaticPresenter
+
+        return StaticPresenter()
+
 
 class RectanglesCoordinates(pydantic.BaseModel):
     """Wrapper for rectangle coordinate input to get full-width card."""
