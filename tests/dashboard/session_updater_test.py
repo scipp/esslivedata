@@ -2,13 +2,15 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for SessionUpdater."""
 
+from ess.livedata.dashboard.notification_queue import (
+    NotificationEvent,
+    NotificationQueue,
+    NotificationType,
+)
 from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
 from ess.livedata.dashboard.state_stores import (
     LayerId,
-    NotificationEvent,
-    NotificationQueue,
-    NotificationType,
     PlotDataService,
 )
 

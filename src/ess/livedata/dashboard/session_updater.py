@@ -15,12 +15,14 @@ from collections.abc import Callable
 
 import panel as pn
 
-from .session_registry import SessionId, SessionRegistry
-from .state_stores import (
-    LayerId,
+from .notification_queue import (
     NotificationEvent,
     NotificationQueue,
     NotificationType,
+)
+from .session_registry import SessionId, SessionRegistry
+from .state_stores import (
+    LayerId,
     PlotDataService,
     PlotLayerState,
 )

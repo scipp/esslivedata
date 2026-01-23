@@ -20,13 +20,14 @@ from .data_service import DataService
 from .job_controller import JobController
 from .job_orchestrator import JobOrchestrator
 from .job_service import JobService
+from .notification_queue import NotificationQueue
 from .orchestrator import Orchestrator
 from .plot_orchestrator import PlotOrchestrator
 from .plotting_controller import PlottingController
 from .roi_publisher import ROIPublisher
 from .service_registry import ServiceRegistry
 from .session_registry import SessionRegistry
-from .state_stores import NotificationQueue, PlotDataService
+from .state_stores import PlotDataService
 from .stream_manager import StreamManager
 from .transport import Transport
 from .workflow_controller import WorkflowController

@@ -36,8 +36,8 @@ from ess.livedata.core.job_manager import JobAction, JobCommand
 from .command_service import CommandService
 from .config_store import ConfigStore
 from .configuration_adapter import ConfigurationState
+from .notification_queue import NotificationEvent, NotificationQueue, NotificationType
 from .pending_command_tracker import PendingCommandTracker
-from .state_stores import NotificationEvent, NotificationQueue, NotificationType
 from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
 if TYPE_CHECKING:
