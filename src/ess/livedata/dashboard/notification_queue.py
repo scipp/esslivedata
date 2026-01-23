@@ -10,15 +10,12 @@ session polls and displays in its own context.
 
 from __future__ import annotations
 
-import logging
 import threading
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 
 from .session_registry import SessionId
-
-logger = logging.getLogger(__name__)
 
 
 class NotificationType(Enum):
@@ -89,11 +86,6 @@ class NotificationQueue:
                 # The oldest event will be dropped, so increment offset
                 self._event_offset += 1
             self._events.append(event)
-            logger.debug(
-                "Pushed notification: %s (%s)",
-                event.message[:50],
-                event.notification_type.value,
-            )
 
     def register_session(self, session_id: SessionId) -> None:
         """
@@ -111,7 +103,6 @@ class NotificationQueue:
             # Start at current end - don't replay old notifications
             current_index = self._event_offset + len(self._events)
             self._cursors[session_id] = _SessionCursor(next_index=current_index)
-            logger.debug("Registered session %s at index %d", session_id, current_index)
 
     def unregister_session(self, session_id: SessionId) -> None:
         """
@@ -125,9 +116,6 @@ class NotificationQueue:
         with self._lock:
             if session_id in self._cursors:
                 del self._cursors[session_id]
-                logger.debug(
-                    "Unregistered session %s from notification queue", session_id
-                )
 
     def get_new_events(self, session_id: SessionId) -> list[NotificationEvent]:
         """
