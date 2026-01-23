@@ -111,7 +111,7 @@ class WidgetLifecycleCallbacks:
     All callbacks receive the workflow_id so widgets can filter relevant events.
 
     Note: Command success/error notifications are handled via NotificationQueue
-    for proper multi-session support. See multi-session-architecture.md.
+    for proper multi-session support.
     """
 
     on_staged_changed: Callable[[WorkflowId], None] | None = None

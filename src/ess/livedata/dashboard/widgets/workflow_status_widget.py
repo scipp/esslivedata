@@ -209,8 +209,6 @@ class WorkflowStatusWidget:
 
         # Subscribe to orchestrator lifecycle events for cross-session sync.
         # This ensures all browser sessions' widgets stay synchronized.
-        # Note: Command success/error notifications are handled via NotificationQueue
-        # for proper multi-session support. See multi-session-architecture.md.
         from ..job_orchestrator import WidgetLifecycleCallbacks
 
         self._lifecycle_subscription: WidgetLifecycleSubscriptionId = (
