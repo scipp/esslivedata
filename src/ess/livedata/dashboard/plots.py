@@ -155,6 +155,7 @@ class Plotter:
         **kwargs:
             Additional keyword arguments passed to the autoscaler if created.
         """
+        self._cached_state: Any | None = None
         self.autoscaler_kwargs = kwargs
         self.autoscalers: dict[ResultKey, Autoscaler] = {}
         self.layout_params = layout_params or LayoutParams()
@@ -383,6 +384,7 @@ class Plotter:
         if time_info is not None:
             result = result.opts(title=time_info, fontsize={'title': '10pt'})
 
+        self._set_cached_state(result)
         return result
 
     def create_presenter(self) -> Presenter:
@@ -401,6 +403,18 @@ class Plotter:
             A Presenter instance for this plotter.
         """
         return DefaultPresenter()
+
+    def _set_cached_state(self, state: Any) -> None:
+        """Store computed state. Atomic assignment ensures thread safety."""
+        self._cached_state = state
+
+    def get_cached_state(self) -> Any | None:
+        """Get the last computed state, or None if not yet computed."""
+        return self._cached_state
+
+    def has_cached_state(self) -> bool:
+        """Check if state has been computed."""
+        return self._cached_state is not None
 
     def _apply_generic_options(self, plot_element: hv.Element) -> hv.Element:
         """Apply generic options like aspect ratio to a plot element."""

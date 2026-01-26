@@ -240,6 +240,14 @@ class CorrelationHistogramPlotter:
 
         return self._renderer.compute(histograms)
 
+    def get_cached_state(self) -> Any | None:
+        """Get the last computed state from the renderer."""
+        return self._renderer.get_cached_state()
+
+    def has_cached_state(self) -> bool:
+        """Check if the renderer has computed state."""
+        return self._renderer.has_cached_state()
+
     def create_presenter(self) -> Presenter:
         """Create a Presenter by delegating to the renderer."""
         return self._renderer.create_presenter()

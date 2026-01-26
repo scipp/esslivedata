@@ -695,6 +695,7 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         )
 
         # Forward data (presenter may use in future)
+        self._set_cached_state(data)
         return data
 
     def _create_edit_handler(self) -> Callable[[dict], None]:

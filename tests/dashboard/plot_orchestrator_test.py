@@ -45,6 +45,7 @@ class FakePlotter:
     def __init__(self):
         self.kdims = None
         self._initialized_data = None
+        self._cached_state = None
 
     def initialize_from_data(self, data):
         self._initialized_data = data
@@ -54,7 +55,15 @@ class FakePlotter:
         return FakePresenter(self)
 
     def compute(self, data):
-        return FakePlot()
+        result = FakePlot()
+        self._cached_state = result
+        return result
+
+    def get_cached_state(self):
+        return self._cached_state
+
+    def has_cached_state(self):
+        return self._cached_state is not None
 
     def __call__(self, data):
         return self.compute(data)
@@ -1306,7 +1315,7 @@ class TestCellRetrieval:
         # PlotDataService should have data for the layer
         state = plot_data_service.get(layer_id)
         assert state is not None
-        assert state.state is not None  # Has computed data
+        assert state.plotter.has_cached_state()  # Has computed data
         assert state.error is None
 
     def test_plot_data_service_has_error_when_plot_creation_fails(
@@ -1426,7 +1435,7 @@ class TestCellRetrieval:
                 state = plot_data_service.get(layer.layer_id)
                 assert state is not None
                 assert state.error is None
-                assert state.state is not None  # Has computed data
+                assert state.plotter.has_cached_state()  # Has computed data
 
     def test_layer_config_update_recreates_plotter_with_running_workflow(
         self,
@@ -1472,7 +1481,7 @@ class TestCellRetrieval:
         # Verify layer has data in PlotDataService
         state1 = plot_data_service.get(layer_id)
         assert state1 is not None
-        assert state1.state is not None
+        assert state1.plotter.has_cached_state()
 
         # Update layer config while workflow is still running
         new_config = make_plot_config(
@@ -1537,7 +1546,7 @@ class TestCellRetrieval:
         # Verify layer has data in PlotDataService
         state = plot_data_service.get(layer_id)
         assert state is not None
-        assert state.state is not None
+        assert state.plotter.has_cached_state()
 
         # Remove cell
         plot_orchestrator.remove_cell(cell_id)

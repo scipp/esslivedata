@@ -701,13 +701,10 @@ class PlotOrchestrator:
                 raise TypeError(
                     f"Plotter '{config.plot_name}' does not support static plots"
                 )
-            plot = plotter.create_static_plot()
-            # Store static plot in PlotDataService (plotter has create_presenter())
-            self._plot_data_service.update(
-                layer_id,
-                state=plot,
-                plotter=plotter,
-            )
+            plotter.create_static_plot()  # Caches state internally
+            # Store plotter in PlotDataService (has create_presenter()
+            # and get_cached_state() methods)
+            self._plot_data_service.update(layer_id, plotter=plotter)
         except Exception:
             error_msg = traceback.format_exc()
             self._logger.exception(
@@ -779,14 +776,11 @@ class PlotOrchestrator:
 
             try:
                 # Compute state (runs once, shared across all sessions)
-                computed_state = plotter.compute(data)
+                # plotter.compute() caches state internally
+                plotter.compute(data)
 
-                # Store in PlotDataService - sessions will poll for this
-                self._plot_data_service.update(
-                    layer_id,
-                    state=computed_state,
-                    plotter=plotter,
-                )
+                # Bump version in PlotDataService - sessions will poll for this
+                self._plot_data_service.update(layer_id, plotter=plotter)
             except Exception:
                 error_msg = traceback.format_exc()
                 self._logger.exception(

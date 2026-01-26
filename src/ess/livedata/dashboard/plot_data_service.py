@@ -22,19 +22,14 @@ logger = logging.getLogger(__name__)
 class PlotLayerState:
     """State for a single plot layer with version tracking.
 
-    Stores the computed plot state along with references needed for
-    per-session component creation:
-
-    - state: The computed HoloViews elements from plotter.compute(), or None if
-      waiting for data or failed
-    - plotter: Reference to the Plotter instance for create_presenter()
-    - error: Error message if the layer failed (mutually exclusive with state)
-    - stopped: True if the workflow ended and no more data is expected
+    Stores the plotter reference and lifecycle flags. The computed state
+    is cached within the plotter itself (via get_cached_state()).
     """
 
-    state: Any | None = None  # Computed HoloViews elements, or None if waiting/failed
     version: int = 0
-    plotter: Any = None  # Reference to Plotter for create_presenter()
+    plotter: Any = (
+        None  # Reference to Plotter for create_presenter() and get_cached_state()
+    )
     error: str | None = None  # Error message if failed
     stopped: bool = False  # True if workflow ended
 
@@ -59,19 +54,19 @@ class PlotDataService:
     def update(
         self,
         layer_id: LayerId,
-        state: Any,
         *,
         plotter: Any = None,
     ) -> None:
         """
         Update state for a layer.
 
+        The plotter's compute() method caches state internally. This method
+        only needs to bump the version and store the plotter reference.
+
         Parameters
         ----------
         layer_id:
             Layer ID to update.
-        state:
-            New computed plot state (HoloViews elements from plotter.compute()).
         plotter:
             Optional plotter instance for per-session presenter creation.
             Only needs to be provided on first update.
@@ -82,13 +77,11 @@ class PlotDataService:
                 # Preserve plotter reference if not provided on update
                 effective_plotter = plotter if plotter is not None else current.plotter
                 self._layers[layer_id] = PlotLayerState(
-                    state=state,
                     version=current.version + 1,
                     plotter=effective_plotter,
                 )
             else:
                 self._layers[layer_id] = PlotLayerState(
-                    state=state,
                     version=1,
                     plotter=plotter,
                 )
@@ -194,7 +187,6 @@ class PlotDataService:
         with self._lock:
             if layer_id not in self._layers:
                 self._layers[layer_id] = PlotLayerState(
-                    state=None,
                     version=1,
                     plotter=plotter,
                 )
@@ -218,7 +210,6 @@ class PlotDataService:
             current = self._layers.get(layer_id)
             if current is not None:
                 self._layers[layer_id] = PlotLayerState(
-                    state=None,
                     version=current.version + 1,
                     plotter=current.plotter,
                     error=error_msg,
@@ -226,7 +217,6 @@ class PlotDataService:
                 )
             else:
                 self._layers[layer_id] = PlotLayerState(
-                    state=None,
                     version=1,
                     error=error_msg,
                 )
@@ -252,7 +242,6 @@ class PlotDataService:
             current = self._layers.get(layer_id)
             if current is not None:
                 self._layers[layer_id] = PlotLayerState(
-                    state=current.state,
                     version=current.version + 1,
                     plotter=current.plotter,
                     error=current.error,
@@ -266,7 +255,6 @@ class PlotDataService:
             else:
                 # Create entry if it doesn't exist
                 self._layers[layer_id] = PlotLayerState(
-                    state=None,
                     version=1,
                     stopped=True,
                 )

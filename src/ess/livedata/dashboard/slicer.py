@@ -310,7 +310,9 @@ class SlicerPlotter(Plotter):
         prepared_data = {
             k: self._prepare_2d_image_data(v, use_log_scale) for k, v in data.items()
         }
-        return SlicerState(data=prepared_data, clim=clim)
+        result = SlicerState(data=prepared_data, clim=clim)
+        self._set_cached_state(result)
+        return result
 
     def _compute_global_clim(
         self, data: dict[ResultKey, sc.DataArray]

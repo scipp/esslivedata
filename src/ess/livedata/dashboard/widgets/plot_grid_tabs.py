@@ -523,7 +523,7 @@ class PlotGridTabs:
         """
         Check if data is available for a layer.
 
-        Checks PlotDataService for layer state with non-None state.
+        Checks PlotDataService for layer state with cached plotter state.
 
         Parameters
         ----------
@@ -536,7 +536,11 @@ class PlotGridTabs:
             True if data is available for this layer.
         """
         layer_state = self._plot_data_service.get(layer_id)
-        return layer_state is not None and layer_state.state is not None
+        return (
+            layer_state is not None
+            and layer_state.plotter is not None
+            and layer_state.plotter.has_cached_state()
+        )
 
     def _create_layer_toolbars(
         self,

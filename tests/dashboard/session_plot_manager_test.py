@@ -11,11 +11,29 @@ from ess.livedata.dashboard.plot_data_service import LayerId, PlotDataService
 from ess.livedata.dashboard.session_plot_manager import SessionPlotManager
 
 
+class FakePlot:
+    """Fake plot state for testing."""
+
+    pass
+
+
 class FakePlotter:
     """Fake plotter for testing."""
 
     def __init__(self, *, scale: str = 'linear'):
         self.scale = scale
+        self._cached_state = None
+
+    def compute(self, data):
+        result = FakePlot()
+        self._cached_state = result
+        return result
+
+    def get_cached_state(self):
+        return self._cached_state
+
+    def has_cached_state(self):
+        return self._cached_state is not None
 
     def create_presenter(self):
         return FakePresenter(scale=self.scale)
@@ -53,7 +71,8 @@ class TestSessionPlotManager:
         """Test that setup_layer creates a DynamicMap."""
         layer_id = LayerId(uuid4())
         plotter = FakePlotter()
-        plot_data_service.update(layer_id, state={'data': 1}, plotter=plotter)
+        plotter.compute({'data': 1})  # Populate cached state
+        plot_data_service.update(layer_id, plotter=plotter)
 
         dmap = session_manager.setup_layer(layer_id)
 
@@ -67,7 +86,8 @@ class TestSessionPlotManager:
         """Test that setup_layer returns cached DynamicMap if already set up."""
         layer_id = LayerId(uuid4())
         plotter = FakePlotter()
-        plot_data_service.update(layer_id, state={'data': 1}, plotter=plotter)
+        plotter.compute({'data': 1})  # Populate cached state
+        plot_data_service.update(layer_id, plotter=plotter)
 
         dmap1 = session_manager.setup_layer(layer_id)
         dmap2 = session_manager.setup_layer(layer_id)
@@ -91,7 +111,8 @@ class TestSessionPlotManager:
         """Test that invalidate_layer removes cached components."""
         layer_id = LayerId(uuid4())
         plotter = FakePlotter()
-        plot_data_service.update(layer_id, state={'data': 1}, plotter=plotter)
+        plotter.compute({'data': 1})  # Populate cached state
+        plot_data_service.update(layer_id, plotter=plotter)
 
         # Set up the layer
         session_manager.setup_layer(layer_id)
@@ -115,7 +136,8 @@ class TestSessionPlotManager:
         """
         layer_id = LayerId(uuid4())
         plotter = FakePlotter(scale='linear')
-        plot_data_service.update(layer_id, state={'data': 1}, plotter=plotter)
+        plotter.compute({'data': 1})  # Populate cached state
+        plot_data_service.update(layer_id, plotter=plotter)
 
         # Set up layer in session
         dmap_original = session_manager.setup_layer(layer_id)
@@ -145,9 +167,8 @@ class TestSessionPlotManager:
         """
         old_layer_id = LayerId(uuid4())
         plotter_linear = FakePlotter(scale='linear')
-        plot_data_service.update(
-            old_layer_id, state={'data': 1}, plotter=plotter_linear
-        )
+        plotter_linear.compute({'data': 1})  # Populate cached state
+        plot_data_service.update(old_layer_id, plotter=plotter_linear)
 
         # Set up with linear scale
         dmap_linear = session_manager.setup_layer(old_layer_id)
@@ -158,7 +179,8 @@ class TestSessionPlotManager:
         plot_data_service.remove(old_layer_id)
         new_layer_id = LayerId(uuid4())
         plotter_log = FakePlotter(scale='log')
-        plot_data_service.update(new_layer_id, state={'data': 2}, plotter=plotter_log)
+        plotter_log.compute({'data': 2})  # Populate cached state
+        plot_data_service.update(new_layer_id, plotter=plotter_log)
 
         # update_pipes cleans up orphaned old layer
         session_manager.update_pipes()
@@ -177,13 +199,15 @@ class TestSessionPlotManager:
         """Test that update_pipes forwards data updates to session pipes."""
         layer_id = LayerId(uuid4())
         plotter = FakePlotter()
-        plot_data_service.update(layer_id, state={'data': 1}, plotter=plotter)
+        plotter.compute({'data': 1})  # Populate cached state
+        plot_data_service.update(layer_id, plotter=plotter)
 
         # Set up layer
         session_manager.setup_layer(layer_id)
 
-        # Update data
-        plot_data_service.update(layer_id, state={'data': 2})
+        # Update data by computing new state and bumping version
+        plotter.compute({'data': 2})
+        plot_data_service.update(layer_id, plotter=plotter)
 
         # update_pipes should forward the update
         updated = session_manager.update_pipes()

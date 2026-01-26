@@ -8,16 +8,34 @@ from ess.livedata.dashboard.plot_data_service import (
 )
 
 
+class FakePlotter:
+    """Fake plotter that caches state for testing."""
+
+    def __init__(self, state=None):
+        self._cached_state = state
+
+    def compute(self, data):
+        self._cached_state = data
+        return data
+
+    def get_cached_state(self):
+        return self._cached_state
+
+    def has_cached_state(self):
+        return self._cached_state is not None
+
+
 class TestPlotDataService:
     def test_update_and_get(self):
         service = PlotDataService()
         layer_id = LayerId('layer-1')
 
-        service.update(layer_id, {'plot': 'data'})
+        plotter = FakePlotter(state={'plot': 'data'})
+        service.update(layer_id, plotter=plotter)
         state = service.get(layer_id)
 
         assert state is not None
-        assert state.state == {'plot': 'data'}
+        assert state.plotter.get_cached_state() == {'plot': 'data'}
         assert state.version == 1
 
     def test_get_unknown_layer_returns_none(self):
@@ -28,10 +46,12 @@ class TestPlotDataService:
         service = PlotDataService()
         layer_id = LayerId('layer-1')
 
-        service.update(layer_id, 'v1')
+        plotter = FakePlotter(state='v1')
+        service.update(layer_id, plotter=plotter)
         assert service.get_version(layer_id) == 1
 
-        service.update(layer_id, 'v2')
+        plotter._cached_state = 'v2'
+        service.update(layer_id, plotter=plotter)
         assert service.get_version(layer_id) == 2
 
     def test_get_version_unknown_layer_returns_zero(self):
@@ -43,22 +63,26 @@ class TestPlotDataService:
         layer1 = LayerId('layer-1')
         layer2 = LayerId('layer-2')
 
-        service.update(layer1, 'v1')
+        plotter1 = FakePlotter(state='v1')
+        service.update(layer1, plotter=plotter1)
         checkpoint = {layer1: service.get_version(layer1)}
-        service.update(layer2, 'v2')
-        service.update(layer1, 'v1-updated')
+        plotter2 = FakePlotter(state='v2')
+        service.update(layer2, plotter=plotter2)
+        plotter1._cached_state = 'v1-updated'
+        service.update(layer1, plotter=plotter1)
 
         updates = service.get_updates_since(checkpoint)
 
         assert set(updates.keys()) == {layer1, layer2}
-        assert updates[layer1].state == 'v1-updated'
-        assert updates[layer2].state == 'v2'
+        assert updates[layer1].plotter.get_cached_state() == 'v1-updated'
+        assert updates[layer2].plotter.get_cached_state() == 'v2'
 
     def test_get_updates_since_empty_versions(self):
         service = PlotDataService()
         layer1 = LayerId('layer-1')
 
-        service.update(layer1, 'v1')
+        plotter = FakePlotter(state='v1')
+        service.update(layer1, plotter=plotter)
 
         updates = service.get_updates_since({})
 
@@ -67,7 +91,8 @@ class TestPlotDataService:
     def test_remove_layer(self):
         service = PlotDataService()
         layer_id = LayerId('layer-1')
-        service.update(layer_id, 'v1')
+        plotter = FakePlotter(state='v1')
+        service.update(layer_id, plotter=plotter)
 
         service.remove(layer_id)
 
@@ -79,7 +104,8 @@ class TestPlotDataService:
 
     def test_clear(self):
         service = PlotDataService()
-        service.update(LayerId('layer-1'), 'v1')
+        plotter = FakePlotter(state='v1')
+        service.update(LayerId('layer-1'), plotter=plotter)
 
         service.clear()
 

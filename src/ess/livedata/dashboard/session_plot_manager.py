@@ -95,18 +95,20 @@ class SessionPlotManager:
 
         # Get data from shared service
         state = self._plot_data_service.get(layer_id)
-        # Need plotter (for create_presenter) and state (computed data) to set up.
-        # state.state can be None if waiting for data or after an error.
-        if state is None or state.plotter is None or state.state is None:
+        # Need plotter (for create_presenter and get_cached_state) to set up.
+        # plotter.has_cached_state() returns False if waiting for data.
+        if state is None or state.plotter is None:
+            return None
+        if not state.plotter.has_cached_state():
             return None
 
         try:
             # Use Presenter pattern - plotter creates appropriate presenter
             presenter = state.plotter.create_presenter()
 
-            # Create session-bound Pipe with initial state
+            # Create session-bound Pipe with initial state from plotter's cache
             # (either pre-computed HoloViews elements or raw data for kdims plotters)
-            pipe = hv.streams.Pipe(data=state.state)
+            pipe = hv.streams.Pipe(data=state.plotter.get_cached_state())
             dmap = presenter.present(pipe)
 
             self._presenters[layer_id] = presenter
@@ -182,8 +184,8 @@ class SessionPlotManager:
             last_version = self._last_versions.get(layer_id, 0)
             if state.version > last_version:
                 try:
-                    # Send updated state to session pipe
-                    session_pipe.send(state.state)
+                    # Send updated state from plotter's cache to session pipe
+                    session_pipe.send(state.plotter.get_cached_state())
                     self._last_versions[layer_id] = state.version
                     updated_layers.add(layer_id)
                     logger.debug(

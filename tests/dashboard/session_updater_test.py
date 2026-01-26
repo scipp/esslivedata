@@ -15,6 +15,19 @@ from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
 
 
+class FakePlotter:
+    """Fake plotter that caches state for testing."""
+
+    def __init__(self, state=None):
+        self._cached_state = state
+
+    def get_cached_state(self):
+        return self._cached_state
+
+    def has_cached_state(self):
+        return self._cached_state is not None
+
+
 class TestSessionUpdater:
     def test_periodic_update_sends_heartbeat(self):
         session_id = SessionId('session-1')
@@ -45,13 +58,14 @@ class TestSessionUpdater:
         updater.register_plot_handler(layer_id, lambda s: received_states.append(s))
 
         # Update service
-        service.update(layer_id, {'data': 'test'})
+        plotter = FakePlotter(state={'data': 'test'})
+        service.update(layer_id, plotter=plotter)
 
         # Poll should pick up change
         updater.periodic_update()
 
         assert len(received_states) == 1
-        assert received_states[0].state == {'data': 'test'}
+        assert received_states[0].plotter.get_cached_state() == {'data': 'test'}
 
     def test_polls_notifications(self):
         session_id = SessionId('session-1')
@@ -93,7 +107,8 @@ class TestSessionUpdater:
         updater.unregister_plot_handler(layer_id)
 
         # Update service
-        service.update(layer_id, {'data': 'test'})
+        plotter = FakePlotter(state={'data': 'test'})
+        service.update(layer_id, plotter=plotter)
 
         # Poll should not invoke handler
         updater.periodic_update()
