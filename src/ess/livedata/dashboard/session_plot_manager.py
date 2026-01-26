@@ -5,7 +5,7 @@ SessionPlotManager - Manages per-session plot components.
 
 This module extracts session-specific plot management from PlotGridTabs,
 providing a clean separation between:
-- Shared state (PlotDataService stores computed plot data)
+- Shared state (PlotDataService stores plotter references)
 - Session state (per-session Pipes, Presenters, DynamicMaps)
 
 Each browser session creates its own SessionPlotManager instance via the
@@ -35,12 +35,12 @@ class SessionPlotManager:
     Each browser session gets its own SessionPlotManager instance. The manager:
     1. Tracks which layers have been set up for this session
     2. Creates session-bound Pipes and DynamicMaps on demand
-    3. Polls PlotDataService for updates and forwards to session Pipes
+    3. Polls presenters for pending updates and forwards to session Pipes
 
     Parameters
     ----------
     plot_data_service:
-        Shared service storing plot data with version tracking.
+        Shared service storing plot layer state.
     """
 
     def __init__(self, plot_data_service: PlotDataService) -> None:
@@ -48,7 +48,6 @@ class SessionPlotManager:
         self._presenters: dict[LayerId, Presenter] = {}
         self._pipes: dict[LayerId, hv.streams.Pipe] = {}
         self._dmaps: dict[LayerId, hv.DynamicMap | hv.Element] = {}
-        self._last_versions: dict[LayerId, int] = {}
 
     def get_dmap(self, layer_id: LayerId) -> hv.DynamicMap | hv.Element | None:
         """
@@ -114,12 +113,10 @@ class SessionPlotManager:
             self._presenters[layer_id] = presenter
             self._pipes[layer_id] = pipe
             self._dmaps[layer_id] = dmap
-            self._last_versions[layer_id] = state.version
 
             logger.debug(
-                "Created session DynamicMap for layer_id=%s (version %d)",
+                "Created session DynamicMap for layer_id=%s",
                 layer_id,
-                state.version,
             )
 
             return dmap
@@ -145,16 +142,15 @@ class SessionPlotManager:
         self._presenters.pop(layer_id, None)
         self._pipes.pop(layer_id, None)
         self._dmaps.pop(layer_id, None)
-        self._last_versions.pop(layer_id, None)
         logger.debug("Invalidated session cache for layer_id=%s", layer_id)
 
     def update_pipes(self) -> set[LayerId]:
         """
-        Poll PlotDataService for updates and forward to session Pipes.
+        Poll presenters for pending updates and forward to session Pipes.
 
-        Checks each tracked layer for version changes and sends new state
-        to the corresponding session Pipe. This is how plot updates
-        propagate to each browser session.
+        Checks each presenter's dirty flag and sends new state to the
+        corresponding session Pipe. This is how plot updates propagate
+        to each browser session.
 
         Also cleans up orphaned layers - when update_layer_config() replaces
         a layer with a new layer_id, the old layer_id is removed from
@@ -174,32 +170,25 @@ class SessionPlotManager:
             if self._plot_data_service.get(layer_id) is None:
                 self.invalidate_layer(layer_id)
 
-        for layer_id, session_pipe in list(self._pipes.items()):
-            state = self._plot_data_service.get(layer_id)
-
-            if state is None:
+        for layer_id, presenter in list(self._presenters.items()):
+            if not presenter.has_pending_update():
                 continue
 
-            # Check if version has changed
-            last_version = self._last_versions.get(layer_id, 0)
-            if state.version > last_version:
-                try:
-                    # Send updated state from plotter's cache to session pipe
-                    session_pipe.send(state.plotter.get_cached_state())
-                    self._last_versions[layer_id] = state.version
+            try:
+                # Consume update from presenter and send to session pipe
+                session_pipe = self._pipes.get(layer_id)
+                if session_pipe is not None:
+                    session_pipe.send(presenter.consume_update())
                     updated_layers.add(layer_id)
                     logger.debug(
-                        "Forwarded state update to session pipe for layer_id=%s "
-                        "(version %d -> %d)",
-                        layer_id,
-                        last_version,
-                        state.version,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to forward state to session pipe for layer_id=%s",
+                        "Forwarded state update to session pipe for layer_id=%s",
                         layer_id,
                     )
+            except Exception:
+                logger.exception(
+                    "Failed to forward state to session pipe for layer_id=%s",
+                    layer_id,
+                )
 
         return updated_layers
 
@@ -212,5 +201,4 @@ class SessionPlotManager:
         self._presenters.clear()
         self._pipes.clear()
         self._dmaps.clear()
-        self._last_versions.clear()
         logger.debug("SessionPlotManager cleaned up")

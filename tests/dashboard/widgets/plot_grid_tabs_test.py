@@ -158,13 +158,12 @@ def plot_data_service():
 
 
 @pytest.fixture
-def session_updater(plot_data_service):
+def session_updater():
     """Create a SessionUpdater for testing."""
     registry = SessionRegistry()
     return SessionUpdater(
         session_id=SessionId('test-session'),
         session_registry=registry,
-        plot_data_service=plot_data_service,
     )
 
 
@@ -301,12 +300,10 @@ class TestGridTabManagement:
         session_updater1 = SessionUpdater(
             session_id=SessionId('session-1'),
             session_registry=registry,
-            plot_data_service=plot_data_service,
         )
         session_updater2 = SessionUpdater(
             session_id=SessionId('session-2'),
             session_registry=registry,
-            plot_data_service=plot_data_service,
         )
 
         # Create separate job status widgets for each instance

@@ -3,35 +3,36 @@
 """
 Plot data service for multi-session synchronization.
 
-Provides polling-based access to computed plot state, ensuring each
-session's periodic callback accesses state in the correct session context.
+Provides storage for plot layer state (plotter, error, stopped).
+Change notification is handled by the Plotter/Presenter dirty flag mechanism.
 """
 
 from __future__ import annotations
 
 import logging
 import threading
-from dataclasses import dataclass
-from typing import Any, NewType
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, NewType
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from .plots import Plotter
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class PlotLayerState:
-    """State for a single plot layer with version tracking.
+    """State for a single plot layer.
 
     Stores the plotter reference and lifecycle flags. The computed state
     is cached within the plotter itself (via get_cached_state()).
+    Change notification is handled by the Plotter/Presenter dirty flag mechanism.
     """
 
-    version: int = 0
-    plotter: Any = (
-        None  # Reference to Plotter for create_presenter() and get_cached_state()
-    )
-    error: str | None = None  # Error message if failed
-    stopped: bool = False  # True if workflow ended
+    plotter: Plotter | None = field(default=None)
+    error: str | None = field(default=None)
+    stopped: bool = field(default=False)
 
 
 LayerId = NewType('LayerId', UUID)
@@ -39,10 +40,11 @@ LayerId = NewType('LayerId', UUID)
 
 class PlotDataService:
     """
-    Stores computed plot state with version tracking.
+    Stores plot layer state (plotter, error, stopped).
 
-    PlotOrchestrator stores results after calling `plotter.compute()`.
-    Each session polls for updates in its periodic callback.
+    PlotOrchestrator stores plotter references after setup.
+    Change notification is handled by the Plotter/Presenter dirty flag mechanism -
+    when plotter.compute() is called, it marks all presenters dirty.
 
     Thread-safe: can be called from background threads and periodic callbacks.
     """
@@ -50,46 +52,6 @@ class PlotDataService:
     def __init__(self) -> None:
         self._layers: dict[LayerId, PlotLayerState] = {}
         self._lock = threading.Lock()
-
-    def update(
-        self,
-        layer_id: LayerId,
-        *,
-        plotter: Any = None,
-    ) -> None:
-        """
-        Update state for a layer.
-
-        The plotter's compute() method caches state internally. This method
-        only needs to bump the version and store the plotter reference.
-
-        Parameters
-        ----------
-        layer_id:
-            Layer ID to update.
-        plotter:
-            Optional plotter instance for per-session presenter creation.
-            Only needs to be provided on first update.
-        """
-        with self._lock:
-            if layer_id in self._layers:
-                current = self._layers[layer_id]
-                # Preserve plotter reference if not provided on update
-                effective_plotter = plotter if plotter is not None else current.plotter
-                self._layers[layer_id] = PlotLayerState(
-                    version=current.version + 1,
-                    plotter=effective_plotter,
-                )
-            else:
-                self._layers[layer_id] = PlotLayerState(
-                    version=1,
-                    plotter=plotter,
-                )
-            logger.debug(
-                "Updated plot state for %s at version %d",
-                layer_id,
-                self._layers[layer_id].version,
-            )
 
     def get(self, layer_id: LayerId) -> PlotLayerState | None:
         """
@@ -108,48 +70,63 @@ class PlotDataService:
         with self._lock:
             return self._layers.get(layer_id)
 
-    def get_version(self, layer_id: LayerId) -> int:
+    def set_plotter(self, layer_id: LayerId, plotter: Any) -> None:
         """
-        Get version for a specific layer.
+        Set the plotter for a layer.
+
+        Creates or replaces the layer entry. This resets any previous
+        error/stopped state since setting a plotter means starting fresh.
 
         Parameters
         ----------
         layer_id:
-            Layer ID to check.
-
-        Returns
-        -------
-        :
-            Version number, or 0 if layer doesn't exist.
+            Layer ID to update.
+        plotter:
+            Plotter instance for per-session presenter creation.
         """
         with self._lock:
-            if layer_id in self._layers:
-                return self._layers[layer_id].version
-            return 0
+            # Create or reset layer state - setting a plotter means starting fresh
+            self._layers[layer_id] = PlotLayerState(plotter=plotter)
+            logger.debug("Set plotter for %s", layer_id)
 
-    def get_updates_since(
-        self, versions: dict[LayerId, int]
-    ) -> dict[LayerId, PlotLayerState]:
+    def set_error(self, layer_id: LayerId, error_msg: str) -> None:
         """
-        Get layers that have been updated since the given versions.
+        Set error state for a layer.
+
+        Marks presenters dirty so sessions see the change.
 
         Parameters
         ----------
-        versions:
-            Dictionary mapping layer IDs to last-seen versions.
-
-        Returns
-        -------
-        :
-            Dictionary of layers with newer versions than provided.
+        layer_id:
+            Layer ID to update.
+        error_msg:
+            Error message to display.
         """
         with self._lock:
-            updates: dict[LayerId, PlotLayerState] = {}
-            for layer_id, layer_state in self._layers.items():
-                last_version = versions.get(layer_id, 0)
-                if layer_state.version > last_version:
-                    updates[layer_id] = layer_state
-            return updates
+            state = self._layers.setdefault(layer_id, PlotLayerState())
+            state.error = error_msg
+            if state.plotter is not None:
+                state.plotter._mark_presenters_dirty()
+            logger.debug("Set error for %s: %s", layer_id, error_msg)
+
+    def set_stopped(self, layer_id: LayerId) -> None:
+        """
+        Mark a layer as stopped.
+
+        Sets the stopped flag to indicate the workflow has ended and no more
+        data is expected. Marks presenters dirty so sessions see the change.
+
+        Parameters
+        ----------
+        layer_id:
+            Layer ID to update.
+        """
+        with self._lock:
+            state = self._layers.setdefault(layer_id, PlotLayerState())
+            state.stopped = True
+            if state.plotter is not None:
+                state.plotter._mark_presenters_dirty()
+            logger.debug("Set stopped for %s", layer_id)
 
     def remove(self, layer_id: LayerId) -> None:
         """
@@ -164,101 +141,6 @@ class PlotDataService:
             if layer_id in self._layers:
                 del self._layers[layer_id]
                 logger.debug("Removed plot state for %s", layer_id)
-
-    def create_entry(
-        self,
-        layer_id: LayerId,
-        *,
-        plotter: Any = None,
-    ) -> None:
-        """
-        Create an initial entry for a layer in "waiting" state.
-
-        Creates the entry only if it doesn't already exist. Use this when
-        setting up a layer before data arrives.
-
-        Parameters
-        ----------
-        layer_id:
-            Layer ID to create entry for.
-        plotter:
-            Optional plotter instance for per-session presenter creation.
-        """
-        with self._lock:
-            if layer_id not in self._layers:
-                self._layers[layer_id] = PlotLayerState(
-                    version=1,
-                    plotter=plotter,
-                )
-                logger.debug("Created initial entry for %s", layer_id)
-
-    def set_error(self, layer_id: LayerId, error_msg: str) -> None:
-        """
-        Set error state for a layer.
-
-        Clears any existing state and sets the error message. Bumps the version
-        so sessions see the change.
-
-        Parameters
-        ----------
-        layer_id:
-            Layer ID to update.
-        error_msg:
-            Error message to display.
-        """
-        with self._lock:
-            current = self._layers.get(layer_id)
-            if current is not None:
-                self._layers[layer_id] = PlotLayerState(
-                    version=current.version + 1,
-                    plotter=current.plotter,
-                    error=error_msg,
-                    stopped=current.stopped,
-                )
-            else:
-                self._layers[layer_id] = PlotLayerState(
-                    version=1,
-                    error=error_msg,
-                )
-            logger.debug(
-                "Set error for %s at version %d",
-                layer_id,
-                self._layers[layer_id].version,
-            )
-
-    def set_stopped(self, layer_id: LayerId) -> None:
-        """
-        Mark a layer as stopped.
-
-        Sets the stopped flag to indicate the workflow has ended and no more
-        data is expected. Bumps the version so sessions see the change.
-
-        Parameters
-        ----------
-        layer_id:
-            Layer ID to update.
-        """
-        with self._lock:
-            current = self._layers.get(layer_id)
-            if current is not None:
-                self._layers[layer_id] = PlotLayerState(
-                    version=current.version + 1,
-                    plotter=current.plotter,
-                    error=current.error,
-                    stopped=True,
-                )
-                logger.debug(
-                    "Set stopped for %s at version %d",
-                    layer_id,
-                    self._layers[layer_id].version,
-                )
-            else:
-                # Create entry if it doesn't exist
-                self._layers[layer_id] = PlotLayerState(
-                    version=1,
-                    stopped=True,
-                )
-                logger.debug("Created stopped entry for %s", layer_id)
 
     def clear(self) -> None:
         """Clear all state. Mainly useful for testing."""

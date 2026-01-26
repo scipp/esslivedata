@@ -48,7 +48,7 @@ from ess.livedata.config.roi_names import (
     get_roi_mapper,
 )
 
-from .plots import Plotter, Presenter
+from .plots import Plotter, Presenter, PresenterBase
 from .static_plots import Color, LineDash, RectanglesCoordinates
 
 if TYPE_CHECKING:
@@ -487,7 +487,7 @@ ConverterType = TypeVar('ConverterType', RectangleConverter, PolygonConverter)
 # -----------------------------------------------------------------------------
 
 
-class BaseROIRequestPresenter(ABC):
+class BaseROIRequestPresenter(PresenterBase, ABC):
     """
     Base presenter for ROI request plotters.
 
@@ -498,6 +498,8 @@ class BaseROIRequestPresenter(ABC):
 
     Parameters
     ----------
+    plotter:
+        The plotter that created this presenter.
     initial_hv_data:
         Initial data in HoloViews format for pipe initialization.
     initial_stream_data:
@@ -514,12 +516,14 @@ class BaseROIRequestPresenter(ABC):
     def __init__(
         self,
         *,
+        plotter: Plotter,
         initial_hv_data: list,
         initial_stream_data: dict,
         style: Any,
         max_roi_count: int,
         on_edit: Callable[[dict], None],
     ) -> None:
+        super().__init__(plotter)
         self._style = style
         self._max_roi_count = max_roi_count
         self._on_edit_callback = on_edit
@@ -840,7 +844,8 @@ class RectanglesRequestPlotter(
 
     def create_presenter(self) -> RectanglesRequestPresenter:
         """Create a presenter for rectangle ROI requests."""
-        return RectanglesRequestPresenter(
+        presenter = RectanglesRequestPresenter(
+            plotter=self,
             initial_hv_data=self._converter.to_hv_data(
                 self._initial_rois, index_to_color=None
             ),
@@ -849,6 +854,8 @@ class RectanglesRequestPlotter(
             max_roi_count=self._get_max_roi_count(),
             on_edit=self._create_edit_handler(),
         )
+        self._presenters.add(presenter)
+        return presenter
 
     @classmethod
     def from_params(cls, params: RectanglesRequestParams) -> RectanglesRequestPlotter:
@@ -928,7 +935,8 @@ class PolygonsRequestPlotter(
 
     def create_presenter(self) -> PolygonsRequestPresenter:
         """Create a presenter for polygon ROI requests."""
-        return PolygonsRequestPresenter(
+        presenter = PolygonsRequestPresenter(
+            plotter=self,
             initial_hv_data=self._converter.to_hv_data(
                 self._initial_rois, index_to_color=None
             ),
@@ -937,6 +945,8 @@ class PolygonsRequestPlotter(
             max_roi_count=self._get_max_roi_count(),
             on_edit=self._create_edit_handler(),
         )
+        self._presenters.add(presenter)
+        return presenter
 
     @classmethod
     def from_params(cls, params: PolygonsRequestParams) -> PolygonsRequestPlotter:

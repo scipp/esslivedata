@@ -127,7 +127,6 @@ class DashboardBase(ServiceBase, ABC):
         return SessionUpdater(
             session_id=self._get_session_id(),
             session_registry=self._services.session_registry,
-            plot_data_service=self._services.plot_data_service,
             notification_queue=self._services.notification_queue,
         )
 

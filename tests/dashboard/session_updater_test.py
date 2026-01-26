@@ -7,25 +7,8 @@ from ess.livedata.dashboard.notification_queue import (
     NotificationQueue,
     NotificationType,
 )
-from ess.livedata.dashboard.plot_data_service import (
-    LayerId,
-    PlotDataService,
-)
 from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
-
-
-class FakePlotter:
-    """Fake plotter that caches state for testing."""
-
-    def __init__(self, state=None):
-        self._cached_state = state
-
-    def get_cached_state(self):
-        return self._cached_state
-
-    def has_cached_state(self):
-        return self._cached_state is not None
 
 
 class TestSessionUpdater:
@@ -40,32 +23,6 @@ class TestSessionUpdater:
         updater.periodic_update()
 
         assert registry.is_active(session_id)
-
-    def test_polls_plot_updates(self):
-        session_id = SessionId('session-1')
-        registry = SessionRegistry()
-        service = PlotDataService()
-
-        updater = SessionUpdater(
-            session_id=session_id,
-            session_registry=registry,
-            plot_data_service=service,
-        )
-
-        # Register handler
-        received_states = []
-        layer_id = LayerId('layer-1')
-        updater.register_plot_handler(layer_id, lambda s: received_states.append(s))
-
-        # Update service
-        plotter = FakePlotter(state={'data': 'test'})
-        service.update(layer_id, plotter=plotter)
-
-        # Poll should pick up change
-        updater.periodic_update()
-
-        assert len(received_states) == 1
-        assert received_states[0].plotter.get_cached_state() == {'data': 'test'}
 
     def test_polls_notifications(self):
         session_id = SessionId('session-1')
@@ -88,32 +45,41 @@ class TestSessionUpdater:
         assert len(notifications) == 1
         assert notifications[0].message == 'Test'
 
-    def test_unregister_plot_handler(self):
+    def test_custom_handler_called_during_periodic_update(self):
         session_id = SessionId('session-1')
         registry = SessionRegistry()
-        service = PlotDataService()
 
-        updater = SessionUpdater(
-            session_id=session_id,
-            session_registry=registry,
-            plot_data_service=service,
-        )
+        updater = SessionUpdater(session_id=session_id, session_registry=registry)
 
-        received_states = []
-        layer_id = LayerId('layer-1')
-        updater.register_plot_handler(layer_id, lambda s: received_states.append(s))
+        # Register custom handler
+        calls = []
+        updater.register_custom_handler(lambda: calls.append(1))
 
-        # Unregister
-        updater.unregister_plot_handler(layer_id)
-
-        # Update service
-        plotter = FakePlotter(state={'data': 'test'})
-        service.update(layer_id, plotter=plotter)
-
-        # Poll should not invoke handler
+        # Periodic update should call handler
         updater.periodic_update()
 
-        assert received_states == []
+        assert len(calls) == 1
+
+    def test_unregister_custom_handler(self):
+        session_id = SessionId('session-1')
+        registry = SessionRegistry()
+
+        updater = SessionUpdater(session_id=session_id, session_registry=registry)
+
+        calls = []
+
+        def handler() -> None:
+            calls.append(1)
+
+        updater.register_custom_handler(handler)
+
+        # Unregister
+        updater.unregister_custom_handler(handler)
+
+        # Periodic update should not call handler
+        updater.periodic_update()
+
+        assert calls == []
 
     def test_cleanup_unregisters_from_notification_queue(self):
         session_id = SessionId('session-1')

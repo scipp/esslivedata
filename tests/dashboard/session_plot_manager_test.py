@@ -2,12 +2,14 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for SessionPlotManager."""
 
+import weakref
 from uuid import uuid4
 
 import holoviews as hv
 import pytest
 
 from ess.livedata.dashboard.plot_data_service import LayerId, PlotDataService
+from ess.livedata.dashboard.plots import PresenterBase
 from ess.livedata.dashboard.session_plot_manager import SessionPlotManager
 
 
@@ -23,10 +25,12 @@ class FakePlotter:
     def __init__(self, *, scale: str = 'linear'):
         self.scale = scale
         self._cached_state = None
+        self._presenters: weakref.WeakSet = weakref.WeakSet()
 
     def compute(self, data):
         result = FakePlot()
         self._cached_state = result
+        self._mark_presenters_dirty()
         return result
 
     def get_cached_state(self):
@@ -36,13 +40,21 @@ class FakePlotter:
         return self._cached_state is not None
 
     def create_presenter(self):
-        return FakePresenter(scale=self.scale)
+        presenter = FakePresenter(self, scale=self.scale)
+        self._presenters.add(presenter)
+        return presenter
+
+    def _mark_presenters_dirty(self):
+        """Mark all registered presenters as having pending updates."""
+        for presenter in self._presenters:
+            presenter._mark_dirty()
 
 
-class FakePresenter:
+class FakePresenter(PresenterBase):
     """Fake presenter for testing."""
 
-    def __init__(self, scale: str):
+    def __init__(self, plotter, *, scale: str = 'linear'):
+        super().__init__(plotter)
         self.scale = scale
 
     def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
@@ -72,7 +84,7 @@ class TestSessionPlotManager:
         layer_id = LayerId(uuid4())
         plotter = FakePlotter()
         plotter.compute({'data': 1})  # Populate cached state
-        plot_data_service.update(layer_id, plotter=plotter)
+        plot_data_service.set_plotter(layer_id, plotter)
 
         dmap = session_manager.setup_layer(layer_id)
 
@@ -87,7 +99,7 @@ class TestSessionPlotManager:
         layer_id = LayerId(uuid4())
         plotter = FakePlotter()
         plotter.compute({'data': 1})  # Populate cached state
-        plot_data_service.update(layer_id, plotter=plotter)
+        plot_data_service.set_plotter(layer_id, plotter)
 
         dmap1 = session_manager.setup_layer(layer_id)
         dmap2 = session_manager.setup_layer(layer_id)
@@ -99,7 +111,9 @@ class TestSessionPlotManager:
     ):
         """Test that setup_layer returns None if layer has no data."""
         layer_id = LayerId(uuid4())
-        plot_data_service.create_entry(layer_id)
+        # Create an entry with no plotter - represents waiting for data
+        plotter = FakePlotter()
+        plot_data_service.set_plotter(layer_id, plotter)
 
         dmap = session_manager.setup_layer(layer_id)
 
@@ -112,7 +126,7 @@ class TestSessionPlotManager:
         layer_id = LayerId(uuid4())
         plotter = FakePlotter()
         plotter.compute({'data': 1})  # Populate cached state
-        plot_data_service.update(layer_id, plotter=plotter)
+        plot_data_service.set_plotter(layer_id, plotter)
 
         # Set up the layer
         session_manager.setup_layer(layer_id)
@@ -137,7 +151,7 @@ class TestSessionPlotManager:
         layer_id = LayerId(uuid4())
         plotter = FakePlotter(scale='linear')
         plotter.compute({'data': 1})  # Populate cached state
-        plot_data_service.update(layer_id, plotter=plotter)
+        plot_data_service.set_plotter(layer_id, plotter)
 
         # Set up layer in session
         dmap_original = session_manager.setup_layer(layer_id)
@@ -168,7 +182,7 @@ class TestSessionPlotManager:
         old_layer_id = LayerId(uuid4())
         plotter_linear = FakePlotter(scale='linear')
         plotter_linear.compute({'data': 1})  # Populate cached state
-        plot_data_service.update(old_layer_id, plotter=plotter_linear)
+        plot_data_service.set_plotter(old_layer_id, plotter_linear)
 
         # Set up with linear scale
         dmap_linear = session_manager.setup_layer(old_layer_id)
@@ -180,7 +194,7 @@ class TestSessionPlotManager:
         new_layer_id = LayerId(uuid4())
         plotter_log = FakePlotter(scale='log')
         plotter_log.compute({'data': 2})  # Populate cached state
-        plot_data_service.update(new_layer_id, plotter=plotter_log)
+        plot_data_service.set_plotter(new_layer_id, plotter_log)
 
         # update_pipes cleans up orphaned old layer
         session_manager.update_pipes()
@@ -196,20 +210,23 @@ class TestSessionPlotManager:
     def test_update_pipes_forwards_data_updates(
         self, plot_data_service, session_manager
     ):
-        """Test that update_pipes forwards data updates to session pipes."""
+        """Test that update_pipes forwards data updates to session pipes.
+
+        When plotter.compute() is called, it marks all presenters dirty.
+        update_pipes() should detect this and forward the update to the pipe.
+        """
         layer_id = LayerId(uuid4())
         plotter = FakePlotter()
-        plotter.compute({'data': 1})  # Populate cached state
-        plot_data_service.update(layer_id, plotter=plotter)
+        plotter.compute({'data': 1})  # Populate cached state and mark dirty
+        plot_data_service.set_plotter(layer_id, plotter)
 
-        # Set up layer
+        # Set up layer - presenter is created and dirty flag is reset
         session_manager.setup_layer(layer_id)
 
-        # Update data by computing new state and bumping version
+        # Update data by computing new state - marks presenter dirty
         plotter.compute({'data': 2})
-        plot_data_service.update(layer_id, plotter=plotter)
 
-        # update_pipes should forward the update
+        # update_pipes should detect dirty flag and forward the update
         updated = session_manager.update_pipes()
 
         assert layer_id in updated

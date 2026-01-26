@@ -5,11 +5,17 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Protocol, cast
+import weakref
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import holoviews as hv
 import numpy as np
 import scipp as sc
+
+if TYPE_CHECKING:
+    from typing import TypeVar
+
+    PlotterT = TypeVar('PlotterT', bound='Plotter')
 
 from ess.livedata.config.workflow_spec import ResultKey
 
@@ -56,8 +62,51 @@ class Presenter(Protocol):
         """
         ...
 
+    def has_pending_update(self) -> bool:
+        """Check if there is a pending update to present."""
+        ...
 
-class DefaultPresenter:
+    def consume_update(self) -> Any:
+        """Consume the pending update and return the cached state."""
+        ...
+
+
+class PresenterBase:
+    """
+    Base class for presenters with dirty flag tracking.
+
+    Tracks whether new data has been computed since the last time this
+    presenter consumed an update. This enables efficient polling-based
+    update detection in multi-session scenarios.
+    """
+
+    def __init__(self, plotter: Plotter) -> None:
+        self._plotter = plotter
+        self._dirty: bool = False
+
+    def _mark_dirty(self) -> None:
+        """Mark this presenter as having a pending update."""
+        self._dirty = True
+
+    def has_pending_update(self) -> bool:
+        """Check if there is a pending update to present."""
+        return self._dirty
+
+    def consume_update(self) -> Any:
+        """
+        Consume the pending update and return the cached state.
+
+        Clears the dirty flag and returns the plotter's cached state.
+        """
+        self._dirty = False
+        return self._plotter.get_cached_state()
+
+    def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap | hv.Element:
+        """Create a DynamicMap or Element for this session from a data pipe."""
+        raise NotImplementedError("Subclasses must implement present()")
+
+
+class DefaultPresenter(PresenterBase):
     """
     Default presenter for standard plotters.
 
@@ -77,7 +126,7 @@ class DefaultPresenter:
         return hv.DynamicMap(passthrough, streams=[pipe], cache_size=1)
 
 
-class StaticPresenter:
+class StaticPresenter(PresenterBase):
     """
     Presenter for static plots that returns the element directly.
 
@@ -136,6 +185,9 @@ def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
 class Plotter:
     """
     Base class for plots that support autoscaling.
+
+    Tracks presenters via WeakSet and marks them dirty when state changes.
+    This enables efficient polling-based update detection.
     """
 
     def __init__(
@@ -156,6 +208,7 @@ class Plotter:
             Additional keyword arguments passed to the autoscaler if created.
         """
         self._cached_state: Any | None = None
+        self._presenters: weakref.WeakSet[PresenterBase] = weakref.WeakSet()
         self.autoscaler_kwargs = kwargs
         self.autoscalers: dict[ResultKey, Autoscaler] = {}
         self.layout_params = layout_params or LayoutParams()
@@ -393,6 +446,8 @@ class Plotter:
 
         Stage 2 of the two-stage architecture. Returns a fresh Presenter
         instance that can be used to create session-bound DynamicMaps.
+        The presenter is registered with this plotter and will be marked
+        dirty when compute() produces new state.
 
         Override this method in subclasses that need custom presenters
         (e.g., ROI plotters with edit streams).
@@ -402,11 +457,19 @@ class Plotter:
         :
             A Presenter instance for this plotter.
         """
-        return DefaultPresenter()
+        presenter = DefaultPresenter(self)
+        self._presenters.add(presenter)
+        return presenter
 
     def _set_cached_state(self, state: Any) -> None:
-        """Store computed state. Atomic assignment ensures thread safety."""
+        """Store computed state and mark all presenters dirty."""
         self._cached_state = state
+        self._mark_presenters_dirty()
+
+    def _mark_presenters_dirty(self) -> None:
+        """Mark all registered presenters as having pending updates."""
+        for presenter in self._presenters:
+            presenter._mark_dirty()
 
     def get_cached_state(self) -> Any | None:
         """Get the last computed state, or None if not yet computed."""

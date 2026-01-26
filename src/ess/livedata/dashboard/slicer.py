@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import holoviews as hv
 import numpy as np
@@ -14,8 +14,11 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import ResultKey
 
 from .plot_params import PlotParams3d, PlotScale, PlotScaleParams2d, TickParams
-from .plots import Plotter
+from .plots import Plotter, PresenterBase
 from .scipp_to_holoviews import to_holoviews
+
+if TYPE_CHECKING:
+    pass
 
 
 @dataclass
@@ -31,7 +34,7 @@ class SlicerState:
     clim: tuple[float, float] | None = None
 
 
-class SlicerPresenter:
+class SlicerPresenter(PresenterBase):
     """
     Per-session presenter for SlicerPlotter.
 
@@ -40,7 +43,13 @@ class SlicerPresenter:
     own SlicerPresenter instance with session-bound components.
     """
 
-    def __init__(self, base_opts: dict[str, Any], sizing_opts: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        plotter: Plotter,
+        base_opts: dict[str, Any],
+        sizing_opts: dict[str, Any],
+    ) -> None:
+        super().__init__(plotter)
         self._base_opts = base_opts
         self._sizing_opts = sizing_opts
         self._kdims: list[hv.Dimension] | None = None
@@ -342,4 +351,8 @@ class SlicerPlotter(Plotter):
 
     def create_presenter(self) -> SlicerPresenter:
         """Create a SlicerPresenter for per-session rendering."""
-        return SlicerPresenter(base_opts=self._base_opts, sizing_opts=self._sizing_opts)
+        presenter = SlicerPresenter(
+            plotter=self, base_opts=self._base_opts, sizing_opts=self._sizing_opts
+        )
+        self._presenters.add(presenter)
+        return presenter

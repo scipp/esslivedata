@@ -704,7 +704,7 @@ class PlotOrchestrator:
             plotter.create_static_plot()  # Caches state internally
             # Store plotter in PlotDataService (has create_presenter()
             # and get_cached_state() methods)
-            self._plot_data_service.update(layer_id, plotter=plotter)
+            self._plot_data_service.set_plotter(layer_id, plotter)
         except Exception:
             error_msg = traceback.format_exc()
             self._logger.exception(
@@ -753,9 +753,6 @@ class PlotOrchestrator:
             self._logger.error('PlotDataService is required for layer_id=%s', layer_id)
             return
 
-        # Create entry in "waiting" state (clears any previous error/stopped state)
-        self._plot_data_service.create_entry(layer_id)
-
         # Create plotter eagerly - doesn't need data
         try:
             plotter = self._plotting_controller.create_plotter(
@@ -768,19 +765,19 @@ class PlotOrchestrator:
             self._notify_cell_updated(grid_id, cell_id, cell)
             return
 
+        # Register plotter with PlotDataService (resets any previous error/stopped)
+        self._plot_data_service.set_plotter(layer_id, plotter)
+
         def on_data(data: dict) -> None:
-            """Compute plot state and store in PlotDataService."""
+            """Compute plot state - plotter marks presenters dirty automatically."""
             # Check if layer still exists
             if layer_id not in self._layer_to_cell:
                 return
 
             try:
                 # Compute state (runs once, shared across all sessions)
-                # plotter.compute() caches state internally
+                # plotter.compute() caches state and marks presenters dirty
                 plotter.compute(data)
-
-                # Bump version in PlotDataService - sessions will poll for this
-                self._plot_data_service.update(layer_id, plotter=plotter)
             except Exception:
                 error_msg = traceback.format_exc()
                 self._logger.exception(
