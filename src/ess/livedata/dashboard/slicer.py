@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import holoviews as hv
 import numpy as np
@@ -16,9 +16,6 @@ from ess.livedata.config.workflow_spec import ResultKey
 from .plot_params import PlotParams3d, PlotScale, PlotScaleParams2d, TickParams
 from .plots import Plotter, PresenterBase
 from .scipp_to_holoviews import to_holoviews
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass
