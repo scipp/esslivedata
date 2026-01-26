@@ -52,8 +52,6 @@ from .plots import Plotter, Presenter, PresenterBase
 from .static_plots import Color, LineDash, RectanglesCoordinates
 
 if TYPE_CHECKING:
-    from ess.livedata.config.workflow_spec import ResultKey
-
     from .roi_publisher import ROIPublisher
 
 logger = structlog.get_logger(__name__)
@@ -72,11 +70,6 @@ def _get_max_rois_for_geometry(geometry_type: ROIGeometryType) -> int:
     """Get max ROI count for a geometry type from central config."""
     geom = get_roi_mapper().geometry_for_type(geometry_type)
     return geom.num_rois if geom else get_default_num_rois(geometry_type)
-
-
-# -----------------------------------------------------------------------------
-# Converters
-# -----------------------------------------------------------------------------
 
 
 class RectangleConverter:
@@ -310,9 +303,13 @@ class PolygonConverter:
         }
 
 
-# -----------------------------------------------------------------------------
-# Pydantic models for params
-# -----------------------------------------------------------------------------
+if TYPE_CHECKING:
+    from ess.livedata.config.workflow_spec import ResultKey
+
+# TypeVars for generic base class
+ROIType = TypeVar('ROIType', RectangleROI, PolygonROI)
+ParamsType = TypeVar('ParamsType', bound=pydantic.BaseModel)
+ConverterType = TypeVar('ConverterType', RectangleConverter, PolygonConverter)
 
 
 class OptionalRectanglesCoordinates(RectanglesCoordinates):
@@ -389,102 +386,6 @@ class RectanglesRequestParams(pydantic.BaseModel):
         title="Options",
         description="Drawing options.",
     )
-
-
-class PolygonsRequestStyle(pydantic.BaseModel):
-    """Style options for ROI request polygons."""
-
-    color: Color = pydantic.Field(default=Color("#808080"), title="Color")
-    line_width: float = pydantic.Field(
-        default=2.0,
-        ge=0.0,
-        le=10.0,
-        title="Line Width",
-        description="Line width in pixels",
-    )
-    line_dash: LineDash = pydantic.Field(
-        default=LineDash.dashed,
-        title="Line Style",
-        description="Line style: solid, dashed, dotted, dotdash",
-    )
-
-
-class PolygonsCoordinates(pydantic.BaseModel):
-    """Wrapper for polygon coordinate input."""
-
-    coordinates: str = pydantic.Field(
-        default="",
-        title="Coordinates",
-        description='E.g., [[0,0],[10,0],[5,10]], [[20,20],[30,20],[30,30],[20,30]]',
-    )
-
-    def parse(self) -> list[tuple[list[float], list[float]]]:
-        """Parse validated coordinates into list of (xs, ys) tuples."""
-        import json
-
-        coords_str = self.coordinates.strip()
-        if not coords_str:
-            return []
-
-        try:
-            # Parse as JSON array of polygons
-            result = json.loads(f"[{coords_str}]")
-            polygons = []
-            for poly in result:
-                if not isinstance(poly, list) or len(poly) < 3:
-                    continue
-                xs = [float(p[0]) for p in poly]
-                ys = [float(p[1]) for p in poly]
-                polygons.append((xs, ys))
-            return polygons
-        except (json.JSONDecodeError, IndexError, TypeError):
-            return []
-
-
-class PolygonsRequestOptions(pydantic.BaseModel):
-    """Options for polygons request plotter."""
-
-    max_roi_count: int = pydantic.Field(
-        default_factory=lambda: _get_max_rois_for_geometry("polygon"),
-        ge=1,
-        le=_get_max_rois_for_geometry("polygon"),
-        title="Max ROIs",
-        description="Maximum number of polygons that can be drawn.",
-    )
-
-
-class PolygonsRequestParams(pydantic.BaseModel):
-    """Parameters for interactive polygons request plotter."""
-
-    geometry: PolygonsCoordinates = pydantic.Field(
-        default_factory=PolygonsCoordinates,
-        title="Initial Coordinates",
-        description="Initial polygon coordinates. Leave empty for none.",
-    )
-    style: PolygonsRequestStyle = pydantic.Field(
-        default_factory=PolygonsRequestStyle,
-        title="Appearance",
-        description="Visual styling options.",
-    )
-    options: PolygonsRequestOptions = pydantic.Field(
-        default_factory=PolygonsRequestOptions,
-        title="Options",
-        description="Drawing options.",
-    )
-
-
-# -----------------------------------------------------------------------------
-# TypeVars for generic classes
-# -----------------------------------------------------------------------------
-
-ROIType = TypeVar('ROIType', RectangleROI, PolygonROI)
-ParamsType = TypeVar('ParamsType', bound=pydantic.BaseModel)
-ConverterType = TypeVar('ConverterType', RectangleConverter, PolygonConverter)
-
-
-# -----------------------------------------------------------------------------
-# Presenters
-# -----------------------------------------------------------------------------
 
 
 class BaseROIRequestPresenter(PresenterBase, ABC):
@@ -624,11 +525,6 @@ class PolygonsRequestPresenter(BaseROIRequestPresenter):
         )
 
 
-# -----------------------------------------------------------------------------
-# Plotters
-# -----------------------------------------------------------------------------
-
-
 class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, ConverterType]):
     """Base class for interactive ROI request plotters.
 
@@ -660,6 +556,38 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
     def set_roi_publisher(self, publisher: ROIPublisher | None) -> None:
         """Set the ROI publisher for this plotter."""
         self._roi_publisher = publisher
+
+    @abstractmethod
+    def _create_converter(self) -> ConverterType:
+        """Create the converter for this ROI type."""
+
+    @abstractmethod
+    def _geometry_type(self) -> str:
+        """Return geometry type name ('rectangle' or 'polygon')."""
+
+    @abstractmethod
+    def _get_index_offset(self) -> int:
+        """Return index offset for ROI indices (0 for rectangles, 4 for polygons)."""
+
+    @abstractmethod
+    def _parse_initial_geometry(self) -> dict[int, ROIType]:
+        """Parse initial geometry from params."""
+
+    @abstractmethod
+    def _should_skip_edit(self, new_rois: dict[int, ROIType]) -> bool:
+        """Return True if this edit event should be skipped."""
+
+    @abstractmethod
+    def _get_style(self) -> Any:
+        """Return the style params object with color, line_width, line_dash."""
+
+    @abstractmethod
+    def _get_max_roi_count(self) -> int:
+        """Return maximum number of ROIs that can be drawn."""
+
+    @abstractmethod
+    def create_presenter(self) -> Presenter:
+        """Create a presenter for this plotter."""
 
     def compute(
         self, data: dict[ResultKey, sc.DataArray], **kwargs
@@ -761,38 +689,6 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
             self._data_key.job_id,
         )
 
-    @abstractmethod
-    def _create_converter(self) -> ConverterType:
-        """Create the converter for this ROI type."""
-
-    @abstractmethod
-    def _geometry_type(self) -> str:
-        """Return geometry type name ('rectangle' or 'polygon')."""
-
-    @abstractmethod
-    def _get_index_offset(self) -> int:
-        """Return index offset for ROI indices (0 for rectangles, 4 for polygons)."""
-
-    @abstractmethod
-    def _parse_initial_geometry(self) -> dict[int, ROIType]:
-        """Parse initial geometry from params."""
-
-    @abstractmethod
-    def _get_style(self) -> Any:
-        """Return the style params object with color, line_width, line_dash."""
-
-    @abstractmethod
-    def _get_max_roi_count(self) -> int:
-        """Return maximum number of ROIs that can be drawn."""
-
-    @abstractmethod
-    def _should_skip_edit(self, new_rois: dict[int, ROIType]) -> bool:
-        """Return True if this edit event should be skipped."""
-
-    @abstractmethod
-    def create_presenter(self) -> Presenter:
-        """Create a presenter for this plotter."""
-
 
 class RectanglesRequestPlotter(
     BaseROIRequestPlotter[RectangleROI, RectanglesRequestParams, RectangleConverter]
@@ -832,15 +728,15 @@ class RectanglesRequestPlotter(
             )
         return rois
 
+    def _should_skip_edit(self, new_rois: dict[int, RectangleROI]) -> bool:
+        del new_rois  # Rectangles never skip edits
+        return False
+
     def _get_style(self) -> RectanglesRequestStyle:
         return self._params.style
 
     def _get_max_roi_count(self) -> int:
         return self._params.options.max_roi_count
-
-    def _should_skip_edit(self, new_rois: dict[int, RectangleROI]) -> bool:
-        del new_rois  # Rectangles never skip edits
-        return False
 
     def create_presenter(self) -> RectanglesRequestPresenter:
         """Create a presenter for rectangle ROI requests."""
@@ -861,6 +757,88 @@ class RectanglesRequestPlotter(
     def from_params(cls, params: RectanglesRequestParams) -> RectanglesRequestPlotter:
         """Create plotter from params (concrete type hint for registry)."""
         return cls(params)
+
+
+class PolygonsRequestStyle(pydantic.BaseModel):
+    """Style options for ROI request polygons."""
+
+    color: Color = pydantic.Field(default=Color("#808080"), title="Color")
+    line_width: float = pydantic.Field(
+        default=2.0,
+        ge=0.0,
+        le=10.0,
+        title="Line Width",
+        description="Line width in pixels",
+    )
+    line_dash: LineDash = pydantic.Field(
+        default=LineDash.dashed,
+        title="Line Style",
+        description="Line style: solid, dashed, dotted, dotdash",
+    )
+
+
+class PolygonsCoordinates(pydantic.BaseModel):
+    """Wrapper for polygon coordinate input."""
+
+    coordinates: str = pydantic.Field(
+        default="",
+        title="Coordinates",
+        description='E.g., [[0,0],[10,0],[5,10]], [[20,20],[30,20],[30,30],[20,30]]',
+    )
+
+    def parse(self) -> list[tuple[list[float], list[float]]]:
+        """Parse validated coordinates into list of (xs, ys) tuples."""
+        import json
+
+        coords_str = self.coordinates.strip()
+        if not coords_str:
+            return []
+
+        try:
+            # Parse as JSON array of polygons
+            result = json.loads(f"[{coords_str}]")
+            polygons = []
+            for poly in result:
+                if not isinstance(poly, list) or len(poly) < 3:
+                    continue
+                xs = [float(p[0]) for p in poly]
+                ys = [float(p[1]) for p in poly]
+                polygons.append((xs, ys))
+            return polygons
+        except (json.JSONDecodeError, IndexError, TypeError):
+            return []
+
+
+class PolygonsRequestOptions(pydantic.BaseModel):
+    """Options for polygons request plotter."""
+
+    max_roi_count: int = pydantic.Field(
+        default_factory=lambda: _get_max_rois_for_geometry("polygon"),
+        ge=1,
+        le=_get_max_rois_for_geometry("polygon"),
+        title="Max ROIs",
+        description="Maximum number of polygons that can be drawn.",
+    )
+
+
+class PolygonsRequestParams(pydantic.BaseModel):
+    """Parameters for interactive polygons request plotter."""
+
+    geometry: PolygonsCoordinates = pydantic.Field(
+        default_factory=PolygonsCoordinates,
+        title="Initial Coordinates",
+        description="Initial polygon coordinates. Leave empty for none.",
+    )
+    style: PolygonsRequestStyle = pydantic.Field(
+        default_factory=PolygonsRequestStyle,
+        title="Appearance",
+        description="Visual styling options.",
+    )
+    options: PolygonsRequestOptions = pydantic.Field(
+        default_factory=PolygonsRequestOptions,
+        title="Options",
+        description="Drawing options.",
+    )
 
 
 class PolygonsRequestPlotter(
@@ -906,12 +884,6 @@ class PolygonsRequestPlotter(
                 )
         return rois
 
-    def _get_style(self) -> PolygonsRequestStyle:
-        return self._params.style
-
-    def _get_max_roi_count(self) -> int:
-        return self._params.options.max_roi_count
-
     def _should_skip_edit(self, new_rois: dict[int, PolygonROI]) -> bool:
         """Skip publishing while user is actively drawing a polygon.
 
@@ -932,6 +904,12 @@ class PolygonsRequestPlotter(
                 if roi.x[-1] == roi.x[-2] and roi.y[-1] == roi.y[-2]:
                     return True
         return False
+
+    def _get_style(self) -> PolygonsRequestStyle:
+        return self._params.style
+
+    def _get_max_roi_count(self) -> int:
+        return self._params.options.max_roi_count
 
     def create_presenter(self) -> PolygonsRequestPresenter:
         """Create a presenter for polygon ROI requests."""
