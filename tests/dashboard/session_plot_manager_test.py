@@ -79,72 +79,45 @@ def session_manager(plot_data_service):
 class TestSessionPlotManager:
     """Tests for SessionPlotManager."""
 
-    def test_get_or_create_layer_creates_dmap_when_data_available(
-        self, plot_data_service, session_manager
-    ):
-        """Test that get_or_create_layer creates a DynamicMap when data is available."""
+    def test_setup_layer_creates_dmap(self, plot_data_service, session_manager):
+        """Test that setup_layer creates a DynamicMap."""
         layer_id = LayerId(uuid4())
         plotter = FakePlotter()
         plotter.compute({'data': 1})  # Populate cached state
         plot_data_service.set_plotter(layer_id, plotter)
 
-        result = session_manager.get_or_create_layer(layer_id)
+        dmap = session_manager.setup_layer(layer_id)
 
-        assert isinstance(result, hv.DynamicMap)
-        assert session_manager.get_dmap(layer_id) is not None
+        assert dmap is not None
+        assert isinstance(dmap, hv.DynamicMap)
+        assert session_manager.has_layer(layer_id)
 
-    def test_get_or_create_layer_returns_cached_dmap_on_second_call(
+    def test_setup_layer_returns_cached_dmap_on_second_call(
         self, plot_data_service, session_manager
     ):
-        """Test that get_or_create_layer returns cached DynamicMap if already set up."""
+        """Test that setup_layer returns cached DynamicMap if already set up."""
         layer_id = LayerId(uuid4())
         plotter = FakePlotter()
         plotter.compute({'data': 1})  # Populate cached state
         plot_data_service.set_plotter(layer_id, plotter)
 
-        dmap1 = session_manager.get_or_create_layer(layer_id)
-        dmap2 = session_manager.get_or_create_layer(layer_id)
+        dmap1 = session_manager.setup_layer(layer_id)
+        dmap2 = session_manager.setup_layer(layer_id)
 
         assert dmap1 is dmap2
 
-    def test_get_or_create_layer_returns_placeholder_if_no_data(
+    def test_setup_layer_returns_none_if_no_data(
         self, plot_data_service, session_manager
     ):
-        """Test that get_or_create_layer returns placeholder if no data yet."""
+        """Test that setup_layer returns None if layer has no data."""
         layer_id = LayerId(uuid4())
-        # Create an entry with plotter but no data
+        # Create an entry with no plotter - represents waiting for data
         plotter = FakePlotter()
         plot_data_service.set_plotter(layer_id, plotter)
 
-        result = session_manager.get_or_create_layer(layer_id)
+        dmap = session_manager.setup_layer(layer_id)
 
-        # Should return a placeholder (hv.Text), not None
-        assert isinstance(result, hv.Text)
-        # Should NOT be cached as a real DynamicMap
-        assert session_manager.get_dmap(layer_id) is None
-
-    def test_get_or_create_layer_returns_placeholder_if_no_state(
-        self, plot_data_service, session_manager
-    ):
-        """Test that get_or_create_layer returns placeholder if no state exists."""
-        layer_id = LayerId(uuid4())
-        # No state in PlotDataService
-
-        result = session_manager.get_or_create_layer(layer_id)
-
-        assert isinstance(result, hv.Text)
-
-    def test_get_or_create_layer_returns_error_placeholder_on_error(
-        self, plot_data_service, session_manager
-    ):
-        """Test that get_or_create_layer returns error placeholder."""
-        layer_id = LayerId(uuid4())
-        plot_data_service.set_error(layer_id, "Something went wrong")
-
-        result = session_manager.get_or_create_layer(layer_id)
-
-        assert isinstance(result, hv.Text)
-        # The text should contain the error
+        assert dmap is None
 
     def test_invalidate_layer_clears_cached_components(
         self, plot_data_service, session_manager
@@ -156,12 +129,13 @@ class TestSessionPlotManager:
         plot_data_service.set_plotter(layer_id, plotter)
 
         # Set up the layer
-        session_manager.get_or_create_layer(layer_id)
-        assert session_manager.get_dmap(layer_id) is not None
+        session_manager.setup_layer(layer_id)
+        assert session_manager.has_layer(layer_id)
 
         # Invalidate
         session_manager.invalidate_layer(layer_id)
 
+        assert not session_manager.has_layer(layer_id)
         assert session_manager.get_dmap(layer_id) is None
 
     def test_update_pipes_cleans_up_orphaned_layers(
@@ -179,9 +153,10 @@ class TestSessionPlotManager:
         plotter.compute({'data': 1})  # Populate cached state
         plot_data_service.set_plotter(layer_id, plotter)
 
-        # Set up layer in session (creates real DynamicMap)
-        session_manager.get_or_create_layer(layer_id)
-        assert session_manager.get_dmap(layer_id) is not None
+        # Set up layer in session
+        dmap_original = session_manager.setup_layer(layer_id)
+        assert dmap_original is not None
+        assert session_manager.has_layer(layer_id)
 
         # Simulate PlotOrchestrator.update_layer_config():
         # Old layer_id is removed from PlotDataService
@@ -191,7 +166,7 @@ class TestSessionPlotManager:
         session_manager.update_pipes()
 
         # Session cache should be cleared
-        assert session_manager.get_dmap(layer_id) is None
+        assert not session_manager.has_layer(layer_id)
 
     def test_new_layer_id_gets_fresh_components(
         self, plot_data_service, session_manager
@@ -210,7 +185,7 @@ class TestSessionPlotManager:
         plot_data_service.set_plotter(old_layer_id, plotter_linear)
 
         # Set up with linear scale
-        dmap_linear = session_manager.get_or_create_layer(old_layer_id)
+        dmap_linear = session_manager.setup_layer(old_layer_id)
         presenter_linear = session_manager._presenters[old_layer_id]
         assert presenter_linear.scale == 'linear'
 
@@ -223,10 +198,10 @@ class TestSessionPlotManager:
 
         # update_pipes cleans up orphaned old layer
         session_manager.update_pipes()
-        assert session_manager.get_dmap(old_layer_id) is None
+        assert not session_manager.has_layer(old_layer_id)
 
         # New layer_id gets fresh components
-        dmap_log = session_manager.get_or_create_layer(new_layer_id)
+        dmap_log = session_manager.setup_layer(new_layer_id)
         presenter_log = session_manager._presenters[new_layer_id]
 
         assert dmap_log is not dmap_linear
@@ -246,75 +221,12 @@ class TestSessionPlotManager:
         plot_data_service.set_plotter(layer_id, plotter)
 
         # Set up layer - presenter is created and dirty flag is reset
-        session_manager.get_or_create_layer(layer_id)
+        session_manager.setup_layer(layer_id)
 
         # Update data by computing new state - marks presenter dirty
         plotter.compute({'data': 2})
 
         # update_pipes should detect dirty flag and forward the update
-        transitioned = session_manager.update_pipes()
-        # No transitions expected - layer was already set up with data
-        assert transitioned == set()
+        updated = session_manager.update_pipes()
 
-    def test_update_pipes_returns_transitioned_layers(
-        self, plot_data_service, session_manager
-    ):
-        """Test that update_pipes returns layers that transitioned to ready state.
-
-        When a layer returns a placeholder (waiting for data) and data later
-        becomes available, update_pipes should return that layer_id as transitioned.
-        """
-        layer_id = LayerId(uuid4())
-        plotter = FakePlotter()
-        # No cached state yet - plotter exists but no data
-        plot_data_service.set_plotter(layer_id, plotter)
-
-        # First call returns placeholder (pending)
-        result = session_manager.get_or_create_layer(layer_id)
-        assert isinstance(result, hv.Text)  # Placeholder
-
-        # Now data arrives
-        plotter.compute({'data': 1})
-
-        # update_pipes should detect the transition
-        transitioned = session_manager.update_pipes()
-        assert layer_id in transitioned
-
-        # Simulate what PlotGridTabs does: call get_or_create_layer to rebuild
-        # This creates the real DynamicMap and clears the pending state
-        session_manager.get_or_create_layer(layer_id)
-
-        # Now the second call should NOT return it (no longer pending)
-        transitioned_again = session_manager.update_pipes()
-        assert layer_id not in transitioned_again
-
-    def test_update_pipes_clears_pending_on_transition(
-        self, plot_data_service, session_manager
-    ):
-        """Test that pending layers are cleared when transitioned.
-
-        After a transition is detected, the layer should be removed from
-        pending so it's not reported again.
-        """
-        layer_id = LayerId(uuid4())
-        plotter = FakePlotter()
-        plot_data_service.set_plotter(layer_id, plotter)
-
-        # Get placeholder (adds to pending)
-        session_manager.get_or_create_layer(layer_id)
-        assert layer_id in session_manager._pending_layers
-
-        # Data arrives
-        plotter.compute({'data': 1})
-
-        # First update_pipes detects transition
-        transitioned = session_manager.update_pipes()
-        assert layer_id in transitioned
-
-        # Layer should still be in pending until it's actually set up
-        # (get_or_create_layer creates the real DynamicMap)
-        assert layer_id in session_manager._pending_layers
-
-        # After get_or_create_layer, pending is cleared
-        session_manager.get_or_create_layer(layer_id)
-        assert layer_id not in session_manager._pending_layers
+        assert layer_id in updated
