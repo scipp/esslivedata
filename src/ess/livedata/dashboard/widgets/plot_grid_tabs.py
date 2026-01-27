@@ -17,9 +17,11 @@ import panel as pn
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
+from ..data_roles import PRIMARY
 from ..plot_orchestrator import (
     CellGeometry,
     CellId,
+    DataSourceConfig,
     GridId,
     LayerId,
     LayerState,
@@ -489,6 +491,76 @@ class PlotGridTabs:
             margin=GridCellStyles.CELL_MARGIN,
         )
 
+    def _get_available_overlays_for_layer(
+        self, config: PlotConfig
+    ) -> list[tuple[str, str, str]]:
+        """
+        Get available overlay suggestions for a layer based on its configuration.
+
+        Parameters
+        ----------
+        config
+            Layer's plot configuration.
+
+        Returns
+        -------
+        :
+            List of (output_name, plotter_name, plotter_title) tuples.
+            Returns empty list if overlays are not applicable.
+        """
+        # Skip for static overlays (no workflow)
+        if config.is_static():
+            return []
+
+        # Get workflow spec
+        workflow_spec = self._workflow_registry.get(config.workflow_id)
+        if workflow_spec is None:
+            return []
+
+        return self._plotting_controller.get_available_overlays(
+            workflow_spec, config.plot_name
+        )
+
+    def _create_overlay_layer(
+        self,
+        cell_id: CellId,
+        base_config: PlotConfig,
+        output_name: str,
+        plotter_name: str,
+    ) -> None:
+        """
+        Create an overlay layer inheriting configuration from a base layer.
+
+        Parameters
+        ----------
+        cell_id
+            ID of the cell to add the overlay to.
+        base_config
+            Configuration of the base layer (e.g., image layer).
+        output_name
+            Name of the output for the overlay (e.g., 'rectangles_readback').
+        plotter_name
+            Name of the plotter to use for the overlay.
+        """
+        # Get default params for the plotter
+        spec = self._plotting_controller.get_spec(plotter_name)
+        params = spec.params() if spec.params else None
+
+        # Create PlotConfig inheriting workflow/sources from base layer
+        overlay_config = PlotConfig(
+            data_sources={
+                PRIMARY: DataSourceConfig(
+                    workflow_id=base_config.workflow_id,
+                    source_names=list(base_config.source_names),
+                    output_name=output_name,
+                )
+            },
+            plot_name=plotter_name,
+            params=params,
+        )
+
+        self._orchestrator.add_layer(cell_id, overlay_config)
+
     def _create_layer_toolbars(
         self,
         cell_id: CellId,
@@ -512,6 +584,9 @@ class PlotGridTabs:
         :
             List of toolbar widgets, one per layer.
         """
+        # Collect existing plotter names to filter already-added overlays
+        existing_plotter_names = {layer.config.plot_name for layer in cell.layers}
+
         toolbars = []
         for layer in cell.layers:
             layer_id = layer.layer_id
@@ -533,7 +608,15 @@ class PlotGridTabs:
             elif state.plot is None:
                 description = f"{description}\n\nStatus: Waiting for data..."
 
-            # Create callbacks that capture layer_id / cell_id
+            # Get available overlays, excluding those already present in the cell
+            available_overlays = [
+                overlay
+                for overlay in self._get_available_overlays_for_layer(config)
+                if overlay[1]
+                not in existing_plotter_names  # overlay[1] is plotter_name
+            ]
+
+            # Create callbacks that capture layer_id / cell_id / config
             def make_close_callback(lid: LayerId) -> Callable[[], None]:
                 def on_close() -> None:
                     self._orchestrator.remove_layer(lid)
@@ -552,10 +635,20 @@ class PlotGridTabs:
 
                 return on_add
 
+            def make_overlay_callback(
+                cid: CellId, cfg: PlotConfig
+            ) -> Callable[[str, str], None]:
+                def on_overlay(output_name: str, plotter_name: str) -> None:
+                    self._create_overlay_layer(cid, cfg, output_name, plotter_name)
+
+                return on_overlay
+
             toolbar = create_cell_toolbar(
                 on_gear_callback=make_gear_callback(layer_id),
                 on_close_callback=make_close_callback(layer_id),
                 on_add_callback=make_add_callback(cell_id),
+                on_overlay_selected=make_overlay_callback(cell_id, config),
+                available_overlays=available_overlays,
                 title=title,
                 description=description,
                 stopped=state.stopped,

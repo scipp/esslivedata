@@ -39,6 +39,7 @@ class JobResult:
     end_time: int | None
     data: sc.DataGroup | None = None
     error_message: str | None = None
+    warning_message: str | None = None
 
     @property
     def stream_name(self) -> str:
@@ -261,9 +262,18 @@ class Job:
 
     def get(self) -> JobResult:
         try:
-            data = sc.DataGroup(
-                {str(key): val for key, val in self._processor.finalize().items()}
-            )
+            raw_result = self._processor.finalize()
+            none_keys = [str(key) for key, val in raw_result.items() if val is None]
+            valid_items = {
+                str(key): val for key, val in raw_result.items() if val is not None
+            }
+            warning_message = None
+            if none_keys:
+                warning_message = (
+                    f"Workflow returned None for output(s): {', '.join(none_keys)}. "
+                    "These outputs were excluded from the result."
+                )
+            data = sc.DataGroup(valid_items)
             data = _add_time_coords(data, self.start_time, self.end_time)
             return JobResult(
                 job_id=self._job_id,
@@ -271,6 +281,7 @@ class Job:
                 start_time=self.start_time,
                 end_time=self.end_time,
                 data=data,
+                warning_message=warning_message,
             )
         except Exception:
             tb = traceback.format_exc()

@@ -58,6 +58,7 @@ class TestDashboardNullTransport:
             'ess.livedata.dashboard.reduction',
             instrument='dummy',
             transport='none',
+            no_fetch_announcements=True,
         )
 
         with service:

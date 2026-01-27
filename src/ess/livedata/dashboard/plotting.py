@@ -390,6 +390,26 @@ plotter_registry.register_plotter(
 _register_static_plotters()
 
 
+# Maps base plotter name -> list of (required_output_name, overlay_plotter_name)
+# Each tuple specifies: which workflow output is required, and which plotter to use
+#
+# Overlay suggestions are chained to enforce ordering:
+#   image -> readback -> request
+# This ensures the read-only visualization layer is added before the interactive editor.
+OVERLAY_PATTERNS: dict[str, list[tuple[str, str]]] = {
+    'image': [
+        ('roi_rectangle', 'rectangles_readback'),
+        ('roi_polygon', 'polygons_readback'),
+    ],
+    'rectangles_readback': [
+        ('roi_rectangle', 'rectangles_request'),
+    ],
+    'polygons_readback': [
+        ('roi_polygon', 'polygons_request'),
+    ],
+}
+
+
 # ROI data requirements (shared between readback and request plotters)
 _RECTANGLE_ROI_REQUIREMENTS: dict = {
     'min_dims': 1,
