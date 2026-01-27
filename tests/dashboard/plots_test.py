@@ -342,7 +342,8 @@ class TestSlicerPlotter:
     def test_compute_returns_slicer_state(self, slicer_plotter, data_3d, data_key):
         """Test that compute() returns a SlicerState with prepared data and clim."""
         data_dict = {data_key: data_3d}
-        result = slicer_plotter.compute(data_dict)
+        slicer_plotter.compute(data_dict)
+        result = slicer_plotter.get_cached_state()
 
         assert isinstance(result, slicer.SlicerState)
         # Data should have same keys
@@ -358,7 +359,8 @@ class TestSlicerPlotter:
         plotter = slicer.SlicerPlotter.from_params(params)
 
         data_dict = {data_key: data_3d}
-        result = plotter.compute(data_dict)
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
 
         # clim should span the full range of data
         expected_min = float(data_3d.values.min())
@@ -372,7 +374,8 @@ class TestSlicerPlotter:
         plotter = slicer.SlicerPlotter.from_params(params)
 
         data_dict = {data_key: data_3d}
-        result = plotter.compute(data_dict)
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
 
         # data_3d starts at 0 (from arange), so min should be > 0
         assert result.clim is not None
@@ -473,7 +476,8 @@ class TestSlicerPlotter:
         plotter = slicer.SlicerPlotter.from_params(params)
 
         data_dict = {data_key: data_3d}
-        result = plotter.compute(data_dict)
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
 
         # First value (0) should be NaN in log scale (data_3d starts at 0 from arange)
         prepared_data = result.data[data_key]
@@ -491,7 +495,8 @@ class TestSlicerPlotter:
     ):
         """Test that SlicerPresenter creates kdims from SlicerState."""
         data_dict = {data_key: data_3d}
-        state = slicer_plotter.compute(data_dict)
+        slicer_plotter.compute(data_dict)
+        state = slicer_plotter.get_cached_state()
 
         presenter = slicer_plotter.create_presenter()
         pipe = hv.streams.Pipe(data=state)
@@ -504,7 +509,8 @@ class TestSlicerPlotter:
     def test_presenter_kdims_with_coords(self, slicer_plotter, data_3d, data_key):
         """Test that presenter kdims use coordinate values when available."""
         data_dict = {data_key: data_3d}
-        state = slicer_plotter.compute(data_dict)
+        slicer_plotter.compute(data_dict)
+        state = slicer_plotter.get_cached_state()
 
         presenter = slicer_plotter.create_presenter()
         pipe = hv.streams.Pipe(data=state)
@@ -523,7 +529,8 @@ class TestSlicerPlotter:
     ):
         """Test that presenter kdims fall back to indices without coordinates."""
         data_dict = {data_key: data_3d_no_coords}
-        state = slicer_plotter.compute(data_dict)
+        slicer_plotter.compute(data_dict)
+        state = slicer_plotter.get_cached_state()
 
         presenter = slicer_plotter.create_presenter()
         pipe = hv.streams.Pipe(data=state)
@@ -536,7 +543,8 @@ class TestSlicerPlotter:
     def test_presenter_dmap_renders_slice(self, slicer_plotter, data_3d, data_key):
         """Test that presenter's DynamicMap can render slices."""
         data_dict = {data_key: data_3d}
-        state = slicer_plotter.compute(data_dict)
+        slicer_plotter.compute(data_dict)
+        state = slicer_plotter.get_cached_state()
 
         presenter = slicer_plotter.create_presenter()
         pipe = hv.streams.Pipe(data=state)
@@ -589,7 +597,8 @@ class TestSlicerPlotter:
         )
 
         data_dict = {data_key: data}
-        state = slicer_plotter.compute(data_dict)
+        slicer_plotter.compute(data_dict)
+        state = slicer_plotter.get_cached_state()
 
         presenter = slicer_plotter.create_presenter()
         pipe = hv.streams.Pipe(data=state)
@@ -623,7 +632,8 @@ class TestSlicerPlotter:
         )
 
         data_dict = {data_key: data}
-        state = slicer_plotter.compute(data_dict)
+        slicer_plotter.compute(data_dict)
+        state = slicer_plotter.get_cached_state()
 
         presenter = slicer_plotter.create_presenter()
         pipe = hv.streams.Pipe(data=state)
@@ -663,7 +673,8 @@ class TestPlotterLabelChanges:
         plotter = plots.LinePlotter.from_params(PlotParams1d())
         data_dict = {data_key_with_output_name: simple_data}
 
-        result = plotter.compute(data_dict)
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
 
         # Result should have label that includes output_name
         # Label format: "detector/roi_current_0"
@@ -727,7 +738,8 @@ class TestPlotterOverlayMode:
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {data_key_1: simple_data_1}
 
-        result = plotter.compute(data_dict)
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
 
         # Should return Overlay, not raw Curve
         assert isinstance(result, hv.Overlay)
@@ -744,7 +756,8 @@ class TestPlotterOverlayMode:
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {data_key_1: simple_data_1, data_key_2: simple_data_2}
 
-        result = plotter.compute(data_dict)
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
 
         # Should return Overlay
         assert isinstance(result, hv.Overlay)
@@ -761,7 +774,8 @@ class TestPlotterOverlayMode:
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {data_key_1: simple_data_1}
 
-        result = plotter.compute(data_dict)
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
 
         # Should return raw Curve, not Overlay
         assert isinstance(result, hv.Curve)
@@ -774,7 +788,8 @@ class TestPlotterOverlayMode:
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {}
 
-        result = plotter.compute(data_dict)
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
 
         # With overlay mode and empty data, returns Overlay containing Text
         assert isinstance(result, hv.Overlay)
@@ -792,7 +807,8 @@ class TestPlotterOverlayMode:
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {}
 
-        result = plotter.compute(data_dict)
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
 
         # With layout mode and empty data, returns Text directly
         assert isinstance(result, hv.Text)
@@ -914,7 +930,8 @@ class TestBarsPlotter:
             key2: sc.DataArray(sc.scalar(20.0, unit='counts')),
         }
 
-        result = plotter.compute(data)
+        plotter.compute(data)
+        result = plotter.get_cached_state()
         # With layout mode and 2 sources, should return Layout
         assert isinstance(result, hv.Layout)
         assert len(result) == 2
@@ -1177,7 +1194,8 @@ class TestLagIndicator:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
-        result = plotter.compute({data_key: data})
+        plotter.compute({data_key: data})
+        result = plotter.get_cached_state()
 
         # Check that title contains time range and lag
         opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
@@ -1197,7 +1215,8 @@ class TestLagIndicator:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
-        result = plotter.compute({data_key: data})
+        plotter.compute({data_key: data})
+        result = plotter.get_cached_state()
 
         # Check that no title is set (or title doesn't contain Lag)
         opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
@@ -1247,7 +1266,8 @@ class TestLagIndicator:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
-        result = plotter.compute({data_key1: data1, data_key2: data2})
+        plotter.compute({data_key1: data1, data_key2: data2})
+        result = plotter.get_cached_state()
 
         # Check that lag is approximately 5 seconds (the older data)
         opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
@@ -1297,7 +1317,8 @@ class TestTwoStageArchitecture:
         plotter = plots.LinePlotter.from_params(PlotParams1d())
         data_dict = {data_key: simple_data}
         # With new architecture, pipe receives pre-computed elements
-        computed = plotter.compute(data_dict)
+        plotter.compute(data_dict)
+        computed = plotter.get_cached_state()
 
         presenter = plotter.create_presenter()
         pipe = hv.streams.Pipe(data=computed)
@@ -1324,7 +1345,8 @@ class TestTwoStageArchitecture:
         data_dict = {data_key: data_3d}
 
         # Compute returns SlicerState
-        state = plotter.compute(data_dict)
+        plotter.compute(data_dict)
+        state = plotter.get_cached_state()
         assert isinstance(state, slicer.SlicerState)
 
         # Presenter creates DynamicMap with kdims
@@ -1345,7 +1367,8 @@ class TestTwoStageArchitecture:
         plotter = plots.LinePlotter.from_params(PlotParams1d())
         data_dict = {data_key: simple_data}
         # With new architecture, compute() is called once and result is passed to pipe
-        computed = plotter.compute(data_dict)
+        plotter.compute(data_dict)
+        computed = plotter.get_cached_state()
 
         presenter = plotter.create_presenter()
         pipe = hv.streams.Pipe(data=computed)

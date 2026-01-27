@@ -21,7 +21,7 @@ from .scipp_to_holoviews import to_holoviews
 @dataclass
 class SlicerState:
     """
-    State for SlicerPresenter - the result of SlicerPlotter.compute().
+    Cached state for SlicerPlotter.
 
     Contains 3D data and pre-computed color limits for consistent color
     scale across all slices.
@@ -278,7 +278,7 @@ class SlicerPlotter(Plotter):
             aspect_params=params.plot_aspect,
         )
 
-    def compute(self, data: dict[ResultKey, sc.DataArray], **kwargs) -> SlicerState:
+    def compute(self, data: dict[ResultKey, sc.DataArray], **kwargs) -> None:
         """
         Prepare 3D data for slicing with pre-computed color bounds.
 
@@ -294,11 +294,6 @@ class SlicerPlotter(Plotter):
             Dictionary of 3D DataArrays.
         **kwargs:
             Unused (required by base class signature).
-
-        Returns
-        -------
-        :
-            SlicerState containing prepared data and pre-computed color limits.
         """
         del kwargs  # Unused for SlicerPlotter
         clim = self._compute_global_clim(data)
@@ -307,9 +302,7 @@ class SlicerPlotter(Plotter):
         prepared_data = {
             k: self._prepare_2d_image_data(v, use_log_scale) for k, v in data.items()
         }
-        result = SlicerState(data=prepared_data, clim=clim)
-        self._set_cached_state(result)
-        return result
+        self._set_cached_state(SlicerState(data=prepared_data, clim=clim))
 
     def _compute_global_clim(
         self, data: dict[ResultKey, sc.DataArray]

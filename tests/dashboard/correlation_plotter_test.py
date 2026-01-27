@@ -160,7 +160,8 @@ class TestCorrelationHistogramPlotter:
             X_AXIS: {_make_result_key('position'): axis_data},
         }
 
-        result = plotter.compute(data)
+        plotter.compute(data)
+        result = plotter.get_cached_state()
         assert result is not None
 
     def test_works_with_multiple_axes(self):
@@ -187,7 +188,8 @@ class TestCorrelationHistogramPlotter:
             Y_AXIS: {_make_result_key('temperature'): y_axis},
         }
 
-        result = plotter.compute(data)
+        plotter.compute(data)
+        result = plotter.get_cached_state()
         assert result is not None
 
     def test_handles_data_before_axis_range(self):
@@ -210,7 +212,8 @@ class TestCorrelationHistogramPlotter:
         }
 
         # Should not raise
-        result = plotter.compute(data)
+        plotter.compute(data)
+        result = plotter.get_cached_state()
         assert result is not None
 
 

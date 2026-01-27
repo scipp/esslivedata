@@ -31,7 +31,6 @@ class FakePlotter:
         result = FakePlot()
         self._cached_state = result
         self._mark_presenters_dirty()
-        return result
 
     def get_cached_state(self):
         return self._cached_state

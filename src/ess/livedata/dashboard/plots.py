@@ -374,15 +374,13 @@ class Plotter:
             return (1.0, 10.0)
         return None
 
-    def compute(
-        self, data: dict[ResultKey, sc.DataArray], **kwargs
-    ) -> hv.Overlay | hv.Layout | hv.Element:
+    def compute(self, data: dict[ResultKey, sc.DataArray], **kwargs) -> None:
         """
-        Compute plot elements from input data.
+        Compute plot elements from input data and cache the result.
 
         This is Stage 1 of the two-stage plotter architecture. It transforms
-        input data into HoloViews elements that can be stored and shared
-        across sessions.
+        input data into HoloViews elements, caches the result, and marks all
+        registered presenters as dirty.
 
         Parameters
         ----------
@@ -390,11 +388,6 @@ class Plotter:
             Dictionary mapping ResultKeys to DataArrays.
         **kwargs:
             Additional keyword arguments passed to plot().
-
-        Returns
-        -------
-        :
-            Combined HoloViews plot elements (Overlay, Layout, or single Element).
         """
         plots: list[hv.Element] = []
         try:
@@ -438,7 +431,6 @@ class Plotter:
             result = result.opts(title=time_info, fontsize={'title': '10pt'})
 
         self._set_cached_state(result)
-        return result
 
     def create_presenter(self) -> Presenter:
         """

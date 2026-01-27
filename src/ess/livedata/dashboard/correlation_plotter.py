@@ -189,7 +189,7 @@ class CorrelationHistogramPlotter:
     def initialize_from_data(self, data: dict[str, Any]) -> None:
         """No-op: histogram edges are computed dynamically on each call."""
 
-    def compute(self, data: dict[str, Any]) -> Any:
+    def compute(self, data: dict[str, Any]) -> None:
         """Compute histograms for all data sources and render.
 
         Parameters
@@ -238,7 +238,7 @@ class CorrelationHistogramPlotter:
             else:
                 histograms[key] = dependent.hist(bin_spec)
 
-        return self._renderer.compute(histograms)
+        self._renderer.compute(histograms)
 
     def get_cached_state(self) -> Any | None:
         """Get the last computed state from the renderer."""
