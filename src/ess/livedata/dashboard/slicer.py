@@ -103,20 +103,11 @@ class SlicerPresenter(PresenterBase):
 
         dim_names = list(first_data.dims)
 
-        # Mode selector: slice or flatten
         mode_selector = hv.Dimension(
-            'mode',
-            values=['slice', 'flatten'],
-            default='slice',
-            label='Mode',
+            'mode', values=['slice', 'flatten'], default='slice', label='Mode'
         )
-
-        # Dimension selector
         dim_selector = hv.Dimension(
-            'slice_dim',
-            values=dim_names,
-            default=dim_names[0],
-            label='Slice Dimension',
+            'slice_dim', values=dim_names, default=dim_names[0], label='Slice Dimension'
         )
 
         # Create sliders for each dimension

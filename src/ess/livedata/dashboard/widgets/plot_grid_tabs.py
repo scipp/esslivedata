@@ -677,10 +677,7 @@ class PlotGridTabs:
 
         return pn.pane.Markdown(
             content,
-            styles={
-                'text-align': 'left',
-                'padding': '20px',
-            },
+            styles={'text-align': 'left', 'padding': '20px'},
         )
 
     def _create_plot_content(
