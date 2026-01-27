@@ -893,7 +893,7 @@ class TestLifecycleEventNotifications:
         # Callback now has simplified signature (just config, no state)
         assert set(call_kwargs.keys()) == {'grid_id', 'cell_id', 'cell'}
 
-    def test_on_cell_updated_called_when_cell_added_not_on_data_arrival(
+    def test_on_cell_updated_not_called_again_when_data_arrives(
         self,
         plot_orchestrator,
         plot_cell,
@@ -903,7 +903,11 @@ class TestLifecycleEventNotifications:
         fake_plotting_controller,
         fake_data_service,
     ):
-        """on_cell_updated called only when cell added, not on data arrival."""
+        """on_cell_updated only called on cell add, not when first data arrives.
+
+        The transition from placeholder to real DynamicMap is now detected by
+        SessionPlotManager.update_pipes() and handled via PlotGridTabs polling.
+        """
         callback = CallbackCapture()
         plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
 
@@ -935,8 +939,8 @@ class TestLifecycleEventNotifications:
             )
             fake_data_service[result_key] = sc.scalar(1.0)
 
-        # Still only called once (no notification on workflow commit or data arrival)
-        # Sessions poll PlotDataService directly instead
+        # Still only 1 call - PlotOrchestrator doesn't notify on data arrival.
+        # Transition is detected by SessionPlotManager.update_pipes() instead.
         assert callback.call_count == 1
 
     def test_on_cell_updated_called_when_plot_fails_with_error_message(

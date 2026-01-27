@@ -455,6 +455,33 @@ class PlotOrchestrator:
         grid_id = self._cell_to_grid[cell_id]
         return self._grids[grid_id].cells[cell_id]
 
+    def get_layer_location(
+        self, layer_id: LayerId
+    ) -> tuple[GridId, CellId, PlotCell] | None:
+        """
+        Get the grid, cell ID, and cell config for a layer.
+
+        Parameters
+        ----------
+        layer_id
+            ID of the layer to locate.
+
+        Returns
+        -------
+        :
+            Tuple of (grid_id, cell_id, cell) if found, None if layer doesn't exist.
+        """
+        cell_id = self._layer_to_cell.get(layer_id)
+        if cell_id is None:
+            return None
+        grid_id = self._cell_to_grid.get(cell_id)
+        if grid_id is None:
+            return None
+        cell = self._grids[grid_id].cells.get(cell_id)
+        if cell is None:
+            return None
+        return (grid_id, cell_id, cell)
+
     def add_layer(self, cell_id: CellId, config: PlotConfig) -> LayerId:
         """
         Add a new layer to an existing cell.

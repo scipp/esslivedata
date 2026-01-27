@@ -3,14 +3,20 @@
 """
 SessionPlotManager - Manages per-session plot components.
 
-This module extracts session-specific plot management from PlotGridTabs,
-providing a clean separation between:
+This module provides session-specific plot management, separating:
 - Shared state (PlotDataService stores plotter references)
 - Session state (per-session Pipes, Presenters, DynamicMaps)
 
 Each browser session creates its own SessionPlotManager instance via the
 SessionUpdater. The manager creates session-bound HoloViews components
 in the correct session context.
+
+The manager always returns something displayable for any layer:
+- hv.Text placeholder for initializing/waiting/error/stopped states
+- hv.DynamicMap when data is available
+
+This allows PlotGridTabs to be a simple grid display without knowledge
+of data readiness or state transitions.
 """
 
 from __future__ import annotations
@@ -33,9 +39,9 @@ class SessionPlotManager:
     Manages per-session Pipes, Presenters, and DynamicMaps.
 
     Each browser session gets its own SessionPlotManager instance. The manager:
-    1. Tracks which layers have been set up for this session
-    2. Creates session-bound Pipes and DynamicMaps on demand
-    3. Polls presenters for pending updates and forwards to session Pipes
+    1. Always returns something displayable for any layer (placeholder or real plot)
+    2. Creates session-bound Pipes and DynamicMaps when data becomes available
+    3. Forwards data updates from presenters to session Pipes
 
     Parameters
     ----------
@@ -48,6 +54,8 @@ class SessionPlotManager:
         self._presenters: dict[LayerId, Presenter] = {}
         self._pipes: dict[LayerId, hv.streams.Pipe] = {}
         self._dmaps: dict[LayerId, hv.DynamicMap | hv.Element] = {}
+        # Layers that returned placeholder, waiting for data to become available
+        self._pending_layers: set[LayerId] = set()
 
     def get_dmap(self, layer_id: LayerId) -> hv.DynamicMap | hv.Element | None:
         """
@@ -67,46 +75,68 @@ class SessionPlotManager:
         """
         return self._dmaps.get(layer_id)
 
-    def has_layer(self, layer_id: LayerId) -> bool:
-        """Check if a layer has been set up for this session."""
+    def _is_setup(self, layer_id: LayerId) -> bool:
+        """Check if a layer has a real DynamicMap (not just placeholder)."""
         return layer_id in self._dmaps
 
-    def setup_layer(self, layer_id: LayerId) -> hv.DynamicMap | hv.Element | None:
+    def get_or_create_layer(self, layer_id: LayerId) -> hv.DynamicMap | hv.Element:
         """
-        Set up a layer for this session if data is available.
+        Get or create a displayable element for a layer.
 
-        Creates session-bound Pipe and DynamicMap/Element using the Presenter pattern.
-        Returns immediately if the layer is already set up.
+        Always returns something displayable:
+        - hv.Text placeholder for initializing/waiting/error/stopped states
+        - hv.DynamicMap when data is available
+
+        When data becomes available (plotter ready with cached state), creates
+        session-bound Pipe and DynamicMap using the Presenter pattern.
+
+        Layers that return placeholders are tracked as "pending" - update_pipes()
+        will detect when they become ready and signal for widget rebuilds.
 
         Parameters
         ----------
         layer_id:
-            Layer ID to set up.
+            Layer ID to get or create.
 
         Returns
         -------
         :
-            The newly created DynamicMap or Element, or None if no data available yet.
+            A displayable HoloViews element (always succeeds).
         """
-        # Already set up
+        # Already set up with real DynamicMap - return it
         if layer_id in self._dmaps:
             return self._dmaps[layer_id]
 
-        # Get data from shared service
+        # Get state from shared service
         state = self._plot_data_service.get(layer_id)
-        # Need plotter (for create_presenter and get_cached_state) to set up.
-        # plotter.has_cached_state() returns False if waiting for data.
-        if state is None or state.plotter is None:
-            return None
-        if not state.plotter.has_cached_state():
-            return None
 
+        # No state yet - layer just created
+        if state is None:
+            self._pending_layers.add(layer_id)
+            return hv.Text(0, 0, "Initializing...")
+
+        # Error state - show error message
+        if state.error:
+            self._pending_layers.discard(layer_id)
+            short_error = (
+                state.error[:200] + "..." if len(state.error) > 200 else state.error
+            )
+            return hv.Text(0, 0, f"Error:\n{short_error}")
+
+        # Stopped state - show stopped message
+        if state.stopped:
+            self._pending_layers.discard(layer_id)
+            return hv.Text(0, 0, "Workflow stopped")
+
+        # Waiting for plotter or data
+        if state.plotter is None or not state.plotter.has_cached_state():
+            self._pending_layers.add(layer_id)
+            return hv.Text(0, 0, "Waiting for data...")
+
+        # Data available - create real DynamicMap
+        self._pending_layers.discard(layer_id)
         try:
-            # Use Presenter pattern - plotter creates appropriate presenter
             presenter = state.plotter.create_presenter()
-
-            # Create session-bound Pipe with initial state from plotter's cache
-            # (either pre-computed HoloViews elements or raw data for kdims plotters)
             pipe = hv.streams.Pipe(data=state.plotter.get_cached_state())
             dmap = presenter.present(pipe)
 
@@ -114,19 +144,14 @@ class SessionPlotManager:
             self._pipes[layer_id] = pipe
             self._dmaps[layer_id] = dmap
 
-            logger.debug(
-                "Created session DynamicMap for layer_id=%s",
-                layer_id,
-            )
-
+            logger.debug("Created session DynamicMap for layer_id=%s", layer_id)
             return dmap
 
         except Exception:
             logger.exception(
-                "Failed to create session DynamicMap for layer_id=%s",
-                layer_id,
+                "Failed to create session DynamicMap for layer_id=%s", layer_id
             )
-            return None
+            return hv.Text(0, 0, "Failed to create plot")
 
     def invalidate_layer(self, layer_id: LayerId) -> None:
         """
@@ -142,6 +167,7 @@ class SessionPlotManager:
         self._presenters.pop(layer_id, None)
         self._pipes.pop(layer_id, None)
         self._dmaps.pop(layer_id, None)
+        self._pending_layers.discard(layer_id)
         logger.debug("Invalidated session cache for layer_id=%s", layer_id)
 
     def update_pipes(self) -> set[LayerId]:
@@ -152,6 +178,10 @@ class SessionPlotManager:
         corresponding session Pipe. This is how plot updates propagate
         to each browser session.
 
+        Also checks pending layers to see if they became ready (data available).
+        Returns layer IDs that transitioned from placeholder to ready state -
+        these need widget rebuilds to display the real DynamicMap.
+
         Also cleans up orphaned layers - when update_layer_config() replaces
         a layer with a new layer_id, the old layer_id is removed from
         PlotDataService and becomes orphaned in the session cache.
@@ -159,27 +189,42 @@ class SessionPlotManager:
         Returns
         -------
         :
-            Set of layer IDs that received updates.
+            Layer IDs that transitioned from placeholder to ready state.
         """
-        updated_layers: set[LayerId] = set()
+        transitioned: set[LayerId] = set()
 
         # Clean up orphaned layers no longer in PlotDataService.
-        # When update_layer_config() creates a new layer_id, the old one
-        # is removed from PlotDataService. We detect and clean up here.
         for layer_id in list(self._dmaps.keys()):
             if self._plot_data_service.get(layer_id) is None:
                 self.invalidate_layer(layer_id)
 
+        # Also clean up pending layers that were removed
+        for layer_id in list(self._pending_layers):
+            if self._plot_data_service.get(layer_id) is None:
+                self._pending_layers.discard(layer_id)
+
+        # Check pending layers for transitions (data became available)
+        for layer_id in list(self._pending_layers):
+            state = self._plot_data_service.get(layer_id)
+            if (
+                state is not None
+                and state.plotter is not None
+                and state.plotter.has_cached_state()
+                and not state.error
+                and not state.stopped
+            ):
+                transitioned.add(layer_id)
+                logger.debug("Layer %s transitioned to ready state", layer_id)
+
+        # Forward data updates to existing pipes
         for layer_id, presenter in list(self._presenters.items()):
             if not presenter.has_pending_update():
                 continue
 
             try:
-                # Consume update from presenter and send to session pipe
                 session_pipe = self._pipes.get(layer_id)
                 if session_pipe is not None:
                     session_pipe.send(presenter.consume_update())
-                    updated_layers.add(layer_id)
                     logger.debug(
                         "Forwarded state update to session pipe for layer_id=%s",
                         layer_id,
@@ -190,7 +235,7 @@ class SessionPlotManager:
                     layer_id,
                 )
 
-        return updated_layers
+        return transitioned
 
     def get_tracked_layer_ids(self) -> set[LayerId]:
         """Get all layer IDs tracked by this session."""
@@ -201,4 +246,5 @@ class SessionPlotManager:
         self._presenters.clear()
         self._pipes.clear()
         self._dmaps.clear()
+        self._pending_layers.clear()
         logger.debug("SessionPlotManager cleaned up")
