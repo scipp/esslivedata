@@ -78,43 +78,43 @@ def session_manager(plot_data_service):
 class TestSessionPlotManager:
     """Tests for SessionPlotManager."""
 
-    def test_setup_layer_creates_dmap(self, plot_data_service, session_manager):
-        """Test that setup_layer creates a DynamicMap."""
+    def test_get_dmap_creates_dmap_when_data_available(
+        self, plot_data_service, session_manager
+    ):
+        """Test that get_dmap creates a DynamicMap when data is available."""
         layer_id = LayerId(uuid4())
         plotter = FakePlotter()
         plotter.compute({'data': 1})  # Populate cached state
         plot_data_service.set_plotter(layer_id, plotter)
 
-        dmap = session_manager.setup_layer(layer_id)
+        dmap = session_manager.get_dmap(layer_id)
 
         assert dmap is not None
         assert isinstance(dmap, hv.DynamicMap)
         assert session_manager.has_layer(layer_id)
 
-    def test_setup_layer_returns_cached_dmap_on_second_call(
+    def test_get_dmap_returns_cached_dmap_on_second_call(
         self, plot_data_service, session_manager
     ):
-        """Test that setup_layer returns cached DynamicMap if already set up."""
+        """Test that get_dmap returns cached DynamicMap if already set up."""
         layer_id = LayerId(uuid4())
         plotter = FakePlotter()
         plotter.compute({'data': 1})  # Populate cached state
         plot_data_service.set_plotter(layer_id, plotter)
 
-        dmap1 = session_manager.setup_layer(layer_id)
-        dmap2 = session_manager.setup_layer(layer_id)
+        dmap1 = session_manager.get_dmap(layer_id)
+        dmap2 = session_manager.get_dmap(layer_id)
 
         assert dmap1 is dmap2
 
-    def test_setup_layer_returns_none_if_no_data(
-        self, plot_data_service, session_manager
-    ):
-        """Test that setup_layer returns None if layer has no data."""
+    def test_get_dmap_returns_none_if_no_data(self, plot_data_service, session_manager):
+        """Test that get_dmap returns None if layer has no data."""
         layer_id = LayerId(uuid4())
         # Create an entry with no plotter - represents waiting for data
         plotter = FakePlotter()
         plot_data_service.set_plotter(layer_id, plotter)
 
-        dmap = session_manager.setup_layer(layer_id)
+        dmap = session_manager.get_dmap(layer_id)
 
         assert dmap is None
 
@@ -131,8 +131,8 @@ class TestSessionPlotManager:
         plotter.compute({'data': 1})  # Populate cached state
         plot_data_service.set_plotter(layer_id, plotter)
 
-        # Set up the layer
-        session_manager.setup_layer(layer_id)
+        # Set up the layer via get_dmap
+        session_manager.get_dmap(layer_id)
         assert session_manager.has_layer(layer_id)
 
         # Simulate layer being removed from PlotDataService (orphaned)
@@ -160,8 +160,8 @@ class TestSessionPlotManager:
         plotter.compute({'data': 1})  # Populate cached state
         plot_data_service.set_plotter(layer_id, plotter)
 
-        # Set up layer in session
-        dmap_original = session_manager.setup_layer(layer_id)
+        # Set up layer in session via get_dmap
+        dmap_original = session_manager.get_dmap(layer_id)
         assert dmap_original is not None
         assert session_manager.has_layer(layer_id)
 
@@ -191,8 +191,8 @@ class TestSessionPlotManager:
         plotter_linear.compute({'data': 1})  # Populate cached state
         plot_data_service.set_plotter(old_layer_id, plotter_linear)
 
-        # Set up with linear scale
-        dmap_linear = session_manager.setup_layer(old_layer_id)
+        # Set up with linear scale via get_dmap
+        dmap_linear = session_manager.get_dmap(old_layer_id)
         presenter_linear = session_manager._presenters[old_layer_id]
         assert presenter_linear.scale == 'linear'
 
@@ -207,8 +207,8 @@ class TestSessionPlotManager:
         session_manager.update_pipes()
         assert not session_manager.has_layer(old_layer_id)
 
-        # New layer_id gets fresh components
-        dmap_log = session_manager.setup_layer(new_layer_id)
+        # New layer_id gets fresh components via get_dmap
+        dmap_log = session_manager.get_dmap(new_layer_id)
         presenter_log = session_manager._presenters[new_layer_id]
 
         assert dmap_log is not dmap_linear
@@ -227,8 +227,8 @@ class TestSessionPlotManager:
         plotter.compute({'data': 1})  # Populate cached state and mark dirty
         plot_data_service.set_plotter(layer_id, plotter)
 
-        # Set up layer - presenter is created and dirty flag is reset
-        session_manager.setup_layer(layer_id)
+        # Set up layer via get_dmap - presenter is created and dirty flag is reset
+        session_manager.get_dmap(layer_id)
 
         # Update data by computing new state - marks presenter dirty
         plotter.compute({'data': 2})

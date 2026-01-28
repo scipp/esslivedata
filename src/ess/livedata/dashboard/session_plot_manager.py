@@ -62,14 +62,14 @@ class SessionPlotManager:
             data is not yet available.
         """
         if layer_id not in self._dmaps:
-            self.setup_layer(layer_id)
+            self._setup_layer(layer_id)
         return self._dmaps.get(layer_id)
 
     def has_layer(self, layer_id: LayerId) -> bool:
         """Check if a layer has been set up for this session."""
         return layer_id in self._dmaps
 
-    def setup_layer(self, layer_id: LayerId) -> hv.DynamicMap | hv.Element | None:
+    def _setup_layer(self, layer_id: LayerId) -> hv.DynamicMap | hv.Element | None:
         """
         Set up a layer for this session if data is available.
 

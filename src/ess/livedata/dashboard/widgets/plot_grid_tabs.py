@@ -795,13 +795,10 @@ class PlotGridTabs:
                 for layer in cell.layers:
                     layer_id = layer.layer_id
 
-                    # Skip if already set up
-                    if self._session_plot_manager.has_layer(layer_id):
-                        continue
-
-                    # Try to set up the layer (checks PlotDataService internally)
-                    dmap = self._session_plot_manager.setup_layer(layer_id)
-                    if dmap is not None:
+                    # Check if layer transitions from not-set-up to set-up
+                    had_layer = self._session_plot_manager.has_layer(layer_id)
+                    dmap = self._session_plot_manager.get_dmap(layer_id)
+                    if not had_layer and dmap is not None:
                         cell_updated = True
                         logger.debug("Set up session plot for layer_id=%s", layer_id)
 
