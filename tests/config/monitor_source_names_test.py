@@ -94,9 +94,9 @@ def test_bifrost_monitors_correctly_mapped() -> None:
 
 
 def test_dream_monitors_use_correct_cbm_indices() -> None:
-    """DREAM uses default monitor names (monitor1, monitor2, ...).
+    """DREAM monitors use NeXus group names (monitor_bunker, monitor_cave).
 
-    These should map to cbm1, cbm2, ... with consistent 1-based indexing.
+    These should map to cbm1, cbm2 with consistent 1-based indexing.
     """
     stream_mapping = streams.get_stream_mapping(instrument='dream', dev=False)
 
@@ -106,9 +106,9 @@ def test_dream_monitors_use_correct_cbm_indices() -> None:
         if key.source_name.startswith('cbm')
     }
 
-    # First monitor should be cbm1 -> monitor1 (consistent 1-based indexing)
+    # First monitor should be cbm1 -> monitor_bunker (consistent 1-based indexing)
     assert (
-        cbm_to_monitor.get('cbm1') == 'monitor1'
-    ), "DREAM's first monitor (monitor1) should be mapped to cbm1"
+        cbm_to_monitor.get('cbm1') == 'monitor_bunker'
+    ), "DREAM's first monitor (monitor_bunker) should be mapped to cbm1"
     # cbm0 should not exist
     assert 'cbm0' not in cbm_to_monitor, "cbm0 should not exist in DREAM's mapping"
