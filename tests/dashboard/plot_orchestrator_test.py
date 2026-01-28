@@ -976,8 +976,8 @@ class TestLifecycleEventNotifications:
         # Error is stored in PlotDataService for polling-based detection
         state = plot_data_service.get(layer_id)
         assert state is not None
-        assert state.error is not None
-        assert 'Test error' in state.error
+        assert state.error_message is not None
+        assert 'Test error' in state.error_message
 
     def test_on_cell_updated_called_when_layer_config_updated_no_plot_yet(
         self, plot_orchestrator, plot_cell, workflow_id
@@ -1118,8 +1118,8 @@ class TestErrorHandling:
         # Error is stored in PlotDataService for polling-based detection
         state = plot_data_service.get(layer_id)
         assert state is not None
-        assert state.error is not None
-        assert 'Plot creation failed' in state.error
+        assert state.error_message is not None
+        assert 'Plot creation failed' in state.error_message
 
     def test_plotting_controller_raises_exception_orchestrator_remains_usable(
         self,
@@ -1312,7 +1312,7 @@ class TestCellRetrieval:
         state = plot_data_service.get(layer_id)
         assert state is not None
         assert state.plotter.has_cached_state()  # Has computed data
-        assert state.error is None
+        assert state.error_message is None
 
     def test_plot_data_service_has_error_when_plot_creation_fails(
         self,
@@ -1357,8 +1357,8 @@ class TestCellRetrieval:
         # PlotDataService should have error for the layer
         state = plot_data_service.get(layer_id)
         assert state is not None
-        assert state.error is not None
-        assert "Plot creation failed" in state.error
+        assert state.error_message is not None
+        assert "Plot creation failed" in state.error_message
 
     def test_late_subscriber_can_retrieve_existing_grids_and_plot_state(
         self,
@@ -1430,7 +1430,7 @@ class TestCellRetrieval:
             for layer in cell.layers:
                 state = plot_data_service.get(layer.layer_id)
                 assert state is not None
-                assert state.error is None
+                assert state.error_message is None
                 assert state.plotter.has_cached_state()  # Has computed data
 
     def test_layer_config_update_recreates_plotter_with_running_workflow(

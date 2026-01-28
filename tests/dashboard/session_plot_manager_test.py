@@ -112,9 +112,9 @@ class TestSessionPlotManager:
     def test_get_dmap_returns_none_if_no_data(self, plot_data_service, session_manager):
         """Test that get_dmap returns None if layer has no data."""
         layer_id = LayerId(uuid4())
-        # Create an entry with no plotter - represents waiting for data
+        # Create an entry in WAITING_FOR_DATA state - no cached data yet
         plotter = FakePlotter()
-        plot_data_service.set_plotter(layer_id, plotter)
+        plot_data_service.job_started(layer_id, plotter)
 
         dmap = session_manager.get_dmap(layer_id)
 

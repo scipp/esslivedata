@@ -13,7 +13,6 @@ last-seen versions and rebuild when versions change.
 
 from __future__ import annotations
 
-import logging
 import threading
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, NewType
@@ -21,8 +20,6 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from .plots import Plotter
-
-logger = logging.getLogger(__name__)
 
 
 class LayerState(Enum):
@@ -114,17 +111,12 @@ class LayerStateMachine:
             LayerState.READY,
         }
         if self._state not in valid_from:
-            logger.warning("Invalid transition job_started from %s", self._state.name)
             return
 
         self._state = LayerState.WAITING_FOR_DATA
         self._plotter = plotter
         self._error_message = None
         self._version += 1
-        logger.debug(
-            "Layer transition: job_started → WAITING_FOR_DATA (version=%d)",
-            self._version,
-        )
 
     def data_arrived(self) -> None:
         """
@@ -133,14 +125,10 @@ class LayerStateMachine:
         Valid from: WAITING_FOR_DATA.
         """
         if self._state != LayerState.WAITING_FOR_DATA:
-            logger.warning("Invalid transition data_arrived from %s", self._state.name)
             return
 
         self._state = LayerState.READY
         self._version += 1
-        logger.debug(
-            "Layer transition: data_arrived → READY (version=%d)", self._version
-        )
 
     def job_stopped(self) -> None:
         """
@@ -151,16 +139,12 @@ class LayerStateMachine:
         """
         valid_from = {LayerState.WAITING_FOR_DATA, LayerState.READY}
         if self._state not in valid_from:
-            logger.warning("Invalid transition job_stopped from %s", self._state.name)
             return
 
         self._state = LayerState.STOPPED
         self._version += 1
         if self._plotter is not None:
             self._plotter.mark_presenters_dirty()
-        logger.debug(
-            "Layer transition: job_stopped → STOPPED (version=%d)", self._version
-        )
 
     def error_occurred(self, error_msg: str) -> None:
         """
@@ -179,9 +163,6 @@ class LayerStateMachine:
         self._version += 1
         if self._plotter is not None:
             self._plotter.mark_presenters_dirty()
-        logger.debug(
-            "Layer transition: error_occurred → ERROR (version=%d)", self._version
-        )
 
     def has_displayable_plot(self) -> bool:
         """
@@ -193,52 +174,6 @@ class LayerStateMachine:
         if self._state not in {LayerState.READY, LayerState.STOPPED}:
             return False
         return self._plotter is not None and self._plotter.has_cached_state()
-
-
-class PlotLayerState:
-    """Facade for LayerStateMachine providing backward-compatible properties.
-
-    This class wraps LayerStateMachine to provide the original interface
-    (plotter, error, stopped properties) for code that hasn't been updated
-    to use the state machine directly.
-    """
-
-    def __init__(self) -> None:
-        self._machine = LayerStateMachine()
-
-    @property
-    def state_machine(self) -> LayerStateMachine:
-        """Access the underlying state machine."""
-        return self._machine
-
-    @property
-    def state(self) -> LayerState:
-        """Current state of the layer."""
-        return self._machine.state
-
-    @property
-    def version(self) -> int:
-        """Version counter for change detection."""
-        return self._machine.version
-
-    @property
-    def plotter(self) -> Plotter | None:
-        """Plotter instance (backward-compatible property)."""
-        return self._machine.plotter
-
-    @property
-    def error(self) -> str | None:
-        """Error message (backward-compatible property)."""
-        return self._machine.error_message
-
-    @property
-    def stopped(self) -> bool:
-        """Whether the layer is stopped (backward-compatible property)."""
-        return self._machine.state == LayerState.STOPPED
-
-    def has_displayable_plot(self) -> bool:
-        """Check if the layer has a displayable plot."""
-        return self._machine.has_displayable_plot()
 
 
 LayerId = NewType('LayerId', UUID)
@@ -261,10 +196,10 @@ class PlotDataService:
     """
 
     def __init__(self) -> None:
-        self._layers: dict[LayerId, PlotLayerState] = {}
+        self._layers: dict[LayerId, LayerStateMachine] = {}
         self._lock = threading.Lock()
 
-    def get(self, layer_id: LayerId) -> PlotLayerState | None:
+    def get(self, layer_id: LayerId) -> LayerStateMachine | None:
         """
         Get current state for a layer.
 
@@ -281,28 +216,6 @@ class PlotDataService:
         with self._lock:
             return self._layers.get(layer_id)
 
-    def ensure_layer(self, layer_id: LayerId) -> PlotLayerState:
-        """
-        Get or create state for a layer.
-
-        Creates a new layer in WAITING_FOR_JOB state if it doesn't exist.
-
-        Parameters
-        ----------
-        layer_id:
-            Layer ID to get or create.
-
-        Returns
-        -------
-        :
-            The layer state (existing or newly created).
-        """
-        with self._lock:
-            if layer_id not in self._layers:
-                self._layers[layer_id] = PlotLayerState()
-                logger.debug("Created layer %s in WAITING_FOR_JOB", layer_id)
-            return self._layers[layer_id]
-
     def job_started(self, layer_id: LayerId, plotter: Any) -> None:
         """
         Transition a layer to WAITING_FOR_DATA when a job starts.
@@ -317,9 +230,8 @@ class PlotDataService:
             Plotter instance for per-session presenter creation.
         """
         with self._lock:
-            state = self._layers.setdefault(layer_id, PlotLayerState())
-            state.state_machine.job_started(plotter)
-            logger.debug("Job started for %s", layer_id)
+            state = self._layers.setdefault(layer_id, LayerStateMachine())
+            state.job_started(plotter)
 
     def data_arrived(self, layer_id: LayerId) -> None:
         """
@@ -333,8 +245,7 @@ class PlotDataService:
         with self._lock:
             state = self._layers.get(layer_id)
             if state is not None:
-                state.state_machine.data_arrived()
-                logger.debug("Data arrived for %s", layer_id)
+                state.data_arrived()
 
     def job_stopped(self, layer_id: LayerId) -> None:
         """
@@ -348,8 +259,7 @@ class PlotDataService:
         with self._lock:
             state = self._layers.get(layer_id)
             if state is not None:
-                state.state_machine.job_stopped()
-                logger.debug("Job stopped for %s", layer_id)
+                state.job_stopped()
 
     def error_occurred(self, layer_id: LayerId, error_msg: str) -> None:
         """
@@ -365,35 +275,8 @@ class PlotDataService:
             Error message to display.
         """
         with self._lock:
-            state = self._layers.setdefault(layer_id, PlotLayerState())
-            state.state_machine.error_occurred(error_msg)
-            logger.debug("Error for %s: %s", layer_id, error_msg)
-
-    # --- Backward-compatible methods (delegate to state machine) ---
-
-    def set_plotter(self, layer_id: LayerId, plotter: Any) -> None:
-        """
-        Set the plotter for a layer (backward-compatible).
-
-        Delegates to job_started() for state machine transition.
-        """
-        self.job_started(layer_id, plotter)
-
-    def set_error(self, layer_id: LayerId, error_msg: str) -> None:
-        """
-        Set error state for a layer (backward-compatible).
-
-        Delegates to error_occurred() for state machine transition.
-        """
-        self.error_occurred(layer_id, error_msg)
-
-    def set_stopped(self, layer_id: LayerId) -> None:
-        """
-        Mark a layer as stopped (backward-compatible).
-
-        Delegates to job_stopped() for state machine transition.
-        """
-        self.job_stopped(layer_id)
+            state = self._layers.setdefault(layer_id, LayerStateMachine())
+            state.error_occurred(error_msg)
 
     def remove(self, layer_id: LayerId) -> None:
         """
@@ -405,11 +288,9 @@ class PlotDataService:
             Layer ID to remove.
         """
         with self._lock:
-            if layer_id in self._layers:
-                del self._layers[layer_id]
-                logger.debug("Removed plot state for %s", layer_id)
+            self._layers.pop(layer_id, None)
 
     def clear(self) -> None:
-        """Clear all state. Mainly useful for testing."""
+        """Clear all state."""
         with self._lock:
             self._layers.clear()

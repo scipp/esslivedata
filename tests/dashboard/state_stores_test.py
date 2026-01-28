@@ -9,7 +9,6 @@ from ess.livedata.dashboard.plot_data_service import (
     LayerState,
     LayerStateMachine,
     PlotDataService,
-    PlotLayerState,
 )
 from ess.livedata.dashboard.plots import PresenterBase
 
@@ -61,94 +60,97 @@ class FakePresenter(PresenterBase):
 
 
 class TestPlotDataService:
-    def test_set_plotter_and_get(self):
-        service = PlotDataService()
-        layer_id = LayerId('layer-1')
-
-        plotter = FakePlotter(state={'plot': 'data'})
-        service.set_plotter(layer_id, plotter)
-        state = service.get(layer_id)
-
-        assert state is not None
-        assert state.plotter is plotter
-        assert state.plotter.get_cached_state() == {'plot': 'data'}
-        assert state.error is None
-        assert state.stopped is False
+    """Basic PlotDataService tests for layer management."""
 
     def test_get_unknown_layer_returns_none(self):
         service = PlotDataService()
         assert service.get(LayerId('unknown')) is None
 
-    def test_set_plotter_replaces_previous_state(self):
+    def test_job_started_and_get(self):
+        service = PlotDataService()
+        layer_id = LayerId('layer-1')
+
+        plotter = FakePlotter(state={'plot': 'data'})
+        service.job_started(layer_id, plotter)
+        state = service.get(layer_id)
+
+        assert state is not None
+        assert state.plotter is plotter
+        assert state.plotter.get_cached_state() == {'plot': 'data'}
+        assert state.error_message is None
+        assert state.state == LayerState.WAITING_FOR_DATA
+
+    def test_job_started_replaces_previous_plotter(self):
         service = PlotDataService()
         layer_id = LayerId('layer-1')
 
         plotter1 = FakePlotter(state='v1')
-        service.set_plotter(layer_id, plotter1)
+        service.job_started(layer_id, plotter1)
         assert service.get(layer_id).plotter is plotter1
 
         plotter2 = FakePlotter(state='v2')
-        service.set_plotter(layer_id, plotter2)
+        service.job_started(layer_id, plotter2)
         state = service.get(layer_id)
 
         assert state.plotter is plotter2
-        # Setting a new plotter resets error/stopped state
-        assert state.error is None
-        assert state.stopped is False
+        # Starting a new job resets error state
+        assert state.error_message is None
+        assert state.state == LayerState.WAITING_FOR_DATA
 
-    def test_set_error_marks_presenters_dirty(self):
+    def test_error_occurred_marks_presenters_dirty(self):
         service = PlotDataService()
         layer_id = LayerId('layer-1')
 
         plotter = FakePlotter(state='data')
-        service.set_plotter(layer_id, plotter)
+        service.job_started(layer_id, plotter)
 
         # Create a presenter so we can track dirty flag
         presenter = plotter.create_presenter()
         presenter._dirty = False  # Reset after creation
 
-        service.set_error(layer_id, 'Something went wrong')
+        service.error_occurred(layer_id, 'Something went wrong')
 
-        assert service.get(layer_id).error == 'Something went wrong'
+        assert service.get(layer_id).error_message == 'Something went wrong'
         assert presenter.has_pending_update()
 
-    def test_set_stopped_marks_presenters_dirty(self):
+    def test_job_stopped_marks_presenters_dirty(self):
         service = PlotDataService()
         layer_id = LayerId('layer-1')
 
         plotter = FakePlotter(state='data')
-        service.set_plotter(layer_id, plotter)
+        service.job_started(layer_id, plotter)
 
         # Create a presenter so we can track dirty flag
         presenter = plotter.create_presenter()
         presenter._dirty = False  # Reset after creation
 
-        service.set_stopped(layer_id)
+        service.job_stopped(layer_id)
 
-        assert service.get(layer_id).stopped is True
+        assert service.get(layer_id).state == LayerState.STOPPED
         assert presenter.has_pending_update()
 
-    def test_set_error_on_entry_without_plotter(self):
+    def test_error_occurred_on_nonexistent_layer_creates_it(self):
         service = PlotDataService()
         layer_id = LayerId('layer-1')
 
-        # Set error before setting plotter
-        service.set_error(layer_id, 'Error occurred')
+        # Error on nonexistent layer creates it in ERROR state
+        service.error_occurred(layer_id, 'Error occurred')
 
         state = service.get(layer_id)
-        assert state.error == 'Error occurred'
+        assert state.error_message == 'Error occurred'
         assert state.plotter is None
+        assert state.state == LayerState.ERROR
 
-    def test_set_stopped_on_nonexistent_layer_is_noop(self):
-        """Calling set_stopped on a layer that doesn't exist is a no-op.
+    def test_job_stopped_on_nonexistent_layer_is_noop(self):
+        """Calling job_stopped on a layer that doesn't exist is a no-op.
 
         With the state machine model, you can't stop a job that hasn't started.
         """
         service = PlotDataService()
         layer_id = LayerId('layer-1')
 
-        # Set stopped before setting plotter - should be a no-op
-        service.set_stopped(layer_id)
+        # Stop before job started - should be a no-op
+        service.job_stopped(layer_id)
 
         assert service.get(layer_id) is None
 
@@ -156,7 +158,7 @@ class TestPlotDataService:
         service = PlotDataService()
         layer_id = LayerId('layer-1')
         plotter = FakePlotter(state='v1')
-        service.set_plotter(layer_id, plotter)
+        service.job_started(layer_id, plotter)
 
         service.remove(layer_id)
 
@@ -169,7 +171,7 @@ class TestPlotDataService:
     def test_clear(self):
         service = PlotDataService()
         plotter = FakePlotter(state='v1')
-        service.set_plotter(LayerId('layer-1'), plotter)
+        service.job_started(LayerId('layer-1'), plotter)
 
         service.clear()
 
@@ -356,56 +358,8 @@ class TestLayerStateMachine:
         assert presenter.has_pending_update() is True
 
 
-class TestPlotLayerStateFacade:
-    """Tests for PlotLayerState backward-compatible facade."""
-
-    def test_initial_state(self):
-        state = PlotLayerState()
-        assert state.state == LayerState.WAITING_FOR_JOB
-        assert state.version == 0
-        assert state.plotter is None
-        assert state.error is None
-        assert state.stopped is False
-
-    def test_plotter_property_after_job_started(self):
-        state = PlotLayerState()
-        plotter = FakePlotter(state='data')
-        state.state_machine.job_started(plotter)
-
-        assert state.plotter is plotter
-
-    def test_error_property_after_error_occurred(self):
-        state = PlotLayerState()
-        state.state_machine.error_occurred("test error")
-
-        assert state.error == "test error"
-
-    def test_stopped_property_true_when_stopped(self):
-        state = PlotLayerState()
-        plotter = FakePlotter(state='data')
-        state.state_machine.job_started(plotter)
-        state.state_machine.job_stopped()
-
-        assert state.stopped is True
-
-    def test_stopped_property_false_when_not_stopped(self):
-        state = PlotLayerState()
-        plotter = FakePlotter(state='data')
-        state.state_machine.job_started(plotter)
-
-        assert state.stopped is False
-
-    def test_has_displayable_plot_delegates_to_machine(self):
-        state = PlotLayerState()
-        plotter = FakePlotter(state='data')
-        state.state_machine.job_started(plotter)
-        state.state_machine.data_arrived()
-
-        assert state.has_displayable_plot() is True
-
-
 class TestPlotDataServiceStateMachine:
-    """Tests for PlotDataService using state machine methods."""
+    """Tests for PlotDataService state machine transitions."""
 
     def test_job_started_creates_layer(self):
         service = PlotDataService()
@@ -442,7 +396,6 @@ class TestPlotDataServiceStateMachine:
 
         state = service.get(layer_id)
         assert state.state == LayerState.STOPPED
-        assert state.stopped is True
 
     def test_error_occurred_transitions_to_error(self):
         service = PlotDataService()
@@ -452,43 +405,7 @@ class TestPlotDataServiceStateMachine:
 
         state = service.get(layer_id)
         assert state.state == LayerState.ERROR
-        assert state.error == "test error"
-
-    def test_set_plotter_delegates_to_job_started(self):
-        """Test backward-compatible set_plotter method."""
-        service = PlotDataService()
-        layer_id = LayerId('layer-1')
-        plotter = FakePlotter(state='data')
-
-        service.set_plotter(layer_id, plotter)
-
-        state = service.get(layer_id)
-        assert state.state == LayerState.WAITING_FOR_DATA
-        assert state.plotter is plotter
-
-    def test_set_error_delegates_to_error_occurred(self):
-        """Test backward-compatible set_error method."""
-        service = PlotDataService()
-        layer_id = LayerId('layer-1')
-
-        service.set_error(layer_id, "test error")
-
-        state = service.get(layer_id)
-        assert state.state == LayerState.ERROR
-        assert state.error == "test error"
-
-    def test_set_stopped_delegates_to_job_stopped(self):
-        """Test backward-compatible set_stopped method."""
-        service = PlotDataService()
-        layer_id = LayerId('layer-1')
-        plotter = FakePlotter(state='data')
-        service.job_started(layer_id, plotter)
-
-        service.set_stopped(layer_id)
-
-        state = service.get(layer_id)
-        assert state.state == LayerState.STOPPED
-        assert state.stopped is True
+        assert state.error_message == "test error"
 
     def test_version_increments_on_transitions(self):
         service = PlotDataService()
