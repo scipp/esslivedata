@@ -13,6 +13,7 @@ last-seen versions and rebuild when versions change.
 
 from __future__ import annotations
 
+import logging
 import threading
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, NewType
@@ -20,6 +21,8 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from .plots import Plotter
+
+logger = logging.getLogger(__name__)
 
 
 class LayerState(Enum):
@@ -125,6 +128,11 @@ class LayerStateMachine:
         Valid from: WAITING_FOR_DATA.
         """
         if self._state != LayerState.WAITING_FOR_DATA:
+            logger.warning(
+                "Invalid transition: data_arrived() called in state %s (expected %s)",
+                self._state.name,
+                LayerState.WAITING_FOR_DATA.name,
+            )
             return
 
         self._state = LayerState.READY
@@ -139,6 +147,11 @@ class LayerStateMachine:
         """
         valid_from = {LayerState.WAITING_FOR_DATA, LayerState.READY}
         if self._state not in valid_from:
+            logger.warning(
+                "Invalid transition: job_stopped() called in state %s (expected %s)",
+                self._state.name,
+                [s.name for s in valid_from],
+            )
             return
 
         self._state = LayerState.STOPPED

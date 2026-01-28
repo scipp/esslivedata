@@ -657,15 +657,21 @@ class PlotGridTabs:
                         text_color = '#dc3545'
                     case LayerState.STOPPED:
                         status = "Workflow ended"
-                        text_color = '#495057'  # Dark grey
-                    case LayerState.READY:
-                        status = "Ready"
-                        text_color = '#28a745'
+                        text_color = '#495057'
                     case LayerState.WAITING_FOR_DATA:
                         status = "Waiting for data..."
                         text_color = '#6c757d'
                     case LayerState.WAITING_FOR_JOB:
                         status = "Waiting for workflow..."
+                        text_color = '#6c757d'
+                    case LayerState.READY:
+                        # Defensive: READY should have displayable plot and not
+                        # reach placeholder. Log if this happens.
+                        logger.warning(
+                            "Layer %s in READY state but showing placeholder",
+                            layer.layer_id,
+                        )
+                        status = "Ready (loading...)"
                         text_color = '#6c757d'
 
             status_lines.append(
@@ -804,7 +810,11 @@ class PlotGridTabs:
                     current_version = state.version if state is not None else -1
                     last_version = self._last_seen_versions.get(layer_id)
 
-                    # Detect: new layers (never seen) or version changes
+                    # Detect: new layers (never seen) or version changes.
+                    # Version increments on every state transition, so this catches
+                    # all changes including WAITING_FOR_DATA -> READY. When widget
+                    # rebuilds, _get_session_composed_plot() calls get_dmap() which
+                    # sets up session-local DynamicMaps as needed.
                     if last_version is None or current_version != last_version:
                         self._last_seen_versions[layer_id] = current_version
                         cell_updated = True
@@ -814,13 +824,6 @@ class PlotGridTabs:
                             last_version,
                             current_version,
                         )
-
-                    # Also check if layer transitions from not-set-up to set-up
-                    had_layer = self._session_plot_manager.has_layer(layer_id)
-                    dmap = self._session_plot_manager.get_dmap(layer_id)
-                    if not had_layer and dmap is not None:
-                        cell_updated = True
-                        logger.debug("Set up session plot for layer_id=%s", layer_id)
 
                 # Update widget if any layer changed.
                 # Defer insertion to allow Bokeh to process any pending model
