@@ -111,6 +111,35 @@ class TestMakeLookup:
         result = lookup[sc.scalar(150, unit='ms')]
         assert result.value == 1.0
 
+    def test_handles_datetime64_coord_in_nearest_mode(self):
+        """Lookup should work when axis dimension is datetime64 and nearest mode.
+
+        When data timestamps are before the axis range, 'nearest' mode is used.
+        If the axis dimension coordinate is datetime64, the astype('float64')
+        conversion should be skipped since datetime64 is not an int dtype.
+        """
+        # Create datetime64 timestamps using scipp's datetime function
+        base_ns = 1_000_000_000_000_000_000  # Some epoch nanoseconds
+        times = sc.datetimes(
+            dims=['time'],
+            values=[base_ns + i * 1_000_000_000 for i in range(3)],  # 1s apart
+            unit='ns',
+        )
+        axis_data = sc.DataArray(
+            data=sc.array(dims=['time'], values=[1.0, 2.0, 3.0], unit='m'),
+            coords={'time': times},
+        )
+        # Data max time is before the first axis timestamp
+        data_max_time = sc.datetime(base_ns - 1_000_000_000, unit='ns')  # 1s before
+
+        # Should not raise DTypeError about astype not supporting datetime64
+        lookup = _make_lookup(axis_data, data_max_time)
+
+        # 'nearest' mode: should get value at nearest time (the first one)
+        query_time = sc.datetime(base_ns - 500_000_000, unit='ns')  # 500ms before
+        result = lookup[query_time]
+        assert result.value == 1.0
+
 
 class TestCorrelationHistogramPlotter:
     """Tests for the base CorrelationHistogramPlotter class."""
