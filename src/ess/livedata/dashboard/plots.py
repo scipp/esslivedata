@@ -70,9 +70,8 @@ class Presenter(Protocol):
         """Consume the pending update and return the cached state."""
         ...
 
-    @property
-    def plotter(self) -> Plotter:
-        """The plotter this presenter is bound to."""
+    def is_owned_by(self, plotter: Plotter) -> bool:
+        """Check if this presenter is owned by the given plotter."""
         ...
 
 
@@ -83,16 +82,27 @@ class PresenterBase:
     Tracks whether new data has been computed since the last time this
     presenter consumed an update. This enables efficient polling-based
     update detection in multi-session scenarios.
+
+    Parameters
+    ----------
+    plotter:
+        The plotter that creates and manages this presenter's state.
+    owner:
+        Optional "logical owner" for identity checks. Used when a plotter
+        delegates presenter creation to an inner renderer but wants to be
+        recognized as the owner for lifecycle management (e.g., detecting
+        plotter replacement). Defaults to plotter if not specified.
     """
 
-    def __init__(self, plotter: Plotter) -> None:
+    def __init__(self, plotter: Plotter, *, owner: Plotter | None = None) -> None:
         self._plotter = plotter
+        self._owner = owner
         self._dirty: bool = False
 
-    @property
-    def plotter(self) -> Plotter:
-        """The plotter this presenter is bound to."""
-        return self._plotter
+    def is_owned_by(self, plotter: Plotter) -> bool:
+        """Check if this presenter is owned by the given plotter."""
+        owner = self._owner if self._owner is not None else self._plotter
+        return owner is plotter
 
     def _mark_dirty(self) -> None:
         """Mark this presenter as having a pending update."""
@@ -442,7 +452,7 @@ class Plotter:
 
         self._set_cached_state(result)
 
-    def create_presenter(self) -> Presenter:
+    def create_presenter(self, *, owner: Plotter | None = None) -> Presenter:
         """
         Create a Presenter for this plotter.
 
@@ -454,21 +464,27 @@ class Plotter:
         Override this method in subclasses that need custom presenters
         (e.g., ROI plotters with edit streams).
 
+        Parameters
+        ----------
+        owner:
+            Optional "logical owner" for identity checks. Used when a plotter
+            delegates presenter creation to an inner renderer. Defaults to self.
+
         Returns
         -------
         :
             A Presenter instance for this plotter.
         """
-        presenter = DefaultPresenter(self)
+        presenter = DefaultPresenter(self, owner=owner)
         self._presenters.add(presenter)
         return presenter
 
     def _set_cached_state(self, state: Any) -> None:
         """Store computed state and mark all presenters dirty."""
         self._cached_state = state
-        self._mark_presenters_dirty()
+        self.mark_presenters_dirty()
 
-    def _mark_presenters_dirty(self) -> None:
+    def mark_presenters_dirty(self) -> None:
         """Mark all registered presenters as having pending updates."""
         for presenter in self._presenters:
             presenter._mark_dirty()

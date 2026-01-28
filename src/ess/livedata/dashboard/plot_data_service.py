@@ -106,7 +106,7 @@ class PlotDataService:
             state = self._layers.setdefault(layer_id, PlotLayerState())
             state.error = error_msg
             if state.plotter is not None:
-                state.plotter._mark_presenters_dirty()
+                state.plotter.mark_presenters_dirty()
             logger.debug("Set error for %s: %s", layer_id, error_msg)
 
     def set_stopped(self, layer_id: LayerId) -> None:
@@ -125,7 +125,7 @@ class PlotDataService:
             state = self._layers.setdefault(layer_id, PlotLayerState())
             state.stopped = True
             if state.plotter is not None:
-                state.plotter._mark_presenters_dirty()
+                state.plotter.mark_presenters_dirty()
             logger.debug("Set stopped for %s", layer_id)
 
     def remove(self, layer_id: LayerId) -> None:

@@ -21,7 +21,7 @@ class FakePlotter:
 
     def compute(self, data):
         self._cached_state = data
-        self._mark_presenters_dirty()
+        self.mark_presenters_dirty()
         return data
 
     def get_cached_state(self):
@@ -35,7 +35,7 @@ class FakePlotter:
         self._presenters.add(presenter)
         return presenter
 
-    def _mark_presenters_dirty(self):
+    def mark_presenters_dirty(self):
         """Mark all registered presenters as having pending updates."""
         for presenter in self._presenters:
             presenter._mark_dirty()

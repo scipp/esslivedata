@@ -155,7 +155,7 @@ class SessionPlotManager:
         for layer_id, presenter in list(self._presenters.items()):
             # Detect plotter replacement (e.g., workflow restart creates new plotter)
             state = self._plot_data_service.get(layer_id)
-            if state is not None and presenter.plotter is not state.plotter:
+            if state is not None and not presenter.is_owned_by(state.plotter):
                 self.invalidate_layer(layer_id)
                 continue
 

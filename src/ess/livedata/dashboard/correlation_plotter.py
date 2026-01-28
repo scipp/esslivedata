@@ -249,8 +249,15 @@ class CorrelationHistogramPlotter:
         return self._renderer.has_cached_state()
 
     def create_presenter(self) -> Presenter:
-        """Create a Presenter by delegating to the renderer."""
-        return self._renderer.create_presenter()
+        """Create a Presenter owned by this plotter.
+
+        Uses the renderer for presentation.
+        """
+        return self._renderer.create_presenter(owner=self)
+
+    def mark_presenters_dirty(self) -> None:
+        """Mark all presenters as dirty by delegating to the renderer."""
+        self._renderer.mark_presenters_dirty()
 
 
 class CorrelationHistogram1dPlotter(CorrelationHistogramPlotter):

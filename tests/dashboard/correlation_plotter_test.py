@@ -217,6 +217,38 @@ class TestCorrelationHistogramPlotter:
         assert result is not None
 
 
+class TestCorrelationHistogramPlotterOwnership:
+    """Tests for presenter ownership in CorrelationHistogramPlotter."""
+
+    def test_presenter_owned_by_outer_plotter_not_renderer(self):
+        """The presenter should be owned by the CorrelationHistogramPlotter,
+        not by the inner renderer (LinePlotter/ImagePlotter).
+
+        This is critical for SessionPlotManager's plotter replacement detection
+        to work correctly with correlation plotters.
+        """
+        axes = [AxisSpec(role=X_AXIS, name='x', bins=10)]
+        renderer = _make_line_renderer()
+        plotter = CorrelationHistogramPlotter(
+            axes=axes, normalize=False, renderer=renderer
+        )
+
+        # Compute some data to populate cached state
+        axis_data = make_axis_data(times=[100, 200, 300], values=[1.0, 2.0, 3.0])
+        source_data = make_source_data(times=[150, 250], values=[10.0, 20.0])
+        data = {
+            PRIMARY: {_make_result_key('detector'): source_data},
+            X_AXIS: {_make_result_key('position'): axis_data},
+        }
+        plotter.compute(data)
+
+        presenter = plotter.create_presenter()
+
+        # Presenter should be owned by the outer plotter, not the renderer
+        assert presenter.is_owned_by(plotter)
+        assert not presenter.is_owned_by(renderer)
+
+
 class TestCorrelationHistogram1dPlotter:
     """Tests for CorrelationHistogram1dPlotter wrapper."""
 

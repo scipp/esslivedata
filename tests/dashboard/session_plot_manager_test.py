@@ -30,7 +30,7 @@ class FakePlotter:
     def compute(self, data):
         result = FakePlot()
         self._cached_state = result
-        self._mark_presenters_dirty()
+        self.mark_presenters_dirty()
 
     def get_cached_state(self):
         return self._cached_state
@@ -38,12 +38,12 @@ class FakePlotter:
     def has_cached_state(self):
         return self._cached_state is not None
 
-    def create_presenter(self):
-        presenter = FakePresenter(self, scale=self.scale)
+    def create_presenter(self, *, owner=None):
+        presenter = FakePresenter(self, scale=self.scale, owner=owner)
         self._presenters.add(presenter)
         return presenter
 
-    def _mark_presenters_dirty(self):
+    def mark_presenters_dirty(self):
         """Mark all registered presenters as having pending updates."""
         for presenter in self._presenters:
             presenter._mark_dirty()
@@ -52,8 +52,8 @@ class FakePlotter:
 class FakePresenter(PresenterBase):
     """Fake presenter for testing."""
 
-    def __init__(self, plotter, *, scale: str = 'linear'):
-        super().__init__(plotter)
+    def __init__(self, plotter, *, scale: str = 'linear', owner=None):
+        super().__init__(plotter, owner=owner)
         self.scale = scale
 
     def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
@@ -255,7 +255,7 @@ class TestSessionPlotManager:
         # Set up layer via get_dmap
         session_manager.get_dmap(layer_id)
         presenter_a = session_manager._presenters[layer_id]
-        assert presenter_a.plotter is plotter_a
+        assert presenter_a.is_owned_by(plotter_a)
 
         # Simulate workflow restart: new plotter for same layer_id
         plotter_b = FakePlotter()
@@ -271,5 +271,5 @@ class TestSessionPlotManager:
         # Re-setup via get_dmap creates fresh components with new plotter
         session_manager.get_dmap(layer_id)
         presenter_b = session_manager._presenters[layer_id]
-        assert presenter_b.plotter is plotter_b
+        assert presenter_b.is_owned_by(plotter_b)
         assert presenter_b is not presenter_a
