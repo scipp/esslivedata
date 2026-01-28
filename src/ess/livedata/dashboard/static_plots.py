@@ -102,7 +102,8 @@ class StaticPlotter(ABC):
     def _set_cached_state(self, state: hv.Element) -> None:
         """Store computed state and mark all presenters dirty."""
         self._cached_state = state
-        for presenter in self._presenters:
+        # Convert to list to avoid RuntimeError if WeakSet is modified during iteration
+        for presenter in list(self._presenters):
             presenter._mark_dirty()
 
     def get_cached_state(self) -> hv.Element | None:

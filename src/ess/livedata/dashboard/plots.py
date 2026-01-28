@@ -486,7 +486,9 @@ class Plotter:
 
     def mark_presenters_dirty(self) -> None:
         """Mark all registered presenters as having pending updates."""
-        for presenter in self._presenters:
+        # Convert to list to avoid RuntimeError if WeakSet is modified during iteration
+        # (e.g., by garbage collector removing dead references)
+        for presenter in list(self._presenters):
             presenter._mark_dirty()
 
     def get_cached_state(self) -> Any | None:
