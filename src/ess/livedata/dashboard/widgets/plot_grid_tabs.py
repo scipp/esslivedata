@@ -802,11 +802,19 @@ class PlotGridTabs:
                         cell_updated = True
                         logger.debug("Set up session plot for layer_id=%s", layer_id)
 
-                # Update widget if any layer was newly set up
+                # Update widget if any layer was newly set up.
+                # Defer insertion to allow Bokeh to process any pending model
+                # updates from pipe.send() calls in update_pipes() above. Without
+                # deferral, widget removal can race with DynamicMap updates,
+                # causing KeyError when Panel tries to access removed models.
                 if cell_updated:
                     if (plot := self._get_session_composed_plot(cell)) is not None:
                         widget = self._create_cell_widget(cell_id, cell, plot)
-                        plot_grid.insert_widget_at(cell.geometry, widget)
+                        pn.state.execute(
+                            lambda g=cell.geometry,
+                            w=widget,
+                            pg=plot_grid: pg.insert_widget_at(g, w)
+                        )
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events and shutdown manager."""
