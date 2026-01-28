@@ -17,7 +17,7 @@ import panel as pn
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
-from ..plot_data_service import LayerState, PlotDataService, PlotLayerState
+from ..plot_data_service import LayerState, LayerStateMachine, PlotDataService
 from ..plot_orchestrator import (
     CellGeometry,
     CellId,
@@ -444,7 +444,9 @@ class PlotGridTabs:
         # Remove widget at explicit position
         plot_grid.remove_widget_at(geometry)
 
-    def _get_layer_states(self, cell: PlotCell) -> dict[LayerId, PlotLayerState | None]:
+    def _get_layer_states(
+        self, cell: PlotCell
+    ) -> dict[LayerId, LayerStateMachine | None]:
         """
         Get layer states from PlotDataService for all layers in a cell.
 
@@ -456,7 +458,7 @@ class PlotGridTabs:
         Returns
         -------
         :
-            Dict mapping layer IDs to their PlotLayerState (or None if not in service).
+            Dict mapping layer IDs to their state (or None if not in service).
         """
         return {
             layer.layer_id: self._plot_data_service.get(layer.layer_id)
@@ -504,7 +506,7 @@ class PlotGridTabs:
             content = self._create_placeholder_content(cell, layer_states)
             # Check if any layer has an error
             has_error = any(
-                state is not None and state.error is not None
+                state is not None and state.error_message is not None
                 for state in layer_states.values()
             )
             if has_error:
@@ -532,7 +534,7 @@ class PlotGridTabs:
         self,
         cell_id: CellId,
         cell: PlotCell,
-        layer_states: dict[LayerId, PlotLayerState | None],
+        layer_states: dict[LayerId, LayerStateMachine | None],
     ) -> list[pn.Row]:
         """
         Create toolbars for all layers in a cell.
@@ -571,7 +573,7 @@ class PlotGridTabs:
             else:
                 match state.state:
                     case LayerState.ERROR:
-                        description = f"{description}\n\nError: {state.error}"
+                        description = f"{description}\n\nError: {state.error_message}"
                     case LayerState.STOPPED:
                         stopped = True
                         description = f"{description}\n\nStatus: Workflow ended"
@@ -616,7 +618,7 @@ class PlotGridTabs:
     def _create_placeholder_content(
         self,
         cell: PlotCell,
-        layer_states: dict[LayerId, PlotLayerState | None],
+        layer_states: dict[LayerId, LayerStateMachine | None],
     ) -> pn.pane.Markdown:
         """
         Create placeholder content showing layer status.
@@ -650,7 +652,7 @@ class PlotGridTabs:
             else:
                 match state.state:
                     case LayerState.ERROR:
-                        error_text = state.error or "Unknown error"
+                        error_text = state.error_message or "Unknown error"
                         status = f"Error: {error_text[:100]}..."
                         text_color = '#dc3545'
                     case LayerState.STOPPED:
