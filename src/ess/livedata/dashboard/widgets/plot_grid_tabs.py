@@ -806,17 +806,10 @@ class PlotGridTabs:
                 if cell_updated:
                     plot_grid = self._grid_widgets.get(grid_id)
                     if plot_grid is not None:
-                        session_plot = self._get_session_composed_plot(cell)
-
-                        if session_plot is not None:
-                            widget = self._create_cell_widget(
-                                cell_id, cell, session_plot
-                            )
-                            pn.state.execute(
-                                lambda g=cell.geometry,
-                                w=widget,
-                                pg=plot_grid: pg.insert_widget_at(g, w)
-                            )
+                        plot = self._get_session_composed_plot(cell)
+                        if plot is not None:
+                            widget = self._create_cell_widget(cell_id, cell, plot)
+                            plot_grid.insert_widget_at(cell.geometry, widget)
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events and shutdown manager."""
