@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import traceback
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any
 
 import scipp as sc
@@ -100,7 +100,7 @@ class JobState(str, Enum):
     warning = "warning"
 
 
-class ServiceState(str, Enum):
+class ServiceState(StrEnum):
     """State of a backend service worker."""
 
     starting = "starting"  # Service initializing
