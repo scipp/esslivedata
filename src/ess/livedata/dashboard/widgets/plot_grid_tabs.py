@@ -9,20 +9,20 @@ synchronized with PlotOrchestrator via lifecycle subscriptions.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
-from typing import Any
 
 import holoviews as hv
 import panel as pn
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
+from ..plot_data_service import PlotDataService, PlotLayerState
 from ..plot_orchestrator import (
     CellGeometry,
     CellId,
     GridId,
     LayerId,
-    LayerState,
     PlotCell,
     PlotConfig,
     PlotGridConfig,
@@ -30,6 +30,8 @@ from ..plot_orchestrator import (
     SubscriptionId,
 )
 from ..plot_params import PlotAspectType, StretchMode
+from ..session_plot_manager import SessionPlotManager
+from ..session_updater import SessionUpdater
 from .plot_config_modal import PlotConfigModal
 from .plot_grid import GridCellStyles, PlotGrid
 from .plot_grid_manager import PlotGridManager
@@ -38,6 +40,8 @@ from .plot_widgets import (
     get_plot_cell_display_info,
     get_workflow_display_info,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _get_sizing_mode(config: PlotConfig) -> str:
@@ -88,6 +92,10 @@ class PlotGridTabs:
         Widget for displaying workflow status and controls.
     backend_status_widget
         Optional widget for displaying backend worker status.
+    plot_data_service
+        Shared service for plot data with version tracking.
+    session_updater
+        This session's updater for periodic callbacks.
     """
 
     def __init__(
@@ -98,13 +106,20 @@ class PlotGridTabs:
         job_status_widget,
         workflow_status_widget,
         backend_status_widget=None,
+        *,
+        plot_data_service: PlotDataService,
+        session_updater: SessionUpdater,
     ) -> None:
         self._orchestrator = plot_orchestrator
         self._workflow_registry = dict(workflow_registry)
         self._plotting_controller = plotting_controller
+        self._plot_data_service = plot_data_service
 
         # Track grid widgets (insertion order determines tab position)
         self._grid_widgets: dict[GridId, PlotGrid] = {}
+
+        # Multi-session support: SessionPlotManager handles per-session components
+        self._session_plot_manager = SessionPlotManager(plot_data_service)
 
         # Determine number of static tabs for stylesheet
         static_tab_count = 4 if backend_status_widget else 3
@@ -194,6 +209,9 @@ class PlotGridTabs:
         for grid_id, grid_config in self._orchestrator.get_all_grids().items():
             self._add_grid_tab(grid_id, grid_config)
 
+        # Register handler for periodic polling
+        session_updater.register_custom_handler(self._poll_for_plot_updates)
+
     def _add_grid_tab(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Add a new grid tab after the Manage tab."""
 
@@ -219,15 +237,11 @@ class PlotGridTabs:
 
         # Populate with existing cells (important for late subscribers / new sessions)
         for cell_id, cell in grid_config.cells.items():
-            # Get current layer states and composed plot from orchestrator
-            # This ensures late subscribers (new sessions) see existing plots
-            layer_states, plot = self._orchestrator.get_cell_state(cell_id)
+            # Notify about cell config - widget will query PlotDataService for state
             self._on_cell_updated(
                 grid_id=grid_id,
                 cell_id=cell_id,
                 cell=cell,
-                layer_states=layer_states,
-                plot=plot,
             )
 
     def _remove_grid_tab(self, grid_id: GridId) -> None:
@@ -360,14 +374,15 @@ class PlotGridTabs:
         grid_id: GridId,
         cell_id: CellId,
         cell: PlotCell,
-        layer_states: dict[LayerId, LayerState],
-        plot: Any = None,
     ) -> None:
         """
         Handle cell update from orchestrator.
 
         Creates a cell widget with per-layer toolbars and either a placeholder
         or the composed plot, then inserts it into the grid.
+
+        This is called when cell configuration changes (layer added/removed/updated).
+        Layer runtime state (error, stopped, data) is queried from PlotDataService.
 
         Parameters
         ----------
@@ -377,17 +392,19 @@ class PlotGridTabs:
             ID of the cell being updated.
         cell
             Plot cell configuration with all layers.
-        layer_states
-            Per-layer runtime state (pipe, plot, error) for each layer.
-        plot
-            The composed plot (hv.Overlay), or None if no layers have data yet.
         """
         plot_grid = self._grid_widgets.get(grid_id)
         if plot_grid is None:
             return
 
+        # Get session-local composed plot if data is available.
+        # Note: When config changes, update_layer_config() creates a new layer_id.
+        # The old layer_id is orphaned and cleaned up by update_pipes().
+        # New layer_ids have no cache, so fresh components are created naturally.
+        session_plot = self._get_session_composed_plot(cell)
+
         # Create widget with toolbars and content
-        widget = self._create_cell_widget(cell_id, cell, layer_states, plot)
+        widget = self._create_cell_widget(cell_id, cell, session_plot)
 
         # Defer insertion for plots to allow Panel to update layout sizing.
         # When a workflow is already running with data, subscribing triggers
@@ -396,10 +413,7 @@ class PlotGridTabs:
         # collapsed/default size before the grid container is properly sized,
         # resulting in "glitched" rendering. Deferring to the next event loop
         # iteration allows Panel to process layout updates first.
-        if plot is not None:
-            # Schedule insertion on next event loop iteration using pn.state.execute
-            # This is more appropriate than add_periodic_callback for one-shot deferred
-            # execution and ensures proper thread safety for Bokeh model updates.
+        if session_plot is not None:
             pn.state.execute(
                 lambda g=cell.geometry: plot_grid.insert_widget_at(g, widget)
             )
@@ -427,12 +441,30 @@ class PlotGridTabs:
         # Remove widget at explicit position
         plot_grid.remove_widget_at(geometry)
 
+    def _get_layer_states(self, cell: PlotCell) -> dict[LayerId, PlotLayerState | None]:
+        """
+        Get layer states from PlotDataService for all layers in a cell.
+
+        Parameters
+        ----------
+        cell
+            Plot cell with layers.
+
+        Returns
+        -------
+        :
+            Dict mapping layer IDs to their PlotLayerState (or None if not in service).
+        """
+        return {
+            layer.layer_id: self._plot_data_service.get(layer.layer_id)
+            for layer in cell.layers
+        }
+
     def _create_cell_widget(
         self,
         cell_id: CellId,
         cell: PlotCell,
-        layer_states: dict[LayerId, LayerState],
-        plot: hv.DynamicMap | hv.Layout | None,
+        plot: hv.DynamicMap | hv.Element | hv.Overlay | None,
     ) -> pn.Column:
         """
         Create a cell widget with per-layer toolbars and content area.
@@ -446,8 +478,6 @@ class PlotGridTabs:
             ID of the cell.
         cell
             Plot cell configuration with all layers.
-        layer_states
-            Per-layer runtime state for each layer.
         plot
             The composed plot, or None if no layers have data yet.
 
@@ -456,6 +486,9 @@ class PlotGridTabs:
         :
             Panel widget with toolbars and content.
         """
+        # Get layer states from PlotDataService
+        layer_states = self._get_layer_states(cell)
+
         # Create toolbars for all layers
         toolbars = self._create_layer_toolbars(cell_id, cell, layer_states)
 
@@ -467,7 +500,10 @@ class PlotGridTabs:
         else:
             content = self._create_placeholder_content(cell, layer_states)
             # Check if any layer has an error
-            has_error = any(state.error is not None for state in layer_states.values())
+            has_error = any(
+                state is not None and state.error is not None
+                for state in layer_states.values()
+            )
             if has_error:
                 bg_color = '#ffe6e6'
                 border = '2px solid #dc3545'
@@ -489,11 +525,34 @@ class PlotGridTabs:
             margin=GridCellStyles.CELL_MARGIN,
         )
 
+    def _has_data(self, layer_id: LayerId) -> bool:
+        """
+        Check if data is available for a layer.
+
+        Checks PlotDataService for layer state with cached plotter state.
+
+        Parameters
+        ----------
+        layer_id
+            ID of the layer to check.
+
+        Returns
+        -------
+        :
+            True if data is available for this layer.
+        """
+        layer_state = self._plot_data_service.get(layer_id)
+        return (
+            layer_state is not None
+            and layer_state.plotter is not None
+            and layer_state.plotter.has_cached_state()
+        )
+
     def _create_layer_toolbars(
         self,
         cell_id: CellId,
         cell: PlotCell,
-        layer_states: dict[LayerId, LayerState],
+        layer_states: dict[LayerId, PlotLayerState | None],
     ) -> list[pn.Row]:
         """
         Create toolbars for all layers in a cell.
@@ -505,7 +564,7 @@ class PlotGridTabs:
         cell
             Plot cell with layers.
         layer_states
-            Per-layer runtime state.
+            Per-layer runtime state from PlotDataService.
 
         Returns
         -------
@@ -516,7 +575,7 @@ class PlotGridTabs:
         for layer in cell.layers:
             layer_id = layer.layer_id
             config = layer.config
-            state = layer_states.get(layer_id, LayerState())
+            state = layer_states.get(layer_id)
 
             # Get display info for this layer
             title, description = get_plot_cell_display_info(
@@ -526,11 +585,13 @@ class PlotGridTabs:
             )
 
             # Add state info to description
-            if state.error is not None:
+            stopped = False
+            if state is not None and state.error is not None:
                 description = f"{description}\n\nError: {state.error}"
-            elif state.stopped:
+            elif state is not None and state.stopped:
+                stopped = True
                 description = f"{description}\n\nStatus: Workflow ended"
-            elif state.plot is None:
+            elif not self._has_data(layer_id):
                 description = f"{description}\n\nStatus: Waiting for data..."
 
             # Create callbacks that capture layer_id / cell_id
@@ -558,7 +619,7 @@ class PlotGridTabs:
                 on_add_callback=make_add_callback(cell_id),
                 title=title,
                 description=description,
-                stopped=state.stopped,
+                stopped=stopped,
             )
             toolbars.append(toolbar)
 
@@ -567,7 +628,7 @@ class PlotGridTabs:
     def _create_placeholder_content(
         self,
         cell: PlotCell,
-        layer_states: dict[LayerId, LayerState],
+        layer_states: dict[LayerId, PlotLayerState | None],
     ) -> pn.pane.Markdown:
         """
         Create placeholder content showing layer status.
@@ -577,7 +638,7 @@ class PlotGridTabs:
         cell
             Plot cell with layers.
         layer_states
-            Per-layer runtime state.
+            Per-layer runtime state from PlotDataService.
 
         Returns
         -------
@@ -588,19 +649,19 @@ class PlotGridTabs:
         status_lines = []
         for layer in cell.layers:
             config = layer.config
-            state = layer_states.get(layer.layer_id, LayerState())
+            state = layer_states.get(layer.layer_id)
 
             workflow_title, output_title = get_workflow_display_info(
                 self._workflow_registry, config.workflow_id, config.output_name
             )
 
-            if state.error is not None:
+            if state is not None and state.error is not None:
                 status = f"Error: {state.error[:100]}..."
                 text_color = '#dc3545'
-            elif state.stopped:
+            elif state is not None and state.stopped:
                 status = "Workflow ended"
                 text_color = '#495057'  # Dark grey - indicates stopped state
-            elif state.plot is not None:
+            elif self._has_data(layer.layer_id):
                 status = "Ready"
                 text_color = '#28a745'
             else:
@@ -616,16 +677,13 @@ class PlotGridTabs:
 
         return pn.pane.Markdown(
             content,
-            styles={
-                'text-align': 'left',
-                'padding': '20px',
-            },
+            styles={'text-align': 'left', 'padding': '20px'},
         )
 
     def _create_plot_content(
         self,
         cell: PlotCell,
-        plot: hv.DynamicMap | hv.Layout,
+        plot: hv.DynamicMap | hv.Element | hv.Overlay,
     ) -> pn.pane.HoloViews:
         """
         Create plot content widget.
@@ -680,11 +738,92 @@ class PlotGridTabs:
         )
         return plot_pane_wrapper.layout
 
+    def _get_session_composed_plot(
+        self, cell: PlotCell
+    ) -> hv.DynamicMap | hv.Element | None:
+        """
+        Get composed plot from session-local DynamicMaps or static elements.
+
+        Parameters
+        ----------
+        cell
+            The plot cell with layers.
+
+        Returns
+        -------
+        :
+            Composed plot from session DMaps/elements, or None if none available.
+        """
+        if self._session_plot_manager is None:
+            return None
+
+        plots = []
+        for layer in cell.layers:
+            dmap = self._session_plot_manager.get_dmap(layer.layer_id)
+            if dmap is not None:
+                plots.append(dmap)
+
+        if not plots:
+            return None
+
+        if len(plots) == 1:
+            return plots[0]
+
+        return hv.Overlay(plots)
+
+    def _poll_for_plot_updates(self) -> None:
+        """
+        Poll PlotDataService for updates and set up new layers.
+
+        Called from SessionUpdater's periodic callback. This method:
+        1. Forwards data updates to existing session pipes
+        2. Checks all layers in all grids for data availability
+        3. Sets up session components for layers that have data but aren't set up yet
+        """
+        # Forward data updates from PlotDataService to session pipes
+        self._session_plot_manager.update_pipes()
+
+        # Check all layers in all grids for setup
+        for grid_id, plot_grid in self._grid_widgets.items():
+            grid_config = self._orchestrator.get_grid(grid_id)
+            if grid_config is None:
+                continue
+
+            for cell_id, cell in grid_config.cells.items():
+                cell_updated = False
+
+                for layer in cell.layers:
+                    layer_id = layer.layer_id
+
+                    # Check if layer transitions from not-set-up to set-up
+                    had_layer = self._session_plot_manager.has_layer(layer_id)
+                    dmap = self._session_plot_manager.get_dmap(layer_id)
+                    if not had_layer and dmap is not None:
+                        cell_updated = True
+                        logger.debug("Set up session plot for layer_id=%s", layer_id)
+
+                # Update widget if any layer was newly set up.
+                # Defer insertion to allow Bokeh to process any pending model
+                # updates from pipe.send() calls in update_pipes() above. Without
+                # deferral, widget removal can race with DynamicMap updates,
+                # causing KeyError when Panel tries to access removed models.
+                if cell_updated:
+                    if (plot := self._get_session_composed_plot(cell)) is not None:
+                        widget = self._create_cell_widget(cell_id, cell, plot)
+                        pn.state.execute(
+                            lambda g=cell.geometry,
+                            w=widget,
+                            pg=plot_grid: pg.insert_widget_at(g, w)
+                        )
+
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events and shutdown manager."""
         if self._subscription_id is not None:
             self._orchestrator.unsubscribe_from_lifecycle(self._subscription_id)
             self._subscription_id = None
+        if self._session_plot_manager is not None:
+            self._session_plot_manager.cleanup()
+            self._session_plot_manager = None
         self._grid_manager.shutdown()
 
     @property

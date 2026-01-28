@@ -2,9 +2,9 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Dashboard service composition and setup."""
 
-from collections.abc import Callable
+import threading
+import time
 from contextlib import ExitStack
-from typing import Any
 
 import scipp as sc
 import structlog
@@ -20,11 +20,14 @@ from .data_service import DataService
 from .job_controller import JobController
 from .job_orchestrator import JobOrchestrator
 from .job_service import JobService
+from .notification_queue import NotificationQueue
 from .orchestrator import Orchestrator
+from .plot_data_service import PlotDataService
 from .plot_orchestrator import PlotOrchestrator
 from .plotting_controller import PlottingController
 from .roi_publisher import ROIPublisher
 from .service_registry import ServiceRegistry
+from .session_registry import SessionRegistry
 from .stream_manager import StreamManager
 from .transport import Transport
 from .workflow_controller import WorkflowController
@@ -49,10 +52,6 @@ class DashboardServices:
         Use dev mode with simplified topic structure
     exit_stack:
         ExitStack for managing resource cleanup (caller manages lifecycle)
-    pipe_factory:
-        Factory function for creating pipes for StreamManager.
-        For GUI: use holoviews.streams.Pipe
-        For tests: use lambda data: None (no-op)
     transport:
         Transport instance for message sources and sinks.
         For Kafka: DashboardKafkaTransport(instrument, dev)
@@ -70,20 +69,30 @@ class DashboardServices:
         instrument: str,
         dev: bool,
         exit_stack: ExitStack,
-        pipe_factory: Callable[[Any], Any],
         transport: Transport,
         config_manager: ConfigStoreManager,
     ):
         self._instrument = instrument
         self._dev = dev
         self._exit_stack = exit_stack
-        self._pipe_factory = pipe_factory
         self._transport = transport
         self._config_manager = config_manager
 
         # Config stores for workflow and plotter persistent UI state
         self.workflow_config_store = config_manager.get_store('workflow_configs')
         self.plotter_config_store = config_manager.get_store('plotter_configs')
+
+        # Shared state stores for multi-session support
+        self.plot_data_service = PlotDataService()
+        self.notification_queue = NotificationQueue()
+
+        # Session registry for tracking active browser sessions
+        self.session_registry = SessionRegistry(stale_timeout_seconds=60.0)
+
+        # Background update thread state
+        self._update_thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+        self._update_interval = 0.2  # seconds
 
         # Setup all services
         self._setup_data_infrastructure()
@@ -93,12 +102,52 @@ class DashboardServices:
         logger.info("DashboardServices initialized for %s", instrument)
 
     def start(self) -> None:
-        """Start background tasks (e.g., message polling)."""
+        """Start background tasks (message polling and orchestrator updates)."""
         self._transport.start()
+        self._start_update_thread()
 
     def stop(self) -> None:
-        """Stop background tasks (e.g., message polling)."""
+        """Stop background tasks (message polling and orchestrator updates)."""
+        self._stop_update_thread()
         self._transport.stop()
+
+    def _start_update_thread(self) -> None:
+        """Start the background thread that runs orchestrator updates."""
+        if self._update_thread is not None:
+            return
+        self._stop_event.clear()
+        self._update_thread = threading.Thread(
+            target=self._update_loop, daemon=True, name="orchestrator-update"
+        )
+        self._update_thread.start()
+        logger.info("orchestrator_update_thread_started")
+
+    def _stop_update_thread(self) -> None:
+        """Stop the background orchestrator update thread."""
+        if self._update_thread is None:
+            return
+        self._stop_event.set()
+        self._update_thread.join(timeout=5.0)
+        if self._update_thread.is_alive():
+            logger.warning("orchestrator_update_thread_stop_timeout")
+        self._update_thread = None
+        logger.info("orchestrator_update_thread_stopped")
+
+    def _update_loop(self) -> None:
+        """Background loop that periodically updates the orchestrator."""
+        while not self._stop_event.is_set():
+            start = time.monotonic()
+            try:
+                self.orchestrator.update()
+                self.session_registry.cleanup_stale_sessions()
+            except Exception:
+                logger.exception("orchestrator_update_error")
+
+            # Only sleep if update was quick (no work to do), to avoid busy-wait.
+            # If there was real work, loop immediately to check for more data.
+            elapsed = time.monotonic() - start
+            if elapsed < 0.01:  # < 10ms means no real work
+                self._stop_event.wait(self._update_interval)
 
     def _setup_data_infrastructure(self) -> None:
         """Set up data services, forwarder, and orchestrator."""
@@ -110,9 +159,7 @@ class DashboardServices:
         # da00 of backend services converted to scipp.DataArray
         ScippDataService = DataService[ResultKey, sc.DataArray]
         self.data_service = ScippDataService()
-        self.stream_manager = StreamManager(
-            data_service=self.data_service, pipe_factory=self._pipe_factory
-        )
+        self.stream_manager = StreamManager(data_service=self.data_service)
         self.job_service = JobService()
         self.service_registry = ServiceRegistry()
         self.job_controller = JobController(
@@ -145,6 +192,7 @@ class DashboardServices:
             config_store=plot_config_store,
             raw_templates=raw_templates,
             instrument_config=self.instrument_config,
+            plot_data_service=self.plot_data_service,
         )
         logger.info("PlotOrchestrator setup complete")
 
@@ -160,6 +208,7 @@ class DashboardServices:
             workflow_registry=self.processor_factory,
             config_store=self.workflow_config_store,
             instrument_config=self.instrument_config,
+            notification_queue=self.notification_queue,
         )
         self.workflow_controller = WorkflowController(
             job_orchestrator=self.job_orchestrator,

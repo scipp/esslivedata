@@ -36,6 +36,7 @@ from ess.livedata.core.job_manager import JobAction, JobCommand
 from .command_service import CommandService
 from .config_store import ConfigStore
 from .configuration_adapter import ConfigurationState
+from .notification_queue import NotificationEvent, NotificationQueue, NotificationType
 from .pending_command_tracker import PendingCommandTracker
 from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
@@ -108,21 +109,14 @@ class WidgetLifecycleCallbacks:
 
     Widgets use this to stay synchronized across browser sessions.
     All callbacks receive the workflow_id so widgets can filter relevant events.
+
+    Note: Command success/error notifications are handled via NotificationQueue
+    for proper multi-session support.
     """
 
     on_staged_changed: Callable[[WorkflowId], None] | None = None
     on_workflow_committed: Callable[[WorkflowId], None] | None = None
     on_workflow_stopped: Callable[[WorkflowId], None] | None = None
-    on_command_success: Callable[[WorkflowId, str, int, int], None] | None = None
-    """Called when a command succeeds.
-
-    Args: workflow_id, action ("start"/"stop"/"reset"), success_count, total_count.
-    """
-    on_command_error: Callable[[WorkflowId, str, int, int, str], None] | None = None
-    """Called when a command fails.
-
-    Args: workflow_id, action, error_count, total_count, error_message.
-    """
 
 
 class JobOrchestrator:
@@ -135,6 +129,7 @@ class JobOrchestrator:
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         config_store: ConfigStore | None = None,
         instrument_config: Instrument | None = None,
+        notification_queue: NotificationQueue | None = None,
     ) -> None:
         """
         Initialize the job orchestrator.
@@ -150,11 +145,16 @@ class JobOrchestrator:
             Orchestrator loads configs on init and persists on commit.
         instrument_config
             Optional instrument configuration for source metadata lookup.
+        notification_queue
+            Optional queue for multi-session notifications. When provided,
+            command success/error notifications are pushed here instead of
+            using direct callbacks.
         """
         self._command_service = command_service
         self._workflow_registry = workflow_registry
         self._config_store = config_store
         self._instrument_config = instrument_config
+        self._notification_queue = notification_queue
 
         # Command acknowledgement tracking
         self._pending_commands = PendingCommandTracker()
@@ -1074,18 +1074,30 @@ class JobOrchestrator:
     def _notify_command_success(
         self, workflow_id: WorkflowId, action: str, success_count: int, total_count: int
     ) -> None:
-        """Notify all widget subscribers that a command succeeded."""
-        for subscription_id, callbacks in self._widget_subscriptions.items():
-            if callbacks.on_command_success is not None:
-                try:
-                    callbacks.on_command_success(
-                        workflow_id, action, success_count, total_count
-                    )
-                except Exception:
-                    logger.exception(
-                        'Error in on_command_success callback for subscription %s',
-                        subscription_id,
-                    )
+        """Push command success notification to the queue.
+
+        Notifications are pushed to NotificationQueue for multi-session support.
+        Each session polls the queue and shows notifications in its own context.
+        """
+        if self._notification_queue is None:
+            return
+
+        # Get workflow title for user-friendly message
+        spec = self._workflow_registry.get(workflow_id)
+        title = spec.title if spec else str(workflow_id)
+
+        # Convert action to past tense
+        past_tense = {"start": "Started", "stop": "Stopped", "reset": "Reset"}
+        verb = past_tense.get(action, action.capitalize())
+
+        message = f"{verb} {success_count}/{total_count} jobs for '{title}'"
+        self._notification_queue.push(
+            NotificationEvent(
+                message=message,
+                notification_type=NotificationType.SUCCESS,
+                duration=3000,
+            )
+        )
 
     def _notify_command_error(
         self,
@@ -1095,18 +1107,29 @@ class JobOrchestrator:
         total_count: int,
         error_message: str,
     ) -> None:
-        """Notify all widget subscribers that a command failed."""
-        for subscription_id, callbacks in self._widget_subscriptions.items():
-            if callbacks.on_command_error is not None:
-                try:
-                    callbacks.on_command_error(
-                        workflow_id, action, error_count, total_count, error_message
-                    )
-                except Exception:
-                    logger.exception(
-                        'Error in on_command_error callback for subscription %s',
-                        subscription_id,
-                    )
+        """Push command error notification to the queue.
+
+        Notifications are pushed to NotificationQueue for multi-session support.
+        Each session polls the queue and shows notifications in its own context.
+        """
+        if self._notification_queue is None:
+            return
+
+        # Get workflow title for user-friendly message
+        spec = self._workflow_registry.get(workflow_id)
+        title = spec.title if spec else str(workflow_id)
+
+        message = (
+            f"Failed to {action} {error_count}/{total_count} jobs "
+            f"for '{title}': {error_message}"
+        )
+        self._notification_queue.push(
+            NotificationEvent(
+                message=message,
+                notification_type=NotificationType.ERROR,
+                duration=5000,
+            )
+        )
 
     def process_acknowledgement(
         self, message_id: str, response: str, error_message: str | None = None
