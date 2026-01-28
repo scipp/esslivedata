@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import traceback
 from dataclasses import dataclass
-from enum import Enum, StrEnum
+from enum import Enum, StrEnum, auto
 from typing import Any
 
 import scipp as sc
@@ -103,11 +103,11 @@ class JobState(str, Enum):
 class ServiceState(StrEnum):
     """State of a backend service worker."""
 
-    starting = "starting"  # Service initializing
-    running = "running"  # Normal operation
-    stopping = "stopping"  # Graceful shutdown in progress
-    stopped = "stopped"  # Graceful shutdown completed
-    error = "error"  # Service encountered fatal error
+    starting = auto()  # Service initializing
+    running = auto()  # Normal operation
+    stopping = auto()  # Graceful shutdown in progress
+    stopped = auto()  # Graceful shutdown completed
+    error = auto()  # Service encountered fatal error
 
 
 @dataclass
