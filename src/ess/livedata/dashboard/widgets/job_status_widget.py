@@ -460,17 +460,17 @@ class JobStatusListWidget:
 
         self._job_list = pn.Column(sizing_mode="stretch_width", margin=(0, 10))
 
-        # Initialize with current job statuses
-        for job_status in self._job_service.job_statuses.values():
+        # Initialize with current job statuses (snapshot to avoid race conditions)
+        for job_status in list(self._job_service.job_statuses.values()):
             self._add_or_update_job_widget(job_status)
 
     def _on_status_update(self) -> None:
         """Handle job status updates from the service."""
-        # Get all current job statuses and update widgets accordingly
-        current_statuses = self._job_service.job_statuses
+        # Snapshot to avoid race conditions with background threads
+        current_statuses = list(self._job_service.job_statuses.values())
         current_job_keys = {
             f"{status.job_id.source_name}:{status.job_id.job_number}"
-            for status in current_statuses.values()
+            for status in current_statuses
         }
 
         # Remove widgets for jobs that no longer exist
@@ -479,7 +479,7 @@ class JobStatusListWidget:
             self._remove_job_widget(job_key)
 
         # Add or update widgets for current jobs
-        for job_status in current_statuses.values():
+        for job_status in current_statuses:
             self._add_or_update_job_widget(job_status)
 
     def _add_or_update_job_widget(self, job_status: JobStatus) -> None:
