@@ -784,7 +784,7 @@ class PlotGridTabs:
         self._session_plot_manager.update_pipes()
 
         # Check all layers in all grids for setup
-        for grid_id in self._grid_widgets.keys():
+        for grid_id, plot_grid in self._grid_widgets.items():
             grid_config = self._orchestrator.get_grid(grid_id)
             if grid_config is None:
                 continue
@@ -804,12 +804,9 @@ class PlotGridTabs:
 
                 # Update widget if any layer was newly set up
                 if cell_updated:
-                    plot_grid = self._grid_widgets.get(grid_id)
-                    if plot_grid is not None:
-                        plot = self._get_session_composed_plot(cell)
-                        if plot is not None:
-                            widget = self._create_cell_widget(cell_id, cell, plot)
-                            plot_grid.insert_widget_at(cell.geometry, widget)
+                    if (plot := self._get_session_composed_plot(cell)) is not None:
+                        widget = self._create_cell_widget(cell_id, cell, plot)
+                        plot_grid.insert_widget_at(cell.geometry, widget)
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events and shutdown manager."""
