@@ -70,6 +70,11 @@ class Presenter(Protocol):
         """Consume the pending update and return the cached state."""
         ...
 
+    @property
+    def plotter(self) -> Plotter:
+        """The plotter this presenter is bound to."""
+        ...
+
 
 class PresenterBase:
     """
@@ -83,6 +88,11 @@ class PresenterBase:
     def __init__(self, plotter: Plotter) -> None:
         self._plotter = plotter
         self._dirty: bool = False
+
+    @property
+    def plotter(self) -> Plotter:
+        """The plotter this presenter is bound to."""
+        return self._plotter
 
     def _mark_dirty(self) -> None:
         """Mark this presenter as having a pending update."""

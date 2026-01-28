@@ -237,3 +237,39 @@ class TestSessionPlotManager:
         updated = session_manager.update_pipes()
 
         assert layer_id in updated
+
+    def test_update_pipes_detects_plotter_replacement(
+        self, plot_data_service, session_manager
+    ):
+        """Test that update_pipes detects when a plotter is replaced.
+
+        When a workflow restarts, a new plotter is created for the same layer_id.
+        The session should detect this and invalidate its cached components so
+        they get recreated with the new plotter.
+        """
+        layer_id = LayerId(uuid4())
+        plotter_a = FakePlotter()
+        plotter_a.compute({'data': 1})
+        plot_data_service.set_plotter(layer_id, plotter_a)
+
+        # Set up layer via get_dmap
+        session_manager.get_dmap(layer_id)
+        presenter_a = session_manager._presenters[layer_id]
+        assert presenter_a.plotter is plotter_a
+
+        # Simulate workflow restart: new plotter for same layer_id
+        plotter_b = FakePlotter()
+        plotter_b.compute({'data': 2})
+        plot_data_service.set_plotter(layer_id, plotter_b)
+
+        # update_pipes should detect plotter change and invalidate
+        session_manager.update_pipes()
+
+        # Session cache should be cleared
+        assert not session_manager.has_layer(layer_id)
+
+        # Re-setup via get_dmap creates fresh components with new plotter
+        session_manager.get_dmap(layer_id)
+        presenter_b = session_manager._presenters[layer_id]
+        assert presenter_b.plotter is plotter_b
+        assert presenter_b is not presenter_a
