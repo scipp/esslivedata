@@ -90,13 +90,10 @@ class SessionPlotManager:
         if layer_id in self._dmaps:
             return self._dmaps[layer_id]
 
-        # Get data from shared service
+        # Get layer state from shared service
         state = self._plot_data_service.get(layer_id)
-        # Need plotter (for create_presenter and get_cached_state) to set up.
-        # plotter.has_cached_state() returns False if waiting for data.
-        if state is None or state.plotter is None:
-            return None
-        if not state.plotter.has_cached_state():
+        # Only set up if layer has a displayable plot (READY or STOPPED with data)
+        if state is None or not state.has_displayable_plot():
             return None
 
         try:

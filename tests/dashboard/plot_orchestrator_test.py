@@ -955,12 +955,13 @@ class TestLifecycleEventNotifications:
         plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
 
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
-        cell_id = add_cell_with_layer(
-            plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
-        )
+        add_cell_with_layer(plot_orchestrator, grid_id, plot_cell[0], plot_cell[1])
 
         # Should have been called once when cell was added
         assert callback.call_count == 1
+        call_kwargs = callback.call_args[1]
+        cell = call_kwargs['cell']
+        layer_id = cell.layers[0].layer_id
 
         # Configure controller to raise exception on create_plotter
         fake_plotting_controller.configure_to_raise(ValueError('Test error'))
@@ -968,18 +969,11 @@ class TestLifecycleEventNotifications:
         # Commit workflow - this triggers eager plotter creation which will fail
         commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
-        # Called 2x: add cell, plotter creation failure (error notification)
-        assert callback.call_count == 2
-        call_kwargs = callback.call_args[1]
-        assert call_kwargs['grid_id'] == grid_id
-        assert call_kwargs['cell_id'] == cell_id
-        # Verify cell has correct geometry and layer config
-        cell = call_kwargs['cell']
-        assert cell.geometry == plot_cell[0]
-        assert len(cell.layers) == 1
-        assert cell.layers[0].config == plot_cell[1]
-        # Error is stored in PlotDataService
-        layer_id = cell.layers[0].layer_id
+        # Only 1 call - initial cell creation
+        # Error state changes are now detected via polling, not callbacks
+        assert callback.call_count == 1
+
+        # Error is stored in PlotDataService for polling-based detection
         state = plot_data_service.get(layer_id)
         assert state is not None
         assert state.error is not None
@@ -1097,7 +1091,7 @@ class TestErrorHandling:
         fake_data_service,
         plot_data_service,
     ):
-        """PlottingController exception calls on_cell_updated with error."""
+        """PlottingController exception stores error in PlotDataService."""
         callback = CallbackCapture()
         plot_orchestrator.subscribe_to_lifecycle(on_cell_updated=callback)
 
@@ -1108,6 +1102,8 @@ class TestErrorHandling:
 
         # Should have been called once when cell was added
         assert callback.call_count == 1
+        cell = plot_orchestrator.get_cell(cell_id)
+        layer_id = cell.layers[0].layer_id
 
         fake_plotting_controller.configure_to_raise(
             RuntimeError('Plot creation failed')
@@ -1115,11 +1111,11 @@ class TestErrorHandling:
         # Commit workflow - this triggers eager plotter creation which will fail
         commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
 
-        # Called 2x: add cell, plotter creation failure (error notification)
-        assert callback.call_count == 2
-        # Error is stored in PlotDataService
-        cell = plot_orchestrator.get_cell(cell_id)
-        layer_id = cell.layers[0].layer_id
+        # Only 1 call - initial cell creation
+        # Error state changes are now detected via polling, not callbacks
+        assert callback.call_count == 1
+
+        # Error is stored in PlotDataService for polling-based detection
         state = plot_data_service.get(layer_id)
         assert state is not None
         assert state.error is not None

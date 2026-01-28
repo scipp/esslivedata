@@ -17,7 +17,7 @@ import panel as pn
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
-from ..plot_data_service import PlotDataService, PlotLayerState
+from ..plot_data_service import LayerState, PlotDataService, PlotLayerState
 from ..plot_orchestrator import (
     CellGeometry,
     CellId,
@@ -120,6 +120,9 @@ class PlotGridTabs:
 
         # Multi-session support: SessionPlotManager handles per-session components
         self._session_plot_manager = SessionPlotManager(plot_data_service)
+
+        # Version tracking for state change detection via polling
+        self._last_seen_versions: dict[LayerId, int] = {}
 
         # Determine number of static tabs for stylesheet
         static_tab_count = 4 if backend_status_widget else 3
@@ -525,29 +528,6 @@ class PlotGridTabs:
             margin=GridCellStyles.CELL_MARGIN,
         )
 
-    def _has_data(self, layer_id: LayerId) -> bool:
-        """
-        Check if data is available for a layer.
-
-        Checks PlotDataService for layer state with cached plotter state.
-
-        Parameters
-        ----------
-        layer_id
-            ID of the layer to check.
-
-        Returns
-        -------
-        :
-            True if data is available for this layer.
-        """
-        layer_state = self._plot_data_service.get(layer_id)
-        return (
-            layer_state is not None
-            and layer_state.plotter is not None
-            and layer_state.plotter.has_cached_state()
-        )
-
     def _create_layer_toolbars(
         self,
         cell_id: CellId,
@@ -584,15 +564,23 @@ class PlotGridTabs:
                 get_source_title=self._orchestrator.get_source_title,
             )
 
-            # Add state info to description
+            # Add state info to description using explicit state enum
             stopped = False
-            if state is not None and state.error is not None:
-                description = f"{description}\n\nError: {state.error}"
-            elif state is not None and state.stopped:
-                stopped = True
-                description = f"{description}\n\nStatus: Workflow ended"
-            elif not self._has_data(layer_id):
+            if state is None:
                 description = f"{description}\n\nStatus: Waiting for data..."
+            else:
+                match state.state:
+                    case LayerState.ERROR:
+                        description = f"{description}\n\nError: {state.error}"
+                    case LayerState.STOPPED:
+                        stopped = True
+                        description = f"{description}\n\nStatus: Workflow ended"
+                    case LayerState.WAITING_FOR_DATA:
+                        description = f"{description}\n\nStatus: Waiting for data..."
+                    case LayerState.WAITING_FOR_JOB:
+                        description = f"{description}\n\nStatus: Waiting for workflow"
+                    case LayerState.READY:
+                        pass  # No extra description for ready state
 
             # Create callbacks that capture layer_id / cell_id
             def make_close_callback(lid: LayerId) -> Callable[[], None]:
@@ -655,18 +643,28 @@ class PlotGridTabs:
                 self._workflow_registry, config.workflow_id, config.output_name
             )
 
-            if state is not None and state.error is not None:
-                status = f"Error: {state.error[:100]}..."
-                text_color = '#dc3545'
-            elif state is not None and state.stopped:
-                status = "Workflow ended"
-                text_color = '#495057'  # Dark grey - indicates stopped state
-            elif self._has_data(layer.layer_id):
-                status = "Ready"
-                text_color = '#28a745'
-            else:
+            # Determine status from explicit state enum
+            if state is None:
                 status = "Waiting for data..."
                 text_color = '#6c757d'
+            else:
+                match state.state:
+                    case LayerState.ERROR:
+                        error_text = state.error or "Unknown error"
+                        status = f"Error: {error_text[:100]}..."
+                        text_color = '#dc3545'
+                    case LayerState.STOPPED:
+                        status = "Workflow ended"
+                        text_color = '#495057'  # Dark grey
+                    case LayerState.READY:
+                        status = "Ready"
+                        text_color = '#28a745'
+                    case LayerState.WAITING_FOR_DATA:
+                        status = "Waiting for data..."
+                        text_color = '#6c757d'
+                    case LayerState.WAITING_FOR_JOB:
+                        status = "Waiting for workflow..."
+                        text_color = '#6c757d'
 
             status_lines.append(
                 f"**{workflow_title} → {output_title}**: "
@@ -777,13 +775,17 @@ class PlotGridTabs:
 
         Called from SessionUpdater's periodic callback. This method:
         1. Forwards data updates to existing session pipes
-        2. Checks all layers in all grids for data availability
-        3. Sets up session components for layers that have data but aren't set up yet
+        2. Checks all layers for version changes (state transitions)
+        3. Rebuilds cell widgets when versions change or layers are newly set up
+
+        Version-based change detection replaces callback-based updates for state
+        changes (waiting/ready/stopped/error). Polling at ~100ms intervals is
+        acceptable for config UI updates.
         """
         # Forward data updates from PlotDataService to session pipes
         self._session_plot_manager.update_pipes()
 
-        # Check all layers in all grids for setup
+        # Check all layers in all grids for setup and version changes
         for grid_id, plot_grid in self._grid_widgets.items():
             grid_config = self._orchestrator.get_grid(grid_id)
             if grid_config is None:
@@ -794,27 +796,43 @@ class PlotGridTabs:
 
                 for layer in cell.layers:
                     layer_id = layer.layer_id
+                    state = self._plot_data_service.get(layer_id)
 
-                    # Check if layer transitions from not-set-up to set-up
+                    # Check for version changes or new layers
+                    current_version = state.version if state is not None else -1
+                    last_version = self._last_seen_versions.get(layer_id)
+
+                    # Detect: new layers (never seen) or version changes
+                    if last_version is None or current_version != last_version:
+                        self._last_seen_versions[layer_id] = current_version
+                        cell_updated = True
+                        logger.debug(
+                            "Layer %s version changed: %s -> %d",
+                            layer_id,
+                            last_version,
+                            current_version,
+                        )
+
+                    # Also check if layer transitions from not-set-up to set-up
                     had_layer = self._session_plot_manager.has_layer(layer_id)
                     dmap = self._session_plot_manager.get_dmap(layer_id)
                     if not had_layer and dmap is not None:
                         cell_updated = True
                         logger.debug("Set up session plot for layer_id=%s", layer_id)
 
-                # Update widget if any layer was newly set up.
+                # Update widget if any layer changed.
                 # Defer insertion to allow Bokeh to process any pending model
                 # updates from pipe.send() calls in update_pipes() above. Without
                 # deferral, widget removal can race with DynamicMap updates,
                 # causing KeyError when Panel tries to access removed models.
                 if cell_updated:
-                    if (plot := self._get_session_composed_plot(cell)) is not None:
-                        widget = self._create_cell_widget(cell_id, cell, plot)
-                        pn.state.execute(
-                            lambda g=cell.geometry,
-                            w=widget,
-                            pg=plot_grid: pg.insert_widget_at(g, w)
-                        )
+                    session_plot = self._get_session_composed_plot(cell)
+                    widget = self._create_cell_widget(cell_id, cell, session_plot)
+                    pn.state.execute(
+                        lambda g=cell.geometry,
+                        w=widget,
+                        pg=plot_grid: pg.insert_widget_at(g, w)
+                    )
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events and shutdown manager."""

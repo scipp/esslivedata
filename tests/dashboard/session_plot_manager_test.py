@@ -85,7 +85,8 @@ class TestSessionPlotManager:
         layer_id = LayerId(uuid4())
         plotter = FakePlotter()
         plotter.compute({'data': 1})  # Populate cached state
-        plot_data_service.set_plotter(layer_id, plotter)
+        plot_data_service.job_started(layer_id, plotter)
+        plot_data_service.data_arrived(layer_id)  # Transition to READY
 
         dmap = session_manager.get_dmap(layer_id)
 
@@ -100,7 +101,8 @@ class TestSessionPlotManager:
         layer_id = LayerId(uuid4())
         plotter = FakePlotter()
         plotter.compute({'data': 1})  # Populate cached state
-        plot_data_service.set_plotter(layer_id, plotter)
+        plot_data_service.job_started(layer_id, plotter)
+        plot_data_service.data_arrived(layer_id)  # Transition to READY
 
         dmap1 = session_manager.get_dmap(layer_id)
         dmap2 = session_manager.get_dmap(layer_id)
@@ -129,7 +131,8 @@ class TestSessionPlotManager:
         layer_id = LayerId(uuid4())
         plotter = FakePlotter()
         plotter.compute({'data': 1})  # Populate cached state
-        plot_data_service.set_plotter(layer_id, plotter)
+        plot_data_service.job_started(layer_id, plotter)
+        plot_data_service.data_arrived(layer_id)  # Transition to READY
 
         # Set up the layer via get_dmap
         session_manager.get_dmap(layer_id)
@@ -158,7 +161,8 @@ class TestSessionPlotManager:
         layer_id = LayerId(uuid4())
         plotter = FakePlotter(scale='linear')
         plotter.compute({'data': 1})  # Populate cached state
-        plot_data_service.set_plotter(layer_id, plotter)
+        plot_data_service.job_started(layer_id, plotter)
+        plot_data_service.data_arrived(layer_id)  # Transition to READY
 
         # Set up layer in session via get_dmap
         dmap_original = session_manager.get_dmap(layer_id)
@@ -189,7 +193,8 @@ class TestSessionPlotManager:
         old_layer_id = LayerId(uuid4())
         plotter_linear = FakePlotter(scale='linear')
         plotter_linear.compute({'data': 1})  # Populate cached state
-        plot_data_service.set_plotter(old_layer_id, plotter_linear)
+        plot_data_service.job_started(old_layer_id, plotter_linear)
+        plot_data_service.data_arrived(old_layer_id)  # Transition to READY
 
         # Set up with linear scale via get_dmap
         dmap_linear = session_manager.get_dmap(old_layer_id)
@@ -201,7 +206,8 @@ class TestSessionPlotManager:
         new_layer_id = LayerId(uuid4())
         plotter_log = FakePlotter(scale='log')
         plotter_log.compute({'data': 2})  # Populate cached state
-        plot_data_service.set_plotter(new_layer_id, plotter_log)
+        plot_data_service.job_started(new_layer_id, plotter_log)
+        plot_data_service.data_arrived(new_layer_id)  # Transition to READY
 
         # update_pipes cleans up orphaned old layer
         session_manager.update_pipes()
@@ -225,7 +231,8 @@ class TestSessionPlotManager:
         layer_id = LayerId(uuid4())
         plotter = FakePlotter()
         plotter.compute({'data': 1})  # Populate cached state and mark dirty
-        plot_data_service.set_plotter(layer_id, plotter)
+        plot_data_service.job_started(layer_id, plotter)
+        plot_data_service.data_arrived(layer_id)  # Transition to READY
 
         # Set up layer via get_dmap - presenter is created and dirty flag is reset
         session_manager.get_dmap(layer_id)
@@ -250,7 +257,8 @@ class TestSessionPlotManager:
         layer_id = LayerId(uuid4())
         plotter_a = FakePlotter()
         plotter_a.compute({'data': 1})
-        plot_data_service.set_plotter(layer_id, plotter_a)
+        plot_data_service.job_started(layer_id, plotter_a)
+        plot_data_service.data_arrived(layer_id)  # Transition to READY
 
         # Set up layer via get_dmap
         session_manager.get_dmap(layer_id)
@@ -260,7 +268,8 @@ class TestSessionPlotManager:
         # Simulate workflow restart: new plotter for same layer_id
         plotter_b = FakePlotter()
         plotter_b.compute({'data': 2})
-        plot_data_service.set_plotter(layer_id, plotter_b)
+        plot_data_service.job_started(layer_id, plotter_b)  # Transitions to WAITING
+        plot_data_service.data_arrived(layer_id)  # Transition to READY
 
         # update_pipes should detect plotter change and invalidate
         session_manager.update_pipes()
