@@ -121,7 +121,11 @@ class TestSessionPlotManager:
     def test_invalidate_layer_clears_cached_components(
         self, plot_data_service, session_manager
     ):
-        """Test that invalidate_layer removes cached components."""
+        """Test that invalidate_layer removes cached components.
+
+        In the real flow, invalidate_layer() is called when a layer is orphaned
+        (removed from PlotDataService). This test simulates that scenario.
+        """
         layer_id = LayerId(uuid4())
         plotter = FakePlotter()
         plotter.compute({'data': 1})  # Populate cached state
@@ -131,10 +135,14 @@ class TestSessionPlotManager:
         session_manager.setup_layer(layer_id)
         assert session_manager.has_layer(layer_id)
 
-        # Invalidate
+        # Simulate layer being removed from PlotDataService (orphaned)
+        plot_data_service.remove(layer_id)
+
+        # Invalidate (as would happen in update_pipes orphan cleanup)
         session_manager.invalidate_layer(layer_id)
 
         assert not session_manager.has_layer(layer_id)
+        # get_dmap() attempts auto-setup, but fails since layer not in PlotDataService
         assert session_manager.get_dmap(layer_id) is None
 
     def test_update_pipes_cleans_up_orphaned_layers(

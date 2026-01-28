@@ -15,17 +15,10 @@ in the correct session context.
 
 from __future__ import annotations
 
-import logging
-from typing import TYPE_CHECKING
-
 import holoviews as hv
 
 from .plot_data_service import LayerId, PlotDataService
-
-if TYPE_CHECKING:
-    from .plots import Presenter
-
-logger = logging.getLogger(__name__)
+from .plots import Presenter
 
 
 class SessionPlotManager:
@@ -51,9 +44,11 @@ class SessionPlotManager:
 
     def get_dmap(self, layer_id: LayerId) -> hv.DynamicMap | hv.Element | None:
         """
-        Get existing DynamicMap or Element for a layer, or None if not yet created.
+        Get DynamicMap or Element for a layer, attempting setup if not yet created.
 
-        Use `setup_layer` to create DynamicMaps/Elements for new layers.
+        Automatically calls `setup_layer` if the layer hasn't been set up yet.
+        This eliminates the "flash to placeholder" when layer data is already
+        available (e.g., static overlays or when workflow is already running).
 
         Parameters
         ----------
@@ -63,8 +58,11 @@ class SessionPlotManager:
         Returns
         -------
         :
-            The session's DynamicMap or Element for this layer, or None if not set up.
+            The session's DynamicMap or Element for this layer, or None if
+            data is not yet available.
         """
+        if layer_id not in self._dmaps:
+            self.setup_layer(layer_id)
         return self._dmaps.get(layer_id)
 
     def has_layer(self, layer_id: LayerId) -> bool:
@@ -102,30 +100,15 @@ class SessionPlotManager:
             return None
 
         try:
-            # Use Presenter pattern - plotter creates appropriate presenter
             presenter = state.plotter.create_presenter()
-
-            # Create session-bound Pipe with initial state from plotter's cache
-            # (either pre-computed HoloViews elements or raw data for kdims plotters)
             pipe = hv.streams.Pipe(data=state.plotter.get_cached_state())
             dmap = presenter.present(pipe)
-
             self._presenters[layer_id] = presenter
             self._pipes[layer_id] = pipe
             self._dmaps[layer_id] = dmap
-
-            logger.debug(
-                "Created session DynamicMap for layer_id=%s",
-                layer_id,
-            )
-
             return dmap
 
         except Exception:
-            logger.exception(
-                "Failed to create session DynamicMap for layer_id=%s",
-                layer_id,
-            )
             return None
 
     def invalidate_layer(self, layer_id: LayerId) -> None:
@@ -142,7 +125,6 @@ class SessionPlotManager:
         self._presenters.pop(layer_id, None)
         self._pipes.pop(layer_id, None)
         self._dmaps.pop(layer_id, None)
-        logger.debug("Invalidated session cache for layer_id=%s", layer_id)
 
     def update_pipes(self) -> set[LayerId]:
         """
@@ -174,21 +156,11 @@ class SessionPlotManager:
             if not presenter.has_pending_update():
                 continue
 
-            try:
-                # Consume update from presenter and send to session pipe
-                session_pipe = self._pipes.get(layer_id)
-                if session_pipe is not None:
-                    session_pipe.send(presenter.consume_update())
-                    updated_layers.add(layer_id)
-                    logger.debug(
-                        "Forwarded state update to session pipe for layer_id=%s",
-                        layer_id,
-                    )
-            except Exception:
-                logger.exception(
-                    "Failed to forward state to session pipe for layer_id=%s",
-                    layer_id,
-                )
+            # Consume update from presenter and send to session pipe
+            session_pipe = self._pipes.get(layer_id)
+            if session_pipe is not None:
+                session_pipe.send(presenter.consume_update())
+                updated_layers.add(layer_id)
 
         return updated_layers
 
@@ -201,4 +173,3 @@ class SessionPlotManager:
         self._presenters.clear()
         self._pipes.clear()
         self._dmaps.clear()
-        logger.debug("SessionPlotManager cleaned up")
