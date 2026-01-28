@@ -24,6 +24,7 @@ from .orchestrator import Orchestrator
 from .plot_orchestrator import PlotOrchestrator
 from .plotting_controller import PlottingController
 from .roi_publisher import ROIPublisher
+from .service_registry import ServiceRegistry
 from .stream_manager import StreamManager
 from .transport import Transport
 from .workflow_controller import WorkflowController
@@ -117,6 +118,7 @@ class DashboardServices:
             data_service=self.data_service, pipe_factory=self._pipe_factory
         )
         self.job_service = JobService(logger=self._logger)
+        self.service_registry = ServiceRegistry(logger=self._logger)
         self.job_controller = JobController(
             command_service=self.command_service, job_service=self.job_service
         )
@@ -178,5 +180,6 @@ class DashboardServices:
             self._transport_resources.message_source,
             data_service=self.data_service,
             job_service=self.job_service,
+            service_registry=self.service_registry,
             job_orchestrator=self.job_orchestrator,
         )

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from collections import defaultdict
 from typing import Any, Generic
 
 from ..handlers.config_handler import ConfigProcessor
 from .handler import Accumulator, PreprocessorFactory
-from .job import JobResult, JobStatus
+from .job import JobResult, JobStatus, ServiceState, ServiceStatus
 from .job_manager import JobFactory, JobManager, WorkflowData
 from .job_manager_adapter import JobManagerAdapter
 from .message import (
@@ -95,9 +96,8 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._message_preprocessor = MessagePreprocessor(
             factory=preprocessor_factory, logger=self._logger
         )
-        self._job_manager = JobManager(
-            job_factory=JobFactory(instrument=preprocessor_factory.instrument)
-        )
+        instrument = preprocessor_factory.instrument
+        self._job_manager = JobManager(job_factory=JobFactory(instrument=instrument))
         self._job_manager_adapter = JobManagerAdapter(
             job_manager=self._job_manager, logger=self._logger
         )
@@ -108,8 +108,25 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._last_status_update: int | None = None
         self._status_update_interval = 2_000_000_000  # 2 seconds
 
+        # Service heartbeat state
+        self._instrument = instrument.name
+        self._namespace = instrument.active_namespace or "unknown"
+        self._worker_id = str(uuid.uuid4())
+        self._started_at = time.time_ns()
+        self._messages_processed = 0
+        self._service_state = ServiceState.starting
+        self._service_error: str | None = None
+        self._has_processed_first_batch = False
+
     def process(self) -> None:
+        # Transition from starting to running on first process cycle
+        if not self._has_processed_first_batch:
+            self._has_processed_first_batch = True
+            self._service_state = ServiceState.running
+            self._logger.info('Service transitioned to running state')
+
         messages = self._source.get_messages()
+        self._messages_processed += len(messages)
         self._logger.debug('Processing %d messages', len(messages))
         config_messages: list[Message[Tin]] = []
         data_messages: list[Message[Tin]] = []
@@ -181,12 +198,74 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             if timestamp - self._last_status_update < self._status_update_interval:
                 return
         self._last_status_update = timestamp
+
+        # Publish job statuses
         job_statuses = self._job_manager.get_all_job_statuses()
         messages = [
             _job_status_to_message(status, timestamp=timestamp)
             for status in job_statuses
         ]
+
+        # Publish service heartbeat
+        service_status = self._get_service_status(job_statuses)
+        messages.append(_service_status_to_message(service_status, timestamp=timestamp))
+
         self._sink.publish_messages(messages)
+
+    def _get_service_status(self, job_statuses: list[JobStatus]) -> ServiceStatus:
+        """Get the current service status for heartbeat publishing."""
+        return ServiceStatus(
+            instrument=self._instrument,
+            namespace=self._namespace,
+            worker_id=self._worker_id,
+            state=self._service_state,
+            started_at=self._started_at,
+            active_job_count=len(job_statuses),
+            messages_processed=self._messages_processed,
+            error=self._service_error,
+        )
+
+    def shutdown(self) -> None:
+        """Transition to stopping state and send heartbeat.
+
+        Called by Service at the beginning of graceful shutdown to notify the
+        dashboard that this worker is shutting down intentionally.
+        """
+        self._logger.info('Service shutting down, sending stopping heartbeat')
+        self._service_state = ServiceState.stopping
+        self._send_final_heartbeat()
+
+    def report_stopped(self) -> None:
+        """Transition to stopped state and send final heartbeat.
+
+        Called by Service after worker thread has stopped to notify the
+        dashboard that shutdown completed successfully.
+        """
+        self._logger.info('Service stopped, sending final heartbeat')
+        self._service_state = ServiceState.stopped
+        self._send_final_heartbeat()
+
+    def report_error(self, error_message: str) -> None:
+        """Transition to error state and send final heartbeat.
+
+        Called by Service when an unhandled exception occurs to notify the
+        dashboard that this worker encountered a fatal error.
+        """
+        self._logger.error('Service error: %s', error_message)
+        self._service_state = ServiceState.error
+        self._service_error = error_message
+        self._send_final_heartbeat()
+
+    def _send_final_heartbeat(self) -> None:
+        """Send a final service heartbeat with current state."""
+        timestamp = time.time_ns()
+        job_statuses = self._job_manager.get_all_job_statuses()
+        service_status = self._get_service_status(job_statuses)
+        message = _service_status_to_message(service_status, timestamp=timestamp)
+        try:
+            self._sink.publish_messages([message])
+        except Exception:
+            self._logger.exception('Failed to send final heartbeat')
 
 
 def _job_result_to_message(result: JobResult) -> Message:
@@ -204,4 +283,8 @@ def _job_result_to_message(result: JobResult) -> Message:
 
 
 def _job_status_to_message(status: JobStatus, timestamp: int) -> Message:
+    return Message(timestamp=timestamp, stream=STATUS_STREAM_ID, value=status)
+
+
+def _service_status_to_message(status: ServiceStatus, timestamp: int) -> Message:
     return Message(timestamp=timestamp, stream=STATUS_STREAM_ID, value=status)

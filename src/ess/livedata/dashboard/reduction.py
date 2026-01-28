@@ -14,6 +14,7 @@ from panel.theme.material import Material
 from ess.livedata import Service
 
 from .dashboard import DashboardBase
+from .widgets.backend_status_widget import BackendStatusWidget
 from .widgets.job_status_widget import JobStatusListWidget
 from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
@@ -151,6 +152,10 @@ class ReductionApp(DashboardBase):
             job_service=self._services.job_service,
         )
 
+        backend_status_widget = BackendStatusWidget(
+            service_registry=self._services.service_registry,
+        )
+
         plot_grid_tabs = PlotGridTabs(
             plot_orchestrator=self._services.plot_orchestrator,
             # Temporary hack, will likely get this from JobOrchestrator, or make
@@ -159,6 +164,7 @@ class ReductionApp(DashboardBase):
             plotting_controller=self._services.plotting_controller,
             job_status_widget=job_status_widget,
             workflow_status_widget=workflow_status_widget,
+            backend_status_widget=backend_status_widget,
         )
 
         return plot_grid_tabs.panel
