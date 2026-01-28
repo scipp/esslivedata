@@ -224,7 +224,7 @@ class FakePlottingController:
         )
 
         # Use real StreamManager for subscription (avoids duplicating logic)
-        self._stream_manager.make_stream(
+        return self._stream_manager.make_stream(
             keys_by_role,
             on_data=on_data,
         )
@@ -1836,3 +1836,70 @@ class TestPlotConfigIsStatic:
             params=FakePlotParams(),
         )
         assert config.output_name == 'My Rectangles'
+
+
+class TestDataSubscriptionCleanup:
+    """Tests for data subscription cleanup on workflow restart."""
+
+    def test_workflow_restart_cleans_up_old_data_subscription(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        job_orchestrator,
+        workflow_id,
+        workflow_spec,
+        fake_data_service,
+    ):
+        """When workflow restarts, old data subscription is unregistered."""
+        # Add cell with layer
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        add_cell_with_layer(plot_orchestrator, grid_id, plot_cell[0], plot_cell[1])
+
+        # Commit workflow to create first data subscription
+        job_ids_1 = commit_workflow_for_test(
+            job_orchestrator, workflow_id, workflow_spec
+        )
+
+        # Check subscriber count after first commit
+        initial_subscriber_count = len(fake_data_service._subscribers)
+        assert initial_subscriber_count >= 1
+
+        # Restart workflow (stop + start)
+        job_orchestrator.stop_workflow(workflow_id)
+        job_ids_2 = commit_workflow_for_test(
+            job_orchestrator, workflow_id, workflow_spec
+        )
+
+        # Subscriber count should stay the same (old cleaned up, new added)
+        assert len(fake_data_service._subscribers) == initial_subscriber_count
+        # Job numbers should be different
+        assert job_ids_1[0].job_number != job_ids_2[0].job_number
+
+    def test_layer_removal_cleans_up_data_subscription(
+        self,
+        plot_orchestrator,
+        plot_cell,
+        job_orchestrator,
+        workflow_id,
+        workflow_spec,
+        fake_data_service,
+    ):
+        """When layer is removed, its data subscription is unregistered."""
+        # Add cell with layer
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        cell_id = add_cell_with_layer(
+            plot_orchestrator, grid_id, plot_cell[0], plot_cell[1]
+        )
+
+        # Commit workflow to create data subscription
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+
+        # Check subscriber count
+        subscriber_count_with_layer = len(fake_data_service._subscribers)
+        assert subscriber_count_with_layer >= 1
+
+        # Remove the cell (which removes the layer)
+        plot_orchestrator.remove_cell(cell_id)
+
+        # Subscriber should be removed
+        assert len(fake_data_service._subscribers) == subscriber_count_with_layer - 1

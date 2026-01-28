@@ -296,6 +296,7 @@ class PlotOrchestrator:
         self._layer_subscriptions: dict[LayerId, LayerSubscription] = {}
         self._layer_to_cell: dict[LayerId, CellId] = {}
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
+        self._data_subscriptions: dict[LayerId, Any] = {}  # DataServiceSubscriber
 
         # Parse templates (requires plotter registry, so must be done here)
         self._templates = self._parse_grid_specs(list(raw_templates))
@@ -602,6 +603,10 @@ class PlotOrchestrator:
         if layer_id in self._layer_subscriptions:
             self._layer_subscriptions[layer_id].unsubscribe()
             del self._layer_subscriptions[layer_id]
+        # Clean up data subscription
+        if layer_id in self._data_subscriptions:
+            self._data_service.unregister_subscriber(self._data_subscriptions[layer_id])
+            del self._data_subscriptions[layer_id]
         # Clean up from PlotDataService
         if self._plot_data_service is not None:
             self._plot_data_service.remove(layer_id)
@@ -765,6 +770,11 @@ class PlotOrchestrator:
             self._notify_cell_updated(grid_id, cell_id, cell)
             return
 
+        # Cleanup old data subscription if this layer had one (e.g., workflow restart)
+        if layer_id in self._data_subscriptions:
+            self._data_service.unregister_subscriber(self._data_subscriptions[layer_id])
+            del self._data_subscriptions[layer_id]
+
         # Register plotter with PlotDataService (resets any previous error/stopped)
         self._plot_data_service.set_plotter(layer_id, plotter)
 
@@ -788,12 +798,13 @@ class PlotOrchestrator:
 
         # Set up data pipeline - on_data will be called when data arrives
         try:
-            self._plotting_controller.setup_pipeline(
+            subscriber = self._plotting_controller.setup_pipeline(
                 keys_by_role=ready.keys_by_role,
                 plot_name=config.plot_name,
                 params=config.params,
                 on_data=on_data,
             )
+            self._data_subscriptions[layer_id] = subscriber
         except Exception:
             error_msg = traceback.format_exc()
             self._logger.exception(

@@ -12,6 +12,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
 )
 
+from .data_service import DataServiceSubscriber
 from .job_service import JobService
 from .plot_params import create_extractors_from_params
 from .plotting import PlotterSpec, plotter_registry
@@ -124,7 +125,7 @@ class PlottingController:
         plot_name: str,
         params: dict | pydantic.BaseModel,
         on_data: Callable[[dict[ResultKey, Any]], None],
-    ) -> None:
+    ) -> DataServiceSubscriber[ResultKey]:
         """
         Set up data pipeline for any plot type.
 
@@ -144,6 +145,13 @@ class PlottingController:
         on_data
             Callback invoked on every data update with the assembled data.
             Called when at least one key from each role has data.
+
+        Returns
+        -------
+        :
+            The data subscriber. Can be unregistered via
+            DataService.unregister_subscriber() to stop receiving updates
+            (e.g., when workflow restarts).
         """
         # Validate params if dict, pass through if already a model
         if isinstance(params, dict):
@@ -158,7 +166,7 @@ class PlottingController:
 
         # Standard path: single subscription with role-aware assembly
         extractors = create_extractors_from_params(all_keys, window, spec)
-        self._stream_manager.make_stream(
+        return self._stream_manager.make_stream(
             keys_by_role=keys_by_role,
             on_data=on_data,
             extractors=extractors,

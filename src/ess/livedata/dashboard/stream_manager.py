@@ -9,7 +9,7 @@ from typing import Any
 
 from ess.livedata.config.workflow_spec import ResultKey
 
-from .data_service import DataService
+from .data_service import DataService, DataServiceSubscriber
 from .data_subscriber import DataSubscriber
 
 
@@ -24,7 +24,7 @@ class StreamManager:
         keys_by_role: dict[str, list[ResultKey]],
         on_data: Callable[[dict[ResultKey, Any]], None],
         extractors: dict[ResultKey, Any] | None = None,
-    ) -> None:
+    ) -> DataServiceSubscriber[ResultKey]:
         """
         Create a data stream for the given result keys organized by role.
 
@@ -45,6 +45,13 @@ class StreamManager:
         extractors
             Optional dict mapping keys to UpdateExtractor instances. If not
             provided, uses LatestValueExtractor for all keys.
+
+        Returns
+        -------
+        :
+            The registered subscriber. Can be passed to
+            DataService.unregister_subscriber() to stop receiving updates
+            (e.g., when workflow restarts).
         """
         from .extractors import LatestValueExtractor
 
@@ -61,3 +68,4 @@ class StreamManager:
             on_data=on_data,
         )
         self.data_service.register_subscriber(subscriber)
+        return subscriber

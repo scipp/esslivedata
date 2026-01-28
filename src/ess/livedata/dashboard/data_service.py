@@ -164,6 +164,26 @@ class DataService(MutableMapping[K, V]):
         existing_data = self._build_subscriber_data(subscriber)
         subscriber.trigger(existing_data)
 
+    def unregister_subscriber(self, subscriber: DataServiceSubscriber[K]) -> bool:
+        """
+        Unregister a subscriber, stopping it from receiving updates.
+
+        Parameters
+        ----------
+        subscriber:
+            The subscriber to unregister.
+
+        Returns
+        -------
+        :
+            True if the subscriber was found and removed, False otherwise.
+        """
+        try:
+            self._subscribers.remove(subscriber)
+            return True
+        except ValueError:
+            return False
+
     def _notify_subscribers(self, updated_keys: set[K]) -> None:
         """
         Notify relevant subscribers about data updates.

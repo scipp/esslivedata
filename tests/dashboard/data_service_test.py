@@ -119,6 +119,31 @@ def test_register_subscriber_adds_to_list(data_service: DataService[str, int]):
     _ = get_pipe()  # Ensure pipe exists
 
 
+def test_unregister_subscriber_removes_from_list(data_service: DataService[str, int]):
+    subscriber, get_pipe = create_test_subscriber({"key1"})
+    data_service.register_subscriber(subscriber)
+
+    result = data_service.unregister_subscriber(subscriber)
+
+    assert result is True
+    # Subscriber should no longer receive updates
+    data_service["key1"] = make_test_data(42)
+    pipe = get_pipe()
+    # Only received data from initial registration trigger, not the new update
+    assert len(pipe.sent_data) == 0
+
+
+def test_unregister_nonexistent_subscriber_returns_false(
+    data_service: DataService[str, int],
+):
+    subscriber, _ = create_test_subscriber({"key1"})
+    # Don't register the subscriber
+
+    result = data_service.unregister_subscriber(subscriber)
+
+    assert result is False
+
+
 def test_setitem_notifies_matching_subscriber(data_service: DataService[str, int]):
     subscriber, get_pipe = create_test_subscriber({"key1", "key2"})
     data_service.register_subscriber(subscriber)
