@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
-import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
+
+import structlog
 
 from ..config.acknowledgement import CommandAcknowledgement
 from ..config.models import ConfigKey
@@ -14,6 +15,8 @@ from ..core.job_manager import JobCommand
 from ..core.job_manager_adapter import JobManagerAdapter
 from ..core.message import RESPONSES_STREAM_ID, Message
 from ..kafka.message_adapter import RawConfigItem
+
+logger = structlog.get_logger(__name__)
 
 # Re-export for backwards compatibility with tests
 __all__ = ['ConfigProcessor', 'ConfigUpdate']
@@ -53,14 +56,12 @@ class ConfigProcessor:
         self,
         *,
         job_manager_adapter: JobManagerAdapter,
-        logger: logging.Logger | None = None,
     ) -> None:
         self._job_manager_adapter = job_manager_adapter
         self._actions = {
             'workflow_config': self._job_manager_adapter.set_workflow_with_config,
             JobCommand.key: self._job_manager_adapter.job_command,
         }
-        self._logger = logger or logging.getLogger(__name__)
 
     def process_messages(
         self, messages: list[Message[RawConfigItem]]
@@ -90,11 +91,11 @@ class ConfigProcessor:
                 config_key = update.key
                 value = update.value
 
-                self._logger.info(
-                    'Processing config message for source_name = %s: %s = %s',
-                    source_name,
-                    config_key,
-                    value,
+                logger.info(
+                    'processing_config_message',
+                    source_name=source_name,
+                    config_key=config_key,
+                    value=value,
                 )
 
                 if source_name is None:
@@ -104,19 +105,19 @@ class ConfigProcessor:
                 latest_updates[config_key][source_name] = update
 
             except Exception:
-                self._logger.exception('Error processing config message')
+                logger.exception('error_processing_config_message')
 
         # Process the latest updates
         response_messages: list[Message[CommandAcknowledgement]] = []
 
         for config_key, source_updates in latest_updates.items():
             for source_name, update in source_updates.items():
-                self._logger.debug(
-                    'Processing config key %s for source %s', config_key, source_name
+                logger.debug(
+                    'processing_config_key', config_key=config_key, source=source_name
                 )
                 try:
                     if (action := self._actions.get(config_key)) is None:
-                        self._logger.debug('Unknown config key: %s', config_key)
+                        logger.debug('unknown_config_key', config_key=config_key)
                         continue
                     result = action(source_name, update.value)
                     if result is not None:
@@ -125,10 +126,10 @@ class ConfigProcessor:
                         )
 
                 except Exception:
-                    self._logger.exception(
-                        'Error processing config key %s for source %s',
-                        config_key,
-                        source_name,
+                    logger.exception(
+                        'error_processing_config_key',
+                        config_key=config_key,
+                        source=source_name,
                     )
 
         return response_messages

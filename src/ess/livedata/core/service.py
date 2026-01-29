@@ -240,6 +240,18 @@ class Service(ServiceBase):
             default='INFO',
             help='Set the logging level',
         )
+        parser.add_argument(
+            '--log-json-file',
+            default=None,
+            metavar='PATH',
+            help='Write JSON-formatted logs to this file',
+        )
+        parser.add_argument(
+            '--no-stdout-log',
+            action='store_true',
+            default=False,
+            help='Disable logging to stdout',
+        )
         return parser
 
 

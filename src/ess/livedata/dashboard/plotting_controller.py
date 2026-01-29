@@ -2,7 +2,6 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable, Hashable
 from typing import Any, TypeVar
 
@@ -38,8 +37,6 @@ class PlottingController:
         Service for accessing job data and information.
     stream_manager:
         Manager for creating data streams.
-    logger:
-        Logger instance. If None, creates a logger using the module name.
     roi_publisher:
         Publisher for ROI updates to Kafka. If None, ROI publishing is disabled.
     """
@@ -48,12 +45,10 @@ class PlottingController:
         self,
         job_service: JobService,
         stream_manager: StreamManager,
-        logger: logging.Logger | None = None,
         roi_publisher: ROIPublisher | None = None,
     ) -> None:
         self._job_service = job_service
         self._stream_manager = stream_manager
-        self._logger = logger or logging.getLogger(__name__)
         self._roi_publisher = roi_publisher
 
     def get_available_plotters_from_spec(

@@ -4,6 +4,7 @@
 import logging
 
 import pytest
+from structlog.testing import capture_logs
 
 from ess.livedata.config import instrument_registry, workflow_spec
 from ess.livedata.config.models import ConfigKey
@@ -211,9 +212,7 @@ def configured_dummy_detector() -> LivedataApp:
 
 def test_message_with_unknown_schema_is_ignored(
     configured_dummy_detector: LivedataApp,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(logging.INFO)
     app = configured_dummy_detector
     sink = app.sink
 
@@ -222,27 +221,24 @@ def test_message_with_unknown_schema_is_ignored(
     app.publish_data(topic=app.detector_topic, time=1, data=b'corrupt data')
     app.publish_events(size=1000, time=1, reuse_events=True)
 
-    app.step()
+    with capture_logs() as captured:
+        app.step()
+
     # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
     # counts_total, counts_in_toa + 2 initial ROI readbacks
     assert len(sink.messages) == 8
     assert sink.messages[0].value.values.sum() == 2000
 
-    # Check log messages for exceptions
-    assert "has an unknown schema. Skipping." in caplog.text
-    warning_records = [
-        r
-        for r in caplog.records
-        if r.levelname == "WARNING" and "ess.livedata.kafka.message_adapter" in r.name
-    ]
-    assert any("has an unknown schema. Skipping." in r.message for r in warning_records)
+    # Check log messages for warnings
+    warning_logs = [log for log in captured if log['log_level'] == 'warning']
+    assert any(
+        "has an unknown schema. Skipping." in log['event'] for log in warning_logs
+    )
 
 
 def test_message_that_cannot_be_decoded_is_ignored(
     configured_dummy_detector: LivedataApp,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(logging.INFO)
     app = configured_dummy_detector
     sink = app.sink
 
@@ -251,18 +247,15 @@ def test_message_that_cannot_be_decoded_is_ignored(
     app.publish_data(topic=app.detector_topic, time=1, data=b'1234ev44data')
     app.publish_events(size=1000, time=1, reuse_events=True)
 
-    app.step()
+    with capture_logs() as captured:
+        app.step()
+
     # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
     # counts_total, counts_in_toa + 2 initial ROI readbacks
     assert len(sink.messages) == 8
     assert sink.messages[0].value.values.sum() == 2000
 
     # Check log messages for exceptions
-    assert "Error adapting message" in caplog.text
-    assert "unpack_from requires a buffer" in caplog.text
-    error_records = [
-        r
-        for r in caplog.records
-        if r.levelname == "ERROR" and "ess.livedata.kafka.message_adapter" in r.name
-    ]
-    assert any("unpack_from requires a buffer" in r.message for r in error_records)
+    error_logs = [log for log in captured if log['log_level'] == 'error']
+    assert any("Error adapting message" in log['event'] for log in error_logs)
+    assert any("unpack_from requires a buffer" in str(log) for log in error_logs)

@@ -2,7 +2,6 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for the ServiceRegistry dashboard component."""
 
-import logging
 import time
 
 from ess.livedata.core.job import ServiceState, ServiceStatus
@@ -26,7 +25,7 @@ class TestMakeWorkerKey:
 
 class TestServiceRegistry:
     def test_status_updated_stores_status(self) -> None:
-        registry = ServiceRegistry(logger=logging.getLogger(__name__))
+        registry = ServiceRegistry()
         status = ServiceStatus(
             instrument="dream",
             namespace="test_namespace",
@@ -44,7 +43,7 @@ class TestServiceRegistry:
         assert registry.worker_statuses[worker_key] == status
 
     def test_status_updated_notifies_subscribers(self) -> None:
-        registry = ServiceRegistry(logger=logging.getLogger(__name__))
+        registry = ServiceRegistry()
         notifications = []
 
         def on_update():
@@ -69,7 +68,7 @@ class TestServiceRegistry:
         assert len(notifications) == 2  # Called again on update
 
     def test_multiple_workers_tracked_separately(self) -> None:
-        registry = ServiceRegistry(logger=logging.getLogger(__name__))
+        registry = ServiceRegistry()
         status1 = ServiceStatus(
             instrument="dream",
             namespace="ns1",
@@ -97,7 +96,7 @@ class TestServiceRegistry:
         assert registry.worker_statuses[make_worker_key(status2)] == status2
 
     def test_status_updated_replaces_existing(self) -> None:
-        registry = ServiceRegistry(logger=logging.getLogger(__name__))
+        registry = ServiceRegistry()
         status_old = ServiceStatus(
             instrument="dream",
             namespace="ns1",
@@ -126,7 +125,7 @@ class TestServiceRegistry:
         assert stored.active_job_count == 3
 
     def test_is_status_stale_returns_false_for_recent_status(self) -> None:
-        registry = ServiceRegistry(logger=logging.getLogger(__name__))
+        registry = ServiceRegistry()
         status = ServiceStatus(
             instrument="dream",
             namespace="ns1",
@@ -144,10 +143,7 @@ class TestServiceRegistry:
 
     def test_is_status_stale_returns_true_for_expired_status(self) -> None:
         # Use a very short timeout for testing
-        registry = ServiceRegistry(
-            logger=logging.getLogger(__name__),
-            heartbeat_timeout_ns=1_000_000,  # 1 ms
-        )
+        registry = ServiceRegistry(heartbeat_timeout_ns=1_000_000)  # 1 ms
         status = ServiceStatus(
             instrument="dream",
             namespace="ns1",
@@ -169,10 +165,7 @@ class TestServiceRegistry:
     def test_is_status_stale_returns_false_for_stopped_worker(self) -> None:
         """Stopped workers should never be considered stale."""
         # Use a very short timeout for testing
-        registry = ServiceRegistry(
-            logger=logging.getLogger(__name__),
-            heartbeat_timeout_ns=1_000_000,  # 1 ms
-        )
+        registry = ServiceRegistry(heartbeat_timeout_ns=1_000_000)  # 1 ms
         status = ServiceStatus(
             instrument="dream",
             namespace="ns1",
@@ -194,10 +187,7 @@ class TestServiceRegistry:
 
     def test_get_stale_workers_returns_only_stale(self) -> None:
         # Use a very short timeout for testing
-        registry = ServiceRegistry(
-            logger=logging.getLogger(__name__),
-            heartbeat_timeout_ns=1_000_000,  # 1 ms
-        )
+        registry = ServiceRegistry(heartbeat_timeout_ns=1_000_000)  # 1 ms
 
         # Add a worker that will become stale
         status_stale = ServiceStatus(
@@ -231,7 +221,7 @@ class TestServiceRegistry:
         assert make_worker_key(status_stale) in stale
 
     def test_get_worker_uptime_seconds(self) -> None:
-        registry = ServiceRegistry(logger=logging.getLogger(__name__))
+        registry = ServiceRegistry()
         # started_at is in nanoseconds
         started_at_ns = time.time_ns() - 60_000_000_000  # 60 seconds ago
         status = ServiceStatus(
@@ -252,12 +242,12 @@ class TestServiceRegistry:
         assert 59 <= uptime <= 61  # Allow for timing variance
 
     def test_get_worker_uptime_seconds_returns_none_for_unknown(self) -> None:
-        registry = ServiceRegistry(logger=logging.getLogger(__name__))
+        registry = ServiceRegistry()
         uptime = registry.get_worker_uptime_seconds("unknown:worker:key")
         assert uptime is None
 
     def test_get_last_seen_seconds_ago_returns_recent_value(self) -> None:
-        registry = ServiceRegistry(logger=logging.getLogger(__name__))
+        registry = ServiceRegistry()
         status = ServiceStatus(
             instrument="dream",
             namespace="ns1",
@@ -277,12 +267,12 @@ class TestServiceRegistry:
         assert last_seen < 1.0
 
     def test_get_last_seen_seconds_ago_returns_none_for_unknown(self) -> None:
-        registry = ServiceRegistry(logger=logging.getLogger(__name__))
+        registry = ServiceRegistry()
         last_seen = registry.get_last_seen_seconds_ago("unknown:worker:key")
         assert last_seen is None
 
     def test_get_last_seen_seconds_ago_increases_over_time(self) -> None:
-        registry = ServiceRegistry(logger=logging.getLogger(__name__))
+        registry = ServiceRegistry()
         status = ServiceStatus(
             instrument="dream",
             namespace="ns1",

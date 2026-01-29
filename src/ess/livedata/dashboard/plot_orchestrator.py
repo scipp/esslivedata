@@ -1127,7 +1127,6 @@ class PlotOrchestrator:
             if spec is not None:
                 specs.append(spec)
 
-        self._logger.info('Parsed %d grid spec(s)', len(specs))
         return specs
 
     def _parse_single_spec(self, raw: dict[str, Any]) -> GridSpec | None:
