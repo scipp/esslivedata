@@ -32,7 +32,7 @@ from ..plot_orchestrator import (
     SubscriptionId,
 )
 from ..plot_params import PlotAspectType, StretchMode
-from ..session_plot_manager import SessionPlotManager
+from ..session_layer import SessionLayer
 from ..session_updater import SessionUpdater
 from .plot_config_modal import PlotConfigModal
 from .plot_grid import GridCellStyles, PlotGrid
@@ -120,11 +120,8 @@ class PlotGridTabs:
         # Track grid widgets (insertion order determines tab position)
         self._grid_widgets: dict[GridId, PlotGrid] = {}
 
-        # Multi-session support: SessionPlotManager handles per-session components
-        self._session_plot_manager = SessionPlotManager(plot_data_service)
-
-        # Version tracking for state change detection via polling
-        self._last_seen_versions: dict[LayerId, int] = {}
+        # Per-session layer state (presenter, pipe, dmap, version)
+        self._session_layers: dict[LayerId, SessionLayer] = {}
 
         # Determine number of static tabs for stylesheet
         static_tab_count = 4 if backend_status_widget else 3
@@ -411,18 +408,9 @@ class PlotGridTabs:
         # Create widget with toolbars and content
         widget = self._create_cell_widget(cell_id, cell, session_plot)
 
-        # Record current versions for all layers to prevent redundant rebuilds.
-        # Without this, _poll_for_plot_updates would see last_version=None and
-        # trigger another rebuild on the next poll cycle.
-        # Note: _create_cell_widget calls _get_layer_states which validates all
-        # layers have state, so direct access is safe here.
-        for layer in cell.layers:
-            state = self._plot_data_service.get(layer.layer_id)
-            if state is None:
-                raise RuntimeError(
-                    f"Layer state missing for {layer.layer_id} after _get_layer_states"
-                )
-            self._last_seen_versions[layer.layer_id] = state.version
+        # Note: SessionLayer.create() already records state.version in
+        # last_seen_version, so _poll_for_plot_updates won't trigger
+        # redundant rebuilds.
 
         # Defer insertion for plots to allow Panel to update layout sizing.
         # When a workflow is already running with data, subscribing triggers
@@ -853,6 +841,8 @@ class PlotGridTabs:
         """
         Get composed plot from session-local DynamicMaps or static elements.
 
+        Creates SessionLayer instances on demand when data is available.
+
         Parameters
         ----------
         cell
@@ -863,14 +853,21 @@ class PlotGridTabs:
         :
             Composed plot from session DMaps/elements, or None if none available.
         """
-        if self._session_plot_manager is None:
-            return None
-
         plots = []
         for layer in cell.layers:
-            dmap = self._session_plot_manager.get_dmap(layer.layer_id)
-            if dmap is not None:
-                plots.append(dmap)
+            layer_id = layer.layer_id
+
+            # Get or create session layer
+            if layer_id not in self._session_layers:
+                state = self._plot_data_service.get(layer_id)
+                if state is not None:
+                    session_layer = SessionLayer.create(layer_id, state)
+                    if session_layer is not None:
+                        self._session_layers[layer_id] = session_layer
+
+            session_layer = self._session_layers.get(layer_id)
+            if session_layer is not None:
+                plots.append(session_layer.dmap)
 
         if not plots:
             return None
@@ -885,7 +882,7 @@ class PlotGridTabs:
         Poll PlotDataService for updates and set up new layers.
 
         Called from SessionUpdater's periodic callback. This method:
-        1. Forwards data updates to existing session pipes
+        1. Updates existing session layers - push data, clean up invalids
         2. Checks all layers for version changes (state transitions)
         3. Rebuilds cell widgets when versions change or layers are newly set up
 
@@ -893,23 +890,33 @@ class PlotGridTabs:
         changes (waiting/ready/stopped/error). Polling at ~100ms intervals is
         acceptable for config UI updates.
         """
-        # Forward data updates from PlotDataService to session pipes
-        self._session_plot_manager.update_pipes()
+        # Phase 1: Update existing session layers - push data, clean up invalids
+        for layer_id in list(self._session_layers.keys()):
+            session_layer = self._session_layers[layer_id]
+            state = self._plot_data_service.get(layer_id)
 
-        # Check all layers in all grids for setup and version changes
+            # Orphan or plotter replaced → delete from cache
+            # Cell rebuild will happen via version detection in Phase 2
+            if state is None or not session_layer.is_valid_for(state.plotter):
+                del self._session_layers[layer_id]
+                continue
+
+            # Push data updates to session pipe
+            session_layer.update_pipe()
+
+        # Phase 2: Check all layers in orchestrator for version changes
+        cells_to_rebuild: dict[CellId, tuple[GridId, PlotCell, PlotGrid]] = {}
+
         for grid_id, plot_grid in self._grid_widgets.items():
             grid_config = self._orchestrator.get_grid(grid_id)
             if grid_config is None:
                 continue
 
             for cell_id, cell in grid_config.cells.items():
-                cell_updated = False
-
                 for layer in cell.layers:
                     layer_id = layer.layer_id
                     state = self._plot_data_service.get(layer_id)
 
-                    # Check for version changes or new layers
                     if state is None:
                         # Should not happen: layers are registered before widgets
                         # are notified. Skip this layer but log for debugging.
@@ -918,17 +925,20 @@ class PlotGridTabs:
                             layer_id,
                         )
                         continue
-                    current_version = state.version
-                    last_version = self._last_seen_versions.get(layer_id)
 
-                    # Detect: new layers (never seen) or version changes.
-                    # Version increments on every state transition, so this catches
-                    # all changes including WAITING_FOR_DATA -> READY. When widget
-                    # rebuilds, _get_session_composed_plot() calls get_dmap() which
-                    # sets up session-local DynamicMaps as needed.
+                    # Get last seen version from session layer (if exists)
+                    session_layer = self._session_layers.get(layer_id)
+                    last_version = (
+                        session_layer.last_seen_version if session_layer else None
+                    )
+                    current_version = state.version
+
+                    # Detect: new layers (never seen) or version changes
                     if last_version is None or current_version != last_version:
-                        self._last_seen_versions[layer_id] = current_version
-                        cell_updated = True
+                        cells_to_rebuild[cell_id] = (grid_id, cell, plot_grid)
+                        # Update version tracking if session layer exists
+                        if session_layer is not None:
+                            session_layer.last_seen_version = current_version
                         logger.debug(
                             "Layer %s version changed: %s -> %d",
                             layer_id,
@@ -936,28 +946,26 @@ class PlotGridTabs:
                             current_version,
                         )
 
-                # Update widget if any layer changed.
-                # Defer insertion to allow Bokeh to process any pending model
-                # updates from pipe.send() calls in update_pipes() above. Without
-                # deferral, widget removal can race with DynamicMap updates,
-                # causing KeyError when Panel tries to access removed models.
-                if cell_updated:
-                    session_plot = self._get_session_composed_plot(cell)
-                    widget = self._create_cell_widget(cell_id, cell, session_plot)
-                    pn.state.execute(
-                        lambda g=cell.geometry,
-                        w=widget,
-                        pg=plot_grid: pg.insert_widget_at(g, w)
-                    )
+        # Phase 3: Rebuild affected cells
+        # Defer insertion to allow Bokeh to process any pending model updates
+        # from pipe.send() calls above. Without deferral, widget removal can
+        # race with DynamicMap updates, causing KeyError when Panel tries to
+        # access removed models.
+        for cell_id, (_grid_id, cell, plot_grid) in cells_to_rebuild.items():
+            session_plot = self._get_session_composed_plot(cell)
+            widget = self._create_cell_widget(cell_id, cell, session_plot)
+            pn.state.execute(
+                lambda g=cell.geometry, w=widget, pg=plot_grid: pg.insert_widget_at(
+                    g, w
+                )
+            )
 
     def shutdown(self) -> None:
-        """Unsubscribe from lifecycle events and shutdown manager."""
+        """Unsubscribe from lifecycle events and clean up session state."""
         if self._subscription_id is not None:
             self._orchestrator.unsubscribe_from_lifecycle(self._subscription_id)
             self._subscription_id = None
-        if self._session_plot_manager is not None:
-            self._session_plot_manager.cleanup()
-            self._session_plot_manager = None
+        self._session_layers.clear()
         self._grid_manager.shutdown()
 
     @property
