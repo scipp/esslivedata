@@ -76,6 +76,7 @@ class ReductionApp(DashboardBase):
         dev: bool = False,
         log_level: int,
         transport: str = 'kafka',
+        fetch_announcements: bool = True,
     ):
         super().__init__(
             instrument=instrument,
@@ -85,10 +86,15 @@ class ReductionApp(DashboardBase):
             port=5009,  # Default port for reduction dashboard
             transport=transport,
         )
+        self._fetch_announcements = fetch_announcements
         self._logger.info("Reduction dashboard initialized")
 
     def _create_announcements_pane(self) -> pn.pane.Markdown:
         """Create a Markdown pane that periodically reloads from URL."""
+        if not self._fetch_announcements:
+            return pn.pane.Markdown(
+                "*Announcements disabled.*", sizing_mode='stretch_width'
+            )
 
         def read_announcements() -> str:
             try:
@@ -176,6 +182,12 @@ def get_arg_parser() -> argparse.ArgumentParser:
         choices=['kafka', 'none'],
         default='kafka',
         help='Transport backend for message handling',
+    )
+    parser.add_argument(
+        '--no-fetch-announcements',
+        action='store_false',
+        dest='fetch_announcements',
+        help='Disable fetching announcements from external URL',
     )
     return parser
 
