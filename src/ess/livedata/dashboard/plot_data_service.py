@@ -126,7 +126,12 @@ class LayerStateMachine:
         Transition to READY when data arrives.
 
         Valid from: WAITING_FOR_DATA.
+        No-op if already in READY state (data continues to arrive after first update).
         """
+        if self._state == LayerState.READY:
+            # Already ready - subsequent data arrivals are expected, no-op
+            return
+
         if self._state != LayerState.WAITING_FOR_DATA:
             logger.warning(
                 "Invalid transition: data_arrived() called in state %s (expected %s)",
