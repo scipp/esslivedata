@@ -409,6 +409,14 @@ class PlotGridTabs:
         # Create widget with toolbars and content
         widget = self._create_cell_widget(cell_id, cell, session_plot)
 
+        # Record current versions for all layers to prevent redundant rebuilds.
+        # Without this, _poll_for_plot_updates would see last_version=None and
+        # trigger another rebuild on the next poll cycle.
+        for layer in cell.layers:
+            state = self._plot_data_service.get(layer.layer_id)
+            if state is not None:
+                self._last_seen_versions[layer.layer_id] = state.version
+
         # Defer insertion for plots to allow Panel to update layout sizing.
         # When a workflow is already running with data, subscribing triggers
         # plot creation synchronously (in subscribe_to_workflow's immediate
