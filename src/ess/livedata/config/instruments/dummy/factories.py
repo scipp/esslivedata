@@ -27,7 +27,11 @@ def setup_factories(instrument: Instrument) -> None:
     import sciline
 
     from ess.livedata.handlers.area_detector_view import AreaDetectorView
-    from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
+    from ess.livedata.handlers.detector_view import (
+        DetectorViewFactory,
+        InstrumentDetectorSource,
+        LogicalViewConfig,
+    )
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
 
     # Configure detector with explicit detector_number
@@ -38,10 +42,13 @@ def setup_factories(instrument: Instrument) -> None:
         ),
     )
 
-    # Create detector view for event-mode panel_0
-    _panel_0_view = DetectorLogicalView(instrument=instrument)
+    # Create detector view for event-mode panel_0 using Sciline-based factory
+    _panel_0_view = DetectorViewFactory(
+        data_source=InstrumentDetectorSource(instrument),
+        view_config=LogicalViewConfig(),  # Identity transform
+    )
 
-    specs.panel_0_view_handle.attach_factory()(_panel_0_view.make_view)
+    specs.panel_0_view_handle.attach_factory()(_panel_0_view.make_workflow)
 
     # Area detector view for area_panel (ad00 images)
     specs.area_panel_view_handle.attach_factory()(AreaDetectorView.view_factory())

@@ -14,7 +14,11 @@ from . import specs
 def setup_factories(instrument: Instrument) -> None:
     """Initialize NMX-specific factories and configure detectors."""
     # Lazy imports
-    from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
+    from ess.livedata.handlers.detector_view import (
+        DetectorViewFactory,
+        InstrumentDetectorSource,
+        LogicalViewConfig,
+    )
 
     # Configure detectors with computed arrays
     # TODO Unclear if this is transposed or not. Wait for updated files.
@@ -31,7 +35,10 @@ def setup_factories(instrument: Instrument) -> None:
             ).fold(dim=dim, sizes=sizes),
         )
 
-    # Create detector view
-    _nmx_panels_view = DetectorLogicalView(instrument=instrument)
+    # Create detector view using Sciline-based factory (identity transform)
+    _nmx_panels_view = DetectorViewFactory(
+        data_source=InstrumentDetectorSource(instrument),
+        view_config=LogicalViewConfig(),  # Identity transform
+    )
 
-    specs.panel_xy_view_handle.attach_factory()(_nmx_panels_view.make_view)
+    specs.panel_xy_view_handle.attach_factory()(_nmx_panels_view.make_workflow)

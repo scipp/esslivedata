@@ -12,7 +12,7 @@ from streaming_data_types import logdata_f144
 from ess.reduce import streaming
 
 from ..core.handler import Accumulator
-from .to_nxevent_data import DetectorEvents, MonitorEvents
+from .to_nxevent_data import MonitorEvents
 
 T = TypeVar('T')
 
@@ -159,48 +159,6 @@ class Cumulative(_CumulativeAccumulationMixin, Accumulator[sc.DataArray, sc.Data
     def add(self, timestamp: int, data: sc.DataArray) -> None:
         _ = timestamp
         self._add_cumulative(data)
-
-
-class GroupIntoPixels(Accumulator[DetectorEvents, sc.DataArray]):
-    def __init__(self, detector_number: sc.Variable):
-        self._chunks: list[DetectorEvents] = []
-        self._toa_unit = 'ns'
-        self._sizes = detector_number.sizes
-        self._dim = 'detector_number'
-        self._groups = detector_number.flatten(to=self._dim)
-
-    def add(self, timestamp: int, data: DetectorEvents) -> None:
-        # timestamp in function signature is required for compliance with Accumulator
-        # interface.
-        _ = timestamp
-        # We could easily support other units, but ev44 is always in ns so this should
-        # never happen.
-        if data.unit != self._toa_unit:
-            raise ValueError(f"Expected unit '{self._toa_unit}', got '{data.unit}'")
-        self._chunks.append(data)
-
-    def get(self) -> sc.DataArray:
-        # Could optimize the concatenate by reusing a buffer (directly write to it in
-        # self.add).
-        pixel_ids = (
-            np.concatenate([c.pixel_id for c in self._chunks])
-            if self._chunks
-            else np.array([], dtype=np.int32)
-        )
-        time_of_arrival = (
-            np.concatenate([c.time_of_arrival for c in self._chunks])
-            if self._chunks
-            else np.array([], dtype=np.int32)
-        )
-        da = sc.DataArray(
-            data=sc.array(dims=['event'], values=time_of_arrival, unit=self._toa_unit),
-            coords={self._dim: sc.array(dims=['event'], values=pixel_ids, unit=None)},
-        )
-        self._chunks.clear()
-        return da.group(self._groups).fold(dim=self._dim, sizes=self._sizes)
-
-    def clear(self) -> None:
-        self._chunks.clear()
 
 
 class CollectTOA(Accumulator[MonitorEvents, np.ndarray]):
