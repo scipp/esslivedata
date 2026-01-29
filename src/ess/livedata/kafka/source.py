@@ -41,6 +41,39 @@ class MultiConsumer(KafkaConsumer):
             messages.extend(consumer.consume(num_messages, timeout))
         return messages
 
+    def assignment(self) -> list:
+        """Return combined partition assignments from all consumers."""
+        assignments = []
+        for consumer in self._consumers:
+            if hasattr(consumer, 'assignment'):
+                assignments.extend(consumer.assignment())
+        return assignments
+
+    def get_watermark_offsets(self, partition, timeout: float = 1.0) -> tuple[int, int]:
+        """Get watermark offsets for a partition from the owning consumer."""
+        for consumer in self._consumers:
+            if not hasattr(consumer, 'assignment') or not hasattr(
+                consumer, 'get_watermark_offsets'
+            ):
+                continue
+            if partition in consumer.assignment():
+                return consumer.get_watermark_offsets(partition, timeout=timeout)
+        raise ValueError(f"No consumer found for partition {partition}")
+
+    def position(self, partitions: list) -> list:
+        """Get positions for partitions from their owning consumers."""
+        results = []
+        for partition in partitions:
+            for consumer in self._consumers:
+                if not hasattr(consumer, 'assignment') or not hasattr(
+                    consumer, 'position'
+                ):
+                    continue
+                if partition in consumer.assignment():
+                    results.extend(consumer.position([partition]))
+                    break
+        return results
+
 
 class KafkaMessageSource(MessageSource[KafkaMessage]):
     """

@@ -10,6 +10,7 @@ from ess.livedata.kafka.source import (
     BackgroundMessageSource,
     ConsumerHealthStatus,
     KafkaMessageSource,
+    MultiConsumer,
 )
 
 
@@ -564,3 +565,158 @@ class TestBackgroundMessageSource:
 
         captured = capsys.readouterr()
         assert "consecutive_errors" in captured.out
+
+
+class FakeTopicPartition:
+    """Fake TopicPartition for testing lag support."""
+
+    def __init__(self, topic: str, partition: int, offset: int = -1):
+        self.topic = topic
+        self.partition = partition
+        self.offset = offset
+
+    def __eq__(self, other):
+        if not isinstance(other, FakeTopicPartition):
+            return False
+        return self.topic == other.topic and self.partition == other.partition
+
+    def __hash__(self):
+        return hash((self.topic, self.partition))
+
+
+class LagSupportingConsumer:
+    """A fake consumer that supports lag monitoring methods."""
+
+    def __init__(self, topic: str, partitions: list[int]):
+        self._topic = topic
+        self._partitions = partitions
+        self._positions: dict[tuple[str, int], int] = {}
+        self._watermarks: dict[tuple[str, int], tuple[int, int]] = {}
+
+        for p in partitions:
+            self._positions[(topic, p)] = 0
+            self._watermarks[(topic, p)] = (0, 100)
+
+    def set_position(self, partition: int, offset: int) -> None:
+        self._positions[(self._topic, partition)] = offset
+
+    def set_watermarks(self, partition: int, low: int, high: int) -> None:
+        self._watermarks[(self._topic, partition)] = (low, high)
+
+    def consume(self, num_messages: int, timeout: float) -> list:
+        return []
+
+    def assignment(self) -> list[FakeTopicPartition]:
+        return [FakeTopicPartition(self._topic, p) for p in self._partitions]
+
+    def get_watermark_offsets(
+        self, tp: FakeTopicPartition, timeout: float = 1.0
+    ) -> tuple[int, int]:
+        return self._watermarks[(tp.topic, tp.partition)]
+
+    def position(
+        self, partitions: list[FakeTopicPartition]
+    ) -> list[FakeTopicPartition]:
+        result = []
+        for tp in partitions:
+            offset = self._positions[(tp.topic, tp.partition)]
+            result.append(FakeTopicPartition(tp.topic, tp.partition, offset))
+        return result
+
+
+class TestMultiConsumer:
+    def test_assignment_aggregates_from_all_consumers(self) -> None:
+        consumer1 = LagSupportingConsumer("topic1", [0, 1])
+        consumer2 = LagSupportingConsumer("topic2", [0])
+
+        multi = MultiConsumer([consumer1, consumer2])
+        assignment = multi.assignment()
+
+        assert len(assignment) == 3
+        topics = {(tp.topic, tp.partition) for tp in assignment}
+        assert topics == {("topic1", 0), ("topic1", 1), ("topic2", 0)}
+
+    def test_get_watermark_offsets_delegates_to_owning_consumer(self) -> None:
+        consumer1 = LagSupportingConsumer("topic1", [0])
+        consumer1.set_watermarks(0, 10, 200)
+        consumer2 = LagSupportingConsumer("topic2", [0])
+        consumer2.set_watermarks(0, 5, 50)
+
+        multi = MultiConsumer([consumer1, consumer2])
+
+        tp1 = FakeTopicPartition("topic1", 0)
+        tp2 = FakeTopicPartition("topic2", 0)
+
+        assert multi.get_watermark_offsets(tp1) == (10, 200)
+        assert multi.get_watermark_offsets(tp2) == (5, 50)
+
+    def test_get_watermark_offsets_raises_for_unknown_partition(self) -> None:
+        consumer = LagSupportingConsumer("topic1", [0])
+        multi = MultiConsumer([consumer])
+
+        unknown_tp = FakeTopicPartition("unknown", 0)
+        with pytest.raises(ValueError, match="No consumer found"):
+            multi.get_watermark_offsets(unknown_tp)
+
+    def test_position_delegates_to_owning_consumers(self) -> None:
+        consumer1 = LagSupportingConsumer("topic1", [0])
+        consumer1.set_position(0, 42)
+        consumer2 = LagSupportingConsumer("topic2", [0])
+        consumer2.set_position(0, 99)
+
+        multi = MultiConsumer([consumer1, consumer2])
+
+        partitions = [FakeTopicPartition("topic1", 0), FakeTopicPartition("topic2", 0)]
+        positions = multi.position(partitions)
+
+        assert len(positions) == 2
+        assert positions[0].offset == 42
+        assert positions[1].offset == 99
+
+    def test_consume_aggregates_from_all_consumers(self) -> None:
+        consumer1 = ControllableKafkaConsumer()
+        consumer1.add_messages([FakeKafkaMessage(value=b'msg1', topic="topic1")])
+        consumer2 = ControllableKafkaConsumer()
+        consumer2.add_messages([FakeKafkaMessage(value=b'msg2', topic="topic2")])
+
+        multi = MultiConsumer([consumer1, consumer2])
+        messages = multi.consume(10, 0.01)
+
+        assert len(messages) == 2
+
+    def test_works_with_mixed_consumers(self) -> None:
+        """MultiConsumer works even if some consumers don't support lag methods."""
+        lag_consumer = LagSupportingConsumer("topic1", [0])
+        simple_consumer = ControllableKafkaConsumer()
+
+        multi = MultiConsumer([lag_consumer, simple_consumer])
+
+        # assignment should only include partitions from lag-supporting consumer
+        assignment = multi.assignment()
+        assert len(assignment) == 1
+        assert assignment[0].topic == "topic1"
+
+
+class TestBackgroundMessageSourceWithMultiConsumer:
+    def test_get_consumer_lag_works_through_multi_consumer(self) -> None:
+        """Test that get_consumer_lag works through MultiConsumer wrapper."""
+        consumer1 = LagSupportingConsumer("topic1", [0])
+        consumer1.set_position(0, 50)
+        consumer1.set_watermarks(0, 0, 100)
+
+        consumer2 = LagSupportingConsumer("topic2", [0])
+        consumer2.set_position(0, 25)
+        consumer2.set_watermarks(0, 0, 75)
+
+        multi = MultiConsumer([consumer1, consumer2])
+
+        with BackgroundMessageSource(multi, timeout=0.01) as source:
+            time.sleep(0.02)
+            lag = source.get_consumer_lag()
+
+            assert lag is not None
+            assert lag["total_lag"] == (100 - 50) + (75 - 25)  # 50 + 50 = 100
+            assert "topic1:0" in lag
+            assert lag["topic1:0"]["lag"] == 50
+            assert "topic2:0" in lag
+            assert lag["topic2:0"]["lag"] == 50
