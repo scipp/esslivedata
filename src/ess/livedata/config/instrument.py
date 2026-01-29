@@ -387,12 +387,12 @@ class Instrument:
         module = importlib.import_module(f'ess.livedata.config.instruments.{self.name}')
 
         if self._monitor_workflow_handle is not None:
-            from ess.livedata.handlers.monitor_data_handler import (
-                MonitorStreamProcessor,
+            from ess.livedata.handlers.monitor_workflow_specs import (
+                create_monitor_workflow_factory,
             )
 
             self._monitor_workflow_handle.attach_factory()(
-                MonitorStreamProcessor.create_workflow
+                create_monitor_workflow_factory
             )
 
         if self._timeseries_workflow_handle is not None:

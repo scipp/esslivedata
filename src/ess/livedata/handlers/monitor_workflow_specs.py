@@ -105,3 +105,20 @@ def register_monitor_workflow_specs(
         params=MonitorDataParams,
         outputs=MonitorHistogramOutputs,
     )
+
+
+def create_monitor_workflow_factory(source_name: str, params: MonitorDataParams):
+    """
+    Factory function for monitor workflow from MonitorDataParams.
+
+    This is a wrapper around create_monitor_workflow that unpacks the params.
+    Defined here so the params type hint can be properly resolved by the
+    workflow factory registration system.
+    """
+    from .monitor_workflow import create_monitor_workflow
+
+    return create_monitor_workflow(
+        source_name=source_name,
+        edges=params.toa_edges.get_edges(),
+        toa_range=params.toa_range.range_ns if params.toa_range.enabled else None,
+    )
