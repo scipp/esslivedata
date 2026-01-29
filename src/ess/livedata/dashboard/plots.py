@@ -6,16 +6,11 @@ from __future__ import annotations
 
 import time
 import weakref
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import Any, Protocol, cast
 
 import holoviews as hv
 import numpy as np
 import scipp as sc
-
-if TYPE_CHECKING:
-    from typing import TypeVar
-
-    PlotterT = TypeVar('PlotterT', bound='Plotter')
 
 from ess.livedata.config.workflow_spec import ResultKey
 
