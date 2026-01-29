@@ -120,7 +120,9 @@ class PlotGridTabs:
         # Track grid widgets (insertion order determines tab position)
         self._grid_widgets: dict[GridId, PlotGrid] = {}
 
-        # Per-session layer state (presenter, pipe, dmap, version)
+        # Per-session layer state: version tracking and optional render components.
+        # SessionLayer is created eagerly for version tracking; components are
+        # added lazily when displayable data becomes available.
         self._session_layers: dict[LayerId, SessionLayer] = {}
 
         # Determine number of static tabs for stylesheet
@@ -841,7 +843,7 @@ class PlotGridTabs:
         """
         Get composed plot from session-local DynamicMaps or static elements.
 
-        Creates SessionLayer instances on demand when data is available.
+        Ensures session components exist when data is available.
 
         Parameters
         ----------
@@ -856,17 +858,16 @@ class PlotGridTabs:
         plots = []
         for layer in cell.layers:
             layer_id = layer.layer_id
-
-            # Get or create session layer
-            if layer_id not in self._session_layers:
-                state = self._plot_data_service.get(layer_id)
-                if state is not None:
-                    session_layer = SessionLayer.create(layer_id, state)
-                    if session_layer is not None:
-                        self._session_layers[layer_id] = session_layer
-
             session_layer = self._session_layers.get(layer_id)
-            if session_layer is not None:
+            if session_layer is None:
+                continue
+
+            # Ensure components exist if data is now available
+            state = self._plot_data_service.get(layer_id)
+            if state is not None:
+                session_layer.ensure_components(state)
+
+            if session_layer.dmap is not None:
                 plots.append(session_layer.dmap)
 
         if not plots:
@@ -884,8 +885,8 @@ class PlotGridTabs:
         Called from SessionUpdater's periodic callback. Single pass over all
         orchestrator layers to:
         - Push data updates to existing session pipes
-        - Clean up invalid session layers (plotter replaced)
         - Detect version changes requiring cell rebuilds
+        - Create/update session layers as needed
 
         Version-based change detection replaces callback-based updates for state
         changes (waiting/ready/stopped/error). Polling at ~100ms intervals is
@@ -914,33 +915,36 @@ class PlotGridTabs:
                         )
                         continue
 
+                    # Get or create session layer for version tracking
                     session_layer = self._session_layers.get(layer_id)
+                    if session_layer is None:
+                        session_layer = SessionLayer(
+                            layer_id=layer_id, last_seen_version=state.version
+                        )
+                        self._session_layers[layer_id] = session_layer
+                        # New layer → rebuild cell
+                        cells_to_rebuild[cell_id] = (grid_id, cell, plot_grid)
+                        logger.debug(
+                            "Layer %s first seen at version %d", layer_id, state.version
+                        )
+                    else:
+                        # Check validity and push data updates
+                        if not session_layer.is_valid_for(state.plotter):
+                            # Plotter replaced → clear components, will recreate
+                            session_layer.components = None
 
-                    # Check validity: plotter replaced → invalidate session layer
-                    if session_layer is not None and not session_layer.is_valid_for(
-                        state.plotter
-                    ):
-                        del self._session_layers[layer_id]
-                        session_layer = None
-
-                    # Push data updates to session pipe
-                    if session_layer is not None:
                         session_layer.update_pipe()
 
-                    # Detect version changes: new layers or state transitions
-                    last_version = (
-                        session_layer.last_seen_version if session_layer else None
-                    )
-                    if last_version is None or state.version != last_version:
-                        cells_to_rebuild[cell_id] = (grid_id, cell, plot_grid)
-                        if session_layer is not None:
+                        # Check for version changes
+                        if state.version != session_layer.last_seen_version:
+                            cells_to_rebuild[cell_id] = (grid_id, cell, plot_grid)
                             session_layer.last_seen_version = state.version
-                        logger.debug(
-                            "Layer %s version changed: %s -> %d",
-                            layer_id,
-                            last_version,
-                            state.version,
-                        )
+                            logger.debug(
+                                "Layer %s version changed: %d -> %d",
+                                layer_id,
+                                session_layer.last_seen_version,
+                                state.version,
+                            )
 
         # Clean up orphaned session layers (removed from orchestrator)
         for layer_id in list(self._session_layers.keys()):

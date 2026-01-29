@@ -3,9 +3,9 @@
 """
 SessionLayer - Per-session state for a single plot layer.
 
-Each browser session creates SessionLayer instances to hold session-bound
-HoloViews components (Pipe, DynamicMap, Presenter). This replaces the
-separate SessionPlotManager class with a simpler, self-contained unit.
+Each browser session creates SessionLayer instances to track layer versions
+and hold session-bound HoloViews components (Pipe, DynamicMap, Presenter)
+when data is available.
 """
 
 from __future__ import annotations
@@ -22,32 +22,26 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class SessionLayer:
+class SessionComponents:
     """
-    Per-session state for a single plot layer.
+    Session-bound HoloViews components for rendering a layer.
 
-    Holds session-bound HoloViews components and tracks the last seen version
-    from PlotDataService for change detection.
+    These components are created together when a layer has displayable data
+    and are always used as a unit.
 
     Parameters
     ----------
-    layer_id:
-        The layer's unique identifier.
     presenter:
         Per-session presenter created from the plotter.
     pipe:
         Session-local HoloViews Pipe for data updates.
     dmap:
         The DynamicMap or Element created by the presenter.
-    last_seen_version:
-        Version from PlotDataService when this was created/updated.
     """
 
-    layer_id: LayerId
     presenter: Presenter
     pipe: hv.streams.Pipe
     dmap: hv.DynamicMap | hv.Element
-    last_seen_version: int
 
     def update_pipe(self) -> bool:
         """
@@ -65,39 +59,27 @@ class SessionLayer:
 
     def is_valid_for(self, plotter: Plotter | None) -> bool:
         """
-        Check if this session layer is still valid for the given plotter.
+        Check if these components are still valid for the given plotter.
 
         Returns False if the plotter has been replaced (e.g., workflow restart),
-        indicating the session components should be recreated.
-
-        Parameters
-        ----------
-        plotter:
-            The current plotter from PlotDataService, or None if layer removed.
-
-        Returns
-        -------
-        :
-            True if still valid, False if plotter changed or was removed.
+        indicating the components should be recreated.
         """
         return plotter is not None and self.presenter.is_owned_by(plotter)
 
     @classmethod
-    def create(cls, layer_id: LayerId, state: LayerStateMachine) -> SessionLayer | None:
+    def create(cls, state: LayerStateMachine) -> SessionComponents | None:
         """
-        Create a SessionLayer if data is available.
+        Create session components if data is available.
 
         Parameters
         ----------
-        layer_id:
-            The layer's unique identifier.
         state:
             Layer state from PlotDataService.
 
         Returns
         -------
         :
-            A new SessionLayer, or None if no displayable plot yet.
+            New components, or None if no displayable plot yet.
         """
         if not state.has_displayable_plot():
             return None
@@ -107,10 +89,84 @@ class SessionLayer:
         pipe = hv.streams.Pipe(data=plotter.get_cached_state())
         dmap = presenter.present(pipe)
 
-        return cls(
-            layer_id=layer_id,
-            presenter=presenter,
-            pipe=pipe,
-            dmap=dmap,
-            last_seen_version=state.version,
-        )
+        return cls(presenter=presenter, pipe=pipe, dmap=dmap)
+
+
+@dataclass
+class SessionLayer:
+    """
+    Per-session state for a single plot layer.
+
+    Tracks the last seen version for change detection. Optionally holds
+    session-bound rendering components when data is available.
+
+    Parameters
+    ----------
+    layer_id:
+        The layer's unique identifier.
+    last_seen_version:
+        Version from PlotDataService when this was last seen.
+    components:
+        Session-bound rendering components, or None if no displayable data yet.
+    """
+
+    layer_id: LayerId
+    last_seen_version: int
+    components: SessionComponents | None = None
+
+    @property
+    def dmap(self) -> hv.DynamicMap | hv.Element | None:
+        """The DynamicMap or Element for rendering, or None if not available."""
+        return self.components.dmap if self.components else None
+
+    def update_pipe(self) -> bool:
+        """
+        Push pending update to pipe if components are available.
+
+        Returns
+        -------
+        :
+            True if an update was sent, False otherwise.
+        """
+        if self.components is None:
+            return False
+        return self.components.update_pipe()
+
+    def is_valid_for(self, plotter: Plotter | None) -> bool:
+        """
+        Check if this session layer is still valid for the given plotter.
+
+        A layer without components is always valid (nothing to invalidate).
+        A layer with components is valid if the plotter hasn't changed.
+        """
+        if self.components is None:
+            return True
+        return self.components.is_valid_for(plotter)
+
+    def ensure_components(self, state: LayerStateMachine) -> bool:
+        """
+        Ensure components exist if data is now available.
+
+        Creates components if they don't exist and data is displayable.
+        Invalidates components if plotter has changed.
+
+        Parameters
+        ----------
+        state:
+            Current layer state from PlotDataService.
+
+        Returns
+        -------
+        :
+            True if components exist after this call, False otherwise.
+        """
+        # Check if existing components are still valid
+        if self.components is not None:
+            if not self.components.is_valid_for(state.plotter):
+                self.components = None
+            else:
+                return True
+
+        # Try to create components
+        self.components = SessionComponents.create(state)
+        return self.components is not None
