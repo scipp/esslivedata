@@ -19,7 +19,7 @@ from .message_adapter import (
     ResponsesAdapter,
     RouteBySchemaAdapter,
     RouteByTopicAdapter,
-    X5f2ToJobStatusAdapter,
+    X5f2ToStatusAdapter,
 )
 from .stream_mapping import StreamMapping
 
@@ -118,8 +118,6 @@ class RoutingAdapterBuilder:
         return self
 
     def with_livedata_status_route(self) -> Self:
-        """Adds the livedata status route."""
-        self._routes[self._stream_mapping.livedata_status_topic] = (
-            X5f2ToJobStatusAdapter()
-        )
+        """Adds the livedata status route for job and service heartbeats."""
+        self._routes[self._stream_mapping.livedata_status_topic] = X5f2ToStatusAdapter()
         return self

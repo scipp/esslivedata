@@ -42,7 +42,7 @@ cyclebane==24.10.0
     # via sciline
 cycler==0.12.1
     # via matplotlib
-dask==2025.12.0
+dask==2026.1.1
     # via
     #   essdiffraction
     #   esspolarization
@@ -70,7 +70,7 @@ essreduce @ git+https://github.com/scipp/essreduce@main
     #   essspectroscopy
 essreflectometry==26.1.0
     # via -r nightly.in
-esssans==25.12.0
+esssans==26.1.1
     # via -r nightly.in
 essspectroscopy==26.1.0
     # via -r nightly.in
@@ -189,7 +189,7 @@ numpy==2.4.1
     #   spglib
 orsopy==1.2.2
     # via essreflectometry
-packaging==26.0rc2
+packaging==26.0rc3
     # via
     #   bokeh
     #   dask
@@ -322,7 +322,7 @@ scippneutron==25.11.2
     #   essreflectometry
     #   esssans
     #   essspectroscopy
-scippnexus==25.11.0
+scippnexus==26.1.0
     # via
     #   essdiffraction
     #   essreduce
@@ -342,7 +342,9 @@ spglib==2.7.0
     # via ncrystal
 stack-data==0.6.3
     # via ipython
-tof==25.12.1
+structlog==25.5.0
+    # via -r nightly.in
+tof==26.1.0
     # via
     #   essdiffraction
     #   essspectroscopy

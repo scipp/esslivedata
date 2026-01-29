@@ -7,26 +7,27 @@ from pathlib import Path
 
 import panel as pn
 import scipp as sc
+import structlog
 
 from ess.livedata import Message, StreamId, StreamKind
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_f144
 
+logger = structlog.get_logger(__name__)
+
 
 class LogProducerWidget:
     """Widget for manually publishing log messages to Kafka streams."""
 
-    def __init__(self, instrument: str, logger, exit_stack: ExitStack):
+    def __init__(self, instrument: str, exit_stack: ExitStack):
         self._instrument = instrument
-        self._logger = logger
 
         self._sink = exit_stack.enter_context(
             KafkaSink(
                 kafka_config=load_config(namespace=config_names.kafka_upstream),
                 instrument=instrument,
                 serializer=serialize_dataarray_to_f144,
-                logger=logger,
             )
         )
 
@@ -44,7 +45,7 @@ class LogProducerWidget:
         config_path = self._get_config_path()
 
         if not config_path.exists():
-            self._logger.warning("Log producer config file not found: %s", config_path)
+            logger.warning("Log producer config file not found: %s", config_path)
             return
 
         try:
@@ -56,7 +57,7 @@ class LogProducerWidget:
                 self._sliders.append(slider)
 
         except Exception as e:
-            self._logger.error("Failed to load log producer config: %s", e)
+            logger.error("Failed to load log producer config: %s", e)
 
     def _get_config_path(self) -> Path:
         """Get the path to the configuration file for the current instrument."""
@@ -92,14 +93,14 @@ class LogProducerWidget:
         )
         msg = Message(value=da, stream=StreamId(kind=StreamKind.LOG, name=stream_name))
         self._sink.publish_messages([msg])
-        self._logger.info(
+        logger.info(
             "Stream '%s' - Published message with value: %s", stream_name, value
         )
 
     def _on_throttled_change(self, event):
         """Update pn.config.throttled when checkbox value changes."""
         pn.config.throttled = event.new
-        self._logger.info("Throttled mode set to: %s", event.new)
+        logger.info("Throttled mode set to: %s", event.new)
 
     @property
     def panel(self) -> pn.viewable.Viewable:

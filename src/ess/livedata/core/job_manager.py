@@ -10,6 +10,7 @@ from typing import Any, ClassVar
 
 import pydantic
 import scipp as sc
+import structlog
 
 from ess.livedata.config.instrument import Instrument
 from ess.livedata.config.workflow_spec import (
@@ -22,6 +23,8 @@ from ess.livedata.config.workflow_spec import (
 
 from .job import Job, JobData, JobReply, JobResult, JobState, JobStatus
 from .message import StreamId
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -195,6 +198,9 @@ class JobManager:
             raise KeyError(f"Job {job_id} not found in scheduled jobs.")
         self._job_states[job_id] = JobState.active
         self._active_jobs[job_id] = job
+        logger.info(
+            "job_activated", job_id=str(job_id), workflow_id=str(job.workflow_id)
+        )
 
     def _advance_to_time(self, start_time: int, end_time: int) -> None:
         """Activate jobs that should start and mark jobs that should finish."""
@@ -230,6 +236,13 @@ class JobManager:
         self._job_schedules[job_id] = config.schedule
         self._job_states[job_id] = JobState.scheduled
         self._scheduled_jobs[job_id] = job
+        logger.info(
+            "job_scheduled",
+            job_id=str(job_id),
+            workflow_id=str(config.identifier),
+            source=source_name,
+            schedule=str(config.schedule),
+        )
         return job_id
 
     def stop_job(self, job_id: JobId) -> None:
@@ -244,6 +257,7 @@ class JobManager:
         # Move to stopped jobs and update state
         self._stopped_jobs[job_id] = job
         self._job_states[job_id] = JobState.stopped
+        logger.info("job_stopped", job_id=str(job_id))
 
     def remove_job(self, job_id: JobId) -> None:
         """Remove a job with the given ID completely from the system."""
@@ -264,8 +278,15 @@ class JobManager:
         # Remove from finishing jobs if present
         if job_id in self._finishing_jobs:
             self._finishing_jobs.remove(job_id)
+        logger.info("job_removed", job_id=str(job_id))
 
     def job_command(self, command: JobCommand) -> None:
+        logger.info(
+            "job_command_received",
+            action=command.action.value,
+            job_id=str(command.job_id) if command.job_id else None,
+            workflow_id=str(command.workflow_id) if command.workflow_id else None,
+        )
         if command.job_id is not None:
             self._perform_job_action(job_id=command.job_id, action=command.action)
         elif command.workflow_id is not None:
@@ -357,6 +378,11 @@ class JobManager:
             # data failed, but the job may still be able to finalize previous data.
             self._job_warning_messages[job.job_id] = reply.error_message
             self._job_states[job.job_id] = JobState.warning
+            logger.warning(
+                "job_warning",
+                job_id=str(job.job_id),
+                error_message=reply.error_message[:200],
+            )
         else:
             # Clear warning state on successful data processing
             self._job_warning_messages.pop(job.job_id, None)
@@ -383,11 +409,20 @@ class JobManager:
                 # Finalizing failed, put job into error state, cannot compute results.
                 self._job_error_messages[job.job_id] = result.error_message
                 self._job_states[job.job_id] = JobState.error
+                logger.error(
+                    "job_error",
+                    job_id=str(job.job_id),
+                    error_message=result.error_message[:200],
+                )
             else:
                 # Clear error state on successful finalization
                 self._job_error_messages.pop(job.job_id, None)
-                # Update state based on current status (may still have warnings)
-                if job.job_id in self._job_warning_messages:
+                # Track warnings from job finalization (e.g., None values in result)
+                if result.warning_message is not None:
+                    self._job_warning_messages[job.job_id] = result.warning_message
+                    self._job_states[job.job_id] = JobState.warning
+                elif job.job_id in self._job_warning_messages:
+                    # Preserve existing warnings from data processing
                     self._job_states[job.job_id] = JobState.warning
                 else:
                     self._job_states[job.job_id] = JobState.active

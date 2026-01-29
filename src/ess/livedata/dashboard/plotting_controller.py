@@ -2,7 +2,6 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable, Hashable
 from typing import Any, TypeVar
 
@@ -16,7 +15,7 @@ from ess.livedata.config.workflow_spec import (
 
 from .job_service import JobService
 from .plot_params import create_extractors_from_params
-from .plotting import PlotterSpec, plotter_registry
+from .plotting import OVERLAY_PATTERNS, PlotterSpec, plotter_registry
 from .roi_publisher import ROIPublisher
 from .roi_request_plots import ROIPublisherAware
 from .stream_manager import StreamManager
@@ -38,8 +37,6 @@ class PlottingController:
         Service for accessing job data and information.
     stream_manager:
         Manager for creating data streams.
-    logger:
-        Logger instance. If None, creates a logger using the module name.
     roi_publisher:
         Publisher for ROI updates to Kafka. If None, ROI publishing is disabled.
     """
@@ -48,12 +45,10 @@ class PlottingController:
         self,
         job_service: JobService,
         stream_manager: StreamManager,
-        logger: logging.Logger | None = None,
         roi_publisher: ROIPublisher | None = None,
     ) -> None:
         self._job_service = job_service
         self._stream_manager = stream_manager
-        self._logger = logger or logging.getLogger(__name__)
         self._roi_publisher = roi_publisher
 
     def get_available_plotters_from_spec(
@@ -123,6 +118,57 @@ class PlottingController:
             Dictionary of static plotter names to their specifications.
         """
         return plotter_registry.get_static_plotters()
+
+    def get_available_overlays(
+        self,
+        workflow_spec: WorkflowSpec,
+        base_plotter_name: str,
+    ) -> list[tuple[str, str, str]]:
+        """
+        Get overlay suggestions for a base layer.
+
+        Returns overlay options that are compatible with the base plotter
+        and available in the workflow's outputs.
+
+        Parameters
+        ----------
+        workflow_spec:
+            The workflow specification for the base layer.
+        base_plotter_name:
+            Name of the base layer's plotter (e.g., "image").
+
+        Returns
+        -------
+        :
+            List of (output_name, plotter_name, plotter_title) tuples for
+            overlays that are available based on the workflow's outputs.
+        """
+        patterns = OVERLAY_PATTERNS.get(base_plotter_name, [])
+        if not patterns:
+            return []
+
+        # Check which outputs are available in the workflow spec
+        if workflow_spec.outputs is None:
+            return []
+
+        output_fields = workflow_spec.outputs.model_fields
+        available_overlays: list[tuple[str, str, str]] = []
+
+        for output_name, plotter_name in patterns:
+            # Check if the required output exists in the workflow spec
+            if output_name not in output_fields:
+                continue
+
+            # Get the plotter title for display
+            try:
+                spec = plotter_registry.get_spec(plotter_name)
+                plotter_title = spec.title
+            except KeyError:
+                continue
+
+            available_overlays.append((output_name, plotter_name, plotter_title))
+
+        return available_overlays
 
     def setup_pipeline(
         self,

@@ -107,7 +107,7 @@ scippneutron==25.11.2
     # via
     #   -r base.in
     #   essreduce
-scippnexus==25.11.0
+scippnexus==26.1.0
     # via
     #   essreduce
     #   scippneutron
@@ -117,6 +117,8 @@ scipy==1.17.0
     #   scippnexus
 six==1.17.0
     # via python-dateutil
+structlog==25.5.0
+    # via -r base.in
 typing-extensions==4.15.0
     # via
     #   pydantic

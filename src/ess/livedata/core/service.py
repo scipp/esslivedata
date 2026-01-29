@@ -57,8 +57,22 @@ class ServiceBase(ABC):
     def _handle_shutdown(self, signum: int, _: Any) -> None:
         """Handle shutdown signals"""
         self._logger.info("Received signal %d, initiating shutdown...", signum)
+        self._notify_processor_shutdown()
         self.stop()
+        self._notify_processor_stopped()
         sys.exit(0)
+
+    def _notify_processor_shutdown(self) -> None:  # noqa: B027
+        """Notify processor of shutdown if it supports lifecycle hooks.
+
+        Override in subclasses to provide processor-specific shutdown notification.
+        """
+
+    def _notify_processor_stopped(self) -> None:  # noqa: B027
+        """Notify processor that shutdown completed if it supports lifecycle hooks.
+
+        Override in subclasses to provide processor-specific stopped notification.
+        """
 
     def start(self, blocking: bool = True) -> None:
         """Start the service and block until stopped"""
@@ -160,14 +174,39 @@ class Service(ServiceBase):
                 remaining = max(0.0, self._poll_interval - elapsed)
                 if remaining > 0:
                     time.sleep(remaining)
-        except Exception:
+        except Exception as e:
             self._logger.exception("Error in service loop")
+            self._notify_processor_error(str(e))
             self._running = False
             # Send a signal to the main thread to unblock it
             if threading.current_thread() is not threading.main_thread():
                 os.kill(os.getpid(), signal.SIGINT)
         finally:
             self._logger.info("Service loop stopped")
+
+    def _notify_processor_shutdown(self) -> None:
+        """Notify processor of shutdown if it supports lifecycle hooks."""
+        if hasattr(self._processor, 'shutdown'):
+            try:
+                self._processor.shutdown()
+            except Exception:
+                self._logger.exception("Error notifying processor of shutdown")
+
+    def _notify_processor_stopped(self) -> None:
+        """Notify processor that shutdown completed if it supports lifecycle hooks."""
+        if hasattr(self._processor, 'report_stopped'):
+            try:
+                self._processor.report_stopped()
+            except Exception:
+                self._logger.exception("Error notifying processor of stopped")
+
+    def _notify_processor_error(self, error_message: str) -> None:
+        """Notify processor of error if it supports lifecycle hooks."""
+        if hasattr(self._processor, 'report_error'):
+            try:
+                self._processor.report_error(error_message)
+            except Exception:
+                self._logger.exception("Error notifying processor of error")
 
     def _stop_impl(self) -> None:
         """Stop the service gracefully"""
@@ -200,6 +239,18 @@ class Service(ServiceBase):
             choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
             default='INFO',
             help='Set the logging level',
+        )
+        parser.add_argument(
+            '--log-json-file',
+            default=None,
+            metavar='PATH',
+            help='Write JSON-formatted logs to this file',
+        )
+        parser.add_argument(
+            '--no-stdout-log',
+            action='store_true',
+            default=False,
+            help='Disable logging to stdout',
         )
         return parser
 

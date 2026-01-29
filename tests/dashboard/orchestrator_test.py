@@ -16,11 +16,17 @@ from ess.livedata.core.message import (
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.orchestrator import Orchestrator
+from ess.livedata.dashboard.service_registry import ServiceRegistry
 
 
 def make_job_number() -> uuid.UUID:
     """Generate a random UUID for job number."""
     return uuid.uuid4()
+
+
+def make_service_registry() -> ServiceRegistry:
+    """Create a service registry for testing."""
+    return ServiceRegistry()
 
 
 class FakeMessageSource:
@@ -69,7 +75,10 @@ class TestOrchestrator:
         data_service = DataService()
         job_service = JobService()
         orchestrator = Orchestrator(
-            message_source=source, data_service=data_service, job_service=job_service
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            service_registry=make_service_registry(),
         )
 
         orchestrator.update()
@@ -81,7 +90,10 @@ class TestOrchestrator:
         data_service = DataService()
         job_service = JobService()
         orchestrator = Orchestrator(
-            message_source=source, data_service=data_service, job_service=job_service
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            service_registry=make_service_registry(),
         )
 
         workflow_id = WorkflowId(
@@ -108,7 +120,10 @@ class TestOrchestrator:
         data_service = DataService()
         job_service = JobService()
         orchestrator = Orchestrator(
-            message_source=source, data_service=data_service, job_service=job_service
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            service_registry=make_service_registry(),
         )
 
         workflow_id1 = WorkflowId(
@@ -152,7 +167,10 @@ class TestOrchestrator:
         data_service = DataService()
         job_service = JobService()
         orchestrator = Orchestrator(
-            message_source=source, data_service=data_service, job_service=job_service
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            service_registry=make_service_registry(),
         )
 
         workflow_id = WorkflowId(
@@ -184,7 +202,10 @@ class TestOrchestrator:
         data_service = DataService()
         job_service = JobService()
         orchestrator = Orchestrator(
-            message_source=source, data_service=data_service, job_service=job_service
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            service_registry=make_service_registry(),
         )
 
         workflow_id = WorkflowId(
@@ -211,7 +232,10 @@ class TestOrchestrator:
         data_service = DataService()
         job_service = JobService()
         orchestrator = Orchestrator(
-            message_source=source, data_service=data_service, job_service=job_service
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            service_registry=make_service_registry(),
         )
 
         workflow_id = WorkflowId(
@@ -237,7 +261,10 @@ class TestOrchestrator:
         data_service = DataService()
         job_service = JobService()
         orchestrator = Orchestrator(
-            message_source=source, data_service=data_service, job_service=job_service
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            service_registry=make_service_registry(),
         )
 
         data = sc.DataArray(sc.array(dims=['x'], values=[1, 2, 3]))
@@ -253,7 +280,10 @@ class TestOrchestrator:
         data_service = DataService()
         job_service = JobService()
         orchestrator = Orchestrator(
-            message_source=source, data_service=data_service, job_service=job_service
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            service_registry=make_service_registry(),
         )
 
         workflow_id = WorkflowId(
@@ -295,7 +325,10 @@ class TestOrchestrator:
         data_service = DataService()
         job_service = JobService()
         orchestrator = Orchestrator(
-            message_source=source, data_service=data_service, job_service=job_service
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            service_registry=make_service_registry(),
         )
 
         # Track transaction calls
@@ -358,6 +391,7 @@ class TestOrchestratorAcknowledgementProcessing:
             message_source=source,
             data_service=data_service,
             job_service=job_service,
+            service_registry=make_service_registry(),
             job_orchestrator=job_orchestrator,
         )
 
@@ -387,6 +421,7 @@ class TestOrchestratorAcknowledgementProcessing:
             message_source=source,
             data_service=data_service,
             job_service=job_service,
+            service_registry=make_service_registry(),
             job_orchestrator=job_orchestrator,
         )
 
@@ -420,6 +455,7 @@ class TestOrchestratorAcknowledgementProcessing:
             message_source=source,
             data_service=data_service,
             job_service=job_service,
+            service_registry=make_service_registry(),
             job_orchestrator=None,
         )
 
@@ -430,6 +466,78 @@ class TestOrchestratorAcknowledgementProcessing:
         )
         # Should not raise an exception
         orchestrator.forward(RESPONSES_STREAM_ID, ack)
+
+
+class TestOrchestratorServiceStatusRouting:
+    """Test that ServiceStatus messages are routed to the ServiceRegistry."""
+
+    def test_forward_routes_service_status_to_registry(self) -> None:
+        """Test that ServiceStatus messages are routed to service registry."""
+        from ess.livedata.core.job import ServiceState, ServiceStatus
+
+        source = FakeMessageSource()
+        data_service = DataService()
+        job_service = JobService()
+        service_registry = make_service_registry()
+        orchestrator = Orchestrator(
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            service_registry=service_registry,
+        )
+
+        status = ServiceStatus(
+            instrument="dream",
+            namespace="test_namespace",
+            worker_id="worker123",
+            state=ServiceState.running,
+            started_at=1000000000,
+            active_job_count=2,
+            messages_processed=100,
+        )
+
+        orchestrator.forward(STATUS_STREAM_ID, status)
+
+        # Verify the service registry received the status
+        assert len(service_registry.worker_statuses) == 1
+        worker_key = "dream:test_namespace:worker123"
+        assert worker_key in service_registry.worker_statuses
+        assert service_registry.worker_statuses[worker_key] == status
+
+    def test_forward_routes_job_status_to_job_service(self) -> None:
+        """Test that JobStatus messages are routed to job service."""
+        from ess.livedata.config.workflow_spec import JobId, WorkflowId
+        from ess.livedata.core.job import JobState, JobStatus
+
+        source = FakeMessageSource()
+        data_service = DataService()
+        job_service = JobService()
+        service_registry = make_service_registry()
+        orchestrator = Orchestrator(
+            message_source=source,
+            data_service=data_service,
+            job_service=job_service,
+            service_registry=service_registry,
+        )
+
+        workflow_id = WorkflowId(
+            instrument="dream",
+            namespace="test_namespace",
+            name="test_workflow",
+            version=1,
+        )
+        job_id = JobId(source_name="detector1", job_number=make_job_number())
+        job_status = JobStatus(
+            job_id=job_id,
+            workflow_id=workflow_id,
+            state=JobState.active,
+        )
+
+        orchestrator.forward(STATUS_STREAM_ID, job_status)
+
+        # Verify job service received the status (not service registry)
+        assert len(service_registry.worker_statuses) == 0
+        assert len(job_service.job_statuses) == 1
 
 
 def _data_stream_id(key: ResultKey) -> StreamId:

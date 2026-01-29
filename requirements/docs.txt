@@ -38,7 +38,7 @@ decorator==5.2.1
     # via ipython
 defusedxml==0.7.1
     # via nbconvert
-docutils==0.21.2
+docutils==0.22.4
     # via
     #   myst-parser
     #   nbsphinx
@@ -137,7 +137,7 @@ ptyprocess==0.7.0
     # via pexpect
 pure-eval==0.2.3
     # via stack-data
-pyarrow==22.0.0
+pyarrow==23.0.0
     # via -r docs.in
 pydantic-settings==2.12.0
     # via autodoc-pydantic
@@ -179,7 +179,7 @@ snowballstemmer==3.0.1
     # via sphinx
 soupsieve==2.8.1
     # via beautifulsoup4
-sphinx==8.2.3
+sphinx==9.0.4
     # via
     #   -r docs.in
     #   autodoc-pydantic
@@ -190,11 +190,11 @@ sphinx==8.2.3
     #   sphinx-copybutton
     #   sphinx-design
     #   sphinxcontrib-mermaid
-sphinx-autodoc-typehints==3.5.2
+sphinx-autodoc-typehints==3.6.1
     # via -r docs.in
 sphinx-copybutton==0.5.2
     # via -r docs.in
-sphinx-design==0.6.1
+sphinx-design==0.7.0
     # via -r docs.in
 sphinxcontrib-applehelp==2.0.0
     # via sphinx

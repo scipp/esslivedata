@@ -913,7 +913,10 @@ class PlotOrchestrator:
 
         # No change to shared_axes here. We prevent sharing between different cells
         # using linked_axes=False in PlotGridTabs when wrapping in pn.pane.HoloViews.
-        return hv.Overlay(plots)
+        # Use collate() to fix nesting structure: DynamicMap(Overlay(...)) instead of
+        # Overlay([DynamicMap(...), ...]). This is the HoloViews-recommended structure
+        # and silences warnings about nested DynamicMaps within Overlays.
+        return hv.Overlay(plots).collate()
 
     def _validate_params(
         self, plot_name: str, params: dict[str, Any]
@@ -1124,7 +1127,6 @@ class PlotOrchestrator:
             if spec is not None:
                 specs.append(spec)
 
-        self._logger.info('Parsed %d grid spec(s)', len(specs))
         return specs
 
     def _parse_single_spec(self, raw: dict[str, Any]) -> GridSpec | None:

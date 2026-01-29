@@ -19,22 +19,14 @@ from ess.livedata.handlers.detector_view_specs import (
     DetectorViewParams,
 )
 
+from .streams import detector_names, monitor_names
 from .views import get_mantle_front_layer, get_strip_view, get_wire_view
-
-# Detector names for DREAM data reduction workflows
-detector_names = [
-    'mantle_detector',
-    'endcap_backward_detector',
-    'endcap_forward_detector',
-    'high_resolution_detector',
-    'sans_detector',
-]
 
 # Create instrument
 instrument = Instrument(
     name='dream',
     detector_names=detector_names,
-    monitors=['monitor1', 'monitor2'],
+    monitors=monitor_names,
     source_metadata={
         'mantle_detector': SourceMetadata(
             title='Mantle',
@@ -56,8 +48,8 @@ instrument = Instrument(
             title='SANS',
             description='Small-angle neutron scattering detector',
         ),
-        'monitor1': SourceMetadata(title='Monitor 1'),
-        'monitor2': SourceMetadata(title='Monitor 2'),
+        'monitor_bunker': SourceMetadata(title='Bunker Monitor'),
+        'monitor_cave': SourceMetadata(title='Cave Monitor'),
     },
 )
 
@@ -180,8 +172,8 @@ projection_handle = instrument.register_spec(
 class DreamAuxSources(AuxSourcesBase):
     """Auxiliary source names for DREAM powder workflows."""
 
-    cave_monitor: Literal['monitor1'] = pydantic.Field(
-        default='monitor1',
+    cave_monitor: Literal['monitor_cave'] = pydantic.Field(
+        default='monitor_cave',
         description='Cave monitor for normalization.',
     )
 
