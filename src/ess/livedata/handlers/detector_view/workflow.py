@@ -27,7 +27,6 @@ from ess.reduce.live.raw import (
     position_with_noisy_replicas,
 )
 from ess.reduce.nexus.types import SampleRun
-from ess.reduce.nexus.workflow import GenericNeXusWorkflow
 from ess.reduce.streaming import EternalAccumulator
 from ess.reduce.time_of_flight import GenericTofWorkflow
 
@@ -129,12 +128,15 @@ def create_base_workflow(
     :
         Sciline pipeline with detector view providers.
     """
-    # Select base workflow and projection provider based on coordinate mode
+    # GenericTofWorkflow extends GenericNeXusWorkflow with TOF providers, so it can
+    # be used for all coordinate modes. The coordinate mode determines which
+    # projection provider to use.
+    workflow = GenericTofWorkflow(run_types=[SampleRun], monitor_types=[])
+
+    # Select projection provider based on coordinate mode
     if coordinate_mode == 'toa':
-        workflow = GenericNeXusWorkflow(run_types=[SampleRun], monitor_types=[])
         workflow.insert(project_raw_detector)
     elif coordinate_mode == 'tof':
-        workflow = GenericTofWorkflow(run_types=[SampleRun], monitor_types=[])
         workflow.insert(project_tof_detector)
     elif coordinate_mode == 'wavelength':
         # Future: would use WavelengthDetector-based provider

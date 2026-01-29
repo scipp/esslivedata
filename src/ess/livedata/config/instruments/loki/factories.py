@@ -43,56 +43,28 @@ def setup_factories(instrument: Instrument) -> None:
 
     # Sciline-based detector view with XY projection for all detector banks.
     # Resolution values = base resolution * scale (12), matching the legacy setup.
+    _bank_resolutions = {
+        'loki_detector_0': {'y': 144, 'x': 144},
+        # First window frame
+        'loki_detector_1': {'y': 36, 'x': 108},
+        'loki_detector_2': {'y': 108, 'x': 36},
+        'loki_detector_3': {'y': 36, 'x': 108},
+        'loki_detector_4': {'y': 108, 'x': 36},
+        # Second window frame
+        'loki_detector_5': {'y': 36, 'x': 108},
+        'loki_detector_6': {'y': 108, 'x': 36},
+        'loki_detector_7': {'y': 36, 'x': 108},
+        'loki_detector_8': {'y': 108, 'x': 36},
+    }
     _xy_projection = DetectorViewFactory(
         data_source=NeXusDetectorSource(get_nexus_geometry_filename('loki')),
         view_config={
-            'loki_detector_0': GeometricViewConfig(
+            name: GeometricViewConfig(
                 projection_type='xy_plane',
-                resolution={'y': 144, 'x': 144},
+                resolution=res,
                 pixel_noise='cylindrical',
-            ),
-            # First window frame
-            'loki_detector_1': GeometricViewConfig(
-                projection_type='xy_plane',
-                resolution={'y': 36, 'x': 108},
-                pixel_noise='cylindrical',
-            ),
-            'loki_detector_2': GeometricViewConfig(
-                projection_type='xy_plane',
-                resolution={'y': 108, 'x': 36},
-                pixel_noise='cylindrical',
-            ),
-            'loki_detector_3': GeometricViewConfig(
-                projection_type='xy_plane',
-                resolution={'y': 36, 'x': 108},
-                pixel_noise='cylindrical',
-            ),
-            'loki_detector_4': GeometricViewConfig(
-                projection_type='xy_plane',
-                resolution={'y': 108, 'x': 36},
-                pixel_noise='cylindrical',
-            ),
-            # Second window frame
-            'loki_detector_5': GeometricViewConfig(
-                projection_type='xy_plane',
-                resolution={'y': 36, 'x': 108},
-                pixel_noise='cylindrical',
-            ),
-            'loki_detector_6': GeometricViewConfig(
-                projection_type='xy_plane',
-                resolution={'y': 108, 'x': 36},
-                pixel_noise='cylindrical',
-            ),
-            'loki_detector_7': GeometricViewConfig(
-                projection_type='xy_plane',
-                resolution={'y': 36, 'x': 108},
-                pixel_noise='cylindrical',
-            ),
-            'loki_detector_8': GeometricViewConfig(
-                projection_type='xy_plane',
-                resolution={'y': 108, 'x': 36},
-                pixel_noise='cylindrical',
-            ),
+            )
+            for name, res in _bank_resolutions.items()
         },
     )
 

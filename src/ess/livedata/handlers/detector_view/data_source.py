@@ -11,7 +11,7 @@ data or synthetic detector structures.
 from __future__ import annotations
 
 import pathlib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import sciline
 import scipp as sc
@@ -53,11 +53,11 @@ def create_empty_detector(detector_number: sc.Variable) -> sc.DataArray:
     )
 
 
-class DetectorDataSource:
+class DetectorDataSource(Protocol):
     """
-    Base class for detector data source configuration.
+    Protocol for detector data source configuration.
 
-    Subclasses define how EmptyDetector is obtained for the workflow.
+    Implementations define how EmptyDetector is obtained for the workflow.
     EmptyDetector provides the detector pixel structure needed by
     GenericNeXusWorkflow to group events by pixel (NeXusData → RawDetector).
     """
@@ -73,10 +73,10 @@ class DetectorDataSource:
         source_name:
             Name of the detector source.
         """
-        raise NotImplementedError
+        ...
 
 
-class NeXusDetectorSource(DetectorDataSource):
+class NeXusDetectorSource:
     """
     Load EmptyDetector from a NeXus file.
 
@@ -97,7 +97,7 @@ class NeXusDetectorSource(DetectorDataSource):
         workflow[NeXusName[NXdetector]] = source_name
 
 
-class DetectorNumberSource(DetectorDataSource):
+class DetectorNumberSource:
     """
     Create EmptyDetector from detector_number without file I/O.
 
@@ -119,7 +119,7 @@ class DetectorNumberSource(DetectorDataSource):
         )
 
 
-class InstrumentDetectorSource(DetectorDataSource):
+class InstrumentDetectorSource:
     """
     Create EmptyDetector from an Instrument's configured detector_number.
 

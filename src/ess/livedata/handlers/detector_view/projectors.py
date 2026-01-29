@@ -269,8 +269,7 @@ class LogicalProjector:
                 if isinstance(self._reduction_dim, str)
                 else list(self._reduction_dim)
             )
-            for dim in dims_to_reduce:
-                result = result.bins.concat(dim)
+            result = result.bins.concat(dims_to_reduce)
 
         return result
 

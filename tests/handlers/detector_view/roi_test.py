@@ -315,8 +315,8 @@ class TestPolygonROIExtraction:
         # Exact count depends on point-in-polygon for centers on the diagonal
         assert result.sum().value > 0
         # Full grid sum = (0+1+...+9)*10*3 = 45*10*3 = 1350
-        # Triangle should cover roughly half, so less than 1350
-        assert result.sum().value < 1350
+        # Triangle should cover roughly half, so less than 75% of total
+        assert result.sum().value < 1350 * 0.75
 
 
 class TestMixedROIExtraction:
