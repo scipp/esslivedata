@@ -641,10 +641,10 @@ class PlotOrchestrator:
         config = layer.config
 
         if config.is_static():
-            # Static overlay: create plot immediately without subscription
+            # Static overlay: create plot immediately without subscription.
+            # _create_static_layer_plot registers the layer via job_started/data_arrived
+            # or error_occurred, so it's ready for display when we notify.
             self._create_static_layer_plot(grid_id, cell_id, layer)
-            # Register as READY before notifying - static layers don't wait for data
-            self._plot_data_service.static_layer_ready(layer_id)
             # Notify sessions so they can display the static plot
             cell = self._grids[grid_id].cells[cell_id]
             self._notify_cell_updated(grid_id, cell_id, cell)

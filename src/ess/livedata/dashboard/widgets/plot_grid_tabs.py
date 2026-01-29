@@ -881,31 +881,18 @@ class PlotGridTabs:
         """
         Poll PlotDataService for updates and set up new layers.
 
-        Called from SessionUpdater's periodic callback. This method:
-        1. Updates existing session layers - push data, clean up invalids
-        2. Checks all layers for version changes (state transitions)
-        3. Rebuilds cell widgets when versions change or layers are newly set up
+        Called from SessionUpdater's periodic callback. Single pass over all
+        orchestrator layers to:
+        - Push data updates to existing session pipes
+        - Clean up invalid session layers (plotter replaced)
+        - Detect version changes requiring cell rebuilds
 
         Version-based change detection replaces callback-based updates for state
         changes (waiting/ready/stopped/error). Polling at ~100ms intervals is
         acceptable for config UI updates.
         """
-        # Phase 1: Update existing session layers - push data, clean up invalids
-        for layer_id in list(self._session_layers.keys()):
-            session_layer = self._session_layers[layer_id]
-            state = self._plot_data_service.get(layer_id)
-
-            # Orphan or plotter replaced → delete from cache
-            # Cell rebuild will happen via version detection in Phase 2
-            if state is None or not session_layer.is_valid_for(state.plotter):
-                del self._session_layers[layer_id]
-                continue
-
-            # Push data updates to session pipe
-            session_layer.update_pipe()
-
-        # Phase 2: Check all layers in orchestrator for version changes
         cells_to_rebuild: dict[CellId, tuple[GridId, PlotCell, PlotGrid]] = {}
+        seen_layer_ids: set[LayerId] = set()
 
         for grid_id, plot_grid in self._grid_widgets.items():
             grid_config = self._orchestrator.get_grid(grid_id)
@@ -915,8 +902,9 @@ class PlotGridTabs:
             for cell_id, cell in grid_config.cells.items():
                 for layer in cell.layers:
                     layer_id = layer.layer_id
-                    state = self._plot_data_service.get(layer_id)
+                    seen_layer_ids.add(layer_id)
 
+                    state = self._plot_data_service.get(layer_id)
                     if state is None:
                         # Should not happen: layers are registered before widgets
                         # are notified. Skip this layer but log for debugging.
@@ -926,27 +914,40 @@ class PlotGridTabs:
                         )
                         continue
 
-                    # Get last seen version from session layer (if exists)
                     session_layer = self._session_layers.get(layer_id)
+
+                    # Check validity: plotter replaced → invalidate session layer
+                    if session_layer is not None and not session_layer.is_valid_for(
+                        state.plotter
+                    ):
+                        del self._session_layers[layer_id]
+                        session_layer = None
+
+                    # Push data updates to session pipe
+                    if session_layer is not None:
+                        session_layer.update_pipe()
+
+                    # Detect version changes: new layers or state transitions
                     last_version = (
                         session_layer.last_seen_version if session_layer else None
                     )
-                    current_version = state.version
-
-                    # Detect: new layers (never seen) or version changes
-                    if last_version is None or current_version != last_version:
+                    if last_version is None or state.version != last_version:
                         cells_to_rebuild[cell_id] = (grid_id, cell, plot_grid)
-                        # Update version tracking if session layer exists
                         if session_layer is not None:
-                            session_layer.last_seen_version = current_version
+                            session_layer.last_seen_version = state.version
                         logger.debug(
                             "Layer %s version changed: %s -> %d",
                             layer_id,
                             last_version,
-                            current_version,
+                            state.version,
                         )
 
-        # Phase 3: Rebuild affected cells
+        # Clean up orphaned session layers (removed from orchestrator)
+        for layer_id in list(self._session_layers.keys()):
+            if layer_id not in seen_layer_ids:
+                del self._session_layers[layer_id]
+
+        # Rebuild affected cells.
         # Defer insertion to allow Bokeh to process any pending model updates
         # from pipe.send() calls above. Without deferral, widget removal can
         # race with DynamicMap updates, causing KeyError when Panel tries to
