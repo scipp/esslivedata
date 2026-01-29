@@ -13,10 +13,7 @@ from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
 
 
 def make_detector_service_builder(
-    *,
-    instrument: str,
-    dev: bool = True,
-    log_level: int = logging.INFO,
+    *, instrument: str, dev: bool = True, log_level: int = logging.INFO
 ) -> DataServiceBuilder:
     stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
     adapter = (
