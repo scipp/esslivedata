@@ -234,6 +234,40 @@ class PlotDataService:
         with self._lock:
             return self._layers.get(layer_id)
 
+    def layer_added(self, layer_id: LayerId) -> None:
+        """
+        Register a layer in WAITING_FOR_JOB state.
+
+        Called when a dynamic layer is added to the grid but before any
+        workflow job has started for it.
+
+        Parameters
+        ----------
+        layer_id:
+            Layer ID to register.
+        """
+        with self._lock:
+            if layer_id not in self._layers:
+                self._layers[layer_id] = LayerStateMachine()
+
+    def static_layer_ready(self, layer_id: LayerId) -> None:
+        """
+        Register a static layer as immediately READY.
+
+        Static overlays don't have streaming jobs - they render immediately
+        when added. This registers them as READY without a plotter.
+
+        Parameters
+        ----------
+        layer_id:
+            Layer ID to register.
+        """
+        with self._lock:
+            if layer_id not in self._layers:
+                self._layers[layer_id] = LayerStateMachine(
+                    initial_state=LayerState.READY
+                )
+
     def job_started(self, layer_id: LayerId, plotter: Any) -> None:
         """
         Transition a layer to WAITING_FOR_DATA when a job starts.

@@ -66,13 +66,16 @@ def fake_job_service():
 
 
 @pytest.fixture
-def plot_orchestrator(plotting_controller, job_orchestrator, fake_data_service):
+def plot_orchestrator(
+    plotting_controller, job_orchestrator, fake_data_service, plot_data_service
+):
     """Create a PlotOrchestrator for testing."""
     return PlotOrchestrator(
         plotting_controller=plotting_controller,
         job_orchestrator=job_orchestrator,
         data_service=fake_data_service,
         instrument='dummy',
+        plot_data_service=plot_data_service,
     )
 
 

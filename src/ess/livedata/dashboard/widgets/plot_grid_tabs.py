@@ -412,10 +412,15 @@ class PlotGridTabs:
         # Record current versions for all layers to prevent redundant rebuilds.
         # Without this, _poll_for_plot_updates would see last_version=None and
         # trigger another rebuild on the next poll cycle.
+        # Note: _create_cell_widget calls _get_layer_states which validates all
+        # layers have state, so direct access is safe here.
         for layer in cell.layers:
             state = self._plot_data_service.get(layer.layer_id)
-            if state is not None:
-                self._last_seen_versions[layer.layer_id] = state.version
+            if state is None:
+                raise RuntimeError(
+                    f"Layer state missing for {layer.layer_id} after _get_layer_states"
+                )
+            self._last_seen_versions[layer.layer_id] = state.version
 
         # Defer insertion for plots to allow Panel to update layout sizing.
         # When a workflow is already running with data, subscribing triggers
@@ -452,9 +457,7 @@ class PlotGridTabs:
         # Remove widget at explicit position
         plot_grid.remove_widget_at(geometry)
 
-    def _get_layer_states(
-        self, cell: PlotCell
-    ) -> dict[LayerId, LayerStateMachine | None]:
+    def _get_layer_states(self, cell: PlotCell) -> dict[LayerId, LayerStateMachine]:
         """
         Get layer states from PlotDataService for all layers in a cell.
 
@@ -466,12 +469,19 @@ class PlotGridTabs:
         Returns
         -------
         :
-            Dict mapping layer IDs to their state (or None if not in service).
+            Dict mapping layer IDs to their state.
         """
-        return {
-            layer.layer_id: self._plot_data_service.get(layer.layer_id)
-            for layer in cell.layers
-        }
+        result: dict[LayerId, LayerStateMachine] = {}
+        for layer in cell.layers:
+            state = self._plot_data_service.get(layer.layer_id)
+            if state is None:
+                raise RuntimeError(
+                    f"Layer {layer.layer_id} has no state in PlotDataService. "
+                    "This indicates a bug: layers should be registered before "
+                    "widgets are notified."
+                )
+            result[layer.layer_id] = state
+        return result
 
     def _create_cell_widget(
         self,
@@ -514,8 +524,7 @@ class PlotGridTabs:
             content = self._create_placeholder_content(cell, layer_states)
             # Check if any layer has an error
             has_error = any(
-                state is not None and state.error_message is not None
-                for state in layer_states.values()
+                state.error_message is not None for state in layer_states.values()
             )
             if has_error:
                 bg_color = '#ffe6e6'
@@ -542,7 +551,7 @@ class PlotGridTabs:
         self,
         cell_id: CellId,
         cell: PlotCell,
-        layer_states: dict[LayerId, LayerStateMachine | None],
+        layer_states: dict[LayerId, LayerStateMachine],
     ) -> list[pn.Row]:
         """
         Create toolbars for all layers in a cell.
@@ -565,7 +574,7 @@ class PlotGridTabs:
         for layer in cell.layers:
             layer_id = layer.layer_id
             config = layer.config
-            state = layer_states.get(layer_id)
+            state = layer_states[layer_id]
 
             # Get display info for this layer
             title, description = get_plot_cell_display_info(
@@ -576,21 +585,18 @@ class PlotGridTabs:
 
             # Add state info to description using explicit state enum
             stopped = False
-            if state is None:
-                description = f"{description}\n\nStatus: Waiting for data..."
-            else:
-                match state.state:
-                    case LayerState.ERROR:
-                        description = f"{description}\n\nError: {state.error_message}"
-                    case LayerState.STOPPED:
-                        stopped = True
-                        description = f"{description}\n\nStatus: Workflow ended"
-                    case LayerState.WAITING_FOR_DATA:
-                        description = f"{description}\n\nStatus: Waiting for data..."
-                    case LayerState.WAITING_FOR_JOB:
-                        description = f"{description}\n\nStatus: Waiting for workflow"
-                    case LayerState.READY:
-                        pass  # No extra description for ready state
+            match state.state:
+                case LayerState.ERROR:
+                    description = f"{description}\n\nError: {state.error_message}"
+                case LayerState.STOPPED:
+                    stopped = True
+                    description = f"{description}\n\nStatus: Workflow ended"
+                case LayerState.WAITING_FOR_DATA:
+                    description = f"{description}\n\nStatus: Waiting for data..."
+                case LayerState.WAITING_FOR_JOB:
+                    description = f"{description}\n\nStatus: Waiting for workflow"
+                case LayerState.READY:
+                    pass  # No extra description for ready state
 
             # Create callbacks that capture layer_id / cell_id
             def make_close_callback(lid: LayerId) -> Callable[[], None]:
@@ -626,7 +632,7 @@ class PlotGridTabs:
     def _create_placeholder_content(
         self,
         cell: PlotCell,
-        layer_states: dict[LayerId, LayerStateMachine | None],
+        layer_states: dict[LayerId, LayerStateMachine],
     ) -> pn.pane.Markdown:
         """
         Create placeholder content showing layer status.
@@ -647,40 +653,36 @@ class PlotGridTabs:
         status_lines = []
         for layer in cell.layers:
             config = layer.config
-            state = layer_states.get(layer.layer_id)
+            state = layer_states[layer.layer_id]
 
             workflow_title, output_title = get_workflow_display_info(
                 self._workflow_registry, config.workflow_id, config.output_name
             )
 
             # Determine status from explicit state enum
-            if state is None:
-                status = "Waiting for data..."
-                text_color = '#6c757d'
-            else:
-                match state.state:
-                    case LayerState.ERROR:
-                        error_text = state.error_message or "Unknown error"
-                        status = f"Error: {error_text[:100]}..."
-                        text_color = '#dc3545'
-                    case LayerState.STOPPED:
-                        status = "Workflow ended"
-                        text_color = '#495057'
-                    case LayerState.WAITING_FOR_DATA:
-                        status = "Waiting for data..."
-                        text_color = '#6c757d'
-                    case LayerState.WAITING_FOR_JOB:
-                        status = "Waiting for workflow..."
-                        text_color = '#6c757d'
-                    case LayerState.READY:
-                        # Defensive: READY should have displayable plot and not
-                        # reach placeholder. Log if this happens.
-                        logger.warning(
-                            "Layer %s in READY state but showing placeholder",
-                            layer.layer_id,
-                        )
-                        status = "Ready (loading...)"
-                        text_color = '#6c757d'
+            match state.state:
+                case LayerState.ERROR:
+                    error_text = state.error_message or "Unknown error"
+                    status = f"Error: {error_text[:100]}..."
+                    text_color = '#dc3545'
+                case LayerState.STOPPED:
+                    status = "Workflow ended"
+                    text_color = '#495057'
+                case LayerState.WAITING_FOR_DATA:
+                    status = "Waiting for data..."
+                    text_color = '#6c757d'
+                case LayerState.WAITING_FOR_JOB:
+                    status = "Waiting for workflow..."
+                    text_color = '#6c757d'
+                case LayerState.READY:
+                    # Defensive: READY should have displayable plot and not
+                    # reach placeholder. Log if this happens.
+                    logger.warning(
+                        "Layer %s in READY state but showing placeholder",
+                        layer.layer_id,
+                    )
+                    status = "Ready (loading...)"
+                    text_color = '#6c757d'
 
             status_lines.append(
                 f"**{workflow_title} → {output_title}**: "
@@ -815,7 +817,15 @@ class PlotGridTabs:
                     state = self._plot_data_service.get(layer_id)
 
                     # Check for version changes or new layers
-                    current_version = state.version if state is not None else -1
+                    if state is None:
+                        # Should not happen: layers are registered before widgets
+                        # are notified. Skip this layer but log for debugging.
+                        logger.warning(
+                            "Layer %s has no state in PlotDataService during poll",
+                            layer_id,
+                        )
+                        continue
+                    current_version = state.version
                     last_version = self._last_seen_versions.get(layer_id)
 
                     # Detect: new layers (never seen) or version changes.

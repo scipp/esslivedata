@@ -253,10 +253,10 @@ class PlotOrchestrator:
         job_orchestrator: JobOrchestratorProtocol,
         data_service: DataService,
         instrument: str,
+        plot_data_service: PlotDataService,
         config_store: ConfigStore | None = None,
         raw_templates: Sequence[dict[str, Any]] = (),
         instrument_config: Instrument | None = None,
-        plot_data_service: PlotDataService | None = None,
     ) -> None:
         """
         Initialize the plot orchestrator.
@@ -271,6 +271,8 @@ class PlotOrchestrator:
             DataService for monitoring data arrival.
         instrument
             Name of the instrument (e.g., 'dummy', 'dream').
+        plot_data_service
+            Service for storing plot state for multi-session support.
         config_store
             Optional store for persisting plot grid configurations across sessions.
         raw_templates
@@ -278,9 +280,6 @@ class PlotOrchestrator:
             during initialization and made available via get_available_templates().
         instrument_config
             Optional instrument configuration for source metadata lookup.
-        plot_data_service
-            Service for storing plot state for multi-session support.
-            Required for the dashboard to function properly.
         """
         self._plotting_controller = plotting_controller
         self._job_orchestrator = job_orchestrator
@@ -608,8 +607,7 @@ class PlotOrchestrator:
             self._data_service.unregister_subscriber(self._data_subscriptions[layer_id])
             del self._data_subscriptions[layer_id]
         # Clean up from PlotDataService
-        if self._plot_data_service is not None:
-            self._plot_data_service.remove(layer_id)
+        self._plot_data_service.remove(layer_id)
         if remove_from_cell_mapping:
             self._layer_to_cell.pop(layer_id, None)
 
@@ -645,6 +643,8 @@ class PlotOrchestrator:
         if config.is_static():
             # Static overlay: create plot immediately without subscription
             self._create_static_layer_plot(grid_id, cell_id, layer)
+            # Register as READY before notifying - static layers don't wait for data
+            self._plot_data_service.static_layer_ready(layer_id)
             # Notify sessions so they can display the static plot
             cell = self._grids[grid_id].cells[cell_id]
             self._notify_cell_updated(grid_id, cell_id, cell)
@@ -665,6 +665,11 @@ class PlotOrchestrator:
             on_stopped=on_any_job_stopped,
         )
         self._layer_subscriptions[layer_id] = subscription
+
+        # Register layer in WAITING_FOR_JOB state before starting subscription
+        # This ensures PlotDataService has state for the layer when widgets are notified
+        self._plot_data_service.layer_added(layer_id)
+
         subscription.start()  # May fire on_ready synchronously if workflows running
 
         # Always notify current config - sessions will poll PlotDataService for state
@@ -696,10 +701,6 @@ class PlotOrchestrator:
 
         layer_id = layer.layer_id
         config = layer.config
-
-        if self._plot_data_service is None:
-            self._logger.error('PlotDataService is required for layer_id=%s', layer_id)
-            return
 
         try:
             plotter = plotter_registry.create_plotter(config.plot_name, config.params)
@@ -753,10 +754,6 @@ class PlotOrchestrator:
             return
 
         config = self.get_layer_config(layer_id)
-
-        if self._plot_data_service is None:
-            self._logger.error('PlotDataService is required for layer_id=%s', layer_id)
-            return
 
         # Create plotter eagerly - doesn't need data
         try:
@@ -841,8 +838,7 @@ class PlotOrchestrator:
         )
 
         # Transition to STOPPED state - UI will detect via polling
-        if self._plot_data_service is not None:
-            self._plot_data_service.job_stopped(layer_id)
+        self._plot_data_service.job_stopped(layer_id)
 
     def _validate_params(
         self, plot_name: str, params: dict[str, Any]

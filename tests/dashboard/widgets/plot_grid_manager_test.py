@@ -7,6 +7,7 @@ import yaml
 
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
+from ess.livedata.dashboard.plot_data_service import PlotDataService
 from ess.livedata.dashboard.plot_orchestrator import PlotOrchestrator
 from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.stream_manager import StreamManager
@@ -55,13 +56,22 @@ def fake_data_service():
 
 
 @pytest.fixture
-def plot_orchestrator(plotting_controller, job_orchestrator, fake_data_service):
+def plot_data_service():
+    """Create a PlotDataService for testing."""
+    return PlotDataService()
+
+
+@pytest.fixture
+def plot_orchestrator(
+    plotting_controller, job_orchestrator, fake_data_service, plot_data_service
+):
     """Create a PlotOrchestrator for testing."""
     return PlotOrchestrator(
         plotting_controller=plotting_controller,
         job_orchestrator=job_orchestrator,
         data_service=fake_data_service,
         instrument='dummy',
+        plot_data_service=plot_data_service,
     )
 
 
