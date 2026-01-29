@@ -81,7 +81,13 @@ class LayerStateMachine:
 
     @property
     def version(self) -> int:
-        """Version counter, incremented on every state transition."""
+        """Version counter, incremented on every state change.
+
+        UI components compare versions to detect when rebuilds are needed.
+        We track version rather than just state because some transitions
+        (e.g., plotter replacement while in WAITING_FOR_DATA) don't change
+        state but still require UI updates.
+        """
         return self._version
 
     @property
@@ -98,8 +104,11 @@ class LayerStateMachine:
         """
         Transition to WAITING_FOR_DATA when a job starts.
 
-        Valid from: WAITING_FOR_JOB, WAITING_FOR_DATA (replace), STOPPED, ERROR,
-        READY (restart).
+        Valid from: WAITING_FOR_JOB, WAITING_FOR_DATA, STOPPED, ERROR, READY.
+
+        When called from WAITING_FOR_DATA (workflow restarted before data
+        arrived), state doesn't change but version still increments because
+        the plotter is replaced and UI needs to rebuild with the new one.
 
         Parameters
         ----------
