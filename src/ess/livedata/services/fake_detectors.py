@@ -9,6 +9,7 @@ from typing import NoReturn
 import numpy as np
 import scipp as sc
 import scippnexus as snx
+import structlog
 from streaming_data_types import area_detector_ad00, eventdata_ev44
 
 from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
@@ -17,6 +18,9 @@ from ess.livedata.config.config_loader import load_config
 from ess.livedata.config.instruments import get_config
 from ess.livedata.core import IdentityProcessor
 from ess.livedata.kafka.sink import KafkaSink, SerializationError
+from ess.livedata.logging_config import configure_logging
+
+logger = structlog.get_logger(__name__)
 
 
 def events_from_nexus(file_path: str) -> dict[str, sc.DataGroup]:
@@ -47,9 +51,7 @@ class FakeDetectorSource(MessageSource[sc.Dataset]):
         interval_ns: int = int(1e9 / 14),
         instrument: str,
         nexus_file: str | None = None,
-        logger: logging.Logger | None = None,
     ):
-        self._logger = logger or logging.getLogger(__name__)
         self._instrument = instrument
         self._config = get_config(instrument).detector_fakes
         self._rng = np.random.default_rng()
@@ -61,15 +63,15 @@ class FakeDetectorSource(MessageSource[sc.Dataset]):
         self._nexus_data = None if nexus_file is None else events_from_nexus(nexus_file)
         if self._nexus_data is None:
             detector_names = list(self._config.keys())
-            self._logger.info("Configured detectors: %s", detector_names)
+            logger.info("Configured detectors: %s", detector_names)
         else:
             detector_names = list(self._nexus_data.keys())
             bank_sizes = {
                 name: data['event_time_offset'].size
                 for name, data in self._nexus_data.items()
             }
-            self._logger.info("Loaded event data from %s", nexus_file)
-            self._logger.info(
+            logger.info("Loaded event data from %s", nexus_file)
+            logger.info(
                 "Loaded detectors:\n%s",
                 '\n'.join(
                     f'    {detector}: {size} events'
@@ -84,7 +86,7 @@ class FakeDetectorSource(MessageSource[sc.Dataset]):
         self._last_message_time = {
             detector: time.time_ns() for detector in detector_names
         }
-        self._offset = {name: 0 for name in detector_names}
+        self._offset = dict.fromkeys(detector_names, 0)
 
     def _make_normal(self, mean: float, std: float, size: int) -> np.ndarray:
         return self._rng.normal(loc=mean, scale=std, size=size).astype(np.int64)
@@ -159,9 +161,7 @@ class FakeAreaDetectorSource(MessageSource[sc.DataArray]):
         *,
         interval_ns: int = int(1e9 / 14),
         instrument: str,
-        logger: logging.Logger | None = None,
     ):
-        self._logger = logger or logging.getLogger(__name__)
         self._instrument = instrument
         self._config = get_config(instrument).area_detector_fakes
         self._rng = np.random.default_rng()
@@ -169,7 +169,7 @@ class FakeAreaDetectorSource(MessageSource[sc.DataArray]):
         self._unique_id = 0
 
         detector_names = list(self._config.keys())
-        self._logger.info("Configured area detectors: %s", detector_names)
+        logger.info("Configured area detectors: %s", detector_names)
 
         self._last_message_time = {
             detector: time.time_ns() for detector in detector_names
@@ -265,16 +265,13 @@ def run_service(
     kafka_config = load_config(namespace=config_names.kafka_upstream)
     name = 'fake_producer'
     Service.configure_logging(log_level)
-    logger = logging.getLogger(f'{instrument}_{name}')
 
     if mode == 'ad00':
         serializer = serialize_area_detector_to_ad00
-        source = FakeAreaDetectorSource(instrument=instrument, logger=logger)
+        source = FakeAreaDetectorSource(instrument=instrument)
     else:
         serializer = serialize_detector_events_to_ev44
-        source = FakeDetectorSource(
-            instrument=instrument, nexus_file=nexus_file, logger=logger
-        )
+        source = FakeDetectorSource(instrument=instrument, nexus_file=nexus_file)
 
     resources = ExitStack()
     with resources:
@@ -312,7 +309,19 @@ def main() -> NoReturn:
         default='ev44',
         help='Data format to generate: ev44 (events) or ad00 (area detector images).',
     )
-    run_service(**vars(parser.parse_args()))
+    args = vars(parser.parse_args())
+
+    # Configure logging with parsed arguments
+    log_level = getattr(logging, args.pop('log_level'))
+    log_json_file = args.pop('log_json_file')
+    no_stdout_log = args.pop('no_stdout_log')
+    configure_logging(
+        level=log_level,
+        json_file=log_json_file,
+        disable_stdout=no_stdout_log,
+    )
+
+    run_service(log_level=log_level, **args)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-import logging
 import uuid
 
 import pytest
@@ -27,7 +26,7 @@ def make_job_number() -> uuid.UUID:
 
 def make_service_registry() -> ServiceRegistry:
     """Create a service registry for testing."""
-    return ServiceRegistry(logger=logging.getLogger(__name__))
+    return ServiceRegistry()
 
 
 class FakeMessageSource:

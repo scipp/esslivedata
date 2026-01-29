@@ -11,7 +11,6 @@ Coordinates workflow execution across multiple sources, handling:
 
 from __future__ import annotations
 
-import logging
 import uuid
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
@@ -20,6 +19,7 @@ from typing import TYPE_CHECKING, NewType
 from uuid import UUID
 
 import pydantic
+import structlog
 from pydantic import BaseModel, Field
 
 import ess.livedata.config.keys as keys
@@ -41,6 +41,8 @@ from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
 if TYPE_CHECKING:
     from ess.livedata.config import Instrument
+
+logger = structlog.get_logger(__name__)
 
 SourceName = str
 SubscriptionId = NewType('SubscriptionId', UUID)
@@ -153,7 +155,6 @@ class JobOrchestrator:
         self._workflow_registry = workflow_registry
         self._config_store = config_store
         self._instrument_config = instrument_config
-        self._logger = logging.getLogger(__name__)
 
         # Command acknowledgement tracking
         self._pending_commands = PendingCommandTracker()
@@ -200,7 +201,7 @@ class JobOrchestrator:
                             aux_source_names=job_data.get('aux_source_names', {}),
                         )
                         loaded_count += 1
-                self._logger.info(
+                logger.info(
                     'Loaded config for workflow %s from store: %d sources',
                     workflow_id,
                     loaded_count,
@@ -215,7 +216,7 @@ class JobOrchestrator:
                         # Params model has required fields without defaults
                         # These workflows don't use JobOrchestrator staging
                         self._workflows[workflow_id] = WorkflowState()
-                        self._logger.debug(
+                        logger.debug(
                             'Initialized workflow %s (params cannot be instantiated)',
                             workflow_id,
                         )
@@ -231,7 +232,7 @@ class JobOrchestrator:
                             params=params.copy(),
                             aux_source_names=aux_source_names.copy(),
                         )
-                self._logger.debug(
+                logger.debug(
                     'Initialized workflow %s with defaults: %d sources',
                     workflow_id,
                     len(spec.source_names),
@@ -243,7 +244,7 @@ class JobOrchestrator:
                     try:
                         state.current = JobSet.model_validate(current_data)
                     except (KeyError, ValueError, TypeError) as e:
-                        self._logger.warning(
+                        logger.warning(
                             'Failed to restore active job for workflow %s: %s',
                             workflow_id,
                             e,
@@ -253,7 +254,7 @@ class JobOrchestrator:
                     try:
                         state.previous = JobSet.model_validate(previous_data)
                     except (KeyError, ValueError, TypeError) as e:
-                        self._logger.warning(
+                        logger.warning(
                             'Failed to restore previous job for workflow %s: %s',
                             workflow_id,
                             e,
@@ -388,7 +389,7 @@ class JobOrchestrator:
 
         # Stop old jobs if any
         if state.current is not None:
-            self._logger.info(
+            logger.info(
                 'Workflow %s already has active jobs, stopping: %s',
                 workflow_id,
                 state.current.job_number,
@@ -401,9 +402,7 @@ class JobOrchestrator:
                 )
                 for job_id in state.current.job_ids()
             )
-            self._logger.debug(
-                'Will stop %d old jobs in batch', len(state.current.jobs)
-            )
+            logger.debug('Will stop %d old jobs in batch', len(state.current.jobs))
             # Move current to previous for cleanup once stop commands succeed.
             # Related to #445: Future improvements may wait for stop command
             # success responses before removing old job data.
@@ -437,7 +436,7 @@ class JobOrchestrator:
 
         self._command_service.send_batch(commands)
 
-        self._logger.info(
+        logger.info(
             'Started workflow %s with job_number %s on sources %s',
             workflow_id,
             job_set.job_number,
@@ -451,7 +450,7 @@ class JobOrchestrator:
         self._persist_state_to_store(workflow_id)
 
         # Notify PlotOrchestrator subscribers that job is active
-        self._logger.info(
+        logger.info(
             'Workflow %s committed with job_number=%s, notifying subscribers',
             workflow_id,
             job_set.job_number,
@@ -806,7 +805,7 @@ class JobOrchestrator:
         """
         state = self._workflows[workflow_id]
         if state.current is None:
-            self._logger.debug(
+            logger.debug(
                 'No active jobs for workflow %s to %s', workflow_id, action.value
             )
             return False
@@ -830,7 +829,7 @@ class JobOrchestrator:
 
         self._command_service.send_batch(commands)
 
-        self._logger.info(
+        logger.info(
             '%s workflow %s (job_number=%s, %d jobs)',
             action.value.capitalize(),
             workflow_id,
@@ -856,7 +855,7 @@ class JobOrchestrator:
         for subscription_id in self._workflow_subscriptions.get(workflow_id, set()):
             if subscription_id in self._subscriptions:
                 try:
-                    self._logger.debug(
+                    logger.debug(
                         'Calling on_started callback for subscription %s '
                         '(workflow=%s, job_number=%s)',
                         subscription_id,
@@ -865,7 +864,7 @@ class JobOrchestrator:
                     )
                     self._subscriptions[subscription_id].on_started(job_number)
                 except Exception:
-                    self._logger.exception(
+                    logger.exception(
                         'Error in workflow availability callback for workflow %s',
                         workflow_id,
                     )
@@ -888,7 +887,7 @@ class JobOrchestrator:
                 callbacks = self._subscriptions[subscription_id]
                 if callbacks.on_stopped is not None:
                     try:
-                        self._logger.debug(
+                        logger.debug(
                             'Calling on_stopped callback for subscription %s '
                             '(workflow=%s, job_number=%s)',
                             subscription_id,
@@ -897,7 +896,7 @@ class JobOrchestrator:
                         )
                         callbacks.on_stopped(job_number)
                     except Exception:
-                        self._logger.exception(
+                        logger.exception(
                             'Error in workflow stopped callback for workflow %s',
                             workflow_id,
                         )
@@ -944,7 +943,7 @@ class JobOrchestrator:
             state = self._workflows[workflow_id]
             if state.current is not None:
                 current_job_number = state.current.job_number
-                self._logger.debug(
+                logger.debug(
                     'Workflow %s already has active job (job_number=%s), '
                     'notifying new subscriber %s immediately',
                     workflow_id,
@@ -955,7 +954,7 @@ class JobOrchestrator:
                     callbacks.on_started(current_job_number)
                     callback_invoked = True
                 except Exception:
-                    self._logger.exception(
+                    logger.exception(
                         'Error in immediate callback for subscription %s',
                         subscription_id,
                     )
@@ -976,9 +975,9 @@ class JobOrchestrator:
             # Remove from workflow tracking
             for workflow_subs in self._workflow_subscriptions.values():
                 workflow_subs.discard(subscription_id)
-            self._logger.debug('Removed subscription %s', subscription_id)
+            logger.debug('Removed subscription %s', subscription_id)
         else:
-            self._logger.warning(
+            logger.warning(
                 'Attempted to unsubscribe from non-existent subscription %s',
                 subscription_id,
             )
@@ -1006,7 +1005,7 @@ class JobOrchestrator:
         """
         subscription_id = WidgetLifecycleSubscriptionId(uuid.uuid4())
         self._widget_subscriptions[subscription_id] = callbacks
-        self._logger.debug('Added widget lifecycle subscription %s', subscription_id)
+        logger.debug('Added widget lifecycle subscription %s', subscription_id)
         return subscription_id
 
     def unsubscribe_from_widget_lifecycle(
@@ -1022,11 +1021,9 @@ class JobOrchestrator:
         """
         if subscription_id in self._widget_subscriptions:
             del self._widget_subscriptions[subscription_id]
-            self._logger.debug(
-                'Removed widget lifecycle subscription %s', subscription_id
-            )
+            logger.debug('Removed widget lifecycle subscription %s', subscription_id)
         else:
-            self._logger.warning(
+            logger.warning(
                 'Attempted to unsubscribe from non-existent widget subscription %s',
                 subscription_id,
             )
@@ -1045,7 +1042,7 @@ class JobOrchestrator:
                 try:
                     callbacks.on_staged_changed(workflow_id)
                 except Exception:
-                    self._logger.exception(
+                    logger.exception(
                         'Error in on_staged_changed callback for subscription %s',
                         subscription_id,
                     )
@@ -1057,7 +1054,7 @@ class JobOrchestrator:
                 try:
                     callbacks.on_workflow_committed(workflow_id)
                 except Exception:
-                    self._logger.exception(
+                    logger.exception(
                         'Error in on_workflow_committed callback for subscription %s',
                         subscription_id,
                     )
@@ -1069,7 +1066,7 @@ class JobOrchestrator:
                 try:
                     callbacks.on_workflow_stopped(workflow_id)
                 except Exception:
-                    self._logger.exception(
+                    logger.exception(
                         'Error in on_workflow_stopped callback for subscription %s',
                         subscription_id,
                     )
@@ -1085,7 +1082,7 @@ class JobOrchestrator:
                         workflow_id, action, success_count, total_count
                     )
                 except Exception:
-                    self._logger.exception(
+                    logger.exception(
                         'Error in on_command_success callback for subscription %s',
                         subscription_id,
                     )
@@ -1106,7 +1103,7 @@ class JobOrchestrator:
                         workflow_id, action, error_count, total_count, error_message
                     )
                 except Exception:
-                    self._logger.exception(
+                    logger.exception(
                         'Error in on_command_error callback for subscription %s',
                         subscription_id,
                     )
@@ -1145,7 +1142,7 @@ class JobOrchestrator:
         total = result.success_count + result.error_count
 
         if result.all_succeeded:
-            self._logger.info(
+            logger.info(
                 'Command %s for workflow %s acknowledged (%d/%d)',
                 result.action,
                 result.workflow_id,
@@ -1157,7 +1154,7 @@ class JobOrchestrator:
             )
         elif result.all_failed:
             combined_errors = "; ".join(result.error_messages) or "Unknown error"
-            self._logger.warning(
+            logger.warning(
                 'Command %s for workflow %s failed (%d/%d): %s',
                 result.action,
                 result.workflow_id,
@@ -1175,7 +1172,7 @@ class JobOrchestrator:
         else:
             # Partial success - notify both
             combined_errors = "; ".join(result.error_messages) or "Unknown error"
-            self._logger.warning(
+            logger.warning(
                 'Command %s for workflow %s partially succeeded (%d/%d, %d failed): %s',
                 result.action,
                 result.workflow_id,

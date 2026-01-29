@@ -11,3 +11,4 @@ pydantic>=2
 scipp>=25.02.0
 scippneutron>=25.11.1
 pooch
+structlog>=24.0.0

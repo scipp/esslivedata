@@ -2,10 +2,13 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-import logging
 from typing import Generic, Protocol
 
+import structlog
+
 from .message import Message, MessageSink, MessageSource, Tin, Tout
+
+logger = structlog.get_logger(__name__)
 
 
 class Processor(Protocol):
@@ -27,15 +30,13 @@ class IdentityProcessor(Generic[Tin, Tout]):
     def __init__(
         self,
         *,
-        logger: logging.Logger | None = None,
         source: MessageSource[Message[Tin]],
         sink: MessageSink[Tout],
     ) -> None:
-        self._logger = logger or logging.getLogger(__name__)
         self._source = source
         self._sink = sink
 
     def process(self) -> None:
         messages = self._source.get_messages()
-        self._logger.debug('Processing %d messages', len(messages))
+        logger.debug('processing_messages', count=len(messages))
         self._sink.publish_messages(messages)

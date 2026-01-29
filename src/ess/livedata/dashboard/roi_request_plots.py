@@ -12,13 +12,13 @@ to identify where to publish ROI updates.
 
 from __future__ import annotations
 
-import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
 import holoviews as hv
 import pydantic
 import scipp as sc
+import structlog
 
 from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
 from ess.livedata.config.roi_names import (
@@ -30,6 +30,8 @@ from ess.livedata.config.roi_names import (
 
 from .plots import Plotter
 from .static_plots import Color, LineDash, RectanglesCoordinates
+
+logger = structlog.get_logger(__name__)
 
 if TYPE_CHECKING:
     from .roi_publisher import ROIPublisher
@@ -377,12 +379,10 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         self,
         params: ParamsType,
         roi_publisher: ROIPublisher | None = None,
-        logger: logging.Logger | None = None,
     ) -> None:
         super().__init__()
         self._params = params
         self._roi_publisher = roi_publisher
-        self._logger = logger or logging.getLogger(__name__)
         self._converter = self._create_converter()
         self._roi_mapper = get_roi_mapper()
 
@@ -527,9 +527,7 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
             self._publish_rois(new_rois)
 
         except Exception as e:
-            self._logger.error(
-                "Failed to process %s edit: %s", self._geometry_type(), e
-            )
+            logger.error("Failed to process %s edit: %s", self._geometry_type(), e)
 
     def _apply_styling(self, dmap: hv.DynamicMap) -> hv.DynamicMap:
         """Apply common styling options to the DynamicMap."""
@@ -551,11 +549,11 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
 
         geometry = self._roi_mapper.geometry_for_type(self._geometry_type())
         if geometry is None:
-            self._logger.warning("%s geometry not configured", self._geometry_type())
+            logger.warning("%s geometry not configured", self._geometry_type())
             return
 
         self._roi_publisher.publish(self._result_key.job_id, rois, geometry)
-        self._logger.info(
+        logger.info(
             "Published %d %s ROI(s) for job %s",
             len(rois),
             self._geometry_type(),
@@ -590,7 +588,7 @@ class RectanglesRequestPlotter(
         try:
             rects = self._params.geometry.parse()
         except Exception:
-            self._logger.warning("Failed to parse initial rectangle coordinates")
+            logger.warning("Failed to parse initial rectangle coordinates")
             return {}
 
         rois: dict[int, RectangleROI] = {}
@@ -740,7 +738,7 @@ class PolygonsRequestPlotter(
         try:
             polygons = self._params.geometry.parse()
         except Exception:
-            self._logger.warning("Failed to parse initial polygon coordinates")
+            logger.warning("Failed to parse initial polygon coordinates")
             return {}
 
         rois: dict[int, PolygonROI] = {}

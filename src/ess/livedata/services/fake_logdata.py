@@ -11,6 +11,7 @@ from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.core import IdentityProcessor
 from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_f144
+from ess.livedata.logging_config import configure_logging
 
 
 def _make_ramp(size: int) -> sc.DataArray:
@@ -46,7 +47,7 @@ class FakeLogdataSource(MessageSource[sc.DataArray]):
         # Track the current time and cycle count for each log data
         self._current_time = {name: self._time_ns() for name in self._ramp_patterns}
         # Track the last index we produced for each log
-        self._current_index = {name: 0 for name in self._ramp_patterns}
+        self._current_index = dict.fromkeys(self._ramp_patterns, 0)
         # How often to produce new data points (in seconds)
         self._interval_ns = int(1e9)  # 1 second in nanoseconds
         self._last_produce_time = self._time_ns()
@@ -142,7 +143,19 @@ def main() -> NoReturn:
     parser = Service.setup_arg_parser(
         'Fake that publishes f144 logdata', dev_flag=False
     )
-    run_service(**vars(parser.parse_args()))
+    args = vars(parser.parse_args())
+
+    # Configure logging with parsed arguments
+    log_level = getattr(logging, args.pop('log_level'))
+    log_json_file = args.pop('log_json_file')
+    no_stdout_log = args.pop('no_stdout_log')
+    configure_logging(
+        level=log_level,
+        json_file=log_json_file,
+        disable_stdout=no_stdout_log,
+    )
+
+    run_service(log_level=log_level, **args)
 
 
 if __name__ == "__main__":

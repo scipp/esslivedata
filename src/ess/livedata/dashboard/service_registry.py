@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
-import logging
 import time
 from collections.abc import Callable
 
+import structlog
+
 from ess.livedata.core.job import ServiceState, ServiceStatus
+
+logger = structlog.get_logger(__name__)
 
 # Timeout threshold for considering a worker stale (30 seconds in nanoseconds)
 SERVICE_HEARTBEAT_TIMEOUT_NS = 30_000_000_000
@@ -30,10 +33,8 @@ class ServiceRegistry:
     def __init__(
         self,
         *,
-        logger: logging.Logger | None = None,
         heartbeat_timeout_ns: int = SERVICE_HEARTBEAT_TIMEOUT_NS,
     ) -> None:
-        self._logger = logger or logging.getLogger(__name__)
         self._worker_statuses: dict[str, ServiceStatus] = {}
         self._worker_timestamps: dict[str, int] = {}
         self._update_subscribers: list[Callable[[], None]] = []
@@ -51,19 +52,19 @@ class ServiceRegistry:
         try:
             callback()
         except Exception as e:
-            self._logger.error("Error in service status update callback: %s", e)
+            logger.error("Error in service status update callback: %s", e)
 
     def status_updated(self, status: ServiceStatus) -> None:
         """Update the stored worker status and record timestamp."""
         worker_key = make_worker_key(status)
-        self._logger.debug("Worker status updated: %s -> %s", worker_key, status.state)
+        logger.debug("Worker status updated: %s -> %s", worker_key, status.state)
         self._worker_statuses[worker_key] = status
         self._worker_timestamps[worker_key] = time.time_ns()
         self._notify_update()
 
     def _notify_update(self) -> None:
         """Notify listeners about worker status updates."""
-        self._logger.debug(
+        logger.debug(
             "Worker statuses updated: %s workers tracked",
             len(self._worker_statuses),
         )
@@ -72,7 +73,7 @@ class ServiceRegistry:
             try:
                 callback()
             except Exception as e:
-                self._logger.error("Error in service status update callback: %s", e)
+                logger.error("Error in service status update callback: %s", e)
 
     def remove_worker(self, worker_key: str) -> None:
         """Remove a worker from tracking."""

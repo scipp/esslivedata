@@ -12,6 +12,7 @@ from panel.io.resources import CDN_DIST
 from panel.theme.material import Material
 
 from ess.livedata import Service
+from ess.livedata.logging_config import configure_logging
 
 from .dashboard import DashboardBase
 from .widgets.backend_status_widget import BackendStatusWidget
@@ -123,7 +124,6 @@ class ReductionApp(DashboardBase):
         if self._dev:
             dev_widget = LogProducerWidget(
                 instrument=self._instrument,
-                logger=self._logger,
                 exit_stack=self._exit_stack,
             )
             dev_content = [dev_widget.panel, pn.layout.Divider()]
@@ -188,8 +188,22 @@ def get_arg_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    import logging
+
     parser = get_arg_parser()
-    app = ReductionApp(**vars(parser.parse_args()))
+    args = vars(parser.parse_args())
+
+    # Configure logging with parsed arguments
+    log_level = getattr(logging, args.pop('log_level'))
+    log_json_file = args.pop('log_json_file')
+    no_stdout_log = args.pop('no_stdout_log')
+    configure_logging(
+        level=log_level,
+        json_file=log_json_file,
+        disable_stdout=no_stdout_log,
+    )
+
+    app = ReductionApp(log_level=log_level, **args)
     app.start(blocking=True)
 
 

@@ -2,11 +2,13 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-import logging
+import structlog
 
 from ..config.acknowledgement import AcknowledgementResponse, CommandAcknowledgement
 from ..config.workflow_spec import WorkflowConfig
 from .job_manager import DifferentInstrument, JobCommand, JobManager
+
+logger = structlog.get_logger(__name__)
 
 
 class JobManagerAdapter:
@@ -21,8 +23,7 @@ class JobManagerAdapter:
        but this, too, would require frontend changes.
     """
 
-    def __init__(self, *, job_manager: JobManager, logger: logging.Logger) -> None:
-        self._logger = logger
+    def __init__(self, *, job_manager: JobManager) -> None:
         self._job_manager = job_manager
 
     def job_command(
@@ -37,13 +38,14 @@ class JobManagerAdapter:
             # Job not found. Similar to DifferentInstrument for workflows: multiple
             # backend services receive the same commands, but only the one owning the
             # job should respond. Future work may add device-based filtering (#445).
-            self._logger.debug(
-                "Job %s not found, assuming it is handled by another worker",
-                command.job_id,
+            logger.debug(
+                "job_not_found",
+                job_id=str(command.job_id),
+                message="Assuming handled by another worker",
             )
             return None
         except Exception as e:
-            self._logger.exception("Failed to execute job command %s", command.action)
+            logger.exception("job_command_failed", action=command.action)
             if command.message_id is not None:
                 return CommandAcknowledgement(
                     message_id=command.message_id,
@@ -79,13 +81,16 @@ class JobManagerAdapter:
             # data_reduction and 'dream_beam_monitors' for monitor_data, which is
             # included in the identifier. This should thus work safely, but the question
             # is whether it should be filtered out earlier.
-            self._logger.debug(
-                "Workflow %s not found, assuming it is handled by another worker",
-                config.identifier,
+            logger.debug(
+                "workflow_not_found",
+                workflow_id=str(config.identifier),
+                message="Assuming handled by another worker",
             )
             return None
         except Exception as e:
-            self._logger.exception("Failed to start workflow %s", config.identifier)
+            logger.exception(
+                "workflow_start_failed", workflow_id=str(config.identifier)
+            )
             if config.message_id is not None:
                 return CommandAcknowledgement(
                     message_id=config.message_id,

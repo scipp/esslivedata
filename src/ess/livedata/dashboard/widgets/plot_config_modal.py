@@ -13,13 +13,13 @@ existing data:
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import panel as pn
 import pydantic
+import structlog
 
 from ess.livedata.config.workflow_spec import (
     WorkflowId,
@@ -40,6 +40,8 @@ from ess.livedata.dashboard.plotting import PlotterSpec
 
 from .configuration_widget import ConfigurationPanel
 from .wizard import Wizard, WizardStep
+
+logger = structlog.get_logger(__name__)
 
 # Synthetic workflow ID for static overlays (no actual workflow subscription)
 STATIC_OVERLAY_NAMESPACE = "static_overlay"
@@ -109,7 +111,6 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
     def __init__(
         self,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
-        logger: logging.Logger,
         initial_config: PlotConfig | None = None,
     ) -> None:
         """
@@ -119,14 +120,11 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         ----------
         workflow_registry
             Registry of available workflows and their specifications.
-        logger
-            Logger instance for error reporting.
         initial_config
             Optional initial configuration for edit mode.
         """
         super().__init__()
         self._workflow_registry = dict(workflow_registry)
-        self._logger = logger
         self._initial_config = initial_config
         self._selected_namespace: str | None = None
         self._selected_workflow_id: WorkflowId | None = None
@@ -463,7 +461,6 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         self,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         plotting_controller,
-        logger: logging.Logger,
         initial_config: PlotConfig | None = None,
     ) -> None:
         """
@@ -475,15 +472,12 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             Registry of available workflows and their specifications.
         plotting_controller
             Controller for determining available plotters from specs.
-        logger
-            Logger instance for error reporting.
         initial_config
             Optional initial configuration for edit mode.
         """
         super().__init__()
         self._workflow_registry = dict(workflow_registry)
         self._plotting_controller = plotting_controller
-        self._logger = logger
         self._initial_config = initial_config
         self._output_selection: OutputSelection | None = None
         self._selected_plot_name: str | None = None
@@ -809,7 +803,6 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         self,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         plotting_controller,
-        logger: logging.Logger,
         initial_config: PlotConfig | None = None,
         instrument_config: Instrument | None = None,
     ) -> None:
@@ -822,8 +815,6 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             Registry of available workflows and their specifications.
         plotting_controller
             Controller for getting plotter specs.
-        logger
-            Logger instance for error reporting.
         initial_config
             Optional initial configuration for edit mode.
         instrument_config
@@ -832,7 +823,6 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         super().__init__()
         self._workflow_registry = dict(workflow_registry)
         self._plotting_controller = plotting_controller
-        self._logger = logger
         self._initial_config = initial_config
         self._instrument_config = instrument_config
         self._config_panel: ConfigurationPanel | None = None
@@ -949,7 +939,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
                 self._plotter_selection.plot_name
             )
         except Exception as e:
-            self._logger.exception("Error getting plot spec")
+            logger.exception("Error getting plot spec")
             self._show_error(f'Error getting plot spec: {e}')
             return
 
@@ -1084,25 +1074,21 @@ class PlotConfigModal:
     ) -> None:
         self._success_callback = success_callback
         self._cancel_callback = cancel_callback
-        self._logger = logging.getLogger(__name__)
         self._initial_config = initial_config
 
         # Create steps
         step1 = WorkflowAndOutputSelectionStep(
             workflow_registry=workflow_registry,
-            logger=self._logger,
             initial_config=initial_config,
         )
         step2 = PlotterSelectionStep(
             workflow_registry=workflow_registry,
             plotting_controller=plotting_controller,
-            logger=self._logger,
             initial_config=initial_config,
         )
         step3 = SpecBasedConfigurationStep(
             workflow_registry=workflow_registry,
             plotting_controller=plotting_controller,
-            logger=self._logger,
             initial_config=initial_config,
             instrument_config=instrument_config,
         )

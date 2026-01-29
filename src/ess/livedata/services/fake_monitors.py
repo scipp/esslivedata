@@ -19,6 +19,7 @@ from ess.livedata.kafka.sink import (
     SerializationError,
     serialize_dataarray_to_da00,
 )
+from ess.livedata.logging_config import configure_logging
 
 
 class FakeMonitorSource(MessageSource[sc.Variable]):
@@ -175,7 +176,19 @@ def main() -> NoReturn:
         metavar='1-10',
         help='Number of monitors to simulate (1-10, default: 2)',
     )
-    run_service(**vars(parser.parse_args()))
+    args = vars(parser.parse_args())
+
+    # Configure logging with parsed arguments
+    log_level = getattr(logging, args.pop('log_level'))
+    log_json_file = args.pop('log_json_file')
+    no_stdout_log = args.pop('no_stdout_log')
+    configure_logging(
+        level=log_level,
+        json_file=log_json_file,
+        disable_stdout=no_stdout_log,
+    )
+
+    run_service(log_level=log_level, **args)
 
 
 if __name__ == "__main__":

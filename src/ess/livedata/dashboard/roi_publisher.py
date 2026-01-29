@@ -2,12 +2,14 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Publisher for ROI updates to Kafka."""
 
-import logging
+import structlog
 
 from ..config.models import PolygonROI, RectangleROI
 from ..config.roi_names import ROIGeometry
 from ..config.workflow_spec import JobId
 from ..core.message import Message, MessageSink, StreamId, StreamKind
+
+logger = structlog.get_logger(__name__)
 
 ROIs = dict[int, RectangleROI] | dict[int, PolygonROI]
 
@@ -23,13 +25,10 @@ class ROIPublisher:
     ----------
     sink:
         Message sink for publishing messages.
-    logger:
-        Logger instance. If None, creates a logger using the module name.
     """
 
-    def __init__(self, sink: MessageSink, logger: logging.Logger | None = None):
+    def __init__(self, sink: MessageSink):
         self._sink = sink
-        self._logger = logger or logging.getLogger(__name__)
 
     def publish(
         self,
@@ -58,14 +57,14 @@ class ROIPublisher:
         self._sink.publish_messages([msg])
 
         if rois:
-            self._logger.debug(
+            logger.debug(
                 "Published %d %s ROI(s) for job %s",
                 len(rois),
                 geometry.geometry_type,
                 job_id,
             )
         else:
-            self._logger.debug(
+            logger.debug(
                 "Published empty %s ROI update (cleared all) for job %s",
                 geometry.geometry_type,
                 job_id,

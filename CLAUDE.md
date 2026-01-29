@@ -22,17 +22,11 @@ All unit tests run without Kafka - no Docker container needed.
 # Run all tests
 tox
 
-# Run tests for specific Python version
-tox -e py311
-
 # Run tests manually with pytest
 python -m pytest
 
 # Run specific test file
 python -m pytest tests/core/processor_test.py
-
-# Run tests with benchmarks
-python -m pytest --benchmark-only
 ```
 
 ### Code Quality
@@ -166,7 +160,7 @@ The dashboard follows a **layered MVC architecture**:
 
 **Key Pattern**: Separation between:
 - **Pydantic models**: Backend validation, serialization, Kafka communication
-- **Param models**: GUI widgets and user interaction
+- **Param models**: GUI widgets and user interaction. Concrete fields (such as `int`, `bool`, ...) must be in a nested model or widget generation will fail.
 - **ConfigBackedParam**: Translation layer bridging the two (for simple controls)
 
 **Threading Model**:
