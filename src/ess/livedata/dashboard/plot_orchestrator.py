@@ -645,6 +645,9 @@ class PlotOrchestrator:
         if config.is_static():
             # Static overlay: create plot immediately without subscription
             self._create_static_layer_plot(grid_id, cell_id, layer)
+            # Notify sessions so they can display the static plot
+            cell = self._grids[grid_id].cells[cell_id]
+            self._notify_cell_updated(grid_id, cell_id, cell)
             self._persist_to_store()
             return
 
@@ -705,7 +708,8 @@ class PlotOrchestrator:
                 raise TypeError(
                     f"Plotter '{config.plot_name}' does not support static plots"
                 )
-            plotter.create_static_plot()  # Caches state internally
+            element = plotter.create_static_plot()
+            plotter._set_cached_state(element)
             # Static layers are immediately ready - transition through both states
             self._plot_data_service.job_started(layer_id, plotter)
             self._plot_data_service.data_arrived(layer_id)
