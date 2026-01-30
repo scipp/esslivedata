@@ -73,11 +73,60 @@ def _parse_rectangle_list(v: str) -> list[list[int | float]]:
 
 
 class StaticPlotter(ABC):
-    """Base class for static plotters that create plots from params only."""
+    """Base class for static plotters that create plots from params only.
+
+    Static plotters don't inherit from Plotter since they don't process data,
+    but they still need to track presenters for the dirty flag mechanism.
+    """
+
+    def __init__(self) -> None:
+        import weakref
+
+        from .plots import PresenterBase
+
+        self._presenters: weakref.WeakSet[PresenterBase] = weakref.WeakSet()
+        self._cached_state: hv.Element | None = None
 
     @abstractmethod
     def create_static_plot(self) -> hv.Element:
         """Create a plot element from the stored params."""
+
+    def create_presenter(self):
+        """Create a StaticPresenter for this plotter."""
+        from .plots import StaticPresenter
+
+        presenter = StaticPresenter(self)
+        self._presenters.add(presenter)
+        return presenter
+
+    def _set_cached_state(self, state: hv.Element) -> None:
+        """Store computed state and mark all presenters dirty."""
+        self._cached_state = state
+        # Convert to list to avoid RuntimeError if WeakSet is modified during iteration
+        for presenter in list(self._presenters):
+            presenter._mark_dirty()
+
+    def get_cached_state(self) -> hv.Element | None:
+        """Get the last computed state, or None if not yet computed."""
+        return self._cached_state
+
+    def has_cached_state(self) -> bool:
+        """Check if state has been computed."""
+        return self._cached_state is not None
+
+    def compute(self, data: dict) -> None:
+        """Compute the static plot and cache the result.
+
+        Parameters
+        ----------
+        data
+            Ignored. Static plotters don't use data; they create plots purely
+            from their params. This parameter exists for interface compatibility
+            with dynamic plotters.
+        """
+        del data  # Unused - static plotters ignore data
+        element = self.create_static_plot()
+        self._set_cached_state(element)
 
 
 class RectanglesCoordinates(pydantic.BaseModel):
@@ -169,6 +218,7 @@ class RectanglesPlotter(StaticPlotter):
     """Plotter for static rectangles overlay."""
 
     def __init__(self, params: RectanglesParams) -> None:
+        super().__init__()
         self.params = params
 
     @classmethod
@@ -263,6 +313,7 @@ class LinesPlotter(StaticPlotter):
     def __init__(
         self, params: VLinesParams | HLinesParams, element_class: type
     ) -> None:
+        super().__init__()
         self.params = params
         self._element_class = element_class
 
