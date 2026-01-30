@@ -110,6 +110,18 @@ def setup_factories(instrument: Instrument) -> None:
                 "wavelength mode not yet implemented for monitors"
             )
 
+        # monitor_bunker is only 6.62 m from the source, which is outside the
+        # DREAM TOF lookup table range (59.85-80.15 m). Only monitor_cave
+        # (Ltotal 72.33 m) is compatible with TOF mode.
+        if mode == 'tof' and source_name == 'monitor_bunker':
+            raise ValueError(
+                "TOF mode is not supported for 'monitor_bunker'. "
+                "The bunker monitor's flight path (6.62 m) is outside the "
+                "DREAM TOF lookup table range (59.85-80.15 m). "
+                "Use TOA mode for bunker monitor, or select 'monitor_cave' "
+                "for TOF mode."
+            )
+
         tof_lookup_table_filename = None
         geometry_filename = None
 
