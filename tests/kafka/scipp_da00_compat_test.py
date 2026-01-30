@@ -305,3 +305,121 @@ def test_roundtrip_with_name():
 
     assert converted.name == original.name
     assert sc.identical(original, converted)
+
+
+@pytest.mark.parametrize(
+    ('dtype', 'expected_dtype'),
+    [
+        (np.uint8, np.int32),
+        (np.int8, np.int32),
+        (np.uint16, np.int32),
+        (np.int16, np.int32),
+        (np.uint32, np.int64),
+        (np.uint64, np.float64),
+    ],
+)
+def test_da00_to_scipp_converts_unsupported_integer_dtypes(
+    dtype: np.dtype, expected_dtype: np.dtype
+):
+    """Test that unsupported integer dtypes are converted to compatible types."""
+    variables = [
+        dataarray_da00.Variable(
+            name='signal',
+            data=np.array([1, 2, 3], dtype=dtype),
+            axes=['x'],
+            shape=(3,),
+            unit='counts',
+        ),
+    ]
+
+    da = da00_to_scipp(variables)
+
+    assert da.data.values.dtype == expected_dtype
+
+
+def test_da00_to_scipp_preserves_supported_dtypes():
+    """Test that supported dtypes are not modified."""
+    for dtype in [np.int32, np.int64, np.float32, np.float64]:
+        variables = [
+            dataarray_da00.Variable(
+                name='signal',
+                data=np.array([1, 2, 3], dtype=dtype),
+                axes=['x'],
+                shape=(3,),
+                unit='counts',
+            ),
+        ]
+
+        da = da00_to_scipp(variables)
+
+        assert da.data.values.dtype == dtype
+
+
+def test_da00_to_scipp_drops_coords_with_incompatible_dimensions():
+    """Test that coords with incompatible dimensions are filtered out.
+
+    This handles cases like EFU sending `reference_time` and `frame_total` with
+    per-frame dimensions while the signal data is integrated over frames.
+    See issue #679 for follow-up work.
+    """
+    variables = [
+        dataarray_da00.Variable(
+            name='signal',
+            data=np.array([[1, 2], [3, 4]]),
+            axes=['x', 'y'],
+            shape=(2, 2),
+            unit='counts',
+        ),
+        dataarray_da00.Variable(
+            name='x', data=np.array([10, 20]), axes=['x'], shape=(2,), unit='m'
+        ),
+        # This coord has an incompatible dimension 'frame'
+        dataarray_da00.Variable(
+            name='reference_time',
+            data=np.array([100, 200, 300]),
+            axes=['frame'],
+            shape=(3,),
+            unit='ns',
+        ),
+        # Another coord with incompatible dimension
+        dataarray_da00.Variable(
+            name='frame_total',
+            data=np.array([10, 20, 30]),
+            axes=['frame'],
+            shape=(3,),
+            unit='counts',
+        ),
+    ]
+
+    da = da00_to_scipp(variables)
+
+    # Should keep 'x' coord but drop 'reference_time' and 'frame_total'
+    assert 'x' in da.coords
+    assert 'reference_time' not in da.coords
+    assert 'frame_total' not in da.coords
+
+
+def test_da00_to_scipp_keeps_scalar_coords():
+    """Test that scalar coords (0-dimensional) are kept."""
+    variables = [
+        dataarray_da00.Variable(
+            name='signal',
+            data=np.array([1, 2, 3]),
+            axes=['x'],
+            shape=(3,),
+            unit='counts',
+        ),
+        dataarray_da00.Variable(
+            name='x', data=np.array([10, 20, 30]), axes=['x'], shape=(3,), unit='m'
+        ),
+        # Scalar coord (no dimensions) should be compatible with any data
+        dataarray_da00.Variable(
+            name='temperature', data=np.array(300.0), axes=[], shape=(), unit='K'
+        ),
+    ]
+
+    da = da00_to_scipp(variables)
+
+    assert 'x' in da.coords
+    assert 'temperature' in da.coords
+    assert da.coords['temperature'].dims == ()
