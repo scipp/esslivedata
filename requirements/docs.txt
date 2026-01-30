@@ -166,6 +166,10 @@ referencing==0.37.0
     #   jsonschema
     #   jsonschema-specifications
 roman-numerals==4.1.0
+    # via
+    #   roman-numerals-py
+    #   sphinx
+roman-numerals-py==4.1.0
     # via sphinx
 rpds-py==0.30.0
     # via
@@ -173,7 +177,7 @@ rpds-py==0.30.0
     #   referencing
 snowballstemmer==3.0.1
     # via sphinx
-soupsieve==2.8.3
+soupsieve==2.8.1
     # via beautifulsoup4
 sphinx==9.0.4
     # via

@@ -66,9 +66,9 @@ def test_can_configure_and_stop_detector_workflow(
 
     app.publish_events(size=2000, time=2)
     service.step()
-    # Each workflow call returns 6 results: cumulative, current,
-    # roi_spectra_current, roi_spectra_cumulative, counts_total, counts_in_toa
-    # First finalize also sends 2 initial ROI readbacks (rectangles, polygons)
+    # Each workflow call returns 8 results: cumulative, current,
+    # roi_spectra_current, roi_spectra_cumulative, counts_total, counts_in_toa,
+    # roi_rectangle, roi_polygon
     assert len(sink.messages) == 8
     assert sink.messages[0].value.nansum().value == 2000  # cumulative
     assert sink.messages[1].value.nansum().value == 2000  # current
@@ -78,7 +78,7 @@ def test_can_configure_and_stop_detector_workflow(
 
     app.publish_events(size=3000, time=4)
     service.step()
-    assert len(sink.messages) == 14  # 8 + 6 (no initial readbacks on subsequent calls)
+    assert len(sink.messages) == 16  # 8 + 8
     assert sink.messages[8].value.nansum().value == 5000  # cumulative
     assert sink.messages[9].value.nansum().value == 3000  # current
 
@@ -87,9 +87,9 @@ def test_can_configure_and_stop_detector_workflow(
     # Later time
     app.publish_events(size=1000, time=5)
     service.step()
-    assert len(sink.messages) == 20
-    assert sink.messages[14].value.nansum().value == 7000  # cumulative
-    assert sink.messages[15].value.nansum().value == 2000  # current
+    assert len(sink.messages) == 24  # 16 + 8
+    assert sink.messages[16].value.nansum().value == 7000  # cumulative
+    assert sink.messages[17].value.nansum().value == 2000  # current
 
     # Stop workflow
     command = JobCommand(action=JobAction.stop)
@@ -100,7 +100,7 @@ def test_can_configure_and_stop_detector_workflow(
     service.step()
     app.publish_events(size=1000, time=20)
     service.step()
-    assert len(sink.messages) == 20
+    assert len(sink.messages) == 24
 
 
 def test_service_can_recover_after_bad_workflow_id_was_set(
@@ -170,7 +170,7 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     app.publish_events(size=2000, time=2)
     service.step()
     # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
-    # counts_total, counts_in_toa + 2 initial ROI readbacks
+    # counts_total, counts_in_toa, roi_rectangle, roi_polygon
     assert len(sink.messages) == 8
     assert sink.messages[0].value.values.sum() == 2000
 
@@ -185,8 +185,8 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     # Add more events and verify the original workflow is still running
     app.publish_events(size=3000, time=4)
     service.step()
-    # No error ack without message_id, just data messages (8 + 6)
-    assert len(sink.messages) == 14
+    # No error ack without message_id, just data messages (8 + 8)
+    assert len(sink.messages) == 16
     assert sink.messages[8].value.values.sum() == 5000  # cumulative
 
 

@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 import sciline
 import sciline.typing
+import scipp as sc
 
 from ess.reduce import streaming
 
@@ -30,11 +32,32 @@ class StreamProcessorWorkflow(Workflow):
         dynamic_keys: dict[str, sciline.typing.Key],
         context_keys: dict[str, sciline.typing.Key] | None = None,
         target_keys: dict[str, sciline.typing.Key],
+        window_outputs: Iterable[str] = (),
         **kwargs: Any,
     ) -> None:
+        """
+        Parameters
+        ----------
+        base_workflow:
+            The sciline Pipeline to wrap.
+        dynamic_keys:
+            Mapping from stream names to sciline keys for dynamic inputs.
+        context_keys:
+            Mapping from stream names to sciline keys for context inputs.
+        target_keys:
+            Mapping from output names to sciline keys for target outputs.
+        window_outputs:
+            Output names representing the current window (delta since last finalize).
+            These receive time, start_time, end_time coords.
+        **kwargs:
+            Additional arguments passed to StreamProcessor.
+        """
         self._dynamic_keys = dynamic_keys
         self._context_keys = context_keys if context_keys else {}
         self._target_keys = target_keys
+        self._window_outputs = set(window_outputs)
+        self._current_start_time: int | None = None
+        self._current_end_time: int | None = None
         self._stream_processor = streaming.StreamProcessor(
             base_workflow,
             dynamic_keys=tuple(self._dynamic_keys.values()),
@@ -46,6 +69,11 @@ class StreamProcessorWorkflow(Workflow):
     def accumulate(
         self, data: dict[str, Any], *, start_time: int, end_time: int
     ) -> None:
+        # Track time range of data since last finalize
+        if self._current_start_time is None:
+            self._current_start_time = start_time
+        self._current_end_time = end_time
+
         context = {
             sciline_key: data[key]
             for key, sciline_key in self._context_keys.items()
@@ -63,7 +91,28 @@ class StreamProcessorWorkflow(Workflow):
 
     def finalize(self) -> dict[str, Any]:
         targets = self._stream_processor.finalize()
-        return {name: targets[key] for name, key in self._target_keys.items()}
+        results = {name: targets[key] for name, key in self._target_keys.items()}
+
+        # Add time coords to window outputs
+        if self._window_outputs and self._current_start_time is not None:
+            start_time_coord = sc.scalar(self._current_start_time, unit='ns')
+            end_time_coord = sc.scalar(self._current_end_time, unit='ns')
+
+            for name in self._window_outputs:
+                if name in results:
+                    results[name] = results[name].assign_coords(
+                        time=start_time_coord,
+                        start_time=start_time_coord,
+                        end_time=end_time_coord,
+                    )
+
+        # Reset time tracking for next period
+        self._current_start_time = None
+        self._current_end_time = None
+
+        return results
 
     def clear(self) -> None:
         self._stream_processor.clear()
+        self._current_start_time = None
+        self._current_end_time = None

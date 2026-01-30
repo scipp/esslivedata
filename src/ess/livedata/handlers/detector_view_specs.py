@@ -24,8 +24,25 @@ from ..config.instrument import Instrument
 from ..config.workflow_spec import AuxSourcesBase, JobId, WorkflowOutputsBase
 from ..handlers.workflow_factory import SpecHandle
 
+CoordinateMode = Literal['toa', 'tof', 'wavelength']
+
+
+class CoordinateModeSettings(pydantic.BaseModel):
+    """Settings for coordinate mode selection."""
+
+    mode: CoordinateMode = pydantic.Field(
+        default='toa',
+        description="Coordinate system for event data: 'toa' (time-of-arrival), "
+        "'tof' (time-of-flight), or 'wavelength'.",
+    )
+
 
 class DetectorViewParams(pydantic.BaseModel):
+    coordinate_mode: CoordinateModeSettings = pydantic.Field(
+        title="Coordinate Mode",
+        description="Select coordinate system for detector view.",
+        default_factory=CoordinateModeSettings,
+    )
     pixel_weighting: models.PixelWeighting = pydantic.Field(
         title="Pixel Weighting",
         description="Whether to apply pixel weighting based on the number of pixels "
@@ -34,15 +51,15 @@ class DetectorViewParams(pydantic.BaseModel):
             enabled=False, method=models.WeightingMethod.PIXEL_NUMBER
         ),
     )
-    # TODO split out the enabled flag?
+    # TOA (time-of-arrival) settings
     toa_range: parameter_models.TOARange = pydantic.Field(
         title="Time of Arrival Range",
-        description="Time of arrival range for detector data.",
+        description="Time of arrival range filter for TOA mode.",
         default=parameter_models.TOARange(),
     )
     toa_edges: parameter_models.TOAEdges = pydantic.Field(
         title="Time of Arrival Edges",
-        description="Time of arrival edges for histogramming.",
+        description="Time of arrival edges for histogramming in TOA mode.",
         default=parameter_models.TOAEdges(
             start=0.0,
             stop=1000.0 / 14,
@@ -50,6 +67,62 @@ class DetectorViewParams(pydantic.BaseModel):
             unit=parameter_models.TimeUnit.MS,
         ),
     )
+    # TOF (time-of-flight) settings
+    tof_range: parameter_models.TOFRange = pydantic.Field(
+        title="Time of Flight Range",
+        description="Time of flight range filter for TOF mode.",
+        default=parameter_models.TOFRange(),
+    )
+    tof_edges: parameter_models.TOFEdges = pydantic.Field(
+        title="Time of Flight Edges",
+        description="Time of flight edges for histogramming in TOF mode.",
+        default=parameter_models.TOFEdges(
+            start=0.0,
+            stop=1000.0 / 14,
+            num_bins=100,
+            unit=parameter_models.TimeUnit.MS,
+        ),
+    )
+    # Wavelength settings
+    wavelength_range: parameter_models.WavelengthRangeFilter = pydantic.Field(
+        title="Wavelength Range",
+        description="Wavelength range filter for wavelength mode.",
+        default=parameter_models.WavelengthRangeFilter(),
+    )
+    wavelength_edges: parameter_models.WavelengthEdges = pydantic.Field(
+        title="Wavelength Edges",
+        description="Wavelength edges for histogramming in wavelength mode.",
+        default=parameter_models.WavelengthEdges(
+            start=1.0,
+            stop=10.0,
+            num_bins=100,
+            unit=parameter_models.WavelengthUnit.ANGSTROM,
+        ),
+    )
+
+    def get_active_edges(self) -> sc.Variable:
+        """Return the edges for the currently selected coordinate mode."""
+        match self.coordinate_mode.mode:
+            case 'toa':
+                return self.toa_edges.get_edges()
+            case 'tof':
+                return self.tof_edges.get_edges()
+            case 'wavelength':
+                return self.wavelength_edges.get_edges()
+
+    def get_active_range(self) -> tuple[sc.Variable, sc.Variable] | None:
+        """Return the range for the currently selected coordinate mode, if enabled."""
+        match self.coordinate_mode.mode:
+            case 'toa':
+                return self.toa_range.range_ns if self.toa_range.enabled else None
+            case 'tof':
+                return self.tof_range.range if self.tof_range.enabled else None
+            case 'wavelength':
+                return (
+                    self.wavelength_range.range
+                    if self.wavelength_range.enabled
+                    else None
+                )
 
 
 def _make_nd_template(ndim: int, *, with_time_coord: bool = False) -> sc.DataArray:

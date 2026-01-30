@@ -48,7 +48,11 @@ def setup_factories(instrument: Instrument) -> None:
         CutData,
     )
     from ess.livedata.handlers.accumulators import LatestValue
-    from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
+    from ess.livedata.handlers.detector_view import (
+        DetectorViewFactory,
+        InstrumentDetectorSource,
+        LogicalViewConfig,
+    )
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
     from ess.reduce.nexus.types import (
         Filename,
@@ -69,12 +73,15 @@ def setup_factories(instrument: Instrument) -> None:
     # Configure detector
     instrument.configure_detector('unified_detector', detector_number=detector_number)
 
-    # Create detector view
-    _logical_view = DetectorLogicalView(
-        instrument=instrument, transform=_to_flat_detector_view
+    # Create detector view using Sciline-based factory with transform
+    _detector_view_factory = DetectorViewFactory(
+        data_source=InstrumentDetectorSource(instrument),
+        view_config=LogicalViewConfig(transform=_to_flat_detector_view),
     )
 
-    specs.unified_detector_view_handle.attach_factory()(_logical_view.make_view)
+    specs.unified_detector_view_handle.attach_factory()(
+        _detector_view_factory.make_workflow
+    )
 
     # Create base reduction workflow
     (

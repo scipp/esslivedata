@@ -405,17 +405,28 @@ class Instrument:
             )
 
         if self._logical_views:
-            from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
+            from ess.livedata.handlers.detector_view import (
+                DetectorViewFactory,
+                InstrumentDetectorSource,
+            )
+            from ess.livedata.handlers.detector_view import (
+                LogicalViewConfig as ScilineLogicalViewConfig,
+            )
 
             for config in self._logical_views:
                 handle = self._logical_view_handles[config.name]
-                view = DetectorLogicalView(
-                    instrument=self,
+                # Create view config for this logical view
+                view_config = ScilineLogicalViewConfig(
                     transform=config.transform,
                     reduction_dim=config.reduction_dim,
                     roi_support=config.roi_support,
                 )
-                handle.attach_factory()(view.make_view)
+                # Create factory with InstrumentDetectorSource for dynamic lookup
+                factory = DetectorViewFactory(
+                    data_source=InstrumentDetectorSource(self),
+                    view_config=view_config,
+                )
+                handle.attach_factory()(factory.make_workflow)
 
         if hasattr(module, 'setup_factories'):
             module.setup_factories(self)
