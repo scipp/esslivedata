@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for the monitor view workflow using StreamProcessor."""
 
+import pydantic
 import pytest
 import scipp as sc
 
@@ -607,18 +608,12 @@ class TestRegisterMonitorWorkflowSpecs:
 class TestMonitorWorkflowFactoryCoordinateMode:
     """Tests for coordinate mode in monitor workflow factory."""
 
-    def test_wavelength_mode_raises_not_implemented(self):
-        """Test that wavelength mode raises NotImplementedError."""
-        from ess.livedata.handlers.monitor_workflow_specs import (
-            create_monitor_workflow_factory,
-        )
-
-        params = MonitorDataParams(
-            coordinate_mode=CoordinateModeSettings(mode='wavelength'),
-        )
-
-        with pytest.raises(NotImplementedError, match="wavelength mode not yet"):
-            create_monitor_workflow_factory('monitor_1', params)
+    def test_wavelength_mode_raises_validation_error(self):
+        """Test that wavelength mode raises ValidationError."""
+        with pytest.raises(
+            pydantic.ValidationError, match="wavelength mode is not yet supported"
+        ):
+            CoordinateModeSettings(mode='wavelength')
 
     def test_tof_mode_creates_workflow(self):
         """Test that TOF mode creates a valid workflow."""
