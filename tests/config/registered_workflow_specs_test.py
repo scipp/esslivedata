@@ -16,6 +16,7 @@ import pytest
 from ess.livedata.config.instrument import instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
 from ess.livedata.config.workflow_spec import WorkflowConfig, WorkflowId
+from ess.livedata.dashboard.plotting import plotter_registry
 from ess.livedata.dashboard.workflow_configuration_adapter import (
     WorkflowConfigurationAdapter,
 )
@@ -218,3 +219,60 @@ def test_workflow_config_widget_adapter_compatibility(
     if spec.aux_sources is not None:
         aux_instance = spec.aux_sources()
         assert isinstance(aux_instance, pydantic.BaseModel)
+
+
+def _collect_workflow_outputs():
+    """Collect (instrument, workflow_id, output_name) for all workflow outputs.
+
+    This enables per-output testing for finer-grained failure reporting.
+    """
+    outputs = []
+    for instrument_name in available_instruments():
+        _ = get_config(instrument_name)  # Load specs only
+        instrument = instrument_registry[instrument_name]
+        # DO NOT call instrument.load_factories()
+        for workflow_id in instrument.workflow_factory:
+            spec = instrument.workflow_factory[workflow_id]
+            outputs.extend(
+                pytest.param(
+                    instrument_name,
+                    workflow_id,
+                    output_name,
+                    id=f"{workflow_id}/{output_name}",
+                )
+                for output_name in spec.outputs.model_fields
+            )
+    return outputs
+
+
+@pytest.mark.parametrize(
+    ("instrument_name", "workflow_id", "output_name"), _collect_workflow_outputs()
+)
+def test_workflow_output_has_compatible_plotter(
+    instrument_name: str, workflow_id: WorkflowId, output_name: str
+):
+    """Test that each workflow output has at least one compatible plotter.
+
+    This ensures the dashboard can offer valid plotting options for every
+    declared workflow output. The plotter matching uses the output's template
+    DataArray (from default_factory) to validate against plotter requirements.
+    """
+    instrument = instrument_registry[instrument_name]
+    spec = instrument.workflow_factory[workflow_id]
+
+    template = spec.get_output_template(output_name)
+    if template is None:
+        pytest.fail(
+            f"Output '{output_name}' of {workflow_id} has no template. "
+            f"Add default_factory to the field definition to enable plotter matching."
+        )
+
+    compatible = plotter_registry.get_compatible_plotters_with_spec(
+        {output_name: template}, spec.aux_sources
+    )
+
+    assert compatible, (
+        f"Output '{output_name}' of {workflow_id} has no compatible plotter. "
+        f"Template: ndim={template.ndim}, dims={template.dims}, "
+        f"coords={list(template.coords)}"
+    )

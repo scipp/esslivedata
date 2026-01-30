@@ -5,16 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
-import numpy as np
 import scipp as sc
 from streaming_data_types import logdata_f144
 
 from ess.reduce import streaming
+from ess.reduce.streaming import EternalAccumulator
 
 from ..core.handler import Accumulator
-from .to_nxevent_data import DetectorEvents, MonitorEvents
+from .to_nxevent_data import MonitorEvents
 
-__all__ = ["DetectorEvents", "MonitorEvents"]
+__all__ = ["MonitorEvents"]
 
 T = TypeVar('T')
 
@@ -76,15 +76,37 @@ class LatestValueHandler(Accumulator[sc.DataArray, sc.DataArray]):
         self._latest = None
 
 
-class WindowAccumulator(streaming.EternalAccumulator[T], Generic[T]):
+class NoCopyAccumulator(EternalAccumulator):
     """
-    Streaming accumulator that clears after each finalize cycle.
+    Accumulator that skips deepcopy on read for better performance.
 
-    Use this for "current window" outputs where you want the delta since
-    the last finalize, not the cumulative total.
+    The base EternalAccumulator uses deepcopy in _get_value() to ensure safety.
+    This accumulator skips that deepcopy, saving ~30ms per read for a 500MB
+    histogram.
+
+    The copy on first push is retained to avoid shared references when the same
+    value is pushed to multiple accumulators.
+
+    Use only when downstream consumers do not modify or store references to
+    the returned value. This constraint is met in streaming workflows
+    where downstream just serializes the data.
+    """
+
+    def _get_value(self):
+        """Return value directly without deepcopy."""
+        return self._value
+
+
+class NoCopyWindowAccumulator(NoCopyAccumulator):
+    """
+    Window accumulator without deepcopy that clears after finalize.
+
+    Combines the performance benefits of NoCopyAccumulator with window semantics
+    (clearing after each finalize cycle).
     """
 
     def on_finalize(self) -> None:
+        """Clear accumulated value after finalize retrieves it."""
         self.clear()
 
 
@@ -173,45 +195,3 @@ class Cumulative(_CumulativeAccumulationMixin, Accumulator[sc.DataArray, sc.Data
     def add(self, timestamp: int, data: sc.DataArray) -> None:
         _ = timestamp
         self._add_cumulative(data)
-
-
-class GroupIntoPixels(Accumulator[DetectorEvents, sc.DataArray]):
-    def __init__(self, detector_number: sc.Variable):
-        self._chunks: list[DetectorEvents] = []
-        self._toa_unit = 'ns'
-        self._sizes = detector_number.sizes
-        self._dim = 'detector_number'
-        self._groups = detector_number.flatten(to=self._dim)
-
-    def add(self, timestamp: int, data: DetectorEvents) -> None:
-        # timestamp in function signature is required for compliance with Accumulator
-        # interface.
-        _ = timestamp
-        # We could easily support other units, but ev44 is always in ns so this should
-        # never happen.
-        if data.unit != self._toa_unit:
-            raise ValueError(f"Expected unit '{self._toa_unit}', got '{data.unit}'")
-        self._chunks.append(data)
-
-    def get(self) -> sc.DataArray:
-        # Could optimize the concatenate by reusing a buffer (directly write to it in
-        # self.add).
-        pixel_ids = (
-            np.concatenate([c.pixel_id for c in self._chunks])
-            if self._chunks
-            else np.array([], dtype=np.int32)
-        )
-        time_of_arrival = (
-            np.concatenate([c.time_of_arrival for c in self._chunks])
-            if self._chunks
-            else np.array([], dtype=np.int32)
-        )
-        da = sc.DataArray(
-            data=sc.array(dims=['event'], values=time_of_arrival, unit=self._toa_unit),
-            coords={self._dim: sc.array(dims=['event'], values=pixel_ids, unit=None)},
-        )
-        self._chunks.clear()
-        return da.group(self._groups).fold(dim=self._dim, sizes=self._sizes)
-
-    def clear(self) -> None:
-        self._chunks.clear()

@@ -155,6 +155,35 @@ class TestFullHistoryExtractor:
         # Data values should be unchanged
         assert sc.identical(result.data, data.data)
 
+    def test_extract_applies_local_timezone_offset(self):
+        """Datetime conversion applies local timezone offset for display."""
+        from ess.livedata.dashboard.time_utils import get_local_timezone_offset_ns
+
+        extractor = FullHistoryExtractor()
+
+        # Create data with int64 ns timestamps
+        ns_epoch = int(1.733e18)  # ~Dec 2024
+        data = sc.DataArray(
+            sc.array(dims=['time'], values=[1.0, 2.0], unit='K'),
+            coords={
+                'time': sc.array(
+                    dims=['time'],
+                    values=[ns_epoch, ns_epoch + int(1e9)],
+                    unit='ns',
+                    dtype='int64',
+                ),
+            },
+        )
+
+        result = extractor.extract(data)
+
+        # The datetime should be shifted by the local timezone offset
+        tz_offset_ns = get_local_timezone_offset_ns()
+        expected_first = sc.epoch(unit='ns') + sc.scalar(
+            ns_epoch + tz_offset_ns, unit='ns', dtype='int64'
+        )
+        assert result.coords['time'][0] == expected_first
+
     def test_extract_preserves_datetime64_time_coord(self):
         """Datetime64 time coordinates pass through unchanged."""
         extractor = FullHistoryExtractor()

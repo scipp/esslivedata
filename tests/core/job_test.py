@@ -458,6 +458,49 @@ class TestJob:
         assert "Finalize failure" in result.error_message
         assert result.data is None
 
+    def test_get_with_none_value_in_result_reports_warning(
+        self, fake_processor, sample_workflow_id
+    ):
+        """Test that a None value in workflow result is reported as a warning.
+
+        Workflows should not return None values, but if they do, the job should
+        filter them out, return the valid outputs, and report a warning rather
+        than crashing the backend when serializing.
+        """
+        job_id = JobId(source_name="test_source", job_number=1)
+        job = Job(
+            job_id=job_id,
+            workflow_id=sample_workflow_id,
+            processor=fake_processor,
+            source_names=["test_source"],
+        )
+
+        # Add some data successfully
+        data = JobData(
+            start_time=100,
+            end_time=200,
+            primary_data={"test_source": sc.scalar(42.0)},
+            aux_data={},
+        )
+        job.add(data)
+
+        # Make processor return a dict with None value
+        fake_processor.data = {
+            "valid_output": sc.DataArray(sc.scalar(1.0)),
+            "invalid_output": None,  # This should cause a warning
+        }
+
+        result = job.get()
+        # Should not be an error
+        assert result.error_message is None
+        # Should have a warning
+        assert result.warning_message is not None
+        assert "invalid_output" in result.warning_message
+        # Valid data should be returned
+        assert result.data is not None
+        assert "valid_output" in result.data
+        assert "invalid_output" not in result.data
+
     def test_reset_clears_processor_and_times(
         self, sample_job, sample_job_data, fake_processor
     ):

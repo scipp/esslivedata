@@ -27,12 +27,16 @@ from ess.livedata.config.grid_template import GridSpec
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
 
 from .config_store import ConfigStore
+from .data_roles import PRIMARY
 from .data_service import DataService
 from .job_orchestrator import WorkflowCallbacks
+from .layer_subscription import LayerSubscription, SubscriptionReady
 from .plotting_controller import PlottingController
 
 if TYPE_CHECKING:
     import holoviews as hv
+
+    from ess.livedata.config import Instrument
 
 SubscriptionId = NewType('SubscriptionId', UUID)
 GridId = NewType('GridId', UUID)
@@ -130,68 +134,55 @@ class DataSourceConfig:
 class PlotConfig:
     """Configuration for a single plot layer.
 
-    The data_sources list supports different layer types:
+    The data_sources dict maps role names to DataSourceConfig:
 
-    - **Single data source**: Standard plot subscribed to one workflow output.
-    - **Single data source with empty source_names**: Static overlay (e.g., geometric
-      shapes). Uses a synthetic workflow ID and stores a user-defined name in
-      output_name.
-    - **Multiple data sources**: Correlation histograms combining outputs from
-      multiple workflows (planned feature).
+    - **"primary"**: The main data source (required). For standard plots, this is
+      the only entry. For correlation histograms, this is the data to be histogrammed.
+    - **"x_axis"**: X-axis correlation data (optional). Used by correlation histograms.
+    - **"y_axis"**: Y-axis correlation data (optional). For 2D correlation histograms.
 
-    For the common single-source case, convenience properties (workflow_id,
-    source_names, output_name) provide direct access to the first data source,
-    avoiding verbose patterns like ``config.data_sources[0].workflow_id`` throughout
-    the codebase. When multi-source correlation histograms are implemented, code
-    handling those will access data_sources directly.
+    Static overlays (e.g., geometric shapes) have a primary source with empty
+    source_names, a synthetic workflow ID, and store a user-defined name in output_name.
+
+    Convenience properties (workflow_id, source_names, output_name) provide direct
+    access to the primary data source.
     """
 
-    data_sources: list[DataSourceConfig]
+    data_sources: dict[str, DataSourceConfig]
     plot_name: str
     params: pydantic.BaseModel
 
     @property
     def workflow_id(self) -> WorkflowId:
-        """Workflow ID from the first data source.
-
-        Convenience property for the common single-source case.
-        For multi-source layers, access data_sources directly.
-        """
-        if not self.data_sources:
-            raise ValueError("Cannot access workflow_id: no data sources configured")
-        return self.data_sources[0].workflow_id
+        """Workflow ID from the primary data source."""
+        if PRIMARY not in self.data_sources:
+            raise ValueError("Cannot access workflow_id: no primary data source")
+        return self.data_sources[PRIMARY].workflow_id
 
     @property
     def source_names(self) -> list[str]:
-        """Source names from the first data source.
-
-        Convenience property for the common single-source case.
-        For multi-source layers, access data_sources directly.
-        """
-        if not self.data_sources:
-            raise ValueError("Cannot access source_names: no data sources configured")
-        return self.data_sources[0].source_names
+        """Source names from the primary data source."""
+        if PRIMARY not in self.data_sources:
+            raise ValueError("Cannot access source_names: no primary data source")
+        return self.data_sources[PRIMARY].source_names
 
     @property
     def output_name(self) -> str:
-        """Output name from the first data source.
-
-        Convenience property for the common single-source case.
-        For multi-source layers, access data_sources directly.
-        """
-        if not self.data_sources:
-            raise ValueError("Cannot access output_name: no data sources configured")
-        return self.data_sources[0].output_name
+        """Output name from the primary data source."""
+        if PRIMARY not in self.data_sources:
+            raise ValueError("Cannot access output_name: no primary data source")
+        return self.data_sources[PRIMARY].output_name
 
     def is_static(self) -> bool:
         """Return True if this is a static overlay (no workflow subscription needed).
 
-        Static overlays have a single data source with empty source_names. They use
-        a synthetic workflow ID and store the user-defined overlay name in output_name.
+        Static overlays have only a primary data source with empty source_names.
+        They use a synthetic workflow ID and store the user-defined overlay name
+        in output_name.
         """
-        return (
-            len(self.data_sources) == 1 and len(self.data_sources[0].source_names) == 0
-        )
+        if PRIMARY not in self.data_sources or len(self.data_sources) != 1:
+            return False
+        return len(self.data_sources[PRIMARY].source_names) == 0
 
 
 @dataclass
@@ -284,6 +275,7 @@ class PlotOrchestrator:
         instrument: str,
         config_store: ConfigStore | None = None,
         raw_templates: Sequence[dict[str, Any]] = (),
+        instrument_config: Instrument | None = None,
     ) -> None:
         """
         Initialize the plot orchestrator.
@@ -303,17 +295,20 @@ class PlotOrchestrator:
         raw_templates
             Raw grid template dicts loaded from YAML files. These are parsed
             during initialization and made available via get_available_templates().
+        instrument_config
+            Optional instrument configuration for source metadata lookup.
         """
         self._plotting_controller = plotting_controller
         self._job_orchestrator = job_orchestrator
         self._data_service = data_service
         self._instrument = instrument
+        self._instrument_config = instrument_config
         self._config_store = config_store
         self._logger = logging.getLogger(__name__)
 
         self._grids: dict[GridId, PlotGridConfig] = {}
         self._cell_to_grid: dict[CellId, GridId] = {}
-        self._layer_to_subscription: dict[LayerId, SubscriptionId] = {}
+        self._layer_subscriptions: dict[LayerId, LayerSubscription] = {}
         self._layer_state: dict[LayerId, LayerState] = {}
         self._layer_to_cell: dict[LayerId, CellId] = {}
         self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
@@ -328,6 +323,21 @@ class PlotOrchestrator:
     def instrument(self) -> str:
         """The instrument name for this orchestrator."""
         return self._instrument
+
+    @property
+    def instrument_config(self) -> Instrument | None:
+        """The instrument configuration (if available)."""
+        return self._instrument_config
+
+    def get_source_title(self, source_name: str) -> str:
+        """Get display title for a source name.
+
+        Falls back to the source name if no instrument config is available
+        or no title is defined for the source.
+        """
+        if self._instrument_config is not None:
+            return self._instrument_config.get_source_title(source_name)
+        return source_name
 
     def add_grid(self, title: str, nrows: int, ncols: int) -> GridId:
         """
@@ -611,9 +621,9 @@ class PlotOrchestrator:
             Set to False when the layer is being updated (still in the cell),
             True when removing the layer completely.
         """
-        if layer_id in self._layer_to_subscription:
-            self._job_orchestrator.unsubscribe(self._layer_to_subscription[layer_id])
-            del self._layer_to_subscription[layer_id]
+        if layer_id in self._layer_subscriptions:
+            self._layer_subscriptions[layer_id].unsubscribe()
+            del self._layer_subscriptions[layer_id]
         self._layer_state.pop(layer_id, None)
         if remove_from_cell_mapping:
             self._layer_to_cell.pop(layer_id, None)
@@ -622,30 +632,18 @@ class PlotOrchestrator:
         """
         Subscribe a layer to workflow lifecycle and set up initial notification.
 
+        Uses LayerSubscription to handle both single and multi-source layers uniformly.
+        LayerSubscription manages:
+        - Subscribing to all required workflows
+        - Tracking which workflows have started
+        - Notifying when ALL workflows are ready (for multi-source layers)
+        - Propagating stop notifications
+
         Branches based on layer type (determined by data sources):
 
         - **Static overlay** (single data source with empty source_names): Create plot
           immediately without workflow subscription.
-        - **Standard plot** (single data source): Subscribe to workflow availability.
-        - **Correlation histogram** (multiple data sources): Future work.
-
-        For standard layers with one data source, handles two scenarios:
-
-        **Scenario A: Workflow not yet running**
-
-        1. Subscribe to workflow (callback not invoked)
-        2. Notify UI that cell is "waiting for workflow"
-        3. When workflow is committed, on_started fires -> _on_layer_job_available
-
-        **Scenario B: Workflow already running**
-
-        1. Subscribe to workflow (on_started invoked immediately with job_number)
-        2. _on_layer_job_available sets up data pipeline
-        3. If data exists: plot created immediately
-           If no data yet: notify UI "waiting for data"
-
-        When the workflow is stopped, on_stopped fires -> _on_layer_job_stopped,
-        which marks the layer as stopped and notifies the UI.
+        - **Dynamic layers** (single or multiple data sources): Use LayerSubscription.
 
         Parameters
         ----------
@@ -665,44 +663,27 @@ class PlotOrchestrator:
             self._persist_to_store()
             return
 
-        if len(config.data_sources) > 1:
-            # Future work: correlation histograms with multiple data sources
-            self._logger.warning(
-                'Multiple data sources not yet supported for layer_id=%s', layer_id
-            )
-            cell = self._grids[grid_id].cells[cell_id]
-            self._layer_state[layer_id] = LayerState(
-                error='Multiple data sources not yet supported'
-            )
-            layer_states, composed = self.get_cell_state(cell_id)
-            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
-            self._persist_to_store()
-            return
+        # Unified path for all non-static layers (single or multi-source)
+        def on_all_jobs_ready(ready: SubscriptionReady) -> None:
+            self._on_all_jobs_ready(layer_id, cell_id, grid_id, ready)
 
-        # Standard path: single data source
-        def on_workflow_available(job_number: JobNumber) -> None:
-            self._on_layer_job_available(layer_id, job_number)
-
-        def on_workflow_stopped(job_number: JobNumber) -> None:
+        def on_any_job_stopped(job_number: JobNumber) -> None:
             self._on_layer_job_stopped(layer_id, job_number)
 
-        # Subscribe to workflow lifecycle.
-        # Returns whether callback was invoked immediately (workflow already running).
-        subscription_id, was_invoked = self._job_orchestrator.subscribe_to_workflow(
-            workflow_id=config.workflow_id,
-            callbacks=WorkflowCallbacks(
-                on_started=on_workflow_available,
-                on_stopped=on_workflow_stopped,
-            ),
+        subscription = LayerSubscription(
+            data_sources=config.data_sources,
+            job_orchestrator=self._job_orchestrator,
+            on_ready=on_all_jobs_ready,
+            on_stopped=on_any_job_stopped,
         )
-        self._layer_to_subscription[layer_id] = subscription_id
+        self._layer_subscriptions[layer_id] = subscription
+        subscription.start()  # May fire on_ready synchronously if workflows running
 
-        # Scenario A: Workflow doesn't exist yet.
-        # Notify UI that cell is waiting for workflow to be committed.
-        if not was_invoked:
-            cell = self._grids[grid_id].cells[cell_id]
-            layer_states, composed = self.get_cell_state(cell_id)
-            self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
+        # Always notify current state - either "waiting" or plot-ready
+        # (if on_ready fired synchronously and data existed)
+        cell = self._grids[grid_id].cells[cell_id]
+        layer_states, composed = self.get_cell_state(cell_id)
+        self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
 
         # Persist updated state
         self._persist_to_store()
@@ -750,39 +731,47 @@ class PlotOrchestrator:
         layer_states, composed = self.get_cell_state(cell_id)
         self._notify_cell_updated(grid_id, cell_id, cell, layer_states, composed)
 
-    def _on_layer_job_available(self, layer_id: LayerId, job_number: JobNumber) -> None:
+    def _on_all_jobs_ready(
+        self,
+        layer_id: LayerId,
+        cell_id: CellId,
+        grid_id: GridId,
+        ready: SubscriptionReady,
+    ) -> None:
         """
-        Handle workflow availability notification for a layer.
+        Handle notification when all workflows for a layer are ready.
 
-        Called when a workflow job becomes available (either immediately during
-        subscription if workflow was already running, or later when committed).
+        Called by LayerSubscription when all data sources have running jobs.
+        Sets up the data pipeline with the unified setup_pipeline() method.
 
         **Flow:**
 
-        1. Set up data pipeline with on_first_data callback
-        2. If data already exists in DataService:
+        1. Set up data pipeline with keys_by_role structure
+        2. If data already exists in DataService and all roles have data:
            - on_first_data fires immediately -> plot created -> state stored
            - Compose and notify
-        3. If no data yet:
+        3. If no data yet or not all roles have data:
            - Notify UI that layer is "waiting for data"
-           - Later when data arrives, on_first_data fires -> plot created
+           - Later when data arrives, on_first_data fires
 
         Parameters
         ----------
         layer_id
             ID of the layer to create plot for.
-        job_number
-            Job number for the workflow.
+        cell_id
+            ID of the cell containing the layer.
+        grid_id
+            ID of the grid containing the cell.
+        ready
+            SubscriptionReady containing keys_by_role for structured data access.
         """
         # Defensive check: layer may have been removed before callback fires
         if layer_id not in self._layer_to_cell:
             self._logger.warning(
-                'Ignoring workflow availability for removed layer_id=%s', layer_id
+                'Ignoring all-jobs-ready for removed layer_id=%s', layer_id
             )
             return
 
-        cell_id = self._layer_to_cell[layer_id]
-        grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
         # Clear any previous state (e.g., from a stopped job) to start fresh
@@ -794,9 +783,8 @@ class PlotOrchestrator:
         def on_data_arrived(pipe) -> None:
             """Create plot when first data arrives for the pipeline."""
             self._logger.debug(
-                'Data arrived for layer_id=%s, job_number=%s, creating plot',
+                'Data arrived for layer_id=%s, creating plot',
                 layer_id,
-                job_number,
             )
             # Create the plot with the now-populated pipe
             try:
@@ -824,13 +812,10 @@ class PlotOrchestrator:
                     grid_id, cell_id, cell, layer_states, composed
                 )
 
-        # Set up data pipeline with callback
+        # Set up data pipeline with callback using the unified interface
         try:
-            self._plotting_controller.setup_data_pipeline(
-                job_number=job_number,
-                workflow_id=config.workflow_id,
-                source_names=config.source_names,
-                output_name=config.output_name,
+            self._plotting_controller.setup_pipeline(
+                keys_by_role=ready.keys_by_role,
                 plot_name=config.plot_name,
                 params=config.params,
                 on_first_data=on_data_arrived,
@@ -928,7 +913,10 @@ class PlotOrchestrator:
 
         # No change to shared_axes here. We prevent sharing between different cells
         # using linked_axes=False in PlotGridTabs when wrapping in pn.pane.HoloViews.
-        return hv.Overlay(plots)
+        # Use collate() to fix nesting structure: DynamicMap(Overlay(...)) instead of
+        # Overlay([DynamicMap(...), ...]). This is the HoloViews-recommended structure
+        # and silences warnings about nested DynamicMaps within Overlays.
+        return hv.Overlay(plots).collate()
 
     def _validate_params(
         self, plot_name: str, params: dict[str, Any]
@@ -1046,34 +1034,51 @@ class PlotOrchestrator:
         if params is None:
             return None
 
-        # Parse data sources: support both new and legacy format
-        data_sources: list[DataSourceConfig]
+        # Parse data sources: support dict, list, and legacy formats
+        data_sources: dict[str, DataSourceConfig]
         if 'data_sources' in layer_data:
-            # New format: data_sources list
-            data_sources = [
-                DataSourceConfig(
-                    workflow_id=WorkflowId.from_string(ds['workflow_id']),
-                    source_names=ds['source_names'],
-                    output_name=ds.get('output_name', 'result'),
+            raw_sources = layer_data['data_sources']
+            if isinstance(raw_sources, dict):
+                # New format: data_sources dict with role keys
+                data_sources = {
+                    role: DataSourceConfig(
+                        workflow_id=WorkflowId.from_string(ds['workflow_id']),
+                        source_names=ds['source_names'],
+                        output_name=ds.get('output_name', 'result'),
+                    )
+                    for role, ds in raw_sources.items()
+                }
+            else:
+                # Legacy format: data_sources list (first entry is primary)
+                data_sources = (
+                    {
+                        PRIMARY: DataSourceConfig(
+                            workflow_id=WorkflowId.from_string(
+                                raw_sources[0]['workflow_id']
+                            ),
+                            source_names=raw_sources[0]['source_names'],
+                            output_name=raw_sources[0].get('output_name', 'result'),
+                        )
+                    }
+                    if raw_sources
+                    else {}
                 )
-                for ds in layer_data['data_sources']
-            ]
         elif 'workflow_id' in layer_data:
             # Legacy format: single workflow at top level
-            data_sources = [
-                DataSourceConfig(
+            data_sources = {
+                PRIMARY: DataSourceConfig(
                     workflow_id=WorkflowId.from_string(layer_data['workflow_id']),
                     source_names=layer_data['source_names'],
                     output_name=layer_data.get('output_name', 'result'),
                 )
-            ]
+            }
         else:
             # Fallback for templates missing workflow specification.
             # Note: This creates an invalid config - static overlays should use
             # the data_sources format with a synthetic workflow ID. This branch
             # exists for robustness but templates should always specify workflow_id
             # or data_sources.
-            data_sources = []
+            data_sources = {}
 
         config = PlotConfig(
             data_sources=data_sources,
@@ -1122,7 +1127,6 @@ class PlotOrchestrator:
             if spec is not None:
                 specs.append(spec)
 
-        self._logger.info('Parsed %d grid spec(s)', len(specs))
         return specs
 
     def _parse_single_spec(self, raw: dict[str, Any]) -> GridSpec | None:
@@ -1224,14 +1228,14 @@ class PlotOrchestrator:
         """Serialize a single layer to dict format."""
         config = layer.config
         return {
-            'data_sources': [
-                {
+            'data_sources': {
+                role: {
                     'workflow_id': str(ds.workflow_id),
                     'source_names': ds.source_names,
                     'output_name': ds.output_name,
                 }
-                for ds in config.data_sources
-            ],
+                for role, ds in config.data_sources.items()
+            },
             'plot_name': config.plot_name,
             'params': config.params.model_dump(mode='json'),
         }

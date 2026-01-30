@@ -39,7 +39,7 @@ def make_monitor_app(instrument: str) -> LivedataApp:
 
 first_monitor_source_name = {
     'dummy': 'monitor1',
-    'dream': 'monitor1',
+    'dream': 'monitor_bunker',
     'bifrost': '090_frame_1',
     'loki': 'monitor1',
 }

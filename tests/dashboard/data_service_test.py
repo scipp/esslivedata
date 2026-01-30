@@ -9,7 +9,6 @@ import pytest
 import scipp as sc
 
 from ess.livedata.dashboard.data_service import DataService, DataServiceSubscriber
-from ess.livedata.dashboard.data_subscriber import DataSubscriber, Pipe, StreamAssembler
 from ess.livedata.dashboard.extractors import LatestValueExtractor
 
 
@@ -21,14 +20,7 @@ def make_test_data(value: int, time: float = 0.0) -> sc.DataArray:
     )
 
 
-class FakeDataAssembler(StreamAssembler[str]):
-    """Fake assembler for testing."""
-
-    def assemble(self, data: dict[str, Any]) -> dict[str, Any]:
-        return data.copy()
-
-
-class FakePipe(Pipe):
+class FakePipe:
     """Fake pipe for testing."""
 
     def __init__(self, data: Any = None) -> None:
@@ -39,19 +31,41 @@ class FakePipe(Pipe):
         self.sent_data.append(data)
 
 
-def create_test_subscriber(keys: set[str]) -> tuple[DataSubscriber[str], Callable]:
+class SimpleTestSubscriber(DataServiceSubscriber[str]):
+    """Simple subscriber for testing DataService behavior."""
+
+    def __init__(self, keys: set[str]) -> None:
+        self._keys_set = keys
+        self._extractors = {key: LatestValueExtractor() for key in keys}
+        self._pipe: FakePipe | None = None
+        super().__init__()
+
+    @property
+    def extractors(self):
+        return self._extractors
+
+    @property
+    def pipe(self) -> FakePipe:
+        if self._pipe is None:
+            raise RuntimeError("Pipe not yet created")
+        return self._pipe
+
+    def trigger(self, store: dict[str, Any]) -> None:
+        # Filter to only subscribed keys
+        data = {key: store[key] for key in self._keys_set if key in store}
+        if self._pipe is None:
+            self._pipe = FakePipe(data)
+        else:
+            self._pipe.send(data)
+
+
+def create_test_subscriber(keys: set[str]) -> tuple[SimpleTestSubscriber, Callable]:
     """
     Create a test subscriber with the given keys.
 
     Returns the subscriber and a callable to get the pipe after it's created.
     """
-    assembler = FakeDataAssembler(keys)
-    extractors = {key: LatestValueExtractor() for key in keys}
-
-    def pipe_factory(data: Any) -> FakePipe:
-        return FakePipe(data)
-
-    subscriber = DataSubscriber(assembler, pipe_factory, extractors)
+    subscriber = SimpleTestSubscriber(keys)
 
     def get_pipe() -> FakePipe:
         """Get the pipe (created on first trigger)."""

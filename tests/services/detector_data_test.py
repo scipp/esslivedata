@@ -4,6 +4,7 @@
 import logging
 
 import pytest
+from structlog.testing import capture_logs
 
 from ess.livedata.config import instrument_registry, workflow_spec
 from ess.livedata.config.models import ConfigKey
@@ -65,9 +66,9 @@ def test_can_configure_and_stop_detector_workflow(
 
     app.publish_events(size=2000, time=2)
     service.step()
-    # Each workflow call returns 6 results: cumulative, current,
-    # roi_spectra_current, roi_spectra_cumulative, counts_total, counts_in_toa
-    # First finalize also sends 2 initial ROI readbacks (rectangles, polygons)
+    # Each workflow call returns 8 results: cumulative, current,
+    # roi_spectra_current, roi_spectra_cumulative, counts_total, counts_in_toa,
+    # roi_rectangle, roi_polygon
     assert len(sink.messages) == 8
     assert sink.messages[0].value.nansum().value == 2000  # cumulative
     assert sink.messages[1].value.nansum().value == 2000  # current
@@ -77,7 +78,7 @@ def test_can_configure_and_stop_detector_workflow(
 
     app.publish_events(size=3000, time=4)
     service.step()
-    assert len(sink.messages) == 14  # 8 + 6 (no initial readbacks on subsequent calls)
+    assert len(sink.messages) == 16  # 8 + 8
     assert sink.messages[8].value.nansum().value == 5000  # cumulative
     assert sink.messages[9].value.nansum().value == 3000  # current
 
@@ -86,9 +87,9 @@ def test_can_configure_and_stop_detector_workflow(
     # Later time
     app.publish_events(size=1000, time=5)
     service.step()
-    assert len(sink.messages) == 20
-    assert sink.messages[14].value.nansum().value == 7000  # cumulative
-    assert sink.messages[15].value.nansum().value == 2000  # current
+    assert len(sink.messages) == 24  # 16 + 8
+    assert sink.messages[16].value.nansum().value == 7000  # cumulative
+    assert sink.messages[17].value.nansum().value == 2000  # current
 
     # Stop workflow
     command = JobCommand(action=JobAction.stop)
@@ -99,7 +100,7 @@ def test_can_configure_and_stop_detector_workflow(
     service.step()
     app.publish_events(size=1000, time=20)
     service.step()
-    assert len(sink.messages) == 20
+    assert len(sink.messages) == 24
 
 
 def test_service_can_recover_after_bad_workflow_id_was_set(
@@ -169,7 +170,7 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     app.publish_events(size=2000, time=2)
     service.step()
     # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
-    # counts_total, counts_in_toa + 2 initial ROI readbacks
+    # counts_total, counts_in_toa, roi_rectangle, roi_polygon
     assert len(sink.messages) == 8
     assert sink.messages[0].value.values.sum() == 2000
 
@@ -184,8 +185,8 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     # Add more events and verify the original workflow is still running
     app.publish_events(size=3000, time=4)
     service.step()
-    # No error ack without message_id, just data messages (8 + 6)
-    assert len(sink.messages) == 14
+    # No error ack without message_id, just data messages (8 + 8)
+    assert len(sink.messages) == 16
     assert sink.messages[8].value.values.sum() == 5000  # cumulative
 
 
@@ -211,9 +212,7 @@ def configured_dummy_detector() -> LivedataApp:
 
 def test_message_with_unknown_schema_is_ignored(
     configured_dummy_detector: LivedataApp,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(logging.INFO)
     app = configured_dummy_detector
     sink = app.sink
 
@@ -222,27 +221,24 @@ def test_message_with_unknown_schema_is_ignored(
     app.publish_data(topic=app.detector_topic, time=1, data=b'corrupt data')
     app.publish_events(size=1000, time=1, reuse_events=True)
 
-    app.step()
+    with capture_logs() as captured:
+        app.step()
+
     # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
     # counts_total, counts_in_toa + 2 initial ROI readbacks
     assert len(sink.messages) == 8
     assert sink.messages[0].value.values.sum() == 2000
 
-    # Check log messages for exceptions
-    assert "has an unknown schema. Skipping." in caplog.text
-    warning_records = [
-        r
-        for r in caplog.records
-        if r.levelname == "WARNING" and "ess.livedata.kafka.message_adapter" in r.name
-    ]
-    assert any("has an unknown schema. Skipping." in r.message for r in warning_records)
+    # Check log messages for warnings
+    warning_logs = [log for log in captured if log['log_level'] == 'warning']
+    assert any(
+        "has an unknown schema. Skipping." in log['event'] for log in warning_logs
+    )
 
 
 def test_message_that_cannot_be_decoded_is_ignored(
     configured_dummy_detector: LivedataApp,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(logging.INFO)
     app = configured_dummy_detector
     sink = app.sink
 
@@ -251,18 +247,15 @@ def test_message_that_cannot_be_decoded_is_ignored(
     app.publish_data(topic=app.detector_topic, time=1, data=b'1234ev44data')
     app.publish_events(size=1000, time=1, reuse_events=True)
 
-    app.step()
+    with capture_logs() as captured:
+        app.step()
+
     # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
     # counts_total, counts_in_toa + 2 initial ROI readbacks
     assert len(sink.messages) == 8
     assert sink.messages[0].value.values.sum() == 2000
 
     # Check log messages for exceptions
-    assert "Error adapting message" in caplog.text
-    assert "unpack_from requires a buffer" in caplog.text
-    error_records = [
-        r
-        for r in caplog.records
-        if r.levelname == "ERROR" and "ess.livedata.kafka.message_adapter" in r.name
-    ]
-    assert any("unpack_from requires a buffer" in r.message for r in error_records)
+    error_logs = [log for log in captured if log['log_level'] == 'error']
+    assert any("Error adapting message" in log['event'] for log in error_logs)
+    assert any("unpack_from requires a buffer" in str(log) for log in error_logs)

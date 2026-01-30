@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import pydantic
 
 from ess.livedata.config.workflow_spec import WorkflowSpec
 
 from .configuration_adapter import ConfigurationAdapter, ConfigurationState
+
+if TYPE_CHECKING:
+    from ess.livedata.config import Instrument
 
 
 class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
@@ -22,6 +26,7 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
             [list[str], pydantic.BaseModel, pydantic.BaseModel | None], None
         ],
         initial_source_names: list[str] | None = None,
+        instrument_config: Instrument | None = None,
     ) -> None:
         """Initialize adapter with workflow spec, config, and start callback."""
         super().__init__(
@@ -30,6 +35,7 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         self._spec = spec
         self._start_callback = start_callback
         self._cached_aux_sources: pydantic.BaseModel | None = None
+        self._instrument_config = instrument_config
 
     @property
     def title(self) -> str:
@@ -54,6 +60,12 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
     def source_names(self) -> list[str]:
         """Get available source names."""
         return self._spec.source_names
+
+    def get_source_title(self, source_name: str) -> str:
+        """Get display title for a source name."""
+        if self._instrument_config is not None:
+            return self._instrument_config.get_source_title(source_name)
+        return source_name
 
     def start_action(
         self,

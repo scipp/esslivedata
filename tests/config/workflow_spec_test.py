@@ -481,3 +481,189 @@ class TestJobId:
         assert str(job_id_1) != str(job_id_2)
         assert str(job_id_1) == f'detector_1/{job_number}'
         assert str(job_id_2) == f'detector_2/{job_number}'
+
+
+class TestFindTimeseriesOutputs:
+    """Tests for find_timeseries_outputs() helper function."""
+
+    def test_finds_timeseries_output_with_time_coord(self) -> None:
+        """Test that outputs with 0-D data and time coord are found."""
+        from ess.livedata.config.workflow_spec import find_timeseries_outputs
+
+        class TimeseriesOutputs(WorkflowOutputsBase):
+            delta: sc.DataArray = Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.scalar(0.0),
+                    coords={'time': sc.scalar(0, unit='ns')},
+                ),
+            )
+
+        workflow_id = WorkflowId(
+            instrument='test', namespace='timeseries', name='test', version=1
+        )
+        spec = WorkflowSpec(
+            instrument='test',
+            namespace='timeseries',
+            name='test',
+            version=1,
+            title='Test',
+            description='Test',
+            params=None,
+            outputs=TimeseriesOutputs,
+            source_names=['source1', 'source2'],
+        )
+
+        results = find_timeseries_outputs({workflow_id: spec})
+
+        # Should find 2 entries (one per source_name)
+        assert len(results) == 2
+        assert (workflow_id, 'source1', 'delta') in results
+        assert (workflow_id, 'source2', 'delta') in results
+
+    def test_ignores_multidimensional_outputs(self) -> None:
+        """Test that outputs with ndim > 0 are not identified as timeseries."""
+        from ess.livedata.config.workflow_spec import find_timeseries_outputs
+
+        class NonTimeseriesOutputs(WorkflowOutputsBase):
+            histogram: sc.DataArray = Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['x'], shape=[10]),
+                    coords={'time': sc.scalar(0, unit='ns')},
+                ),
+            )
+
+        workflow_id = WorkflowId(
+            instrument='test', namespace='other', name='test', version=1
+        )
+        spec = WorkflowSpec(
+            instrument='test',
+            namespace='other',
+            name='test',
+            version=1,
+            title='Test',
+            description='Test',
+            params=None,
+            outputs=NonTimeseriesOutputs,
+            source_names=['source1'],
+        )
+
+        results = find_timeseries_outputs({workflow_id: spec})
+
+        assert len(results) == 0
+
+    def test_ignores_outputs_without_time_coord(self) -> None:
+        """Test that 0-D outputs without time coord are not identified as timeseries."""
+        from ess.livedata.config.workflow_spec import find_timeseries_outputs
+
+        class NoTimeCoordOutputs(WorkflowOutputsBase):
+            value: sc.DataArray = Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+            )
+
+        workflow_id = WorkflowId(
+            instrument='test', namespace='other', name='test', version=1
+        )
+        spec = WorkflowSpec(
+            instrument='test',
+            namespace='other',
+            name='test',
+            version=1,
+            title='Test',
+            description='Test',
+            params=None,
+            outputs=NoTimeCoordOutputs,
+            source_names=['source1'],
+        )
+
+        results = find_timeseries_outputs({workflow_id: spec})
+
+        assert len(results) == 0
+
+    def test_ignores_outputs_without_default_factory(self) -> None:
+        """Test that outputs without default_factory are skipped."""
+        from ess.livedata.config.workflow_spec import find_timeseries_outputs
+
+        class NoFactoryOutputs(WorkflowOutputsBase):
+            delta: sc.DataArray = Field(title='Delta')
+
+        workflow_id = WorkflowId(
+            instrument='test', namespace='other', name='test', version=1
+        )
+        spec = WorkflowSpec(
+            instrument='test',
+            namespace='other',
+            name='test',
+            version=1,
+            title='Test',
+            description='Test',
+            params=None,
+            outputs=NoFactoryOutputs,
+            source_names=['source1'],
+        )
+
+        results = find_timeseries_outputs({workflow_id: spec})
+
+        assert len(results) == 0
+
+    def test_empty_registry_returns_empty_list(self) -> None:
+        """Test that empty registry returns empty list."""
+        from ess.livedata.config.workflow_spec import find_timeseries_outputs
+
+        results = find_timeseries_outputs({})
+
+        assert results == []
+
+    def test_multiple_workflows_combined(self) -> None:
+        """Test that timeseries from multiple workflows are combined."""
+        from ess.livedata.config.workflow_spec import find_timeseries_outputs
+
+        class TimeseriesOutputs(WorkflowOutputsBase):
+            delta: sc.DataArray = Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.scalar(0.0),
+                    coords={'time': sc.scalar(0, unit='ns')},
+                ),
+            )
+
+        class NonTimeseriesOutputs(WorkflowOutputsBase):
+            histogram: sc.DataArray = Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['x'], shape=[10]),
+                ),
+            )
+
+        workflow_id_1 = WorkflowId(
+            instrument='test', namespace='timeseries', name='ts1', version=1
+        )
+        workflow_id_2 = WorkflowId(
+            instrument='test', namespace='detector', name='det1', version=1
+        )
+
+        spec1 = WorkflowSpec(
+            instrument='test',
+            namespace='timeseries',
+            name='ts1',
+            version=1,
+            title='TS 1',
+            description='Test',
+            params=None,
+            outputs=TimeseriesOutputs,
+            source_names=['src1'],
+        )
+        spec2 = WorkflowSpec(
+            instrument='test',
+            namespace='detector',
+            name='det1',
+            version=1,
+            title='Det 1',
+            description='Test',
+            params=None,
+            outputs=NonTimeseriesOutputs,
+            source_names=['src2'],
+        )
+
+        results = find_timeseries_outputs({workflow_id_1: spec1, workflow_id_2: spec2})
+
+        # Only workflow_id_1 has timeseries outputs
+        assert len(results) == 1
+        assert (workflow_id_1, 'src1', 'delta') in results

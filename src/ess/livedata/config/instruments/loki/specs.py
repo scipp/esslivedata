@@ -14,6 +14,8 @@ from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
 
+from .views import get_wire_view
+
 
 class SansWorkflowOptions(pydantic.BaseModel):
     use_transmission_run: bool = pydantic.Field(
@@ -36,10 +38,27 @@ class LokiAuxSources(AuxSourcesBase):
     )
 
 
+def _make_1d_q_template() -> sc.DataArray:
+    """Create an empty 1D template for I(Q) output."""
+    return sc.DataArray(
+        sc.zeros(dims=['Q'], shape=[0], unit='dimensionless'),
+        coords={'Q': sc.arange('Q', 0, unit='1/angstrom')},
+    )
+
+
+def _make_1d_wavelength_template() -> sc.DataArray:
+    """Create an empty 1D template for wavelength-binned output."""
+    return sc.DataArray(
+        sc.zeros(dims=['wavelength'], shape=[0], unit='dimensionless'),
+        coords={'wavelength': sc.arange('wavelength', 0, unit='angstrom')},
+    )
+
+
 class IofQOutputs(WorkflowOutputsBase):
     """Outputs for the basic I(Q) workflow."""
 
     i_of_q: sc.DataArray = pydantic.Field(
+        default_factory=_make_1d_q_template,
         title='I(Q)',
         description='Scattered intensity as a function of momentum transfer Q.',
     )
@@ -49,6 +68,7 @@ class IofQWithTransmissionOutputs(IofQOutputs):
     """Outputs for I(Q) workflow with transmission from current run."""
 
     transmission_fraction: sc.DataArray = pydantic.Field(
+        default_factory=_make_1d_wavelength_template,
         title='Transmission Fraction',
         description='Sample transmission fraction calculated from current run.',
     )
@@ -99,6 +119,17 @@ xy_projection_handle = register_detector_view_spec(
     instrument=instrument,
     projection='xy_plane',
     source_names=detector_names,
+)
+
+# Register wire view for all detector banks
+instrument.add_logical_view(
+    name='wire_view',
+    title='Wire View',
+    description='Sum over straw and pixel dimensions to show layer x tube counts.',
+    source_names=detector_names,
+    transform=get_wire_view,
+    output_ndim=2,
+    reduction_dim=['straw', 'pixel'],
 )
 
 # Register I(Q) workflow spec (basic)

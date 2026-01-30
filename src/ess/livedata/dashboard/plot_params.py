@@ -41,6 +41,25 @@ class PlotScale(str, enum.Enum):
     log = 'log'
 
 
+class Curve1dRenderMode(StrEnum):
+    """Enumeration of rendering modes for 1D curves."""
+
+    curve = 'curve'
+    histogram = 'histogram'
+
+
+class Curve1dParams(pydantic.BaseModel):
+    """Parameters for 1D curve rendering."""
+
+    mode: Curve1dRenderMode = pydantic.Field(
+        default=Curve1dRenderMode.curve,
+        description=(
+            "Rendering mode: 'curve' for smooth lines or 'histogram' for step plot."
+        ),
+        title="Curve Mode",
+    )
+
+
 class CombineMode(str, enum.Enum):
     """Enumeration of combine modes for multiple datasets."""
 
@@ -198,13 +217,13 @@ class PlotParamsBase(pydantic.BaseModel):
     )
 
 
-class PlotParams1d(PlotParamsBase):
-    """Common parameters for 1d plots."""
+class PlotDisplayParams1d(PlotParamsBase):
+    """Display parameters for 1D plots without windowing.
 
-    window: WindowParams = pydantic.Field(
-        default_factory=WindowParams,
-        description="Windowing and aggregation options.",
-    )
+    Used by correlation histograms and other derived 1D plots that don't
+    need window configuration (they process full timeseries data).
+    """
+
     plot_scale: PlotScaleParams = pydantic.Field(
         default_factory=PlotScaleParams,
         description="Scaling options for the plot axes.",
@@ -213,15 +232,19 @@ class PlotParams1d(PlotParamsBase):
         default_factory=TickParams,
         description="Tick configuration for plot axes.",
     )
-
-
-class PlotParams2d(PlotParamsBase):
-    """Common parameters for 2d plots."""
-
-    window: WindowParams = pydantic.Field(
-        default_factory=WindowParams,
-        description="Windowing and aggregation options.",
+    curve: Curve1dParams = pydantic.Field(
+        default_factory=Curve1dParams,
+        description="1D curve rendering options.",
     )
+
+
+class PlotDisplayParams2d(PlotParamsBase):
+    """Display parameters for 2D plots without windowing.
+
+    Used by 2D correlation histograms and other derived 2D plots that don't
+    need window configuration.
+    """
+
     plot_scale: PlotScaleParams2d = pydantic.Field(
         default_factory=PlotScaleParams2d,
         description="Scaling options for the plot and color axes.",
@@ -229,6 +252,24 @@ class PlotParams2d(PlotParamsBase):
     ticks: TickParams = pydantic.Field(
         default_factory=TickParams,
         description="Tick configuration for plot axes.",
+    )
+
+
+class PlotParams1d(PlotDisplayParams1d):
+    """Common parameters for 1D plots with windowing support."""
+
+    window: WindowParams = pydantic.Field(
+        default_factory=WindowParams,
+        description="Windowing and aggregation options.",
+    )
+
+
+class PlotParams2d(PlotDisplayParams2d):
+    """Common parameters for 2D plots with windowing support."""
+
+    window: WindowParams = pydantic.Field(
+        default_factory=WindowParams,
+        description="Windowing and aggregation options.",
     )
 
 

@@ -393,9 +393,9 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         else:
             ref = data
         # Drop all coords that will be accumulated (not stored in reference)
-        for coord in self._ACCUMULATED_COORDS:
-            if coord in ref.coords:
-                ref = ref.drop_coords(coord)
+        ref = ref.drop_coords(
+            [coord for coord in self._ACCUMULATED_COORDS if coord in ref.coords]
+        )
         self._reference = ref
 
         # Calculate max_capacity from memory limit
@@ -490,8 +490,8 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         # Create template with reference data but incoming metadata
         # Drop all accumulated coords for comparison
         template = new.assign(self._reference.data)
-        for coord in self._ACCUMULATED_COORDS:
-            if coord in template.coords:
-                template = template.drop_coords(coord)
+        template = template.drop_coords(
+            [coord for coord in self._ACCUMULATED_COORDS if coord in template.coords]
+        )
 
         return sc.identical(self._reference, template)

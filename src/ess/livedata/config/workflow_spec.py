@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
@@ -386,3 +387,58 @@ class WorkflowConfig(BaseModel):
             aux_source_names=aux_source_names or {},
             params=params or {},
         )
+
+
+def _is_timeseries_output(da: sc.DataArray) -> bool:
+    """Check if DataArray represents a timeseries (0-D with time coord)."""
+    return da.ndim == 0 and 'time' in da.coords
+
+
+def find_timeseries_outputs(
+    workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+) -> list[tuple[WorkflowId, str, str]]:
+    """
+    Find all timeseries outputs in the workflow registry.
+
+    A timeseries output is a 0-D DataArray with a 'time' coordinate.
+    This is determined by checking the default_factory template of each
+    output field in the workflow spec.
+
+    Parameters
+    ----------
+    workflow_registry:
+        Registry of workflow specs to search.
+
+    Returns
+    -------
+    :
+        List of (workflow_id, source_name, output_name) tuples for all
+        timeseries outputs found. Each source_name from the workflow's
+        source_names list is paired with each timeseries output_name.
+    """
+    results: list[tuple[WorkflowId, str, str]] = []
+
+    for workflow_id, spec in workflow_registry.items():
+        if spec.outputs is None:
+            continue
+
+        # Find timeseries output fields
+        timeseries_outputs: list[str] = []
+        for field_name, field_info in spec.outputs.model_fields.items():
+            if not field_info.default_factory:
+                continue
+            try:
+                template = field_info.default_factory()
+                if _is_timeseries_output(template):
+                    timeseries_outputs.append(field_name)
+            except Exception:  # noqa: S112
+                continue
+
+        # Create entries for each source_name x output combination
+        results.extend(
+            (workflow_id, source_name, output_name)
+            for source_name in spec.source_names
+            for output_name in timeseries_outputs
+        )
+
+    return results

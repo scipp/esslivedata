@@ -39,3 +39,7 @@ def _on_workflow_stopped(self, workflow_id):
 ## Icons
 
 Do not use Unicode characters for button icons. Use embedded SVG icons from `dashboard/icons.py` via `get_icon()`. Use the `create_tool_button()` helper from `dashboard/buttons.py` for consistent styling.
+
+## Avoiding flicker
+
+Make sure all widget-updates that touch more than a single widget (or a single widget multiple times) use `pn.io.hold()`.

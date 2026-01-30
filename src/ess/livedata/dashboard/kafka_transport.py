@@ -2,11 +2,11 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Kafka-based transport implementation for the dashboard."""
 
-import logging
 from contextlib import ExitStack
 from types import TracebackType
 
 import scipp as sc
+import structlog
 
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
@@ -20,6 +20,8 @@ from ess.livedata.kafka.sink import KafkaSink, serialize_dataarray_to_da00
 from ess.livedata.kafka.source import BackgroundMessageSource
 
 from .transport import DashboardResources, Transport
+
+logger = structlog.get_logger(__name__)
 
 
 class DashboardKafkaTransport(Transport[DashboardResources]):
@@ -35,8 +37,6 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
         Instrument name (e.g., 'dummy', 'dream', 'bifrost')
     dev:
         Use dev mode with simplified topic structure
-    logger:
-        Logger instance for logging
     """
 
     def __init__(
@@ -44,11 +44,9 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
         *,
         instrument: str,
         dev: bool,
-        logger: logging.Logger,
     ):
         self._instrument = instrument
         self._dev = dev
-        self._logger = logger
         self._exit_stack = ExitStack()
         self._background_source = None
 
@@ -75,7 +73,6 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
                 KafkaSink[ConfigUpdate](
                     kafka_config=kafka_downstream_config,
                     instrument=self._instrument,
-                    logger=self._logger,
                 )
             )
 
@@ -85,12 +82,11 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
                     kafka_config=kafka_upstream_config,
                     instrument=self._instrument,
                     serializer=serialize_dataarray_to_da00,
-                    logger=self._logger,
                 )
             )
 
-            self._logger.info(
-                "DashboardKafkaTransport initialized for %s", self._instrument
+            logger.info(
+                "dashboard_kafka_transport_initialized", instrument=self._instrument
             )
 
             return DashboardResources(
@@ -112,19 +108,19 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
     ) -> None:
         """Clean up all Kafka resources."""
         self._exit_stack.close()
-        self._logger.info("DashboardKafkaTransport cleaned up")
+        logger.info("dashboard_kafka_transport_cleaned_up")
 
     def start(self) -> None:
         """Start background message polling."""
         if self._background_source is not None:
             self._background_source.start()
-            self._logger.info("Background message polling started")
+            logger.info("dashboard_message_polling_started")
 
     def stop(self) -> None:
         """Stop background message polling."""
         if self._background_source is not None:
             self._background_source.stop()
-            self._logger.info("Background message polling stopped")
+            logger.info("dashboard_message_polling_stopped")
 
     def _create_message_source(
         self,

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pydantic
 
@@ -13,6 +13,9 @@ from ess.livedata.dashboard.configuration_adapter import (
     ConfigurationState,
 )
 from ess.livedata.dashboard.plotting import PlotterSpec
+
+if TYPE_CHECKING:
+    from ess.livedata.config import Instrument
 
 
 class PlotConfigurationAdapter(ConfigurationAdapter):
@@ -32,6 +35,7 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         success_callback,
         config_state: ConfigurationState | None = None,
         initial_source_names: list[str] | None = None,
+        instrument_config: Instrument | None = None,
     ):
         """
         Initialize plot configuration adapter.
@@ -48,6 +52,8 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
             Optional reference configuration state (from a single source) to restore.
         initial_source_names:
             Source names to pre-select in the UI. None to select all available.
+        instrument_config:
+            Optional instrument configuration for source metadata lookup.
         """
         super().__init__(
             config_state=config_state, initial_source_names=initial_source_names
@@ -55,6 +61,7 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         self._plot_spec = plot_spec
         self._source_names = source_names
         self._success_callback = success_callback
+        self._instrument_config = instrument_config
 
     @property
     def title(self) -> str:
@@ -74,6 +81,12 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
     def source_names(self) -> list[str]:
         """Get available source names."""
         return self._source_names
+
+    def get_source_title(self, source_name: str) -> str:
+        """Get display title for a source name."""
+        if self._instrument_config is not None:
+            return self._instrument_config.get_source_title(source_name)
+        return source_name
 
     def start_action(
         self,

@@ -11,7 +11,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowId,
     WorkflowOutputsBase,
 )
-from ess.livedata.core.job import Job, JobId, JobReply, JobResult
+from ess.livedata.core.job import Job, JobId, JobReply, JobResult, JobState
 from ess.livedata.core.job_manager import JobFactory, JobManager, WorkflowData
 from ess.livedata.core.message import StreamId
 
@@ -1158,6 +1158,75 @@ class TestJobManager:
         results = manager.compute_results()
         assert len(results) == 1
         assert results[0].error_message is None
+
+    def test_warning_from_none_values_propagates_to_job_status(self, fake_job_factory):
+        """Test that warnings from None values in results are tracked in job status."""
+        manager = JobManager(fake_job_factory)
+        config = WorkflowConfig(
+            identifier=WorkflowId(
+                instrument="test",
+                namespace="data_reduction",
+                name="test_workflow",
+                version=1,
+            )
+        )
+        job_id = manager.schedule_job("test_source", config)
+
+        # Activate job and push data
+        data = WorkflowData(
+            start_time=100,
+            end_time=200,
+            data={StreamId(name="test_source"): sc.scalar(42.0)},
+        )
+        manager.push_data(data)
+
+        # Make processor return a dict with None value
+        processor = fake_job_factory.processors[job_id]
+        processor.data = {
+            "valid_output": sc.DataArray(sc.scalar(1.0)),
+            "invalid_output": None,
+        }
+
+        results = manager.compute_results()
+        assert len(results) == 1
+        # Result should have valid data and a warning
+        assert results[0].error_message is None
+        assert results[0].warning_message is not None
+        assert "invalid_output" in results[0].warning_message
+        assert results[0].data is not None
+        assert "valid_output" in results[0].data
+
+        # Job status should reflect warning state
+        statuses = manager.get_all_job_statuses()
+        assert len(statuses) == 1
+        assert statuses[0].state == JobState.warning
+        assert statuses[0].warning_message is not None
+        assert "invalid_output" in statuses[0].warning_message
+
+        # Now fix the processor to return valid data (no None values)
+        processor.data = {
+            "valid_output": sc.DataArray(sc.scalar(2.0)),
+            "other_output": sc.DataArray(sc.scalar(3.0)),
+        }
+
+        # Push more data to trigger recomputation
+        more_data = WorkflowData(
+            start_time=201,
+            end_time=300,
+            data={StreamId(name="test_source"): sc.scalar(24.0)},
+        )
+        manager.push_data(more_data)
+
+        results = manager.compute_results()
+        assert len(results) == 1
+        assert results[0].error_message is None
+        assert results[0].warning_message is None  # Warning should be cleared
+
+        # Job status should be back to active
+        statuses = manager.get_all_job_statuses()
+        assert len(statuses) == 1
+        assert statuses[0].state == JobState.active
+        assert statuses[0].warning_message is None
 
     def test_successful_jobs_will_not_compute_again_without_new_primary_data(
         self, fake_job_factory

@@ -7,12 +7,30 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+import pydantic
 import scipp as sc
 import scippnexus as snx
 
 from ess.livedata.handlers.workflow_factory import SpecHandle, WorkflowFactory
 
 from .workflow_spec import WorkflowSpec
+
+
+class SourceMetadata(pydantic.BaseModel):
+    """Metadata for a data source (detector, monitor, or timeseries).
+
+    Parameters
+    ----------
+    title:
+        Human-readable title for display in the UI.
+    description:
+        Longer description shown in tooltips.
+    """
+
+    title: str = pydantic.Field(description="Human-readable title for UI display")
+    description: str = pydantic.Field(
+        default='', description="Longer description for tooltips"
+    )
 
 
 @dataclass
@@ -23,7 +41,7 @@ class LogicalViewConfig:
     title: str
     description: str
     source_names: list[str]
-    transform: Callable[[sc.DataArray], sc.DataArray]
+    transform: Callable[[sc.DataArray, str], sc.DataArray]
     roi_support: bool = True
     output_ndim: int | None = None
     reduction_dim: str | list[str] | None = None
@@ -68,6 +86,7 @@ class Instrument:
     monitors: list[str] = field(default_factory=list)
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
     f144_attribute_registry: dict[str, dict[str, Any]] = field(default_factory=dict)
+    source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
     _nexus_file: str | None = None
     active_namespace: str | None = None
@@ -168,6 +187,40 @@ class Instrument:
     def get_detector_number(self, name: str) -> sc.Variable:
         return self._detector_numbers[name]
 
+    def get_source_title(self, source_name: str) -> str:
+        """Get display title for a source, falling back to source_name.
+
+        Parameters
+        ----------
+        source_name:
+            Internal source name (e.g., detector name, monitor name).
+
+        Returns
+        -------
+        :
+            Human-readable title if defined, otherwise the source_name itself.
+        """
+        if metadata := self.source_metadata.get(source_name):
+            return metadata.title
+        return source_name
+
+    def get_source_description(self, source_name: str) -> str:
+        """Get description for a source.
+
+        Parameters
+        ----------
+        source_name:
+            Internal source name (e.g., detector name, monitor name).
+
+        Returns
+        -------
+        :
+            Description if defined, otherwise an empty string.
+        """
+        if metadata := self.source_metadata.get(source_name):
+            return metadata.description
+        return ''
+
     def add_logical_view(
         self,
         *,
@@ -175,7 +228,7 @@ class Instrument:
         title: str,
         description: str,
         source_names: Sequence[str],
-        transform: Callable[[sc.DataArray], sc.DataArray],
+        transform: Callable[[sc.DataArray, str], sc.DataArray],
         roi_support: bool = True,
         output_ndim: int | None = None,
         reduction_dim: str | list[str] | None = None,
@@ -198,6 +251,10 @@ class Instrument:
             List of detector source names this view applies to.
         transform:
             Function that transforms raw detector data to the view output.
+            Signature: ``(da: DataArray, source_name: str) -> DataArray``.
+            The ``source_name`` identifies which detector bank the data is from,
+            allowing a single transform to handle multiple banks with different
+            parameters (e.g., different fold sizes).
             If reduction_dim is specified, the transform should NOT include
             summing - that is handled separately to enable proper ROI index mapping.
         roi_support:
@@ -216,16 +273,11 @@ class Instrument:
         """
         from ess.livedata.handlers.detector_view_specs import (
             DetectorROIAuxSources,
-            DetectorViewOutputs,
             DetectorViewParams,
             make_detector_view_outputs,
         )
 
-        outputs = (
-            make_detector_view_outputs(output_ndim)
-            if output_ndim is not None
-            else DetectorViewOutputs
-        )
+        outputs = make_detector_view_outputs(output_ndim, roi_support=roi_support)
         handle = self.register_spec(
             namespace="detector_data",
             name=name,
@@ -353,16 +405,28 @@ class Instrument:
             )
 
         if self._logical_views:
-            from ess.livedata.handlers.detector_data_handler import DetectorLogicalView
+            from ess.livedata.handlers.detector_view import (
+                DetectorViewFactory,
+                InstrumentDetectorSource,
+            )
+            from ess.livedata.handlers.detector_view import (
+                LogicalViewConfig as ScilineLogicalViewConfig,
+            )
 
             for config in self._logical_views:
                 handle = self._logical_view_handles[config.name]
-                view = DetectorLogicalView(
-                    instrument=self,
+                # Create view config for this logical view
+                view_config = ScilineLogicalViewConfig(
                     transform=config.transform,
                     reduction_dim=config.reduction_dim,
+                    roi_support=config.roi_support,
                 )
-                handle.attach_factory()(view.make_view)
+                # Create factory with InstrumentDetectorSource for dynamic lookup
+                factory = DetectorViewFactory(
+                    data_source=InstrumentDetectorSource(self),
+                    view_config=view_config,
+                )
+                handle.attach_factory()(factory.make_workflow)
 
         if hasattr(module, 'setup_factories'):
             module.setup_factories(self)

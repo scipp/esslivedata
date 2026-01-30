@@ -863,7 +863,7 @@ class TestPlotterLabelChanges:
 
     def test_label_includes_output_name(self, simple_data, data_key_with_output_name):
         """Test that plot label includes output_name."""
-        plotter = plots.LinePlotter.from_params(PlotParams2d())
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
         data_dict = {data_key_with_output_name: simple_data}
 
         result = plotter(data_dict)
@@ -926,7 +926,7 @@ class TestPlotterOverlayMode:
         """Test that overlay mode returns Overlay even with single item."""
         from ess.livedata.dashboard.plot_params import LayoutParams
 
-        params = PlotParams2d(layout=LayoutParams(combine_mode='overlay'))
+        params = PlotParams1d(layout=LayoutParams(combine_mode='overlay'))
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {data_key_1: simple_data_1}
 
@@ -943,7 +943,7 @@ class TestPlotterOverlayMode:
         """Test that overlay mode combines multiple plots into Overlay."""
         from ess.livedata.dashboard.plot_params import LayoutParams
 
-        params = PlotParams2d(layout=LayoutParams(combine_mode='overlay'))
+        params = PlotParams1d(layout=LayoutParams(combine_mode='overlay'))
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {data_key_1: simple_data_1, data_key_2: simple_data_2}
 
@@ -960,7 +960,7 @@ class TestPlotterOverlayMode:
         """Test that non-overlay mode returns raw plot for single item."""
         from ess.livedata.dashboard.plot_params import LayoutParams
 
-        params = PlotParams2d(layout=LayoutParams(combine_mode='layout'))
+        params = PlotParams1d(layout=LayoutParams(combine_mode='layout'))
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {data_key_1: simple_data_1}
 
@@ -973,7 +973,7 @@ class TestPlotterOverlayMode:
         """Test that empty data returns 'No data' text element in overlay mode."""
         from ess.livedata.dashboard.plot_params import LayoutParams
 
-        params = PlotParams2d(layout=LayoutParams(combine_mode='overlay'))
+        params = PlotParams1d(layout=LayoutParams(combine_mode='overlay'))
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {}
 
@@ -991,7 +991,7 @@ class TestPlotterOverlayMode:
         """Test that empty data returns 'No data' text element in layout mode."""
         from ess.livedata.dashboard.plot_params import LayoutParams
 
-        params = PlotParams2d(layout=LayoutParams(combine_mode='layout'))
+        params = PlotParams1d(layout=LayoutParams(combine_mode='layout'))
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {}
 

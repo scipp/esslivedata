@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Generic, Protocol, TypeVar
@@ -8,6 +7,7 @@ from typing import Any, Generic, Protocol, TypeVar
 import scipp as sc
 import streaming_data_types
 import streaming_data_types.exceptions
+import structlog
 from streaming_data_types import (
     area_detector_ad00,
     dataarray_da00,
@@ -16,7 +16,7 @@ from streaming_data_types import (
 )
 from streaming_data_types.fbschemas.eventdata_ev44 import Event44Message
 
-from ess.livedata.core.job import JobStatus
+from ess.livedata.core.job import JobStatus, ServiceStatus
 
 from ..config.acknowledgement import CommandAcknowledgement
 from ..core.message import (
@@ -28,11 +28,14 @@ from ..core.message import (
     StreamId,
     StreamKind,
 )
-from ..handlers.accumulators import DetectorEvents, LogData, MonitorEvents
+from ..handlers.accumulators import LogData
+from ..handlers.to_nxevent_data import DetectorEvents, MonitorEvents
 from .scipp_ad00_compat import ad00_to_scipp
 from .scipp_da00_compat import da00_to_scipp
 from .stream_mapping import InputStreamKey, StreamLUT
-from .x5f2_compat import x5f2_to_job_status
+from .x5f2_compat import x5f2_to_status
+
+logger = structlog.get_logger(__name__)
 
 T = TypeVar('T')
 U = TypeVar('U')
@@ -170,12 +173,20 @@ class Ev44ToMonitorEventsAdapter(
         )
 
 
-class X5f2ToJobStatusAdapter(MessageAdapter[KafkaMessage, Message[JobStatus]]):
-    def adapt(self, message: KafkaMessage) -> Message[JobStatus]:
+class X5f2ToStatusAdapter(
+    MessageAdapter[KafkaMessage, Message[JobStatus | ServiceStatus]]
+):
+    """
+    Adapter for status messages that returns JobStatus or ServiceStatus.
+
+    Discriminates based on the `message_type` field in the x5f2 status_json.
+    """
+
+    def adapt(self, message: KafkaMessage) -> Message[JobStatus | ServiceStatus]:
         return Message(
             timestamp=message.timestamp()[1],
             stream=STATUS_STREAM_ID,
-            value=x5f2_to_job_status(message.value()),
+            value=x5f2_to_status(message.value()),
         )
 
 
@@ -325,8 +336,16 @@ class RouteBySchemaAdapter(MessageAdapter[KafkaMessage, T]):
 
     def adapt(self, message: KafkaMessage) -> T:
         schema = streaming_data_types.utils.get_schema(message.value())
-        if schema is None or schema not in self._routes:
-            raise streaming_data_types.exceptions.WrongSchemaException()
+        if schema is None:
+            raise streaming_data_types.exceptions.WrongSchemaException(
+                f"Could not determine schema from message (topic={message.topic()}). "
+                f"Expected one of: {list(self._routes.keys())}"
+            )
+        if schema not in self._routes:
+            raise streaming_data_types.exceptions.WrongSchemaException(
+                f"Unexpected schema '{schema}' from topic '{message.topic()}'. "
+                f"Expected one of: {list(self._routes.keys())}"
+            )
         return self._routes[schema].adapt(message)
 
 
@@ -344,7 +363,13 @@ class RouteByTopicAdapter(MessageAdapter[KafkaMessage, T]):
         return list(self._routes.keys())
 
     def adapt(self, message: KafkaMessage) -> T:
-        return self._routes[message.topic()].adapt(message)
+        topic = message.topic()
+        if topic not in self._routes:
+            raise KeyError(
+                f"Received message from unexpected topic '{topic}'. "
+                f"Configured topics: {list(self._routes.keys())}"
+            )
+        return self._routes[topic].adapt(message)
 
 
 class AdaptingMessageSource(MessageSource[U]):
@@ -356,7 +381,6 @@ class AdaptingMessageSource(MessageSource[U]):
         self,
         source: MessageSource[T],
         adapter: MessageAdapter[T, U],
-        logger: logging.Logger | None = None,
         raise_on_error: bool = False,
     ):
         """
@@ -366,13 +390,10 @@ class AdaptingMessageSource(MessageSource[U]):
             The source of messages to adapt.
         adapter
             The adapter to use.
-        logger
-            Logger to use for logging errors.
         raise_on_error
             If True, exceptions during adaptation will be re-raised. If False,
             they will be logged and the message will be skipped.
         """
-        self._logger = logger or logging.getLogger(__name__)
         self._source = source
         self._adapter = adapter
         self._raise_on_error = raise_on_error
@@ -384,11 +405,11 @@ class AdaptingMessageSource(MessageSource[U]):
             try:
                 adapted.append(self._adapter.adapt(msg))
             except streaming_data_types.exceptions.WrongSchemaException:
-                self._logger.warning('Message %s has an unknown schema. Skipping.', msg)
+                logger.warning('Message %s has an unknown schema. Skipping.', msg)
                 if self._raise_on_error:
                     raise
             except Exception as e:
-                self._logger.exception('Error adapting message %s: %s', msg, e)
+                logger.exception('Error adapting message %s: %s', msg, e)
                 if self._raise_on_error:
                     raise
         return adapted

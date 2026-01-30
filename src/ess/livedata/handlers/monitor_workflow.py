@@ -122,9 +122,7 @@ def create_monitor_workflow(
     toa_range:
         Optional (low, high) range for ratemeter counts.
     """
-    from ess.reduce import streaming
-
-    from .accumulators import WindowAccumulator
+    from .accumulators import NoCopyAccumulator, NoCopyWindowAccumulator
     from .stream_processor_workflow import StreamProcessorWorkflow
 
     workflow = build_monitor_workflow()
@@ -150,8 +148,8 @@ def create_monitor_workflow(
             'counts_in_toa_range': MonitorCountsInRange,
         },
         accumulators={
-            CumulativeMonitorHistogram: streaming.EternalAccumulator(),
-            WindowMonitorHistogram: WindowAccumulator(),
+            CumulativeMonitorHistogram: NoCopyAccumulator(),
+            WindowMonitorHistogram: NoCopyWindowAccumulator(),
         },
         window_outputs=['current', 'counts_total', 'counts_in_toa_range'],
     )

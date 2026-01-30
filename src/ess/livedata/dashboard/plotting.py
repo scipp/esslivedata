@@ -12,6 +12,10 @@ from typing import Any, Generic, Protocol, TypeVar
 import pydantic
 import scipp as sc
 
+from .correlation_plotter import (
+    CorrelationHistogram1dPlotter,
+    CorrelationHistogram2dPlotter,
+)
 from .extractors import FullHistoryExtractor, UpdateExtractor
 from .plots import (
     BarsPlotter,
@@ -346,8 +350,64 @@ plotter_registry.register_plotter(
 )
 
 
+plotter_registry.register_plotter(
+    name='correlation_histogram_1d',
+    title='Correlation Histogram 1D',
+    description=(
+        'Create a 1D histogram correlating the selected timeseries against another '
+        'timeseries axis. Useful for visualizing how data varies with a parameter '
+        'like temperature or motor position.'
+    ),
+    data_requirements=DataRequirements(
+        min_dims=0,
+        max_dims=0,
+        multiple_datasets=True,
+        required_extractor=FullHistoryExtractor,
+    ),
+    factory=CorrelationHistogram1dPlotter.from_params,
+)
+
+
+plotter_registry.register_plotter(
+    name='correlation_histogram_2d',
+    title='Correlation Histogram 2D',
+    description=(
+        'Create a 2D histogram correlating the selected timeseries against two '
+        'timeseries axes. Useful for visualizing how data varies with two parameters '
+        'simultaneously.'
+    ),
+    data_requirements=DataRequirements(
+        min_dims=0,
+        max_dims=0,
+        multiple_datasets=True,
+        required_extractor=FullHistoryExtractor,
+    ),
+    factory=CorrelationHistogram2dPlotter.from_params,
+)
+
+
 # Register static plotters (rectangles, vlines, hlines)
 _register_static_plotters()
+
+
+# Maps base plotter name -> list of (required_output_name, overlay_plotter_name)
+# Each tuple specifies: which workflow output is required, and which plotter to use
+#
+# Overlay suggestions are chained to enforce ordering:
+#   image -> readback -> request
+# This ensures the read-only visualization layer is added before the interactive editor.
+OVERLAY_PATTERNS: dict[str, list[tuple[str, str]]] = {
+    'image': [
+        ('roi_rectangle', 'rectangles_readback'),
+        ('roi_polygon', 'polygons_readback'),
+    ],
+    'rectangles_readback': [
+        ('roi_rectangle', 'rectangles_request'),
+    ],
+    'polygons_readback': [
+        ('roi_polygon', 'polygons_request'),
+    ],
+}
 
 
 # ROI data requirements (shared between readback and request plotters)

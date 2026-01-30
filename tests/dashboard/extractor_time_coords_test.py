@@ -67,10 +67,10 @@ class TestFullHistoryExtractor:
         result = extractor.extract(data)
 
         # Result should have scalar start_time = min of input 1-D start_time
-        expected_start = data.coords['start_time'].values[0]  # First value (min)
+        expected_start = data.coords['start_time'][0]
         assert 'start_time' in result.coords
         assert result.coords['start_time'].ndim == 0  # Scalar
-        assert result.coords['start_time'].value == expected_start
+        assert sc.identical(result.coords['start_time'], expected_start)
 
     def test_sets_end_time_from_max_of_1d_coord(self):
         """end_time should be max of the 1-D end_time coord."""
@@ -80,10 +80,10 @@ class TestFullHistoryExtractor:
         result = extractor.extract(data)
 
         # Result should have scalar end_time = max of input 1-D end_time
-        expected_end = data.coords['end_time'].values[-1]  # Last value (max)
+        expected_end = data.coords['end_time'][-1]
         assert 'end_time' in result.coords
         assert result.coords['end_time'].ndim == 0  # Scalar
-        assert result.coords['end_time'].value == expected_end
+        assert sc.identical(result.coords['end_time'], expected_end)
 
     def test_end_time_reflects_actual_data_range(self):
         """end_time should reflect the actual data, giving recent lag."""
@@ -207,7 +207,7 @@ class TestLatestValueExtractor:
         result = extractor.extract(data)
 
         # Verify coords are from the last slice
-        expected_start = data.coords['start_time'].values[-1]
-        expected_end = data.coords['end_time'].values[-1]
-        assert result.coords['start_time'].value == expected_start
-        assert result.coords['end_time'].value == expected_end
+        expected_start = data.coords['start_time'][-1]
+        expected_end = data.coords['end_time'][-1]
+        assert sc.identical(result.coords['start_time'], expected_start)
+        assert sc.identical(result.coords['end_time'], expected_end)

@@ -95,8 +95,21 @@ class BifrostWorkflowParams(pydantic.BaseModel):
     )
 
 
+def _make_2d_template() -> sc.DataArray:
+    """Create an empty 2D template for 2D output data."""
+    return sc.DataArray(sc.zeros(dims=['dim_0', 'dim_1'], shape=[0, 0], unit='counts'))
+
+
+def _make_3d_template() -> sc.DataArray:
+    """Create an empty 3D template for 3D output data."""
+    return sc.DataArray(
+        sc.zeros(dims=['dim_0', 'dim_1', 'dim_2'], shape=[0, 0, 0], unit='counts')
+    )
+
+
 class SpectrumViewOutputs(WorkflowOutputsBase):
     spectrum_view: sc.DataArray = pydantic.Field(
+        default_factory=_make_3d_template,
         title='Spectrum View',
         description='Spectrum view showing time-of-flight vs. detector position.',
     )
@@ -106,6 +119,10 @@ class DetectorRatemeterOutputs(WorkflowOutputsBase):
     """Outputs for detector ratemeter workflow."""
 
     detector_region_counts: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.scalar(0, unit='counts'),
+            coords={'time': sc.scalar(0, unit='ns')},
+        ),
         title='Detector Region Counts',
         description='Total counts for the selected arc and pixel range.',
     )
@@ -216,6 +233,7 @@ class QMapOutputs(WorkflowOutputsBase):
     """Outputs for Bifrost Q-map workflows."""
 
     cut_data: sc.DataArray = pydantic.Field(
+        default_factory=_make_2d_template,
         title='Cut Data',
         description='2D cut of intensity in Q-space or Q-E space.',
     )

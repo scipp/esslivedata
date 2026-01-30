@@ -46,9 +46,18 @@ class ConfigurationWidget:
             initial_source_names = self._config.source_names
         else:
             initial_source_names = self._config.initial_source_names
+
+        # Build options dict: {display_title: internal_name}
+        # Sort by display title for consistent ordering
+        options = {
+            self._config.get_source_title(name): name
+            for name in self._config.source_names
+        }
+        sorted_options = dict(sorted(options.items()))
+
         return pn.widgets.MultiChoice(
             name="Source Names",
-            options=sorted(self._config.source_names),
+            options=sorted_options,
             value=sorted(initial_source_names),
             placeholder="Select source names to apply workflow to",
             sizing_mode='stretch_width',

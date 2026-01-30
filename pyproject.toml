@@ -33,12 +33,13 @@ dependencies = [
   "PyYAML",
   "confluent_kafka",
   "ess-streaming-data-types",
-  "essreduce>=25.12.0",
+  "essreduce>=26.01.1",
   "jinja2",
   "pydantic>=2",
   "scipp>=25.02.0",  # Improved performance of scipp.group
   "scippneutron>=25.11.1",  # For DREAM unit conversion fixes
   "pooch",
+  "structlog>=24.0.0",
 ]
 
 dynamic = ["version"]
@@ -50,7 +51,6 @@ test = [
     "esssans",
     "essspectroscopy>=25.11.1",
     "holoviews",
-    "markdown-it-py==3.0.0",  # Work around myst-parser upper bound
     "panel",
     "param",
     "pytest",

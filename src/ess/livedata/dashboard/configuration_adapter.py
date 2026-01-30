@@ -136,6 +136,24 @@ class ConfigurationAdapter(ABC, Generic[Model]):
     def source_names(self) -> list[str]:
         """Available source names."""
 
+    def get_source_title(self, source_name: str) -> str:
+        """Get display title for a source name.
+
+        Default implementation returns the source name as-is.
+        Subclasses can override to provide human-readable titles.
+
+        Parameters
+        ----------
+        source_name:
+            Internal source name.
+
+        Returns
+        -------
+        :
+            Display title for the source.
+        """
+        return source_name
+
     @property
     def initial_source_names(self) -> list[str]:
         """

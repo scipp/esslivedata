@@ -27,14 +27,7 @@ from .plot_params import (
     TickParams,
 )
 from .scipp_to_holoviews import to_holoviews
-
-
-def _format_time_ns(ns: int) -> str:
-    """Format nanoseconds since epoch as HH:MM:SS.s in local time (0.1s precision)."""
-    from datetime import UTC, datetime
-
-    dt = datetime.fromtimestamp(ns / 1e9, tz=UTC).astimezone()
-    return f"{dt.strftime('%H:%M:%S')}.{dt.microsecond // 100000}"
+from .time_utils import format_time_ns_local
 
 
 def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
@@ -71,11 +64,11 @@ def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
     lag_s = (now_ns - min_end) / 1e9
 
     if min_start is not None and max_end is not None:
-        start_str = _format_time_ns(min_start)
-        end_str = _format_time_ns(max_end)
+        start_str = format_time_ns_local(min_start)
+        end_str = format_time_ns_local(max_end)
         return f'{start_str} - {end_str} (Lag: {lag_s:.1f}s)'
     else:
-        end_str = _format_time_ns(min_end)
+        end_str = format_time_ns_local(min_end)
         return f'{end_str} (Lag: {lag_s:.1f}s)'
 
 
@@ -300,7 +293,11 @@ class Plotter(ABC):
         elif len(plots) == 1:
             result = plots[0]
         else:
-            result = hv.Layout(plots).cols(self.layout_params.layout_columns)
+            result = (
+                hv.Layout(plots)
+                .opts(shared_axes=False)
+                .cols(self.layout_params.layout_columns)
+            )
 
         # Add time interval and lag indicator as plot title
         time_info = _compute_time_info(data)
@@ -365,6 +362,8 @@ class LinePlotter(Plotter):
         self,
         scale_opts: PlotScaleParams,
         tick_params: TickParams | None = None,
+        *,
+        as_histogram: bool = False,
         **kwargs,
     ):
         """
@@ -376,10 +375,14 @@ class LinePlotter(Plotter):
             Scaling options for axes.
         tick_params:
             Tick configuration parameters.
+        as_histogram:
+            If True, preserve bin edges and render as step-style histogram.
+            If False (default), convert bin edges to midpoints for smooth curves.
         **kwargs:
             Additional keyword arguments passed to the base class.
         """
         super().__init__(**kwargs)
+        self._as_histogram = as_histogram
         self._base_opts: dict[str, Any] = {
             'logx': True if scale_opts.x_scale == PlotScale.log else False,
             'logy': True if scale_opts.y_scale == PlotScale.log else False,
@@ -389,21 +392,29 @@ class LinePlotter(Plotter):
     @classmethod
     def from_params(cls, params: PlotParams1d):
         """Create LinePlotter from PlotParams1d."""
+        from .plot_params import Curve1dRenderMode
+
         return cls(
             grow_threshold=0.1,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
+            as_histogram=params.curve.mode == Curve1dRenderMode.histogram,
         )
 
-    def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Curve:
-        """Create a line plot from a scipp DataArray."""
-        da = self._convert_bin_edges_to_midpoints(data)
+    def plot(
+        self, data: sc.DataArray, data_key: ResultKey, **kwargs
+    ) -> hv.Curve | hv.Histogram:
+        """Create a line or histogram plot from a scipp DataArray."""
+        if self._as_histogram:
+            da = data
+        else:
+            da = self._convert_bin_edges_to_midpoints(data)
         framewise = self._update_autoscaler_and_get_framewise(da, data_key)
 
-        curve = to_holoviews(da)
-        return curve.opts(framewise=framewise, **self._base_opts)
+        plot = to_holoviews(da)
+        return plot.opts(framewise=framewise, **self._base_opts)
 
 
 class ImagePlotter(Plotter):

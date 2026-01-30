@@ -12,8 +12,10 @@ from panel.io.resources import CDN_DIST
 from panel.theme.material import Material
 
 from ess.livedata import Service
+from ess.livedata.logging_config import configure_logging
 
 from .dashboard import DashboardBase
+from .widgets.backend_status_widget import BackendStatusWidget
 from .widgets.job_status_widget import JobStatusListWidget
 from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
@@ -73,6 +75,7 @@ class ReductionApp(DashboardBase):
         dev: bool = False,
         log_level: int,
         transport: str = 'kafka',
+        fetch_announcements: bool = True,
     ):
         super().__init__(
             instrument=instrument,
@@ -82,10 +85,15 @@ class ReductionApp(DashboardBase):
             port=5009,  # Default port for reduction dashboard
             transport=transport,
         )
+        self._fetch_announcements = fetch_announcements
         self._logger.info("Reduction dashboard initialized")
 
     def _create_announcements_pane(self) -> pn.pane.Markdown:
         """Create a Markdown pane that periodically reloads from URL."""
+        if not self._fetch_announcements:
+            return pn.pane.Markdown(
+                "*Announcements disabled.*", sizing_mode='stretch_width'
+            )
 
         def read_announcements() -> str:
             try:
@@ -116,7 +124,6 @@ class ReductionApp(DashboardBase):
         if self._dev:
             dev_widget = LogProducerWidget(
                 instrument=self._instrument,
-                logger=self._logger,
                 exit_stack=self._exit_stack,
             )
             dev_content = [dev_widget.panel, pn.layout.Divider()]
@@ -145,6 +152,10 @@ class ReductionApp(DashboardBase):
             job_service=self._services.job_service,
         )
 
+        backend_status_widget = BackendStatusWidget(
+            service_registry=self._services.service_registry,
+        )
+
         plot_grid_tabs = PlotGridTabs(
             plot_orchestrator=self._services.plot_orchestrator,
             # Temporary hack, will likely get this from JobOrchestrator, or make
@@ -153,6 +164,7 @@ class ReductionApp(DashboardBase):
             plotting_controller=self._services.plotting_controller,
             job_status_widget=job_status_widget,
             workflow_status_widget=workflow_status_widget,
+            backend_status_widget=backend_status_widget,
         )
 
         return plot_grid_tabs.panel
@@ -166,12 +178,32 @@ def get_arg_parser() -> argparse.ArgumentParser:
         default='kafka',
         help='Transport backend for message handling',
     )
+    parser.add_argument(
+        '--no-fetch-announcements',
+        action='store_false',
+        dest='fetch_announcements',
+        help='Disable fetching announcements from external URL',
+    )
     return parser
 
 
 def main() -> None:
+    import logging
+
     parser = get_arg_parser()
-    app = ReductionApp(**vars(parser.parse_args()))
+    args = vars(parser.parse_args())
+
+    # Configure logging with parsed arguments
+    log_level = getattr(logging, args.pop('log_level'))
+    log_json_file = args.pop('log_json_file')
+    no_stdout_log = args.pop('no_stdout_log')
+    configure_logging(
+        level=log_level,
+        json_file=log_json_file,
+        disable_stdout=no_stdout_log,
+    )
+
+    app = ReductionApp(log_level=log_level, **args)
     app.start(blocking=True)
 
 

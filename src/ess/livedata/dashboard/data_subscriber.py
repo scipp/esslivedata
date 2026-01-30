@@ -1,9 +1,16 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""
+Data subscription and assembly for streaming plot updates.
+
+This module provides the core data flow components:
+- DataSubscriber: Connects to DataService, assembles data, and feeds pipes
+- Assembly is role-aware: single-role outputs flat dict, multi-role outputs grouped dict
+"""
+
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from collections.abc import Callable, Hashable, Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Generic, Protocol, TypeVar
 
 import panel as pn
@@ -43,89 +50,65 @@ class Pipe(PipeBase):
         """
 
 
-Key = TypeVar('Key', bound=Hashable)
 P = TypeVar('P', bound=PipeBase)
 
 
-class StreamAssembler(ABC, Generic[Key]):
+class DataSubscriber(DataServiceSubscriber[ResultKey], Generic[P]):
+    """Subscriber that assembles data by role and feeds it to a pipe.
+
+    Handles both single-role (standard plots) and multi-role (correlation plots):
+    - Single role: outputs flat dict[ResultKey, data] for backward compatibility
+    - Multiple roles: outputs dict[str, dict[ResultKey, data]] grouped by role
+
+    The ready_condition is built internally: requires at least one key from each role.
     """
-    Base class for assembling data from a data store.
-
-    This class defines the interface for assembling data from a data store based on
-    specific keys. Subclasses must implement the `assemble` method.
-    """
-
-    def __init__(self, keys: set[Key]) -> None:
-        """
-        Initialize the assembler with its data dependencies.
-
-        Parameters
-        ----------
-        keys:
-            The set of data keys this assembler depends on. This is used to determine
-            when the assembler will be triggered to assemble data, i.e., updates to
-            which keys in :py:class:`DataService` will trigger the assembler to run.
-        """
-        self._keys = keys
-
-    @property
-    def keys(self) -> set[Key]:
-        """Return the set of data keys this assembler depends on."""
-        return self._keys
-
-    @abstractmethod
-    def assemble(self, data: dict[Key, Any]) -> Any:
-        """
-        Assemble data from the provided dictionary.
-
-        Parameters
-        ----------
-        data:
-            A dictionary containing data keyed by ResultKey.
-
-        Returns
-        -------
-        :
-            The assembled data.
-        """
-
-
-class DataSubscriber(DataServiceSubscriber[Key], Generic[Key, P]):
-    """Unified subscriber that uses a StreamAssembler to process data."""
 
     def __init__(
         self,
-        assembler: StreamAssembler[Key],
-        pipe_factory: Callable[[dict[Key, Any]], P],
-        extractors: Mapping[Key, UpdateExtractor],
+        keys_by_role: dict[str, list[ResultKey]],
+        pipe_factory: Callable[[Any], P],
+        extractors: Mapping[ResultKey, UpdateExtractor],
         on_first_data: Callable[[P], None] | None = None,
     ) -> None:
         """
-        Initialize the subscriber with an assembler and pipe factory.
+        Initialize the subscriber.
 
         Parameters
         ----------
-        assembler:
-            The assembler responsible for processing the data.
-        pipe_factory:
+        keys_by_role
+            Dict mapping role names to lists of ResultKeys. For standard plots,
+            this is {"primary": [keys...]}. For correlation plots, includes
+            additional roles like "x_axis", "y_axis".
+        pipe_factory
             Factory function to create the pipe on first trigger.
         extractors:
             Mapping from keys to their UpdateExtractor instances.
         on_first_data:
             Optional callback invoked when first data arrives with the created pipe.
-            Called after pipe creation with non-empty data.
         """
-        self._assembler = assembler
+        self._keys_by_role = keys_by_role
+        self._all_keys = {key for keys in keys_by_role.values() for key in keys}
+        self._single_role = len(keys_by_role) == 1
+
+        # Build ready_condition: need at least one key from each role
+        self._key_sets_by_role = [set(keys) for keys in keys_by_role.values()]
+
         self._pipe_factory = pipe_factory
         self._pipe: P | None = None
         self._extractors = extractors
         self._on_first_data = on_first_data
         self._first_data_callback_invoked = False
+
         # Initialize parent class to cache keys
         super().__init__()
 
     @property
-    def extractors(self) -> Mapping[Key, UpdateExtractor]:
+    def keys(self) -> set[ResultKey]:
+        """Return all keys this subscriber depends on."""
+        return self._all_keys
+
+    @property
+    def extractors(self) -> Mapping[ResultKey, UpdateExtractor]:
         """Return extractors for obtaining data views."""
         return self._extractors
 
@@ -136,17 +119,40 @@ class DataSubscriber(DataServiceSubscriber[Key], Generic[Key, P]):
             raise RuntimeError("Pipe not yet initialized - subscriber not triggered")
         return self._pipe
 
-    def trigger(self, store: dict[Key, Any]) -> None:
-        """
-        Trigger the subscriber with the current data store.
+    def _is_ready(self, available_keys: set[ResultKey]) -> bool:
+        """Check if we have at least one key from each role."""
+        return all(bool(available_keys & ks) for ks in self._key_sets_by_role)
 
-        Parameters
-        ----------
-        store:
-            The complete data store containing all available data.
+    def _assemble(self, data: dict[ResultKey, Any]) -> Any:
+        """Assemble data based on role structure.
+
+        Single role: returns flat dict[ResultKey, data] for standard plotters.
+        Multiple roles: returns dict[str, dict[ResultKey, data]] for
+        correlation plotters.
         """
-        data = {key: store[key] for key in self.keys if key in store}
-        assembled_data = self._assembler.assemble(data)
+        if self._single_role:
+            # Flat output for standard plotters (sorted for deterministic ordering)
+            sorted_keys = sorted(
+                (k for k in self._all_keys if k in data),
+                key=lambda k: (str(k.workflow_id), str(k.job_id), k.output_name),
+            )
+            return {k: data[k] for k in sorted_keys}
+        else:
+            # Grouped output for correlation plotters
+            result: dict[str, dict[ResultKey, Any]] = {}
+            for role, role_keys in self._keys_by_role.items():
+                sorted_keys = sorted(
+                    role_keys, key=lambda k: (str(k.workflow_id), str(k.job_id))
+                )
+                role_data = {k: data[k] for k in sorted_keys if k in data}
+                if role_data:
+                    result[role] = role_data
+            return result
+
+    def trigger(self, store: dict[ResultKey, Any]) -> None:
+        """Trigger the subscriber with the current data store."""
+        data = {key: store[key] for key in self._all_keys if key in store}
+        assembled_data = self._assemble(data)
 
         if self._pipe is None:
             # First trigger - always create pipe (even with empty data)
@@ -155,28 +161,21 @@ class DataSubscriber(DataServiceSubscriber[Key], Generic[Key, P]):
             # Subsequent triggers - send to existing pipe
             self._pipe.send(assembled_data)
 
-        # Invoke first-data callback when we have actual data for the first time.
+        # Invoke first-data callback when we have actual data for the first time
+        # AND the ready_condition is satisfied (at least one key from each role).
         # IMPORTANT: We defer this callback to the next event loop iteration using
         # pn.state.execute(). This breaks the synchronous callback chain that occurs
         # when subscribing to a workflow that already has data, preventing UI blocking
         # during plot creation. The chain would otherwise be:
-        #   subscribe_to_workflow() → on_job_available() → setup_data_pipeline()
+        #   subscribe_to_workflow() → on_all_jobs_ready() → setup_pipeline()
         #   → register_subscriber() → trigger() → on_first_data() → create_plot()
         # All running synchronously before returning control to the event loop.
-        if data and not self._first_data_callback_invoked and self._on_first_data:
+        if (
+            data
+            and not self._first_data_callback_invoked
+            and self._on_first_data
+            and self._is_ready(set(data.keys()))
+        ):
             self._first_data_callback_invoked = True
             pipe = self._pipe  # Capture for lambda
             pn.state.execute(lambda: self._on_first_data(pipe))
-
-
-class MergingStreamAssembler(StreamAssembler):
-    """Assembler for merging data from multiple sources into a dict."""
-
-    def assemble(self, data: dict[ResultKey, Any]) -> dict[ResultKey, Any]:
-        # Sort keys to ensure deterministic ordering (important for color assignment)
-        # Sort by (workflow_id, job_id, output_name) for consistent ordering
-        sorted_keys = sorted(
-            (key for key in self.keys if key in data),
-            key=lambda k: (str(k.workflow_id), str(k.job_id), k.output_name),
-        )
-        return {key: data[key] for key in sorted_keys}

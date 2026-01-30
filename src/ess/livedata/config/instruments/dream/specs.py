@@ -11,26 +11,46 @@ import pydantic
 import scipp as sc
 
 from ess.livedata import parameter_models
-from ess.livedata.config import Instrument, instrument_registry
+from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
-from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
+from ess.livedata.handlers.detector_view_specs import (
+    DetectorROIAuxSources,
+    DetectorViewOutputs,
+    DetectorViewParams,
+)
 
+from .streams import detector_names, monitor_names
 from .views import get_mantle_front_layer, get_strip_view, get_wire_view
-
-# Detector names for DREAM data reduction workflows
-detector_names = [
-    'mantle_detector',
-    'endcap_backward_detector',
-    'endcap_forward_detector',
-    'high_resolution_detector',
-    'sans_detector',
-]
 
 # Create instrument
 instrument = Instrument(
     name='dream',
     detector_names=detector_names,
-    monitors=['monitor1', 'monitor2'],
+    monitors=monitor_names,
+    source_metadata={
+        'mantle_detector': SourceMetadata(
+            title='Mantle',
+            description='Main cylindrical detector covering the mantle region',
+        ),
+        'endcap_backward_detector': SourceMetadata(
+            title='Backward Endcap',
+            description='Endcap detector at backward scattering angles',
+        ),
+        'endcap_forward_detector': SourceMetadata(
+            title='Forward Endcap',
+            description='Endcap detector at forward scattering angles',
+        ),
+        'high_resolution_detector': SourceMetadata(
+            title='High Resolution',
+            description='High-resolution detector bank',
+        ),
+        'sans_detector': SourceMetadata(
+            title='SANS',
+            description='Small-angle neutron scattering detector',
+        ),
+        'monitor_bunker': SourceMetadata(title='Bunker Monitor'),
+        'monitor_cave': SourceMetadata(title='Cave Monitor'),
+    },
 )
 
 # Register instrument
@@ -45,34 +65,37 @@ instrument.add_logical_view(
     transform=get_mantle_front_layer,
 )
 instrument.add_logical_view(
-    name='mantle_wire_view',
-    title='Mantle wire view',
-    description='Sum over strips to show counts per wire in the mantle detector.',
-    source_names=['mantle_detector'],
+    name='wire_view',
+    title='Wire view',
+    description='Sum over strips to show counts per wire.',
+    source_names=[
+        'mantle_detector',
+        'endcap_backward_detector',
+        'endcap_forward_detector',
+    ],
     transform=get_wire_view,
+    roi_support=False,
+    reduction_dim='strip',
 )
 instrument.add_logical_view(
-    name='mantle_strip_view',
-    title='Mantle strip view',
+    name='strip_view',
+    title='Strip view',
     description='Sum over all dimensions except strip to show counts per strip.',
-    source_names=['mantle_detector'],
+    source_names=detector_names,
     transform=get_strip_view,
+    output_ndim=1,
+    roi_support=False,
+    reduction_dim='other',
 )
 
 # Mapping of detector names to their projection types
-# (excluding sans_detector which has no geometry)
 _projections: dict[str, str] = {
     'mantle_detector': 'cylinder_mantle_z',
     'endcap_backward_detector': 'xy_plane',
     'endcap_forward_detector': 'xy_plane',
     'high_resolution_detector': 'xy_plane',
+    'sans_detector': 'xy_plane',
 }
-
-# Register unified detector projection spec
-projection_handle = register_detector_view_spec(
-    instrument=instrument,
-    projection=_projections,
-)
 
 
 # Pydantic models for DREAM workflows
@@ -117,11 +140,40 @@ class InstrumentConfiguration(pydantic.BaseModel):
         return self
 
 
+class DreamDetectorViewParams(DetectorViewParams):
+    """DREAM-specific detector view parameters with chopper settings."""
+
+    instrument_configuration: InstrumentConfiguration = pydantic.Field(
+        title="Instrument Configuration",
+        description="Chopper configuration for TOF mode lookup table selection.",
+        default_factory=InstrumentConfiguration,
+    )
+
+
+# Register detector projection spec with DreamDetectorViewParams for TOF mode.
+# Replaces both the legacy DetectorProjection and the Sciline detector view
+# registrations.
+projection_handle = instrument.register_spec(
+    namespace='detector_data',
+    name='detector_projection',
+    version=1,
+    title='Detector Projection',
+    description=(
+        'Projection of detector banks onto 2D planes. '
+        'Uses the appropriate projection for each detector.'
+    ),
+    source_names=list(_projections.keys()),
+    aux_sources=DetectorROIAuxSources,
+    params=DreamDetectorViewParams,
+    outputs=DetectorViewOutputs,
+)
+
+
 class DreamAuxSources(AuxSourcesBase):
     """Auxiliary source names for DREAM powder workflows."""
 
-    cave_monitor: Literal['monitor1'] = pydantic.Field(
-        default='monitor1',
+    cave_monitor: Literal['monitor_cave'] = pydantic.Field(
+        default='monitor_cave',
         description='Cave monitor for normalization.',
     )
 
@@ -165,7 +217,7 @@ class PowderReductionOutputs(WorkflowOutputsBase):
 
     focussed_data_dspacing: sc.DataArray = pydantic.Field(
         default_factory=lambda: sc.DataArray(
-            sc.zeros(dims=['dspacing'], shape=[0], unit='counts'),
+            sc.zeros(dims=['dspacing'], shape=[0], unit='dimensionless'),
             coords={'dspacing': sc.arange('dspacing', 0, unit='angstrom')},
         ),
         title='I(d)',
@@ -173,7 +225,9 @@ class PowderReductionOutputs(WorkflowOutputsBase):
     )
     focussed_data_dspacing_two_theta: sc.DataArray = pydantic.Field(
         default_factory=lambda: sc.DataArray(
-            sc.zeros(dims=['dspacing', 'two_theta'], shape=[0, 0], unit='counts'),
+            sc.zeros(
+                dims=['dspacing', 'two_theta'], shape=[0, 0], unit='dimensionless'
+            ),
             coords={
                 'dspacing': sc.arange('dspacing', 0, unit='angstrom'),
                 'two_theta': sc.arange('two_theta', 0, unit='rad'),

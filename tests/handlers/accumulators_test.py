@@ -7,13 +7,14 @@ from streaming_data_types import logdata_f144
 from ess.livedata.core.handler import Accumulator
 from ess.livedata.handlers.accumulators import (
     Cumulative,
-    GroupIntoPixels,
     LatestValue,
     LatestValueHandler,
     LogData,
+    NoCopyAccumulator,
+    NoCopyWindowAccumulator,
     NullAccumulator,
 )
-from ess.livedata.handlers.to_nxevent_data import DetectorEvents, ToNXevent_data
+from ess.livedata.handlers.to_nxevent_data import ToNXevent_data
 
 
 def test_LogData_from_f144() -> None:
@@ -189,6 +190,65 @@ class TestLatestValue:
             _ = accumulator.value
 
 
+class TestNoCopyAccumulator:
+    """Tests for NoCopyAccumulator (streaming accumulator without deepcopy)."""
+
+    def test_value_before_push_raises_error(self) -> None:
+        accumulator = NoCopyAccumulator()
+        with pytest.raises(ValueError, match="Cannot get value from empty accumulator"):
+            _ = accumulator.value
+
+    def test_is_empty_before_push(self) -> None:
+        accumulator = NoCopyAccumulator()
+        assert accumulator.is_empty
+
+    def test_accumulates_values(self) -> None:
+        accumulator = NoCopyAccumulator()
+        da1 = sc.DataArray(sc.array(dims=['x'], values=[1.0], unit='m'))
+        da2 = sc.DataArray(sc.array(dims=['x'], values=[2.0], unit='m'))
+
+        accumulator.push(da1)
+        assert sc.identical(accumulator.value, da1)
+
+        accumulator.push(da2)
+        expected = sc.DataArray(sc.array(dims=['x'], values=[3.0], unit='m'))
+        assert sc.identical(accumulator.value, expected)
+
+    def test_clear(self) -> None:
+        accumulator = NoCopyAccumulator()
+        da = sc.DataArray(sc.array(dims=['x'], values=[1.0], unit='m'))
+
+        accumulator.push(da)
+        accumulator.clear()
+
+        assert accumulator.is_empty
+
+
+class TestNoCopyWindowAccumulator:
+    """Tests for NoCopyWindowAccumulator (clears on finalize)."""
+
+    def test_clears_on_finalize(self) -> None:
+        accumulator = NoCopyWindowAccumulator()
+        da = sc.DataArray(sc.array(dims=['x'], values=[1.0], unit='m'))
+
+        accumulator.push(da)
+        assert not accumulator.is_empty
+
+        accumulator.on_finalize()
+        assert accumulator.is_empty
+
+    def test_accumulates_before_finalize(self) -> None:
+        accumulator = NoCopyWindowAccumulator()
+        da1 = sc.DataArray(sc.array(dims=['x'], values=[1.0], unit='m'))
+        da2 = sc.DataArray(sc.array(dims=['x'], values=[2.0], unit='m'))
+
+        accumulator.push(da1)
+        accumulator.push(da2)
+
+        expected = sc.DataArray(sc.array(dims=['x'], values=[3.0], unit='m'))
+        assert sc.identical(accumulator.value, expected)
+
+
 class TestCumulative:
     def test_get_before_add_raises_error(self) -> None:
         accumulator = Cumulative()
@@ -296,84 +356,3 @@ class TestCumulative:
         cumulative.add(2, da2)  # Different shape, should reset
         result = cumulative.get()
         assert sc.identical(result.data, da2.data)
-
-
-class TestGroupIntoPixels:
-    def test_get_before_add_raises_error(self) -> None:
-        detector_number = sc.array(dims=['y', 'x'], values=[[0, 1], [2, 3]], unit=None)
-        grouper = GroupIntoPixels(detector_number=detector_number)
-
-        # Should not raise since it returns empty grouped data
-        result = grouper.get()
-        assert result.sizes == {'y': 2, 'x': 2}
-
-    def test_groups_events_by_pixel_id(self) -> None:
-        detector_number = sc.array(dims=['y', 'x'], values=[[0, 1], [2, 3]], unit=None)
-        grouper = GroupIntoPixels(detector_number=detector_number)
-
-        events = DetectorEvents(
-            pixel_id=[0, 1, 0, 2],
-            time_of_arrival=[100.0, 200.0, 150.0, 300.0],
-            unit='ns',
-        )
-
-        grouper.add(0, events)
-        result = grouper.get()
-
-        assert result.sizes == {'y': 2, 'x': 2}
-        # Check that events are grouped correctly
-        pixel_0_0 = result['y', 0]['x', 0]  # detector_number=0
-        pixel_0_1 = result['y', 0]['x', 1]  # detector_number=1
-        pixel_1_0 = result['y', 1]['x', 0]  # detector_number=2
-        pixel_1_1 = result['y', 1]['x', 1]  # detector_number=3
-
-        assert len(pixel_0_0.values) == 2  # Two events for pixel 0
-        assert len(pixel_0_1.values) == 1  # One event for pixel 1
-        assert len(pixel_1_0.values) == 1  # One event for pixel 2
-        assert len(pixel_1_1.values) == 0  # No events for pixel 3
-
-    def test_raises_if_unit_is_not_ns(self) -> None:
-        detector_number = sc.array(dims=['x'], values=[0, 1])
-        grouper = GroupIntoPixels(detector_number=detector_number)
-
-        events = DetectorEvents(
-            pixel_id=[0, 1], time_of_arrival=[100.0, 200.0], unit='ms'
-        )
-
-        with pytest.raises(ValueError, match="Expected unit 'ns'"):
-            grouper.add(0, events)
-
-    def test_accumulates_multiple_chunks(self) -> None:
-        detector_number = sc.array(dims=['x'], values=[0, 1], unit=None)
-        grouper = GroupIntoPixels(detector_number=detector_number)
-
-        events1 = DetectorEvents(
-            pixel_id=[0, 1], time_of_arrival=[100.0, 200.0], unit='ns'
-        )
-        events2 = DetectorEvents(
-            pixel_id=[0, 1], time_of_arrival=[150.0, 250.0], unit='ns'
-        )
-
-        grouper.add(0, events1)
-        grouper.add(1, events2)
-        result = grouper.get()
-
-        # Each pixel should have 2 events
-        assert len(result['x', 0].values) == 2
-        assert len(result['x', 1].values) == 2
-
-    def test_clear(self) -> None:
-        detector_number = sc.array(dims=['x'], values=[0, 1], unit=None)
-        grouper = GroupIntoPixels(detector_number=detector_number)
-
-        events = DetectorEvents(
-            pixel_id=[0, 1], time_of_arrival=[100.0, 200.0], unit='ns'
-        )
-
-        grouper.add(0, events)
-        grouper.clear()
-        result = grouper.get()
-
-        # Should be empty after clear
-        assert len(result['x', 0].values) == 0
-        assert len(result['x', 1].values) == 0

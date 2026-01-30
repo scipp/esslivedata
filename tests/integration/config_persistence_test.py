@@ -266,6 +266,7 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
     We verify content equality, not ID equality.
     """
     from ess.livedata.config.workflow_spec import WorkflowId
+    from ess.livedata.dashboard.data_roles import PRIMARY
     from ess.livedata.dashboard.plot_orchestrator import (
         CellGeometry,
         DataSourceConfig,
@@ -294,13 +295,13 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
             window={'mode': WindowMode.window, 'window_duration_seconds': 5.0}
         )
         plot_config = PlotConfig(
-            data_sources=[
-                DataSourceConfig(
+            data_sources={
+                PRIMARY: DataSourceConfig(
                     workflow_id=workflow_id,
                     output_name='histogram',
                     source_names=['monitor1', 'monitor2'],
                 )
-            ],
+            },
             plot_name='lines',
             params=params1,
         )
@@ -316,13 +317,13 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
             window={'mode': WindowMode.latest, 'window_duration_seconds': 10.0}
         )
         plot_config2 = PlotConfig(
-            data_sources=[
-                DataSourceConfig(
+            data_sources={
+                PRIMARY: DataSourceConfig(
                     workflow_id=workflow_id,
                     output_name='spectrum',
                     source_names=['monitor1'],
                 )
-            ],
+            },
             plot_name='lines',
             params=params2,
         )
@@ -337,13 +338,13 @@ def test_plot_orchestrator_persistence_across_backend_restarts(tmp_path) -> None
 
         params3 = PlotParams1d()  # Default params
         plot_config3 = PlotConfig(
-            data_sources=[
-                DataSourceConfig(
+            data_sources={
+                PRIMARY: DataSourceConfig(
                     workflow_id=workflow_id,
                     output_name='output3',
                     source_names=['monitor2'],
                 )
-            ],
+            },
             plot_name='lines',
             params=params3,
         )
@@ -428,6 +429,7 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
     Previously, enum instances caused serialization failures.
     """
     from ess.livedata.config.workflow_spec import WorkflowId
+    from ess.livedata.dashboard.data_roles import PRIMARY
     from ess.livedata.dashboard.plot_orchestrator import (
         CellGeometry,
         DataSourceConfig,
@@ -466,13 +468,13 @@ def test_plot_orchestrator_persists_pydantic_params_with_enums(tmp_path) -> None
         )
         # Pass Pydantic model directly (this is what the UI does)
         plot_config = PlotConfig(
-            data_sources=[
-                DataSourceConfig(
+            data_sources={
+                PRIMARY: DataSourceConfig(
                     workflow_id=workflow_id,
                     output_name='image',
                     source_names=['monitor1'],
                 )
-            ],
+            },
             plot_name='image',  # Use real plotter that accepts PlotParams2d
             params=params_with_enums,
         )
@@ -511,6 +513,7 @@ def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
     and deserialized across backend restarts.
     """
     from ess.livedata.config.workflow_spec import WorkflowId
+    from ess.livedata.dashboard.data_roles import PRIMARY
     from ess.livedata.dashboard.plot_orchestrator import (
         CellGeometry,
         DataSourceConfig,
@@ -530,13 +533,13 @@ def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
         window={'mode': WindowMode.window, 'window_duration_seconds': 5.0}
     )
     config1 = PlotConfig(
-        data_sources=[
-            DataSourceConfig(
+        data_sources={
+            PRIMARY: DataSourceConfig(
                 workflow_id=workflow_id,
                 output_name='histogram',
                 source_names=['monitor1'],
             )
-        ],
+        },
         plot_name='lines',
         params=params1,
     )
@@ -545,13 +548,13 @@ def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
         window={'mode': WindowMode.latest, 'window_duration_seconds': 10.0}
     )
     config2 = PlotConfig(
-        data_sources=[
-            DataSourceConfig(
+        data_sources={
+            PRIMARY: DataSourceConfig(
                 workflow_id=workflow_id,
                 output_name='spectrum',
                 source_names=['monitor2'],
             )
-        ],
+        },
         plot_name='lines',
         params=params2,
     )

@@ -5,7 +5,7 @@
 import pytest
 import scipp as sc
 
-from ess.livedata.handlers.accumulators import WindowAccumulator
+from ess.livedata.handlers.accumulators import NoCopyWindowAccumulator
 from ess.livedata.handlers.monitor_workflow import (
     build_monitor_workflow,
     counts_in_range,
@@ -70,34 +70,34 @@ class TestMonitorDataParams:
         assert len(edges) == 101  # num_bins + 1
 
 
-class TestWindowAccumulator:
-    """Tests for WindowAccumulator."""
+class TestNoCopyWindowAccumulator:
+    """Tests for NoCopyWindowAccumulator."""
 
     def test_is_empty_initially(self):
-        acc = WindowAccumulator()
+        acc = NoCopyWindowAccumulator()
         assert acc.is_empty
 
     def test_push_makes_not_empty(self):
-        acc = WindowAccumulator()
+        acc = NoCopyWindowAccumulator()
         acc.push(sc.array(dims=['x'], values=[1.0, 2.0]))
         assert not acc.is_empty
 
     def test_value_returns_pushed_data(self):
-        acc = WindowAccumulator()
+        acc = NoCopyWindowAccumulator()
         data = sc.array(dims=['x'], values=[1.0, 2.0, 3.0])
         acc.push(data)
         result = acc.value
         assert sc.identical(result, data)
 
     def test_on_finalize_clears_accumulator(self):
-        acc = WindowAccumulator()
+        acc = NoCopyWindowAccumulator()
         acc.push(sc.array(dims=['x'], values=[1.0, 2.0]))
         assert not acc.is_empty
         acc.on_finalize()
         assert acc.is_empty
 
     def test_accumulates_values(self):
-        acc = WindowAccumulator()
+        acc = NoCopyWindowAccumulator()
         data1 = sc.array(dims=['x'], values=[1.0, 2.0])
         data2 = sc.array(dims=['x'], values=[3.0, 4.0])
         acc.push(data1)
@@ -107,15 +107,17 @@ class TestWindowAccumulator:
         assert sc.identical(result, expected)
 
     def test_value_after_on_finalize_raises(self):
-        acc = WindowAccumulator()
+        acc = NoCopyWindowAccumulator()
         acc.push(sc.array(dims=['x'], values=[1.0]))
         acc.on_finalize()
         with pytest.raises(ValueError, match="empty"):
             _ = acc.value
 
     def test_differs_from_eternal_accumulator_behavior(self):
-        """WindowAccumulator clears after on_finalize, EternalAccumulator does not."""
-        window_acc = WindowAccumulator()
+        """NoCopyWindowAccumulator clears after on_finalize.
+
+        Unlike EternalAccumulator which preserves its state."""
+        window_acc = NoCopyWindowAccumulator()
         eternal_acc = streaming.EternalAccumulator()
 
         data = sc.array(dims=['x'], values=[1.0, 2.0])
@@ -130,7 +132,7 @@ class TestWindowAccumulator:
         window_acc.on_finalize()
         eternal_acc.on_finalize()
 
-        # WindowAccumulator is cleared, EternalAccumulator is not
+        # NoCopyWindowAccumulator is cleared, EternalAccumulator is not
         assert window_acc.is_empty
         assert not eternal_acc.is_empty
 
