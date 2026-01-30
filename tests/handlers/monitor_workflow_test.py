@@ -6,7 +6,6 @@ import pydantic
 import pytest
 import scipp as sc
 
-from ess.livedata.handlers.accumulators import NoCopyWindowAccumulator
 from ess.livedata.handlers.detector_view_specs import CoordinateModeSettings
 from ess.livedata.handlers.monitor_workflow import (
     build_monitor_workflow,
@@ -29,7 +28,6 @@ from ess.livedata.handlers.monitor_workflow_types import (
     WindowMonitorHistogram,
 )
 from ess.livedata.parameter_models import TimeUnit, TOAEdges, TOFEdges, TOFRange
-from ess.reduce import streaming
 
 
 class TestMonitorDataParams:
@@ -112,73 +110,6 @@ class TestMonitorDataParams:
         low, high = range_filter
         assert low.unit == 'ms'
         assert high.unit == 'ms'
-
-
-class TestNoCopyWindowAccumulator:
-    """Tests for NoCopyWindowAccumulator."""
-
-    def test_is_empty_initially(self):
-        acc = NoCopyWindowAccumulator()
-        assert acc.is_empty
-
-    def test_push_makes_not_empty(self):
-        acc = NoCopyWindowAccumulator()
-        acc.push(sc.array(dims=['x'], values=[1.0, 2.0]))
-        assert not acc.is_empty
-
-    def test_value_returns_pushed_data(self):
-        acc = NoCopyWindowAccumulator()
-        data = sc.array(dims=['x'], values=[1.0, 2.0, 3.0])
-        acc.push(data)
-        result = acc.value
-        assert sc.identical(result, data)
-
-    def test_on_finalize_clears_accumulator(self):
-        acc = NoCopyWindowAccumulator()
-        acc.push(sc.array(dims=['x'], values=[1.0, 2.0]))
-        assert not acc.is_empty
-        acc.on_finalize()
-        assert acc.is_empty
-
-    def test_accumulates_values(self):
-        acc = NoCopyWindowAccumulator()
-        data1 = sc.array(dims=['x'], values=[1.0, 2.0])
-        data2 = sc.array(dims=['x'], values=[3.0, 4.0])
-        acc.push(data1)
-        acc.push(data2)
-        result = acc.value
-        expected = data1 + data2
-        assert sc.identical(result, expected)
-
-    def test_value_after_on_finalize_raises(self):
-        acc = NoCopyWindowAccumulator()
-        acc.push(sc.array(dims=['x'], values=[1.0]))
-        acc.on_finalize()
-        with pytest.raises(ValueError, match="empty"):
-            _ = acc.value
-
-    def test_differs_from_eternal_accumulator_behavior(self):
-        """NoCopyWindowAccumulator clears after on_finalize.
-
-        Unlike EternalAccumulator which preserves its state."""
-        window_acc = NoCopyWindowAccumulator()
-        eternal_acc = streaming.EternalAccumulator()
-
-        data = sc.array(dims=['x'], values=[1.0, 2.0])
-        window_acc.push(data)
-        eternal_acc.push(data)
-
-        # Both are non-empty before on_finalize
-        assert not window_acc.is_empty
-        assert not eternal_acc.is_empty
-
-        # Call on_finalize
-        window_acc.on_finalize()
-        eternal_acc.on_finalize()
-
-        # NoCopyWindowAccumulator is cleared, EternalAccumulator is not
-        assert window_acc.is_empty
-        assert not eternal_acc.is_empty
 
 
 class TestMonitorWorkflowProviders:

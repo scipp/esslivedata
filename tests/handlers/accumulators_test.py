@@ -15,6 +15,7 @@ from ess.livedata.handlers.accumulators import (
     NullAccumulator,
 )
 from ess.livedata.handlers.to_nxevent_data import ToNXevent_data
+from ess.reduce import streaming
 
 
 def test_LogData_from_f144() -> None:
@@ -227,26 +228,69 @@ class TestNoCopyAccumulator:
 class TestNoCopyWindowAccumulator:
     """Tests for NoCopyWindowAccumulator (clears on finalize)."""
 
-    def test_clears_on_finalize(self) -> None:
-        accumulator = NoCopyWindowAccumulator()
-        da = sc.DataArray(sc.array(dims=['x'], values=[1.0], unit='m'))
+    def test_is_empty_initially(self) -> None:
+        acc = NoCopyWindowAccumulator()
+        assert acc.is_empty
 
-        accumulator.push(da)
-        assert not accumulator.is_empty
+    def test_push_makes_not_empty(self) -> None:
+        acc = NoCopyWindowAccumulator()
+        acc.push(sc.array(dims=['x'], values=[1.0, 2.0]))
+        assert not acc.is_empty
 
-        accumulator.on_finalize()
-        assert accumulator.is_empty
+    def test_value_returns_pushed_data(self) -> None:
+        acc = NoCopyWindowAccumulator()
+        data = sc.array(dims=['x'], values=[1.0, 2.0, 3.0])
+        acc.push(data)
+        result = acc.value
+        assert sc.identical(result, data)
 
-    def test_accumulates_before_finalize(self) -> None:
-        accumulator = NoCopyWindowAccumulator()
-        da1 = sc.DataArray(sc.array(dims=['x'], values=[1.0], unit='m'))
-        da2 = sc.DataArray(sc.array(dims=['x'], values=[2.0], unit='m'))
+    def test_on_finalize_clears_accumulator(self) -> None:
+        acc = NoCopyWindowAccumulator()
+        acc.push(sc.array(dims=['x'], values=[1.0, 2.0]))
+        assert not acc.is_empty
+        acc.on_finalize()
+        assert acc.is_empty
 
-        accumulator.push(da1)
-        accumulator.push(da2)
+    def test_accumulates_values(self) -> None:
+        acc = NoCopyWindowAccumulator()
+        data1 = sc.array(dims=['x'], values=[1.0, 2.0])
+        data2 = sc.array(dims=['x'], values=[3.0, 4.0])
+        acc.push(data1)
+        acc.push(data2)
+        result = acc.value
+        expected = data1 + data2
+        assert sc.identical(result, expected)
 
-        expected = sc.DataArray(sc.array(dims=['x'], values=[3.0], unit='m'))
-        assert sc.identical(accumulator.value, expected)
+    def test_value_after_on_finalize_raises(self) -> None:
+        acc = NoCopyWindowAccumulator()
+        acc.push(sc.array(dims=['x'], values=[1.0]))
+        acc.on_finalize()
+        with pytest.raises(ValueError, match="empty"):
+            _ = acc.value
+
+    def test_differs_from_eternal_accumulator_behavior(self) -> None:
+        """NoCopyWindowAccumulator clears after on_finalize.
+
+        Unlike EternalAccumulator which preserves its state.
+        """
+        window_acc = NoCopyWindowAccumulator()
+        eternal_acc = streaming.EternalAccumulator()
+
+        data = sc.array(dims=['x'], values=[1.0, 2.0])
+        window_acc.push(data)
+        eternal_acc.push(data)
+
+        # Both are non-empty before on_finalize
+        assert not window_acc.is_empty
+        assert not eternal_acc.is_empty
+
+        # Call on_finalize
+        window_acc.on_finalize()
+        eternal_acc.on_finalize()
+
+        # NoCopyWindowAccumulator is cleared, EternalAccumulator is not
+        assert window_acc.is_empty
+        assert not eternal_acc.is_empty
 
 
 class TestCumulative:
