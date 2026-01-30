@@ -4,7 +4,8 @@ import numpy as np
 import scipp as sc
 from streaming_data_types import dataarray_da00
 
-# Scipp only supports: bool, float32, float64, int32, int64, string, datetime64
+# Scipp only supports: bool, float32, float64, int32, int64, string, datetime64.
+# Map unsupported integer types to compatible types.
 _DTYPE_MAP = {
     np.dtype('uint8'): np.int32,
     np.dtype('int8'): np.int32,
@@ -50,7 +51,11 @@ def da00_to_scipp(
     if (errors := variables_dict.pop('errors', None)) is not None:
         data.variances = (errors**2).values
 
-    # Filter coords to only those with compatible dimensions
+    # Filter coords to only those with compatible dimensions.
+    # This is a workaround for EFU sending variables like `reference_time` and
+    # `frame_total` with per-frame dimensions, while the signal data is integrated
+    # over frames. Since DataArray requires compatible dimensions for all coords,
+    # we drop coords with incompatible dimensions. See issue #679 for follow-up work.
     compatible_coords = {
         name: var
         for name, var in variables_dict.items()
@@ -85,7 +90,7 @@ def _to_da00_variable(
 
 
 def _to_scipp_variable(var: dataarray_da00.Variable) -> sc.Variable:
-    data = var.data
+    data = np.asarray(var.data)
     if data.dtype in _DTYPE_MAP:
         data = data.astype(_DTYPE_MAP[data.dtype])
     if var.unit is not None and var.unit.startswith('datetime64'):
