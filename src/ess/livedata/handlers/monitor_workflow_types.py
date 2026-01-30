@@ -25,8 +25,3 @@ MonitorCountsInRange = NewType('MonitorCountsInRange', sc.DataArray)
 HistogramEdges = NewType('HistogramEdges', sc.Variable)
 HistogramRangeLow = NewType('HistogramRangeLow', sc.Variable)
 HistogramRangeHigh = NewType('HistogramRangeHigh', sc.Variable)
-
-# Backwards compatibility aliases
-TOAEdges = HistogramEdges
-TOARangeLow = HistogramRangeLow
-TOARangeHigh = HistogramRangeHigh

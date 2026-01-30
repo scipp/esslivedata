@@ -280,7 +280,7 @@ class TestBuildMonitorWorkflow:
         # Create test data
         from scippnexus import NXmonitor
 
-        from ess.reduce.nexus.types import NeXusData, SampleRun
+        from ess.reduce.nexus.types import RawMonitor, SampleRun
 
         toa = sc.array(dims=['event'], values=[1.0, 2.0, 3.0, 4.0, 5.0], unit='ns')
         weights = sc.ones(sizes={'event': 5}, dtype='float64', unit='counts')
@@ -290,7 +290,8 @@ class TestBuildMonitorWorkflow:
         binned = sc.DataArray(sc.bins(begin=begin, dim='event', data=events))
 
         edges = sc.linspace('time_of_arrival', 0, 10, num=6, unit='ns')
-        workflow[NeXusData[NXmonitor, SampleRun]] = binned
+        # Set RawMonitor directly (bypasses NeXus loading providers)
+        workflow[RawMonitor[SampleRun, NXmonitor]] = binned
         workflow[HistogramEdges] = edges
         workflow[HistogramRangeLow] = edges['time_of_arrival', 0]
         workflow[HistogramRangeHigh] = edges['time_of_arrival', -1]
@@ -332,12 +333,20 @@ class TestCreateMonitorWorkflow:
         )
         assert workflow is not None
 
-    def test_workflow_with_tof_mode(self, toa_edges):
-        """Test creating workflow in TOF mode."""
-        workflow = create_monitor_workflow(
-            'monitor_1', toa_edges, coordinate_mode='tof'
-        )
-        assert workflow is not None
+    def test_workflow_with_tof_mode_requires_lookup_table(self, toa_edges):
+        """Test that TOF mode requires tof_lookup_table_filename."""
+        with pytest.raises(ValueError, match="tof_lookup_table_filename is required"):
+            create_monitor_workflow('monitor_1', toa_edges, coordinate_mode='tof')
+
+    def test_workflow_with_tof_mode_requires_geometry_file(self, toa_edges):
+        """Test that TOF mode requires geometry_filename."""
+        with pytest.raises(ValueError, match="geometry_filename is required"):
+            create_monitor_workflow(
+                'monitor_1',
+                toa_edges,
+                coordinate_mode='tof',
+                tof_lookup_table_filename='/path/to/lookup.h5',
+            )
 
 
 class TestMonitorWorkflowIntegration:
@@ -615,13 +624,15 @@ class TestMonitorWorkflowFactoryCoordinateMode:
         ):
             CoordinateModeSettings(mode='wavelength')
 
-    def test_tof_mode_creates_workflow(self):
-        """Test that TOF mode creates a valid workflow."""
+    def test_tof_mode_requires_geometry_and_lookup_table(self):
+        """Test that TOF mode requires geometry and lookup table files.
+
+        The create_monitor_workflow_factory doesn't provide these parameters,
+        so TOF mode should raise ValueError. Instrument-specific factories
+        (like DREAM) are responsible for providing these files.
+        """
         from ess.livedata.handlers.monitor_workflow_specs import (
             create_monitor_workflow_factory,
-        )
-        from ess.livedata.handlers.stream_processor_workflow import (
-            StreamProcessorWorkflow,
         )
 
         params = MonitorDataParams(
@@ -630,5 +641,5 @@ class TestMonitorWorkflowFactoryCoordinateMode:
             tof_range=TOFRange(enabled=True, start=20.0, stop=80.0, unit=TimeUnit.MS),
         )
 
-        workflow = create_monitor_workflow_factory('monitor_1', params)
-        assert isinstance(workflow, StreamProcessorWorkflow)
+        with pytest.raises(ValueError, match="tof_lookup_table_filename is required"):
+            create_monitor_workflow_factory('monitor_1', params)

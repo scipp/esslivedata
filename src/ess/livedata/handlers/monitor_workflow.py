@@ -10,7 +10,16 @@ import sciline
 import scipp as sc
 from scippnexus import NXmonitor
 
-from ess.reduce.nexus.types import NeXusData, SampleRun
+from ess.reduce.nexus.types import (
+    EmptyMonitor,
+    Filename,
+    NeXusData,
+    NeXusName,
+    RawMonitor,
+    SampleRun,
+)
+from ess.reduce.time_of_flight import GenericTofWorkflow
+from ess.reduce.time_of_flight.types import TofLookupTableFilename, TofMonitor
 
 from .monitor_workflow_types import (
     CumulativeMonitorHistogram,
@@ -22,11 +31,6 @@ from .monitor_workflow_types import (
     MonitorHistogram,
     WindowMonitorHistogram,
 )
-
-# Backwards compatibility
-TOAEdges = HistogramEdges
-TOARangeLow = HistogramRangeLow
-TOARangeHigh = HistogramRangeHigh
 
 
 def _histogram_monitor(
@@ -69,7 +73,7 @@ def _histogram_monitor(
 
 
 def histogram_raw_monitor(
-    data: NeXusData[NXmonitor, SampleRun], edges: HistogramEdges
+    data: RawMonitor[SampleRun, NXmonitor], edges: HistogramEdges
 ) -> MonitorHistogram:
     """
     Histogram or rebin monitor data by time-of-arrival (TOA mode).
@@ -89,19 +93,16 @@ def histogram_raw_monitor(
 
 
 def histogram_tof_monitor(
-    data: NeXusData[NXmonitor, SampleRun], edges: HistogramEdges
+    data: TofMonitor[SampleRun, NXmonitor], edges: HistogramEdges
 ) -> MonitorHistogram:
     """
     Histogram or rebin monitor data by time-of-flight (TOF mode).
 
-    In TOF mode, the data is expected to have a 'tof' coordinate from
-    a lookup table conversion applied by an upstream preprocessor.
+    The TofMonitor type is provided by GenericTofWorkflow, which converts
+    RawMonitor to TofMonitor using a lookup table. The data has a 'tof'
+    coordinate computed from the event_time_offset via the lookup table.
     """
     return MonitorHistogram(_histogram_monitor(data, edges, 'tof'))
-
-
-# Backwards compatibility alias
-histogram_monitor_data = histogram_raw_monitor
 
 
 def cumulative_view(hist: MonitorHistogram) -> CumulativeMonitorHistogram:
@@ -137,29 +138,49 @@ def build_monitor_workflow(
     """
     Build the base sciline workflow for monitor processing.
 
+    Uses GenericTofWorkflow as the base, which provides TOF conversion via lookup table.
+    The coordinate mode determines which histogram provider is used:
+    - 'toa': Uses RawMonitor (event_time_offset coordinate)
+    - 'tof': Uses TofMonitor (tof coordinate, converted via lookup table)
+
     Parameters
     ----------
     coordinate_mode:
         Coordinate system to use: 'toa' (time-of-arrival) or 'tof' (time-of-flight).
     """
+    # GenericTofWorkflow extends GenericNeXusWorkflow with TOF providers, so it can
+    # be used for all coordinate modes. The coordinate mode determines which
+    # histogram provider to use.
+    workflow = GenericTofWorkflow(run_types=[SampleRun], monitor_types=[NXmonitor])
+
     # Select histogram provider based on coordinate mode
     if coordinate_mode == 'toa':
-        histogram_provider = histogram_raw_monitor
+        workflow.insert(histogram_raw_monitor)
     elif coordinate_mode == 'tof':
-        histogram_provider = histogram_tof_monitor
+        workflow.insert(histogram_tof_monitor)
     else:
         raise ValueError(f"Unsupported coordinate mode: {coordinate_mode}")
 
-    workflow = sciline.Pipeline(
-        [
-            histogram_provider,
-            cumulative_view,
-            window_view,
-            counts_total,
-            counts_in_range,
-        ]
-    )
+    # Add downstream providers
+    workflow.insert(cumulative_view)
+    workflow.insert(window_view)
+    workflow.insert(counts_total)
+    workflow.insert(counts_in_range)
+
     return workflow
+
+
+def _create_minimal_empty_monitor() -> sc.DataArray:
+    """
+    Create a minimal EmptyMonitor for TOA mode when no geometry file is provided.
+
+    This allows the workflow to run without loading monitor geometry from a file.
+    The minimal structure is sufficient for TOA mode since no position-dependent
+    calculations (like Ltotal) are needed.
+    """
+    # Minimal empty monitor structure - just needs to be compatible with
+    # assemble_monitor_data which combines it with NeXusData
+    return sc.DataArray(sc.scalar(0.0, unit='counts'))
 
 
 def create_monitor_workflow(
@@ -168,6 +189,8 @@ def create_monitor_workflow(
     *,
     range_filter: tuple[sc.Variable, sc.Variable] | None = None,
     coordinate_mode: Literal['toa', 'tof'] = 'toa',
+    geometry_filename: str | None = None,
+    tof_lookup_table_filename: str | None = None,
 ):
     """
     Factory for monitor workflow using StreamProcessor.
@@ -175,16 +198,31 @@ def create_monitor_workflow(
     Parameters
     ----------
     source_name:
-        The monitor name (e.g., 'monitor_1'). Used as dynamic key for stream mapping.
+        The monitor name (e.g., 'monitor_1'). Used as dynamic key for stream mapping
+        and as the NeXus component name when loading geometry from file.
     edges:
         Bin edges for histogramming (TOA or TOF edges depending on mode).
     range_filter:
         Optional (low, high) range for ratemeter counts.
     coordinate_mode:
         Coordinate system to use: 'toa' (time-of-arrival) or 'tof' (time-of-flight).
+    geometry_filename:
+        Path to NeXus file containing monitor geometry. Required for 'tof' mode
+        (needed for Ltotal computation). Optional for 'toa' mode.
+    tof_lookup_table_filename:
+        Path to TOF lookup table file. Required for 'tof' mode.
     """
     from .accumulators import NoCopyAccumulator, NoCopyWindowAccumulator
     from .stream_processor_workflow import StreamProcessorWorkflow
+
+    # Validate TOF mode requirements
+    if coordinate_mode == 'tof':
+        if tof_lookup_table_filename is None:
+            raise ValueError("tof_lookup_table_filename is required for 'tof' mode")
+        if geometry_filename is None:
+            raise ValueError(
+                "geometry_filename is required for 'tof' mode (needed for Ltotal)"
+            )
 
     workflow = build_monitor_workflow(coordinate_mode=coordinate_mode)
     workflow[HistogramEdges] = edges
@@ -196,11 +234,27 @@ def create_monitor_workflow(
         workflow[HistogramRangeLow] = edges[edges.dim, 0]
         workflow[HistogramRangeHigh] = edges[edges.dim, -1]
 
+    # Configure geometry source
+    if geometry_filename is not None:
+        # Load geometry from NeXus file (required for TOF mode)
+        workflow[Filename[SampleRun]] = geometry_filename
+        workflow[NeXusName[NXmonitor]] = source_name
+    else:
+        # TOA mode without geometry file: provide minimal EmptyMonitor directly
+        workflow[EmptyMonitor[SampleRun, NXmonitor]] = _create_minimal_empty_monitor()
+
+    # Configure lookup table for TOF mode
+    if coordinate_mode == 'tof':
+        workflow[TofLookupTableFilename] = tof_lookup_table_filename
+
     # Only accumulate CumulativeMonitorHistogram and WindowMonitorHistogram.
     # MonitorCountsTotal and MonitorCountsInRange are computed from
     # WindowMonitorHistogram during finalize, not accumulated separately.
     return StreamProcessorWorkflow(
         workflow,
+        # Inject preprocessor output as NeXusData; GenericNeXusWorkflow
+        # providers will assemble monitor data to produce RawMonitor.
+        # For TOF mode, GenericTofWorkflow providers convert RawMonitor to TofMonitor.
         dynamic_keys={source_name: NeXusData[NXmonitor, SampleRun]},
         target_keys={
             'cumulative': CumulativeMonitorHistogram,
