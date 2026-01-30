@@ -634,3 +634,73 @@ class TestMonitorWorkflowFactoryCoordinateMode:
 
         with pytest.raises(ValueError, match="tof_lookup_table_filename is required"):
             create_monitor_workflow_factory('monitor_1', params)
+
+
+@pytest.mark.slow
+class TestMonitorWorkflowTofModeHistogramInput:
+    """Tests for TOF coordinate mode with histogram input data.
+
+    These tests require DREAM dependencies (essdiffraction) for the lookup table.
+    """
+
+    @pytest.fixture
+    def tof_edges(self):
+        return sc.linspace('tof', 0, 71_000_000, num=101, unit='ns')
+
+    @pytest.fixture
+    def geometry_filename(self):
+        from ess.livedata.handlers.detector_data_handler import (
+            get_nexus_geometry_filename,
+        )
+
+        return get_nexus_geometry_filename('dream-no-shape')
+
+    @pytest.fixture
+    def lookup_table_filename(self):
+        import ess.dream
+
+        return ess.dream.workflows._get_lookup_table_filename_from_configuration(
+            ess.dream.InstrumentConfiguration.high_flux_BC215
+        )
+
+    def test_tof_mode_with_histogram_input(
+        self, tof_edges, geometry_filename, lookup_table_filename
+    ):
+        """Test TOF mode workflow with histogram input data (da00/MONITOR_COUNTS).
+
+        This is a regression test for the issue where histogram data with
+        frame_time coordinate was not properly handled by the TOF conversion.
+        The essreduce _time_of_flight_data_histogram function expects one of:
+        'time_of_flight', 'tof', or 'frame_time' as the coordinate name.
+        """
+        workflow = create_monitor_workflow(
+            'monitor_bunker',
+            tof_edges,
+            coordinate_mode='tof',
+            geometry_filename=str(geometry_filename),
+            tof_lookup_table_filename=str(lookup_table_filename),
+        )
+
+        # Create histogram data like fake_monitors da00 mode produces
+        # Using 'frame_time' which is what the production data uses
+        input_edges = sc.linspace('frame_time', 0, 71_000_000, num=1001, unit='ns')
+        histogram = sc.DataArray(
+            sc.array(dims=['frame_time'], values=[1.0] * 1000, unit='counts'),
+            coords={'frame_time': input_edges},
+        )
+
+        # Accumulate data
+        workflow.accumulate({'monitor_bunker': histogram}, start_time=0, end_time=1000)
+
+        # Finalize to get results
+        results = workflow.finalize()
+
+        assert 'cumulative' in results
+        assert 'current' in results
+        assert 'counts_total' in results
+        assert 'counts_in_toa_range' in results
+
+        # Check that we got valid results (counts should be preserved)
+        assert results['cumulative'].sum().value == 1000.0
+        assert results['current'].sum().value == 1000.0
+        assert results['counts_total'].value == 1000.0
