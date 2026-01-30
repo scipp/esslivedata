@@ -13,6 +13,10 @@ from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
+from ess.livedata.handlers.monitor_workflow_specs import (
+    TOAOnlyMonitorDataParams,
+    register_monitor_workflow_specs,
+)
 
 from .views import get_wire_view
 
@@ -114,6 +118,11 @@ instrument = Instrument(
 
 # Register instrument
 instrument_registry.register(instrument)
+
+# Register monitor workflow spec (TOA-only, no TOF lookup tables)
+monitor_handle = register_monitor_workflow_specs(
+    instrument, ['monitor1', 'monitor2'], params=TOAOnlyMonitorDataParams
+)
 
 xy_projection_handle = register_detector_view_spec(
     instrument=instrument,

@@ -36,6 +36,13 @@ class CoordinateModeSettings(pydantic.BaseModel):
         "'tof' (time-of-flight), or 'wavelength'.",
     )
 
+    @pydantic.field_validator('mode')
+    @classmethod
+    def _validate_mode(cls, v: CoordinateMode) -> CoordinateMode:
+        if v == 'wavelength':
+            raise ValueError("wavelength mode is not yet supported")
+        return v
+
 
 class DetectorViewParams(pydantic.BaseModel):
     coordinate_mode: CoordinateModeSettings = pydantic.Field(

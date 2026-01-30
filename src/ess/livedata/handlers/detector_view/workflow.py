@@ -27,7 +27,6 @@ from ess.reduce.live.raw import (
     position_with_noisy_replicas,
 )
 from ess.reduce.nexus.types import SampleRun
-from ess.reduce.streaming import EternalAccumulator
 from ess.reduce.time_of_flight import GenericTofWorkflow
 
 from .projectors import make_geometric_projector, make_logical_projector
@@ -59,40 +58,6 @@ from .types import (
     ReductionDim,
     UsePixelWeighting,
 )
-
-
-class NoCopyAccumulator(EternalAccumulator):
-    """
-    Accumulator that skips deepcopy on read for better performance.
-
-    The base EternalAccumulator uses deepcopy in _get_value() to ensure safety.
-    This accumulator skips that deepcopy, saving ~30ms per read for a 500MB
-    histogram.
-
-    The copy on first push is retained to avoid shared references when the same
-    value is pushed to multiple accumulators.
-
-    Use only when downstream consumers do not modify or store references to
-    the returned value. This constraint is met in the detector view workflow
-    where downstream just serializes the data.
-    """
-
-    def _get_value(self):
-        """Return value directly without deepcopy."""
-        return self._value
-
-
-class NoCopyWindowAccumulator(NoCopyAccumulator):
-    """
-    Window accumulator without deepcopy that clears after finalize.
-
-    Combines the performance benefits of NoCopyAccumulator with window semantics
-    (clearing after each finalize cycle).
-    """
-
-    def on_finalize(self) -> None:
-        """Clear accumulated value after finalize retrieves it."""
-        self.clear()
 
 
 def create_base_workflow(

@@ -5,6 +5,10 @@ ODIN instrument spec registration.
 """
 
 from ess.livedata.config import Instrument, instrument_registry
+from ess.livedata.handlers.monitor_workflow_specs import (
+    TOAOnlyMonitorDataParams,
+    register_monitor_workflow_specs,
+)
 
 from .views import fold_image
 
@@ -15,6 +19,11 @@ instrument = Instrument(
 )
 
 instrument_registry.register(instrument)
+
+# Register monitor workflow spec (TOA-only, no TOF lookup tables)
+monitor_handle = register_monitor_workflow_specs(
+    instrument, ['monitor1', 'monitor2'], params=TOAOnlyMonitorDataParams
+)
 
 # Detector view spec registration (with ROI support)
 instrument.add_logical_view(
