@@ -233,34 +233,6 @@ class TestSessionLayer:
 
         assert session_layer.update_pipe() is False
 
-    def test_is_valid_for_returns_true_without_components(self):
-        """Test that is_valid_for() returns True when no components to invalidate."""
-        layer_id = LayerId(uuid4())
-        session_layer = SessionLayer(layer_id=layer_id, last_seen_version=1)
-
-        plotter = FakePlotter()
-        assert session_layer.is_valid_for(plotter) is True
-        assert session_layer.is_valid_for(None) is True
-
-    def test_is_valid_for_delegates_to_components(self, plot_data_service):
-        """Test that is_valid_for() delegates to components when they exist."""
-        layer_id = LayerId(uuid4())
-        plotter = FakePlotter()
-        plotter.compute({'data': 1})
-        plot_data_service.job_started(layer_id, plotter)
-        plot_data_service.data_arrived(layer_id)
-
-        state = plot_data_service.get(layer_id)
-        components = SessionComponents.create(state)
-        session_layer = SessionLayer(
-            layer_id=layer_id, last_seen_version=state.version, components=components
-        )
-
-        assert session_layer.is_valid_for(plotter) is True
-
-        other_plotter = FakePlotter()
-        assert session_layer.is_valid_for(other_plotter) is False
-
 
 class TestSessionLayerEnsureComponents:
     """Tests for SessionLayer.ensure_components() method."""

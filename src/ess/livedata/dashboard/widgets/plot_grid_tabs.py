@@ -922,13 +922,9 @@ class PlotGridTabs:
                         # New layer → rebuild cell
                         cells_to_rebuild[cell_id] = (cell, plot_grid)
                     else:
-                        # Check validity and push data updates
-                        if not session_layer.is_valid_for(state.plotter):
-                            # Plotter replaced → clear components, will recreate
-                            session_layer.components = None
                         session_layer.update_pipe()
 
-                        # Check for version changes
+                        # Check for version changes (plotter changes increment version)
                         if state.version != session_layer.last_seen_version:
                             cells_to_rebuild[cell_id] = (cell, plot_grid)
                             session_layer.last_seen_version = state.version

@@ -131,17 +131,6 @@ class SessionLayer:
             return False
         return self.components.update_pipe()
 
-    def is_valid_for(self, plotter: Plotter | None) -> bool:
-        """
-        Check if this session layer is still valid for the given plotter.
-
-        A layer without components is always valid (nothing to invalidate).
-        A layer with components is valid if the plotter hasn't changed.
-        """
-        if self.components is None:
-            return True
-        return self.components.is_valid_for(plotter)
-
     def ensure_components(self, state: LayerStateMachine) -> bool:
         """
         Ensure components exist if data is now available.
