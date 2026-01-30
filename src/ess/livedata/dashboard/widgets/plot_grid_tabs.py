@@ -121,8 +121,6 @@ class PlotGridTabs:
         self._grid_widgets: dict[GridId, PlotGrid] = {}
 
         # Per-session layer state: version tracking and optional render components.
-        # SessionLayer is created eagerly for version tracking; components are
-        # added lazily when displayable data becomes available.
         self._session_layers: dict[LayerId, SessionLayer] = {}
 
         # Determine number of static tabs for stylesheet
@@ -892,7 +890,7 @@ class PlotGridTabs:
         changes (waiting/ready/stopped/error). Polling at ~100ms intervals is
         acceptable for config UI updates.
         """
-        cells_to_rebuild: dict[CellId, tuple[GridId, PlotCell, PlotGrid]] = {}
+        cells_to_rebuild: dict[CellId, tuple[PlotCell, PlotGrid]] = {}
         seen_layer_ids: set[LayerId] = set()
 
         for grid_id, plot_grid in self._grid_widgets.items():
@@ -918,33 +916,22 @@ class PlotGridTabs:
                     # Get or create session layer for version tracking
                     session_layer = self._session_layers.get(layer_id)
                     if session_layer is None:
-                        session_layer = SessionLayer(
+                        self._session_layers[layer_id] = SessionLayer(
                             layer_id=layer_id, last_seen_version=state.version
                         )
-                        self._session_layers[layer_id] = session_layer
                         # New layer → rebuild cell
-                        cells_to_rebuild[cell_id] = (grid_id, cell, plot_grid)
-                        logger.debug(
-                            "Layer %s first seen at version %d", layer_id, state.version
-                        )
+                        cells_to_rebuild[cell_id] = (cell, plot_grid)
                     else:
                         # Check validity and push data updates
                         if not session_layer.is_valid_for(state.plotter):
                             # Plotter replaced → clear components, will recreate
                             session_layer.components = None
-
                         session_layer.update_pipe()
 
                         # Check for version changes
                         if state.version != session_layer.last_seen_version:
-                            cells_to_rebuild[cell_id] = (grid_id, cell, plot_grid)
+                            cells_to_rebuild[cell_id] = (cell, plot_grid)
                             session_layer.last_seen_version = state.version
-                            logger.debug(
-                                "Layer %s version changed: %d -> %d",
-                                layer_id,
-                                session_layer.last_seen_version,
-                                state.version,
-                            )
 
         # Clean up orphaned session layers (removed from orchestrator)
         for layer_id in list(self._session_layers.keys()):
@@ -956,7 +943,7 @@ class PlotGridTabs:
         # from pipe.send() calls above. Without deferral, widget removal can
         # race with DynamicMap updates, causing KeyError when Panel tries to
         # access removed models.
-        for cell_id, (_grid_id, cell, plot_grid) in cells_to_rebuild.items():
+        for cell_id, (cell, plot_grid) in cells_to_rebuild.items():
             session_plot = self._get_session_composed_plot(cell)
             widget = self._create_cell_widget(cell_id, cell, session_plot)
             pn.state.execute(
