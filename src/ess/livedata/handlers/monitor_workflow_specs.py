@@ -10,15 +10,22 @@ import scipp as sc
 from .. import parameter_models
 from ..config.instrument import Instrument
 from ..config.workflow_spec import WorkflowOutputsBase
+from ..handlers.detector_view_specs import CoordinateModeSettings
 from ..handlers.workflow_factory import SpecHandle
 
 
 class MonitorDataParams(pydantic.BaseModel):
     """Parameters for monitor histogram workflow."""
 
+    coordinate_mode: CoordinateModeSettings = pydantic.Field(
+        title="Coordinate Mode",
+        description="Select coordinate system for monitor data.",
+        default_factory=CoordinateModeSettings,
+    )
+    # TOA (time-of-arrival) settings
     toa_edges: parameter_models.TOAEdges = pydantic.Field(
         title="Time of Arrival Edges",
-        description="Time of arrival edges for histogramming.",
+        description="Time of arrival edges for histogramming in TOA mode.",
         default=parameter_models.TOAEdges(
             start=0.0,
             stop=1000.0 / 14,
@@ -28,9 +35,65 @@ class MonitorDataParams(pydantic.BaseModel):
     )
     toa_range: parameter_models.TOARange = pydantic.Field(
         title="Time of Arrival Range",
-        description="Time of arrival range for ratemeter output.",
+        description="Time of arrival range filter for TOA mode.",
         default=parameter_models.TOARange(),
     )
+    # TOF (time-of-flight) settings
+    tof_edges: parameter_models.TOFEdges = pydantic.Field(
+        title="Time of Flight Edges",
+        description="Time of flight edges for histogramming in TOF mode.",
+        default=parameter_models.TOFEdges(
+            start=0.0,
+            stop=1000.0 / 14,
+            num_bins=100,
+            unit=parameter_models.TimeUnit.MS,
+        ),
+    )
+    tof_range: parameter_models.TOFRange = pydantic.Field(
+        title="Time of Flight Range",
+        description="Time of flight range filter for TOF mode.",
+        default=parameter_models.TOFRange(),
+    )
+    # Wavelength settings
+    wavelength_edges: parameter_models.WavelengthEdges = pydantic.Field(
+        title="Wavelength Edges",
+        description="Wavelength edges for histogramming in wavelength mode.",
+        default=parameter_models.WavelengthEdges(
+            start=1.0,
+            stop=10.0,
+            num_bins=100,
+            unit=parameter_models.WavelengthUnit.ANGSTROM,
+        ),
+    )
+    wavelength_range: parameter_models.WavelengthRangeFilter = pydantic.Field(
+        title="Wavelength Range",
+        description="Wavelength range filter for wavelength mode.",
+        default=parameter_models.WavelengthRangeFilter(),
+    )
+
+    def get_active_edges(self) -> sc.Variable:
+        """Return the edges for the currently selected coordinate mode."""
+        match self.coordinate_mode.mode:
+            case 'toa':
+                return self.toa_edges.get_edges()
+            case 'tof':
+                return self.tof_edges.get_edges()
+            case 'wavelength':
+                return self.wavelength_edges.get_edges()
+
+    def get_active_range(self) -> tuple[sc.Variable, sc.Variable] | None:
+        """Return the range for the currently selected coordinate mode, if enabled."""
+        match self.coordinate_mode.mode:
+            case 'toa':
+                return self.toa_range.range_ns if self.toa_range.enabled else None
+            case 'tof':
+                return self.tof_range.range if self.tof_range.enabled else None
+            case 'wavelength':
+                return (
+                    self.wavelength_range.range
+                    if self.wavelength_range.enabled
+                    else None
+                )
 
 
 class MonitorHistogramOutputs(WorkflowOutputsBase):
@@ -117,8 +180,13 @@ def create_monitor_workflow_factory(source_name: str, params: MonitorDataParams)
     """
     from .monitor_workflow import create_monitor_workflow
 
+    mode = params.coordinate_mode.mode
+    if mode == 'wavelength':
+        raise NotImplementedError("wavelength mode not yet implemented for monitors")
+
     return create_monitor_workflow(
         source_name=source_name,
-        edges=params.toa_edges.get_edges(),
-        toa_range=params.toa_range.range_ns if params.toa_range.enabled else None,
+        edges=params.get_active_edges(),
+        range_filter=params.get_active_range(),
+        coordinate_mode=mode,
     )

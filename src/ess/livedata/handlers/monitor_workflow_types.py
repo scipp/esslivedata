@@ -21,7 +21,12 @@ WindowMonitorHistogram = NewType('WindowMonitorHistogram', sc.DataArray)
 MonitorCountsTotal = NewType('MonitorCountsTotal', sc.DataArray)
 MonitorCountsInRange = NewType('MonitorCountsInRange', sc.DataArray)
 
-# Configuration types
-TOAEdges = NewType('TOAEdges', sc.Variable)
-TOARangeLow = NewType('TOARangeLow', sc.Variable)
-TOARangeHigh = NewType('TOARangeHigh', sc.Variable)
+# Configuration types (mode-agnostic names)
+HistogramEdges = NewType('HistogramEdges', sc.Variable)
+HistogramRangeLow = NewType('HistogramRangeLow', sc.Variable)
+HistogramRangeHigh = NewType('HistogramRangeHigh', sc.Variable)
+
+# Backwards compatibility aliases
+TOAEdges = HistogramEdges
+TOARangeLow = HistogramRangeLow
+TOARangeHigh = HistogramRangeHigh

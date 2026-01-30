@@ -6,26 +6,25 @@ import pytest
 import scipp as sc
 
 from ess.livedata.handlers.accumulators import NoCopyWindowAccumulator
+from ess.livedata.handlers.detector_view_specs import CoordinateModeSettings
 from ess.livedata.handlers.monitor_workflow import (
     build_monitor_workflow,
     counts_in_range,
     counts_total,
     create_monitor_workflow,
     cumulative_view,
-    histogram_monitor_data,
+    histogram_raw_monitor,
     window_view,
 )
 from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
 from ess.livedata.handlers.monitor_workflow_types import (
+    HistogramEdges,
+    HistogramRangeHigh,
+    HistogramRangeLow,
     MonitorHistogram,
-    TOARangeHigh,
-    TOARangeLow,
     WindowMonitorHistogram,
 )
-from ess.livedata.handlers.monitor_workflow_types import (
-    TOAEdges as TOAEdgesKey,
-)
-from ess.livedata.parameter_models import TimeUnit, TOAEdges
+from ess.livedata.parameter_models import TimeUnit, TOAEdges, TOFEdges, TOFRange
 from ess.reduce import streaming
 
 
@@ -36,6 +35,8 @@ class TestMonitorDataParams:
         """Test that MonitorDataParams has correct default values."""
         params = MonitorDataParams()
 
+        # Default coordinate mode is TOA
+        assert params.coordinate_mode.mode == 'toa'
         assert params.toa_edges.start == 0.0
         assert params.toa_edges.stop == 1000.0 / 14
         assert params.toa_edges.num_bins == 100
@@ -68,6 +69,45 @@ class TestMonitorDataParams:
         assert isinstance(edges, sc.Variable)
         assert edges.unit == sc.Unit('ms')
         assert len(edges) == 101  # num_bins + 1
+
+    def test_get_active_edges_toa_mode(self):
+        """Test get_active_edges returns TOA edges in TOA mode."""
+        params = MonitorDataParams(
+            coordinate_mode=CoordinateModeSettings(mode='toa'),
+            toa_edges=TOAEdges(start=0.0, stop=100.0, num_bins=50),
+        )
+        edges = params.get_active_edges()
+        assert edges.dim == 'time_of_arrival'
+        assert len(edges) == 51
+
+    def test_get_active_edges_tof_mode(self):
+        """Test get_active_edges returns TOF edges in TOF mode."""
+        params = MonitorDataParams(
+            coordinate_mode=CoordinateModeSettings(mode='tof'),
+            tof_edges=TOFEdges(start=0.0, stop=100.0, num_bins=50),
+        )
+        edges = params.get_active_edges()
+        assert edges.dim == 'tof'
+        assert len(edges) == 51
+
+    def test_get_active_range_returns_none_when_disabled(self):
+        """Test get_active_range returns None when range filter is disabled."""
+        params = MonitorDataParams(
+            coordinate_mode=CoordinateModeSettings(mode='toa'),
+        )
+        assert params.get_active_range() is None
+
+    def test_get_active_range_tof_mode(self):
+        """Test get_active_range returns TOF range in TOF mode."""
+        params = MonitorDataParams(
+            coordinate_mode=CoordinateModeSettings(mode='tof'),
+            tof_range=TOFRange(enabled=True, start=10.0, stop=50.0, unit=TimeUnit.MS),
+        )
+        range_filter = params.get_active_range()
+        assert range_filter is not None
+        low, high = range_filter
+        assert low.unit == 'ms'
+        assert high.unit == 'ms'
 
 
 class TestNoCopyWindowAccumulator:
@@ -155,8 +195,8 @@ class TestMonitorWorkflowProviders:
     def toa_edges(self):
         return sc.linspace('time_of_arrival', 0, 10, num=6, unit='ns')
 
-    def test_histogram_monitor_data_event_mode(self, sample_events, toa_edges):
-        result = histogram_monitor_data(sample_events, toa_edges)
+    def test_histogram_raw_monitor_event_mode(self, sample_events, toa_edges):
+        result = histogram_raw_monitor(sample_events, toa_edges)
         assert isinstance(result, sc.DataArray)
         assert result.dims == ('time_of_arrival',)
         assert result.sizes['time_of_arrival'] == 5  # 6 edges -> 5 bins
@@ -164,7 +204,7 @@ class TestMonitorWorkflowProviders:
         # All 5 events should be histogrammed
         assert result.sum().value == 5.0
 
-    def test_histogram_monitor_data_histogram_mode(self, toa_edges):
+    def test_histogram_raw_monitor_histogram_mode(self, toa_edges):
         """Test rebinning of already-histogrammed monitor data."""
         # Create input histogram with different edges (finer binning)
         input_edges = sc.linspace('tof', 0, 10, num=11, unit='ns')
@@ -174,21 +214,21 @@ class TestMonitorWorkflowProviders:
             coords={'tof': input_edges},
         )
         # Rebin to target edges (coarser binning)
-        result = histogram_monitor_data(histogram, toa_edges)
+        result = histogram_raw_monitor(histogram, toa_edges)
         assert isinstance(result, sc.DataArray)
         assert result.dims == ('time_of_arrival',)
         assert result.sizes['time_of_arrival'] == 5  # 6 edges -> 5 bins
         # Total counts should be preserved after rebinning
         assert result.sum().value == sum(values)
 
-    def test_histogram_monitor_data_histogram_mode_same_dim(self, toa_edges):
+    def test_histogram_raw_monitor_histogram_mode_same_dim(self, toa_edges):
         """Test histogram-mode when input already has same dim name."""
         input_edges = sc.linspace('time_of_arrival', 0, 10, num=11, unit='ns')
         histogram = sc.DataArray(
             sc.array(dims=['time_of_arrival'], values=[1.0] * 10, unit='counts'),
             coords={'time_of_arrival': input_edges},
         )
-        result = histogram_monitor_data(histogram, toa_edges)
+        result = histogram_raw_monitor(histogram, toa_edges)
         assert result.dims == ('time_of_arrival',)
         assert result.sum().value == 10.0
 
@@ -217,8 +257,8 @@ class TestMonitorWorkflowProviders:
             coords={'time_of_arrival': edges},
         )
         # Select bins 1-3 (values 2.0, 3.0, 4.0)
-        low = sc.scalar(2, unit='ns')
-        high = sc.scalar(8, unit='ns')
+        low = HistogramRangeLow(sc.scalar(2, unit='ns'))
+        high = HistogramRangeHigh(sc.scalar(8, unit='ns'))
         result = counts_in_range(WindowMonitorHistogram(hist), low, high)
         assert result.value == 9.0  # 2 + 3 + 4
 
@@ -250,9 +290,9 @@ class TestBuildMonitorWorkflow:
 
         edges = sc.linspace('time_of_arrival', 0, 10, num=6, unit='ns')
         workflow[NeXusData[NXmonitor, SampleRun]] = binned
-        workflow[TOAEdgesKey] = edges
-        workflow[TOARangeLow] = edges['time_of_arrival', 0]
-        workflow[TOARangeHigh] = edges['time_of_arrival', -1]
+        workflow[HistogramEdges] = edges
+        workflow[HistogramRangeLow] = edges['time_of_arrival', 0]
+        workflow[HistogramRangeHigh] = edges['time_of_arrival', -1]
 
         result = workflow.compute(MonitorHistogram)
         assert isinstance(result, sc.DataArray)
@@ -281,9 +321,21 @@ class TestCreateMonitorWorkflow:
         assert hasattr(workflow, 'finalize')
         assert hasattr(workflow, 'clear')
 
-    def test_workflow_with_toa_range(self, toa_edges):
-        toa_range = (sc.scalar(10_000_000, unit='ns'), sc.scalar(60_000_000, unit='ns'))
-        workflow = create_monitor_workflow('monitor_1', toa_edges, toa_range=toa_range)
+    def test_workflow_with_range_filter(self, toa_edges):
+        range_filter = (
+            sc.scalar(10_000_000, unit='ns'),
+            sc.scalar(60_000_000, unit='ns'),
+        )
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, range_filter=range_filter
+        )
+        assert workflow is not None
+
+    def test_workflow_with_tof_mode(self, toa_edges):
+        """Test creating workflow in TOF mode."""
+        workflow = create_monitor_workflow(
+            'monitor_1', toa_edges, coordinate_mode='tof'
+        )
         assert workflow is not None
 
 
@@ -538,13 +590,50 @@ class TestRegisterMonitorWorkflowSpecs:
         # Attach factory
         @handle.attach_factory()
         def _factory(source_name: str, params: MonitorDataParams):
+            mode = params.coordinate_mode.mode
+            if mode == 'wavelength':
+                raise NotImplementedError("wavelength mode not yet implemented")
             return create_monitor_workflow(
                 source_name=source_name,
-                edges=params.toa_edges.get_edges(),
-                toa_range=(
-                    params.toa_range.range_ns if params.toa_range.enabled else None
-                ),
+                edges=params.get_active_edges(),
+                range_filter=params.get_active_range(),
+                coordinate_mode=mode,
             )
 
         # Verify factory is attached
         assert workflow_id in factory._factories
+
+
+class TestMonitorWorkflowFactoryCoordinateMode:
+    """Tests for coordinate mode in monitor workflow factory."""
+
+    def test_wavelength_mode_raises_not_implemented(self):
+        """Test that wavelength mode raises NotImplementedError."""
+        from ess.livedata.handlers.monitor_workflow_specs import (
+            create_monitor_workflow_factory,
+        )
+
+        params = MonitorDataParams(
+            coordinate_mode=CoordinateModeSettings(mode='wavelength'),
+        )
+
+        with pytest.raises(NotImplementedError, match="wavelength mode not yet"):
+            create_monitor_workflow_factory('monitor_1', params)
+
+    def test_tof_mode_creates_workflow(self):
+        """Test that TOF mode creates a valid workflow."""
+        from ess.livedata.handlers.monitor_workflow_specs import (
+            create_monitor_workflow_factory,
+        )
+        from ess.livedata.handlers.stream_processor_workflow import (
+            StreamProcessorWorkflow,
+        )
+
+        params = MonitorDataParams(
+            coordinate_mode=CoordinateModeSettings(mode='tof'),
+            tof_edges=TOFEdges(start=0.0, stop=100.0, num_bins=10),
+            tof_range=TOFRange(enabled=True, start=20.0, stop=80.0, unit=TimeUnit.MS),
+        )
+
+        workflow = create_monitor_workflow_factory('monitor_1', params)
+        assert isinstance(workflow, StreamProcessorWorkflow)
