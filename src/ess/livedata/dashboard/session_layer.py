@@ -11,14 +11,11 @@ when data is available.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
 
 import holoviews as hv
 
 from .plot_data_service import LayerId, LayerStateMachine
-
-if TYPE_CHECKING:
-    from .plots import Plotter, Presenter
+from .plots import Plotter, Presenter
 
 
 @dataclass
@@ -84,7 +81,9 @@ class SessionComponents:
         if not state.has_displayable_plot():
             return None
 
-        plotter: Any = state.plotter  # Avoid circular import issues with type
+        plotter = state.plotter
+        if plotter is None:
+            raise ValueError("Plotter must not be None when plot is displayable")
         presenter = plotter.create_presenter()
         pipe = hv.streams.Pipe(data=plotter.get_cached_state())
         dmap = presenter.present(pipe)
