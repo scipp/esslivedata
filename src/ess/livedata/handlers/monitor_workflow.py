@@ -75,33 +75,14 @@ def _histogram_monitor(
 def histogram_raw_monitor(
     data: RawMonitor[SampleRun, NXmonitor], edges: HistogramEdges
 ) -> MonitorHistogram:
-    """
-    Histogram or rebin monitor data by time-of-arrival (TOA mode).
-
-    Supports two input modes:
-
-    Event-mode:
-        Input is sc.DataArray with binned events from ToNXevent_data preprocessor.
-        The data has event_time_offset coord containing time-of-arrival values.
-        Events are concatenated and histogrammed into the target edges.
-
-    Histogram-mode:
-        Input is sc.DataArray histogram from Cumulative preprocessor.
-        The histogram is rebinned to the target edges.
-    """
+    """Histogram or rebin monitor data by time-of-arrival (TOA mode)."""
     return MonitorHistogram(_histogram_monitor(data, edges, 'event_time_offset'))
 
 
 def histogram_tof_monitor(
     data: TofMonitor[SampleRun, NXmonitor], edges: HistogramEdges
 ) -> MonitorHistogram:
-    """
-    Histogram or rebin monitor data by time-of-flight (TOF mode).
-
-    The TofMonitor type is provided by GenericTofWorkflow, which converts
-    RawMonitor to TofMonitor using a lookup table. The data has a 'tof'
-    coordinate computed from the event_time_offset via the lookup table.
-    """
+    """Histogram or rebin monitor data by time-of-flight (TOF mode)."""
     return MonitorHistogram(_histogram_monitor(data, edges, 'tof'))
 
 
