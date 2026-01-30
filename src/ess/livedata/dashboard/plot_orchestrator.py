@@ -611,6 +611,64 @@ class PlotOrchestrator:
         if remove_from_cell_mapping:
             self._layer_to_cell.pop(layer_id, None)
 
+    def _create_and_register_plotter(
+        self, layer_id: LayerId, config: PlotConfig
+    ) -> Any | None:
+        """
+        Create plotter and register with PlotDataService.
+
+        Parameters
+        ----------
+        layer_id
+            ID of the layer to create plotter for.
+        config
+            Plot configuration containing plot_name and params.
+
+        Returns
+        -------
+        :
+            The created plotter, or None if creation failed.
+            On failure, error is logged and PlotDataService is notified.
+        """
+        try:
+            plotter = self._plotting_controller.create_plotter(
+                config.plot_name, params=config.params
+            )
+            self._plot_data_service.job_started(layer_id, plotter)
+            return plotter
+        except Exception:
+            error_msg = traceback.format_exc()
+            self._logger.exception('Failed to create plotter for layer_id=%s', layer_id)
+            self._plot_data_service.error_occurred(layer_id, error_msg)
+            return None
+
+    def _run_compute(self, layer_id: LayerId, plotter: Any, data: dict) -> None:
+        """
+        Compute plot state and transition layer to READY.
+
+        Calls plotter.compute() with the provided data and notifies PlotDataService.
+        Handles errors by logging and transitioning to error state.
+
+        Parameters
+        ----------
+        layer_id
+            ID of the layer being computed.
+        plotter
+            The plotter instance to compute with.
+        data
+            Data dict to pass to plotter.compute(). Empty dict for static plotters.
+        """
+        if layer_id not in self._layer_to_cell:
+            return
+
+        try:
+            plotter.compute(data)
+            self._plot_data_service.data_arrived(layer_id)
+        except Exception:
+            error_msg = traceback.format_exc()
+            self._logger.exception('Failed to compute state for layer_id=%s', layer_id)
+            self._plot_data_service.error_occurred(layer_id, error_msg)
+
     def _subscribe_layer(self, grid_id: GridId, cell_id: CellId, layer: Layer) -> None:
         """
         Subscribe a layer to workflow lifecycle and set up initial notification.
@@ -642,10 +700,9 @@ class PlotOrchestrator:
 
         if config.is_static():
             # Static overlay: create plot immediately without subscription.
-            # _create_static_layer_plot registers the layer via job_started/data_arrived
-            # or error_occurred, so it's ready for display when we notify.
-            self._create_static_layer_plot(grid_id, cell_id, layer)
-            # Notify sessions so they can display the static plot
+            plotter = self._create_and_register_plotter(layer_id, config)
+            if plotter is not None:
+                self._run_compute(layer_id, plotter, {})
             cell = self._grids[grid_id].cells[cell_id]
             self._notify_cell_updated(grid_id, cell_id, cell)
             self._persist_to_store()
@@ -653,7 +710,7 @@ class PlotOrchestrator:
 
         # Unified path for all non-static layers (single or multi-source)
         def on_all_jobs_ready(ready: SubscriptionReady) -> None:
-            self._on_all_jobs_ready(layer_id, cell_id, grid_id, ready)
+            self._on_all_jobs_ready(layer_id, ready)
 
         def on_any_job_stopped(job_number: JobNumber) -> None:
             self._on_layer_job_stopped(layer_id, job_number)
@@ -675,57 +732,11 @@ class PlotOrchestrator:
         # Always notify current config - sessions will poll PlotDataService for state
         cell = self._grids[grid_id].cells[cell_id]
         self._notify_cell_updated(grid_id, cell_id, cell)
-
-        # Persist updated state
         self._persist_to_store()
-
-    def _create_static_layer_plot(
-        self, grid_id: GridId, cell_id: CellId, layer: Layer
-    ) -> None:
-        """
-        Create a static layer plot immediately from params.
-
-        Static layers don't subscribe to any workflow; they create their plot
-        directly from the params (e.g., geometric shapes like rectangles, lines).
-
-        Parameters
-        ----------
-        grid_id
-            ID of the grid containing the cell.
-        cell_id
-            ID of the cell containing the layer.
-        layer
-            The layer to create plot for.
-        """
-        from .plotting import plotter_registry
-
-        layer_id = layer.layer_id
-        config = layer.config
-
-        try:
-            plotter = plotter_registry.create_plotter(config.plot_name, config.params)
-            # Static plotters implement create_static_plot() method
-            if not hasattr(plotter, 'create_static_plot'):
-                raise TypeError(
-                    f"Plotter '{config.plot_name}' does not support static plots"
-                )
-            element = plotter.create_static_plot()
-            plotter._set_cached_state(element)
-            # Static layers are immediately ready - transition through both states
-            self._plot_data_service.job_started(layer_id, plotter)
-            self._plot_data_service.data_arrived(layer_id)
-        except Exception:
-            error_msg = traceback.format_exc()
-            self._logger.exception(
-                'Failed to create static plot for layer_id=%s', layer_id
-            )
-            self._plot_data_service.error_occurred(layer_id, error_msg)
 
     def _on_all_jobs_ready(
         self,
         layer_id: LayerId,
-        cell_id: CellId,
-        grid_id: GridId,
         ready: SubscriptionReady,
     ) -> None:
         """
@@ -739,10 +750,6 @@ class PlotOrchestrator:
         ----------
         layer_id
             ID of the layer to create plot for.
-        cell_id
-            ID of the cell containing the layer.
-        grid_id
-            ID of the grid containing the cell.
         ready
             SubscriptionReady containing keys_by_role for structured data access.
         """
@@ -755,51 +762,22 @@ class PlotOrchestrator:
 
         config = self.get_layer_config(layer_id)
 
-        # Create plotter eagerly - doesn't need data
-        try:
-            plotter = self._plotting_controller.create_plotter(
-                config.plot_name, params=config.params
-            )
-        except Exception:
-            error_msg = traceback.format_exc()
-            self._logger.exception('Failed to create plotter for layer_id=%s', layer_id)
-            self._plot_data_service.error_occurred(layer_id, error_msg)
-            return
-
         # Cleanup old data subscription if this layer had one (e.g., workflow restart)
         if layer_id in self._data_subscriptions:
             self._data_service.unregister_subscriber(self._data_subscriptions[layer_id])
             del self._data_subscriptions[layer_id]
 
-        # Register plotter with PlotDataService - transitions to WAITING_FOR_DATA
-        self._plot_data_service.job_started(layer_id, plotter)
+        plotter = self._create_and_register_plotter(layer_id, config)
+        if plotter is None:
+            return
 
-        def on_data(data: dict) -> None:
-            """Compute plot state and transition to READY on first data."""
-            # Check if layer still exists
-            if layer_id not in self._layer_to_cell:
-                return
-
-            try:
-                # Compute state (runs once, shared across all sessions)
-                # plotter.compute() caches state and marks presenters dirty
-                plotter.compute(data)
-                # Transition to READY on successful data processing
-                self._plot_data_service.data_arrived(layer_id)
-            except Exception:
-                error_msg = traceback.format_exc()
-                self._logger.exception(
-                    'Failed to compute state for layer_id=%s', layer_id
-                )
-                self._plot_data_service.error_occurred(layer_id, error_msg)
-
-        # Set up data pipeline - on_data will be called when data arrives
+        # Set up data pipeline - _run_compute will be called when data arrives
         try:
             subscriber = self._plotting_controller.setup_pipeline(
                 keys_by_role=ready.keys_by_role,
                 plot_name=config.plot_name,
                 params=config.params,
-                on_data=on_data,
+                on_data=lambda data: self._run_compute(layer_id, plotter, data),
             )
             self._data_subscriptions[layer_id] = subscriber
         except Exception:

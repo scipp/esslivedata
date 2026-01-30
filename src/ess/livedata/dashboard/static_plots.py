@@ -114,6 +114,20 @@ class StaticPlotter(ABC):
         """Check if state has been computed."""
         return self._cached_state is not None
 
+    def compute(self, data: dict) -> None:
+        """Compute the static plot and cache the result.
+
+        Parameters
+        ----------
+        data
+            Ignored. Static plotters don't use data; they create plots purely
+            from their params. This parameter exists for interface compatibility
+            with dynamic plotters.
+        """
+        del data  # Unused - static plotters ignore data
+        element = self.create_static_plot()
+        self._set_cached_state(element)
+
 
 class RectanglesCoordinates(pydantic.BaseModel):
     """Wrapper for rectangle coordinate input to get full-width card."""
