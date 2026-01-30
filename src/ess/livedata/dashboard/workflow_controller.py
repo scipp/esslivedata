@@ -6,11 +6,11 @@ Workflow controller implementation backed by a config service.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import pydantic
+import structlog
 
 from ess.livedata.config.workflow_spec import (
     JobId,
@@ -26,6 +26,8 @@ from .workflow_configuration_adapter import WorkflowConfigurationAdapter
 
 if TYPE_CHECKING:
     from ess.livedata.config import Instrument
+
+logger = structlog.get_logger(__name__)
 
 
 class WorkflowController:
@@ -69,7 +71,6 @@ class WorkflowController:
         instrument_config
             Optional instrument configuration for source metadata lookup.
         """
-        self._logger = logging.getLogger(__name__)
         self._orchestrator = job_orchestrator
         self._instrument_config = instrument_config
 
@@ -107,7 +108,7 @@ class WorkflowController:
         ValueError
             If the workflow spec is not found.
         """
-        self._logger.info(
+        logger.info(
             'WorkflowController.start_workflow: workflow_id=%s, sources=%s, '
             'config=%s, aux_sources=%s',
             workflow_id,
@@ -119,7 +120,7 @@ class WorkflowController:
         spec = self.get_workflow_spec(workflow_id)
         if spec is None:
             msg = f'Workflow spec for {workflow_id} not found'
-            self._logger.error('%s, cannot start workflow', msg)
+            logger.error('%s, cannot start workflow', msg)
             raise ValueError(msg)
 
         # If no sources, nothing to start

@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-import logging
 import uuid
 
 import pytest
@@ -34,9 +33,7 @@ class TestJobManagerAdapter:
 
     @pytest.fixture
     def adapter(self, fake_job_manager):
-        return JobManagerAdapter(
-            job_manager=fake_job_manager, logger=logging.getLogger(__name__)
-        )
+        return JobManagerAdapter(job_manager=fake_job_manager)
 
     def test_job_command_success_with_message_id(self, adapter, fake_job_manager):
         """Test successful job command returns ACK when message_id is provided."""

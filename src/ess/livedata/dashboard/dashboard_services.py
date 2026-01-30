@@ -2,12 +2,12 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Dashboard service composition and setup."""
 
-import logging
 from collections.abc import Callable
 from contextlib import ExitStack
 from typing import Any
 
 import scipp as sc
+import structlog
 
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.grid_template import load_raw_grid_templates
@@ -24,9 +24,12 @@ from .orchestrator import Orchestrator
 from .plot_orchestrator import PlotOrchestrator
 from .plotting_controller import PlottingController
 from .roi_publisher import ROIPublisher
+from .service_registry import ServiceRegistry
 from .stream_manager import StreamManager
 from .transport import Transport
 from .workflow_controller import WorkflowController
+
+logger = structlog.get_logger(__name__)
 
 
 class DashboardServices:
@@ -46,15 +49,13 @@ class DashboardServices:
         Use dev mode with simplified topic structure
     exit_stack:
         ExitStack for managing resource cleanup (caller manages lifecycle)
-    logger:
-        Logger instance for logging
     pipe_factory:
         Factory function for creating pipes for StreamManager.
         For GUI: use holoviews.streams.Pipe
         For tests: use lambda data: None (no-op)
     transport:
         Transport instance for message sources and sinks.
-        For Kafka: DashboardKafkaTransport(instrument, dev, logger)
+        For Kafka: DashboardKafkaTransport(instrument, dev)
         For testing: NullTransport()
     config_manager:
         ConfigStoreManager instance for creating config stores.
@@ -69,7 +70,6 @@ class DashboardServices:
         instrument: str,
         dev: bool,
         exit_stack: ExitStack,
-        logger: logging.Logger,
         pipe_factory: Callable[[Any], Any],
         transport: Transport,
         config_manager: ConfigStoreManager,
@@ -77,7 +77,6 @@ class DashboardServices:
         self._instrument = instrument
         self._dev = dev
         self._exit_stack = exit_stack
-        self._logger = logger
         self._pipe_factory = pipe_factory
         self._transport = transport
         self._config_manager = config_manager
@@ -91,7 +90,7 @@ class DashboardServices:
         self._setup_workflow_management()
         self._setup_plot_orchestrator()
 
-        self._logger.info("DashboardServices initialized for %s", instrument)
+        logger.info("DashboardServices initialized for %s", instrument)
 
     def start(self) -> None:
         """Start background tasks (e.g., message polling)."""
@@ -106,9 +105,7 @@ class DashboardServices:
         # Set up transport and get resources
         transport_resources = self._exit_stack.enter_context(self._transport)
 
-        self.command_service = CommandService(
-            sink=transport_resources.command_sink, logger=self._logger
-        )
+        self.command_service = CommandService(sink=transport_resources.command_sink)
 
         # da00 of backend services converted to scipp.DataArray
         ScippDataService = DataService[ResultKey, sc.DataArray]
@@ -116,26 +113,24 @@ class DashboardServices:
         self.stream_manager = StreamManager(
             data_service=self.data_service, pipe_factory=self._pipe_factory
         )
-        self.job_service = JobService(logger=self._logger)
+        self.job_service = JobService()
+        self.service_registry = ServiceRegistry()
         self.job_controller = JobController(
             command_service=self.command_service, job_service=self.job_service
         )
 
         # Create ROI publisher for publishing ROI updates to Kafka
-        roi_publisher = ROIPublisher(
-            sink=transport_resources.roi_sink, logger=self._logger
-        )
+        roi_publisher = ROIPublisher(sink=transport_resources.roi_sink)
 
         self.plotting_controller = PlottingController(
             job_service=self.job_service,
             stream_manager=self.stream_manager,
-            logger=self._logger,
             roi_publisher=roi_publisher,
         )
 
         # Orchestrator will be wired to job_orchestrator after workflow setup
         self._transport_resources = transport_resources
-        self._logger.info("Data infrastructure setup complete")
+        logger.info("Data infrastructure setup complete")
 
     def _setup_plot_orchestrator(self) -> None:
         """Set up PlotOrchestrator for managing plot grids."""
@@ -151,7 +146,7 @@ class DashboardServices:
             raw_templates=raw_templates,
             instrument_config=self.instrument_config,
         )
-        self._logger.info("PlotOrchestrator setup complete")
+        logger.info("PlotOrchestrator setup complete")
 
     def _setup_workflow_management(self) -> None:
         """Initialize workflow controller and related components."""
@@ -178,5 +173,6 @@ class DashboardServices:
             self._transport_resources.message_source,
             data_service=self.data_service,
             job_service=self.job_service,
+            service_registry=self.service_registry,
             job_orchestrator=self.job_orchestrator,
         )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import traceback
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, StrEnum, auto
 from typing import Any
 
 import scipp as sc
@@ -98,6 +98,30 @@ class JobState(str, Enum):
     stopped = "stopped"
     error = "error"
     warning = "warning"
+
+
+class ServiceState(StrEnum):
+    """State of a backend service worker."""
+
+    starting = auto()  # Service initializing
+    running = auto()  # Normal operation
+    stopping = auto()  # Graceful shutdown in progress
+    stopped = auto()  # Graceful shutdown completed
+    error = auto()  # Service encountered fatal error
+
+
+@dataclass
+class ServiceStatus:
+    """Complete status information for a backend service worker."""
+
+    instrument: str
+    namespace: str
+    worker_id: str  # UUID as string
+    state: ServiceState
+    started_at: int  # Nanoseconds since epoch
+    active_job_count: int
+    messages_processed: int
+    error: str | None = None
 
 
 def _add_time_coords(

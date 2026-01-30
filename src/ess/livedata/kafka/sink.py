@@ -1,19 +1,35 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
-import logging
+import importlib.metadata
+import os
+import socket
+import time
 from dataclasses import replace
 from types import TracebackType
 from typing import Any, Generic, Protocol, TypeVar
 
 import confluent_kafka as kafka
 import scipp as sc
+import structlog
 from streaming_data_types import dataarray_da00, logdata_f144
 
 from ..config.streams import stream_kind_to_topic
 from ..config.workflow_spec import ResultKey
+from ..core.job import ServiceStatus
 from ..core.message import STATUS_STREAM_ID, Message, MessageSink, StreamKind
 from .scipp_da00_compat import scipp_to_da00
-from .x5f2_compat import job_status_to_x5f2
+from .x5f2_compat import job_status_to_x5f2, service_status_to_x5f2
+
+logger = structlog.get_logger(__name__)
+
+
+def _get_software_version() -> str:
+    """Get the software version for x5f2 messages."""
+    try:
+        return importlib.metadata.version('esslivedata')
+    except importlib.metadata.PackageNotFoundError:
+        return '0.0.0'
+
 
 T = TypeVar("T")
 
@@ -59,16 +75,23 @@ class KafkaSink(MessageSink[T]):
     def __init__(
         self,
         *,
-        logger: logging.Logger | None = None,
         instrument: str,
         kafka_config: dict[str, Any],
         serializer: Serializer[T] = serialize_dataarray_to_da00,
     ):
-        self._logger = logger or logging.getLogger(__name__)
         self._kafka_config = kafka_config
         self._producer: kafka.Producer | None = None
         self._serializer = serializer
         self._instrument = instrument
+        # Cache x5f2 metadata for status messages
+        self._software_version = _get_software_version()
+        self._host_name = socket.gethostname()
+        self._process_id = os.getpid()
+        # Metrics tracking
+        self._messages_published = 0
+        self._publish_errors = 0
+        self._last_metrics_time = time.monotonic()
+        self._metrics_interval = 30.0
 
     def publish_messages(self, messages: Message[T]) -> None:
         if self._producer is None:
@@ -76,11 +99,10 @@ class KafkaSink(MessageSink[T]):
 
         def delivery_callback(err, msg):
             if err is not None:
-                self._logger.error(
-                    "Failed to deliver message to %s: %s", msg.topic(), err
-                )
+                self._publish_errors += 1
+                logger.error("Failed to deliver message to %s: %s", msg.topic(), err)
 
-        self._logger.debug("Publishing %d messages", len(messages))
+        logger.debug("Publishing %d messages", len(messages))
         for msg in messages:
             try:
                 topic = stream_kind_to_topic(
@@ -95,12 +117,25 @@ class KafkaSink(MessageSink[T]):
                     value = msg.value.model_dump_json().encode('utf-8')
                 elif msg.stream == STATUS_STREAM_ID:
                     key_bytes = None
-                    value = job_status_to_x5f2(msg.value)
+                    if isinstance(msg.value, ServiceStatus):
+                        value = service_status_to_x5f2(
+                            msg.value,
+                            software_version=self._software_version,
+                            host_name=self._host_name,
+                            process_id=self._process_id,
+                        )
+                    else:
+                        value = job_status_to_x5f2(
+                            msg.value,
+                            software_version=self._software_version,
+                            host_name=self._host_name,
+                            process_id=self._process_id,
+                        )
                 else:
                     key_bytes = None
                     value = self._serializer(msg)
             except SerializationError as e:
-                self._logger.error("Failed to serialize message: %s", e)
+                logger.error("Failed to serialize message: %s", e)
             else:
                 try:
                     if key_bytes is None:
@@ -116,12 +151,29 @@ class KafkaSink(MessageSink[T]):
                         )
                     self._producer.poll(0)
                 except kafka.KafkaException as e:
-                    self._logger.error("Failed to publish message to %s: %s", topic, e)
+                    logger.error("Failed to publish message to %s: %s", topic, e)
 
         try:
             self._producer.flush(timeout=3)
         except kafka.KafkaException as e:
-            self._logger.error("Error flushing producer: %s", e)
+            logger.error("Error flushing producer: %s", e)
+
+        self._messages_published += len(messages)
+        self._maybe_log_metrics()
+
+    def _maybe_log_metrics(self) -> None:
+        """Log metrics if the interval has elapsed."""
+        now = time.monotonic()
+        if now - self._last_metrics_time >= self._metrics_interval:
+            logger.info(
+                "sink_metrics",
+                messages_published=self._messages_published,
+                errors=self._publish_errors,
+                interval_seconds=self._metrics_interval,
+            )
+            self._messages_published = 0
+            self._publish_errors = 0
+            self._last_metrics_time = now
 
     def close(self) -> None:
         """Close the Kafka producer and release resources."""
@@ -129,7 +181,7 @@ class KafkaSink(MessageSink[T]):
             try:
                 self._producer.flush(timeout=5)
             except kafka.KafkaException as e:
-                self._logger.error("Error flushing producer during close: %s", e)
+                logger.error("Error flushing producer during close: %s", e)
             # The confluent_kafka Producer cleans up when deleted
             del self._producer
 

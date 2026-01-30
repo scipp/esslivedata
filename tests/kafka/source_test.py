@@ -1,13 +1,17 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
-import logging
 import time
 from queue import Queue
 
 import pytest
 
 from ess.livedata.kafka.message_adapter import FakeKafkaMessage
-from ess.livedata.kafka.source import BackgroundMessageSource, KafkaMessageSource
+from ess.livedata.kafka.source import (
+    BackgroundMessageSource,
+    ConsumerHealthStatus,
+    KafkaMessageSource,
+    MultiConsumer,
+)
 
 
 class FakeKafkaConsumer:
@@ -88,7 +92,7 @@ def test_limit_number_of_consumed_messages() -> None:
 
 class TestBackgroundMessageSource:
     def test_context_manager_starts_and_stops_background_consumption(
-        self, caplog: pytest.LogCaptureFixture
+        self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Test that context manager properly starts and stops background
         consumption."""
@@ -101,16 +105,15 @@ class TestBackgroundMessageSource:
         time.sleep(0.02)
         assert consumer.consume_calls == initial_calls
 
-        with caplog.at_level(logging.INFO):
-            with BackgroundMessageSource(consumer, timeout=0.01) as source:
-                # During context: consumption should be happening
-                time.sleep(0.02)
-                assert consumer.consume_calls > initial_calls
+        with BackgroundMessageSource(consumer, timeout=0.01) as source:
+            # During context: consumption should be happening
+            time.sleep(0.02)
+            assert consumer.consume_calls > initial_calls
 
-                # Should get the messages
-                messages = source.get_messages()
-                assert len(messages) == 1
-                assert messages[0].value() == b'test'
+            # Should get the messages
+            messages = source.get_messages()
+            assert len(messages) == 1
+            assert messages[0].value() == b'test'
 
         # After context: consumption should stop
         calls_at_exit = consumer.consume_calls
@@ -118,12 +121,13 @@ class TestBackgroundMessageSource:
         # Should not have made more consume calls after exit
         assert consumer.consume_calls == calls_at_exit
 
-        # Verify logging messages
-        assert "Background message consumption started" in caplog.text
-        assert "Background message consumption stopped" in caplog.text
+        # Verify logging messages (structlog writes to stdout)
+        captured = capsys.readouterr()
+        assert "background_consumer_started" in captured.out
+        assert "background_consumer_stopped" in captured.out
 
     def test_manual_start_stop_controls_background_consumption(
-        self, caplog: pytest.LogCaptureFixture
+        self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Test manual start and stop of background consumption."""
         consumer = ControllableKafkaConsumer()
@@ -135,23 +139,23 @@ class TestBackgroundMessageSource:
         assert consumer.consume_calls == initial_calls
 
         # After start: consumption begins
-        with caplog.at_level(logging.INFO):
-            source.start()
-            time.sleep(0.02)
-            calls_after_start = consumer.consume_calls
-            assert calls_after_start > initial_calls
-            assert "Background message consumption started" in caplog.text
+        source.start()
+        time.sleep(0.02)
+        calls_after_start = consumer.consume_calls
+        assert calls_after_start > initial_calls
+        captured = capsys.readouterr()
+        assert "background_consumer_started" in captured.out
 
         # After stop: consumption ends
-        with caplog.at_level(logging.INFO):
-            source.stop()
-            time.sleep(0.02)
-            calls_after_stop = consumer.consume_calls
-            # Should not have made significantly more calls after stop
-            assert (
-                calls_after_stop <= calls_after_start + 1
-            )  # Allow for one more due to timing
-            assert "Background message consumption stopped" in caplog.text
+        source.stop()
+        time.sleep(0.02)
+        calls_after_stop = consumer.consume_calls
+        # Should not have made significantly more calls after stop
+        assert (
+            calls_after_stop <= calls_after_start + 1
+        )  # Allow for one more due to timing
+        captured = capsys.readouterr()
+        assert "background_consumer_stopped" in captured.out
 
     def test_multiple_starts_are_safe(self) -> None:
         """Test that calling start multiple times doesn't cause issues."""
@@ -237,7 +241,7 @@ class TestBackgroundMessageSource:
             messages = source.get_messages()
             assert len(messages) == 0
 
-    def test_queue_overflow_behavior(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_queue_overflow_behavior(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test behavior when message queue overflows."""
         consumer = ControllableKafkaConsumer()
 
@@ -248,29 +252,22 @@ class TestBackgroundMessageSource:
         consumer.add_messages(many_messages)
 
         # Use small queue size to force overflow
-        with caplog.at_level(logging.WARNING):
-            with BackgroundMessageSource(
-                consumer, max_queue_size=2, num_messages=3, timeout=0.001
-            ) as source:
-                time.sleep(0.01)  # Let it consume and potentially overflow
+        with BackgroundMessageSource(
+            consumer, max_queue_size=2, num_messages=3, timeout=0.001
+        ) as source:
+            time.sleep(0.01)  # Let it consume and potentially overflow
 
-                # Should still be able to get some messages
-                messages = source.get_messages()
-                # Should have gotten some messages, but maybe not all due to overflow
-                assert len(messages) > 0
+            # Should still be able to get some messages
+            messages = source.get_messages()
+            # Should have gotten some messages, but maybe not all due to overflow
+            assert len(messages) > 0
 
-        # Check for overflow warning messages
-        overflow_warnings = [
-            record
-            for record in caplog.records
-            if record.levelno == logging.WARNING
-            and "Message queue full, dropped" in record.message
-        ]
-        # Should have at least one overflow warning given the setup
-        assert len(overflow_warnings) > 0
+        # Check for overflow warning messages (structlog writes to stdout)
+        captured = capsys.readouterr()
+        assert "message_queue_full" in captured.out
 
     def test_error_handling_continues_consumption(
-        self, caplog: pytest.LogCaptureFixture
+        self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Test that errors in consume don't permanently stop consumption."""
         consumer = ControllableKafkaConsumer()
@@ -279,39 +276,29 @@ class TestBackgroundMessageSource:
         consumer.should_raise = True
         consumer.exception_to_raise = RuntimeError("Test error")
 
-        with caplog.at_level(logging.ERROR):
-            with BackgroundMessageSource(consumer, timeout=0.01) as source:
-                # Wait for error to occur
+        with BackgroundMessageSource(consumer, timeout=0.01) as source:
+            # Wait for at least one error to occur
+            time.sleep(0.05)
+
+            # Stop raising errors and add a message
+            consumer.should_raise = False
+            consumer.add_messages(
+                [FakeKafkaMessage(value=b'after_error', topic="topic1")]
+            )
+
+            # Wait for recovery - backoff after first error is 0.5s
+            messages = source.get_messages()
+            for _ in range(20):  # Wait up to 1 second
+                if messages:
+                    break
                 time.sleep(0.05)
-
-                # Stop raising errors and add a message
-                consumer.should_raise = False
-                consumer.add_messages(
-                    [FakeKafkaMessage(value=b'after_error', topic="topic1")]
-                )
-
-                # Wait for recovery and message consumption
-                time.sleep(0.01)
-
-                # Should eventually get the message despite earlier errors
                 messages = source.get_messages()
-                # May take multiple attempts due to timing
-                for _ in range(5):
-                    if messages:
-                        break
-                    time.sleep(0.01)
-                    messages = source.get_messages()
 
-                assert any(msg.value() == b'after_error' for msg in messages)
+            assert any(msg.value() == b'after_error' for msg in messages)
 
-        # Verify error was logged
-        error_logs = [
-            record
-            for record in caplog.records
-            if record.levelno == logging.ERROR
-            and "Error in background message consumption" in record.message
-        ]
-        assert len(error_logs) > 0
+        # Verify error was logged (structlog writes to stdout)
+        captured = capsys.readouterr()
+        assert "background_consumer_error" in captured.out
 
     def test_no_messages_available_returns_empty_list(self) -> None:
         """Test behavior when no messages are available."""
@@ -374,3 +361,362 @@ class TestBackgroundMessageSource:
             messages = source.get_messages()
             # Should get some messages
             assert len(messages) > 0
+
+    def test_circuit_breaker_stops_after_max_errors(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Test that circuit breaker stops consumption after max consecutive errors."""
+        consumer = ControllableKafkaConsumer()
+        consumer.should_raise = True
+        consumer.exception_to_raise = RuntimeError("Persistent error")
+
+        max_errors = 3
+        with BackgroundMessageSource(
+            consumer, timeout=0.01, max_consecutive_errors=max_errors
+        ) as source:
+            # Wait for circuit breaker to trigger
+            # With backoff, this takes: 0.5 + 1.0 + 1.5 = 3 seconds minimum
+            # Use shorter timeout since we're testing the circuit breaker
+            time.sleep(0.5)  # Initial errors happen quickly
+
+            # Check health status shows failure
+            status = source.get_health_status()
+            # Thread should have stopped due to circuit breaker
+            # Give it time to stop
+            for _ in range(50):
+                if not status.thread_alive:
+                    break
+                time.sleep(0.1)
+                status = source.get_health_status()
+
+            assert status.consecutive_errors >= max_errors
+            assert status.failure_reason is not None
+            assert "Circuit breaker" in status.failure_reason
+
+        # Verify circuit breaker was logged
+        captured = capsys.readouterr()
+        assert "consumer_circuit_breaker_triggered" in captured.out
+
+    def test_circuit_breaker_resets_on_success(self) -> None:
+        """Test that consecutive error count resets after successful consume."""
+        consumer = ControllableKafkaConsumer()
+
+        with BackgroundMessageSource(
+            consumer, timeout=0.01, max_consecutive_errors=5
+        ) as source:
+            # Cause some errors
+            consumer.should_raise = True
+            consumer.exception_to_raise = RuntimeError("Temporary error")
+            time.sleep(0.05)  # Let at least one error happen
+
+            # Now stop errors and add messages
+            consumer.should_raise = False
+            consumer.add_messages([FakeKafkaMessage(value=b'success', topic="topic1")])
+
+            # Wait for recovery - backoff after first error is 0.5s
+            for _ in range(20):  # Wait up to 1 second
+                status = source.get_health_status()
+                if status.total_messages_consumed > 0:
+                    break
+                time.sleep(0.05)
+
+            # Error count should have reset after successful consume
+            status = source.get_health_status()
+            assert status.consecutive_errors == 0
+            assert status.is_healthy
+            assert status.total_messages_consumed > 0
+
+    def test_circuit_breaker_disabled_when_max_errors_zero(self) -> None:
+        """Test that circuit breaker can be disabled by setting max_errors to 0."""
+        consumer = ControllableKafkaConsumer()
+        consumer.should_raise = True
+        consumer.exception_to_raise = RuntimeError("Error")
+
+        # Disable circuit breaker
+        with BackgroundMessageSource(
+            consumer, timeout=0.01, max_consecutive_errors=0
+        ) as source:
+            time.sleep(0.1)
+
+            # Thread should still be alive despite errors
+            status = source.get_health_status()
+            assert status.thread_alive
+            assert status.consecutive_errors > 0
+            # No failure reason because circuit breaker is disabled
+            assert status.failure_reason is None
+
+    def test_is_healthy_returns_true_when_not_started(self) -> None:
+        """Test that is_healthy returns True before starting."""
+        consumer = ControllableKafkaConsumer()
+        source = BackgroundMessageSource(consumer, timeout=0.01)
+
+        assert source.is_healthy()
+
+    def test_is_healthy_returns_true_during_normal_operation(self) -> None:
+        """Test that is_healthy returns True during normal consumption."""
+        consumer = ControllableKafkaConsumer()
+        consumer.add_messages([FakeKafkaMessage(value=b'test', topic="topic1")])
+
+        with BackgroundMessageSource(consumer, timeout=0.01) as source:
+            time.sleep(0.02)
+            assert source.is_healthy()
+
+    def test_is_healthy_returns_false_after_circuit_breaker(self) -> None:
+        """Test that is_healthy returns False after circuit breaker triggers."""
+        consumer = ControllableKafkaConsumer()
+        consumer.should_raise = True
+        consumer.exception_to_raise = RuntimeError("Error")
+
+        with BackgroundMessageSource(
+            consumer, timeout=0.01, max_consecutive_errors=2
+        ) as source:
+            # Wait for circuit breaker
+            time.sleep(0.5)
+
+            # Eventually should be unhealthy
+            for _ in range(20):
+                if not source.is_healthy():
+                    break
+                time.sleep(0.05)
+
+            assert not source.is_healthy()
+
+    def test_is_healthy_returns_false_after_health_timeout(self) -> None:
+        """Test that is_healthy returns False if no consume for too long."""
+        consumer = ControllableKafkaConsumer()
+
+        # Very short health timeout for testing
+        with BackgroundMessageSource(
+            consumer,
+            timeout=0.01,
+            health_timeout=0.1,
+            max_consecutive_errors=0,  # Disable circuit breaker
+        ) as source:
+            time.sleep(0.02)  # Let first consume happen
+            assert source.is_healthy()
+
+            # Now cause errors so consume stops succeeding
+            consumer.should_raise = True
+            consumer.exception_to_raise = RuntimeError("Error")
+
+            # Wait for health timeout
+            time.sleep(0.2)
+            assert not source.is_healthy()
+
+    def test_get_health_status_returns_complete_status(self) -> None:
+        """Test that get_health_status returns all expected fields."""
+        consumer = ControllableKafkaConsumer()
+        consumer.add_messages([FakeKafkaMessage(value=b'test', topic="topic1")])
+
+        with BackgroundMessageSource(consumer, timeout=0.01) as source:
+            time.sleep(0.02)
+
+            status = source.get_health_status()
+
+            assert isinstance(status, ConsumerHealthStatus)
+            assert status.is_healthy is True
+            assert status.thread_alive is True
+            assert status.seconds_since_last_consume is not None
+            assert status.seconds_since_last_consume < 1.0
+            assert status.consecutive_errors == 0
+            assert status.queue_depth >= 0
+            assert status.total_messages_consumed >= 0
+            assert status.total_batches_dropped >= 0
+            assert status.failure_reason is None
+
+    def test_get_health_status_tracks_totals(self) -> None:
+        """Test that health status tracks total messages and dropped batches."""
+        consumer = ControllableKafkaConsumer()
+
+        # Add many messages to force queue overflow
+        for i in range(30):
+            consumer.add_messages([FakeKafkaMessage(value=f'msg{i}', topic="topic1")])
+
+        with BackgroundMessageSource(
+            consumer, max_queue_size=2, num_messages=1, timeout=0.001
+        ) as source:
+            time.sleep(0.05)
+
+            status = source.get_health_status()
+            assert status.total_messages_consumed > 0
+            # With small queue size and many messages, some batches should be dropped
+            assert status.total_batches_dropped > 0
+
+    def test_get_consumer_lag_returns_none_for_simple_consumer(self) -> None:
+        """Test that get_consumer_lag returns None for consumers without lag support."""
+        consumer = ControllableKafkaConsumer()
+
+        with BackgroundMessageSource(consumer, timeout=0.01) as source:
+            # ControllableKafkaConsumer doesn't have assignment/get_watermark_offsets
+            lag = source.get_consumer_lag()
+            assert lag is None
+
+    def test_error_handling_includes_consecutive_error_count_in_logs(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Test that error logs include consecutive error count."""
+        consumer = ControllableKafkaConsumer()
+        consumer.should_raise = True
+        consumer.exception_to_raise = RuntimeError("Test error")
+
+        with BackgroundMessageSource(consumer, timeout=0.01, max_consecutive_errors=5):
+            time.sleep(0.1)
+            consumer.should_raise = False
+
+        captured = capsys.readouterr()
+        assert "consecutive_errors" in captured.out
+
+
+class FakeTopicPartition:
+    """Fake TopicPartition for testing lag support."""
+
+    def __init__(self, topic: str, partition: int, offset: int = -1):
+        self.topic = topic
+        self.partition = partition
+        self.offset = offset
+
+    def __eq__(self, other):
+        if not isinstance(other, FakeTopicPartition):
+            return False
+        return self.topic == other.topic and self.partition == other.partition
+
+    def __hash__(self):
+        return hash((self.topic, self.partition))
+
+
+class LagSupportingConsumer:
+    """A fake consumer that supports lag monitoring methods."""
+
+    def __init__(self, topic: str, partitions: list[int]):
+        self._topic = topic
+        self._partitions = partitions
+        self._positions: dict[tuple[str, int], int] = {}
+        self._watermarks: dict[tuple[str, int], tuple[int, int]] = {}
+
+        for p in partitions:
+            self._positions[(topic, p)] = 0
+            self._watermarks[(topic, p)] = (0, 100)
+
+    def set_position(self, partition: int, offset: int) -> None:
+        self._positions[(self._topic, partition)] = offset
+
+    def set_watermarks(self, partition: int, low: int, high: int) -> None:
+        self._watermarks[(self._topic, partition)] = (low, high)
+
+    def consume(self, num_messages: int, timeout: float) -> list:
+        return []
+
+    def assignment(self) -> list[FakeTopicPartition]:
+        return [FakeTopicPartition(self._topic, p) for p in self._partitions]
+
+    def get_watermark_offsets(
+        self, tp: FakeTopicPartition, timeout: float = 1.0
+    ) -> tuple[int, int]:
+        return self._watermarks[(tp.topic, tp.partition)]
+
+    def position(
+        self, partitions: list[FakeTopicPartition]
+    ) -> list[FakeTopicPartition]:
+        result = []
+        for tp in partitions:
+            offset = self._positions[(tp.topic, tp.partition)]
+            result.append(FakeTopicPartition(tp.topic, tp.partition, offset))
+        return result
+
+
+class TestMultiConsumer:
+    def test_assignment_aggregates_from_all_consumers(self) -> None:
+        consumer1 = LagSupportingConsumer("topic1", [0, 1])
+        consumer2 = LagSupportingConsumer("topic2", [0])
+
+        multi = MultiConsumer([consumer1, consumer2])
+        assignment = multi.assignment()
+
+        assert len(assignment) == 3
+        topics = {(tp.topic, tp.partition) for tp in assignment}
+        assert topics == {("topic1", 0), ("topic1", 1), ("topic2", 0)}
+
+    def test_get_watermark_offsets_delegates_to_owning_consumer(self) -> None:
+        consumer1 = LagSupportingConsumer("topic1", [0])
+        consumer1.set_watermarks(0, 10, 200)
+        consumer2 = LagSupportingConsumer("topic2", [0])
+        consumer2.set_watermarks(0, 5, 50)
+
+        multi = MultiConsumer([consumer1, consumer2])
+
+        tp1 = FakeTopicPartition("topic1", 0)
+        tp2 = FakeTopicPartition("topic2", 0)
+
+        assert multi.get_watermark_offsets(tp1) == (10, 200)
+        assert multi.get_watermark_offsets(tp2) == (5, 50)
+
+    def test_get_watermark_offsets_raises_for_unknown_partition(self) -> None:
+        consumer = LagSupportingConsumer("topic1", [0])
+        multi = MultiConsumer([consumer])
+
+        unknown_tp = FakeTopicPartition("unknown", 0)
+        with pytest.raises(ValueError, match="No consumer found"):
+            multi.get_watermark_offsets(unknown_tp)
+
+    def test_position_delegates_to_owning_consumers(self) -> None:
+        consumer1 = LagSupportingConsumer("topic1", [0])
+        consumer1.set_position(0, 42)
+        consumer2 = LagSupportingConsumer("topic2", [0])
+        consumer2.set_position(0, 99)
+
+        multi = MultiConsumer([consumer1, consumer2])
+
+        partitions = [FakeTopicPartition("topic1", 0), FakeTopicPartition("topic2", 0)]
+        positions = multi.position(partitions)
+
+        assert len(positions) == 2
+        assert positions[0].offset == 42
+        assert positions[1].offset == 99
+
+    def test_consume_aggregates_from_all_consumers(self) -> None:
+        consumer1 = ControllableKafkaConsumer()
+        consumer1.add_messages([FakeKafkaMessage(value=b'msg1', topic="topic1")])
+        consumer2 = ControllableKafkaConsumer()
+        consumer2.add_messages([FakeKafkaMessage(value=b'msg2', topic="topic2")])
+
+        multi = MultiConsumer([consumer1, consumer2])
+        messages = multi.consume(10, 0.01)
+
+        assert len(messages) == 2
+
+    def test_works_with_mixed_consumers(self) -> None:
+        """MultiConsumer works even if some consumers don't support lag methods."""
+        lag_consumer = LagSupportingConsumer("topic1", [0])
+        simple_consumer = ControllableKafkaConsumer()
+
+        multi = MultiConsumer([lag_consumer, simple_consumer])
+
+        # assignment should only include partitions from lag-supporting consumer
+        assignment = multi.assignment()
+        assert len(assignment) == 1
+        assert assignment[0].topic == "topic1"
+
+
+class TestBackgroundMessageSourceWithMultiConsumer:
+    def test_get_consumer_lag_works_through_multi_consumer(self) -> None:
+        """Test that get_consumer_lag works through MultiConsumer wrapper."""
+        consumer1 = LagSupportingConsumer("topic1", [0])
+        consumer1.set_position(0, 50)
+        consumer1.set_watermarks(0, 0, 100)
+
+        consumer2 = LagSupportingConsumer("topic2", [0])
+        consumer2.set_position(0, 25)
+        consumer2.set_watermarks(0, 0, 75)
+
+        multi = MultiConsumer([consumer1, consumer2])
+
+        with BackgroundMessageSource(multi, timeout=0.01) as source:
+            time.sleep(0.02)
+            lag = source.get_consumer_lag()
+
+            assert lag is not None
+            assert lag["total_lag"] == (100 - 50) + (75 - 25)  # 50 + 50 = 100
+            assert "topic1:0" in lag
+            assert lag["topic1:0"]["lag"] == 50
+            assert "topic2:0" in lag
+            assert lag["topic2:0"]["lag"] == 50

@@ -7,6 +7,8 @@ import yaml
 from jinja2 import Environment, Template
 from jinja2.meta import find_undeclared_variables
 
+from .environment import DEFAULT_ENV, ENV_VAR
+
 
 def get_template_variables(template_content: str) -> set[str]:
     """Extract variables from Jinja template using AST parser."""
@@ -33,7 +35,7 @@ def load_config(*, namespace: str, env: str | None = None) -> dict:
         Defaults to value of LIVEDATA_ENV environment variable. Set to an empty string
         if the config file is independent of an environment.
     """
-    env = env if env is not None else os.getenv('LIVEDATA_ENV', 'dev')
+    env = env if env is not None else os.getenv(ENV_VAR, DEFAULT_ENV)
     env = f'_{env}' if env else ''
     config_file = f'{namespace}{env}.yaml'
     template_file = f'{namespace}{env}.yaml.jinja'

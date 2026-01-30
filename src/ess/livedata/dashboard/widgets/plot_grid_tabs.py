@@ -88,6 +88,8 @@ class PlotGridTabs:
         Widget for displaying job status information.
     workflow_status_widget
         Widget for displaying workflow status and controls.
+    backend_status_widget
+        Optional widget for displaying backend worker status.
     """
 
     def __init__(
@@ -97,6 +99,7 @@ class PlotGridTabs:
         plotting_controller,
         job_status_widget,
         workflow_status_widget,
+        backend_status_widget=None,
     ) -> None:
         self._orchestrator = plot_orchestrator
         self._workflow_registry = dict(workflow_registry)
@@ -104,6 +107,14 @@ class PlotGridTabs:
 
         # Track grid widgets (insertion order determines tab position)
         self._grid_widgets: dict[GridId, PlotGrid] = {}
+
+        # Determine number of static tabs for stylesheet
+        static_tab_count = 4 if backend_status_widget else 3
+
+        # Build nth-child selectors for static tabs
+        static_tab_selectors = ',\n                '.join(
+            f'.bk-tab:nth-child({i})' for i in range(1, static_tab_count + 1)
+        )
 
         # Main tabs widget.
         # IMPORTANT: dynamic=True is critical for performance. Without it, Panel
@@ -116,20 +127,18 @@ class PlotGridTabs:
             sizing_mode='stretch_both',
             dynamic=True,
             stylesheets=[
-                """
-                .bk-tab:nth-child(1),
-                .bk-tab:nth-child(2),
-                .bk-tab:nth-child(3) {
+                f"""
+                {static_tab_selectors} {{
                     font-weight: bold;
-                }
-                .bk-tab {
+                }}
+                .bk-tab {{
                     border-bottom: 1px solid #2c5aa0 !important;
-                }
-                .bk-tab.bk-active {
+                }}
+                .bk-tab.bk-active {{
                     background-color: #e8f4f8 !important;
                     border: 1px solid #2c5aa0 !important;
                     border-bottom: none !important;
-                }
+                }}
                 """
             ],
         )
@@ -169,7 +178,11 @@ class PlotGridTabs:
         # Add Workflows tab (always second)
         self._tabs.append(('Workflows', workflow_status_widget.panel()))
 
-        # Add Manage tab (always third)
+        # Add Backend Status tab (third, if widget provided)
+        if backend_status_widget is not None:
+            self._tabs.append(('Backend Status', backend_status_widget.panel()))
+
+        # Add Manage tab (third or fourth depending on backend_status_widget)
         self._grid_manager = PlotGridManager(
             orchestrator=plot_orchestrator,
             workflow_registry=workflow_registry,

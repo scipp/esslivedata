@@ -21,7 +21,7 @@ from ess.livedata.core.message import (
     StreamId,
     StreamKind,
 )
-from ess.livedata.handlers.accumulators import DetectorEvents
+from ess.livedata.handlers.to_nxevent_data import DetectorEvents
 from ess.livedata.kafka.message_adapter import (
     Ad00ToScippAdapter,
     AdaptingMessageSource,
@@ -477,18 +477,8 @@ class TestAdaptingMessageSource:
         assert messages[0].timestamp == 1234
 
     def test_unknown_schema_is_logged_and_skipped(self) -> None:
-        class FakeLogger:
-            def __init__(self):
-                self.warning_calls = []
-                self.exception_calls = []
+        from structlog.testing import capture_logs
 
-            def warning(self, message, *args, **kwargs):
-                self.warning_calls.append((message, args, kwargs))
-
-            def exception(self, message, *args, **kwargs):
-                self.exception_calls.append((message, args, kwargs))
-
-        fake_logger = FakeLogger()
         unknown_schema_message = FakeKafkaMessage(value=b"xxxx????", topic="unknown")
 
         class TestMessageSource(MessageSource[KafkaMessage]):
@@ -498,29 +488,19 @@ class TestAdaptingMessageSource:
         adapting_source = AdaptingMessageSource(
             source=TestMessageSource(),
             adapter=KafkaToDa00Adapter(stream_kind=StreamKind.DETECTOR_EVENTS),
-            logger=fake_logger,
             raise_on_error=False,
         )
 
-        messages = adapting_source.get_messages()
+        with capture_logs() as captured:
+            messages = adapting_source.get_messages()
 
         assert len(messages) == 0
-        assert len(fake_logger.warning_calls) == 1
-        assert "unknown schema" in fake_logger.warning_calls[0][0].lower()
+        warning_logs = [log for log in captured if log['log_level'] == 'warning']
+        assert len(warning_logs) == 1
+        assert "unknown schema" in warning_logs[0]['event'].lower()
 
     def test_exception_during_adaptation_is_logged_and_raised(self) -> None:
-        class FakeLogger:
-            def __init__(self):
-                self.warning_calls = []
-                self.exception_calls = []
-
-            def warning(self, message, *args, **kwargs):
-                self.warning_calls.append((message, args, kwargs))
-
-            def exception(self, message, *args, **kwargs):
-                self.exception_calls.append((message, args, kwargs))
-
-        fake_logger = FakeLogger()
+        from structlog.testing import capture_logs
 
         class TestMessageSource(MessageSource[KafkaMessage]):
             def get_messages(self):
@@ -533,15 +513,16 @@ class TestAdaptingMessageSource:
         adapting_source = AdaptingMessageSource(
             source=TestMessageSource(),
             adapter=TestAdapter(),
-            logger=fake_logger,
             raise_on_error=True,  # Explicitly set to raise errors
         )
 
-        with pytest.raises(ValueError, match="Test error"):
-            adapting_source.get_messages()
+        with capture_logs() as captured:
+            with pytest.raises(ValueError, match="Test error"):
+                adapting_source.get_messages()
 
-        assert len(fake_logger.exception_calls) == 1
-        assert "error adapting message" in fake_logger.exception_calls[0][0].lower()
+        exception_logs = [log for log in captured if log['log_level'] == 'error']
+        assert len(exception_logs) == 1
+        assert "error adapting message" in exception_logs[0]['event'].lower()
 
 
 def fake_message_with_value(message: KafkaMessage, value: str) -> Message[str]:
@@ -586,29 +567,10 @@ class TestResponsesAdapter:
 class TestErrorHandling:
     """Tests for handling malformed or corrupt Kafka messages."""
 
-    def setup_method(self):
-        self.fake_logger = self._create_fake_logger()
-
-    def _create_fake_logger(self):
-        class FakeLogger:
-            def __init__(self):
-                self.warning_calls = []
-                self.exception_calls = []
-                self.info_calls = []
-
-            def warning(self, message, *args, **kwargs):
-                self.warning_calls.append((message, args, kwargs))
-
-            def exception(self, message, *args, **kwargs):
-                self.exception_calls.append((message, args, kwargs))
-
-            def info(self, message, *args, **kwargs):
-                self.info_calls.append((message, args, kwargs))
-
-        return FakeLogger()
-
     def test_corrupt_ev44_message(self, monkeypatch):
         """Test handling of corrupt ev44 message."""
+        from structlog.testing import capture_logs
+
         # Create a message that has the ev44 schema identifier but corrupt content
         corrupt_ev44 = bytearray(make_serialized_ev44())
         # Corrupt the data after the schema identifier
@@ -629,21 +591,24 @@ class TestErrorHandling:
         source = AdaptingMessageSource(
             source=CorruptEv44Source(),
             adapter=KafkaToEv44Adapter(stream_kind=StreamKind.MONITOR_EVENTS),
-            logger=self.fake_logger,
             raise_on_error=True,  # Explicitly set to raise errors
         )
 
         # The exception should be caught and logged, then re-raised
-        with pytest.raises(ValueError, match="Failed to deserialize corrupt ev44 data"):
-            source.get_messages()
+        with capture_logs() as captured:
+            with pytest.raises(
+                ValueError, match="Failed to deserialize corrupt ev44 data"
+            ):
+                source.get_messages()
 
-        assert len(self.fake_logger.exception_calls) == 1
-        assert (
-            "error adapting message" in self.fake_logger.exception_calls[0][0].lower()
-        )
+        exception_logs = [log for log in captured if log['log_level'] == 'error']
+        assert len(exception_logs) == 1
+        assert "error adapting message" in exception_logs[0]['event'].lower()
 
     def test_corrupt_da00_message(self, monkeypatch):
         """Test handling of corrupt da00 message."""
+        from structlog.testing import capture_logs
+
         corrupt_da00 = bytearray(make_serialized_da00())
         # Corrupt the data after the schema identifier
         if len(corrupt_da00) > 12:
@@ -663,20 +628,23 @@ class TestErrorHandling:
         source = AdaptingMessageSource(
             source=CorruptDa00Source(),
             adapter=KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS),
-            logger=self.fake_logger,
             raise_on_error=True,  # Explicitly set to raise errors
         )
 
-        with pytest.raises(ValueError, match="Failed to deserialize corrupt da00 data"):
-            source.get_messages()
+        with capture_logs() as captured:
+            with pytest.raises(
+                ValueError, match="Failed to deserialize corrupt da00 data"
+            ):
+                source.get_messages()
 
-        assert len(self.fake_logger.exception_calls) == 1
-        assert (
-            "error adapting message" in self.fake_logger.exception_calls[0][0].lower()
-        )
+        exception_logs = [log for log in captured if log['log_level'] == 'error']
+        assert len(exception_logs) == 1
+        assert "error adapting message" in exception_logs[0]['event'].lower()
 
     def test_corrupt_f144_message(self, monkeypatch):
         """Test handling of corrupt f144 message."""
+        from structlog.testing import capture_logs
+
         corrupt_f144 = bytearray(make_serialized_f144())
         # Corrupt the data after the schema identifier
         if len(corrupt_f144) > 12:
@@ -696,20 +664,22 @@ class TestErrorHandling:
         source = AdaptingMessageSource(
             source=CorruptF144Source(),
             adapter=KafkaToF144Adapter(),
-            logger=self.fake_logger,
             raise_on_error=True,  # Explicitly set to raise errors
         )
 
-        with pytest.raises(ValueError, match="Failed to deserialize corrupt f144 data"):
-            source.get_messages()
+        with capture_logs() as captured:
+            with pytest.raises(
+                ValueError, match="Failed to deserialize corrupt f144 data"
+            ):
+                source.get_messages()
 
-        assert len(self.fake_logger.exception_calls) == 1
-        assert (
-            "error adapting message" in self.fake_logger.exception_calls[0][0].lower()
-        )
+        exception_logs = [log for log in captured if log['log_level'] == 'error']
+        assert len(exception_logs) == 1
+        assert "error adapting message" in exception_logs[0]['event'].lower()
 
     def test_mixed_good_and_corrupt_messages(self, monkeypatch):
         """Test handling a mix of good and corrupt messages."""
+        from structlog.testing import capture_logs
 
         class MixedMessagesSource(MessageSource[KafkaMessage]):
             def get_messages(self):
@@ -748,23 +718,24 @@ class TestErrorHandling:
         source = AdaptingMessageSource(
             source=MixedMessagesSource(),
             adapter=router,
-            logger=self.fake_logger,
             raise_on_error=False,
         )
 
-        source.get_messages()
+        with capture_logs() as captured:
+            source.get_messages()
 
         # Unknown schema is caught and logged as a warning
-        assert len(self.fake_logger.warning_calls) == 1
-        assert "unknown schema" in self.fake_logger.warning_calls[0][0].lower()
+        warning_logs = [log for log in captured if log['log_level'] == 'warning']
+        assert len(warning_logs) == 1
+        assert "unknown schema" in warning_logs[0]['event'].lower()
         # The ValueError from the mocked deserializer is logged as an exception
-        assert len(self.fake_logger.exception_calls) == 1
-        assert (
-            "error adapting message" in self.fake_logger.exception_calls[0][0].lower()
-        )
+        exception_logs = [log for log in captured if log['log_level'] == 'error']
+        assert len(exception_logs) == 1
+        assert "error adapting message" in exception_logs[0]['event'].lower()
 
     def test_non_fatal_error_handling_option(self):
         """Test an option to make adapter errors non-fatal."""
+        from structlog.testing import capture_logs
 
         class FailingAdapter:
             def adapt(self, message):
@@ -778,7 +749,6 @@ class TestErrorHandling:
         source_raising = AdaptingMessageSource(
             source=SimpleSource(),
             adapter=FailingAdapter(),
-            logger=self.fake_logger,
             raise_on_error=True,
         )
 
@@ -787,11 +757,14 @@ class TestErrorHandling:
 
         # Test with default behavior (raise_on_error=False)
         source_non_raising = AdaptingMessageSource(
-            source=SimpleSource(), adapter=FailingAdapter(), logger=self.fake_logger
+            source=SimpleSource(), adapter=FailingAdapter()
         )
 
         # Should not raise an exception, but should log it
-        messages = source_non_raising.get_messages()
+        with capture_logs() as captured:
+            messages = source_non_raising.get_messages()
+
         assert len(messages) == 0  # No messages should be returned
-        assert len(self.fake_logger.exception_calls) >= 1
-        assert "Simulated adapter failure" in str(self.fake_logger.exception_calls[-1])
+        exception_logs = [log for log in captured if log['log_level'] == 'error']
+        assert len(exception_logs) >= 1
+        assert "Simulated adapter failure" in str(exception_logs[-1])

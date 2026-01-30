@@ -13,7 +13,11 @@ import scipp as sc
 from ess.livedata import parameter_models
 from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
-from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
+from ess.livedata.handlers.detector_view_specs import (
+    DetectorROIAuxSources,
+    DetectorViewOutputs,
+    DetectorViewParams,
+)
 
 from .streams import detector_names, monitor_names
 from .views import get_mantle_front_layer, get_strip_view, get_wire_view
@@ -71,6 +75,7 @@ instrument.add_logical_view(
     ],
     transform=get_wire_view,
     roi_support=False,
+    reduction_dim='strip',
 )
 instrument.add_logical_view(
     name='strip_view',
@@ -80,6 +85,7 @@ instrument.add_logical_view(
     transform=get_strip_view,
     output_ndim=1,
     roi_support=False,
+    reduction_dim='other',
 )
 
 # Mapping of detector names to their projection types
@@ -90,12 +96,6 @@ _projections: dict[str, str] = {
     'high_resolution_detector': 'xy_plane',
     'sans_detector': 'xy_plane',
 }
-
-# Register unified detector projection spec
-projection_handle = register_detector_view_spec(
-    instrument=instrument,
-    projection=_projections,
-)
 
 
 # Pydantic models for DREAM workflows
@@ -138,6 +138,35 @@ class InstrumentConfiguration(pydantic.BaseModel):
                 ],
             )
         return self
+
+
+class DreamDetectorViewParams(DetectorViewParams):
+    """DREAM-specific detector view parameters with chopper settings."""
+
+    instrument_configuration: InstrumentConfiguration = pydantic.Field(
+        title="Instrument Configuration",
+        description="Chopper configuration for TOF mode lookup table selection.",
+        default_factory=InstrumentConfiguration,
+    )
+
+
+# Register detector projection spec with DreamDetectorViewParams for TOF mode.
+# Replaces both the legacy DetectorProjection and the Sciline detector view
+# registrations.
+projection_handle = instrument.register_spec(
+    namespace='detector_data',
+    name='detector_projection',
+    version=1,
+    title='Detector Projection',
+    description=(
+        'Projection of detector banks onto 2D planes. '
+        'Uses the appropriate projection for each detector.'
+    ),
+    source_names=list(_projections.keys()),
+    aux_sources=DetectorROIAuxSources,
+    params=DreamDetectorViewParams,
+    outputs=DetectorViewOutputs,
+)
 
 
 class DreamAuxSources(AuxSourcesBase):

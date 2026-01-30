@@ -7,12 +7,12 @@ ess-streaming-data-types
 jinja2
 pydantic>=2
 pooch
+structlog>=24.0.0
 essdiffraction>=25.11.1
 essreflectometry>=25.12.0
 esssans
 essspectroscopy>=25.11.1
 holoviews
-markdown-it-py==3.0.0
 panel
 param
 pytest

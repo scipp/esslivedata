@@ -151,6 +151,30 @@ class TOAEdges(EdgesModel):
         return make_edges(model=self, dim='time_of_arrival', unit=self.unit.value)
 
 
+class TOFRange(RangeModel):
+    """Time of flight range filter settings."""
+
+    enabled: bool = Field(default=False, description="Enable the range filter.")
+    unit: TimeUnit = Field(
+        default=TimeUnit.MICROSECOND, description="Unit of the interval bounds."
+    )
+
+    @property
+    def range(self) -> tuple[sc.Variable, sc.Variable]:
+        """Time-of-flight range as a tuple of scipp scalars."""
+        return (self.get_start(), self.get_stop())
+
+
+class TOFEdges(EdgesModel):
+    """Model for time of flight edges."""
+
+    unit: TimeUnit = Field(default=TimeUnit.MS, description="Unit of the edges.")
+
+    def get_edges(self) -> sc.Variable:
+        """Get the edges as a scipp variable."""
+        return make_edges(model=self, dim='tof', unit=self.unit.value)
+
+
 class WavelengthEdges(EdgesModel):
     """Model for wavelength edges."""
 
@@ -161,6 +185,20 @@ class WavelengthEdges(EdgesModel):
     def get_edges(self) -> sc.Variable:
         """Get the edges as a scipp variable."""
         return make_edges(model=self, dim='wavelength', unit=self.unit.value)
+
+
+class WavelengthRangeFilter(RangeModel):
+    """Wavelength range filter settings for detector view."""
+
+    enabled: bool = Field(default=False, description="Enable the range filter.")
+    unit: WavelengthUnit = Field(
+        default=WavelengthUnit.ANGSTROM, description="Unit of the range bounds."
+    )
+
+    @property
+    def range(self) -> tuple[sc.Variable, sc.Variable]:
+        """Wavelength range as a tuple of scipp scalars."""
+        return (self.get_start(), self.get_stop())
 
 
 class DspacingEdges(EdgesModel):

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..config.acknowledgement import CommandAcknowledgement
 from ..config.workflow_spec import ResultKey
+from ..core.job import JobStatus, ServiceStatus
 from ..core.message import (
     RESPONSES_STREAM_ID,
     STATUS_STREAM_ID,
@@ -15,6 +16,7 @@ from ..core.message import (
 )
 from .data_service import DataService
 from .job_service import JobService
+from .service_registry import ServiceRegistry
 
 if TYPE_CHECKING:
     from .job_orchestrator import JobOrchestrator
@@ -35,11 +37,13 @@ class Orchestrator:
         message_source: MessageSource,
         data_service: DataService,
         job_service: JobService,
+        service_registry: ServiceRegistry,
         job_orchestrator: JobOrchestrator | None = None,
     ) -> None:
         self._message_source = message_source
         self._data_service = data_service
         self._job_service = job_service
+        self._service_registry = service_registry
         self._job_orchestrator = job_orchestrator
         self._logger = logging.getLogger(__name__)
 
@@ -74,7 +78,12 @@ class Orchestrator:
             The data to be forwarded.
         """
         if stream_id == STATUS_STREAM_ID:
-            self._job_service.status_updated(value)
+            if isinstance(value, ServiceStatus):
+                self._service_registry.status_updated(value)
+            elif isinstance(value, JobStatus):
+                self._job_service.status_updated(value)
+            else:
+                self._logger.warning("Unknown status type: %s", type(value))
         elif stream_id == RESPONSES_STREAM_ID:
             self._process_response(value)
         else:

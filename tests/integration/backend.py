@@ -79,9 +79,7 @@ class DashboardBackend:
         if transport == 'none':
             transport_impl = NullTransport()
         elif transport == 'kafka':
-            transport_impl = DashboardKafkaTransport(
-                instrument=instrument, dev=dev, logger=self._logger
-            )
+            transport_impl = DashboardKafkaTransport(instrument=instrument, dev=dev)
         else:
             raise ValueError(f"Unknown transport type: {transport}")
 
@@ -90,7 +88,6 @@ class DashboardBackend:
             instrument=instrument,
             dev=dev,
             exit_stack=self._exit_stack,
-            logger=self._logger,
             pipe_factory=lambda data: None,  # No-op for tests
             transport=transport_impl,
             config_manager=self._config_manager,
