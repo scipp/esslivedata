@@ -91,7 +91,6 @@ class Instrument:
     _nexus_file: str | None = None
     active_namespace: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
-    _monitor_workflow_handle: SpecHandle | None = field(default=None, init=False)
     _timeseries_workflow_handle: SpecHandle | None = field(default=None, init=False)
     _logical_views: list[LogicalViewConfig] = field(default_factory=list, init=False)
     _logical_view_handles: dict[str, SpecHandle] = field(
@@ -100,15 +99,8 @@ class Instrument:
 
     def __post_init__(self) -> None:
         """Auto-register standard workflow specs based on instrument metadata."""
-        from ess.livedata.handlers.monitor_workflow_specs import (
-            register_monitor_workflow_specs,
-        )
         from ess.livedata.handlers.timeseries_workflow_specs import (
             register_timeseries_workflow_specs,
-        )
-
-        self._monitor_workflow_handle = register_monitor_workflow_specs(
-            instrument=self, source_names=self.monitors
         )
 
         timeseries_names = list(self.f144_attribute_registry.keys())
@@ -378,22 +370,14 @@ class Instrument:
 
         This method:
         1. Imports the instrument package (lightweight - just specs)
-        2. Auto-attaches standard factories if specs were registered
-        3. Calls instrument-specific setup_factories(self)
-        4. Auto-loads detector_numbers from nexus for unconfigured detectors
+        2. Auto-attaches timeseries factory if specs were registered
+        3. Auto-attaches logical view factories if views were registered
+        4. Calls instrument-specific setup_factories(self)
+        5. Auto-loads detector_numbers from nexus for unconfigured detectors
         """
         import importlib
 
         module = importlib.import_module(f'ess.livedata.config.instruments.{self.name}')
-
-        if self._monitor_workflow_handle is not None:
-            from ess.livedata.handlers.monitor_workflow_specs import (
-                create_monitor_workflow_factory,
-            )
-
-            self._monitor_workflow_handle.attach_factory()(
-                create_monitor_workflow_factory
-            )
 
         if self._timeseries_workflow_handle is not None:
             from ess.livedata.handlers.timeseries_handler import (

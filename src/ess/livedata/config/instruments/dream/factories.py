@@ -11,7 +11,7 @@ import scipp as sc
 from ess.livedata.config import Instrument
 
 from . import specs
-from .specs import PowderWorkflowParams
+from .specs import DreamMonitorDataParams, PowderWorkflowParams
 
 
 def setup_factories(instrument: Instrument) -> None:
@@ -92,6 +92,45 @@ def setup_factories(instrument: Instrument) -> None:
 
         return _detector_view_factory.make_workflow(
             source_name, params, tof_lookup_table_filename=tof_lookup_table_filename
+        )
+
+    # Monitor workflow factory with DREAM-specific TOF configuration
+    from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
+
+    @specs.monitor_handle.attach_factory()
+    def _monitor_workflow_factory(source_name: str, params: DreamMonitorDataParams):
+        """Factory for DREAM monitor workflow with TOF lookup table support."""
+        from ess.dream.workflows import (
+            _get_lookup_table_filename_from_configuration,
+        )
+
+        mode = params.coordinate_mode.mode
+        if mode == 'wavelength':
+            raise NotImplementedError(
+                "wavelength mode not yet implemented for monitors"
+            )
+
+        tof_lookup_table_filename = None
+        geometry_filename = None
+
+        if mode == 'tof':
+            # Resolve lookup table filename from DREAM instrument configuration
+            config = getattr(
+                dream.InstrumentConfiguration,
+                params.instrument_configuration.value.value,
+            )
+            tof_lookup_table_filename = _get_lookup_table_filename_from_configuration(
+                config
+            )
+            geometry_filename = get_nexus_geometry_filename('dream-no-shape')
+
+        return create_monitor_workflow(
+            source_name=source_name,
+            edges=params.get_active_edges(),
+            range_filter=params.get_active_range(),
+            coordinate_mode=mode,
+            tof_lookup_table_filename=tof_lookup_table_filename,
+            geometry_filename=geometry_filename,
         )
 
     # Powder reduction workflow setup

@@ -10,8 +10,70 @@ import scipp as sc
 from .. import parameter_models
 from ..config.instrument import Instrument
 from ..config.workflow_spec import WorkflowOutputsBase
-from ..handlers.detector_view_specs import CoordinateModeSettings
+from ..handlers.detector_view_specs import CoordinateMode, CoordinateModeSettings
 from ..handlers.workflow_factory import SpecHandle
+
+
+class TOAOnlyCoordinateModeSettings(pydantic.BaseModel):
+    """
+    Coordinate mode settings restricted to TOA only.
+
+    Use this for instruments that don't have TOF lookup tables available.
+    """
+
+    mode: CoordinateMode = pydantic.Field(
+        default='toa',
+        description="Coordinate system for event data. Only TOA (time-of-arrival) "
+        "is available for this instrument.",
+    )
+
+    @pydantic.field_validator('mode')
+    @classmethod
+    def _validate_toa_only(cls, v: CoordinateMode) -> CoordinateMode:
+        if v != 'toa':
+            raise ValueError(
+                f"Only 'toa' mode is supported for this instrument, got '{v}'. "
+                "TOF mode requires instrument-specific lookup tables."
+            )
+        return v
+
+
+class TOAOnlyMonitorDataParams(pydantic.BaseModel):
+    """
+    Monitor data parameters restricted to TOA mode only.
+
+    Use this for instruments that don't have TOF lookup tables available.
+    """
+
+    coordinate_mode: TOAOnlyCoordinateModeSettings = pydantic.Field(
+        title="Coordinate Mode",
+        description="Select coordinate system for monitor data. "
+        "Only TOA mode is available for this instrument.",
+        default_factory=TOAOnlyCoordinateModeSettings,
+    )
+    toa_edges: parameter_models.TOAEdges = pydantic.Field(
+        title="Time of Arrival Edges",
+        description="Time of arrival edges for histogramming.",
+        default=parameter_models.TOAEdges(
+            start=0.0,
+            stop=1000.0 / 14,
+            num_bins=100,
+            unit=parameter_models.TimeUnit.MS,
+        ),
+    )
+    toa_range: parameter_models.TOARange = pydantic.Field(
+        title="Time of Arrival Range",
+        description="Time of arrival range filter.",
+        default=parameter_models.TOARange(),
+    )
+
+    def get_active_edges(self) -> sc.Variable:
+        """Return the TOA edges."""
+        return self.toa_edges.get_edges()
+
+    def get_active_range(self) -> tuple[sc.Variable, sc.Variable] | None:
+        """Return the TOA range if enabled."""
+        return self.toa_range.range_ns if self.toa_range.enabled else None
 
 
 class MonitorDataParams(pydantic.BaseModel):
@@ -137,7 +199,9 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
 
 
 def register_monitor_workflow_specs(
-    instrument: Instrument, source_names: list[str]
+    instrument: Instrument,
+    source_names: list[str],
+    params: type[MonitorDataParams] = MonitorDataParams,
 ) -> SpecHandle | None:
     """
     Register monitor workflow specs (lightweight, no heavy dependencies).
@@ -149,6 +213,10 @@ def register_monitor_workflow_specs(
     source_names
         List of monitor names (source names) for which to register the workflow.
         If empty, returns None without registering.
+    params
+        Parameter model class for the workflow. Defaults to MonitorDataParams.
+        Instruments can provide a subclass with additional fields (e.g., for
+        instrument-specific configuration like chopper mode selection).
 
     Returns
     -------
@@ -165,7 +233,7 @@ def register_monitor_workflow_specs(
         description="Histogrammed and time-integrated beam monitor data. The monitor "
         "is histogrammed or rebinned into specified time-of-arrival (TOA) bins.",
         source_names=source_names,
-        params=MonitorDataParams,
+        params=params,
         outputs=MonitorHistogramOutputs,
     )
 

@@ -18,9 +18,67 @@ from ess.livedata.handlers.detector_view_specs import (
     DetectorViewOutputs,
     DetectorViewParams,
 )
+from ess.livedata.handlers.monitor_workflow_specs import (
+    MonitorDataParams,
+    register_monitor_workflow_specs,
+)
 
 from .streams import detector_names, monitor_names
 from .views import get_mantle_front_layer, get_strip_view, get_wire_view
+
+
+# Pydantic models for DREAM instrument configuration
+# (defined early for use in Instrument)
+class InstrumentConfigurationEnum(StrEnum):
+    """
+    Chopper configuration options for DREAM.
+
+    Mirrors ess.dream.InstrumentConfiguration enum for UI generation.
+    """
+
+    high_flux_BC215 = 'high_flux_BC215'
+    high_flux_BC240 = 'high_flux_BC240'
+    high_resolution = 'high_resolution'
+
+
+class InstrumentConfiguration(pydantic.BaseModel):
+    """
+    Instrument configuration for DREAM.
+    """
+
+    value: InstrumentConfigurationEnum = pydantic.Field(
+        default=InstrumentConfigurationEnum.high_flux_BC240,
+        description='Chopper settings determining TOA to TOF conversion.',
+    )
+
+    @pydantic.model_validator(mode="after")
+    def check_high_resolution_not_implemented(self):
+        if self.value == InstrumentConfigurationEnum.high_resolution:
+            raise pydantic.ValidationError.from_exception_data(
+                "ValidationError",
+                [
+                    {
+                        "type": "value_error",
+                        "loc": ("value",),
+                        "input": self.value,
+                        "ctx": {
+                            "error": "The 'high_resolution' setting is not available."
+                        },
+                    }
+                ],
+            )
+        return self
+
+
+class DreamMonitorDataParams(MonitorDataParams):
+    """DREAM-specific monitor parameters with chopper settings."""
+
+    instrument_configuration: InstrumentConfiguration = pydantic.Field(
+        title="Instrument Configuration",
+        description="Chopper configuration for TOF mode lookup table selection.",
+        default_factory=InstrumentConfiguration,
+    )
+
 
 # Create instrument
 instrument = Instrument(
@@ -55,6 +113,11 @@ instrument = Instrument(
 
 # Register instrument
 instrument_registry.register(instrument)
+
+# Register monitor workflow spec with DREAM-specific params for TOF mode support
+monitor_handle = register_monitor_workflow_specs(
+    instrument, monitor_names, params=DreamMonitorDataParams
+)
 
 # Register logical detector views
 instrument.add_logical_view(
@@ -96,48 +159,6 @@ _projections: dict[str, str] = {
     'high_resolution_detector': 'xy_plane',
     'sans_detector': 'xy_plane',
 }
-
-
-# Pydantic models for DREAM workflows
-class InstrumentConfigurationEnum(StrEnum):
-    """
-    Chopper configuration options for DREAM.
-
-    Mirrors ess.dream.InstrumentConfiguration enum for UI generation.
-    """
-
-    high_flux_BC215 = 'high_flux_BC215'
-    high_flux_BC240 = 'high_flux_BC240'
-    high_resolution = 'high_resolution'
-
-
-class InstrumentConfiguration(pydantic.BaseModel):
-    """
-    Instrument configuration for DREAM.
-    """
-
-    value: InstrumentConfigurationEnum = pydantic.Field(
-        default=InstrumentConfigurationEnum.high_flux_BC240,
-        description='Chopper settings determining TOA to TOF conversion.',
-    )
-
-    @pydantic.model_validator(mode="after")
-    def check_high_resolution_not_implemented(self):
-        if self.value == InstrumentConfigurationEnum.high_resolution:
-            raise pydantic.ValidationError.from_exception_data(
-                "ValidationError",
-                [
-                    {
-                        "type": "value_error",
-                        "loc": ("value",),
-                        "input": self.value,
-                        "ctx": {
-                            "error": "The 'high_resolution' setting is not available."
-                        },
-                    }
-                ],
-            )
-        return self
 
 
 class DreamDetectorViewParams(DetectorViewParams):

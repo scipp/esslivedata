@@ -17,7 +17,10 @@ from ess.livedata.handlers.monitor_workflow import (
     histogram_raw_monitor,
     window_view,
 )
-from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
+from ess.livedata.handlers.monitor_workflow_specs import (
+    MonitorDataParams,
+    register_monitor_workflow_specs,
+)
 from ess.livedata.handlers.monitor_workflow_types import (
     HistogramEdges,
     HistogramRangeHigh,
@@ -532,7 +535,7 @@ class TestMonitorWorkflowIntegration:
 
 
 class TestRegisterMonitorWorkflowSpecs:
-    """Tests for spec registration."""
+    """Tests for explicit spec registration."""
 
     @pytest.fixture
     def test_instrument(self):
@@ -544,58 +547,43 @@ class TestRegisterMonitorWorkflowSpecs:
             monitors=['monitor_1', 'monitor_2'],
         )
 
-    def test_auto_registers_via_post_init(self, test_instrument):
-        """Verify the spec is auto-registered via __post_init__."""
-        handle = test_instrument._monitor_workflow_handle
-        assert handle is not None
-
-    def test_register_with_empty_source_names_returns_none(self):
-        # Need a new instrument with no monitors
-        from ess.livedata.config.instrument import Instrument
-
-        inst = Instrument(name='test_inst_empty_monitors', monitors=[])
-        # The auto-registration should have returned None
-        assert inst._monitor_workflow_handle is None
+    def test_register_with_empty_source_names_returns_none(self, test_instrument):
+        """Explicit registration with empty source names returns None."""
+        handle = register_monitor_workflow_specs(test_instrument, source_names=[])
+        assert handle is None
 
     def test_registered_spec_has_correct_namespace(self, test_instrument):
         """Verify the spec is registered in monitor_data namespace."""
-        factory = test_instrument.workflow_factory
-
-        # Find the spec that was registered
-        for workflow_id, spec in factory.items():
-            if spec.name == 'monitor_histogram':
-                assert workflow_id.namespace == 'monitor_data'
-                return
-
-        pytest.fail("monitor_histogram spec not found in workflow_factory")
+        # Explicit registration
+        handle = register_monitor_workflow_specs(
+            test_instrument, source_names=['monitor_1', 'monitor_2']
+        )
+        assert handle is not None
+        assert handle.workflow_id.namespace == 'monitor_data'
 
     def test_spec_uses_monitor_data_params(self, test_instrument):
+        """Verify the spec uses MonitorDataParams by default."""
+        handle = register_monitor_workflow_specs(
+            test_instrument, source_names=['monitor_1']
+        )
+        assert handle is not None
+
         factory = test_instrument.workflow_factory
-
-        for spec in factory.values():
-            if spec.name == 'monitor_histogram':
-                assert spec.params is MonitorDataParams
-                return
-
-        pytest.fail("monitor_histogram spec not found")
+        spec = factory[handle.workflow_id]
+        assert spec.params is MonitorDataParams
 
     def test_can_attach_factory_to_handle(self, test_instrument):
         """Test that we can attach the factory to the registered spec."""
         from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
 
-        # Get the handle for monitor_histogram spec
-        factory = test_instrument.workflow_factory
-        workflow_id = None
-        for _workflow_id, spec in factory.items():
-            if spec.name == 'monitor_histogram':
-                workflow_id = _workflow_id
-                break
-        if workflow_id is None:
-            pytest.fail("monitor_histogram spec not found")
-
-        # Find the handle in the instrument
-        handle = test_instrument._monitor_workflow_handle
+        # Explicit registration
+        handle = register_monitor_workflow_specs(
+            test_instrument, source_names=['monitor_1', 'monitor_2']
+        )
         assert handle is not None
+
+        factory = test_instrument.workflow_factory
+        workflow_id = handle.workflow_id
 
         # Attach factory
         @handle.attach_factory()
@@ -609,6 +597,9 @@ class TestRegisterMonitorWorkflowSpecs:
                 range_filter=params.get_active_range(),
                 coordinate_mode=mode,
             )
+
+        # Verify factory is attached
+        assert workflow_id in factory._factories
 
         # Verify factory is attached
         assert workflow_id in factory._factories
