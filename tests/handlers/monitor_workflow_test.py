@@ -505,6 +505,7 @@ class TestRegisterMonitorWorkflowSpecs:
 
     def test_can_attach_factory_to_handle(self, test_instrument):
         """Test that we can attach the factory to the registered spec."""
+        from ess.livedata.config.workflow_spec import WorkflowConfig
         from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
 
         # Explicit registration
@@ -529,11 +530,11 @@ class TestRegisterMonitorWorkflowSpecs:
                 coordinate_mode=mode,
             )
 
-        # Verify factory is attached
-        assert workflow_id in factory._factories
-
-        # Verify factory is attached
-        assert workflow_id in factory._factories
+        # Verify factory works by creating a workflow
+        config = WorkflowConfig(identifier=workflow_id)
+        workflow = factory.create(source_name='monitor_1', config=config)
+        assert workflow is not None
+        assert hasattr(workflow, 'accumulate')
 
 
 class TestMonitorWorkflowFactoryCoordinateMode:
