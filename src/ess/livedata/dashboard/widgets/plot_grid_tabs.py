@@ -92,8 +92,8 @@ class PlotGridTabs:
         Widget for displaying job status information.
     workflow_status_widget
         Widget for displaying workflow status and controls.
-    backend_status_widget
-        Optional widget for displaying backend worker status.
+    system_status_widget
+        Optional widget for displaying system status (sessions and backend workers).
     plot_data_service
         Shared service for plot data with version tracking.
     session_updater
@@ -107,7 +107,7 @@ class PlotGridTabs:
         plotting_controller,
         job_status_widget,
         workflow_status_widget,
-        backend_status_widget=None,
+        system_status_widget=None,
         *,
         plot_data_service: PlotDataService,
         session_updater: SessionUpdater,
@@ -124,7 +124,7 @@ class PlotGridTabs:
         self._session_layers: dict[LayerId, SessionLayer] = {}
 
         # Determine number of static tabs for stylesheet
-        static_tab_count = 4 if backend_status_widget else 3
+        static_tab_count = 4 if system_status_widget else 3
 
         # Build nth-child selectors for static tabs
         static_tab_selectors = ',\n                '.join(
@@ -193,11 +193,11 @@ class PlotGridTabs:
         # Add Workflows tab (always second)
         self._tabs.append(('Workflows', workflow_status_widget.panel()))
 
-        # Add Backend Status tab (third, if widget provided)
-        if backend_status_widget is not None:
-            self._tabs.append(('Backend Status', backend_status_widget.panel()))
+        # Add System Status tab (third, if widget provided)
+        if system_status_widget is not None:
+            self._tabs.append(('System Status', system_status_widget.panel()))
 
-        # Add Manage tab (third or fourth depending on backend_status_widget)
+        # Add Manage tab (third or fourth depending on system_status_widget)
         self._grid_manager = PlotGridManager(
             orchestrator=plot_orchestrator,
             workflow_registry=workflow_registry,
