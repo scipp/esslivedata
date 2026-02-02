@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NewType
 
@@ -60,6 +61,33 @@ class SessionRegistry:
         self._stale_timeout = stale_timeout_seconds
         self._sessions: dict[SessionId, SessionInfo] = {}
         self._lock = threading.Lock()
+        self._update_subscribers: list[Callable[[], None]] = []
+
+    def register_update_subscriber(self, callback: Callable[[], None]) -> None:
+        """
+        Register a callback to be called when session state changes.
+
+        The callback is immediately invoked with current state.
+
+        Parameters
+        ----------
+        callback:
+            Function to call on session register/unregister/heartbeat.
+        """
+        self._update_subscribers.append(callback)
+        # Immediately notify the new subscriber of current state
+        try:
+            callback()
+        except Exception as e:
+            logger.error("Error in session update callback: %s", e)
+
+    def _notify_update(self) -> None:
+        """Notify all subscribers of session state change."""
+        for callback in self._update_subscribers:
+            try:
+                callback()
+            except Exception as e:
+                logger.error("Error in session update callback: %s", e)
 
     def register(
         self, session_id: SessionId, updater: SessionUpdater | None = None
@@ -88,6 +116,7 @@ class SessionRegistry:
                 self._sessions[session_id] = SessionInfo(
                     session_id=session_id, updater=updater
                 )
+        self._notify_update()
 
     def unregister(self, session_id: SessionId) -> None:
         """
@@ -102,10 +131,12 @@ class SessionRegistry:
             Session ID to unregister.
         """
         updater = None
+        removed = False
         with self._lock:
             if session_id in self._sessions:
                 updater = self._sessions[session_id].updater
                 del self._sessions[session_id]
+                removed = True
                 logger.info("Unregistered session: %s", session_id)
 
         # Clean up updater outside lock to avoid potential deadlocks
@@ -114,6 +145,9 @@ class SessionRegistry:
                 updater.cleanup()
             except Exception:
                 logger.exception("Error cleaning up updater for session %s", session_id)
+
+        if removed:
+            self._notify_update()
 
     def heartbeat(self, session_id: SessionId) -> None:
         """
@@ -170,6 +204,9 @@ class SessionRegistry:
                         "Error cleaning up updater for stale session %s", session_id
                     )
 
+        if stale_sessions:
+            self._notify_update()
+
         return [session_id for session_id, _ in stale_sessions]
 
     def get_active_sessions(self) -> list[SessionId]:
@@ -206,3 +243,22 @@ class SessionRegistry:
         """Number of currently active sessions."""
         with self._lock:
             return len(self._sessions)
+
+    def get_seconds_since_heartbeat(self, session_id: SessionId) -> float | None:
+        """
+        Get seconds since last heartbeat for a session.
+
+        Parameters
+        ----------
+        session_id:
+            Session ID to check.
+
+        Returns
+        -------
+        :
+            Seconds since last heartbeat, or None if session not found.
+        """
+        with self._lock:
+            if session_id not in self._sessions:
+                return None
+            return time.monotonic() - self._sessions[session_id].last_heartbeat
