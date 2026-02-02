@@ -156,7 +156,8 @@ class TestSessionStatusWidget:
         assert "No active sessions" in widget._summary.object
 
         registry.register(current_id)
-        # Subscriber should have updated the widget
+        # Registry change sets dirty flag; refresh() updates the display
+        widget.refresh()
         assert "1" in widget._summary.object
 
     def test_updates_on_session_unregister(self, registry):
@@ -172,6 +173,8 @@ class TestSessionStatusWidget:
         assert "2" in widget._summary.object
 
         registry.unregister(other_id)
+        # Registry change sets dirty flag; refresh() updates the display
+        widget.refresh()
         assert "1" in widget._summary.object
 
     def test_current_session_sorted_first(self, registry):

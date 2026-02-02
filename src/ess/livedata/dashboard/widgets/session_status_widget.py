@@ -153,9 +153,6 @@ class SessionStatusWidget:
         self._empty_placeholder: pn.pane.HTML | None = None
         self._setup_layout()
 
-        # Subscribe to session registry updates
-        self._session_registry.register_update_subscriber(self._on_status_update)
-
     def _setup_layout(self) -> None:
         """Set up the main layout."""
         self._header = pn.pane.HTML(
@@ -231,10 +228,6 @@ class SessionStatusWidget:
             summary += f' — <span style="color: {color}">{stale_count} stale</span>'
 
         return summary
-
-    def _on_status_update(self) -> None:
-        """Handle session status updates from the registry."""
-        self.refresh()
 
     def refresh(self) -> None:
         """Refresh the display with current session states.
