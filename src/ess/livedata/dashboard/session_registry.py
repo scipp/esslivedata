@@ -4,16 +4,17 @@
 
 from __future__ import annotations
 
-import logging
 import threading
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NewType
 
+import structlog
+
 if TYPE_CHECKING:
     from .session_updater import SessionUpdater
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 SessionId = NewType('SessionId', str)
 

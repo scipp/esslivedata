@@ -13,16 +13,17 @@ last-seen versions and rebuild when versions change.
 
 from __future__ import annotations
 
-import logging
 import threading
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, NewType
 from uuid import UUID
 
+import structlog
+
 if TYPE_CHECKING:
     from .plots import Plotter
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class LayerState(Enum):

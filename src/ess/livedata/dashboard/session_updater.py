@@ -10,10 +10,10 @@ shared services in the correct session context.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 
 import panel as pn
+import structlog
 
 from .notification_queue import (
     NotificationEvent,
@@ -22,7 +22,7 @@ from .notification_queue import (
 )
 from .session_registry import SessionId, SessionRegistry
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class SessionUpdater:

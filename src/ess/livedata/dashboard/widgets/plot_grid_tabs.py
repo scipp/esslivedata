@@ -9,11 +9,11 @@ synchronized with PlotOrchestrator via lifecycle subscriptions.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable, Mapping
 
 import holoviews as hv
 import panel as pn
+import structlog
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
@@ -43,7 +43,7 @@ from .plot_widgets import (
     get_workflow_display_info,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _get_sizing_mode(config: PlotConfig) -> str:
