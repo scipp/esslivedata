@@ -264,7 +264,6 @@ def run_service(
 
     kafka_config = load_config(namespace=config_names.kafka_upstream)
     name = 'fake_producer'
-    Service.configure_logging(log_level)
 
     if mode == 'ad00':
         serializer = serialize_area_detector_to_ad00

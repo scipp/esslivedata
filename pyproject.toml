@@ -137,8 +137,6 @@ pydocstyle.convention = "numpy"
 [tool.ruff.lint.per-file-ignores]
 # logging_config.py legitimately needs stdlib logging to configure structlog's backend
 "src/ess/livedata/logging_config.py" = ["TID251"]
-# service.py configures stdlib logging as structlog backend and third-party logger levels
-"src/ess/livedata/core/service.py" = ["TID251"]
 # those files have an increased risk of relying on import order
 "tests/*" = [
     "S101",  # asserts are fine in tests
