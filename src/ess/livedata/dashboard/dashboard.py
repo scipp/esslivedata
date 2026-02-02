@@ -170,10 +170,18 @@ class DashboardBase(ServiceBase, ABC):
         sidebar_content = self.create_sidebar_content()
         main_content = self.create_main_content(session_updater)
 
+        # Include heartbeat widget in layout (invisible but required for
+        # browser heartbeat JavaScript to run)
+        main_with_heartbeat = pn.Column(
+            session_updater.heartbeat_widget,
+            main_content,
+            sizing_mode='stretch_both',
+        )
+
         template = pn.template.MaterialTemplate(
             title=self.get_dashboard_title(),
             sidebar=sidebar_content,
-            main=main_content,
+            main=main_with_heartbeat,
             header_background=self.get_header_background(),
         )
         # Inject CSS for offline mode (replaces Material Icons font with Unicode)

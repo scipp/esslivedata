@@ -12,16 +12,17 @@ from ess.livedata.dashboard.session_updater import SessionUpdater
 
 
 class TestSessionUpdater:
-    def test_periodic_update_sends_heartbeat(self):
+    def test_periodic_update_runs_without_error(self):
         session_id = SessionId('session-1')
         registry = SessionRegistry()
-        registry.register(session_id)
 
         updater = SessionUpdater(session_id=session_id, session_registry=registry)
 
-        # Heartbeat should be sent on periodic update
+        # Session is registered at construction time (not via heartbeat)
+        # periodic_update should run without error
         updater.periodic_update()
 
+        # Session should remain active (registered at construction)
         assert registry.is_active(session_id)
 
     def test_polls_notifications(self):

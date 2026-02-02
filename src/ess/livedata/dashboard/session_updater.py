@@ -21,6 +21,7 @@ from .notification_queue import (
     NotificationType,
 )
 from .session_registry import SessionId, SessionRegistry
+from .widgets.heartbeat_widget import HeartbeatWidget
 
 logger = structlog.get_logger(__name__)
 
@@ -65,6 +66,12 @@ class SessionUpdater:
         # Callbacks for custom updates (e.g., SessionPlotManager.update_pipes)
         self._custom_handlers: list[Callable[[], None]] = []
 
+        # Browser heartbeat mechanism using ReactiveHTML.
+        # The widget's JavaScript increments a counter every 5 seconds.
+        # We watch for changes to detect browser liveness.
+        self._heartbeat_widget = HeartbeatWidget(interval_ms=5000)
+        self._last_heartbeat_value = 0
+
         # Register with notification queue
         if self._notification_queue is not None:
             self._notification_queue.register_session(session_id)
@@ -100,9 +107,12 @@ class SessionUpdater:
 
         Polls shared services for changes and runs custom handlers
         in a single batched UI update.
+
+        Heartbeats are sent to the registry only when we have evidence that
+        the browser is still connected (via the browser heartbeat widget).
         """
-        # Send heartbeat to registry
-        self._session_registry.heartbeat(self._session_id)
+        # Check if browser has sent a heartbeat (widget value changed)
+        self._check_browser_heartbeat()
 
         # Poll for notifications
         notifications = self._poll_notifications()
@@ -161,6 +171,35 @@ class SessionUpdater:
         self._custom_handlers.clear()
 
         logger.debug("SessionUpdater cleaned up for session %s", self._session_id)
+
+    def _check_browser_heartbeat(self) -> None:
+        """
+        Check if the browser has sent a heartbeat via the widget.
+
+        The browser-side JavaScript increments the heartbeat counter value
+        every 5 seconds. If the value has changed since our last check,
+        the browser is alive and we send a heartbeat to the registry.
+        """
+        current_value = self._heartbeat_widget.counter
+        if current_value != self._last_heartbeat_value:
+            self._last_heartbeat_value = current_value
+            self._session_registry.heartbeat(self._session_id)
+            logger.debug(
+                "Browser heartbeat received for session %s (counter=%d)",
+                self._session_id,
+                current_value,
+            )
+
+    @property
+    def heartbeat_widget(self) -> HeartbeatWidget:
+        """
+        Get the heartbeat widget.
+
+        This must be added to the page layout for browser heartbeats to work.
+        The widget is invisible but its JavaScript runs to send periodic
+        heartbeats from the browser.
+        """
+        return self._heartbeat_widget
 
     @property
     def session_id(self) -> SessionId:
