@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import ClassVar
 
 import panel as pn
@@ -26,6 +27,10 @@ class SessionUIConstants:
     # threshold allows for some network delay while still detecting disconnected
     # browsers quickly.
     STALE_DISPLAY_THRESHOLD_SECONDS = 15.0
+
+    # Minimum interval between display refreshes. The heartbeat times only
+    # need to update every few seconds, not every 500ms polling cycle.
+    MIN_REFRESH_INTERVAL_SECONDS = 2.0
 
     # Sizes
     SESSION_ID_WIDTH = 200
@@ -151,6 +156,7 @@ class SessionStatusWidget:
         self._current_session_id = current_session_id
         self._session_rows: dict[SessionId, SessionStatusRow] = {}
         self._empty_placeholder: pn.pane.HTML | None = None
+        self._last_refresh_time: float = 0.0
         self._setup_layout()
 
     def _setup_layout(self) -> None:
@@ -233,7 +239,16 @@ class SessionStatusWidget:
         """Refresh the display with current session states.
 
         Call this periodically to keep heartbeat times and stale status current.
+        Skips update if called more frequently than MIN_REFRESH_INTERVAL_SECONDS.
         """
+        now = time.monotonic()
+        if (
+            now - self._last_refresh_time
+            < SessionUIConstants.MIN_REFRESH_INTERVAL_SECONDS
+        ):
+            return
+        self._last_refresh_time = now
+
         with pn.io.hold():
             self._summary.object = self._format_summary()
             self._update_session_list()
