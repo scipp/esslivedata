@@ -35,7 +35,7 @@ class TestSessionStatusRow:
         row = SessionStatusRow(
             session_id=SessionId("test-session-id"),
             is_current_session=False,
-            seconds_since_heartbeat=5.0,
+            seconds_since_heartbeat=1.0,
         )
         assert isinstance(row.panel, pn.Row)
 
@@ -56,6 +56,24 @@ class TestSessionStatusRow:
         )
         assert "Active" in row._status_pane.object
 
+    def test_stale_session_shows_stale_badge(self):
+        row = SessionStatusRow(
+            session_id=SessionId("test-session-id"),
+            is_current_session=False,
+            seconds_since_heartbeat=10.0,  # > 5 second threshold
+        )
+        assert "Stale" in row._status_pane.object
+
+    def test_current_session_never_shows_stale(self):
+        # Current session should show "You" even with old heartbeat
+        row = SessionStatusRow(
+            session_id=SessionId("test-session-id"),
+            is_current_session=True,
+            seconds_since_heartbeat=100.0,
+        )
+        assert "You" in row._status_pane.object
+        assert "Stale" not in row._status_pane.object
+
     def test_update_changes_content(self):
         row = SessionStatusRow(
             session_id=SessionId("session-1"),
@@ -70,6 +88,21 @@ class TestSessionStatusRow:
             seconds_since_heartbeat=2.0,
         )
         assert "You" in row._status_pane.object
+
+    def test_update_to_stale_status(self):
+        row = SessionStatusRow(
+            session_id=SessionId("session-1"),
+            is_current_session=False,
+            seconds_since_heartbeat=1.0,
+        )
+        assert "Active" in row._status_pane.object
+
+        row.update(
+            session_id=SessionId("session-1"),
+            is_current_session=False,
+            seconds_since_heartbeat=10.0,
+        )
+        assert "Stale" in row._status_pane.object
 
 
 class TestSessionStatusWidget:
@@ -156,3 +189,39 @@ class TestSessionStatusWidget:
         rows = list(widget._session_rows.values())
         first_row = rows[0]
         assert "You" in first_row._status_pane.object
+
+    def test_refresh_updates_display(self, registry):
+        current_id = SessionId("my-session")
+        registry.register(current_id)
+
+        widget = SessionStatusWidget(
+            session_registry=registry,
+            current_session_id=current_id,
+        )
+
+        # Register another session
+        registry.register(SessionId("other-session"))
+
+        # Refresh should update the display
+        widget.refresh()
+        assert "2" in widget._summary.object
+
+    def test_summary_shows_stale_count(self, registry):
+        current_id = SessionId("my-session")
+        registry.register(current_id)
+
+        # Directly manipulate the session info to simulate a stale session
+        import time
+
+        stale_id = SessionId("stale-session")
+        registry.register(stale_id)
+        # Make the session appear stale by backdating its heartbeat
+        registry._sessions[stale_id].last_heartbeat = time.monotonic() - 10.0
+
+        widget = SessionStatusWidget(
+            session_registry=registry,
+            current_session_id=current_id,
+        )
+
+        # Summary should indicate stale session
+        assert "stale" in widget._summary.object.lower()

@@ -17,7 +17,13 @@ class SessionUIConstants:
     # Colors
     ACTIVE_COLOR = "#28a745"  # Green
     YOU_COLOR = "#007bff"  # Blue for "this is you"
+    STALE_COLOR = "#dc3545"  # Red for stale sessions
     DEFAULT_COLOR = "#6c757d"  # Gray
+
+    # Thresholds
+    # Sessions without heartbeats for this long are shown as "Stale" in the UI.
+    # This is shorter than the cleanup timeout (60s) to provide early visual feedback.
+    STALE_DISPLAY_THRESHOLD_SECONDS = 5.0
 
     # Sizes
     SESSION_ID_WIDTH = 200
@@ -97,10 +103,19 @@ class SessionStatusRow:
         session_id_short = session_id[:12]
         self._session_id_pane.object = f"<code>{session_id_short}</code>"
 
+        # Determine if session is stale (no recent heartbeat)
+        threshold = SessionUIConstants.STALE_DISPLAY_THRESHOLD_SECONDS
+        is_stale = (
+            seconds_since_heartbeat is not None and seconds_since_heartbeat > threshold
+        )
+
         # Status indicator
         if is_current_session:
             color = SessionUIConstants.YOU_COLOR
             status_text = "You"
+        elif is_stale:
+            color = SessionUIConstants.STALE_COLOR
+            status_text = "Stale"
         else:
             color = SessionUIConstants.ACTIVE_COLOR
             status_text = "Active"
@@ -185,21 +200,45 @@ class SessionStatusWidget:
 
     def _format_summary(self) -> str:
         """Format the summary text."""
-        total = self._session_registry.session_count
+        sessions = self._session_registry.get_active_sessions()
+        total = len(sessions)
         is_current_active = self._session_registry.is_active(self._current_session_id)
 
         if total == 0:
             return "<i>No active sessions</i>"
+
+        # Count stale sessions
+        stale_count = 0
+        threshold = SessionUIConstants.STALE_DISPLAY_THRESHOLD_SECONDS
+        for session_id in sessions:
+            if session_id == self._current_session_id:
+                continue  # Current session is never stale from our perspective
+            seconds_ago = self._session_registry.get_seconds_since_heartbeat(session_id)
+            if seconds_ago is not None and seconds_ago > threshold:
+                stale_count += 1
 
         if total == 1 and is_current_active:
             return "<b>1</b> active session (just you)"
 
         you_text = " (including you)" if is_current_active else ""
         session_word = "session" if total == 1 else "sessions"
-        return f"<b>{total}</b> active {session_word}{you_text}"
+        summary = f"<b>{total}</b> {session_word}{you_text}"
+
+        if stale_count > 0:
+            color = SessionUIConstants.STALE_COLOR
+            summary += f' — <span style="color: {color}">{stale_count} stale</span>'
+
+        return summary
 
     def _on_status_update(self) -> None:
         """Handle session status updates from the registry."""
+        self.refresh()
+
+    def refresh(self) -> None:
+        """Refresh the display with current session states.
+
+        Call this periodically to keep heartbeat times and stale status current.
+        """
         with pn.io.hold():
             self._summary.object = self._format_summary()
             self._update_session_list()
