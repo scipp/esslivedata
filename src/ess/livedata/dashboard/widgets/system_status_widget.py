@@ -55,15 +55,8 @@ class SystemStatusWidget:
 
     def panel(self) -> pn.Column:
         """Get the main panel for this widget."""
-        # Add a divider between sections
-        divider = pn.pane.HTML(
-            '<hr style="margin: 20px 0; border: 0; ' 'border-top: 1px solid #dee2e6;">',
-            sizing_mode="stretch_width",
-        )
-
         return pn.Column(
             self._session_widget.panel(),
-            divider,
             self._backend_widget.panel(),
             sizing_mode="stretch_width",
         )
