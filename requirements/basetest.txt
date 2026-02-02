@@ -286,7 +286,7 @@ sciline==25.11.1
     #   essreflectometry
     #   esssans
     #   essspectroscopy
-scipp==25.12.0
+scipp==26.1.1
     # via
     #   essdiffraction
     #   esspolarization
