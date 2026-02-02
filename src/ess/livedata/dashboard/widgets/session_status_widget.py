@@ -21,9 +21,11 @@ class SessionUIConstants:
     DEFAULT_COLOR = "#6c757d"  # Gray
 
     # Thresholds
-    # Sessions without heartbeats for this long are shown as "Stale" in the UI.
-    # This is shorter than the cleanup timeout (60s) to provide early visual feedback.
-    STALE_DISPLAY_THRESHOLD_SECONDS = 5.0
+    # Sessions without browser heartbeats for this long are shown as "Stale".
+    # Browser heartbeats arrive every 5 seconds when connected. A 15-second
+    # threshold allows for some network delay while still detecting disconnected
+    # browsers quickly.
+    STALE_DISPLAY_THRESHOLD_SECONDS = 15.0
 
     # Sizes
     SESSION_ID_WIDTH = 200

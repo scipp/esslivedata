@@ -60,7 +60,7 @@ class TestSessionStatusRow:
         row = SessionStatusRow(
             session_id=SessionId("test-session-id"),
             is_current_session=False,
-            seconds_since_heartbeat=10.0,  # > 5 second threshold
+            seconds_since_heartbeat=20.0,  # > 15 second threshold
         )
         assert "Stale" in row._status_pane.object
 
@@ -100,7 +100,7 @@ class TestSessionStatusRow:
         row.update(
             session_id=SessionId("session-1"),
             is_current_session=False,
-            seconds_since_heartbeat=10.0,
+            seconds_since_heartbeat=20.0,  # > 15 second threshold
         )
         assert "Stale" in row._status_pane.object
 
@@ -215,8 +215,8 @@ class TestSessionStatusWidget:
 
         stale_id = SessionId("stale-session")
         registry.register(stale_id)
-        # Make the session appear stale by backdating its heartbeat
-        registry._sessions[stale_id].last_heartbeat = time.monotonic() - 10.0
+        # Make the session appear stale by backdating its heartbeat (> 15s threshold)
+        registry._sessions[stale_id].last_heartbeat = time.monotonic() - 20.0
 
         widget = SessionStatusWidget(
             session_registry=registry,
