@@ -160,6 +160,7 @@ class ReductionApp(DashboardBase):
             service_registry=self._services.service_registry,
             current_session_id=session_updater.session_id,
         )
+        system_status_widget.register_periodic_refresh(session_updater)
 
         plot_grid_tabs = PlotGridTabs(
             plot_orchestrator=self._services.plot_orchestrator,

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import panel as pn
 
 from ess.livedata.dashboard.service_registry import ServiceRegistry
@@ -11,6 +13,9 @@ from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 
 from .backend_status_widget import BackendStatusWidget
 from .session_status_widget import SessionStatusWidget
+
+if TYPE_CHECKING:
+    from ess.livedata.dashboard.session_updater import SessionUpdater
 
 
 class SystemStatusWidget:
@@ -34,6 +39,19 @@ class SystemStatusWidget:
         self._backend_widget = BackendStatusWidget(
             service_registry=service_registry,
         )
+
+    def register_periodic_refresh(self, session_updater: SessionUpdater) -> None:
+        """
+        Register for periodic refresh of session status display.
+
+        This keeps heartbeat times and stale status indicators current.
+
+        Parameters
+        ----------
+        session_updater:
+            The session updater to register the refresh handler with.
+        """
+        session_updater.register_custom_handler(self._session_widget.refresh)
 
     def panel(self) -> pn.Column:
         """Get the main panel for this widget."""
