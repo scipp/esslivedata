@@ -22,9 +22,11 @@ def setup_factories(instrument: Instrument) -> None:
     import ess.powder.types  # noqa: F401
     from ess import dream, powder
     from ess.dream import DreamPowderWorkflow
-    from ess.livedata.handlers.detector_data_handler import (
-        DetectorProjection,
-        get_nexus_geometry_filename,
+    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
+    from ess.livedata.handlers.detector_view import (
+        DetectorViewFactory,
+        GeometricViewConfig,
+        NeXusDetectorSource,
     )
     from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
     from ess.reduce.nexus.types import (
@@ -37,26 +39,60 @@ def setup_factories(instrument: Instrument) -> None:
         VanadiumRun,
     )
 
-    # Unified detector projection with per-detector projection types.
-    # We use the arc length instead of phi for mantle as it makes it easier to get
-    # a correct aspect ratio for the plot if both axes have the same unit.
-    # Order in 'resolution' matters so plots have X as horizontal axis and Y vertical.
-    _detector_projection = DetectorProjection(
-        instrument=instrument,
-        projection=specs._projections,
-        pixel_noise=sc.scalar(4.0, unit='mm'),
-        resolution={
-            'mantle_detector': {'arc_length': 10, 'z': 40},
-            'endcap_backward_detector': {'y': 30, 'x': 20},
-            'endcap_forward_detector': {'y': 20, 'x': 20},
-            'high_resolution_detector': {'y': 20, 'x': 20},
-            'sans_detector': {'y': 20, 'x': 20},
+    from .specs import DreamDetectorViewParams
+
+    # Sciline-based detector view workflow with per-detector geometric projections.
+    # Resolution values = base resolution * scale (8), matching the legacy setup.
+    # Pixel noise is shared across all detectors.
+    _pixel_noise = sc.scalar(4.0, unit='mm')
+    _detector_view_factory = DetectorViewFactory(
+        data_source=NeXusDetectorSource(get_nexus_geometry_filename('dream-no-shape')),
+        view_config={
+            'mantle_detector': GeometricViewConfig(
+                projection_type='cylinder_mantle_z',
+                resolution={'arc_length': 80, 'z': 320},
+                pixel_noise=_pixel_noise,
+            ),
+            'endcap_backward_detector': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 240, 'x': 160},
+                pixel_noise=_pixel_noise,
+            ),
+            'endcap_forward_detector': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 160, 'x': 160},
+                pixel_noise=_pixel_noise,
+            ),
+            'high_resolution_detector': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 160, 'x': 160},
+                pixel_noise=_pixel_noise,
+            ),
         },
-        resolution_scale=8,
     )
 
-    # Attach unified detector view factory
-    specs.projection_handle.attach_factory()(_detector_projection.make_view)
+    @specs.projection_handle.attach_factory()
+    def _detector_view_workflow_factory(
+        source_name: str, params: DreamDetectorViewParams
+    ) -> StreamProcessorWorkflow:
+        """Factory for Sciline-based detector view workflow."""
+        from ess.dream.workflows import _get_lookup_table_filename_from_configuration
+
+        # Resolve lookup table filename from DREAM-specific params for TOF modes
+        tof_lookup_table_filename = None
+        if params.coordinate_mode.mode in ('tof', 'wavelength'):
+            # Convert enum to DREAM InstrumentConfiguration and get filename
+            config = getattr(
+                dream.InstrumentConfiguration,
+                params.instrument_configuration.value.value,
+            )
+            tof_lookup_table_filename = _get_lookup_table_filename_from_configuration(
+                config
+            )
+
+        return _detector_view_factory.make_workflow(
+            source_name, params, tof_lookup_table_filename=tof_lookup_table_filename
+        )
 
     # Powder reduction workflow setup
     # Normalization to monitors is partially broken due to some wavelength-range check

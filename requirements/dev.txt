@@ -114,7 +114,9 @@ webcolors==25.10.0
 websocket-client==1.9.0
     # via jupyter-server
 wheel==0.45.1
-    # via pip-tools
+    # via
+    #   pip-tools
+    #   sphinx-copybutton
 
 # The following packages are considered to be unsafe in a requirements file:
 # pip

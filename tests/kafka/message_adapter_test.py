@@ -21,7 +21,7 @@ from ess.livedata.core.message import (
     StreamId,
     StreamKind,
 )
-from ess.livedata.handlers.accumulators import DetectorEvents
+from ess.livedata.handlers.to_nxevent_data import DetectorEvents
 from ess.livedata.kafka.message_adapter import (
     Ad00ToScippAdapter,
     AdaptingMessageSource,

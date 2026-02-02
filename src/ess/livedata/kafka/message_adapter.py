@@ -28,7 +28,8 @@ from ..core.message import (
     StreamId,
     StreamKind,
 )
-from ..handlers.accumulators import DetectorEvents, LogData, MonitorEvents
+from ..handlers.accumulators import LogData
+from ..handlers.to_nxevent_data import DetectorEvents, MonitorEvents
 from .scipp_ad00_compat import ad00_to_scipp
 from .scipp_da00_compat import da00_to_scipp
 from .stream_mapping import InputStreamKey, StreamLUT
