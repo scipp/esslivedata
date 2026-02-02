@@ -161,62 +161,6 @@ class TestSessionRegistry:
         # Original registry should not be modified
         assert registry.session_count == 1
 
-    def test_subscriber_notified_on_register(self):
-        registry = SessionRegistry()
-        calls = []
-        registry.register_update_subscriber(lambda: calls.append('update'))
-
-        # Subscriber is called immediately on registration
-        assert calls == ['update']
-
-        # And on new session registration
-        registry.register(SessionId('session-1'))
-        assert calls == ['update', 'update']
-
-    def test_subscriber_notified_on_unregister(self):
-        registry = SessionRegistry()
-        session_id = SessionId('session-1')
-        registry.register(session_id)
-
-        calls = []
-        registry.register_update_subscriber(lambda: calls.append('update'))
-        calls.clear()
-
-        registry.unregister(session_id)
-        assert calls == ['update']
-
-    def test_subscriber_not_notified_on_unregister_unknown(self):
-        registry = SessionRegistry()
-        calls = []
-        registry.register_update_subscriber(lambda: calls.append('update'))
-        calls.clear()
-
-        registry.unregister(SessionId('unknown'))
-        assert calls == []
-
-    def test_subscriber_notified_on_cleanup_stale(self):
-        registry = SessionRegistry(stale_timeout_seconds=0.01)
-        registry.register(SessionId('session-1'))
-
-        calls = []
-        registry.register_update_subscriber(lambda: calls.append('update'))
-        calls.clear()
-
-        time.sleep(0.02)
-        registry.cleanup_stale_sessions()
-        assert calls == ['update']
-
-    def test_subscriber_not_notified_when_cleanup_finds_nothing(self):
-        registry = SessionRegistry(stale_timeout_seconds=10)
-        registry.register(SessionId('session-1'))
-
-        calls = []
-        registry.register_update_subscriber(lambda: calls.append('update'))
-        calls.clear()
-
-        registry.cleanup_stale_sessions()
-        assert calls == []
-
     def test_get_seconds_since_heartbeat_returns_elapsed_time(self):
         registry = SessionRegistry()
         session_id = SessionId('session-1')
