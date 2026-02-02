@@ -111,6 +111,35 @@ class TestMakeLookup:
         result = lookup[sc.scalar(150, unit='ms')]
         assert result.value == 1.0
 
+    def test_handles_datetime64_coord_in_nearest_mode(self):
+        """Lookup should work when axis dimension is datetime64 and nearest mode.
+
+        When data timestamps are before the axis range, 'nearest' mode is used.
+        If the axis dimension coordinate is datetime64, the astype('float64')
+        conversion should be skipped since datetime64 is not an int dtype.
+        """
+        # Create datetime64 timestamps using scipp's datetime function
+        base_ns = 1_000_000_000_000_000_000  # Some epoch nanoseconds
+        times = sc.datetimes(
+            dims=['time'],
+            values=[base_ns + i * 1_000_000_000 for i in range(3)],  # 1s apart
+            unit='ns',
+        )
+        axis_data = sc.DataArray(
+            data=sc.array(dims=['time'], values=[1.0, 2.0, 3.0], unit='m'),
+            coords={'time': times},
+        )
+        # Data max time is before the first axis timestamp
+        data_max_time = sc.datetime(base_ns - 1_000_000_000, unit='ns')  # 1s before
+
+        # Should not raise DTypeError about astype not supporting datetime64
+        lookup = _make_lookup(axis_data, data_max_time)
+
+        # 'nearest' mode: should get value at nearest time (the first one)
+        query_time = sc.datetime(base_ns - 500_000_000, unit='ns')  # 500ms before
+        result = lookup[query_time]
+        assert result.value == 1.0
+
 
 class TestCorrelationHistogramPlotter:
     """Tests for the base CorrelationHistogramPlotter class."""
@@ -128,7 +157,7 @@ class TestCorrelationHistogramPlotter:
         }
 
         with pytest.raises(ValueError, match="at least one data source"):
-            plotter(data)
+            plotter.compute(data)
 
     def test_raises_when_axis_data_missing(self):
         """Should raise ValueError when required axis data is missing."""
@@ -143,7 +172,7 @@ class TestCorrelationHistogramPlotter:
         }
 
         with pytest.raises(ValueError, match=f"role '{X_AXIS}'"):
-            plotter(data)
+            plotter.compute(data)
 
     def test_works_with_single_axis(self):
         """Should work with a single axis (1D histogram)."""
@@ -160,7 +189,8 @@ class TestCorrelationHistogramPlotter:
             X_AXIS: {_make_result_key('position'): axis_data},
         }
 
-        result = plotter(data)
+        plotter.compute(data)
+        result = plotter.get_cached_state()
         assert result is not None
 
     def test_works_with_multiple_axes(self):
@@ -187,7 +217,8 @@ class TestCorrelationHistogramPlotter:
             Y_AXIS: {_make_result_key('temperature'): y_axis},
         }
 
-        result = plotter(data)
+        plotter.compute(data)
+        result = plotter.get_cached_state()
         assert result is not None
 
     def test_handles_data_before_axis_range(self):
@@ -210,8 +241,41 @@ class TestCorrelationHistogramPlotter:
         }
 
         # Should not raise
-        result = plotter(data)
+        plotter.compute(data)
+        result = plotter.get_cached_state()
         assert result is not None
+
+
+class TestCorrelationHistogramPlotterOwnership:
+    """Tests for presenter ownership in CorrelationHistogramPlotter."""
+
+    def test_presenter_owned_by_outer_plotter_not_renderer(self):
+        """The presenter should be owned by the CorrelationHistogramPlotter,
+        not by the inner renderer (LinePlotter/ImagePlotter).
+
+        This is critical for SessionPlotManager's plotter replacement detection
+        to work correctly with correlation plotters.
+        """
+        axes = [AxisSpec(role=X_AXIS, name='x', bins=10)]
+        renderer = _make_line_renderer()
+        plotter = CorrelationHistogramPlotter(
+            axes=axes, normalize=False, renderer=renderer
+        )
+
+        # Compute some data to populate cached state
+        axis_data = make_axis_data(times=[100, 200, 300], values=[1.0, 2.0, 3.0])
+        source_data = make_source_data(times=[150, 250], values=[10.0, 20.0])
+        data = {
+            PRIMARY: {_make_result_key('detector'): source_data},
+            X_AXIS: {_make_result_key('position'): axis_data},
+        }
+        plotter.compute(data)
+
+        presenter = plotter.create_presenter()
+
+        # Presenter should be owned by the outer plotter, not the renderer
+        assert presenter.is_owned_by(plotter)
+        assert not presenter.is_owned_by(renderer)
 
 
 class TestCorrelationHistogram1dPlotter:

@@ -23,7 +23,6 @@ from .plots import (
     LinePlotter,
     Overlay1DPlotter,
     Plotter,
-    SlicerPlotter,
 )
 from .roi_readback_plots import (
     PolygonsReadbackPlotter,
@@ -34,6 +33,7 @@ from .roi_request_plots import (
     RectanglesRequestPlotter,
 )
 from .scipp_to_holoviews import _all_coords_evenly_spaced
+from .slicer_plotter import SlicerPlotter
 from .static_plots import _register_static_plotters
 
 

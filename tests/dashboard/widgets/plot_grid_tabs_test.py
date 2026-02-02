@@ -6,8 +6,11 @@ import pytest
 
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
+from ess.livedata.dashboard.plot_data_service import PlotDataService
 from ess.livedata.dashboard.plot_orchestrator import PlotOrchestrator
 from ess.livedata.dashboard.plotting_controller import PlottingController
+from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
+from ess.livedata.dashboard.session_updater import SessionUpdater
 from ess.livedata.dashboard.stream_manager import StreamManager
 from ess.livedata.dashboard.widgets.job_status_widget import JobStatusListWidget
 from ess.livedata.dashboard.widgets.plot_grid_tabs import PlotGridTabs
@@ -33,7 +36,7 @@ def job_service():
 @pytest.fixture
 def stream_manager(data_service):
     """Create a StreamManager for testing."""
-    return StreamManager(data_service=data_service, pipe_factory=hv.streams.Pipe)
+    return StreamManager(data_service=data_service)
 
 
 @pytest.fixture
@@ -46,13 +49,16 @@ def plotting_controller(job_service, stream_manager):
 
 
 @pytest.fixture
-def plot_orchestrator(plotting_controller, job_orchestrator, data_service):
+def plot_orchestrator(
+    plotting_controller, job_orchestrator, data_service, plot_data_service
+):
     """Create a PlotOrchestrator for testing."""
     return PlotOrchestrator(
         plotting_controller=plotting_controller,
         job_orchestrator=job_orchestrator,
         data_service=data_service,
         instrument='dummy',
+        plot_data_service=plot_data_service,
     )
 
 
@@ -93,12 +99,30 @@ def workflow_status_widget(job_orchestrator, job_service):
 
 
 @pytest.fixture
+def plot_data_service():
+    """Create a PlotDataService for testing."""
+    return PlotDataService()
+
+
+@pytest.fixture
+def session_updater():
+    """Create a SessionUpdater for testing."""
+    registry = SessionRegistry()
+    return SessionUpdater(
+        session_id=SessionId('test-session'),
+        session_registry=registry,
+    )
+
+
+@pytest.fixture
 def plot_grid_tabs(
     plot_orchestrator,
     workflow_registry,
     plotting_controller,
     job_status_widget,
     workflow_status_widget,
+    plot_data_service,
+    session_updater,
 ):
     """Create a PlotGridTabs widget for testing."""
     return PlotGridTabs(
@@ -107,6 +131,8 @@ def plot_grid_tabs(
         plotting_controller=plotting_controller,
         job_status_widget=job_status_widget,
         workflow_status_widget=workflow_status_widget,
+        plot_data_service=plot_data_service,
+        session_updater=session_updater,
     )
 
 
@@ -129,6 +155,8 @@ class TestPlotGridTabsInitialization:
         plotting_controller,
         job_status_widget,
         workflow_status_widget,
+        plot_data_service,
+        session_updater,
     ):
         """Test that widget creates tabs for existing grids."""
         # Add grids before creating widget
@@ -142,6 +170,8 @@ class TestPlotGridTabsInitialization:
             plotting_controller=plotting_controller,
             job_status_widget=job_status_widget,
             workflow_status_widget=workflow_status_widget,
+            plot_data_service=plot_data_service,
+            session_updater=session_updater,
         )
 
         # Should have 5 tabs: Jobs + Workflows + Manage + 2 grids
@@ -208,8 +238,21 @@ class TestGridTabManagement:
         job_service,
         job_controller,
         job_orchestrator,
+        plot_data_service,
     ):
         """Test that multiple widgets sharing same orchestrator stay in sync."""
+        # Create separate session updaters for each widget (simulating different
+        # sessions)
+        registry = SessionRegistry()
+        session_updater1 = SessionUpdater(
+            session_id=SessionId('session-1'),
+            session_registry=registry,
+        )
+        session_updater2 = SessionUpdater(
+            session_id=SessionId('session-2'),
+            session_registry=registry,
+        )
+
         # Create separate job status widgets for each instance
         job_status_widget1 = JobStatusListWidget(
             job_service=job_service, job_controller=job_controller
@@ -234,6 +277,8 @@ class TestGridTabManagement:
             plotting_controller=plotting_controller,
             job_status_widget=job_status_widget1,
             workflow_status_widget=workflow_status_widget1,
+            plot_data_service=plot_data_service,
+            session_updater=session_updater1,
         )
         widget2 = PlotGridTabs(
             plot_orchestrator=plot_orchestrator,
@@ -241,6 +286,8 @@ class TestGridTabManagement:
             plotting_controller=plotting_controller,
             job_status_widget=job_status_widget2,
             workflow_status_widget=workflow_status_widget2,
+            plot_data_service=plot_data_service,
+            session_updater=session_updater2,
         )
 
         # Add grid via orchestrator
@@ -389,3 +436,157 @@ class TestOverlayFiltering:
 
         # None should be available
         assert len(filtered_overlays) == 0
+
+
+class TestPollForPlotUpdates:
+    """Tests for the version-based polling mechanism in _poll_for_plot_updates."""
+
+    def test_version_change_triggers_session_layer_recreation(
+        self, plot_data_service, plot_orchestrator
+    ):
+        """Test version change from plotter replacement triggers recreation.
+
+        This tests the invariant that the version mechanism is sufficient to
+        trigger rebuilds when plotters change, without needing explicit
+        plotter identity checks in the polling loop.
+        """
+        from uuid import uuid4
+
+        import holoviews as hv
+
+        from ess.livedata.dashboard.plot_data_service import LayerId
+        from ess.livedata.dashboard.plots import PresenterBase
+        from ess.livedata.dashboard.session_layer import SessionLayer
+
+        # Create fake plotters
+        class FakePlotter:
+            def __init__(self, name):
+                self.name = name
+                self._cached_state = None
+                self._presenters = []
+
+            def compute(self, data):
+                self._cached_state = data
+                for p in self._presenters:
+                    p._mark_dirty()
+
+            def get_cached_state(self):
+                return self._cached_state
+
+            def has_cached_state(self):
+                return self._cached_state is not None
+
+            def create_presenter(self, *, owner=None):
+                presenter = FakePresenter(self, owner=owner)
+                self._presenters.append(presenter)
+                return presenter
+
+            def mark_presenters_dirty(self):
+                for p in self._presenters:
+                    p._mark_dirty()
+
+        class FakePresenter(PresenterBase):
+            def present(self, pipe):
+                return hv.DynamicMap(lambda data: hv.Curve([]), streams=[pipe])
+
+        layer_id = LayerId(uuid4())
+
+        # Setup initial state: plotter A with data
+        plotter_a = FakePlotter('A')
+        plotter_a.compute({'value': 1})
+        plot_data_service.job_started(layer_id, plotter_a)
+        plot_data_service.data_arrived(layer_id)
+
+        state = plot_data_service.get(layer_id)
+        initial_version = state.version
+
+        # Create session layer with components for plotter A
+        session_layer = SessionLayer(
+            layer_id=layer_id, last_seen_version=initial_version
+        )
+        session_layer.ensure_components(state)
+
+        assert session_layer.components is not None
+        original_components = session_layer.components
+        assert session_layer.components.is_valid_for(plotter_a)
+
+        # Simulate workflow restart: job_started with new plotter B
+        plotter_b = FakePlotter('B')
+        plotter_b.compute({'value': 2})
+        plot_data_service.job_started(layer_id, plotter_b)
+        plot_data_service.data_arrived(layer_id)
+
+        new_state = plot_data_service.get(layer_id)
+
+        # Version must have changed (this is the key invariant)
+        assert new_state.version != initial_version
+        assert new_state.version != session_layer.last_seen_version
+
+        # Simulate what _poll_for_plot_updates does:
+        # It detects version change and triggers rebuild via ensure_components
+        session_layer.last_seen_version = new_state.version
+        session_layer.ensure_components(new_state)
+
+        # Components should be recreated for the new plotter
+        assert session_layer.components is not original_components
+        assert session_layer.components.is_valid_for(plotter_b)
+        assert not original_components.is_valid_for(plotter_b)
+
+    def test_version_unchanged_preserves_components(self, plot_data_service):
+        """Test that components are preserved when version hasn't changed."""
+        from uuid import uuid4
+
+        import holoviews as hv
+
+        from ess.livedata.dashboard.plot_data_service import LayerId
+        from ess.livedata.dashboard.plots import PresenterBase
+        from ess.livedata.dashboard.session_layer import SessionLayer
+
+        class FakePlotter:
+            def __init__(self):
+                self._cached_state = None
+                self._presenters = []
+
+            def compute(self, data):
+                self._cached_state = data
+                for p in self._presenters:
+                    p._mark_dirty()
+
+            def get_cached_state(self):
+                return self._cached_state
+
+            def has_cached_state(self):
+                return self._cached_state is not None
+
+            def create_presenter(self, *, owner=None):
+                presenter = FakePresenter(self, owner=owner)
+                self._presenters.append(presenter)
+                return presenter
+
+            def mark_presenters_dirty(self):
+                for p in self._presenters:
+                    p._mark_dirty()
+
+        class FakePresenter(PresenterBase):
+            def present(self, pipe):
+                return hv.DynamicMap(lambda data: hv.Curve([]), streams=[pipe])
+
+        layer_id = LayerId(uuid4())
+        plotter = FakePlotter()
+        plotter.compute({'value': 1})
+
+        plot_data_service.job_started(layer_id, plotter)
+        plot_data_service.data_arrived(layer_id)
+
+        state = plot_data_service.get(layer_id)
+
+        session_layer = SessionLayer(layer_id=layer_id, last_seen_version=state.version)
+        session_layer.ensure_components(state)
+        original_components = session_layer.components
+
+        # Simulate polling with no version change
+        # (same state, version matches last_seen_version)
+        session_layer.ensure_components(state)
+
+        # Components should be preserved
+        assert session_layer.components is original_components
