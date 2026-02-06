@@ -31,6 +31,7 @@ from .roi_publisher import ROIPublisher
 from .service_registry import ServiceRegistry
 from .stream_manager import StreamManager
 from .transport import Transport
+from .widgets.heartbeat_widget import HeartbeatWidget
 from .workflow_controller import WorkflowController
 
 logger = structlog.get_logger(__name__)
@@ -91,6 +92,16 @@ class DashboardServices:
         self._last_heartbeat: int | None = None
         self._heartbeat_interval = 2_000_000_000  # 2 seconds in nanoseconds
 
+        # Browser heartbeat detection using ReactiveHTML widget.
+        # The widget's JavaScript increments a counter every 5 seconds.
+        # If the counter stops changing, the browser has disconnected and
+        # we should trigger session cleanup.
+        self._heartbeat_widget = HeartbeatWidget(interval_ms=5000)
+        self._last_browser_heartbeat_value = 0
+        self._last_browser_heartbeat_time: float | None = None
+        # If no browser heartbeat for this long, consider browser dead
+        self._browser_heartbeat_timeout = 20.0  # seconds
+
         # Config stores for workflow and plotter persistent UI state
         self.workflow_config_store = config_manager.get_store('workflow_configs')
         self.plotter_config_store = config_manager.get_store('plotter_configs')
@@ -126,6 +137,43 @@ class DashboardServices:
             if timestamp - self._last_heartbeat < self._heartbeat_interval:
                 return
         self._publish_heartbeat(ServiceState.running)
+
+    def is_browser_alive(self) -> bool:
+        """Check if the browser is still connected.
+
+        Returns True if the browser heartbeat counter has changed recently.
+        Returns False if the counter has been stale for longer than the timeout,
+        indicating the browser has disconnected (tab closed, network issue, etc.).
+
+        Call this periodically and trigger session cleanup if it returns False.
+        """
+        import time as time_module  # Use wall clock for timeout
+
+        current_value = self._heartbeat_widget.counter
+        now = time_module.monotonic()
+
+        if current_value != self._last_browser_heartbeat_value:
+            # Browser sent a heartbeat - it's alive
+            self._last_browser_heartbeat_value = current_value
+            self._last_browser_heartbeat_time = now
+            return True
+
+        # Counter hasn't changed - check if we've timed out
+        if self._last_browser_heartbeat_time is None:
+            # First check, give browser time to start
+            self._last_browser_heartbeat_time = now
+            return True
+
+        elapsed = now - self._last_browser_heartbeat_time
+        if elapsed > self._browser_heartbeat_timeout:
+            logger.warning(
+                "Browser heartbeat timeout",
+                session_id=self._session_id,
+                elapsed_seconds=elapsed,
+            )
+            return False
+
+        return True
 
     def _publish_heartbeat(self, state: ServiceState) -> None:
         """Publish a heartbeat with the given state."""
@@ -227,3 +275,13 @@ class DashboardServices:
             service_registry=self.service_registry,
             job_orchestrator=self.job_orchestrator,
         )
+
+    @property
+    def heartbeat_widget(self) -> HeartbeatWidget:
+        """Get the browser heartbeat widget.
+
+        This must be added to the page layout for browser heartbeats to work.
+        The widget is invisible but its JavaScript runs to send periodic
+        heartbeats from the browser.
+        """
+        return self._heartbeat_widget

@@ -110,10 +110,41 @@ class DashboardBase(ServiceBase, ABC):
 
         return services, exit_stack
 
-    def _make_step_callback(self, services: DashboardServices) -> Callable[[], None]:
-        """Create a step callback bound to the given services."""
+    def _make_step_callback(
+        self,
+        services: DashboardServices,
+        cleanup_fn: Callable[[], None],
+        get_callback: Callable[[], pn.io.PeriodicCallback | None],
+    ) -> Callable[[], None]:
+        """Create a step callback bound to the given services.
+
+        Parameters
+        ----------
+        services:
+            The dashboard services for this session.
+        cleanup_fn:
+            Function to call when browser disconnect is detected.
+        get_callback:
+            Function that returns the PeriodicCallback to stop on cleanup.
+        """
+        cleanup_triggered = False
 
         def _step():
+            nonlocal cleanup_triggered
+
+            # Check if browser is still connected
+            if not services.is_browser_alive():
+                if not cleanup_triggered:
+                    cleanup_triggered = True
+                    logger.info("Browser disconnect detected, triggering cleanup")
+                    # Stop the periodic callback first
+                    callback = get_callback()
+                    if callback is not None:
+                        callback.stop()
+                    # Then run cleanup
+                    cleanup_fn()
+                return
+
             # Publish session heartbeat (rate-limited internally)
             services.publish_heartbeat()
 
@@ -137,7 +168,10 @@ class DashboardBase(ServiceBase, ABC):
         return '#2596be'
 
     def start_periodic_updates(
-        self, services: DashboardServices, period: int = 500
+        self,
+        services: DashboardServices,
+        cleanup_fn: Callable[[], None],
+        period: int = 500,
     ) -> pn.io.PeriodicCallback:
         """
         Start periodic updates for the dashboard.
@@ -146,6 +180,8 @@ class DashboardBase(ServiceBase, ABC):
         ----------
         services:
             The per-session services to use for updates.
+        cleanup_fn:
+            Function to call when browser disconnect is detected.
         period:
             The period in milliseconds for the periodic update step.
             Default is 500 ms. Even if the backend produces updates, e.g., once per
@@ -157,7 +193,14 @@ class DashboardBase(ServiceBase, ABC):
         :
             The periodic callback handle (for cleanup).
         """
-        step_fn = self._make_step_callback(services)
+        # Use a mutable container to store the callback reference
+        # so the step function can access it for cleanup
+        callback_holder: list[pn.io.PeriodicCallback | None] = [None]
+
+        def get_callback() -> pn.io.PeriodicCallback | None:
+            return callback_holder[0]
+
+        step_fn = self._make_step_callback(services, cleanup_fn, get_callback)
 
         def _safe_step():
             try:
@@ -166,6 +209,7 @@ class DashboardBase(ServiceBase, ABC):
                 self._logger.exception("Error in periodic update step.")
 
         callback = pn.state.add_periodic_callback(_safe_step, period=period)
+        callback_holder[0] = callback
         self._logger.info("Periodic updates started")
         return callback
 
@@ -176,8 +220,14 @@ class DashboardBase(ServiceBase, ABC):
         session_id = id(pn.state.curdoc) if pn.state.curdoc else "unknown"
         logger.info("session_created", session_id=session_id)
 
-        # Register cleanup when session is destroyed
-        def _cleanup_session(session_context):
+        # Track whether cleanup has been performed to avoid double-cleanup
+        cleanup_done = False
+
+        def _do_cleanup():
+            nonlocal cleanup_done
+            if cleanup_done:
+                return
+            cleanup_done = True
             logger.info("session_cleanup_triggered", session_id=session_id)
             try:
                 services.stop()
@@ -186,21 +236,33 @@ class DashboardBase(ServiceBase, ABC):
             except Exception:
                 logger.exception("session_cleanup_error", session_id=session_id)
 
+        # Register cleanup when session is destroyed (Panel's normal cleanup path)
+        def _cleanup_session(session_context):
+            _do_cleanup()
+
         pn.state.on_session_destroyed(_cleanup_session)
 
         # Build UI with per-session services
         sidebar_content = self.create_sidebar_content(services)
         main_content = self.create_main_content(services)
 
+        # Include heartbeat widget in layout (invisible but required for
+        # browser heartbeat JavaScript to run)
+        main_with_heartbeat = pn.Column(
+            services.heartbeat_widget,
+            main_content,
+            sizing_mode='stretch_both',
+        )
+
         template = pn.template.MaterialTemplate(
             title=self.get_dashboard_title(),
             sidebar=sidebar_content,
-            main=main_content,
+            main=main_with_heartbeat,
             header_background=self.get_header_background(),
         )
         # Inject CSS for offline mode (replaces Material Icons font with Unicode)
         template.config.raw_css.extend(self.get_raw_css())
-        self.start_periodic_updates(services)
+        self.start_periodic_updates(services, cleanup_fn=_do_cleanup)
         return template
 
     def get_raw_css(self) -> list[str]:
