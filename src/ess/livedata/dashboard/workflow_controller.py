@@ -178,20 +178,6 @@ class WorkflowController:
             instrument_config=self._instrument_config,
         )
 
-    def get_workflow_titles(self) -> dict[WorkflowId, str]:
-        """Get workflow IDs mapped to their titles, sorted by title."""
-        return {
-            workflow_id: spec.title
-            for workflow_id, spec in sorted(
-                self._workflow_registry.items(), key=lambda item: item[1].title
-            )
-        }
-
-    def get_workflow_description(self, workflow_id: WorkflowId) -> str | None:
-        """Get the description for the given workflow ID."""
-        spec = self._workflow_registry.get(workflow_id)
-        return spec.description if spec else None
-
     def get_workflow_spec(self, workflow_id: WorkflowId) -> WorkflowSpec | None:
         """Get the current workflow specification for the given Id."""
         return self._workflow_registry.get(workflow_id)

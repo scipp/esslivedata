@@ -19,7 +19,6 @@ from .widgets.backend_status_widget import BackendStatusWidget
 from .widgets.job_status_widget import JobStatusListWidget
 from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
-from .widgets.reduction_widget import ReductionWidget
 from .widgets.workflow_status_widget import WorkflowStatusListWidget
 
 # Remove external Google Fonts dependencies from MaterialTemplate.
@@ -113,12 +112,7 @@ class ReductionApp(DashboardBase):
         return pane
 
     def create_sidebar_content(self) -> pn.viewable.Viewable:
-        """Create the sidebar content with workflow controls."""
-        # Create reduction widget (per-session)
-        reduction_widget = ReductionWidget(
-            controller=self._services.workflow_controller
-        )
-
+        """Create the sidebar content."""
         # Create log producer widget only in dev mode (per-session)
         dev_content = []
         if self._dev:
@@ -131,13 +125,6 @@ class ReductionApp(DashboardBase):
         return pn.Column(
             *dev_content,
             self._create_announcements_pane(),
-            pn.layout.Divider(),
-            pn.pane.Markdown("## Data Reduction"),
-            pn.pane.Markdown(
-                "**Starting workflows here is legacy, prefer using the *Workflows* "
-                "tab.**"
-            ),
-            reduction_widget.widget,
         )
 
     def create_main_content(self) -> pn.viewable.Viewable:
