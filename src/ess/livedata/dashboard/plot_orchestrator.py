@@ -14,7 +14,6 @@ Coordinates plot creation and management across multiple plot grids:
 from __future__ import annotations
 
 import copy
-import logging
 import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -22,6 +21,7 @@ from typing import TYPE_CHECKING, Any, NewType, Protocol
 from uuid import UUID, uuid4
 
 import pydantic
+import structlog
 
 from ess.livedata.config.grid_template import GridSpec
 from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
@@ -304,7 +304,7 @@ class PlotOrchestrator:
         self._instrument = instrument
         self._instrument_config = instrument_config
         self._config_store = config_store
-        self._logger = logging.getLogger(__name__)
+        self._logger = structlog.get_logger()
 
         self._grids: dict[GridId, PlotGridConfig] = {}
         self._cell_to_grid: dict[CellId, GridId] = {}

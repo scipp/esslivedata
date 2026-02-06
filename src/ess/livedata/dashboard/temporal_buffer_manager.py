@@ -4,17 +4,17 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Hashable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
 import scipp as sc
+import structlog
 
 from .extractors import LatestValueExtractor, UpdateExtractor
 from .temporal_buffers import BufferProtocol, SingleValueBuffer, TemporalBuffer
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 K = TypeVar('K', bound=Hashable)
 

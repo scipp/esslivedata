@@ -4,17 +4,17 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from importlib import resources
 from typing import TYPE_CHECKING, Any
 
+import structlog
 import yaml
 
 if TYPE_CHECKING:
     from ess.livedata.dashboard.plot_orchestrator import PlotCell
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 @dataclass(frozen=True)
