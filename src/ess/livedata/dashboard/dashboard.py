@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from contextlib import ExitStack
 
 import panel as pn
+import structlog
 from holoviews import Dimension, streams
 
 from ess.livedata import ServiceBase
@@ -18,6 +19,8 @@ from .transport import NullTransport, Transport
 
 # Global throttling for sliders, etc.
 pn.config.throttled = True
+
+logger = structlog.get_logger(__name__)
 
 
 class DashboardBase(ServiceBase, ABC):
@@ -32,29 +35,20 @@ class DashboardBase(ServiceBase, ABC):
         dashboard_name: str,
         port: int = 5007,
         transport: str = 'kafka',
+        num_procs: int = 1,
     ):
         name = f'{instrument}_{dashboard_name}'
         super().__init__(name=name, log_level=log_level)
         self._instrument = instrument
         self._port = port
         self._dev = dev
-
-        self._exit_stack = ExitStack()
-        self._exit_stack.__enter__()
-
-        self._callback = None
+        self._transport_type = transport
+        self._num_procs = num_procs
 
         # Config store manager for file-backed persistent UI state (GUI dashboards)
-        config_manager = ConfigStoreManager(instrument=instrument, store_type='file')
-
-        # Setup all dashboard services
-        self._services = DashboardServices(
-            instrument=instrument,
-            dev=dev,
-            exit_stack=self._exit_stack,
-            pipe_factory=streams.Pipe,
-            transport=self._create_transport(transport),
-            config_manager=config_manager,
+        # This can be shared across sessions (file-based storage)
+        self._config_manager = ConfigStoreManager(
+            instrument=instrument, store_type='file'
         )
 
         self._logger.info("%s initialized", self.__class__.__name__)
@@ -84,23 +78,53 @@ class DashboardBase(ServiceBase, ABC):
             raise ValueError(f"Unknown transport type: {transport}")
 
     @abstractmethod
-    def create_sidebar_content(self) -> pn.viewable.Viewable:
+    def create_sidebar_content(
+        self, services: DashboardServices
+    ) -> pn.viewable.Viewable:
         """Override this method to create the sidebar content."""
         pass
 
     @abstractmethod
-    def create_main_content(self) -> pn.viewable.Viewable:
+    def create_main_content(self, services: DashboardServices) -> pn.viewable.Viewable:
         """Override this method to create the main dashboard content."""
 
-    def _step(self):
-        """Step function for periodic updates."""
-        # We use hold() to ensure that the UI does not update repeatedly when multiple
-        # messages are processed in a single step. This is important to avoid, e.g.,
-        # multiple lines in the same plot, or different plots updating in short
-        # succession, which is visually distracting.
-        # Furthermore, this improves performance by reducing the number of re-renders.
-        with pn.io.hold():
-            self._services.orchestrator.update()
+    def _create_session_services(self) -> tuple[DashboardServices, ExitStack]:
+        """
+        Create per-session services and resources.
+
+        Returns the services and the exit stack that must be closed on session cleanup.
+        """
+        exit_stack = ExitStack()
+        exit_stack.__enter__()
+
+        services = DashboardServices(
+            instrument=self._instrument,
+            dev=self._dev,
+            exit_stack=exit_stack,
+            pipe_factory=streams.Pipe,
+            transport=self._create_transport(self._transport_type),
+            config_manager=self._config_manager,
+        )
+        services.start()
+
+        return services, exit_stack
+
+    def _make_step_callback(
+        self, services: DashboardServices
+    ) -> tuple[pn.io.PeriodicCallback, callable]:
+        """Create a step callback bound to the given services."""
+
+        def _step():
+            # We use hold() to ensure that the UI does not update repeatedly when
+            # multiple messages are processed in a single step. This is important to
+            # avoid, e.g., multiple lines in the same plot, or different plots updating
+            # in short succession, which is visually distracting.
+            # Furthermore, this improves performance by reducing the number of
+            # re-renders.
+            with pn.io.hold():
+                services.orchestrator.update()
+
+        return _step
 
     def get_dashboard_title(self) -> str:
         """Get the dashboard title. Override for custom titles."""
@@ -110,37 +134,61 @@ class DashboardBase(ServiceBase, ABC):
         """Get the header background color. Override for custom colors."""
         return '#2596be'
 
-    def start_periodic_updates(self, period: int = 500) -> None:
+    def start_periodic_updates(
+        self, services: DashboardServices, period: int = 500
+    ) -> pn.io.PeriodicCallback:
         """
         Start periodic updates for the dashboard.
 
         Parameters
         ----------
+        services:
+            The per-session services to use for updates.
         period:
             The period in milliseconds for the periodic update step.
             Default is 500 ms. Even if the backend produces updates, e.g., once per
             second, this default should reduce UI lag somewhat. If there are no new
             messages, the step function should not do anything.
+
+        Returns
+        -------
+        :
+            The periodic callback handle (for cleanup).
         """
-        if self._callback is not None:
-            # Callback from previous session, e.g., before reloading the page. As far as
-            # I can tell the garbage collector does clean this up eventually, but
-            # let's be explicit.
-            self._callback.stop()
+        step_fn = self._make_step_callback(services)
 
         def _safe_step():
             try:
-                self._step()
+                step_fn()
             except Exception:
                 self._logger.exception("Error in periodic update step.")
 
-        self._callback = pn.state.add_periodic_callback(_safe_step, period=period)
+        callback = pn.state.add_periodic_callback(_safe_step, period=period)
         self._logger.info("Periodic updates started")
+        return callback
 
     def create_layout(self) -> pn.template.MaterialTemplate:
-        """Create the basic dashboard layout."""
-        sidebar_content = self.create_sidebar_content()
-        main_content = self.create_main_content()
+        """Create the basic dashboard layout with per-session services."""
+        # Create per-session services
+        services, exit_stack = self._create_session_services()
+        session_id = id(pn.state.curdoc) if pn.state.curdoc else "unknown"
+        logger.info("session_created", session_id=session_id)
+
+        # Register cleanup when session is destroyed
+        def _cleanup_session(session_context):
+            logger.info("session_cleanup_triggered", session_id=session_id)
+            try:
+                services.stop()
+                exit_stack.__exit__(None, None, None)
+                logger.info("session_cleanup_complete", session_id=session_id)
+            except Exception:
+                logger.exception("session_cleanup_error", session_id=session_id)
+
+        pn.state.on_session_destroyed(_cleanup_session)
+
+        # Build UI with per-session services
+        sidebar_content = self.create_sidebar_content(services)
+        main_content = self.create_main_content(services)
 
         template = pn.template.MaterialTemplate(
             title=self.get_dashboard_title(),
@@ -150,7 +198,7 @@ class DashboardBase(ServiceBase, ABC):
         )
         # Inject CSS for offline mode (replaces Material Icons font with Unicode)
         template.config.raw_css.extend(self.get_raw_css())
-        self.start_periodic_updates()
+        self.start_periodic_updates(services)
         return template
 
     def get_raw_css(self) -> list[str]:
@@ -189,11 +237,12 @@ class DashboardBase(ServiceBase, ABC):
             show=False,
             autoreload=False,
             dev=self._dev,
+            num_procs=self._num_procs,
         )
 
     def _start_impl(self) -> None:
-        """Start the dashboard service."""
-        self._services.start()
+        """Start the dashboard service (no-op, services are per-session)."""
+        pass
 
     def run_forever(self) -> None:
         """Run the dashboard server."""
@@ -205,14 +254,15 @@ class DashboardBase(ServiceBase, ABC):
                 self.create_layout,
                 port=self._port,
                 show=False,
-                autoreload=True,
+                autoreload=self._num_procs
+                == 1,  # autoreload incompatible with multiproc
                 dev=self._dev,
+                num_procs=self._num_procs,
             )
         except KeyboardInterrupt:
             self._logger.info("Keyboard interrupt received, shutting down...")
             self.stop()
 
     def _stop_impl(self) -> None:
-        """Clean shutdown of all components."""
-        self._services.stop()
-        self._exit_stack.__exit__(None, None, None)
+        """Stop the dashboard service (no-op, sessions clean up themselves)."""
+        pass

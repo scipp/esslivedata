@@ -76,7 +76,7 @@ class DashboardServices:
     ):
         self._instrument = instrument
         self._dev = dev
-        self._exit_stack = exit_stack
+        self.exit_stack = exit_stack
         self._pipe_factory = pipe_factory
         self._transport = transport
         self._config_manager = config_manager
@@ -103,7 +103,7 @@ class DashboardServices:
     def _setup_data_infrastructure(self) -> None:
         """Set up data services, forwarder, and orchestrator."""
         # Set up transport and get resources
-        transport_resources = self._exit_stack.enter_context(self._transport)
+        transport_resources = self.exit_stack.enter_context(self._transport)
 
         self.command_service = CommandService(sink=transport_resources.command_sink)
 
