@@ -130,7 +130,7 @@ def run_service(
         serializer = serialize_variable_to_monitor_ev44
     else:
         adapter = EventsToHistogramAdapter(
-            toa=sc.linspace('toa', 0, 71_000_000, num=1001, unit='ns')
+            toa=sc.linspace('frame_time', 0, 71_000_000, num=1001, unit='ns')
         )
         serializer = serialize_dataarray_to_da00
 

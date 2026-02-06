@@ -13,6 +13,10 @@ from ess.livedata.handlers.detector_view_specs import (
     DetectorViewOutputs,
     DetectorViewParams,
 )
+from ess.livedata.handlers.monitor_workflow_specs import (
+    TOAOnlyMonitorDataParams,
+    register_monitor_workflow_specs,
+)
 
 
 class TotalCountsOutputs(WorkflowOutputsBase):
@@ -36,6 +40,11 @@ instrument = Instrument(
 
 # Register instrument
 instrument_registry.register(instrument)
+
+# Register monitor workflow spec (TOA-only, no TOF lookup tables)
+monitor_handle = register_monitor_workflow_specs(
+    instrument, ['monitor1', 'monitor2'], params=TOAOnlyMonitorDataParams
+)
 
 # Register detector view spec.
 # Note: We don't use register_detector_view_specs here because dummy uses
