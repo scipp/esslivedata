@@ -4,6 +4,7 @@
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from contextlib import ExitStack
 
 import panel as pn
@@ -109,12 +110,13 @@ class DashboardBase(ServiceBase, ABC):
 
         return services, exit_stack
 
-    def _make_step_callback(
-        self, services: DashboardServices
-    ) -> tuple[pn.io.PeriodicCallback, callable]:
+    def _make_step_callback(self, services: DashboardServices) -> Callable[[], None]:
         """Create a step callback bound to the given services."""
 
         def _step():
+            # Publish session heartbeat (rate-limited internally)
+            services.publish_heartbeat()
+
             # We use hold() to ensure that the UI does not update repeatedly when
             # multiple messages are processed in a single step. This is important to
             # avoid, e.g., multiple lines in the same plot, or different plots updating

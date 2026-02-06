@@ -2,6 +2,8 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Dashboard service composition and setup."""
 
+import time
+import uuid
 from collections.abc import Callable
 from contextlib import ExitStack
 from typing import Any
@@ -13,6 +15,8 @@ from ess.livedata.config import instrument_registry
 from ess.livedata.config.grid_template import load_raw_grid_templates
 from ess.livedata.config.instruments import get_config
 from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.core.job import ServiceState, ServiceStatus
+from ess.livedata.core.message import STATUS_STREAM_ID, Message
 
 from .command_service import CommandService
 from .config_store import ConfigStoreManager
@@ -81,6 +85,12 @@ class DashboardServices:
         self._transport = transport
         self._config_manager = config_manager
 
+        # Session heartbeat state
+        self._session_id = str(uuid.uuid4())
+        self._started_at = time.time_ns()
+        self._last_heartbeat: int | None = None
+        self._heartbeat_interval = 2_000_000_000  # 2 seconds in nanoseconds
+
         # Config stores for workflow and plotter persistent UI state
         self.workflow_config_store = config_manager.get_store('workflow_configs')
         self.plotter_config_store = config_manager.get_store('plotter_configs')
@@ -90,15 +100,56 @@ class DashboardServices:
         self._setup_workflow_management()
         self._setup_plot_orchestrator()
 
-        logger.info("DashboardServices initialized for %s", instrument)
+        logger.info(
+            "DashboardServices initialized",
+            instrument=instrument,
+            session_id=self._session_id,
+        )
 
     def start(self) -> None:
         """Start background tasks (e.g., message polling)."""
         self._transport.start()
 
     def stop(self) -> None:
-        """Stop background tasks (e.g., message polling)."""
+        """Stop background tasks and send final heartbeat."""
+        self._publish_heartbeat(ServiceState.stopping)
         self._transport.stop()
+
+    def publish_heartbeat(self) -> None:
+        """Publish session heartbeat if interval has elapsed.
+
+        Call this periodically from the UI update loop. The method is
+        rate-limited internally to avoid excessive Kafka traffic.
+        """
+        timestamp = time.time_ns()
+        if self._last_heartbeat is not None:
+            if timestamp - self._last_heartbeat < self._heartbeat_interval:
+                return
+        self._publish_heartbeat(ServiceState.running)
+
+    def _publish_heartbeat(self, state: ServiceState) -> None:
+        """Publish a heartbeat with the given state."""
+        timestamp = time.time_ns()
+        self._last_heartbeat = timestamp
+
+        status = ServiceStatus(
+            instrument=self._instrument,
+            namespace="dashboard",
+            worker_id=self._session_id,
+            state=state,
+            started_at=self._started_at,
+            active_job_count=0,
+            messages_processed=0,
+        )
+        message = Message(
+            timestamp=timestamp,
+            stream=STATUS_STREAM_ID,
+            value=status,
+        )
+        try:
+            self._transport_resources.status_sink.publish_messages([message])
+        except Exception:
+            logger.exception("Failed to publish session heartbeat")
 
     def _setup_data_infrastructure(self) -> None:
         """Set up data services, forwarder, and orchestrator."""

@@ -178,9 +178,9 @@ class PlotGridTabs:
         # Add Workflows tab (always second)
         self._tabs.append(('Workflows', workflow_status_widget.panel()))
 
-        # Add Backend Status tab (third, if widget provided)
+        # Add System Status tab (third, if widget provided)
         if backend_status_widget is not None:
-            self._tabs.append(('Backend Status', backend_status_widget.panel()))
+            self._tabs.append(('System Status', backend_status_widget.panel()))
 
         # Add Manage tab (third or fourth depending on backend_status_widget)
         self._grid_manager = PlotGridManager(
