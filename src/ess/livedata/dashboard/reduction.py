@@ -15,6 +15,7 @@ from ess.livedata import Service
 from ess.livedata.logging_config import configure_logging
 
 from .dashboard import DashboardBase
+from .dashboard_services import DashboardServices
 from .widgets.backend_status_widget import BackendStatusWidget
 from .widgets.job_status_widget import JobStatusListWidget
 from .widgets.log_producer_widget import LogProducerWidget
@@ -76,6 +77,7 @@ class ReductionApp(DashboardBase):
         log_level: int,
         transport: str = 'kafka',
         fetch_announcements: bool = True,
+        num_procs: int = 1,
     ):
         super().__init__(
             instrument=instrument,
@@ -84,6 +86,7 @@ class ReductionApp(DashboardBase):
             dashboard_name='reduction_dashboard',
             port=5009,  # Default port for reduction dashboard
             transport=transport,
+            num_procs=num_procs,
         )
         self._fetch_announcements = fetch_announcements
         self._logger.info("Reduction dashboard initialized")
@@ -112,19 +115,19 @@ class ReductionApp(DashboardBase):
         pn.state.add_periodic_callback(refresh, period=300_000)  # 5 minutes
         return pane
 
-    def create_sidebar_content(self) -> pn.viewable.Viewable:
+    def create_sidebar_content(
+        self, services: DashboardServices
+    ) -> pn.viewable.Viewable:
         """Create the sidebar content with workflow controls."""
         # Create reduction widget (per-session)
-        reduction_widget = ReductionWidget(
-            controller=self._services.workflow_controller
-        )
+        reduction_widget = ReductionWidget(controller=services.workflow_controller)
 
         # Create log producer widget only in dev mode (per-session)
         dev_content = []
         if self._dev:
             dev_widget = LogProducerWidget(
                 instrument=self._instrument,
-                exit_stack=self._exit_stack,
+                exit_stack=services.exit_stack,
             )
             dev_content = [dev_widget.panel, pn.layout.Divider()]
 
@@ -140,28 +143,28 @@ class ReductionApp(DashboardBase):
             reduction_widget.widget,
         )
 
-    def create_main_content(self) -> pn.viewable.Viewable:
+    def create_main_content(self, services: DashboardServices) -> pn.viewable.Viewable:
         """Create the main content area with plot grid tabs."""
         job_status_widget = JobStatusListWidget(
-            job_service=self._services.job_service,
-            job_controller=self._services.job_controller,
+            job_service=services.job_service,
+            job_controller=services.job_controller,
         )
 
         workflow_status_widget = WorkflowStatusListWidget(
-            orchestrator=self._services.job_orchestrator,
-            job_service=self._services.job_service,
+            orchestrator=services.job_orchestrator,
+            job_service=services.job_service,
         )
 
         backend_status_widget = BackendStatusWidget(
-            service_registry=self._services.service_registry,
+            service_registry=services.service_registry,
         )
 
         plot_grid_tabs = PlotGridTabs(
-            plot_orchestrator=self._services.plot_orchestrator,
+            plot_orchestrator=services.plot_orchestrator,
             # Temporary hack, will likely get this from JobOrchestrator, or make
             # registry more accessible.
-            workflow_registry=self._services.workflow_controller._workflow_registry,
-            plotting_controller=self._services.plotting_controller,
+            workflow_registry=services.workflow_controller._workflow_registry,
+            plotting_controller=services.plotting_controller,
             job_status_widget=job_status_widget,
             workflow_status_widget=workflow_status_widget,
             backend_status_widget=backend_status_widget,
@@ -183,6 +186,12 @@ def get_arg_parser() -> argparse.ArgumentParser:
         action='store_false',
         dest='fetch_announcements',
         help='Disable fetching announcements from external URL',
+    )
+    parser.add_argument(
+        '--num-procs',
+        type=int,
+        default=1,
+        help='Number of worker processes for handling sessions',
     )
     return parser
 

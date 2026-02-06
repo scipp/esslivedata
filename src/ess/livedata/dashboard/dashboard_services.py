@@ -2,6 +2,8 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Dashboard service composition and setup."""
 
+import time
+import uuid
 from collections.abc import Callable
 from contextlib import ExitStack
 from typing import Any
@@ -13,6 +15,8 @@ from ess.livedata.config import instrument_registry
 from ess.livedata.config.grid_template import load_raw_grid_templates
 from ess.livedata.config.instruments import get_config
 from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.core.job import ServiceState, ServiceStatus
+from ess.livedata.core.message import STATUS_STREAM_ID, Message
 
 from .command_service import CommandService
 from .config_store import ConfigStoreManager
@@ -27,6 +31,7 @@ from .roi_publisher import ROIPublisher
 from .service_registry import ServiceRegistry
 from .stream_manager import StreamManager
 from .transport import Transport
+from .widgets.heartbeat_widget import HeartbeatWidget
 from .workflow_controller import WorkflowController
 
 logger = structlog.get_logger(__name__)
@@ -76,10 +81,26 @@ class DashboardServices:
     ):
         self._instrument = instrument
         self._dev = dev
-        self._exit_stack = exit_stack
+        self.exit_stack = exit_stack
         self._pipe_factory = pipe_factory
         self._transport = transport
         self._config_manager = config_manager
+
+        # Session heartbeat state
+        self._session_id = str(uuid.uuid4())
+        self._started_at = time.time_ns()
+        self._last_heartbeat: int | None = None
+        self._heartbeat_interval = 2_000_000_000  # 2 seconds in nanoseconds
+
+        # Browser heartbeat detection using ReactiveHTML widget.
+        # The widget's JavaScript increments a counter every 5 seconds.
+        # If the counter stops changing, the browser has disconnected and
+        # we should trigger session cleanup.
+        self._heartbeat_widget = HeartbeatWidget(interval_ms=5000)
+        self._last_browser_heartbeat_value = 0
+        self._last_browser_heartbeat_time: float | None = None
+        # If no browser heartbeat for this long, consider browser dead
+        self._browser_heartbeat_timeout = 20.0  # seconds
 
         # Config stores for workflow and plotter persistent UI state
         self.workflow_config_store = config_manager.get_store('workflow_configs')
@@ -90,20 +111,98 @@ class DashboardServices:
         self._setup_workflow_management()
         self._setup_plot_orchestrator()
 
-        logger.info("DashboardServices initialized for %s", instrument)
+        logger.info(
+            "DashboardServices initialized",
+            instrument=instrument,
+            session_id=self._session_id,
+        )
 
     def start(self) -> None:
         """Start background tasks (e.g., message polling)."""
         self._transport.start()
 
     def stop(self) -> None:
-        """Stop background tasks (e.g., message polling)."""
+        """Stop background tasks and send final heartbeat."""
+        self._publish_heartbeat(ServiceState.stopping)
         self._transport.stop()
+
+    def publish_heartbeat(self) -> None:
+        """Publish session heartbeat if interval has elapsed.
+
+        Call this periodically from the UI update loop. The method is
+        rate-limited internally to avoid excessive Kafka traffic.
+        """
+        timestamp = time.time_ns()
+        if self._last_heartbeat is not None:
+            if timestamp - self._last_heartbeat < self._heartbeat_interval:
+                return
+        self._publish_heartbeat(ServiceState.running)
+
+    def is_browser_alive(self) -> bool:
+        """Check if the browser is still connected.
+
+        Returns True if the browser heartbeat counter has changed recently.
+        Returns False if the counter has been stale for longer than the timeout,
+        indicating the browser has disconnected (tab closed, network issue, etc.).
+
+        Call this periodically and trigger session cleanup if it returns False.
+        """
+        import time as time_module  # Use wall clock for timeout
+
+        current_value = self._heartbeat_widget.counter
+        now = time_module.monotonic()
+
+        if current_value != self._last_browser_heartbeat_value:
+            # Browser sent a heartbeat - it's alive
+            self._last_browser_heartbeat_value = current_value
+            self._last_browser_heartbeat_time = now
+            return True
+
+        # Counter hasn't changed - check if we've timed out
+        if self._last_browser_heartbeat_time is None:
+            # First check, give browser time to start
+            self._last_browser_heartbeat_time = now
+            return True
+
+        elapsed = now - self._last_browser_heartbeat_time
+        if elapsed > self._browser_heartbeat_timeout:
+            logger.warning(
+                "Browser heartbeat timeout",
+                session_id=self._session_id,
+                elapsed_seconds=elapsed,
+            )
+            return False
+
+        return True
+
+    def _publish_heartbeat(self, state: ServiceState) -> None:
+        """Publish a heartbeat with the given state."""
+        timestamp = time.time_ns()
+        self._last_heartbeat = timestamp
+
+        status = ServiceStatus(
+            instrument=self._instrument,
+            namespace="dashboard",
+            worker_id=self._session_id,
+            state=state,
+            started_at=self._started_at,
+            active_job_count=0,
+            messages_processed=0,
+        )
+        message = Message(
+            timestamp=timestamp,
+            stream=STATUS_STREAM_ID,
+            value=status,
+        )
+        try:
+            self._transport_resources.status_sink.publish_messages([message])
+        except Exception:
+            logger.exception("Failed to publish session heartbeat")
 
     def _setup_data_infrastructure(self) -> None:
         """Set up data services, forwarder, and orchestrator."""
         # Set up transport and get resources
-        transport_resources = self._exit_stack.enter_context(self._transport)
+        transport_resources = self.exit_stack.enter_context(self._transport)
 
         self.command_service = CommandService(sink=transport_resources.command_sink)
 
@@ -176,3 +275,13 @@ class DashboardServices:
             service_registry=self.service_registry,
             job_orchestrator=self.job_orchestrator,
         )
+
+    @property
+    def heartbeat_widget(self) -> HeartbeatWidget:
+        """Get the browser heartbeat widget.
+
+        This must be added to the page layout for browser heartbeats to work.
+        The widget is invisible but its JavaScript runs to send periodic
+        heartbeats from the browser.
+        """
+        return self._heartbeat_widget

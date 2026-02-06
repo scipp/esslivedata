@@ -11,6 +11,7 @@ import structlog
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.config.streams import get_stream_mapping, stream_kind_to_topic
+from ess.livedata.core.job import ServiceStatus
 from ess.livedata.core.message import StreamKind
 from ess.livedata.handlers.config_handler import ConfigUpdate
 from ess.livedata.kafka import consumer as kafka_consumer
@@ -85,6 +86,14 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
                 )
             )
 
+            # Create status sink for session heartbeats
+            status_sink = self._exit_stack.enter_context(
+                KafkaSink[ServiceStatus](
+                    kafka_config=kafka_downstream_config,
+                    instrument=self._instrument,
+                )
+            )
+
             logger.info(
                 "dashboard_kafka_transport_initialized", instrument=self._instrument
             )
@@ -93,6 +102,7 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
                 message_source=message_source,
                 command_sink=command_sink,
                 roi_sink=roi_sink,
+                status_sink=status_sink,
             )
 
         except Exception:

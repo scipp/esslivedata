@@ -87,11 +87,14 @@ class DashboardResources:
         Sink for publishing command messages.
     roi_sink:
         Sink for publishing ROI update messages.
+    status_sink:
+        Sink for publishing status/heartbeat messages.
     """
 
     message_source: MessageSource
     command_sink: MessageSink
     roi_sink: MessageSink
+    status_sink: MessageSink
 
 
 class NullMessageSource:
@@ -124,6 +127,7 @@ class NullTransport:
             message_source=NullMessageSource(),
             command_sink=NullMessageSink(),
             roi_sink=NullMessageSink(),
+            status_sink=NullMessageSink(),
         )
 
     def __exit__(
