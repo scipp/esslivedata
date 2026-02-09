@@ -17,15 +17,15 @@ def _extract_time_bounds_as_scalars(data: sc.DataArray) -> dict[str, sc.Variable
     Extract start_time/end_time as scalar values from 1-D coords.
 
     When data comes from a TemporalBuffer, start_time and end_time are 1-D
-    coordinates (one value per time slice). This function extracts the overall
-    time range (min of start_time, max of end_time) for use in plot titles.
+    coordinates (one value per time slice) in chronological order. This function
+    extracts the overall time range for use in plot titles.
 
     Returns an empty dict if coords don't exist or are already scalar.
     """
     bounds: dict[str, sc.Variable] = {}
-    for name, func in [('start_time', 'min'), ('end_time', 'max')]:
+    for name, index in [('start_time', 0), ('end_time', -1)]:
         if name in data.coords and data.coords[name].ndim == 1:
-            bounds[name] = getattr(data.coords[name], func)()
+            bounds[name] = data.coords[name][index]
     return bounds
 
 
