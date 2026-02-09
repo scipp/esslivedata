@@ -882,9 +882,14 @@ class PlotGridTabs:
 
         Called from SessionUpdater's periodic callback. Single pass over all
         orchestrator layers to:
-        - Push data updates to existing session pipes
+        - Push data updates to existing session pipes (active tab only)
         - Detect version changes requiring cell rebuilds
         - Create/update session layers as needed
+
+        Only layers on the currently visible grid tab call ``update_pipe()``,
+        since ``dynamic=True`` on Tabs means hidden tabs have no materialized
+        Bokeh models. Skipped layers keep their dirty flag set; on tab switch
+        the next poll cycle sends the latest cached state.
 
         Version-based change detection replaces callback-based updates for state
         changes (waiting/ready/stopped/error). Polling at ~100ms intervals is
@@ -893,10 +898,21 @@ class PlotGridTabs:
         cells_to_rebuild: dict[CellId, tuple[PlotCell, PlotGrid]] = {}
         seen_layer_ids: set[LayerId] = set()
 
+        # Determine which grid tab is active (if any).
+        active_grid_idx = self._tabs.active - self._static_tabs_count
+        grid_keys = list(self._grid_widgets.keys())
+        active_grid_id: GridId | None = (
+            grid_keys[active_grid_idx]
+            if 0 <= active_grid_idx < len(grid_keys)
+            else None
+        )
+
         for grid_id, plot_grid in self._grid_widgets.items():
-            grid_config = self._orchestrator.get_grid(grid_id)
+            grid_config = self._orchestrator.peek_grid(grid_id)
             if grid_config is None:
                 continue
+
+            is_active = grid_id == active_grid_id
 
             for cell_id, cell in grid_config.cells.items():
                 for layer in cell.layers:
@@ -922,7 +938,8 @@ class PlotGridTabs:
                         # New layer → rebuild cell
                         cells_to_rebuild[cell_id] = (cell, plot_grid)
                     else:
-                        session_layer.update_pipe()
+                        if is_active:
+                            session_layer.update_pipe()
 
                         # Check for version changes (plotter changes increment version)
                         if state.version != session_layer.last_seen_version:

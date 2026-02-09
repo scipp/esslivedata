@@ -1179,6 +1179,25 @@ class PlotOrchestrator:
         except Exception as e:
             self._logger.error('Failed to persist plot grids: %s', e)
 
+    def peek_grid(self, grid_id: GridId) -> PlotGridConfig | None:
+        """
+        Get a read-only view of a plot grid configuration without copying.
+
+        Returns the internal grid object directly. Callers must not modify
+        the returned object.
+
+        Parameters
+        ----------
+        grid_id
+            ID of the grid to retrieve.
+
+        Returns
+        -------
+        :
+            Plot grid configuration if found, None otherwise.
+        """
+        return self._grids.get(grid_id)
+
     def get_grid(self, grid_id: GridId) -> PlotGridConfig | None:
         """
         Get a plot grid configuration.
