@@ -255,6 +255,26 @@ class PlotGridTabs:
         self._tabs.pop(self._static_tabs_count + tab_index)
         del self._grid_widgets[grid_id]
 
+    def _get_active_grid_id(self) -> GridId | None:
+        """Return the GridId of the currently visible grid tab, or None.
+
+        The tab widget contains static tabs (Jobs, Workflows, Manage Plots, ...)
+        followed by dynamic grid tabs. Subtracting the static tab count from the
+        active tab index maps to a grid position. When a static tab is selected
+        the result is negative, which the bounds check rejects.
+
+        Returns None when a config modal is open: the modal overlay obscures
+        the plots, so rendering would be wasted. Dirty flags are preserved and
+        the first poll after the modal closes pushes the latest cached state.
+        """
+        if self._current_modal is not None:
+            return None
+        grid_idx = self._tabs.active - self._static_tabs_count
+        grid_keys = list(self._grid_widgets.keys())
+        if 0 <= grid_idx < len(grid_keys):
+            return grid_keys[grid_idx]
+        return None
+
     def _on_grid_created(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Handle grid creation from orchestrator."""
         self._add_grid_tab(grid_id, grid_config)
@@ -897,20 +917,7 @@ class PlotGridTabs:
         """
         cells_to_rebuild: dict[CellId, tuple[PlotCell, PlotGrid]] = {}
         seen_layer_ids: set[LayerId] = set()
-
-        # Determine which grid tab is active (if any).
-        # When a config modal is open, treat all grids as hidden: the modal
-        # overlay obscures the plots, so pipe.send() would be wasted rendering.
-        # Dirty flags are preserved; the first poll after the modal closes will
-        # push the latest cached state.
-        modal_is_open = self._current_modal is not None
-        active_grid_idx = self._tabs.active - self._static_tabs_count
-        grid_keys = list(self._grid_widgets.keys())
-        active_grid_id: GridId | None = (
-            grid_keys[active_grid_idx]
-            if 0 <= active_grid_idx < len(grid_keys) and not modal_is_open
-            else None
-        )
+        active_grid_id = self._get_active_grid_id()
 
         for grid_id, plot_grid in self._grid_widgets.items():
             grid_config = self._orchestrator.peek_grid(grid_id)

@@ -121,10 +121,10 @@ class FullHistoryExtractor(UpdateExtractor):
         Bokeh displays them as local time rather than UTC.
         """
         dim = self._concat_dim
-        if self._time_origin is not None:
-            return data.assign_coords({dim: self._time_origin + data.coords[dim]})
         if dim not in data.coords:
             return data
+        if self._time_origin is not None:
+            return data.assign_coords({dim: self._time_origin + data.coords[dim]})
         coord = data.coords[dim]
         if coord.dtype != sc.DType.int64 or coord.unit not in ('ns', 'us', 'ms', 's'):
             return data

@@ -133,16 +133,6 @@ class SessionUpdater:
         # Poll for notifications
         notifications = self._poll_notifications()
 
-        # Apply all changes in a single batched update.
-        # - pn.io.hold() batches document change events so they are dispatched
-        #   to the browser in one WebSocket flush, avoiding staggered rendering.
-        # - doc.models.freeze() batches Bokeh model-graph recomputation.
-        #   Without it, each operation that mutates the model graph (pipe.send,
-        #   layout child changes) triggers a full BFS traversal of every model in
-        #   the document via _pop_freeze → recompute → collect_models, at O(M)
-        #   cost. The outer freeze keeps the counter above zero so that inner
-        #   freeze/unfreeze cycles (e.g. HoloViews hold_render) are no-ops,
-        #   collapsing N recomputes into 1.
         with self._batched_update():
             self._show_notifications(notifications)
 
@@ -158,7 +148,19 @@ class SessionUpdater:
 
     @contextmanager
     def _batched_update(self) -> Iterator[None]:
-        """Batch UI updates if a Bokeh document is available."""
+        """Batch UI updates using hold + freeze.
+
+        ``pn.io.hold()`` batches document change events so they are dispatched
+        to the browser in one WebSocket flush, avoiding staggered rendering.
+
+        ``doc.models.freeze()`` batches Bokeh model-graph recomputation.
+        Without it, each operation that mutates the model graph (pipe.send,
+        layout child changes) triggers a full BFS traversal of every model in
+        the document via ``_pop_freeze`` → ``recompute`` → ``collect_models``,
+        at O(M) cost. The outer freeze keeps the counter above zero so that
+        inner freeze/unfreeze cycles (e.g. HoloViews ``hold_render``) are
+        no-ops, collapsing N recomputes into 1.
+        """
         doc = pn.state.curdoc
         freeze = doc.models.freeze() if doc is not None else nullcontext()
         with pn.io.hold(), freeze:

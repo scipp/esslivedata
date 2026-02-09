@@ -93,6 +93,10 @@ class RectanglesReadbackPlotter(Plotter):
             DataArray with ROI readback format (roi_index, x, y coordinates).
         data_key:
             Key identifying this data.
+        label:
+            Unused. ROI readback plots render multiple shapes with per-ROI
+            colors rather than labeled overlays, so individual labels do not
+            apply.
         **kwargs:
             Unused additional arguments.
 
@@ -101,7 +105,7 @@ class RectanglesReadbackPlotter(Plotter):
         :
             HoloViews Rectangles element with per-shape colors.
         """
-        del kwargs, label  # Unused
+        del kwargs, label
 
         # Parse ROI data
         rois = ROI.from_concatenated_data_array(data)
@@ -195,6 +199,10 @@ class PolygonsReadbackPlotter(Plotter):
             DataArray with ROI readback format (roi_index, x, y coordinates).
         data_key:
             Key identifying this data.
+        label:
+            Unused. ROI readback plots render multiple shapes with per-ROI
+            colors rather than labeled overlays, so individual labels do not
+            apply.
         **kwargs:
             Unused additional arguments.
 
@@ -203,7 +211,7 @@ class PolygonsReadbackPlotter(Plotter):
         :
             HoloViews Polygons element with per-shape colors.
         """
-        del kwargs, label  # Unused
+        del kwargs, label
 
         # Parse ROI data
         rois = ROI.from_concatenated_data_array(data)
