@@ -899,11 +899,16 @@ class PlotGridTabs:
         seen_layer_ids: set[LayerId] = set()
 
         # Determine which grid tab is active (if any).
+        # When a config modal is open, treat all grids as hidden: the modal
+        # overlay obscures the plots, so pipe.send() would be wasted rendering.
+        # Dirty flags are preserved; the first poll after the modal closes will
+        # push the latest cached state.
+        modal_is_open = self._current_modal is not None
         active_grid_idx = self._tabs.active - self._static_tabs_count
         grid_keys = list(self._grid_widgets.keys())
         active_grid_id: GridId | None = (
             grid_keys[active_grid_idx]
-            if 0 <= active_grid_idx < len(grid_keys)
+            if 0 <= active_grid_idx < len(grid_keys) and not modal_is_open
             else None
         )
 
