@@ -44,8 +44,8 @@ class TestSystemStatusWidget:
         )
 
         panel = widget.panel()
-        # Panel should contain 3 items: session widget, divider, backend widget
-        assert len(panel) == 3
+        # Panel should contain 2 items: session widget and backend widget
+        assert len(panel) == 2
 
     def test_session_widget_is_first(self):
         session_registry = SessionRegistry()
@@ -61,22 +61,6 @@ class TestSystemStatusWidget:
         first_section = panel[0]
         # First section should be the session widget panel (a Column)
         assert isinstance(first_section, pn.Column)
-
-    def test_divider_between_sections(self):
-        session_registry = SessionRegistry()
-        service_registry = ServiceRegistry()
-
-        widget = SystemStatusWidget(
-            session_registry=session_registry,
-            service_registry=service_registry,
-            current_session_id=SessionId("my-session"),
-        )
-
-        panel = widget.panel()
-        divider = panel[1]
-        # Divider is an HTML pane with an <hr> element
-        assert isinstance(divider, pn.pane.HTML)
-        assert "<hr" in divider.object
 
     def test_register_periodic_refresh(self):
         session_registry = SessionRegistry()
