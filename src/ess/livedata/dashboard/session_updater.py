@@ -10,7 +10,8 @@ shared services in the correct session context.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
 
 import panel as pn
 import structlog
@@ -129,14 +130,6 @@ class SessionUpdater:
         # Check if browser has sent a heartbeat (widget value changed)
         self._check_browser_heartbeat()
 
-        doc = pn.state.curdoc
-        if doc is None:
-            logger.warning(
-                "No active document for session %s during periodic update.",
-                self._session_id,
-            )
-            return
-
         # Poll for notifications
         notifications = self._poll_notifications()
 
@@ -150,7 +143,7 @@ class SessionUpdater:
         #   cost. The outer freeze keeps the counter above zero so that inner
         #   freeze/unfreeze cycles (e.g. HoloViews hold_render) are no-ops,
         #   collapsing N recomputes into 1.
-        with pn.io.hold(), doc.models.freeze():
+        with self._batched_update():
             self._show_notifications(notifications)
 
             # Run custom handlers (e.g., SessionPlotManager.update_pipes)
@@ -162,6 +155,14 @@ class SessionUpdater:
                     logger.exception(
                         "Error in custom handler for session %s", self._session_id
                     )
+
+    @contextmanager
+    def _batched_update(self) -> Iterator[None]:
+        """Batch UI updates if a Bokeh document is available."""
+        doc = pn.state.curdoc
+        freeze = doc.models.freeze() if doc is not None else nullcontext()
+        with pn.io.hold(), freeze:
+            yield
 
     def _poll_notifications(self) -> list[NotificationEvent]:
         """Poll NotificationQueue for new events."""
