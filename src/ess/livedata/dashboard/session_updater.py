@@ -114,11 +114,28 @@ class SessionUpdater:
         # Check if browser has sent a heartbeat (widget value changed)
         self._check_browser_heartbeat()
 
+        doc = pn.state.curdoc
+        if doc is None:
+            logger.warning(
+                "No active document for session %s during periodic update.",
+                self._session_id,
+            )
+            return
+
         # Poll for notifications
         notifications = self._poll_notifications()
 
-        # Apply all changes in a single batched update to avoid staggered rendering
-        with pn.io.hold():
+        # Apply all changes in a single batched update.
+        # - pn.io.hold() batches document change events so they are dispatched
+        #   to the browser in one WebSocket flush, avoiding staggered rendering.
+        # - doc.models.freeze() batches Bokeh model-graph recomputation.
+        #   Without it, each operation that mutates the model graph (pipe.send,
+        #   layout child changes) triggers a full BFS traversal of every model in
+        #   the document via _pop_freeze → recompute → collect_models, at O(M)
+        #   cost. The outer freeze keeps the counter above zero so that inner
+        #   freeze/unfreeze cycles (e.g. HoloViews hold_render) are no-ops,
+        #   collapsing N recomputes into 1.
+        with pn.io.hold(), doc.models.freeze():
             self._show_notifications(notifications)
 
             # Run custom handlers (e.g., SessionPlotManager.update_pipes)
