@@ -65,6 +65,7 @@ class SessionUpdater:
 
         # Callbacks for custom updates (e.g., SessionPlotManager.update_pipes)
         self._custom_handlers: list[Callable[[], None]] = []
+        self._periodic_callback: pn.io.PeriodicCallback | None = None
 
         # Browser heartbeat mechanism using ReactiveHTML.
         # The widget's JavaScript increments a counter every 5 seconds.
@@ -80,6 +81,20 @@ class SessionUpdater:
         self._session_registry.register(session_id, self)
 
         logger.debug("SessionUpdater created for session %s", session_id)
+
+    def set_periodic_callback(self, callback: pn.io.PeriodicCallback) -> None:
+        """
+        Store a reference to the periodic callback driving this updater.
+
+        This allows ``cleanup`` to stop the callback when the session is
+        destroyed or cleaned up as stale.
+
+        Parameters
+        ----------
+        callback:
+            The Panel periodic callback to stop on cleanup.
+        """
+        self._periodic_callback = callback
 
     def register_custom_handler(self, handler: Callable[[], None]) -> None:
         """
@@ -182,6 +197,9 @@ class SessionUpdater:
 
     def cleanup(self) -> None:
         """Clean up session resources."""
+        if self._periodic_callback is not None:
+            self._periodic_callback.stop()
+
         if self._notification_queue is not None:
             self._notification_queue.unregister_session(self._session_id)
 
