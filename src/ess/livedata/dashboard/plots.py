@@ -407,11 +407,8 @@ class Plotter:
         plots: list[hv.Element] = []
         try:
             for data_key, da in data.items():
-                plot_element = self.plot(da, data_key, **kwargs)
-                # Add label from data_key if the plot supports it
-                if hasattr(plot_element, 'relabel'):
-                    label = f'{data_key.job_id.source_name}/{data_key.output_name}'
-                    plot_element = plot_element.relabel(label)
+                label = f'{data_key.job_id.source_name}/{data_key.output_name}'
+                plot_element = self.plot(da, data_key, label=label, **kwargs)
                 plots.append(plot_element)
         except Exception as e:
             plots = [
@@ -510,7 +507,9 @@ class Plotter:
             self.autoscalers[data_key] = Autoscaler(**self.autoscaler_kwargs)
         return self.autoscalers[data_key].update_bounds(data, coord_data=coord_data)
 
-    def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> Any:
+    def plot(
+        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
+    ) -> Any:
         """Create a plot from the given data.
 
         Override this method for plotters that use the default compute() flow.
@@ -570,7 +569,7 @@ class LinePlotter(Plotter):
         )
 
     def plot(
-        self, data: sc.DataArray, data_key: ResultKey, **kwargs
+        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
     ) -> hv.Curve | hv.Histogram:
         """Create a line or histogram plot from a scipp DataArray."""
         if self._as_histogram:
@@ -579,7 +578,7 @@ class LinePlotter(Plotter):
             da = self._convert_bin_edges_to_midpoints(data)
         framewise = self._update_autoscaler_and_get_framewise(da, data_key)
 
-        plot = to_holoviews(da)
+        plot = to_holoviews(da, label=label)
         return plot.opts(framewise=framewise, **self._base_opts)
 
 
@@ -619,7 +618,9 @@ class ImagePlotter(Plotter):
             tick_params=params.ticks,
         )
 
-    def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Image:
+    def plot(
+        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
+    ) -> hv.Image:
         """Create a 2D plot from a scipp DataArray."""
         # Prepare data with appropriate dtype and log scale masking
         use_log_scale = self._scale_opts.color_scale == PlotScale.log
@@ -630,7 +631,7 @@ class ImagePlotter(Plotter):
         # backend) show values below the color limits with the same color as the lowest
         # value in the colormap, which is not what we want for, e.g., zeros on a log
         # scale plot. The nan values will be shown as transparent.
-        histogram = to_holoviews(plot_data)
+        histogram = to_holoviews(plot_data, label=label)
         opts = dict(self._base_opts)
         opts['framewise'] = framewise
         # Set explicit clim for log scale when data is all NaN to avoid HoloViews error
@@ -670,15 +671,20 @@ class BarsPlotter(Plotter):
             aspect_params=params.plot_aspect,
         )
 
-    def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Bars:
+    def plot(
+        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
+    ) -> hv.Bars:
         """Create a bar chart from a 0D scipp DataArray."""
         if data.ndim != 0:
             raise ValueError(f"Expected 0D data, got {data.ndim}D")
 
-        label = data_key.job_id.source_name
+        bar_label = data_key.job_id.source_name
         value = float(data.value)
         bars = hv.Bars(
-            [(label, value)], kdims=['source'], vdims=[data_key.output_name or '']
+            [(bar_label, value)],
+            kdims=['source'],
+            vdims=[data_key.output_name or ''],
+            label=label,
         )
         opts = {'invert_axes': self._horizontal, 'show_legend': False, 'toolbar': None}
         if self._horizontal:
@@ -740,14 +746,14 @@ class Overlay1DPlotter(Plotter):
         )
 
     def plot(
-        self, data: sc.DataArray, data_key: ResultKey, **kwargs
+        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
     ) -> hv.Overlay | hv.Element:
         """
         Create overlaid curves from a 2D DataArray.
 
         Slices along the first dimension and creates a curve for each slice.
         """
-        del kwargs  # Unused
+        del kwargs, label  # Unused
         if data.ndim != 2:
             raise ValueError(f"Expected 2D data, got {data.ndim}D")
 
@@ -774,15 +780,13 @@ class Overlay1DPlotter(Plotter):
             slice_data = data[slice_dim, i]
             coord_val = coord_values[i]
 
-            curve = to_holoviews(slice_data)
-
             # Assign color by coordinate value for stable identity
             color_idx = int(coord_val) % len(self._colors)
             color = self._colors[color_idx]
 
-            # Label by coordinate value
-            label = f"{slice_dim}={coord_val}"
-            curve = curve.relabel(label).opts(
+            curve_label = f"{slice_dim}={coord_val}"
+            curve = to_holoviews(slice_data, label=curve_label)
+            curve = curve.opts(
                 color=color, framewise=framewise, **self._base_opts, **self._sizing_opts
             )
             curves.append(curve)

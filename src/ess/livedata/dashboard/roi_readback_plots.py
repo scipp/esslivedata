@@ -81,7 +81,9 @@ class RectanglesReadbackPlotter(Plotter):
         """Create plotter from params."""
         return cls(params)
 
-    def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Rectangles:
+    def plot(
+        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
+    ) -> hv.Rectangles:
         """
         Create rectangles from ROI readback DataArray.
 
@@ -99,7 +101,7 @@ class RectanglesReadbackPlotter(Plotter):
         :
             HoloViews Rectangles element with per-shape colors.
         """
-        del kwargs  # Unused
+        del kwargs, label  # Unused
 
         # Parse ROI data
         rois = ROI.from_concatenated_data_array(data)
@@ -181,7 +183,9 @@ class PolygonsReadbackPlotter(Plotter):
         """Create plotter from params."""
         return cls(params)
 
-    def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Polygons:
+    def plot(
+        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
+    ) -> hv.Polygons:
         """
         Create polygons from ROI readback DataArray.
 
@@ -199,7 +203,7 @@ class PolygonsReadbackPlotter(Plotter):
         :
             HoloViews Polygons element with per-shape colors.
         """
-        del kwargs  # Unused
+        del kwargs, label  # Unused
 
         # Parse ROI data
         rois = ROI.from_concatenated_data_array(data)
