@@ -28,11 +28,7 @@ from ..icons import get_icon
 from .configuration_widget import ConfigurationModal
 
 if TYPE_CHECKING:
-    from ..job_orchestrator import (
-        JobConfig,
-        JobOrchestrator,
-        WidgetLifecycleSubscriptionId,
-    )
+    from ..job_orchestrator import JobConfig, JobOrchestrator
     from ..job_service import JobService
     from ..session_updater import SessionUpdater
 
@@ -205,19 +201,9 @@ class WorkflowStatusWidget:
         self._header: pn.Row | None = None
         self._body: pn.Column | None = None
 
-        # Subscribe to orchestrator lifecycle events for cross-session sync.
-        # This ensures all browser sessions' widgets stay synchronized.
-        from ..job_orchestrator import WidgetLifecycleCallbacks
-
-        self._lifecycle_subscription: WidgetLifecycleSubscriptionId = (
-            orchestrator.subscribe_to_widget_lifecycle(
-                WidgetLifecycleCallbacks(
-                    on_staged_changed=self._on_lifecycle_event,
-                    on_workflow_committed=self._on_lifecycle_event,
-                    on_workflow_stopped=self._on_lifecycle_event,
-                )
-            )
-        )
+        # Track the orchestrator's workflow state version for change detection.
+        # refresh() compares this to detect structural changes (staging, commit, stop).
+        self._last_state_version: int | None = None
 
         self._build_widget()
 
@@ -225,22 +211,6 @@ class WorkflowStatusWidget:
     def workflow_id(self) -> WorkflowId:
         """Get the workflow ID for this widget."""
         return self._workflow_id
-
-    def cleanup(self) -> None:
-        """Clean up widget subscriptions when widget is destroyed."""
-        self._orchestrator.unsubscribe_from_widget_lifecycle(
-            self._lifecycle_subscription
-        )
-
-    def _on_lifecycle_event(self, workflow_id: WorkflowId) -> None:
-        """Handle orchestrator lifecycle events (staging change, commit, stop).
-
-        Only rebuilds if the event is for this widget's workflow.
-        This callback is shared for all lifecycle events since the response
-        is the same: rebuild the widget to reflect new state.
-        """
-        if workflow_id == self._workflow_id:
-            self._build_widget()
 
     def _build_widget(self) -> None:
         """Build or rebuild the entire widget."""
@@ -853,8 +823,7 @@ class WorkflowStatusWidget:
         staged = self._orchestrator.get_staged_config(self._workflow_id)
 
         # Remove the specified sources and re-stage the rest in a transaction.
-        # Transaction ensures only a single notification is sent, so the widget
-        # rebuilds once via _on_lifecycle_event callback.
+        # Transaction ensures only a single version increment.
         with self._orchestrator.staging_transaction(self._workflow_id):
             self._orchestrator.clear_staged_configs(self._workflow_id)
             for source_name, config in staged.items():
@@ -876,23 +845,28 @@ class WorkflowStatusWidget:
         self._orchestrator.reset_workflow(self._workflow_id)
 
     def _on_stop_click(self) -> None:
-        """Handle stop button click - stops the workflow.
-
-        The orchestrator notifies all widget subscribers via on_workflow_stopped,
-        which triggers _on_lifecycle_event to rebuild this widget.
-        """
+        """Handle stop button click - stops the workflow."""
         self._orchestrator.stop_workflow(self._workflow_id)
 
     def _on_commit_click(self) -> None:
-        """Handle commit button click.
-
-        The orchestrator notifies all widget subscribers via on_workflow_committed,
-        which triggers _on_lifecycle_event to rebuild this widget.
-        """
+        """Handle commit button click."""
         self._orchestrator.commit_workflow(self._workflow_id)
 
     def refresh(self) -> None:
-        """Refresh status badge and timing text from current job statuses."""
+        """Refresh widget from current state.
+
+        Checks the orchestrator's workflow state version to detect structural
+        changes (staging, commit, stop). On version change, does a full rebuild.
+        Otherwise, updates only the status badge and timing text.
+        """
+        current_version = self._orchestrator.get_workflow_state_version(
+            self._workflow_id
+        )
+        if current_version != self._last_state_version:
+            self._last_state_version = current_version
+            self._build_widget()
+            return
+
         if self._status_badge is not None:
             status, status_color = self._get_workflow_status()
             self._status_badge.object = self._make_status_badge_html(

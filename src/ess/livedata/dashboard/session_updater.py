@@ -40,10 +40,9 @@ class SessionUpdater:
     SessionPlotManager.update_pipes(), which uses the Presenter dirty flag
     mechanism for change detection.
 
-    Note: Structural widget updates (staging changes, workflow commits/stops) use
-    direct callbacks (WidgetLifecycleCallbacks) from shared orchestrators.
-    Status heartbeat updates (badges, timing, worker lists) use polling via
-    custom handlers registered here, to batch recomputation.
+    All widget updates (structural rebuilds via version-based change detection,
+    status badges, timing, worker lists) use polling via custom handlers
+    registered here, ensuring all updates run batched in the session context.
 
     Parameters
     ----------
