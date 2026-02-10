@@ -1,0 +1,107 @@
+name: Docker
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Git tag to build. Leave empty to build from latest main commit.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BASE: ghcr.io/scipp/esslivedata
+
+jobs:
+  build-and-push:
+    name: ${{ matrix.target }}/${{ matrix.instrument }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        instrument: [dream, bifrost, loki, odin, estia]
+        target: [backend, dashboard]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name || 'main' }}
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            # Release: use the tag directly
+            VERSION="${{ github.event.release.tag_name }}"
+            IS_RELEASE=true
+          elif [ -n "${{ inputs.tag }}" ]; then
+            # Manual dispatch with tag: use the tag
+            VERSION="${{ inputs.tag }}"
+            IS_RELEASE=true
+          else
+            # Manual dispatch without tag: derive dev version from main
+            LATEST_TAG=$(git describe --tags --abbrev=0 --match '[0-9]*.[0-9]*.[0-9]*')
+            COMMITS_SINCE=$(git rev-list "${LATEST_TAG}..HEAD" --count)
+            SHORT_SHA=$(git rev-parse --short HEAD)
+
+            MAJOR=$(echo "${LATEST_TAG}" | cut -d. -f1)
+            MINOR=$(echo "${LATEST_TAG}" | cut -d. -f2)
+            PATCH=$(echo "${LATEST_TAG}" | cut -d. -f3)
+            NEXT_PATCH=$((PATCH + 1))
+
+            VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}.dev${COMMITS_SINCE}"
+            IS_RELEASE=false
+
+            echo "Latest tag: ${LATEST_TAG}, commits since: ${COMMITS_SINCE}, sha: ${SHORT_SHA}"
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "is_release=${IS_RELEASE}" >> "$GITHUB_OUTPUT"
+          echo "Building version: ${VERSION} (release: ${IS_RELEASE})"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine image tags
+        id: tags
+        run: |
+          IMAGE="${{ env.IMAGE_BASE }}-${{ matrix.target }}-${{ matrix.instrument }}"
+          TAGS="${IMAGE}:${{ steps.version.outputs.version }}"
+          if [ "${{ steps.version.outputs.is_release }}" = "true" ]; then
+            TAGS="${TAGS},${IMAGE}:latest"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            SETUPTOOLS_SCM_PRETEND_VERSION=${{ steps.version.outputs.version }}
+            INSTRUMENT=${{ matrix.instrument }}
+          labels: |
+            org.opencontainers.image.title=esslivedata-${{ matrix.target }}-${{ matrix.instrument }}
+            org.opencontainers.image.description=ESSlivedata ${{ matrix.target }} for ${{ matrix.instrument }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.target }}-${{ matrix.instrument }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}-${{ matrix.instrument }}
