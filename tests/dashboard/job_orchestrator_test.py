@@ -1226,16 +1226,14 @@ class TestJobOrchestratorStop:
         assert second_job_ids[0].job_number != first_job_ids[0].job_number
 
 
-class TestJobOrchestratorWidgetLifecycleSubscriptions:
-    """Test widget lifecycle subscription mechanism for cross-session sync."""
+class TestJobOrchestratorWorkflowStateVersion:
+    """Test version counter mechanism for cross-session change detection."""
 
-    def test_subscribe_returns_subscription_id(
+    def test_initial_version_is_zero(
         self,
         workflow_with_params: WorkflowSpec,
     ):
-        """Subscribe returns a unique subscription ID."""
-        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
-
+        """Workflow state version starts at zero after initialization."""
         workflow_id = workflow_with_params.get_id()
         registry = {workflow_id: workflow_with_params}
 
@@ -1245,18 +1243,13 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
             config_store=None,
         )
 
-        callbacks = WidgetLifecycleCallbacks()
-        subscription_id = orchestrator.subscribe_to_widget_lifecycle(callbacks)
+        assert orchestrator.get_workflow_state_version(workflow_id) == 0
 
-        assert subscription_id is not None
-
-    def test_unsubscribe_removes_subscription(
+    def test_unknown_workflow_returns_zero(
         self,
         workflow_with_params: WorkflowSpec,
     ):
-        """Unsubscribe removes the subscription so callbacks are no longer invoked."""
-        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
-
+        """get_workflow_state_version returns 0 for unknown workflow IDs."""
         workflow_id = workflow_with_params.get_id()
         registry = {workflow_id: workflow_with_params}
 
@@ -1266,41 +1259,16 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
             config_store=None,
         )
 
-        events: list[str] = []
-        callbacks = WidgetLifecycleCallbacks(
-            on_staged_changed=lambda wid: events.append(f'staged:{wid}')
+        unknown_id = WorkflowId(
+            instrument="unknown", namespace="unknown", name="unknown", version=99
         )
-        subscription_id = orchestrator.subscribe_to_widget_lifecycle(callbacks)
+        assert orchestrator.get_workflow_state_version(unknown_id) == 0
 
-        # Stage config should notify
-        orchestrator.stage_config(
-            workflow_id,
-            source_name="det_1",
-            params={"threshold": 50.0},
-            aux_source_names={},
-        )
-        assert len(events) == 1
-
-        # Unsubscribe
-        orchestrator.unsubscribe_from_widget_lifecycle(subscription_id)
-
-        # Stage again - should NOT notify
-        events.clear()
-        orchestrator.stage_config(
-            workflow_id,
-            source_name="det_2",
-            params={"threshold": 60.0},
-            aux_source_names={},
-        )
-        assert len(events) == 0
-
-    def test_stage_config_notifies_subscribers(
+    def test_stage_config_increments_version(
         self,
         workflow_with_params: WorkflowSpec,
     ):
-        """stage_config notifies on_staged_changed callback."""
-        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
-
+        """stage_config increments the workflow state version."""
         workflow_id = workflow_with_params.get_id()
         registry = {workflow_id: workflow_with_params}
 
@@ -1310,17 +1278,8 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
             config_store=None,
         )
 
-        events: list[WorkflowId] = []
-        callbacks = WidgetLifecycleCallbacks(
-            on_staged_changed=lambda wid: events.append(wid)
-        )
-        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+        version_before = orchestrator.get_workflow_state_version(workflow_id)
 
-        # Clear first (triggers notification)
-        orchestrator.clear_staged_configs(workflow_id)
-        events.clear()
-
-        # Stage config
         orchestrator.stage_config(
             workflow_id,
             source_name="det_1",
@@ -1328,15 +1287,15 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
             aux_source_names={},
         )
 
-        assert events == [workflow_id]
+        assert (
+            orchestrator.get_workflow_state_version(workflow_id) == version_before + 1
+        )
 
-    def test_clear_staged_configs_notifies_subscribers(
+    def test_clear_staged_configs_increments_version(
         self,
         workflow_with_params: WorkflowSpec,
     ):
-        """clear_staged_configs notifies on_staged_changed callback."""
-        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
-
+        """clear_staged_configs increments the workflow state version."""
         workflow_id = workflow_with_params.get_id()
         registry = {workflow_id: workflow_with_params}
 
@@ -1346,24 +1305,19 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
             config_store=None,
         )
 
-        events: list[WorkflowId] = []
-        callbacks = WidgetLifecycleCallbacks(
-            on_staged_changed=lambda wid: events.append(wid)
-        )
-        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+        version_before = orchestrator.get_workflow_state_version(workflow_id)
 
-        # Clear staged configs
         orchestrator.clear_staged_configs(workflow_id)
 
-        assert events == [workflow_id]
+        assert (
+            orchestrator.get_workflow_state_version(workflow_id) == version_before + 1
+        )
 
-    def test_commit_workflow_notifies_subscribers(
+    def test_commit_workflow_increments_version(
         self,
         workflow_with_params: WorkflowSpec,
     ):
-        """commit_workflow notifies on_workflow_committed callback."""
-        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
-
+        """commit_workflow increments the workflow state version."""
         workflow_id = workflow_with_params.get_id()
         registry = {workflow_id: workflow_with_params}
 
@@ -1373,24 +1327,17 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
             config_store=None,
         )
 
-        events: list[WorkflowId] = []
-        callbacks = WidgetLifecycleCallbacks(
-            on_workflow_committed=lambda wid: events.append(wid)
-        )
-        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+        version_before = orchestrator.get_workflow_state_version(workflow_id)
 
-        # Commit workflow (uses default staged configs)
         orchestrator.commit_workflow(workflow_id)
 
-        assert events == [workflow_id]
+        assert orchestrator.get_workflow_state_version(workflow_id) > version_before
 
-    def test_stop_workflow_notifies_subscribers(
+    def test_stop_workflow_increments_version(
         self,
         workflow_with_params: WorkflowSpec,
     ):
-        """stop_workflow notifies on_workflow_stopped callback."""
-        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
-
+        """stop_workflow increments the workflow state version."""
         workflow_id = workflow_with_params.get_id()
         registry = {workflow_id: workflow_with_params}
 
@@ -1399,29 +1346,22 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
             workflow_registry=registry,
             config_store=None,
         )
-
-        events: list[WorkflowId] = []
-        callbacks = WidgetLifecycleCallbacks(
-            on_workflow_stopped=lambda wid: events.append(wid)
-        )
-        orchestrator.subscribe_to_widget_lifecycle(callbacks)
 
         # First commit to have something to stop
         orchestrator.commit_workflow(workflow_id)
-        events.clear()
+        version_before = orchestrator.get_workflow_state_version(workflow_id)
 
-        # Stop workflow
         orchestrator.stop_workflow(workflow_id)
 
-        assert events == [workflow_id]
+        assert (
+            orchestrator.get_workflow_state_version(workflow_id) == version_before + 1
+        )
 
-    def test_stop_workflow_does_not_notify_if_nothing_to_stop(
+    def test_stop_workflow_does_not_increment_version_if_nothing_to_stop(
         self,
         workflow_with_params: WorkflowSpec,
     ):
-        """stop_workflow does not notify if there are no active jobs."""
-        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
-
+        """stop_workflow does not increment version when there are no active jobs."""
         workflow_id = workflow_with_params.get_id()
         registry = {workflow_id: workflow_with_params}
 
@@ -1431,127 +1371,12 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
             config_store=None,
         )
 
-        events: list[WorkflowId] = []
-        callbacks = WidgetLifecycleCallbacks(
-            on_workflow_stopped=lambda wid: events.append(wid)
-        )
-        orchestrator.subscribe_to_widget_lifecycle(callbacks)
+        version_before = orchestrator.get_workflow_state_version(workflow_id)
 
         # Try to stop without committing first
         orchestrator.stop_workflow(workflow_id)
 
-        # Should not notify since there was nothing to stop
-        assert events == []
-
-    def test_multiple_subscribers_all_notified(
-        self,
-        workflow_with_params: WorkflowSpec,
-    ):
-        """Multiple subscribers all receive notifications."""
-        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
-
-        workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            config_store=None,
-        )
-
-        events_1: list[str] = []
-        events_2: list[str] = []
-
-        callbacks_1 = WidgetLifecycleCallbacks(
-            on_workflow_committed=lambda wid: events_1.append('committed')
-        )
-        callbacks_2 = WidgetLifecycleCallbacks(
-            on_workflow_committed=lambda wid: events_2.append('committed')
-        )
-
-        orchestrator.subscribe_to_widget_lifecycle(callbacks_1)
-        orchestrator.subscribe_to_widget_lifecycle(callbacks_2)
-
-        # Commit workflow
-        orchestrator.commit_workflow(workflow_id)
-
-        # Both subscribers should be notified
-        assert events_1 == ['committed']
-        assert events_2 == ['committed']
-
-    def test_callback_exception_does_not_affect_other_subscribers(
-        self,
-        workflow_with_params: WorkflowSpec,
-    ):
-        """Exception in one callback does not prevent others from being called."""
-        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
-
-        workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            config_store=None,
-        )
-
-        events: list[str] = []
-
-        def failing_callback(wid):
-            raise RuntimeError("Test error")
-
-        def working_callback(wid):
-            events.append('success')
-
-        callbacks_1 = WidgetLifecycleCallbacks(on_workflow_committed=failing_callback)
-        callbacks_2 = WidgetLifecycleCallbacks(on_workflow_committed=working_callback)
-
-        orchestrator.subscribe_to_widget_lifecycle(callbacks_1)
-        orchestrator.subscribe_to_widget_lifecycle(callbacks_2)
-
-        # Commit workflow - first callback fails, second should still be called
-        orchestrator.commit_workflow(workflow_id)
-
-        assert events == ['success']
-
-    def test_none_callbacks_are_skipped(
-        self,
-        workflow_with_params: WorkflowSpec,
-    ):
-        """Callbacks set to None are safely skipped without error."""
-        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
-
-        workflow_id = workflow_with_params.get_id()
-        registry = {workflow_id: workflow_with_params}
-
-        orchestrator = JobOrchestrator(
-            command_service=CommandService(sink=FakeMessageSink()),
-            workflow_registry=registry,
-            config_store=None,
-        )
-
-        # Subscribe with only one callback set
-        events: list[str] = []
-        callbacks = WidgetLifecycleCallbacks(
-            on_staged_changed=None,
-            on_workflow_committed=lambda wid: events.append('committed'),
-            on_workflow_stopped=None,
-        )
-        orchestrator.subscribe_to_widget_lifecycle(callbacks)
-
-        # All these operations should complete without error
-        orchestrator.clear_staged_configs(workflow_id)
-        orchestrator.stage_config(
-            workflow_id,
-            source_name="det_1",
-            params={"threshold": 50.0},
-            aux_source_names={},
-        )
-        orchestrator.commit_workflow(workflow_id)
-        orchestrator.stop_workflow(workflow_id)
-
-        # Only the commit callback was set
-        assert events == ['committed']
+        assert orchestrator.get_workflow_state_version(workflow_id) == version_before
 
     def test_staging_transaction_replaces_all_configs(
         self,
@@ -1599,13 +1424,11 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
         assert staged["det_2"].params == {"threshold": 200.0}
         assert staged["det_3"].params == {"threshold": 300.0}
 
-    def test_staging_transaction_triggers_single_notification(
+    def test_staging_transaction_increments_version_exactly_once(
         self,
         workflow_with_params: WorkflowSpec,
     ):
-        """staging_transaction triggers only one notification for efficiency."""
-        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
-
+        """staging_transaction increments version by 1 for batched operations."""
         workflow_id = workflow_with_params.get_id()
         registry = {workflow_id: workflow_with_params}
 
@@ -1615,20 +1438,8 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
             config_store=None,
         )
 
-        # Subscribe and count notifications
-        notification_count = 0
+        version_before = orchestrator.get_workflow_state_version(workflow_id)
 
-        def count_notification(wid):
-            nonlocal notification_count
-            notification_count += 1
-
-        callbacks = WidgetLifecycleCallbacks(on_staged_changed=count_notification)
-        orchestrator.subscribe_to_widget_lifecycle(callbacks)
-
-        # Clear the counter (initial subscription triggers notification)
-        notification_count = 0
-
-        # Multiple staging operations in transaction - triggers only ONE notification
         with orchestrator.staging_transaction(workflow_id):
             orchestrator.clear_staged_configs(workflow_id)
             orchestrator.stage_config(
@@ -1650,16 +1461,16 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
                 aux_source_names={},
             )
 
-        # Only one notification despite 4 operations (clear + 3 stage_config)
-        assert notification_count == 1
+        # Exactly one version increment despite 4 operations (clear + 3 stage_config)
+        assert (
+            orchestrator.get_workflow_state_version(workflow_id) == version_before + 1
+        )
 
-    def test_staging_transaction_can_be_nested(
+    def test_nested_staging_transaction_increments_version_once(
         self,
         workflow_with_params: WorkflowSpec,
     ):
-        """staging_transaction supports nesting for same workflow."""
-        from ess.livedata.dashboard.job_orchestrator import WidgetLifecycleCallbacks
-
+        """Nested staging transactions increment version by exactly 1."""
         workflow_id = workflow_with_params.get_id()
         registry = {workflow_id: workflow_with_params}
 
@@ -1669,20 +1480,8 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
             config_store=None,
         )
 
-        # Subscribe and count notifications
-        notification_count = 0
+        version_before = orchestrator.get_workflow_state_version(workflow_id)
 
-        def count_notification(wid):
-            nonlocal notification_count
-            notification_count += 1
-
-        callbacks = WidgetLifecycleCallbacks(on_staged_changed=count_notification)
-        orchestrator.subscribe_to_widget_lifecycle(callbacks)
-
-        # Clear the counter
-        notification_count = 0
-
-        # Nested transactions - should trigger only ONE notification
         with orchestrator.staging_transaction(workflow_id):
             orchestrator.stage_config(
                 workflow_id, source_name="det_1", params={}, aux_source_names={}
@@ -1697,8 +1496,10 @@ class TestJobOrchestratorWidgetLifecycleSubscriptions:
                 workflow_id, source_name="det_3", params={}, aux_source_names={}
             )
 
-        # Only one notification after outer transaction completes
-        assert notification_count == 1
+        # Only one version increment after outer transaction completes
+        assert (
+            orchestrator.get_workflow_state_version(workflow_id) == version_before + 1
+        )
 
         # All configs should be present
         staged = orchestrator.get_staged_config(workflow_id)

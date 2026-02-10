@@ -149,11 +149,13 @@ class ReductionApp(DashboardBase):
             job_service=self._services.job_service,
             job_controller=self._services.job_controller,
         )
+        job_status_widget.register_periodic_refresh(session_updater)
 
         workflow_status_widget = WorkflowStatusListWidget(
             orchestrator=self._services.job_orchestrator,
             job_service=self._services.job_service,
         )
+        workflow_status_widget.register_periodic_refresh(session_updater)
 
         system_status_widget = SystemStatusWidget(
             session_registry=self._services.session_registry,

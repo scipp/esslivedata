@@ -15,25 +15,28 @@ def _on_stop_clicked(self, event):
     self._build_widget()  # BAD: Only updates THIS session's widget
 ```
 
-**Correct pattern** (all sessions stay synchronized):
+**Correct pattern** (version-based polling — all sessions detect changes):
 ```python
-def __init__(self, controller):
-    # Subscribe to lifecycle events from the shared controller
-    controller.subscribe(on_workflow_stopped=self._on_workflow_stopped)
+def __init__(self, orchestrator):
+    self._last_state_version: int | None = None
 
 def _on_stop_clicked(self, event):
-    self.controller.stop_workflow(workflow_id)
-    # Don't rebuild here - let the subscription callback handle it
+    self.orchestrator.stop_workflow(workflow_id)
+    # Don't rebuild here - refresh() will detect the version change
 
-def _on_workflow_stopped(self, workflow_id):
-    self._build_widget()  # GOOD: All subscribed widgets rebuild
+def refresh(self):
+    # Called from SessionUpdater periodic callback in batched context
+    version = self.orchestrator.get_workflow_state_version(self._workflow_id)
+    if version != self._last_state_version:
+        self._last_state_version = version
+        self._build_widget()  # GOOD: Each session detects & rebuilds independently
 ```
 
-**Why this matters**: Controllers, orchestrators, and services are shared across all browser sessions (singletons), but each session has its own widget instances. When Session A triggers an action, Session B's widgets won't know about it unless all widgets subscribe to events from the shared component.
+**Why this matters**: Controllers, orchestrators, and services are shared across all browser sessions (singletons), but each session has its own widget instances. Shared components increment a version counter on state changes. Each session's periodic callback polls the version and rebuilds when it changes, ensuring updates run in the correct session context with batched recomputation.
 
 **Key principles**:
-- Widgets must react to events from shared components (controllers/orchestrators/services), not update themselves after triggering actions
-- Shared components notify all subscribers when state changes
+- Widgets detect changes via version counters on shared state, not via push callbacks
+- All widget updates run inside `SessionUpdater._batched_update()` for efficient recomputation
 - Widget event handlers should only call methods on shared components, never rebuild directly
 
 ## Icons

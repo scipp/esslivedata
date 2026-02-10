@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 import panel as pn
 
@@ -12,6 +12,9 @@ from ess.livedata.core.job_manager import JobAction
 from ess.livedata.dashboard.icons import get_icon
 from ess.livedata.dashboard.job_controller import JobController
 from ess.livedata.dashboard.job_service import JobService
+
+if TYPE_CHECKING:
+    from ess.livedata.dashboard.session_updater import SessionUpdater
 
 
 # UI Constants
@@ -406,9 +409,6 @@ class JobStatusListWidget:
         self._widget_panels: dict[str, pn.layout.Column] = {}
         self._setup_layout()
 
-        # Subscribe to job status updates
-        self._job_service.register_job_status_update_subscriber(self._on_status_update)
-
     def _setup_layout(self) -> None:
         """Set up the main layout."""
         self._header = pn.pane.HTML("<h3>Job Status</h3>", margin=(10, 10, 5, 10))
@@ -464,8 +464,8 @@ class JobStatusListWidget:
         for job_status in list(self._job_service.job_statuses.values()):
             self._add_or_update_job_widget(job_status)
 
-    def _on_status_update(self) -> None:
-        """Handle job status updates from the service."""
+    def refresh(self) -> None:
+        """Refresh job status display from current job statuses."""
         # Snapshot to avoid race conditions with background threads
         current_statuses = list(self._job_service.job_statuses.values())
         current_job_keys = {
@@ -551,6 +551,16 @@ class JobStatusListWidget:
             self._job_controller.send_job_actions_batch(
                 selected_job_ids, JobAction.stop
             )
+
+    def register_periodic_refresh(self, session_updater: SessionUpdater) -> None:
+        """Register for periodic refresh of job status display.
+
+        Parameters
+        ----------
+        session_updater:
+            The session updater to register the refresh handler with.
+        """
+        session_updater.register_custom_handler(self.refresh)
 
     def panel(self) -> pn.layout.Column:
         """Get the main panel for this widget."""

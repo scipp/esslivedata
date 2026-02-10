@@ -264,20 +264,10 @@ class TestWorkflowStatusWidget:
         workflow_status_widget._on_header_click(None)
         assert workflow_status_widget._expanded is True
 
-    def test_cleanup_unsubscribes_from_orchestrator(
+    def test_refresh_rebuilds_widget_on_version_change(
         self, workflow_status_widget, job_orchestrator, workflow_id
     ):
-        """Test that cleanup() unsubscribes from orchestrator lifecycle events."""
-        # Get the subscription ID before cleanup
-        subscription_id = workflow_status_widget._lifecycle_subscription
-
-        # Clean up the widget
-        workflow_status_widget.cleanup()
-
-        # Verify the subscription was removed from orchestrator
-        assert subscription_id not in job_orchestrator._widget_subscriptions
-
-        # Verify that staging changes no longer trigger rebuilds
+        """Test that refresh() triggers a full rebuild when state version changes."""
         rebuild_count = 0
         original_build = workflow_status_widget._build_widget
 
@@ -288,7 +278,7 @@ class TestWorkflowStatusWidget:
 
         workflow_status_widget._build_widget = counting_build
 
-        # Stage a config - should not trigger rebuild after cleanup
+        # Stage a config to bump version
         job_orchestrator.stage_config(
             workflow_id,
             source_name='source1',
@@ -296,7 +286,13 @@ class TestWorkflowStatusWidget:
             aux_source_names={},
         )
 
-        assert rebuild_count == 0  # No rebuild because we unsubscribed
+        # Call refresh - should detect version change and rebuild
+        workflow_status_widget.refresh()
+        assert rebuild_count == 1
+
+        # Call refresh again without changes - should NOT rebuild
+        workflow_status_widget.refresh()
+        assert rebuild_count == 1
 
     def test_header_shows_play_button_when_stopped_with_staged_configs(
         self, workflow_status_widget, job_orchestrator, workflow_id

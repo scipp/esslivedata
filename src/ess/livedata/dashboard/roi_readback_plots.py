@@ -81,7 +81,9 @@ class RectanglesReadbackPlotter(Plotter):
         """Create plotter from params."""
         return cls(params)
 
-    def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Rectangles:
+    def plot(
+        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
+    ) -> hv.Rectangles:
         """
         Create rectangles from ROI readback DataArray.
 
@@ -91,6 +93,10 @@ class RectanglesReadbackPlotter(Plotter):
             DataArray with ROI readback format (roi_index, x, y coordinates).
         data_key:
             Key identifying this data.
+        label:
+            Unused. ROI readback plots render multiple shapes with per-ROI
+            colors rather than labeled overlays, so individual labels do not
+            apply.
         **kwargs:
             Unused additional arguments.
 
@@ -99,7 +105,7 @@ class RectanglesReadbackPlotter(Plotter):
         :
             HoloViews Rectangles element with per-shape colors.
         """
-        del kwargs  # Unused
+        del kwargs, label
 
         # Parse ROI data
         rois = ROI.from_concatenated_data_array(data)
@@ -181,7 +187,9 @@ class PolygonsReadbackPlotter(Plotter):
         """Create plotter from params."""
         return cls(params)
 
-    def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> hv.Polygons:
+    def plot(
+        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
+    ) -> hv.Polygons:
         """
         Create polygons from ROI readback DataArray.
 
@@ -191,6 +199,10 @@ class PolygonsReadbackPlotter(Plotter):
             DataArray with ROI readback format (roi_index, x, y coordinates).
         data_key:
             Key identifying this data.
+        label:
+            Unused. ROI readback plots render multiple shapes with per-ROI
+            colors rather than labeled overlays, so individual labels do not
+            apply.
         **kwargs:
             Unused additional arguments.
 
@@ -199,7 +211,7 @@ class PolygonsReadbackPlotter(Plotter):
         :
             HoloViews Polygons element with per-shape colors.
         """
-        del kwargs  # Unused
+        del kwargs, label
 
         # Parse ROI data
         rois = ROI.from_concatenated_data_array(data)

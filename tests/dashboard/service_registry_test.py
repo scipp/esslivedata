@@ -42,31 +42,6 @@ class TestServiceRegistry:
         assert worker_key in registry.worker_statuses
         assert registry.worker_statuses[worker_key] == status
 
-    def test_status_updated_notifies_subscribers(self) -> None:
-        registry = ServiceRegistry()
-        notifications = []
-
-        def on_update():
-            notifications.append(True)
-
-        # Note: register_update_subscriber calls callback immediately
-        registry.register_update_subscriber(on_update)
-        assert len(notifications) == 1  # Called once on registration
-
-        status = ServiceStatus(
-            instrument="dream",
-            namespace="test_namespace",
-            worker_id="abc123",
-            state=ServiceState.running,
-            started_at=1000,
-            active_job_count=2,
-            messages_processed=100,
-        )
-
-        registry.status_updated(status)
-
-        assert len(notifications) == 2  # Called again on update
-
     def test_multiple_workers_tracked_separately(self) -> None:
         registry = ServiceRegistry()
         status1 = ServiceStatus(

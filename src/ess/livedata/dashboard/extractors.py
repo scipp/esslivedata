@@ -17,15 +17,15 @@ def _extract_time_bounds_as_scalars(data: sc.DataArray) -> dict[str, sc.Variable
     Extract start_time/end_time as scalar values from 1-D coords.
 
     When data comes from a TemporalBuffer, start_time and end_time are 1-D
-    coordinates (one value per time slice). This function extracts the overall
-    time range (min of start_time, max of end_time) for use in plot titles.
+    coordinates (one value per time slice) in chronological order. This function
+    extracts the overall time range for use in plot titles.
 
     Returns an empty dict if coords don't exist or are already scalar.
     """
     bounds: dict[str, sc.Variable] = {}
-    for name, func in [('start_time', 'min'), ('end_time', 'max')]:
+    for name, index in [('start_time', 0), ('end_time', -1)]:
         if name in data.coords and data.coords[name].ndim == 1:
-            bounds[name] = getattr(data.coords[name], func)()
+            bounds[name] = data.coords[name][index]
     return bounds
 
 
@@ -87,30 +87,6 @@ class LatestValueExtractor(UpdateExtractor):
         return data[self._concat_dim, -1]
 
 
-def _ensure_datetime_coord(data: sc.DataArray, dim: str = 'time') -> sc.DataArray:
-    """
-    Convert int64 time coordinate to datetime64 in local time for axis rendering.
-
-    Bokeh requires datetime64 dtype to render human-readable datetime axes.
-    Int64 nanoseconds are displayed as raw numbers (e.g., 1.733e18).
-
-    The datetime values are shifted by the local timezone offset so that
-    Bokeh displays them as local time rather than UTC.
-    """
-    if dim not in data.coords:
-        return data
-    coord = data.coords[dim]
-    if coord.dtype == sc.DType.int64 and coord.unit in ('ns', 'us', 'ms', 's'):
-        datetime_coord = sc.epoch(unit=coord.unit) + coord
-        # Shift by local timezone offset so Bokeh displays local time
-        tz_offset = sc.scalar(get_local_timezone_offset_ns(), unit='ns').to(
-            unit=coord.unit, dtype='int64'
-        )
-        datetime_coord = datetime_coord + tz_offset
-        return data.assign_coords({dim: datetime_coord})
-    return data
-
-
 class FullHistoryExtractor(UpdateExtractor):
     """Extracts the complete buffer history."""
 
@@ -124,6 +100,7 @@ class FullHistoryExtractor(UpdateExtractor):
             The time dimension name.
         """
         self._concat_dim = concat_dim
+        self._time_origin: sc.Variable | None = None
 
     def get_required_timespan(self) -> float:
         """Return infinite timespan to indicate wanting all history."""
@@ -131,8 +108,31 @@ class FullHistoryExtractor(UpdateExtractor):
 
     def extract(self, data: sc.DataArray) -> Any:
         """Extract all data from the buffer, converting time to datetime64."""
-        result = _ensure_datetime_coord(data, self._concat_dim)
+        result = self._to_local_datetime(data)
         return result.assign_coords(**_extract_time_bounds_as_scalars(result))
+
+    def _to_local_datetime(self, data: sc.DataArray) -> sc.DataArray:
+        """Convert int64 time coordinate to datetime64 in local time.
+
+        Bokeh requires datetime64 dtype to render human-readable datetime axes.
+        Int64 nanoseconds are displayed as raw numbers (e.g., 1.733e18).
+
+        The datetime values are shifted by the local timezone offset so that
+        Bokeh displays them as local time rather than UTC.
+        """
+        dim = self._concat_dim
+        if dim not in data.coords:
+            return data
+        if self._time_origin is not None:
+            return data.assign_coords({dim: self._time_origin + data.coords[dim]})
+        coord = data.coords[dim]
+        if coord.dtype != sc.DType.int64 or coord.unit not in ('ns', 'us', 'ms', 's'):
+            return data
+        tz_offset = sc.scalar(get_local_timezone_offset_ns(), unit='ns').to(
+            unit=coord.unit, dtype='int64'
+        )
+        self._time_origin = sc.epoch(unit=coord.unit) + tz_offset
+        return data.assign_coords({dim: self._time_origin + coord})
 
 
 class WindowAggregatingExtractor(UpdateExtractor):

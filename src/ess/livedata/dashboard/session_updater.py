@@ -10,7 +10,8 @@ shared services in the correct session context.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
 
 import panel as pn
 import structlog
@@ -39,8 +40,9 @@ class SessionUpdater:
     SessionPlotManager.update_pipes(), which uses the Presenter dirty flag
     mechanism for change detection.
 
-    Note: Widget state synchronization uses direct callbacks (WidgetLifecycleCallbacks)
-    rather than polling, since the callback mechanism works correctly for widgets.
+    All widget updates (structural rebuilds via version-based change detection,
+    status badges, timing, worker lists) use polling via custom handlers
+    registered here, ensuring all updates run batched in the session context.
 
     Parameters
     ----------
@@ -65,6 +67,7 @@ class SessionUpdater:
 
         # Callbacks for custom updates (e.g., SessionPlotManager.update_pipes)
         self._custom_handlers: list[Callable[[], None]] = []
+        self._periodic_callback: pn.io.PeriodicCallback | None = None
 
         # Browser heartbeat mechanism using ReactiveHTML.
         # The widget's JavaScript increments a counter every 5 seconds.
@@ -80,6 +83,20 @@ class SessionUpdater:
         self._session_registry.register(session_id, self)
 
         logger.debug("SessionUpdater created for session %s", session_id)
+
+    def set_periodic_callback(self, callback: pn.io.PeriodicCallback) -> None:
+        """
+        Store a reference to the periodic callback driving this updater.
+
+        This allows ``cleanup`` to stop the callback when the session is
+        destroyed or cleaned up as stale.
+
+        Parameters
+        ----------
+        callback:
+            The Panel periodic callback to stop on cleanup.
+        """
+        self._periodic_callback = callback
 
     def register_custom_handler(self, handler: Callable[[], None]) -> None:
         """
@@ -117,8 +134,7 @@ class SessionUpdater:
         # Poll for notifications
         notifications = self._poll_notifications()
 
-        # Apply all changes in a single batched update to avoid staggered rendering
-        with pn.io.hold():
+        with self._batched_update():
             self._show_notifications(notifications)
 
             # Run custom handlers (e.g., SessionPlotManager.update_pipes)
@@ -130,6 +146,26 @@ class SessionUpdater:
                     logger.exception(
                         "Error in custom handler for session %s", self._session_id
                     )
+
+    @contextmanager
+    def _batched_update(self) -> Iterator[None]:
+        """Batch UI updates using hold + freeze.
+
+        ``pn.io.hold()`` batches document change events so they are dispatched
+        to the browser in one WebSocket flush, avoiding staggered rendering.
+
+        ``doc.models.freeze()`` batches Bokeh model-graph recomputation.
+        Without it, each operation that mutates the model graph (pipe.send,
+        layout child changes) triggers a full BFS traversal of every model in
+        the document via ``_pop_freeze`` → ``recompute`` → ``collect_models``,
+        at O(M) cost. The outer freeze keeps the counter above zero so that
+        inner freeze/unfreeze cycles (e.g. HoloViews ``hold_render``) are
+        no-ops, collapsing N recomputes into 1.
+        """
+        doc = pn.state.curdoc
+        freeze = doc.models.freeze() if doc is not None else nullcontext()
+        with pn.io.hold(), freeze:
+            yield
 
     def _poll_notifications(self) -> list[NotificationEvent]:
         """Poll NotificationQueue for new events."""
@@ -165,6 +201,9 @@ class SessionUpdater:
 
     def cleanup(self) -> None:
         """Clean up session resources."""
+        if self._periodic_callback is not None:
+            self._periodic_callback.stop()
+
         if self._notification_queue is not None:
             self._notification_queue.unregister_session(self._session_id)
 
