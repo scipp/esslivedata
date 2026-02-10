@@ -210,9 +210,6 @@ class BackendStatusWidget:
         self._empty_placeholder: pn.pane.HTML | None = None
         self._setup_layout()
 
-        # Subscribe to service registry updates
-        self._service_registry.register_update_subscriber(self._on_status_update)
-
     def _setup_layout(self) -> None:
         """Set up the main layout."""
         self._header = pn.pane.HTML(
@@ -326,8 +323,8 @@ class BackendStatusWidget:
 
         return " | ".join(parts)
 
-    def _on_status_update(self) -> None:
-        """Handle worker status updates from the registry."""
+    def refresh(self) -> None:
+        """Refresh the display with current worker states."""
         with pn.io.hold():
             self._summary.object = self._format_summary()
             self._update_worker_list()

@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 
 import structlog
 
@@ -27,7 +26,7 @@ class ServiceRegistry:
     Registry for tracking backend service worker health.
 
     Stores the latest heartbeat from each worker and provides methods for
-    checking staleness and notifying subscribers of updates.
+    checking staleness.
     """
 
     def __init__(
@@ -37,7 +36,6 @@ class ServiceRegistry:
     ) -> None:
         self._worker_statuses: dict[str, ServiceStatus] = {}
         self._worker_timestamps: dict[str, int] = {}
-        self._update_subscribers: list[Callable[[], None]] = []
         self._heartbeat_timeout_ns = heartbeat_timeout_ns
 
     @property
@@ -45,35 +43,12 @@ class ServiceRegistry:
         """Access to all stored worker statuses keyed by worker key."""
         return self._worker_statuses
 
-    def register_update_subscriber(self, callback: Callable[[], None]) -> None:
-        """Register a callback to be called when worker status is updated."""
-        self._update_subscribers.append(callback)
-        # Immediately notify the new subscriber of current state
-        try:
-            callback()
-        except Exception as e:
-            logger.error("Error in service status update callback: %s", e)
-
     def status_updated(self, status: ServiceStatus) -> None:
         """Update the stored worker status and record timestamp."""
         worker_key = make_worker_key(status)
         logger.debug("Worker status updated: %s -> %s", worker_key, status.state)
         self._worker_statuses[worker_key] = status
         self._worker_timestamps[worker_key] = time.time_ns()
-        self._notify_update()
-
-    def _notify_update(self) -> None:
-        """Notify listeners about worker status updates."""
-        logger.debug(
-            "Worker statuses updated: %s workers tracked",
-            len(self._worker_statuses),
-        )
-
-        for callback in self._update_subscribers:
-            try:
-                callback()
-            except Exception as e:
-                logger.error("Error in service status update callback: %s", e)
 
     def remove_worker(self, worker_key: str) -> None:
         """Remove a worker from tracking."""
@@ -81,7 +56,6 @@ class ServiceRegistry:
             del self._worker_statuses[worker_key]
         if worker_key in self._worker_timestamps:
             del self._worker_timestamps[worker_key]
-        self._notify_update()
 
     def is_status_stale(self, worker_key: str) -> bool:
         """Check if a worker's status is stale (no recent heartbeat).

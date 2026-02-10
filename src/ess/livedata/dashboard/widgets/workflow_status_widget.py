@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         WidgetLifecycleSubscriptionId,
     )
     from ..job_service import JobService
+    from ..session_updater import SessionUpdater
 
 
 # UI styling constants
@@ -204,9 +205,6 @@ class WorkflowStatusWidget:
         self._header: pn.Row | None = None
         self._body: pn.Column | None = None
 
-        # Subscribe to job status updates (for status badge / timing updates)
-        self._job_service.register_job_status_update_subscriber(self._on_status_update)
-
         # Subscribe to orchestrator lifecycle events for cross-session sync.
         # This ensures all browser sessions' widgets stay synchronized.
         from ..job_orchestrator import WidgetLifecycleCallbacks
@@ -229,16 +227,7 @@ class WorkflowStatusWidget:
         return self._workflow_id
 
     def cleanup(self) -> None:
-        """Clean up widget subscriptions when widget is destroyed.
-
-        Should be called when the widget is removed from the UI to prevent
-        memory leaks from lingering subscriptions.
-
-        Note: JobService subscription cleanup is not implemented because
-        JobService lacks an unregister mechanism. This is a pre-existing
-        limitation that affects all widgets using JobService.
-        """
-        # Unsubscribe from orchestrator lifecycle events
+        """Clean up widget subscriptions when widget is destroyed."""
         self._orchestrator.unsubscribe_from_widget_lifecycle(
             self._lifecycle_subscription
         )
@@ -902,11 +891,8 @@ class WorkflowStatusWidget:
         """
         self._orchestrator.commit_workflow(self._workflow_id)
 
-    def _on_status_update(self) -> None:
-        """Handle job status updates from JobService.
-
-        Only updates the status badge and timing text to avoid flicker.
-        """
+    def refresh(self) -> None:
+        """Refresh status badge and timing text from current job statuses."""
         if self._status_badge is not None:
             status, status_color = self._get_workflow_status()
             self._status_badge.object = self._make_status_badge_html(
@@ -1053,6 +1039,21 @@ class WorkflowStatusListWidget:
         widget = self._widgets.get(workflow_id)
         if widget is not None:
             widget._build_widget()
+
+    def register_periodic_refresh(self, session_updater: SessionUpdater) -> None:
+        """Register for periodic refresh of workflow status displays.
+
+        Parameters
+        ----------
+        session_updater:
+            The session updater to register the refresh handler with.
+        """
+        session_updater.register_custom_handler(self._refresh_all)
+
+    def _refresh_all(self) -> None:
+        """Refresh all workflow status widgets."""
+        for widget in self._widgets.values():
+            widget.refresh()
 
     def panel(self) -> pn.Column:
         """Get the main panel for this widget."""

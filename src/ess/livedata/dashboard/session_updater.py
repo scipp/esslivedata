@@ -40,8 +40,10 @@ class SessionUpdater:
     SessionPlotManager.update_pipes(), which uses the Presenter dirty flag
     mechanism for change detection.
 
-    Note: Widget state synchronization uses direct callbacks (WidgetLifecycleCallbacks)
-    rather than polling, since the callback mechanism works correctly for widgets.
+    Note: Structural widget updates (staging changes, workflow commits/stops) use
+    direct callbacks (WidgetLifecycleCallbacks) from shared orchestrators.
+    Status heartbeat updates (badges, timing, worker lists) use polling via
+    custom handlers registered here, to batch recomputation.
 
     Parameters
     ----------

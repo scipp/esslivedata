@@ -42,9 +42,10 @@ class SystemStatusWidget:
 
     def register_periodic_refresh(self, session_updater: SessionUpdater) -> None:
         """
-        Register for periodic refresh of session status display.
+        Register for periodic refresh of system status displays.
 
-        This keeps heartbeat times and stale status indicators current.
+        This keeps heartbeat times, stale status indicators, and backend
+        worker status current.
 
         Parameters
         ----------
@@ -52,6 +53,7 @@ class SystemStatusWidget:
             The session updater to register the refresh handler with.
         """
         session_updater.register_custom_handler(self._session_widget.refresh)
+        session_updater.register_custom_handler(self._backend_widget.refresh)
 
     def panel(self) -> pn.Column:
         """Get the main panel for this widget."""
