@@ -74,12 +74,12 @@ class BeamCenterXY(pydantic.BaseModel):
 class LokiAuxSources(AuxSourcesBase):
     """Auxiliary source names for LOKI SANS workflows."""
 
-    incident_monitor: Literal['monitor1'] = pydantic.Field(
-        default='monitor1',
+    incident_monitor: Literal['beam_monitor_1'] = pydantic.Field(
+        default='beam_monitor_1',
         description='Incident beam monitor for normalization.',
     )
-    transmission_monitor: Literal['monitor2'] = pydantic.Field(
-        default='monitor2',
+    transmission_monitor: Literal['beam_monitor_3'] = pydantic.Field(
+        default='beam_monitor_3',
         description='Transmission monitor for sample transmission calculation.',
     )
 
@@ -160,7 +160,12 @@ detector_names = [f'loki_detector_{bank}' for bank in range(9)]
 instrument = Instrument(
     name='loki',
     detector_names=detector_names,
-    monitors=['monitor1', 'monitor2'],
+    monitors=[
+        'beam_monitor_1',
+        'beam_monitor_2',
+        'beam_monitor_3',
+        'beam_monitor_4',
+    ],
     source_metadata={
         'loki_detector_0': SourceMetadata(title='Rear'),
         'loki_detector_1': SourceMetadata(title='Mid Bottom'),
@@ -171,8 +176,10 @@ instrument = Instrument(
         'loki_detector_6': SourceMetadata(title='Front Left'),
         'loki_detector_7': SourceMetadata(title='Front Top'),
         'loki_detector_8': SourceMetadata(title='Front Right'),
-        'monitor1': SourceMetadata(title='Incident Monitor'),
-        'monitor2': SourceMetadata(title='Transmission Monitor'),
+        'beam_monitor_1': SourceMetadata(title='Incident Monitor'),
+        'beam_monitor_2': SourceMetadata(title='Beam Monitor 2'),
+        'beam_monitor_3': SourceMetadata(title='Transmission Monitor'),
+        'beam_monitor_4': SourceMetadata(title='Beam Monitor 4'),
     },
 )
 
