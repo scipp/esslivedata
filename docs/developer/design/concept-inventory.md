@@ -2,8 +2,6 @@
 
 A complete inventory of concepts and behaviors a developer needs to understand to reason about the system. Each entry is a topic that would warrant its own documentation section.
 
-Detailed survey notes are in `.scratch/survey_notes_*.md`.
-
 ---
 
 ## A. System-Wide Concepts
