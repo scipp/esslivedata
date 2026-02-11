@@ -98,6 +98,14 @@ class DspacingUnit(StrEnum):
     NANOMETER = 'nm'
 
 
+class LengthUnit(StrEnum):
+    """Allowed units for length."""
+
+    METER = 'm'
+    CENTIMETER = 'cm'
+    MILLIMETER = 'mm'
+
+
 class AngleUnit(StrEnum):
     """Allowed units for angles."""
 
