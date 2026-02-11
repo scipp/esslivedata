@@ -25,6 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # This should be updated whenever a new instrument is added to pyproject.toml
         instrument: [dream, bifrost, loki, odin, estia]
         target: [backend, dashboard]
 
