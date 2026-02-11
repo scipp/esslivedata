@@ -45,6 +45,97 @@ def _copy_monitor_fields(src_group: h5py.Group, dst_group: h5py.Group) -> None:
     src_group.copy('depends_on', dst_group)
 
 
+def _collect_depends_on_targets(f: h5py.File) -> set[str]:
+    """Collect all absolute paths referenced by depends_on in the file."""
+    targets: set[str] = set()
+
+    def _visitor(name: str, obj: h5py.Group | h5py.Dataset) -> None:
+        # depends_on stored as a dataset (e.g., in NXdetector, NXmonitor)
+        if isinstance(obj, h5py.Dataset) and name.endswith('depends_on'):
+            val = obj[()]
+            if isinstance(val, bytes):
+                val = val.decode()
+            if val != '.':
+                targets.add(val.lstrip('/'))
+        # depends_on stored as an attribute (e.g., on transformation datasets)
+        if isinstance(obj, h5py.Dataset | h5py.Group):
+            val = obj.attrs.get('depends_on')
+            if val is not None:
+                if isinstance(val, bytes):
+                    val = val.decode()
+                if val != '.':
+                    if not val.startswith('/'):
+                        parent = name.rsplit('/', 1)[0] if '/' in name else ''
+                        val = f'{parent}/{val}' if parent else val
+                    else:
+                        val = val.lstrip('/')
+                    targets.add(val)
+
+    f.visititems(_visitor)
+    return targets
+
+
+def _ensure_parent_groups(fin: h5py.File, fout: h5py.File, path: str) -> None:
+    """Create parent groups in *fout*, copying attributes from *fin*."""
+    parts = path.split('/')
+    current = ''
+    for part in parts[:-1]:
+        if not part:
+            continue
+        current = f'{current}/{part}'
+        if current not in fout:
+            src_parent = fin[current]
+            dst_parent = fout.create_group(current)
+            _copy_attributes(src_parent, dst_parent)
+
+
+def _resolve_depends_on_chains(fin: h5py.File, fout: h5py.File) -> None:
+    """Ensure all depends_on targets exist in the output file.
+
+    After copying geometry components, depends_on chains may reference nodes
+    that were not copied, e.g., NXlog groups inside NXpositioner that act as
+    transformations (they carry ``transformation_type``, ``vector``, and
+    ``depends_on`` attributes).  This function follows all chains and creates
+    static transformation datasets for any missing nodes.
+    """
+    resolved: set[str] = set()
+    while True:
+        targets = _collect_depends_on_targets(fout)
+        unresolved = {t for t in targets if t not in fout} - resolved
+        if not unresolved:
+            break
+        for path in unresolved:
+            resolved.add(path)
+            if path not in fin:
+                continue
+            src = fin[path]
+            _ensure_parent_groups(fin, fout, path)
+
+            if isinstance(src, h5py.Dataset):
+                parent_path = path.rsplit('/', 1)[0]
+                fin.copy(path, fout[parent_path])
+            elif isinstance(src, h5py.Group) and 'transformation_type' in src.attrs:
+                # NXlog group acting as a transformation node.
+                # Convert to a static dataset using average_value.
+                avg = src.get('average_value')
+                value = avg[()] if avg is not None else 0.0
+                units = ''
+                if avg is not None and 'units' in avg.attrs:
+                    units = avg.attrs['units']
+                ds = fout.create_dataset(path, data=value)
+                for attr_name in (
+                    'transformation_type',
+                    'vector',
+                    'depends_on',
+                    'offset',
+                    'offset_units',
+                ):
+                    if attr_name in src.attrs:
+                        ds.attrs[attr_name] = src.attrs[attr_name]
+                if units:
+                    ds.attrs['units'] = units
+
+
 def write_minimal_geometry(
     input_filename: Path, output_filename: Path, use_pixel_shape: bool = True
 ) -> None:
@@ -98,6 +189,7 @@ def write_minimal_geometry(
         # Copy root attributes
         _copy_attributes(fin, fout)
         fin.visititems(visit_and_copy)
+        _resolve_depends_on_chains(fin, fout)
 
 
 def main() -> int:
