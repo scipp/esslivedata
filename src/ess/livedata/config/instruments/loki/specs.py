@@ -196,7 +196,8 @@ i_of_q_handle = instrument.register_spec(
     description=(
         'SANS I(Q) reduction for LOKI. Converts detector event data into'
         ' scattered intensity as a function of momentum transfer Q.'
-        ' Direct-beam normalization (flat/efficiency correction) is not applied.'
+        ' Direct-beam normalization (flat/efficiency correction) is not applied and '
+        'currently the transmission does not take into a account and empty run.'
     ),
     source_names=detector_names,
     aux_sources=LokiAuxSources,
