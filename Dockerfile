@@ -29,7 +29,6 @@ ENV LIVEDATA_ENV=docker \
     PYTHONDONTWRITEBYTECODE=1
 
 ENTRYPOINT ["tini", "--"]
-CMD ["python", "-m", "ess.livedata.services.monitor_data"]
 
 # TODO: Replace with HTTP health endpoint (e.g., curl -sf http://localhost:8080/health)
 #       once backend services expose liveness/readiness checks.
