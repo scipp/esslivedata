@@ -41,7 +41,7 @@ first_monitor_source_name = {
     'dummy': 'monitor1',
     'dream': 'monitor_bunker',
     'bifrost': '090_frame_1',
-    'loki': 'monitor1',
+    'loki': 'beam_monitor_1',
 }
 
 

@@ -4,7 +4,9 @@
 LOKI instrument stream mapping configuration.
 """
 
+from ess.livedata import StreamKind
 from ess.livedata.config.env import StreamingEnv
+from ess.livedata.config.streams import stream_kind_to_topic
 from ess.livedata.kafka import InputStreamKey, StreamLUT, StreamMapping
 
 from .._ess import make_common_stream_mapping_inputs, make_dev_stream_mapping
@@ -22,6 +24,14 @@ detector_fakes = {
 }
 
 
+monitor_names = [
+    'beam_monitor_1',
+    'beam_monitor_2',
+    'beam_monitor_3',
+    'beam_monitor_4',
+]
+
+
 def _make_loki_detectors() -> StreamLUT:
     """
     Loki detector mapping.
@@ -37,12 +47,28 @@ def _make_loki_detectors() -> StreamLUT:
     }
 
 
+def _make_loki_monitors() -> StreamLUT:
+    """Loki beam monitor mapping.
+
+    Source names and topic extracted from NeXus file
+    ``coda_loki_999999_00017735.hdf`` using ``nexus_helpers``.
+    """
+    topic = stream_kind_to_topic(instrument='loki', kind=StreamKind.MONITOR_EVENTS)
+    return {
+        InputStreamKey(topic=topic, source_name=f'cbm{i}'): f'beam_monitor_{i}'
+        for i in range(1, 5)
+    }
+
+
+_common_prod = make_common_stream_mapping_inputs(instrument='loki')
+_common_prod['detectors'] = _make_loki_detectors()
+_common_prod['monitors'] = _make_loki_monitors()
+
 stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
-        'loki', detector_names=list(detector_fakes)
+        'loki',
+        detector_names=list(detector_fakes),
+        monitor_names=monitor_names,
     ),
-    StreamingEnv.PROD: StreamMapping(
-        **make_common_stream_mapping_inputs(instrument='loki'),
-        detectors=_make_loki_detectors(),
-    ),
+    StreamingEnv.PROD: StreamMapping(**_common_prod),
 }

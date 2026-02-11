@@ -28,12 +28,9 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.loki.workflow import LokiWorkflow
     from ess.reduce.nexus.types import (
         EmptyBeamRun,
-        IncidentMonitor,
         NeXusData,
         NeXusDetectorName,
-        NeXusName,
         SampleRun,
-        TransmissionMonitor,
         TransmissionRun,
     )
     from ess.reduce.time_of_flight.types import TofLookupTableFilename
@@ -58,9 +55,6 @@ def setup_factories(instrument: Instrument) -> None:
     _base_workflow[TofLookupTableFilename] = str(
         ess.loki.data.loki_tof_lookup_table_no_choppers()
     )
-    # Override monitor names to match the geometry file naming convention.
-    _base_workflow[NeXusName[IncidentMonitor]] = 'monitor_1'
-    _base_workflow[NeXusName[TransmissionMonitor]] = 'monitor_3'
     _base_workflow[DirectBeam] = None
     _base_workflow[CorrectForGravity] = CorrectForGravity(False)
     _base_workflow[ReturnEvents] = ReturnEvents(False)
