@@ -217,8 +217,6 @@ class WorkflowStatusWidget:
                     on_staged_changed=self._on_lifecycle_event,
                     on_workflow_committed=self._on_lifecycle_event,
                     on_workflow_stopped=self._on_lifecycle_event,
-                    on_command_success=self._on_command_success,
-                    on_command_error=self._on_command_error,
                 )
             )
         )
@@ -887,47 +885,6 @@ class WorkflowStatusWidget:
         will reflect the reset automatically.
         """
         self._orchestrator.reset_workflow(self._workflow_id)
-
-    def _on_command_success(
-        self, workflow_id: WorkflowId, action: str, success_count: int, total_count: int
-    ) -> None:
-        """Handle command success notification from orchestrator.
-
-        Only shows notification if it's for this widget's workflow.
-        """
-        if workflow_id != self._workflow_id:
-            return
-
-        # Convert action to past tense for natural message
-        past_tense = {"start": "Started", "stop": "Stopped", "reset": "Reset"}
-        verb = past_tense.get(action, action.capitalize())
-
-        message = (
-            f"{verb} {success_count}/{total_count} jobs for "
-            f"'{self._workflow_spec.title}'"
-        )
-        pn.state.notifications.success(message, duration=3000)
-
-    def _on_command_error(
-        self,
-        workflow_id: WorkflowId,
-        action: str,
-        error_count: int,
-        total_count: int,
-        error_message: str,
-    ) -> None:
-        """Handle command error notification from orchestrator.
-
-        Only shows error if it's for this widget's workflow.
-        """
-        if workflow_id != self._workflow_id:
-            return
-
-        pn.state.notifications.error(
-            f"Failed to {action} {error_count}/{total_count} jobs "
-            f"for '{self._workflow_spec.title}': {error_message}",
-            duration=5000,
-        )
 
     def _on_stop_click(self) -> None:
         """Handle stop button click - stops the workflow.
