@@ -2,8 +2,9 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any
+
+import structlog
 
 from ..config.acknowledgement import CommandAcknowledgement
 from ..config.workflow_spec import ResultKey
@@ -45,7 +46,7 @@ class Orchestrator:
         self._job_service = job_service
         self._service_registry = service_registry
         self._job_orchestrator = job_orchestrator
-        self._logger = logging.getLogger(__name__)
+        self._logger = structlog.get_logger()
 
     def update(self) -> None:
         """
