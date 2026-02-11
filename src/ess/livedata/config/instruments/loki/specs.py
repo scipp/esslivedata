@@ -11,7 +11,7 @@ import pydantic
 import scipp as sc
 
 from ess.livedata import parameter_models
-from ess.livedata.config import Instrument, instrument_registry
+from ess.livedata.config import Instrument, SourceMetadata, instrument_registry
 from ess.livedata.config.workflow_spec import AuxSourcesBase, WorkflowOutputsBase
 from ess.livedata.handlers.detector_view_specs import register_detector_view_spec
 from ess.livedata.handlers.monitor_workflow_specs import (
@@ -161,6 +161,10 @@ instrument = Instrument(
     name='loki',
     detector_names=detector_names,
     monitors=['monitor1', 'monitor2'],
+    source_metadata={
+        'monitor1': SourceMetadata(title='Incident Monitor'),
+        'monitor2': SourceMetadata(title='Transmission Monitor'),
+    },
 )
 
 # Register instrument
