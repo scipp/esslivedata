@@ -171,6 +171,40 @@ class Plotter(ABC):
         return opts
 
     @staticmethod
+    def _strip_overflow_bins(
+        data: sc.DataArray, dim: str | None = None
+    ) -> sc.DataArray:
+        """Remove bins bounded by ``±inf`` edges (overflow/underflow sentinels).
+
+        Overflow bins are used in the backend to capture events outside the
+        user-configured bin range without silently dropping them.  These bins
+        cannot be rendered (infinite width / infinite midpoints), so they are
+        stripped before plotting.
+
+        Parameters
+        ----------
+        data:
+            DataArray that may have overflow bins.
+        dim:
+            Dimension to check. If None, uses the single dimension of 1D data.
+
+        Returns
+        -------
+        :
+            DataArray without overflow bins.
+        """
+        if dim is None:
+            dim = data.dim
+        if dim not in data.coords or not data.coords.is_edges(dim):
+            return data
+        coord_values = data.coords[dim].values
+        start = 1 if np.isinf(coord_values[0]) else 0
+        stop = data.sizes[dim] - (1 if np.isinf(coord_values[-1]) else 0)
+        if start == 0 and stop == data.sizes[dim]:
+            return data
+        return data[dim, start:stop]
+
+    @staticmethod
     def _convert_bin_edges_to_midpoints(
         data: sc.DataArray, dim: str | None = None
     ) -> sc.DataArray:
@@ -407,10 +441,9 @@ class LinePlotter(Plotter):
         self, data: sc.DataArray, data_key: ResultKey, **kwargs
     ) -> hv.Curve | hv.Histogram:
         """Create a line or histogram plot from a scipp DataArray."""
-        if self._as_histogram:
-            da = data
-        else:
-            da = self._convert_bin_edges_to_midpoints(data)
+        da = self._strip_overflow_bins(data)
+        if not self._as_histogram:
+            da = self._convert_bin_edges_to_midpoints(da)
         framewise = self._update_autoscaler_and_get_framewise(da, data_key)
 
         plot = to_holoviews(da)
@@ -841,7 +874,8 @@ class Overlay1DPlotter(Plotter):
         else:
             coord_values = np.arange(slice_size)
 
-        # Pre-convert bin-edge coords to midpoints (shared across all slices)
+        # Strip overflow bins and convert edges to midpoints (shared across all slices)
+        data = self._strip_overflow_bins(data, dim=data.dims[1])
         data = self._convert_bin_edges_to_midpoints(data, dim=data.dims[1])
 
         curves: list[hv.Element] = []
