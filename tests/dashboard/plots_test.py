@@ -280,6 +280,56 @@ class TestLinePlotter:
         result = line_plotter.plot(data, data_key)
         assert isinstance(result, hv.Curve)
 
+    def test_plot_with_inf_overflow_bin_edges(self, line_plotter, data_key):
+        """Test that LinePlotter handles -inf/+inf overflow bin edges."""
+        edges = sc.array(
+            dims=['x'],
+            values=[float('-inf'), 0.0, 10.0, 20.0, float('+inf')],
+            unit='m',
+        )
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[5.0, 1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': edges},
+        )
+        result = line_plotter.plot(data, data_key)
+        assert isinstance(result, hv.Curve)
+
+    def test_plot_with_inf_overflow_bin_edges_renders_to_bokeh(
+        self, line_plotter, data_key
+    ):
+        """Test that LinePlotter with inf edges can be rendered to Bokeh."""
+        edges = sc.array(
+            dims=['x'],
+            values=[float('-inf'), 0.0, 10.0, 20.0, float('+inf')],
+            unit='m',
+        )
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[5.0, 1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': edges},
+        )
+        hv_element = line_plotter.plot(data, data_key)
+        render_to_bokeh(hv_element)
+
+    def test_histogram_mode_with_inf_overflow_bin_edges(self, data_key):
+        """Test that LinePlotter in histogram mode handles inf bin edges."""
+        from ess.livedata.dashboard.plot_params import Curve1dRenderMode, PlotParams1d
+
+        params = PlotParams1d()
+        params.curve.mode = Curve1dRenderMode.histogram
+        plotter = plots.LinePlotter.from_params(params)
+
+        edges = sc.array(
+            dims=['x'],
+            values=[float('-inf'), 0.0, 10.0, 20.0, float('+inf')],
+            unit='m',
+        )
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[5.0, 1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': edges},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Histogram)
+
 
 class TestSlicerPlotter:
     @pytest.fixture
@@ -1343,6 +1393,56 @@ class TestOverlay1DPlotter:
             opts = hv.Store.lookup_options('bokeh', curve, 'plot').kwargs
             assert opts.get('responsive') is True
             assert 'aspect' not in opts or opts.get('aspect') is None
+
+    def test_inf_overflow_bin_edges(self, overlay_plotter, data_key):
+        """Test that Overlay1DPlotter handles -inf/+inf overflow bin edges.
+
+        ROI spectra from detector view histograms have overflow bins with
+        inf edges. The plotter must handle these without error.
+        """
+        toa_edges = sc.concat(
+            [
+                sc.scalar(float('-inf'), unit='us'),
+                sc.array(dims=['toa'], values=[0.0, 10.0, 20.0, 30.0], unit='us'),
+                sc.scalar(float('+inf'), unit='us'),
+            ],
+            'toa',
+        )
+        data = sc.DataArray(
+            sc.array(
+                dims=['roi', 'toa'],
+                values=[[9.0, 1.0, 2.0, 3.0, 7.0], [0.0, 4.0, 5.0, 6.0, 0.0]],
+            ),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[0, 1], unit=None),
+                'toa': toa_edges,
+            },
+        )
+        result = overlay_plotter.plot(data, data_key)
+        assert isinstance(result, hv.Overlay)
+
+    def test_inf_overflow_bin_edges_renders_to_bokeh(self, overlay_plotter, data_key):
+        """Test that Overlay1D with inf edges can be rendered to Bokeh."""
+        toa_edges = sc.concat(
+            [
+                sc.scalar(float('-inf'), unit='us'),
+                sc.array(dims=['toa'], values=[0.0, 10.0, 20.0, 30.0], unit='us'),
+                sc.scalar(float('+inf'), unit='us'),
+            ],
+            'toa',
+        )
+        data = sc.DataArray(
+            sc.array(
+                dims=['roi', 'toa'],
+                values=[[9.0, 1.0, 2.0, 3.0, 7.0], [0.0, 4.0, 5.0, 6.0, 0.0]],
+            ),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[0, 1], unit=None),
+                'toa': toa_edges,
+            },
+        )
+        hv_element = overlay_plotter.plot(data, data_key)
+        render_to_bokeh(hv_element)
 
 
 class TestLagIndicator:

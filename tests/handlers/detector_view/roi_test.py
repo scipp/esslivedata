@@ -388,10 +388,10 @@ class TestEmptyROIRequests:
 
 
 class TestROISpectraOverflowBins:
-    """Tests that ROI spectra strip overflow/underflow bins."""
+    """Tests that ROI spectra preserve overflow/underflow bins."""
 
-    def test_roi_spectra_excludes_overflow_bins(self):
-        """ROI spectra output has only the finite user bins, not overflow."""
+    def test_roi_spectra_preserves_overflow_bins(self):
+        """ROI spectra output includes overflow/underflow bins from histogram."""
         metadata = make_screen_metadata_from_edges()
 
         # Simulate a histogram with overflow/underflow bins:
@@ -423,5 +423,5 @@ class TestROISpectraOverflowBins:
 
         result = extract_roi_spectra(metadata, data, rectangle_request=request)
 
-        # Spectral dim should have only the user bins, not the overflow bins
-        assert result.sizes['tof'] == n_user_bins
+        # Overflow bins are passed through to the frontend
+        assert result.sizes['tof'] == n_user_bins + 2

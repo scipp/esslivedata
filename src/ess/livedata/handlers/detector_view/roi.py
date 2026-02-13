@@ -224,15 +224,6 @@ def roi_spectra(
         )
     y_dim, x_dim = spatial_dims
 
-    # Strip overflow/underflow bins (first and last bin along spectral dim)
-    # added by compute_detector_histogram.  Detect by checking for -inf/+inf edges.
-    spectral_edges = spectral_coord.values
-    has_overflow = (
-        len(spectral_edges) >= 3
-        and np.isneginf(spectral_edges[0])
-        and np.isposinf(spectral_edges[-1])
-    )
-
     spectra: list[sc.DataArray] = []
     roi_indices: list[int] = []
 
@@ -242,8 +233,6 @@ def roi_spectra(
         y_low, y_high = bounds[y_dim]
         sliced = histogram[y_dim, y_low:y_high][x_dim, x_low:x_high]
         spectrum = sliced.sum(dim=[y_dim, x_dim])
-        if has_overflow:
-            spectrum = spectrum[spectral_dim, 1:-1]
         spectra.append(spectrum)
         roi_indices.append(idx)
 
@@ -253,26 +242,19 @@ def roi_spectra(
         masked = histogram.copy(deep=False)
         masked.masks['_roi_polygon'] = mask
         spectrum = masked.sum(dim=[y_dim, x_dim])
-        if has_overflow:
-            spectrum = spectrum[spectral_dim, 1:-1]
         spectra.append(spectrum)
         roi_indices.append(idx)
 
     # Build output DataArray
     if not spectra:
-        # Strip overflow bins from empty output for consistency
-        out_n_spectral = n_spectral - 2 if has_overflow else n_spectral
-        out_coord = spectral_coord[1:-1] if has_overflow else spectral_coord
         return ROISpectra[AccumulationMode](
             sc.DataArray(
                 data=sc.zeros(
-                    dims=['roi', spectral_dim],
-                    shape=[0, out_n_spectral],
-                    unit='counts',
+                    dims=['roi', spectral_dim], shape=[0, n_spectral], unit='counts'
                 ),
                 coords={
                     'roi': sc.array(dims=['roi'], values=[], dtype='int32'),
-                    spectral_dim: out_coord,
+                    spectral_dim: spectral_coord,
                 },
             )
         )
