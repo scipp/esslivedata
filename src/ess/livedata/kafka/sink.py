@@ -3,7 +3,6 @@
 import importlib.metadata
 import os
 import socket
-import time
 from dataclasses import replace
 from types import TracebackType
 from typing import Any, Generic, Protocol, TypeVar
@@ -87,11 +86,6 @@ class KafkaSink(MessageSink[T]):
         self._software_version = _get_software_version()
         self._host_name = socket.gethostname()
         self._process_id = os.getpid()
-        # Metrics tracking
-        self._messages_published = 0
-        self._publish_errors = 0
-        self._last_metrics_time = time.monotonic()
-        self._metrics_interval = 30.0
 
     def publish_messages(self, messages: Message[T]) -> None:
         if self._producer is None:
@@ -99,7 +93,6 @@ class KafkaSink(MessageSink[T]):
 
         def delivery_callback(err, msg):
             if err is not None:
-                self._publish_errors += 1
                 logger.error("Failed to deliver message to %s: %s", msg.topic(), err)
 
         logger.debug("Publishing %d messages", len(messages))
@@ -157,23 +150,6 @@ class KafkaSink(MessageSink[T]):
             self._producer.flush(timeout=3)
         except kafka.KafkaException as e:
             logger.error("Error flushing producer: %s", e)
-
-        self._messages_published += len(messages)
-        self._maybe_log_metrics()
-
-    def _maybe_log_metrics(self) -> None:
-        """Log metrics if the interval has elapsed."""
-        now = time.monotonic()
-        if now - self._last_metrics_time >= self._metrics_interval:
-            logger.info(
-                "sink_metrics",
-                messages_published=self._messages_published,
-                errors=self._publish_errors,
-                interval_seconds=self._metrics_interval,
-            )
-            self._messages_published = 0
-            self._publish_errors = 0
-            self._last_metrics_time = now
 
     def close(self) -> None:
         """Close the Kafka producer and release resources."""

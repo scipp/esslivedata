@@ -177,12 +177,6 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
         self._total_messages_consumed = 0
         self._total_batches_dropped = 0
 
-        # Metrics tracking
-        self._metrics_interval = 30.0
-        self._last_metrics_time = 0.0
-        self._messages_consumed_since_last_metrics = 0
-        self._batches_dropped_since_last_metrics = 0
-
     def __enter__(self):
         """Enter context manager and start background consumption."""
         self.start()
@@ -232,13 +226,11 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
                         logger.info("kafka_consumer_ready")
                         consumer_ready = True
                     if messages:
-                        self._messages_consumed_since_last_metrics += len(messages)
                         self._total_messages_consumed += len(messages)
                         try:
                             self._queue.put_nowait(messages)
                         except queue.Full:
                             # Drop oldest batch if queue is full
-                            self._batches_dropped_since_last_metrics += 1
                             self._total_batches_dropped += 1
                             try:
                                 dropped = self._queue.get_nowait()
@@ -250,7 +242,6 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
                             except queue.Empty:
                                 # Queue became empty between full check and get
                                 self._queue.put_nowait(messages)
-                    self._maybe_log_metrics()
                 except Exception as e:
                     self._consecutive_errors += 1
                     logger.exception(
@@ -282,28 +273,6 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
         except Exception as e:
             self._failure_reason = f"Fatal error in consume loop: {e}"
             logger.exception("background_consumer_fatal_error")
-
-    def _maybe_log_metrics(self) -> None:
-        """Log metrics if the interval has elapsed."""
-        now = time.monotonic()
-        if now - self._last_metrics_time >= self._metrics_interval:
-            # Get consumer lag if available
-            lag_info = self.get_consumer_lag()
-            total_lag = lag_info.get("total_lag") if lag_info else None
-
-            logger.info(
-                "consumer_metrics",
-                messages_consumed=self._messages_consumed_since_last_metrics,
-                queue_depth=self._queue.qsize(),
-                batches_dropped=self._batches_dropped_since_last_metrics,
-                consecutive_errors=self._consecutive_errors,
-                consumer_lag=total_lag,
-                is_healthy=self.is_healthy(),
-                interval_seconds=self._metrics_interval,
-            )
-            self._messages_consumed_since_last_metrics = 0
-            self._batches_dropped_since_last_metrics = 0
-            self._last_metrics_time = now
 
     def get_messages(self) -> list[KafkaMessage]:
         """Get all messages consumed since the last call."""

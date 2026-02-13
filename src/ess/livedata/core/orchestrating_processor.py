@@ -113,13 +113,6 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         self._service_error: str | None = None
         self._has_processed_first_batch = False
 
-        # Metrics tracking
-        self._metrics_interval = 30_000_000_000  # 30 seconds in nanoseconds
-        self._last_metrics_time: int | None = None
-        self._batches_processed = 0
-        self._empty_batches = 0
-        self._errors_since_last_metrics = 0
-
     def process(self) -> None:
         # Transition from starting to running on first process cycle
         if not self._has_processed_first_batch:
@@ -145,8 +138,6 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
 
         message_batch = self._message_batcher.batch(data_messages)
         if message_batch is None:
-            self._empty_batches += 1
-            self._maybe_log_metrics()
             self._sink.publish_messages(result_messages)
             if not config_messages:
                 # Avoid busy-waiting if there is no data and no config messages.
@@ -164,7 +155,6 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         # Log any errors from data processing
         for error in job_errors:
             if error.has_error:
-                self._errors_since_last_metrics += 1
                 logger.error(
                     'job_data_error',
                     job_id=str(error.job_id),
@@ -182,7 +172,6 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
         valid_results = []
         for result in results:
             if result.error_message is not None:
-                self._errors_since_last_metrics += 1
                 logger.error(
                     'job_failed',
                     job_id=str(result.job_id),
@@ -191,9 +180,6 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
                 )
             else:
                 valid_results.append(result)
-
-        self._batches_processed += 1
-        self._maybe_log_metrics()
 
         result_messages.extend(
             [_job_result_to_message(result) for result in valid_results]
@@ -232,30 +218,6 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             messages_processed=self._messages_processed,
             error=self._service_error,
         )
-
-    def _maybe_log_metrics(self) -> None:
-        """Log processor metrics if the interval has elapsed."""
-        timestamp = time.time_ns()
-        if self._last_metrics_time is None:
-            self._last_metrics_time = timestamp
-            return
-
-        if timestamp - self._last_metrics_time >= self._metrics_interval:
-            active_jobs = len(self._job_manager.active_jobs)
-            logger.info(
-                'processor_metrics',
-                messages=self._messages_processed,
-                batches=self._batches_processed,
-                empty_batches=self._empty_batches,
-                active_jobs=active_jobs,
-                errors=self._errors_since_last_metrics,
-                interval_seconds=(timestamp - self._last_metrics_time) / 1e9,
-            )
-            # Reset counters (except messages_processed which is cumulative for service)
-            self._batches_processed = 0
-            self._empty_batches = 0
-            self._errors_since_last_metrics = 0
-            self._last_metrics_time = timestamp
 
     def shutdown(self) -> None:
         """Transition to stopping state and send heartbeat.
