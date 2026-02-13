@@ -453,8 +453,11 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         else:
             latest_time = new_data.coords['time']
 
-        # Calculate cutoff time
-        cutoff = latest_time - sc.scalar(self._required_timespan, unit='s')
+        # Calculate cutoff time (convert timespan to match the time coordinate unit)
+        timespan = sc.to_unit(
+            sc.scalar(self._required_timespan, unit='s'), latest_time.unit
+        )
+        cutoff = latest_time - timespan
 
         # Find first index to keep
         time_coord = self._time_buffer.get()

@@ -38,18 +38,18 @@ def thick_slice_2x2():
 
 
 # Helper functions for creating test data
-def make_single_slice(x_values, time_value):
+def make_single_slice(x_values, time_value, time_unit='s'):
     """Create a single time slice DataArray."""
     return sc.DataArray(
         sc.array(dims=['x'], values=x_values, unit='counts'),
         coords={
             'x': sc.arange('x', len(x_values), unit='m'),
-            'time': sc.scalar(time_value, unit='s'),
+            'time': sc.scalar(time_value, unit=time_unit),
         },
     )
 
 
-def make_thick_slice(x_size, time_values):
+def make_thick_slice(x_size, time_values, time_unit='s'):
     """Create a thick slice DataArray with multiple time points."""
     n_times = len(time_values)
     return sc.DataArray(
@@ -60,7 +60,7 @@ def make_thick_slice(x_size, time_values):
         ),
         coords={
             'x': sc.arange('x', x_size, unit='m'),
-            'time': sc.array(dims=['time'], values=time_values, unit='s'),
+            'time': sc.array(dims=['time'], values=time_values, unit=time_unit),
         },
     )
 
@@ -274,6 +274,55 @@ class TestTemporalBuffer:
 
         with pytest.raises(ValueError, match="exceeds buffer capacity even after"):
             buffer.add(large_data)
+
+    def test_timespan_trimming_with_nanosecond_time_coords(self):
+        """Test trimming works when time coordinates use nanoseconds.
+
+        Regression test for https://github.com/scipp/esslivedata/issues/711
+        where production detector data uses unit='ns' but the trim computation
+        hardcoded unit='s', causing a UnitError.
+        """
+        buffer = TemporalBuffer()
+        buffer.set_required_timespan(5.0)  # 5 seconds
+        buffer.set_max_memory(100)  # Small to trigger trimming
+
+        ns_per_s = int(1e9)
+        # Add data at t=0 ns
+        buffer.add(make_single_slice([1.0, 2.0], 0, time_unit='ns'))
+        initial_capacity = buffer._data_buffer.max_capacity
+
+        # Fill buffer to capacity
+        for t in range(1, initial_capacity):
+            buffer.add(make_single_slice([float(t)] * 2, t * ns_per_s, time_unit='ns'))
+
+        # Add data at t=10s (in ns). Should trigger trimming and keep t >= 5s.
+        buffer.add(make_single_slice([10.0, 10.0], 10 * ns_per_s, time_unit='ns'))
+
+        result = buffer.get()
+        assert result.coords['time'].values[0] >= 5 * ns_per_s
+
+    def test_timespan_trimming_with_nanosecond_thick_slices(self):
+        """Test trimming with nanosecond thick slices."""
+        buffer = TemporalBuffer()
+        buffer.set_required_timespan(2.0)  # 2 seconds
+        buffer.set_max_memory(100)
+
+        ns_per_s = int(1e9)
+        # Add thick slice at t=0, 1s
+        buffer.add(make_thick_slice(2, [0, 1 * ns_per_s], time_unit='ns'))
+        initial_capacity = buffer._data_buffer.max_capacity
+
+        # Fill to capacity
+        t = 2
+        while buffer._data_buffer.size < initial_capacity:
+            buffer.add(make_single_slice([float(t)] * 2, t * ns_per_s, time_unit='ns'))
+            t += 1
+
+        # Trigger trimming with data far in the future
+        buffer.add(make_single_slice([99.0, 99.0], 100 * ns_per_s, time_unit='ns'))
+
+        result = buffer.get()
+        assert result.coords['time'].values[0] >= 98 * ns_per_s
 
     def test_timespan_zero_trims_all_old_data_on_overflow(self):
         """Test that timespan=0.0 trims all data to make room for new data."""
