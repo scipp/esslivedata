@@ -131,6 +131,22 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
             else:
                 data_messages.append(msg)
 
+        # Log upstream latency for data messages
+        if data_messages:
+            wall_clock_ns = time.time_ns()
+            oldest_latency_s = (
+                wall_clock_ns - min(m.timestamp for m in data_messages)
+            ) / 1e9
+            newest_latency_s = (
+                wall_clock_ns - max(m.timestamp for m in data_messages)
+            ) / 1e9
+            logger.info(
+                'upstream_latency',
+                oldest_message_latency_s=round(oldest_latency_s, 2),
+                newest_message_latency_s=round(newest_latency_s, 2),
+                num_messages=len(data_messages),
+            )
+
         # Handle config messages
         result_messages = self._config_processor.process_messages(config_messages)
 

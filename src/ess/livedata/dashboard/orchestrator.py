@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -54,6 +55,23 @@ class Orchestrator:
         """
         messages = self._message_source.get_messages()
         self._logger.debug("Consumed %d messages", len(messages))
+
+        # Log downstream latency for result data messages
+        result_timestamps = [
+            m.timestamp
+            for m in messages
+            if m.stream != STATUS_STREAM_ID and m.stream != RESPONSES_STREAM_ID
+        ]
+        if result_timestamps:
+            wall_clock_ns = time.time_ns()
+            oldest_latency_s = (wall_clock_ns - min(result_timestamps)) / 1e9
+            newest_latency_s = (wall_clock_ns - max(result_timestamps)) / 1e9
+            self._logger.info(
+                'downstream_latency',
+                oldest_result_latency_s=round(oldest_latency_s, 2),
+                newest_result_latency_s=round(newest_latency_s, 2),
+                num_results=len(result_timestamps),
+            )
 
         if not messages:
             return
