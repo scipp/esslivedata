@@ -11,7 +11,11 @@ from ess.livedata.handlers.detector_view.types import LogicalViewConfig
 
 
 def make_fake_nexus_detector_data(
-    *, y_size: int = 4, x_size: int = 4, n_events_per_pixel: int = 10
+    *,
+    y_size: int = 4,
+    x_size: int = 4,
+    n_events_per_pixel: int = 10,
+    event_time_offsets: np.ndarray | None = None,
 ) -> sc.DataArray:
     """Create fake detector data similar to what GenericNeXusWorkflow produces.
 
@@ -19,14 +23,35 @@ def make_fake_nexus_detector_data(
     with events containing event_time_offset coordinates.
 
     This format is used by tests that work with RawDetector (already grouped).
+
+    Parameters
+    ----------
+    y_size:
+        Number of pixels in y dimension.
+    x_size:
+        Number of pixels in x dimension.
+    n_events_per_pixel:
+        Number of events per pixel (ignored if event_time_offsets is provided).
+    event_time_offsets:
+        Optional array of event_time_offset values in nanoseconds. If provided,
+        must have exactly ``y_size * x_size * n`` elements for some integer n,
+        and ``n_events_per_pixel`` is inferred from the array length.
     """
-    rng = np.random.default_rng(42)
-
     total_pixels = y_size * x_size
-    total_events = total_pixels * n_events_per_pixel
 
-    # Create event_time_offset values in nanoseconds (0-71ms range)
-    eto_values = rng.uniform(0, 71_000_000, total_events)
+    if event_time_offsets is not None:
+        total_events = len(event_time_offsets)
+        if total_events % total_pixels != 0:
+            raise ValueError(
+                f"event_time_offsets length ({total_events}) must be divisible "
+                f"by total pixels ({total_pixels})"
+            )
+        n_events_per_pixel = total_events // total_pixels
+        eto_values = event_time_offsets
+    else:
+        rng = np.random.default_rng(42)
+        total_events = total_pixels * n_events_per_pixel
+        eto_values = rng.uniform(0, 71_000_000, total_events)
 
     # Create event table with event_time_offset as coordinate
     # Data values are weights (typically 1.0 for each event)

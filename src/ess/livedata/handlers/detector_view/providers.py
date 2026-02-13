@@ -142,6 +142,20 @@ def get_screen_metadata(
     return projector.get_screen_metadata(empty_detector)
 
 
+def _add_overflow_bins(bins: sc.Variable) -> sc.Variable:
+    """Extend bin edges with ``-inf`` and ``+inf`` sentinel bins.
+
+    This ensures that events outside the user-configured bin range are captured
+    instead of silently dropped by ``hist()``.  The bins are converted to float
+    dtype because ``inf`` cannot be represented in integer types.
+    """
+    dim = bins.dim
+    float_bins = bins.to(dtype='float64')
+    neg_inf = sc.scalar(float('-inf'), unit=bins.unit)
+    pos_inf = sc.scalar(float('+inf'), unit=bins.unit)
+    return sc.concat([neg_inf, float_bins, pos_inf], dim)
+
+
 def compute_detector_histogram(
     screen_binned_events: ScreenBinnedEvents,
     bins: HistogramBins,
@@ -152,6 +166,10 @@ def compute_detector_histogram(
 
     Events have already been projected to screen coordinates by the projection
     providers. This function histograms the specified event coordinate dimension.
+
+    Bin edges are extended with ``-inf`` / ``+inf`` overflow bins so that events
+    outside the user-configured range still contribute to the detector image and
+    total counts.
 
     Parameters
     ----------
@@ -172,12 +190,14 @@ def compute_detector_histogram(
         return DetectorHistogram(screen_binned_events)
 
     # Convert bins to ns and rename dimension to match event_coord for histogramming.
+    # Extend with overflow bins so no events are silently dropped.
     # Then restore user's original dimension name and unit for output.
     output_dim = bins.dim
     bins_ns = bins.to(unit='ns').rename_dims({output_dim: event_coord})
-    histogrammed = screen_binned_events.hist({event_coord: bins_ns})
+    extended_bins_ns = _add_overflow_bins(bins_ns)
+    histogrammed = screen_binned_events.hist({event_coord: extended_bins_ns})
     histogrammed = histogrammed.rename_dims({event_coord: output_dim})
-    histogrammed.coords[output_dim] = bins
+    histogrammed.coords[output_dim] = _add_overflow_bins(bins)
     return DetectorHistogram(histogrammed)
 
 

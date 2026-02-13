@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for Sciline provider functions."""
 
+import numpy as np
 import pytest
 import scipp as sc
 
@@ -78,7 +79,8 @@ class TestComputeDetectorHistogram:
         )
 
         assert 'event_time_offset' in result.dims
-        assert result.sizes['event_time_offset'] == 10
+        # 10 user bins + 2 overflow/underflow bins
+        assert result.sizes['event_time_offset'] == 12
         assert result.sizes['y'] == 4
         assert result.sizes['x'] == 4
 
@@ -122,7 +124,11 @@ class TestComputeDetectorHistogram:
         assert 'time_of_arrival' in result.dims
         assert 'event_time_offset' not in result.dims
         assert result.coords['time_of_arrival'].unit == 'ms'
-        assert sc.allclose(result.coords['time_of_arrival'], bins)
+        # The coord has overflow edges (-inf, +inf) around the user bins
+        coord = result.coords['time_of_arrival']
+        assert sc.isinf(coord[0]).value
+        assert sc.isinf(coord[-1]).value
+        assert sc.allclose(coord[1:-1], bins)
 
 
 class TestAccumulatedHistogramProvider:
@@ -308,3 +314,128 @@ class TestCountProviders:
         )
         assert result_sliced.dims == ()
         assert result_sliced.data < expected_all
+
+
+def _make_screen_binned_with_out_of_range_events(
+    y_size: int = 4, x_size: int = 4, n_events_per_pixel: int = 10
+) -> tuple[sc.DataArray, int]:
+    """Create screen-binned events where some events are outside [0, 71ms].
+
+    Returns the screen-binned data and the total number of events.
+    Half the events per pixel are in range, half are out of range (-1 ns).
+    """
+    n_in_range = n_events_per_pixel // 2
+    n_out_of_range = n_events_per_pixel - n_in_range
+    total_pixels = y_size * x_size
+
+    rng = np.random.default_rng(42)
+    eto_per_pixel = []
+    for _ in range(total_pixels):
+        in_range = rng.uniform(0, 71_000_000, n_in_range)
+        out_of_range = np.full(n_out_of_range, -1.0)
+        eto_per_pixel.append(np.concatenate([in_range, out_of_range]))
+    all_eto = np.concatenate(eto_per_pixel)
+
+    data = make_fake_nexus_detector_data(
+        y_size=y_size,
+        x_size=x_size,
+        event_time_offsets=all_eto,
+    )
+    transform = make_logical_transform(y_size, x_size)
+    projector = make_logical_projector(transform=transform, reduction_dim=None)
+    screen_binned = projector.project_events(sc.values(data))
+    total_events = total_pixels * n_events_per_pixel
+    return screen_binned, total_events
+
+
+class TestOverflowUnderflowBins:
+    """Tests for overflow/underflow bin handling in histogram and downstream."""
+
+    def test_histogram_includes_events_outside_bin_range(self):
+        """Events outside [0, 71ms] are captured in overflow/underflow bins."""
+        screen_binned, total_events = _make_screen_binned_with_out_of_range_events()
+        bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
+
+        result = compute_detector_histogram(
+            screen_binned_events=screen_binned,
+            bins=bins,
+            event_coord='event_time_offset',
+        )
+
+        assert result.sum().value == total_events
+
+    def test_detector_image_without_slice_includes_all_events(self):
+        """2D image with no slice includes all events (including overflow)."""
+        screen_binned, total_events = _make_screen_binned_with_out_of_range_events()
+        bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
+
+        histogram = compute_detector_histogram(
+            screen_binned_events=screen_binned,
+            bins=bins,
+            event_coord='event_time_offset',
+        )
+        weights = PixelWeights(sc.ones(dims=['y', 'x'], shape=[4, 4], dtype='float32'))
+        image = detector_image(
+            histogram=AccumulatedHistogram[Cumulative](histogram),
+            histogram_slice=None,
+            weights=weights,
+            use_weighting=UsePixelWeighting(False),
+        )
+
+        assert image.sum().value == total_events
+
+    def test_detector_image_with_slice_excludes_overflow(self):
+        """2D image with value-based slice excludes overflow/underflow."""
+        screen_binned, total_events = _make_screen_binned_with_out_of_range_events()
+        bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
+
+        histogram = compute_detector_histogram(
+            screen_binned_events=screen_binned,
+            bins=bins,
+            event_coord='event_time_offset',
+        )
+        weights = PixelWeights(sc.ones(dims=['y', 'x'], shape=[4, 4], dtype='float32'))
+        # Slice to the original finite range
+        histogram_slice = (
+            sc.scalar(0, unit='ns'),
+            sc.scalar(71_000_000, unit='ns'),
+        )
+        image = detector_image(
+            histogram=AccumulatedHistogram[Cumulative](histogram),
+            histogram_slice=histogram_slice,
+            weights=weights,
+            use_weighting=UsePixelWeighting(False),
+        )
+
+        # Should exclude the out-of-range events
+        assert image.sum().value < total_events
+
+    def test_counts_total_includes_all_events(self):
+        """counts_total includes overflow/underflow events."""
+        screen_binned, total_events = _make_screen_binned_with_out_of_range_events()
+        bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
+
+        histogram = compute_detector_histogram(
+            screen_binned_events=screen_binned,
+            bins=bins,
+            event_coord='event_time_offset',
+        )
+
+        result = counts_total(histogram=AccumulatedHistogram[Current](histogram))
+        assert result.value == total_events
+
+    def test_histogram_spectral_dim_size_includes_overflow_bins(self):
+        """Histogram has 2 extra bins (underflow + overflow) beyond user bins."""
+        screen_binned, _ = _make_screen_binned_with_out_of_range_events()
+        n_user_bins = 10
+        bins = sc.linspace(
+            'event_time_offset', 0, 71_000_000, n_user_bins + 1, unit='ns'
+        )
+
+        result = compute_detector_histogram(
+            screen_binned_events=screen_binned,
+            bins=bins,
+            event_coord='event_time_offset',
+        )
+
+        assert result.sizes['event_time_offset'] == n_user_bins + 2

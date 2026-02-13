@@ -385,3 +385,43 @@ class TestEmptyROIRequests:
             metadata, histogram, polygon_request=empty_poly
         )
         assert result_poly.sizes['roi'] == 0
+
+
+class TestROISpectraOverflowBins:
+    """Tests that ROI spectra strip overflow/underflow bins."""
+
+    def test_roi_spectra_excludes_overflow_bins(self):
+        """ROI spectra output has only the finite user bins, not overflow."""
+        metadata = make_screen_metadata_from_edges()
+
+        # Simulate a histogram with overflow/underflow bins:
+        # 3 user bins + 2 overflow = 5 total bins along spectral dim.
+        n_user_bins = 3
+        user_edges = sc.linspace('tof', 0.0, 30000.0, n_user_bins + 1, unit='ns')
+        neg_inf = sc.scalar(float('-inf'), unit='ns')
+        pos_inf = sc.scalar(float('+inf'), unit='ns')
+        extended_edges = sc.concat([neg_inf, user_edges, pos_inf], 'tof')
+
+        data = sc.DataArray(
+            data=sc.ones(
+                dims=['y', 'x', 'tof'],
+                shape=[10, 10, n_user_bins + 2],
+                unit='counts',
+            ),
+            coords={
+                'tof': extended_edges,
+                'y': sc.linspace('y', 0.0, 10.0, 11, unit='m'),
+                'x': sc.linspace('x', 0.0, 10.0, 11, unit='m'),
+            },
+        )
+
+        roi = RectangleROI(
+            x=Interval(min=0, max=10, unit='m'),
+            y=Interval(min=0, max=10, unit='m'),
+        )
+        request = RectangleROI.to_concatenated_data_array({0: roi})
+
+        result = extract_roi_spectra(metadata, data, rectangle_request=request)
+
+        # Spectral dim should have only the user bins, not the overflow bins
+        assert result.sizes['tof'] == n_user_bins
