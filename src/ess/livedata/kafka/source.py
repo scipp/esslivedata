@@ -183,6 +183,12 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
         self._messages_consumed_since_last_metrics = 0
         self._batches_dropped_since_last_metrics = 0
 
+        # Lag monitoring (computed in a separate thread to avoid blocking consumption)
+        self._lag_query_timeout = 0.1
+        self._lag_lock = threading.Lock()
+        self._cached_lag: dict[str, Any] | None = None
+        self._lag_thread: threading.Thread | None = None
+
     def __enter__(self):
         """Enter context manager and start background consumption."""
         self.start()
@@ -201,6 +207,8 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._consume_loop, daemon=True)
         self._thread.start()
+        self._lag_thread = threading.Thread(target=self._lag_monitor_loop, daemon=True)
+        self._lag_thread.start()
         logger.info("background_consumer_started")
 
     def stop(self) -> None:
@@ -209,6 +217,8 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
             return
 
         self._stop_event.set()
+        if self._lag_thread and self._lag_thread.is_alive():
+            self._lag_thread.join(timeout=2.0)
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=5.0)
             if self._thread.is_alive():
@@ -283,13 +293,24 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
             self._failure_reason = f"Fatal error in consume loop: {e}"
             logger.exception("background_consumer_fatal_error")
 
+    def _lag_monitor_loop(self) -> None:
+        """Periodically compute consumer lag without blocking the consume loop."""
+        while not self._stop_event.is_set():
+            try:
+                lag = self._compute_consumer_lag()
+                with self._lag_lock:
+                    self._cached_lag = lag
+            except Exception:
+                logger.exception("lag_monitor_error")
+            self._stop_event.wait(timeout=self._metrics_interval)
+
     def _maybe_log_metrics(self) -> None:
         """Log metrics if the interval has elapsed."""
         now = time.monotonic()
         if now - self._last_metrics_time >= self._metrics_interval:
-            # Get consumer lag if available
             lag_info = self.get_consumer_lag()
             total_lag = lag_info.get("total_lag") if lag_info else None
+            partition_lags = lag_info.get("partitions") if lag_info else None
 
             logger.info(
                 "consumer_metrics",
@@ -298,6 +319,7 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
                 batches_dropped=self._batches_dropped_since_last_metrics,
                 consecutive_errors=self._consecutive_errors,
                 consumer_lag=total_lag,
+                partition_lags=partition_lags,
                 is_healthy=self.is_healthy(),
                 interval_seconds=self._metrics_interval,
             )
@@ -370,40 +392,43 @@ class BackgroundMessageSource(MessageSource[KafkaMessage]):
         )
 
     def get_consumer_lag(self) -> dict[str, Any] | None:
-        """Get consumer lag information if the underlying consumer supports it.
+        """Get the most recently computed consumer lag.
 
-        Returns a dictionary with lag information per partition, or None if
-        the consumer does not support lag monitoring.
+        Returns cached lag information computed by the lag monitor thread,
+        or None if no lag data is available yet.
         """
-        # Check if the consumer has the required methods for lag monitoring
+        with self._lag_lock:
+            return self._cached_lag
+
+    def _compute_consumer_lag(self) -> dict[str, Any] | None:
+        """Compute consumer lag per partition.
+
+        Called by the lag monitor thread. Uses a short timeout to avoid
+        blocking for too long if the broker is slow to respond.
+        """
         if not hasattr(self._consumer, 'assignment') or not hasattr(
             self._consumer, 'get_watermark_offsets'
         ):
             return None
 
         try:
-            lag_info: dict[str, Any] = {}
             total_lag = 0
+            partitions: dict[str, int] = {}
             assignment = self._consumer.assignment()
 
             for tp in assignment:
                 try:
-                    low, high = self._consumer.get_watermark_offsets(tp, timeout=1.0)
+                    low, high = self._consumer.get_watermark_offsets(
+                        tp, timeout=self._lag_query_timeout
+                    )
                     position = self._consumer.position([tp])[0].offset
                     if position >= 0 and high >= 0:
                         partition_lag = high - position
                         total_lag += partition_lag
-                        lag_info[f"{tp.topic}:{tp.partition}"] = {
-                            "low": low,
-                            "high": high,
-                            "position": position,
-                            "lag": partition_lag,
-                        }
+                        partitions[f"{tp.topic}:{tp.partition}"] = partition_lag
                 except Exception:  # noqa: S112
-                    # Skip partitions we can't get lag for (e.g., not assigned)
                     continue
 
-            lag_info["total_lag"] = total_lag
-            return lag_info
+            return {"total_lag": total_lag, "partitions": partitions}
         except Exception:
             return None

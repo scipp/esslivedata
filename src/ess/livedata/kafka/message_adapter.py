@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import time
+from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Generic, Protocol, TypeVar
@@ -114,15 +116,39 @@ class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
 
 
 class KafkaToEv44Adapter(KafkaAdapter[eventdata_ev44.EventData]):
+    def __init__(self, *, stream_lut: StreamLUT | None = None, stream_kind: StreamKind):
+        super().__init__(stream_lut=stream_lut, stream_kind=stream_kind)
+        self._events_by_source: dict[str, int] = defaultdict(int)
+        self._messages_by_source: dict[str, int] = defaultdict(int)
+        self._last_metrics_time = time.monotonic()
+        self._metrics_interval = 30.0
+
     def adapt(self, message: KafkaMessage) -> Message[eventdata_ev44.EventData]:
         ev44 = eventdata_ev44.deserialise_ev44(message.value())
         stream = self.get_stream_id(topic=message.topic(), source_name=ev44.source_name)
+        self._events_by_source[stream.name] += len(ev44.time_of_flight)
+        self._messages_by_source[stream.name] += 1
+        self._maybe_log_metrics()
         # A fallback, useful in particular for testing so serialized data can be reused.
         if ev44.reference_time.size > 0:
             timestamp = ev44.reference_time[-1]
         else:
             timestamp = message.timestamp()[1]
         return Message(timestamp=timestamp, stream=stream, value=ev44)
+
+    def _maybe_log_metrics(self) -> None:
+        now = time.monotonic()
+        if now - self._last_metrics_time >= self._metrics_interval:
+            logger.info(
+                "ev44_metrics",
+                total_events=sum(self._events_by_source.values()),
+                total_messages=sum(self._messages_by_source.values()),
+                events_by_source=dict(self._events_by_source),
+                interval_seconds=self._metrics_interval,
+            )
+            self._events_by_source.clear()
+            self._messages_by_source.clear()
+            self._last_metrics_time = now
 
 
 class KafkaToDa00Adapter(KafkaAdapter[list[dataarray_da00.Variable]]):
