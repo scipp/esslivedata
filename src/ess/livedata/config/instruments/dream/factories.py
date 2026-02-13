@@ -78,6 +78,11 @@ def setup_factories(instrument: Instrument) -> None:
                 resolution={'y': 160, 'x': 160},
                 pixel_noise=_pixel_noise,
             ),
+            'sans_detector': GeometricViewConfig(
+                projection_type='xy_plane',
+                resolution={'y': 160, 'x': 160},
+                pixel_noise=_pixel_noise,
+            ),
         },
     )
 

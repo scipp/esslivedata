@@ -1,0 +1,73 @@
+# Version control (version injected via SETUPTOOLS_SCM_PRETEND_VERSION build arg)
+.git/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.tox/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+.devcontainer/
+
+# Tests and documentation
+tests/
+.pytest_cache/
+.hypothesis/
+coverage_html/
+docs/
+html/
+
+# CI and tooling configs
+.github/
+.pre-commit-config.yaml
+.copier-answers.yml
+tox.ini
+.ruff_cache/
+.mypy_cache/
+uv.lock
+
+# IDE and editor files
+.idea/
+.vscode/
+.vs/
+.claude/
+*.sw?
+
+# Docker files (prevent recursive copy)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Data files
+*.data
+*.dat
+*.csv
+*.xye
+*.h5
+*.hdf5
+*.hdf
+*.nxs
+*.raw
+*.cif
+*.rcif
+*.ort
+*.zip
+*.sqw
+*.nxspe
+
+# Development resources and scripts
+resources/
+configs/
+requirements/
+scripts/
+
+# OS files
+.DS_Store

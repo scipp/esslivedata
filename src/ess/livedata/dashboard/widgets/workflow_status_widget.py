@@ -850,9 +850,9 @@ class WorkflowStatusWidget:
             self._modal_container.append(modal.modal)
             modal.show()
         except Exception:
-            import logging
+            import structlog
 
-            logging.getLogger(__name__).exception(
+            structlog.get_logger().exception(
                 "Failed to create workflow configuration modal"
             )
             pn.state.notifications.error("Failed to open configuration")
