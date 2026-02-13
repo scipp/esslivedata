@@ -2,13 +2,18 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Hashable, Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
 from typing import Any, Generic, TypeVar
 
+import structlog
+
 from .extractors import LatestValueExtractor, UpdateExtractor
 from .temporal_buffer_manager import TemporalBufferManager
+
+logger = structlog.get_logger(__name__)
 
 K = TypeVar('K', bound=Hashable)
 V = TypeVar('V')
@@ -173,10 +178,23 @@ class DataService(MutableMapping[K, V]):
         updated_keys
             The set of data keys that were updated.
         """
-        for subscriber in self._subscribers:
+        slow_subscribers = []
+        for i, subscriber in enumerate(self._subscribers):
             if updated_keys & subscriber.keys:
+                t0 = time.perf_counter()
                 subscriber_data = self._build_subscriber_data(subscriber)
                 subscriber.trigger(subscriber_data)
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                if elapsed_ms > 5:
+                    slow_subscribers.append(
+                        f"{type(subscriber).__name__}[{i}]:{elapsed_ms:.0f}ms"
+                    )
+        if slow_subscribers:
+            logger.info(
+                'slow_subscribers',
+                subscribers=slow_subscribers,
+                num_total=len(self._subscribers),
+            )
 
     def __getitem__(self, key: K) -> V:
         """Get the latest value for a key."""
