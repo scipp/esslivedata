@@ -148,7 +148,12 @@ class LivedataApp:
             self.consumer.add_message(monitor_message)
 
     def publish_events(
-        self, *, size: int, time: int, reuse_events: bool = False
+        self,
+        *,
+        size: int,
+        time: int,
+        reuse_events: bool = False,
+        time_of_flight: np.ndarray | None = None,
     ) -> None:
         """
         Publish events to the consumer.
@@ -156,10 +161,25 @@ class LivedataApp:
         If `reuse_events` is True, the same events are reused for each call to this
         method. This is useful for speeding up tests that need to send many event
         messages but do not require different events for each call.
+
+        Parameters
+        ----------
+        size:
+            Number of events to publish.
+        time:
+            Timestamp in seconds.
+        reuse_events:
+            If True, reuse the same events for each call.
+        time_of_flight:
+            Optional custom time_of_flight values (int32 ns). If provided, overrides
+            the default random values. Must have length ``size``.
         """
         if not reuse_events or self._detector_events is None:
             events = self.make_serialized_ev44(
-                name=next(iter(self._detector_config)), size=size, with_ids=True
+                name=next(iter(self._detector_config)),
+                size=size,
+                with_ids=True,
+                time_of_flight=time_of_flight,
             )
             self._detector_events = events
         else:
@@ -180,8 +200,17 @@ class LivedataApp:
         )
         self.consumer.add_message(message)
 
-    def make_serialized_ev44(self, name: str, size: int, with_ids: bool) -> bytes:
-        time_of_arrival = self._rng.uniform(0, 70_000_000, size).astype(np.int32)
+    def make_serialized_ev44(
+        self,
+        name: str,
+        size: int,
+        with_ids: bool,
+        time_of_flight: np.ndarray | None = None,
+    ) -> bytes:
+        if time_of_flight is not None:
+            time_of_arrival = time_of_flight
+        else:
+            time_of_arrival = self._rng.uniform(0, 70_000_000, size).astype(np.int32)
         if with_ids:
             first, last = self._detector_config[name]
             pixel_id = self._rng.integers(first, last + 1, size, dtype=np.int32)

@@ -399,6 +399,55 @@ def test_da00_to_scipp_drops_coords_with_incompatible_dimensions():
     assert 'frame_total' not in da.coords
 
 
+def test_roundtrip_with_inf_bin_edges():
+    """Test roundtrip conversion with -inf/+inf overflow bin edges.
+
+    Detector view histograms use overflow bins with -inf/+inf edges to
+    capture events outside the user-configured bin range.
+    """
+    user_edges = sc.linspace('tof', 0.0, 71000.0, 11, unit='ns')
+    extended_edges = sc.concat(
+        [
+            sc.scalar(float('-inf'), unit='ns'),
+            user_edges,
+            sc.scalar(float('+inf'), unit='ns'),
+        ],
+        'tof',
+    )
+
+    original = sc.DataArray(
+        data=sc.ones(dims=['tof'], shape=[12], unit='counts'),
+        coords={'tof': extended_edges},
+    )
+
+    da00 = scipp_to_da00(original)
+    converted = da00_to_scipp(da00)
+
+    assert sc.identical(original, converted)
+    # Verify inf values survived the roundtrip
+    assert np.isneginf(converted.coords['tof'].values[0])
+    assert np.isposinf(converted.coords['tof'].values[-1])
+
+
+def test_scipp_to_da00_preserves_inf_in_coord():
+    """Test that inf values in coordinates are preserved during serialization."""
+    edges = sc.array(
+        dims=['x'],
+        values=[float('-inf'), 0.0, 1.0, float('+inf')],
+        unit='m',
+    )
+    da = sc.DataArray(
+        data=sc.array(dims=['x'], values=[1, 2, 3], unit='counts'),
+        coords={'x': edges},
+    )
+
+    variables = scipp_to_da00(da)
+    x_var = next(var for var in variables if var.name == 'x')
+
+    assert np.isneginf(x_var.data[0])
+    assert np.isposinf(x_var.data[-1])
+
+
 def test_da00_to_scipp_keeps_scalar_coords():
     """Test that scalar coords (0-dimensional) are kept."""
     variables = [

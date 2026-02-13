@@ -231,6 +231,97 @@ class TestImagePlotter:
         assert labeled is not None
 
 
+class TestStripOverflowBins:
+    """Tests for _strip_overflow_bins static method."""
+
+    def test_strips_both_inf_edges(self):
+        """Both ±inf overflow bins are removed, leaving only finite bins."""
+        edges = sc.array(
+            dims=['x'],
+            values=[float('-inf'), 0.0, 10.0, 20.0, float('+inf')],
+            unit='us',
+        )
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[5.0, 1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': edges},
+        )
+        result = plots.Plotter._strip_overflow_bins(data)
+        np.testing.assert_array_equal(result.coords['x'].values, [0.0, 10.0, 20.0])
+        np.testing.assert_array_equal(result.values, [1.0, 2.0])
+
+    def test_strips_only_leading_inf(self):
+        edges = sc.array(dims=['x'], values=[float('-inf'), 0.0, 10.0, 20.0], unit='us')
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[5.0, 1.0, 2.0], unit='counts'),
+            coords={'x': edges},
+        )
+        result = plots.Plotter._strip_overflow_bins(data)
+        np.testing.assert_array_equal(result.coords['x'].values, [0.0, 10.0, 20.0])
+        np.testing.assert_array_equal(result.values, [1.0, 2.0])
+
+    def test_strips_only_trailing_inf(self):
+        edges = sc.array(dims=['x'], values=[0.0, 10.0, 20.0, float('+inf')], unit='us')
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': edges},
+        )
+        result = plots.Plotter._strip_overflow_bins(data)
+        np.testing.assert_array_equal(result.coords['x'].values, [0.0, 10.0, 20.0])
+        np.testing.assert_array_equal(result.values, [1.0, 2.0])
+
+    def test_no_inf_edges_returns_data_unchanged(self):
+        edges = sc.array(dims=['x'], values=[0.0, 10.0, 20.0], unit='us')
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={'x': edges},
+        )
+        result = plots.Plotter._strip_overflow_bins(data)
+        assert sc.identical(result, data)
+
+    def test_non_edge_coord_returns_data_unchanged(self):
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[0.0, 10.0, 20.0], unit='us')},
+        )
+        result = plots.Plotter._strip_overflow_bins(data)
+        assert sc.identical(result, data)
+
+    def test_explicit_dim_for_2d_data(self):
+        """Stripping works on a specified dimension of 2D data."""
+        toa_edges = sc.array(
+            dims=['toa'],
+            values=[float('-inf'), 0.0, 10.0, 20.0, float('+inf')],
+            unit='us',
+        )
+        data = sc.DataArray(
+            sc.array(
+                dims=['roi', 'toa'],
+                values=[[9.0, 1.0, 2.0, 7.0], [0.0, 4.0, 5.0, 0.0]],
+            ),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[0, 1]),
+                'toa': toa_edges,
+            },
+        )
+        result = plots.Plotter._strip_overflow_bins(data, dim='toa')
+        np.testing.assert_array_equal(result.coords['toa'].values, [0.0, 10.0, 20.0])
+        np.testing.assert_array_equal(result.values, [[1.0, 2.0], [4.0, 5.0]])
+
+    def test_preserves_unit(self):
+        edges = sc.array(
+            dims=['x'],
+            values=[float('-inf'), 0.0, 10.0, float('+inf')],
+            unit='us',
+        )
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[5.0, 1.0, 3.0], unit='counts'),
+            coords={'x': edges},
+        )
+        result = plots.Plotter._strip_overflow_bins(data)
+        assert result.coords['x'].unit == sc.Unit('us')
+        assert result.unit == sc.Unit('counts')
+
+
 class TestLinePlotter:
     @pytest.fixture
     def line_plotter(self):
@@ -279,6 +370,62 @@ class TestLinePlotter:
         )
         result = line_plotter.plot(data, data_key)
         assert isinstance(result, hv.Curve)
+
+    def test_overflow_bins_stripped_in_curve_mode(self, line_plotter, data_key):
+        """Overflow bins with ±inf edges are stripped before curve rendering."""
+        edges = sc.array(
+            dims=['x'],
+            values=[float('-inf'), 0.0, 10.0, 20.0, float('+inf')],
+            unit='m',
+        )
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[5.0, 1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': edges},
+        )
+        result = line_plotter.plot(data, data_key)
+        assert isinstance(result, hv.Curve)
+        # Midpoints of [0, 10, 20] = [5, 15]; no inf values in output
+        np.testing.assert_array_equal(result.dimension_values('x'), [5.0, 15.0])
+        np.testing.assert_array_equal(result.dimension_values('values'), [1.0, 2.0])
+
+    def test_overflow_bins_stripped_in_curve_mode_renders_to_bokeh(
+        self, line_plotter, data_key
+    ):
+        """Curve with stripped overflow bins renders to Bokeh without warnings."""
+        edges = sc.array(
+            dims=['x'],
+            values=[float('-inf'), 0.0, 10.0, 20.0, float('+inf')],
+            unit='m',
+        )
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[5.0, 1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': edges},
+        )
+        hv_element = line_plotter.plot(data, data_key)
+        render_to_bokeh(hv_element)
+
+    def test_overflow_bins_stripped_in_histogram_mode(self, data_key):
+        """Overflow bins with ±inf edges are stripped before histogram rendering."""
+        from ess.livedata.dashboard.plot_params import Curve1dRenderMode, PlotParams1d
+
+        params = PlotParams1d()
+        params.curve.mode = Curve1dRenderMode.histogram
+        plotter = plots.LinePlotter.from_params(params)
+
+        edges = sc.array(
+            dims=['x'],
+            values=[float('-inf'), 0.0, 10.0, 20.0, float('+inf')],
+            unit='m',
+        )
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[5.0, 1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': edges},
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Histogram)
+        # Histogram edges should be [0, 10, 20]; no inf values
+        np.testing.assert_array_equal(result.edges, [0.0, 10.0, 20.0])
+        np.testing.assert_array_equal(result.dimension_values('values'), [1.0, 2.0])
 
 
 class TestSlicerPlotter:
@@ -1343,6 +1490,86 @@ class TestOverlay1DPlotter:
             opts = hv.Store.lookup_options('bokeh', curve, 'plot').kwargs
             assert opts.get('responsive') is True
             assert 'aspect' not in opts or opts.get('aspect') is None
+
+    def test_overflow_bins_stripped(self, overlay_plotter, data_key):
+        """Overflow bins with ±inf edges are stripped before rendering.
+
+        ROI spectra from detector view histograms have overflow bins with
+        inf edges that cannot be rendered.
+        """
+        toa_edges = sc.concat(
+            [
+                sc.scalar(float('-inf'), unit='us'),
+                sc.array(dims=['toa'], values=[0.0, 10.0, 20.0, 30.0], unit='us'),
+                sc.scalar(float('+inf'), unit='us'),
+            ],
+            'toa',
+        )
+        data = sc.DataArray(
+            sc.array(
+                dims=['roi', 'toa'],
+                values=[[9.0, 1.0, 2.0, 3.0, 7.0], [0.0, 4.0, 5.0, 6.0, 0.0]],
+            ),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[0, 1], unit=None),
+                'toa': toa_edges,
+            },
+        )
+        result = overlay_plotter.plot(data, data_key)
+        assert isinstance(result, hv.Overlay)
+        # Each curve should have midpoints of [0,10,20,30] = [5,15,25]; no inf
+        for curve in result:
+            xs = curve.dimension_values('toa')
+            assert not np.any(np.isinf(xs))
+            np.testing.assert_array_equal(xs, [5.0, 15.0, 25.0])
+
+    def test_overflow_bins_stripped_renders_to_bokeh(self, overlay_plotter, data_key):
+        """Overlay1D with stripped overflow bins renders to Bokeh."""
+        toa_edges = sc.concat(
+            [
+                sc.scalar(float('-inf'), unit='us'),
+                sc.array(dims=['toa'], values=[0.0, 10.0, 20.0, 30.0], unit='us'),
+                sc.scalar(float('+inf'), unit='us'),
+            ],
+            'toa',
+        )
+        data = sc.DataArray(
+            sc.array(
+                dims=['roi', 'toa'],
+                values=[[9.0, 1.0, 2.0, 3.0, 7.0], [0.0, 4.0, 5.0, 6.0, 0.0]],
+            ),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[0, 1], unit=None),
+                'toa': toa_edges,
+            },
+        )
+        hv_element = overlay_plotter.plot(data, data_key)
+        render_to_bokeh(hv_element)
+
+    def test_overflow_bins_do_not_poison_autoscaler(self, overlay_plotter, data_key):
+        """Autoscaler must not see ±inf edges, otherwise NaN poisons bounds."""
+        toa_edges = sc.concat(
+            [
+                sc.scalar(float('-inf'), unit='us'),
+                sc.array(dims=['toa'], values=[0.0, 10.0, 20.0, 30.0], unit='us'),
+                sc.scalar(float('+inf'), unit='us'),
+            ],
+            'toa',
+        )
+        data = sc.DataArray(
+            sc.array(
+                dims=['roi', 'toa'],
+                values=[[9.0, 1.0, 2.0, 3.0, 7.0], [0.0, 4.0, 5.0, 6.0, 0.0]],
+            ),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[0, 1], unit=None),
+                'toa': toa_edges,
+            },
+        )
+        # First call sets initial bounds
+        overlay_plotter.plot(data, data_key)
+        # Second call must not fail from NaN-poisoned bounds
+        overlay_plotter.plot(data, data_key)
 
 
 class TestLagIndicator:

@@ -3,6 +3,7 @@
 
 import logging
 
+import numpy as np
 import pytest
 from structlog.testing import capture_logs
 
@@ -259,3 +260,44 @@ def test_message_that_cannot_be_decoded_is_ignored(
     error_logs = [log for log in captured if log['log_level'] == 'error']
     assert any("Error adapting message" in log['event'] for log in error_logs)
     assert any("unpack_from requires a buffer" in str(log) for log in error_logs)
+
+
+def test_events_with_negative_tof_are_counted(
+    configured_dummy_detector: LivedataApp,
+) -> None:
+    """Events with all-negative time_of_flight (-1 ns) contribute to detector counts.
+
+    Reproduces the DREAM scenario where EFU sends ev44 messages with all-(-1) int32
+    time_of_flight arrays (issue #709). Overflow bins ensure these events are captured.
+    """
+    app = configured_dummy_detector
+    sink = app.sink
+
+    n_events = 2000
+    tof = np.full(n_events, -1, dtype=np.int32)
+    app.publish_events(size=n_events, time=2, time_of_flight=tof)
+    app.step()
+
+    assert len(sink.messages) == 8
+    assert sink.messages[0].value.nansum().value == n_events  # cumulative
+    assert sink.messages[1].value.nansum().value == n_events  # current
+
+
+def test_mixed_in_and_out_of_range_events_are_all_counted(
+    configured_dummy_detector: LivedataApp,
+) -> None:
+    """Events both inside and outside the bin range are all counted."""
+    app = configured_dummy_detector
+    sink = app.sink
+
+    n_events = 2000
+    rng = np.random.default_rng(99)
+    tof = rng.uniform(0, 70_000_000, n_events).astype(np.int32)
+    # Set half the events to -1 (outside bin range)
+    tof[: n_events // 2] = -1
+    app.publish_events(size=n_events, time=2, time_of_flight=tof)
+    app.step()
+
+    assert len(sink.messages) == 8
+    assert sink.messages[0].value.nansum().value == n_events  # cumulative
+    assert sink.messages[1].value.nansum().value == n_events  # current

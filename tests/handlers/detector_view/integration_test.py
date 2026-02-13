@@ -428,3 +428,112 @@ class TestUnitHandling:
 
         # Data should have a unit (dimensionless from histogram)
         assert spectra.data.unit is not None
+
+
+class TestOverflowBinsIntegration:
+    """Integration tests for overflow/underflow bins through the full workflow."""
+
+    def test_all_negative_tof_events_are_counted(self):
+        """Events with all-negative time_of_flight (-1 ns) appear in counts.
+
+        Reproduces the DREAM scenario where EFU sends ev44 messages with
+        all-(-1) int32 time_of_flight arrays (issue #709).
+        """
+        y_size, x_size, n_events_per_pixel = 4, 4, 10
+        total_events = y_size * x_size * n_events_per_pixel
+
+        # All events have time_of_flight = -1 (int32), mimicking DREAM EFU output
+        eto = np.full(total_events, -1, dtype=np.int32)
+
+        factory = make_test_factory(y_size=y_size, x_size=x_size)
+        workflow = factory.make_workflow('detector', params=make_test_params())
+
+        events = make_fake_ungrouped_nexus_data(
+            y_size=y_size, x_size=x_size, event_time_offsets=eto
+        )
+        workflow.accumulate(
+            {'detector': NeXusData[NXdetector, SampleRun](events)},
+            start_time=1000,
+            end_time=2000,
+        )
+        result = workflow.finalize()
+
+        assert result['counts_total'].value == total_events
+        assert result['cumulative'].sum().value == total_events
+        assert result['current'].sum().value == total_events
+
+    def test_mixed_in_range_and_out_of_range_events(self):
+        """Events both inside and outside the bin range are all counted."""
+        y_size, x_size = 4, 4
+        total_pixels = y_size * x_size
+        n_per_pixel = 10
+
+        rng = np.random.default_rng(123)
+        eto_per_pixel = []
+        for _ in range(total_pixels):
+            in_range = rng.uniform(0, 71_000_000, n_per_pixel // 2)
+            out_of_range = np.full(n_per_pixel - n_per_pixel // 2, -1.0)
+            eto_per_pixel.append(np.concatenate([in_range, out_of_range]))
+        eto = np.concatenate(eto_per_pixel)
+        total_events = len(eto)
+
+        factory = make_test_factory(y_size=y_size, x_size=x_size)
+        workflow = factory.make_workflow('detector', params=make_test_params())
+
+        events = make_fake_ungrouped_nexus_data(
+            y_size=y_size, x_size=x_size, event_time_offsets=eto
+        )
+        workflow.accumulate(
+            {'detector': NeXusData[NXdetector, SampleRun](events)},
+            start_time=1000,
+            end_time=2000,
+        )
+        result = workflow.finalize()
+
+        assert result['counts_total'].value == total_events
+
+    def test_counts_in_range_excludes_overflow(self):
+        """counts_in_toa_range with a finite slice excludes overflow events."""
+        from ess.livedata.handlers.detector_view_specs import DetectorViewParams
+        from ess.livedata.parameter_models import TOAEdges, TOARange
+
+        y_size, x_size = 4, 4
+        total_pixels = y_size * x_size
+        n_per_pixel = 10
+
+        rng = np.random.default_rng(456)
+        eto_per_pixel = []
+        for _ in range(total_pixels):
+            in_range = rng.uniform(0, 71_000_000, n_per_pixel // 2)
+            out_of_range = np.full(n_per_pixel - n_per_pixel // 2, -1.0)
+            eto_per_pixel.append(np.concatenate([in_range, out_of_range]))
+        eto = np.concatenate(eto_per_pixel)
+        total_events = len(eto)
+        in_range_events = total_pixels * (n_per_pixel // 2)
+
+        # Use ns for both edges and range to avoid unit mismatch between
+        # HistogramSlice (always ns) and the histogram coordinate (user unit).
+        params = DetectorViewParams(
+            toa_edges=TOAEdges(start=0.0, stop=71_400_000.0, num_bins=100, unit='ns'),
+            toa_range=TOARange(enabled=True, start=0.0, stop=71_400_000.0, unit='ns'),
+        )
+
+        factory = make_test_factory(y_size=y_size, x_size=x_size)
+        workflow = factory.make_workflow('detector', params=params)
+
+        events = make_fake_ungrouped_nexus_data(
+            y_size=y_size, x_size=x_size, event_time_offsets=eto
+        )
+        workflow.accumulate(
+            {'detector': NeXusData[NXdetector, SampleRun](events)},
+            start_time=1000,
+            end_time=2000,
+        )
+        result = workflow.finalize()
+
+        # counts_total includes all events (overflow + in-range)
+        assert result['counts_total'].value == total_events
+        # counts_in_toa_range excludes overflow (only in-range events)
+        assert result['counts_in_toa_range'].value == pytest.approx(
+            in_range_events, abs=1
+        )
