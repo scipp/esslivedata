@@ -865,6 +865,9 @@ class Overlay1DPlotter(Plotter):
         if slice_size == 0:
             return hv.Curve([]).opts(**self._base_opts)
 
+        # Strip overflow bins before autoscaler sees ±inf edges
+        data = self._strip_overflow_bins(data, dim=data.dims[1])
+
         # Update autoscaler with full 2D data to establish global bounds
         framewise = self._update_autoscaler_and_get_framewise(data, data_key)
 
@@ -874,8 +877,7 @@ class Overlay1DPlotter(Plotter):
         else:
             coord_values = np.arange(slice_size)
 
-        # Strip overflow bins and convert edges to midpoints (shared across all slices)
-        data = self._strip_overflow_bins(data, dim=data.dims[1])
+        # Convert edges to midpoints (shared across all slices)
         data = self._convert_bin_edges_to_midpoints(data, dim=data.dims[1])
 
         curves: list[hv.Element] = []

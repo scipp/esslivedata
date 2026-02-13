@@ -1546,6 +1546,31 @@ class TestOverlay1DPlotter:
         hv_element = overlay_plotter.plot(data, data_key)
         render_to_bokeh(hv_element)
 
+    def test_overflow_bins_do_not_poison_autoscaler(self, overlay_plotter, data_key):
+        """Autoscaler must not see ±inf edges, otherwise NaN poisons bounds."""
+        toa_edges = sc.concat(
+            [
+                sc.scalar(float('-inf'), unit='us'),
+                sc.array(dims=['toa'], values=[0.0, 10.0, 20.0, 30.0], unit='us'),
+                sc.scalar(float('+inf'), unit='us'),
+            ],
+            'toa',
+        )
+        data = sc.DataArray(
+            sc.array(
+                dims=['roi', 'toa'],
+                values=[[9.0, 1.0, 2.0, 3.0, 7.0], [0.0, 4.0, 5.0, 6.0, 0.0]],
+            ),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[0, 1], unit=None),
+                'toa': toa_edges,
+            },
+        )
+        # First call sets initial bounds
+        overlay_plotter.plot(data, data_key)
+        # Second call must not fail from NaN-poisoned bounds
+        overlay_plotter.plot(data, data_key)
+
 
 class TestLagIndicator:
     """Tests for lag indicator functionality in plotters."""
