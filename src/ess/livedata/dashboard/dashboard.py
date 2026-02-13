@@ -3,6 +3,7 @@
 """Common functionality for implementing dashboards."""
 
 import logging
+import time
 from abc import ABC, abstractmethod
 from contextlib import ExitStack
 
@@ -99,8 +100,12 @@ class DashboardBase(ServiceBase, ABC):
         # multiple lines in the same plot, or different plots updating in short
         # succession, which is visually distracting.
         # Furthermore, this improves performance by reducing the number of re-renders.
+        t0 = time.perf_counter()
         with pn.io.hold():
             self._services.orchestrator.update()
+        hold_flush_ms = round((time.perf_counter() - t0) * 1000, 1)
+        if hold_flush_ms > 100:
+            self._logger.info('step_duration', hold_flush_ms=hold_flush_ms)
 
     def get_dashboard_title(self) -> str:
         """Get the dashboard title. Override for custom titles."""

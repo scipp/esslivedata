@@ -53,8 +53,9 @@ class Orchestrator:
         """
         Call this periodically to consume data and feed it into the dashboard.
         """
+        t0 = time.perf_counter()
         messages = self._message_source.get_messages()
-        self._logger.debug("Consumed %d messages", len(messages))
+        t_get = time.perf_counter()
 
         # Log downstream latency for result data messages
         result_timestamps = [
@@ -83,6 +84,17 @@ class Orchestrator:
         with self._data_service.transaction():
             for message in messages:
                 self.forward(stream_id=message.stream, value=message.value)
+            t_forward = time.perf_counter()
+        t_notify = time.perf_counter()
+
+        self._logger.info(
+            'update_timing',
+            get_messages_ms=round((t_get - t0) * 1000, 1),
+            forward_ms=round((t_forward - t_get) * 1000, 1),
+            notify_ms=round((t_notify - t_forward) * 1000, 1),
+            total_ms=round((t_notify - t0) * 1000, 1),
+            num_messages=len(messages),
+        )
 
     def forward(self, stream_id: StreamId, value: Any) -> None:
         """
