@@ -247,6 +247,7 @@ def roi_spectra(
 
     # Build output DataArray
     if not spectra:
+        # Return empty DataArray with correct structure
         return ROISpectra[AccumulationMode](
             sc.DataArray(
                 data=sc.zeros(
