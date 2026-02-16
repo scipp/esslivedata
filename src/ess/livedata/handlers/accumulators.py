@@ -5,14 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
-import numpy as np
 import scipp as sc
 from streaming_data_types import logdata_f144
 
 from ess.reduce import streaming
+from ess.reduce.streaming import EternalAccumulator
 
 from ..core.handler import Accumulator
 from .to_nxevent_data import MonitorEvents
+
+__all__ = ["MonitorEvents"]
 
 T = TypeVar('T')
 
@@ -72,6 +74,40 @@ class LatestValueHandler(Accumulator[sc.DataArray, sc.DataArray]):
 
     def clear(self) -> None:
         self._latest = None
+
+
+class NoCopyAccumulator(EternalAccumulator):
+    """
+    Accumulator that skips deepcopy on read for better performance.
+
+    The base EternalAccumulator uses deepcopy in _get_value() to ensure safety.
+    This accumulator skips that deepcopy, saving ~30ms per read for a 500MB
+    histogram.
+
+    The copy on first push is retained to avoid shared references when the same
+    value is pushed to multiple accumulators.
+
+    Use only when downstream consumers do not modify or store references to
+    the returned value. This constraint is met in streaming workflows
+    where downstream just serializes the data.
+    """
+
+    def _get_value(self):
+        """Return value directly without deepcopy."""
+        return self._value
+
+
+class NoCopyWindowAccumulator(NoCopyAccumulator):
+    """
+    Window accumulator without deepcopy that clears after finalize.
+
+    Combines the performance benefits of NoCopyAccumulator with window semantics
+    (clearing after each finalize cycle).
+    """
+
+    def on_finalize(self) -> None:
+        """Clear accumulated value after finalize retrieves it."""
+        self.clear()
 
 
 class LatestValue(streaming.Accumulator[T], Generic[T]):
@@ -159,33 +195,3 @@ class Cumulative(_CumulativeAccumulationMixin, Accumulator[sc.DataArray, sc.Data
     def add(self, timestamp: int, data: sc.DataArray) -> None:
         _ = timestamp
         self._add_cumulative(data)
-
-
-class CollectTOA(Accumulator[MonitorEvents, np.ndarray]):
-    """
-    Accumulator that bins time of arrival data into a histogram.
-
-    Monitor data handlers use this as a preprocessor before actual accumulation. For
-    detector data it could be used to produce a histogram for a selected ROI.
-    """
-
-    def __init__(self):
-        self._chunks: list[np.ndarray] = []
-
-    def add(self, timestamp: int, data: MonitorEvents) -> None:
-        _ = timestamp
-        # We could easily support other units, but ev44 is always in ns so this should
-        # never happen.
-        if data.unit != 'ns':
-            raise ValueError(f"Expected unit 'ns', got '{data.unit}'")
-        self._chunks.append(data.time_of_arrival)
-
-    def get(self) -> np.ndarray:
-        # Using NumPy here as for these specific operations with medium-sized data it is
-        # a bit faster than Scipp. Could optimize the concatenate by reusing a buffer.
-        result = np.concatenate(self._chunks or [[]])
-        self._chunks.clear()
-        return result
-
-    def clear(self) -> None:
-        self._chunks.clear()

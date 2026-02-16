@@ -22,7 +22,6 @@ from ess.livedata.handlers.detector_view.types import (
     UsePixelWeighting,
 )
 from ess.livedata.handlers.detector_view.workflow import (
-    NoCopyWindowAccumulator,
     add_logical_projection,
     create_base_workflow,
 )
@@ -32,27 +31,6 @@ from .utils import (
     make_fake_nexus_detector_data,
     make_logical_transform,
 )
-
-
-class TestNoCopyWindowAccumulator:
-    """Tests for NoCopyWindowAccumulator that clears after finalize."""
-
-    def test_clears_after_on_finalize(self):
-        """Test that NoCopyWindowAccumulator clears after on_finalize."""
-        acc = NoCopyWindowAccumulator()
-        acc.push(sc.scalar(10))
-        assert acc.value == sc.scalar(10)
-
-        # Simulate what happens during finalize cycle
-        acc.on_finalize()
-        assert acc.is_empty
-
-    def test_accumulates_multiple_values(self):
-        """Test that values are accumulated before on_finalize."""
-        acc = NoCopyWindowAccumulator()
-        acc.push(sc.scalar(10))
-        acc.push(sc.scalar(20))
-        assert acc.value == sc.scalar(30)
 
 
 class TestCreateBaseWorkflow:
