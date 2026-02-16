@@ -15,6 +15,7 @@ from ess.livedata import Service
 from ess.livedata.logging_config import configure_logging
 
 from .dashboard import DashboardBase
+from .session_updater import SessionUpdater
 from .widgets.backend_status_widget import BackendStatusWidget
 from .widgets.job_status_widget import JobStatusListWidget
 from .widgets.log_producer_widget import LogProducerWidget
@@ -127,7 +128,9 @@ class ReductionApp(DashboardBase):
             self._create_announcements_pane(),
         )
 
-    def create_main_content(self) -> pn.viewable.Viewable:
+    def create_main_content(
+        self, session_updater: SessionUpdater
+    ) -> pn.viewable.Viewable:
         """Create the main content area with plot grid tabs."""
         job_status_widget = JobStatusListWidget(
             job_service=self._services.job_service,
@@ -152,6 +155,8 @@ class ReductionApp(DashboardBase):
             job_status_widget=job_status_widget,
             workflow_status_widget=workflow_status_widget,
             backend_status_widget=backend_status_widget,
+            plot_data_service=self._services.plot_data_service,
+            session_updater=session_updater,
         )
 
         return plot_grid_tabs.panel
