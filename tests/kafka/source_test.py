@@ -711,12 +711,15 @@ class TestBackgroundMessageSourceWithMultiConsumer:
         multi = MultiConsumer([consumer1, consumer2])
 
         with BackgroundMessageSource(multi, timeout=0.01) as source:
-            time.sleep(0.02)
-            lag = source.get_consumer_lag()
+            # Wait for lag monitor thread to compute first measurement
+            lag = None
+            for _ in range(50):
+                lag = source.get_consumer_lag()
+                if lag is not None:
+                    break
+                time.sleep(0.01)
 
             assert lag is not None
             assert lag["total_lag"] == (100 - 50) + (75 - 25)  # 50 + 50 = 100
-            assert "topic1:0" in lag
-            assert lag["topic1:0"]["lag"] == 50
-            assert "topic2:0" in lag
-            assert lag["topic2:0"]["lag"] == 50
+            assert lag["partitions"]["topic1:0"] == 50
+            assert lag["partitions"]["topic2:0"] == 50
