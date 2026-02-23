@@ -90,6 +90,10 @@ python -m ess.livedata.services.timeseries --instrument dummy --dev
 python -m ess.livedata.dashboard.reduction --instrument dummy
 ```
 
+## Tools
+
+`src/ess/livedata/nexus_helpers.py` - Utilities for extracting ESS-specific metadata from NeXus files, in particular Kafka topic and source names.
+
 ## Architecture Overview
 
 ### Core Architecture Pattern
