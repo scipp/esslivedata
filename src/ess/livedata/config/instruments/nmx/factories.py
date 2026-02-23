@@ -42,3 +42,17 @@ def setup_factories(instrument: Instrument) -> None:
     )
 
     specs.panel_xy_view_handle.attach_factory()(_nmx_panels_view.make_workflow)
+
+    # Monitor workflow factory (TOA-only)
+    from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
+    from ess.livedata.handlers.monitor_workflow_specs import TOAOnlyMonitorDataParams
+
+    @specs.monitor_handle.attach_factory()
+    def _monitor_workflow_factory(source_name: str, params: TOAOnlyMonitorDataParams):
+        """Factory for NMX monitor workflow (TOA-only)."""
+        return create_monitor_workflow(
+            source_name=source_name,
+            edges=params.get_active_edges(),
+            range_filter=params.get_active_range(),
+            coordinate_mode='toa',
+        )
