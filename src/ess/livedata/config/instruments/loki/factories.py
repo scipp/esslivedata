@@ -70,6 +70,20 @@ def setup_factories(instrument: Instrument) -> None:
 
     specs.xy_projection_handle.attach_factory()(_xy_projection.make_workflow)
 
+    # Monitor workflow factory (TOA-only)
+    from ess.livedata.handlers.monitor_workflow import create_monitor_workflow
+    from ess.livedata.handlers.monitor_workflow_specs import TOAOnlyMonitorDataParams
+
+    @specs.monitor_handle.attach_factory()
+    def _monitor_workflow_factory(source_name: str, params: TOAOnlyMonitorDataParams):
+        """Factory for LOKI monitor workflow (TOA-only)."""
+        return create_monitor_workflow(
+            source_name=source_name,
+            edges=params.get_active_edges(),
+            range_filter=params.get_active_range(),
+            coordinate_mode='toa',
+        )
+
     def _transmission_from_current_run(
         data: sans_types.CorrectedMonitor[SampleRun, sans_types.MonitorType],
     ) -> sans_types.CorrectedMonitor[
