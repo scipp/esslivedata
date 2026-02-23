@@ -59,7 +59,9 @@ class TestIntegrationWithStreamProcessor:
         assert 'time' in result['roi_spectra_current'].coords
         assert result['roi_spectra_current'].coords['time'].value == 1000
 
-        # Cumulative outputs should NOT have time coords
+        # Cumulative outputs should NOT have time coords at this level.
+        # The Job layer (not tested here) adds start_time/end_time spanning
+        # the full job duration to any output that doesn't already have them.
         assert 'time' not in result['cumulative'].coords
         assert 'start_time' not in result['cumulative'].coords
         assert 'time' not in result['roi_spectra_cumulative'].coords
