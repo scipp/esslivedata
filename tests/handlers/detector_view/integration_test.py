@@ -63,6 +63,10 @@ class TestIntegrationWithStreamProcessor:
         assert 'time' not in result['cumulative'].coords
         assert 'start_time' not in result['cumulative'].coords
         assert 'time' not in result['roi_spectra_cumulative'].coords
+        assert 'time' not in result['counts_total_cumulative'].coords
+        assert 'start_time' not in result['counts_total_cumulative'].coords
+        assert 'time' not in result['counts_in_toa_range_cumulative'].coords
+        assert 'start_time' not in result['counts_in_toa_range_cumulative'].coords
 
     def test_full_workflow_accumulate_and_finalize(self):
         """Test the full workflow with accumulate and finalize."""
@@ -89,6 +93,8 @@ class TestIntegrationWithStreamProcessor:
         assert 'current' in result
         assert 'counts_total' in result
         assert 'counts_in_toa_range' in result
+        assert 'counts_total_cumulative' in result
+        assert 'counts_in_toa_range_cumulative' in result
 
         # Verify output shapes
         assert result['cumulative'].dims == ('y', 'x')
@@ -113,9 +119,12 @@ class TestIntegrationWithStreamProcessor:
 
         cumulative1 = result1['cumulative'].sum().value
         current1 = result1['current'].sum().value
+        counts_total_cum1 = result1['counts_total_cumulative'].value
+        counts_total_cur1 = result1['counts_total'].value
 
         # After first finalize, cumulative == current (same data)
         assert cumulative1 == current1
+        assert counts_total_cum1 == counts_total_cur1
 
         # Second batch - use ungrouped format
         events2 = make_fake_ungrouped_nexus_data(
@@ -130,12 +139,16 @@ class TestIntegrationWithStreamProcessor:
 
         cumulative2 = result2['cumulative'].sum().value
         current2 = result2['current'].sum().value
+        counts_total_cum2 = result2['counts_total_cumulative'].value
+        counts_total_cur2 = result2['counts_total'].value
 
         # Cumulative should have doubled (events1 + events2)
         assert cumulative2 == pytest.approx(cumulative1 * 2, rel=0.1)
+        assert counts_total_cum2 == pytest.approx(counts_total_cum1 * 2, rel=0.1)
 
         # Current should be approximately the same as first batch (only events2)
         assert current2 == pytest.approx(current1, rel=0.1)
+        assert counts_total_cur2 == pytest.approx(counts_total_cur1, rel=0.1)
 
 
 class TestROISpectraIntegration:

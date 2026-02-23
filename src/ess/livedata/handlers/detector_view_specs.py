@@ -153,6 +153,11 @@ def _make_2d_template_with_time() -> sc.DataArray:
     return _make_nd_template(2, with_time_coord=True)
 
 
+def _make_0d_template() -> sc.DataArray:
+    """Create an empty 0D template for cumulative scalar outputs (no time coord)."""
+    return _make_nd_template(0)
+
+
 def _make_0d_template_with_time() -> sc.DataArray:
     """Create an empty 0D template with time coord for scalar outputs."""
     return _make_nd_template(0, with_time_coord=True)
@@ -180,6 +185,19 @@ class DetectorViewOutputsBase(WorkflowOutputsBase):
         title='Event Count in TOA Range',
         description='Number of detector events within the configured TOA range filter.',
         default_factory=_make_0d_template_with_time,
+    )
+    counts_total_cumulative: sc.DataArray = pydantic.Field(
+        title='Total Event Count (Cumulative)',
+        description='Cumulative total number of detector events.',
+        default_factory=_make_0d_template,
+    )
+    counts_in_toa_range_cumulative: sc.DataArray = pydantic.Field(
+        title='Event Count in Range (Cumulative)',
+        description=(
+            'Cumulative number of detector events '
+            'within the configured range filter.'
+        ),
+        default_factory=_make_0d_template,
     )
 
 

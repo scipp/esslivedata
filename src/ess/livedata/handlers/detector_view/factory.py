@@ -187,8 +187,10 @@ class DetectorViewFactory:
         target_keys: dict[str, type] = {
             'cumulative': DetectorImage[Cumulative],
             'current': DetectorImage[Current],
-            'counts_total': CountsTotal,
-            'counts_in_toa_range': CountsInRange,
+            'counts_total': CountsTotal[Current],
+            'counts_in_toa_range': CountsInRange[Current],
+            'counts_total_cumulative': CountsTotal[Cumulative],
+            'counts_in_toa_range_cumulative': CountsInRange[Cumulative],
         }
         context_keys: dict[str, type] = {}
         window_outputs = (

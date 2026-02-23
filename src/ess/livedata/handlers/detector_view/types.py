@@ -178,11 +178,22 @@ class DetectorImage(
     """
 
 
-CountsTotal = NewType('CountsTotal', sc.DataArray)
-"""Total event counts as 0D scalar (from current window)."""
+class CountsTotal(
+    sciline.Scope[AccumulationMode, sc.DataArray],
+    sc.DataArray,  # type: ignore[misc]
+):
+    """Total event counts as 0D scalar, parametrized by accumulation mode."""
 
-CountsInRange = NewType('CountsInRange', sc.DataArray)
-"""Event counts within configured range as 0D scalar (from current window)."""
+
+class CountsInRange(
+    sciline.Scope[AccumulationMode, sc.DataArray],
+    sc.DataArray,  # type: ignore[misc]
+):
+    """Event counts within configured range as 0D scalar.
+
+    Parametrized by accumulation mode.
+    """
+
 
 # Pixel weighting types
 PixelWeights = NewType('PixelWeights', sc.DataArray)
