@@ -48,7 +48,7 @@ from ess.livedata.config.roi_names import (
     get_roi_mapper,
 )
 
-from .plots import Plotter, Presenter, PresenterBase
+from .plots import Plotter, PresenterBase
 from .static_plots import Color, LineDash, RectanglesCoordinates
 
 if TYPE_CHECKING:
@@ -586,7 +586,7 @@ class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, Converter
         """Return maximum number of ROIs that can be drawn."""
 
     @abstractmethod
-    def create_presenter(self) -> Presenter:
+    def create_presenter(self) -> PresenterBase:
         """Create a presenter for this plotter."""
 
     def compute(

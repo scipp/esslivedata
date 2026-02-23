@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import time
 import weakref
-from typing import Any, Protocol, cast
+from typing import Any, cast
 
 import holoviews as hv
 import numpy as np
@@ -29,45 +29,6 @@ from .plot_params import (
 )
 from .scipp_to_holoviews import to_holoviews
 from .time_utils import format_time_ns_local
-
-
-class Presenter(Protocol):
-    """
-    Per-session presentation handler for two-stage plot architecture.
-
-    A Presenter is created fresh for each browser session to handle
-    session-bound components (Pipe, DynamicMap, edit streams).
-    """
-
-    def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap | hv.Element:
-        """
-        Create a DynamicMap or Element for this session from a data pipe.
-
-        Parameters
-        ----------
-        pipe:
-            HoloViews Pipe stream that will receive PlotState updates.
-            The pipe should be created per-session.
-
-        Returns
-        -------
-        :
-            A DynamicMap that renders data from the pipe, or an hv.Element
-            for static plots.
-        """
-        ...
-
-    def has_pending_update(self) -> bool:
-        """Check if there is a pending update to present."""
-        ...
-
-    def consume_update(self) -> Any:
-        """Consume the pending update and return the cached state."""
-        ...
-
-    def is_owned_by(self, plotter: Plotter) -> bool:
-        """Check if this presenter is owned by the given plotter."""
-        ...
 
 
 class PresenterBase:
@@ -129,7 +90,7 @@ class DefaultPresenter(PresenterBase):
     DynamicMap just passes through the data - no computation per-session.
 
     Plotters requiring interactive controls (kdims) must override
-    create_presenter() to return a custom Presenter.
+    create_presenter() to return a custom presenter.
     """
 
     def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
@@ -143,7 +104,7 @@ class DefaultPresenter(PresenterBase):
 
 class StaticPresenter(PresenterBase):
     """
-    Presenter for static plots that returns the element directly.
+    Presenter for static plots. Returns the element directly.
 
     Static plots (rectangles, lines, etc.) don't need DynamicMaps since their
     content doesn't change. The pipe.data contains the pre-computed hv.Element
@@ -447,11 +408,11 @@ class Plotter:
 
         self._set_cached_state(result)
 
-    def create_presenter(self, *, owner: Plotter | None = None) -> Presenter:
+    def create_presenter(self, *, owner: Plotter | None = None) -> PresenterBase:
         """
-        Create a Presenter for this plotter.
+        Create a presenter for this plotter.
 
-        Stage 2 of the two-stage architecture. Returns a fresh Presenter
+        Stage 2 of the two-stage architecture. Returns a fresh presenter
         instance that can be used to create session-bound DynamicMaps.
         The presenter is registered with this plotter and will be marked
         dirty when compute() produces new state.
@@ -468,7 +429,7 @@ class Plotter:
         Returns
         -------
         :
-            A Presenter instance for this plotter.
+            A presenter instance for this plotter.
         """
         presenter = DefaultPresenter(self, owner=owner)
         self._presenters.add(presenter)
