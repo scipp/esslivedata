@@ -14,6 +14,16 @@ ESSlivedata is a live data reduction visualization framework for the European Sp
 
 **Note**: In the devcontainer, all Python commands (`python`, `pytest`, `tox`, etc.) automatically use the micromamba base environment. Pre-commit hooks will run automatically on `git commit` if properly installed.
 
+**Worktree Setup**: When launching with `claude -w`, the session runs in a worktree under `.claude/worktrees/`. You should create a local `.venv/` in the worktree and install the project in editable mode:
+
+```sh
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -e ".[test]"
+```
+
+This ensures dependencies are isolated to the worktree and pre-commit hooks work correctly. The local `.venv/` will take precedence over the base environment.
+
 ### Running Tests
 
 All unit tests run without Kafka - no Docker container needed.
