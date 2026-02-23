@@ -270,21 +270,23 @@ class TestDetectorImageProviders:
 class TestCountProviders:
     """Tests for count provider functions."""
 
-    def test_counts_total(self):
-        """Test that counts_total sums all counts."""
+    @pytest.mark.parametrize("mode", [Current, Cumulative])
+    def test_counts_total(self, mode):
+        """Test that counts_total sums all counts for both modes."""
         data = sc.DataArray(
             sc.ones(
                 dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
             )
         )
 
-        result = counts_total(histogram=AccumulatedHistogram[Current](data))
+        result = counts_total(histogram=AccumulatedHistogram[mode](data))
 
         expected = sc.scalar(4 * 4 * 10, unit='counts', dtype='float64')
         assert sc.identical(result.data, expected)
 
-    def test_counts_in_range_with_and_without_slice(self):
-        """Test counts_in_range with and without histogram slice."""
+    @pytest.mark.parametrize("mode", [Current, Cumulative])
+    def test_counts_in_range_with_and_without_slice(self, mode):
+        """Test counts_in_range with and without histogram slice for both modes."""
         coord = sc.linspace('event_time_offset', 0, 100000, 11, unit='ns')
         data = sc.DataArray(
             sc.ones(
@@ -295,7 +297,7 @@ class TestCountProviders:
 
         # Without slice - should count all bins
         result_no_slice = counts_in_range(
-            histogram=AccumulatedHistogram[Current](data), histogram_slice=None
+            histogram=AccumulatedHistogram[mode](data), histogram_slice=None
         )
         expected_all = sc.scalar(4 * 4 * 10, unit='counts', dtype='float64')
         assert sc.identical(result_no_slice.data, expected_all)
@@ -303,7 +305,7 @@ class TestCountProviders:
         # With slice to first half - should count approximately half
         histogram_slice = (sc.scalar(0, unit='ns'), sc.scalar(50000, unit='ns'))
         result_sliced = counts_in_range(
-            histogram=AccumulatedHistogram[Current](data),
+            histogram=AccumulatedHistogram[mode](data),
             histogram_slice=histogram_slice,
         )
         assert result_sliced.dims == ()
