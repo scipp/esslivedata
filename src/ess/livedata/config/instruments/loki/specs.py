@@ -161,6 +161,7 @@ instrument = Instrument(
     name='loki',
     detector_names=detector_names,
     monitors=[
+        'beam_monitor_0',
         'beam_monitor_1',
         'beam_monitor_2',
         'beam_monitor_3',
@@ -176,10 +177,22 @@ instrument = Instrument(
         'loki_detector_6': SourceMetadata(title='Front Left'),
         'loki_detector_7': SourceMetadata(title='Front Top'),
         'loki_detector_8': SourceMetadata(title='Front Right'),
-        'beam_monitor_1': SourceMetadata(title='Incident Monitor'),
-        'beam_monitor_2': SourceMetadata(title='Beam Monitor 2'),
-        'beam_monitor_3': SourceMetadata(title='Transmission Monitor'),
-        'beam_monitor_4': SourceMetadata(title='Beam Monitor 4'),
+        'beam_monitor_0': SourceMetadata(
+            title='Beam Monitor 0', description='Upstream, z = -16.8 m'
+        ),
+        'beam_monitor_1': SourceMetadata(
+            title='Incident Monitor', description='Upstream, z = -8.4 m'
+        ),
+        'beam_monitor_2': SourceMetadata(
+            title='Beam Monitor 2', description='Upstream, z = -2.04 m'
+        ),
+        'beam_monitor_3': SourceMetadata(
+            title='Transmission Monitor', description='Downstream, z = +0.2 m'
+        ),
+        'beam_monitor_4': SourceMetadata(
+            title='Beam Monitor 4',
+            description='Downstream, movable (on detector carriage)',
+        ),
     },
 )
 
@@ -188,7 +201,7 @@ instrument_registry.register(instrument)
 
 # Register monitor workflow spec (TOA-only, no TOF lookup tables)
 monitor_handle = register_monitor_workflow_specs(
-    instrument, ['monitor1', 'monitor2'], params=TOAOnlyMonitorDataParams
+    instrument, instrument.monitors, params=TOAOnlyMonitorDataParams
 )
 
 xy_projection_handle = register_detector_view_spec(

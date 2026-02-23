@@ -25,6 +25,7 @@ detector_fakes = {
 
 
 monitor_names = [
+    'beam_monitor_0',
     'beam_monitor_1',
     'beam_monitor_2',
     'beam_monitor_3',
@@ -56,7 +57,7 @@ def _make_loki_monitors() -> StreamLUT:
     topic = stream_kind_to_topic(instrument='loki', kind=StreamKind.MONITOR_EVENTS)
     return {
         InputStreamKey(topic=topic, source_name=f'cbm{i}'): f'beam_monitor_{i}'
-        for i in range(1, 5)
+        for i in range(0, 5)
     }
 
 
