@@ -31,7 +31,6 @@ Design Principles
    manager. In practice, there's only one manager per dashboard application.
 """
 
-import logging
 import os
 import threading
 from collections import UserDict
@@ -40,9 +39,10 @@ from pathlib import Path
 from typing import Any, Literal
 
 import platformdirs
+import structlog
 import yaml
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 # Type alias for config stores - any mutable mapping from str to config dict
 # Keys are typically stringified WorkflowId or other identifiers

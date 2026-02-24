@@ -1,15 +1,14 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
-import logging
-
 import scipp as sc
+import structlog
 
 from .core import Message, MessageSink, compact_messages
 
 
 class PlotToPngSink(MessageSink[sc.DataArray]):
     def __init__(self) -> None:
-        self.logger = logging.getLogger(__name__)
+        self.logger = structlog.get_logger()
 
     def publish_messages(self, messages: Message[sc.DataArray]) -> None:
         for msg in compact_messages(messages):

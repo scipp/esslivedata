@@ -45,6 +45,68 @@ def _copy_monitor_fields(src_group: h5py.Group, dst_group: h5py.Group) -> None:
     src_group.copy('depends_on', dst_group)
 
 
+def _read_depends_on(value: bytes | str) -> str | None:
+    if isinstance(value, bytes):
+        value = value.decode()
+    return None if value == '.' else value.lstrip('/')
+
+
+def _collect_depends_on_targets(f: h5py.File) -> set[str]:
+    """Collect all absolute paths referenced by ``depends_on`` in the file."""
+    targets: set[str] = set()
+
+    def _visitor(name: str, obj: h5py.Group | h5py.Dataset) -> None:
+        if isinstance(obj, h5py.Dataset) and name.endswith('depends_on'):
+            if (path := _read_depends_on(obj[()])) is not None:
+                targets.add(path)
+        if 'depends_on' in obj.attrs:
+            val = obj.attrs['depends_on']
+            if (path := _read_depends_on(val)) is not None:
+                if not path.startswith('/') and '/' in name:
+                    parent = name.rsplit('/', 1)[0]
+                    path = f'{parent}/{path}'
+                targets.add(path.lstrip('/'))
+
+    f.visititems(_visitor)
+    return targets
+
+
+def _ensure_parent_groups(fin: h5py.File, fout: h5py.File, path: str) -> None:
+    """Create parent groups in *fout*, copying attributes from *fin*."""
+    parts = path.split('/')
+    current = ''
+    for part in parts[:-1]:
+        if not part:
+            continue
+        current = f'{current}/{part}'
+        if current not in fout:
+            fout.create_group(current)
+            _copy_attributes(fin[current], fout[current])
+
+
+def _resolve_depends_on_chains(fin: h5py.File, fout: h5py.File) -> None:
+    """Copy any ``depends_on`` targets that are missing from the output file.
+
+    After copying geometry components, ``depends_on`` chains may reference
+    nodes that were not copied — for example an NXlog group inside an
+    NXpositioner that acts as a transformation node.  This function follows
+    all chains and copies missing nodes (groups and datasets) as-is.
+    """
+    resolved: set[str] = set()
+    while True:
+        unresolved = _collect_depends_on_targets(fout) - resolved
+        unresolved = {t for t in unresolved if t not in fout}
+        if not unresolved:
+            break
+        for path in unresolved:
+            resolved.add(path)
+            if path not in fin:
+                continue
+            _ensure_parent_groups(fin, fout, path)
+            parent_path = path.rsplit('/', 1)[0] if '/' in path else ''
+            fin.copy(path, fout[parent_path or '/'])
+
+
 def write_minimal_geometry(
     input_filename: Path, output_filename: Path, use_pixel_shape: bool = True
 ) -> None:
@@ -98,6 +160,7 @@ def write_minimal_geometry(
         # Copy root attributes
         _copy_attributes(fin, fout)
         fin.visititems(visit_and_copy)
+        _resolve_depends_on_chains(fin, fout)
 
 
 def main() -> int:

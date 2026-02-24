@@ -2,11 +2,11 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 
 import panel as pn
 import pydantic
+import structlog
 
 from ess.livedata.dashboard.configuration_adapter import ConfigurationAdapter
 
@@ -240,7 +240,7 @@ class ConfigurationPanel:
         self._config = config
         self._config_widget = ConfigurationWidget(config)
         self._error_pane = pn.pane.HTML("", sizing_mode='stretch_width')
-        self._logger = logging.getLogger(__name__)
+        self._logger = structlog.get_logger()
         self._panel = self._create_panel()
 
     def _create_panel(self) -> pn.Column:

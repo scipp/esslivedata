@@ -28,7 +28,7 @@ from .plot_params import (
     PlotDisplayParams1d,
     PlotDisplayParams2d,
 )
-from .plots import ImagePlotter, LinePlotter, Presenter
+from .plots import ImagePlotter, LinePlotter, PresenterBase
 
 
 class NormalizationParams(pydantic.BaseModel):
@@ -249,8 +249,8 @@ class CorrelationHistogramPlotter:
         """Check if the renderer has computed state."""
         return self._renderer.has_cached_state()
 
-    def create_presenter(self) -> Presenter:
-        """Create a Presenter owned by this plotter.
+    def create_presenter(self) -> PresenterBase:
+        """Create a presenter owned by this plotter.
 
         Uses the renderer for presentation.
         """
