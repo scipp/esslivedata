@@ -10,7 +10,7 @@ import scipp as sc
 
 from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
-from ess.livedata.dashboard.plotting import DataRequirements, plotter_registry
+from ess.livedata.dashboard.plotter_registry import DataRequirements, plotter_registry
 from ess.livedata.dashboard.roi_readback_plots import (
     PolygonsReadbackParams,
     PolygonsReadbackPlotter,

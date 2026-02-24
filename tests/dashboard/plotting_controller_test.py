@@ -139,7 +139,7 @@ class TestSpecRequirements:
 
     def test_empty_requirements_always_validates(self) -> None:
         """Test that empty requires_aux_sources always returns True."""
-        from ess.livedata.dashboard.plotting import SpecRequirements
+        from ess.livedata.dashboard.plotter_registry import SpecRequirements
 
         spec_req = SpecRequirements(requires_aux_sources=[])
 
@@ -149,7 +149,7 @@ class TestSpecRequirements:
 
     def test_returns_false_when_aux_sources_is_none_but_required(self) -> None:
         """Test that validation fails when aux_sources is None but required."""
-        from ess.livedata.dashboard.plotting import SpecRequirements
+        from ess.livedata.dashboard.plotter_registry import SpecRequirements
         from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
 
         spec_req = SpecRequirements(requires_aux_sources=[DetectorROIAuxSources])
@@ -158,7 +158,7 @@ class TestSpecRequirements:
 
     def test_returns_true_when_aux_sources_matches_required(self) -> None:
         """Test that validation passes when aux_sources matches requirement."""
-        from ess.livedata.dashboard.plotting import SpecRequirements
+        from ess.livedata.dashboard.plotter_registry import SpecRequirements
         from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
 
         spec_req = SpecRequirements(requires_aux_sources=[DetectorROIAuxSources])
@@ -167,7 +167,7 @@ class TestSpecRequirements:
 
     def test_returns_true_for_subclass_of_required(self) -> None:
         """Test that validation passes for subclasses of required type."""
-        from ess.livedata.dashboard.plotting import SpecRequirements
+        from ess.livedata.dashboard.plotter_registry import SpecRequirements
         from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
 
         # Create a subclass of DetectorROIAuxSources
@@ -181,7 +181,7 @@ class TestSpecRequirements:
     def test_returns_false_when_aux_sources_does_not_match(self) -> None:
         """Test that validation fails when aux_sources doesn't match requirement."""
         from ess.livedata.config.workflow_spec import AuxSourcesBase
-        from ess.livedata.dashboard.plotting import SpecRequirements
+        from ess.livedata.dashboard.plotter_registry import SpecRequirements
         from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
 
         # Create a different aux_sources type
@@ -194,7 +194,7 @@ class TestSpecRequirements:
 
     def test_default_spec_requirements_has_no_requirements(self) -> None:
         """Test that default SpecRequirements has no aux_sources requirements."""
-        from ess.livedata.dashboard.plotting import SpecRequirements
+        from ess.livedata.dashboard.plotter_registry import SpecRequirements
 
         spec_req = SpecRequirements()
 

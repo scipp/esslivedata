@@ -308,7 +308,7 @@ def _format_window_info(params) -> str:
 
 def _get_static_overlay_display_info(config: PlotConfig) -> tuple[str, str]:
     """Get display info for a static overlay layer."""
-    from ..plotting import plotter_registry
+    from ..plotter_registry import plotter_registry
 
     plotter_name = config.plot_name
     try:

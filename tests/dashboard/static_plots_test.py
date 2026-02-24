@@ -135,7 +135,7 @@ class TestPlotterRegistration:
 
     def test_static_plotters_registered(self):
         """Static plotters are registered in the registry."""
-        from ess.livedata.dashboard.plotting import plotter_registry
+        from ess.livedata.dashboard.plotter_registry import plotter_registry
 
         static_plotters = plotter_registry.get_static_plotters()
         assert 'rectangles' in static_plotters
@@ -144,7 +144,10 @@ class TestPlotterRegistration:
 
     def test_static_plotters_have_correct_category(self):
         """Static plotters have STATIC category."""
-        from ess.livedata.dashboard.plotting import PlotterCategory, plotter_registry
+        from ess.livedata.dashboard.plotter_registry import (
+            PlotterCategory,
+            plotter_registry,
+        )
 
         for name in ['rectangles', 'vlines', 'hlines']:
             spec = plotter_registry.get_spec(name)
@@ -152,7 +155,7 @@ class TestPlotterRegistration:
 
     def test_static_plotters_not_in_data_plotters(self):
         """Static plotters are not returned by get_specs (DATA only)."""
-        from ess.livedata.dashboard.plotting import plotter_registry
+        from ess.livedata.dashboard.plotter_registry import plotter_registry
 
         data_plotters = plotter_registry.get_specs()
         assert 'rectangles' not in data_plotters

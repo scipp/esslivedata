@@ -12,7 +12,7 @@ from ess.livedata.dashboard.configuration_adapter import (
     ConfigurationAdapter,
     ConfigurationState,
 )
-from ess.livedata.dashboard.plotting import PlotterSpec
+from ess.livedata.dashboard.plotter_registry import PlotterSpec
 
 if TYPE_CHECKING:
     from ess.livedata.config import Instrument

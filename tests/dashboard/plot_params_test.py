@@ -15,8 +15,8 @@ from ess.livedata.dashboard.plot_params import (
     WindowAggregation,
     WindowMode,
     WindowParams,
-    create_extractors_from_params,
 )
+from ess.livedata.dashboard.plotting_controller import create_extractors_from_params
 
 
 class TestCreateExtractorsFromParams:

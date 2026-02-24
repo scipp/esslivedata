@@ -16,7 +16,7 @@ import pytest
 from ess.livedata.config.instrument import instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
 from ess.livedata.config.workflow_spec import WorkflowConfig, WorkflowId
-from ess.livedata.dashboard.plotting import plotter_registry
+from ess.livedata.dashboard.plotter_registry import plotter_registry
 from ess.livedata.dashboard.workflow_configuration_adapter import (
     WorkflowConfigurationAdapter,
 )
