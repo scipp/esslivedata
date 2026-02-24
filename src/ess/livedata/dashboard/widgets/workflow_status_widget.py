@@ -23,9 +23,9 @@ import panel as pn
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 from ess.livedata.core.job import JobState
 
-from ..buttons import ButtonStyles, create_tool_button
-from ..icons import get_icon
+from .buttons import ButtonStyles, create_tool_button
 from .configuration_widget import ConfigurationModal
+from .icons import get_icon
 
 if TYPE_CHECKING:
     from ..job_orchestrator import JobConfig, JobOrchestrator

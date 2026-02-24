@@ -7,8 +7,8 @@ import pytest
 
 from ess.livedata.config.workflow_spec import JobId, WorkflowId
 from ess.livedata.core.job import JobState, JobStatus
-from ess.livedata.dashboard.icons import get_icon
 from ess.livedata.dashboard.job_service import JobService
+from ess.livedata.dashboard.widgets.icons import get_icon
 from ess.livedata.dashboard.widgets.workflow_status_widget import (
     WorkflowStatusListWidget,
     WorkflowStatusWidget,

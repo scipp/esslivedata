@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING
 import panel as pn
 
 from ...config.workflow_spec import WorkflowId, WorkflowSpec
-from ..buttons import ButtonStyles, create_tool_button, create_tool_button_stylesheet
-from ..icons import get_icon
 from ..plot_params import WindowMode
+from .buttons import ButtonStyles, create_tool_button, create_tool_button_stylesheet
+from .icons import get_icon
 
 if TYPE_CHECKING:
     from ..plot_orchestrator import PlotConfig

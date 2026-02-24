@@ -9,9 +9,10 @@ import panel as pn
 
 from ess.livedata.core.job import JobState, JobStatus
 from ess.livedata.core.job_manager import JobAction
-from ess.livedata.dashboard.icons import get_icon
 from ess.livedata.dashboard.job_controller import JobController
 from ess.livedata.dashboard.job_service import JobService
+
+from .icons import get_icon
 
 if TYPE_CHECKING:
     from ess.livedata.dashboard.session_updater import SessionUpdater
