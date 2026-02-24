@@ -255,6 +255,26 @@ class PlotGridTabs:
         self._tabs.pop(self._static_tabs_count + tab_index)
         del self._grid_widgets[grid_id]
 
+    def _get_active_grid_id(self) -> GridId | None:
+        """Return the GridId of the currently visible grid tab, or None.
+
+        The tab widget contains static tabs (Jobs, Workflows, Manage Plots, ...)
+        followed by dynamic grid tabs. Subtracting the static tab count from the
+        active tab index maps to a grid position. When a static tab is selected
+        the result is negative, which the bounds check rejects.
+
+        Returns None when a config modal is open: the modal overlay obscures
+        the plots, so rendering would be wasted. Dirty flags are preserved and
+        the first poll after the modal closes pushes the latest cached state.
+        """
+        if self._current_modal is not None:
+            return None
+        grid_idx = self._tabs.active - self._static_tabs_count
+        grid_keys = list(self._grid_widgets.keys())
+        if 0 <= grid_idx < len(grid_keys):
+            return grid_keys[grid_idx]
+        return None
+
     def _on_grid_created(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Handle grid creation from orchestrator."""
         self._add_grid_tab(grid_id, grid_config)
@@ -882,9 +902,14 @@ class PlotGridTabs:
 
         Called from SessionUpdater's periodic callback. Single pass over all
         orchestrator layers to:
-        - Push data updates to existing session pipes
+        - Push data updates to existing session pipes (active tab only)
         - Detect version changes requiring cell rebuilds
         - Create/update session layers as needed
+
+        Only layers on the currently visible grid tab call ``update_pipe()``,
+        since ``dynamic=True`` on Tabs means hidden tabs have no materialized
+        Bokeh models. Skipped layers keep their dirty flag set; on tab switch
+        the next poll cycle sends the latest cached state.
 
         Version-based change detection replaces callback-based updates for state
         changes (waiting/ready/stopped/error). Polling at ~100ms intervals is
@@ -892,11 +917,14 @@ class PlotGridTabs:
         """
         cells_to_rebuild: dict[CellId, tuple[PlotCell, PlotGrid]] = {}
         seen_layer_ids: set[LayerId] = set()
+        active_grid_id = self._get_active_grid_id()
 
         for grid_id, plot_grid in self._grid_widgets.items():
-            grid_config = self._orchestrator.get_grid(grid_id)
+            grid_config = self._orchestrator.peek_grid(grid_id)
             if grid_config is None:
                 continue
+
+            is_active = grid_id == active_grid_id
 
             for cell_id, cell in grid_config.cells.items():
                 for layer in cell.layers:
@@ -922,7 +950,8 @@ class PlotGridTabs:
                         # New layer → rebuild cell
                         cells_to_rebuild[cell_id] = (cell, plot_grid)
                     else:
-                        session_layer.update_pipe()
+                        if is_active:
+                            session_layer.update_pipe()
 
                         # Check for version changes (plotter changes increment version)
                         if state.version != session_layer.last_seen_version:

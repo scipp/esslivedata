@@ -75,9 +75,7 @@ class TestSystemStatusWidget:
         fake_updater = FakeSessionUpdater()
         widget.register_periodic_refresh(fake_updater)
 
-        # Should have registered a handler
-        assert len(fake_updater.registered_handlers) == 1
-
-        # The handler should be the session widget's refresh method
-        handler = fake_updater.registered_handlers[0]
-        assert handler == widget._session_widget.refresh
+        # Should have registered handlers for both session and backend widgets
+        assert len(fake_updater.registered_handlers) == 2
+        assert widget._session_widget.refresh in fake_updater.registered_handlers
+        assert widget._backend_widget.refresh in fake_updater.registered_handlers

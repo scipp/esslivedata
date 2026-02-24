@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 
 import structlog
 
@@ -25,24 +24,12 @@ class JobService:
         self._job_statuses: dict[JobId, JobStatus] = {}
         self._job_status_timestamps: dict[JobId, int] = {}
         self._removed_jobs: set[JobId] = set()
-        self._job_status_update_subscribers: list[Callable[[], None]] = []
         self._heartbeat_timeout_ns = heartbeat_timeout_ns
 
     @property
     def job_statuses(self) -> dict[JobId, JobStatus]:
         """Access to all stored job statuses."""
         return self._job_statuses
-
-    def register_job_status_update_subscriber(
-        self, callback: Callable[[], None]
-    ) -> None:
-        """Register a callback to be called when job status is updated."""
-        self._job_status_update_subscribers.append(callback)
-        # Immediately notify the new subscriber of current state
-        try:
-            callback()
-        except Exception as e:
-            logger.error("Error in job status update callback: %s", e)
 
     def status_updated(self, job_status: JobStatus) -> None:
         """Update the stored job status and record timestamp."""
@@ -57,20 +44,6 @@ class JobService:
         logger.debug("Job status updated: %s", job_status)
         self._job_statuses[job_status.job_id] = job_status
         self._job_status_timestamps[job_status.job_id] = time.time_ns()
-        self._notify_job_status_update()
-
-    def _notify_job_status_update(self) -> None:
-        """Notify listeners about job status updates."""
-        logger.debug(
-            "Job statuses updated for jobs: %s", list(self._job_statuses.keys())
-        )
-
-        # Notify all subscribers
-        for callback in self._job_status_update_subscribers:
-            try:
-                callback()
-            except Exception as e:
-                logger.error("Error in job status update callback: %s", e)
 
     def remove_job(self, job_id: JobId) -> None:
         """Remove a job from tracking."""
@@ -82,9 +55,6 @@ class JobService:
             del self._job_statuses[job_id]
         if job_id in self._job_status_timestamps:
             del self._job_status_timestamps[job_id]
-
-        # Notify subscribers of the status update (removal)
-        self._notify_job_status_update()
 
     def is_status_stale(self, job_id: JobId) -> bool:
         """Check if a job's status is stale (no recent heartbeat).

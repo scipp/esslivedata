@@ -153,11 +153,11 @@ class DashboardBase(ServiceBase, ABC):
                 self._logger.exception("Error in periodic update step.")
 
         callback = pn.state.add_periodic_callback(_safe_step, period=period)
+        session_updater.set_periodic_callback(callback)
 
         def _cleanup_session(session_context):
             self._logger.info("Session destroyed: %s", session_id)
             session_registry.unregister(session_id)
-            callback.stop()
 
         pn.state.on_session_destroyed(_cleanup_session)
         self._logger.info("Periodic updates started for session %s", session_id)

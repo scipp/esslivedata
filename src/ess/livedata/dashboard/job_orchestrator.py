@@ -47,7 +47,6 @@ logger = structlog.get_logger(__name__)
 
 SourceName = str
 SubscriptionId = NewType('SubscriptionId', UUID)
-WidgetLifecycleSubscriptionId = NewType('WidgetLifecycleSubscriptionId', UUID)
 
 
 class JobConfig(BaseModel):
@@ -88,6 +87,7 @@ class WorkflowState:
     current: JobSet | None = None
     previous: JobSet | None = None
     staged_jobs: dict[SourceName, JobConfig] = field(default_factory=dict)
+    version: int = 0
 
 
 @dataclass
@@ -101,22 +101,6 @@ class WorkflowCallbacks:
 
     on_started: Callable[[JobNumber], None]
     on_stopped: Callable[[JobNumber], None] | None = None
-
-
-@dataclass
-class WidgetLifecycleCallbacks:
-    """Callbacks for widget lifecycle events from JobOrchestrator.
-
-    Widgets use this to stay synchronized across browser sessions.
-    All callbacks receive the workflow_id so widgets can filter relevant events.
-
-    Note: Command success/error notifications are handled via NotificationQueue
-    for proper multi-session support.
-    """
-
-    on_staged_changed: Callable[[WorkflowId], None] | None = None
-    on_workflow_committed: Callable[[WorkflowId], None] | None = None
-    on_workflow_stopped: Callable[[WorkflowId], None] | None = None
 
 
 class JobOrchestrator:
@@ -165,11 +149,6 @@ class JobOrchestrator:
         # Workflow subscription tracking (for PlotOrchestrator)
         self._subscriptions: dict[SubscriptionId, WorkflowCallbacks] = {}
         self._workflow_subscriptions: dict[WorkflowId, set[SubscriptionId]] = {}
-
-        # Widget lifecycle subscription tracking (for cross-session widget sync)
-        self._widget_subscriptions: dict[
-            WidgetLifecycleSubscriptionId, WidgetLifecycleCallbacks
-        ] = {}
 
         # Transaction state for batching staging operations
         self._transaction_workflow: WorkflowId | None = None
@@ -982,94 +961,47 @@ class JobOrchestrator:
                 subscription_id,
             )
 
-    def subscribe_to_widget_lifecycle(
-        self, callbacks: WidgetLifecycleCallbacks
-    ) -> WidgetLifecycleSubscriptionId:
+    def get_workflow_state_version(self, workflow_id: WorkflowId) -> int:
         """
-        Subscribe to widget lifecycle events for cross-session synchronization.
+        Get the version counter for a workflow's state.
 
-        Widgets use this to stay synchronized across browser sessions. When any
-        session triggers a state change (staging, commit, stop), all subscribed
-        widgets are notified so they can rebuild.
+        The version is incremented on every state mutation (staging changes,
+        commits, stops). Widgets can compare this against a cached version
+        to detect when a rebuild is needed.
 
         Parameters
         ----------
-        callbacks
-            Callbacks to invoke on lifecycle events. Any callback can be None
-            if that event type is not needed.
+        workflow_id
+            The workflow to query.
 
         Returns
         -------
         :
-            Subscription ID for unsubscribing later.
+            The current version counter. Returns 0 for unknown workflow IDs.
         """
-        subscription_id = WidgetLifecycleSubscriptionId(uuid.uuid4())
-        self._widget_subscriptions[subscription_id] = callbacks
-        logger.debug('Added widget lifecycle subscription %s', subscription_id)
-        return subscription_id
-
-    def unsubscribe_from_widget_lifecycle(
-        self, subscription_id: WidgetLifecycleSubscriptionId
-    ) -> None:
-        """
-        Unsubscribe from widget lifecycle events.
-
-        Parameters
-        ----------
-        subscription_id
-            The subscription ID returned from subscribe_to_widget_lifecycle.
-        """
-        if subscription_id in self._widget_subscriptions:
-            del self._widget_subscriptions[subscription_id]
-            logger.debug('Removed widget lifecycle subscription %s', subscription_id)
-        else:
-            logger.warning(
-                'Attempted to unsubscribe from non-existent widget subscription %s',
-                subscription_id,
-            )
+        state = self._workflows.get(workflow_id)
+        if state is None:
+            return 0
+        return state.version
 
     def _notify_staged_changed(self, workflow_id: WorkflowId) -> None:
-        """Notify all widget subscribers that staging area changed.
+        """Increment workflow state version when staging area changes.
 
-        Notifications are deferred if currently in a staging transaction.
+        Version increments are deferred if currently in a staging transaction.
         The transaction context manager will call this on exit.
         """
         if self._transaction_workflow is not None:
             return
 
-        for subscription_id, callbacks in self._widget_subscriptions.items():
-            if callbacks.on_staged_changed is not None:
-                try:
-                    callbacks.on_staged_changed(workflow_id)
-                except Exception:
-                    logger.exception(
-                        'Error in on_staged_changed callback for subscription %s',
-                        subscription_id,
-                    )
+        self._workflows[workflow_id].version += 1
 
     def _notify_workflow_committed(self, workflow_id: WorkflowId) -> None:
-        """Notify all widget subscribers that a workflow was committed."""
-        for subscription_id, callbacks in self._widget_subscriptions.items():
-            if callbacks.on_workflow_committed is not None:
-                try:
-                    callbacks.on_workflow_committed(workflow_id)
-                except Exception:
-                    logger.exception(
-                        'Error in on_workflow_committed callback for subscription %s',
-                        subscription_id,
-                    )
+        """Increment workflow state version when a workflow is committed."""
+        self._workflows[workflow_id].version += 1
 
     def _notify_workflow_stopped(self, workflow_id: WorkflowId) -> None:
-        """Notify all widget subscribers that a workflow was stopped."""
-        for subscription_id, callbacks in self._widget_subscriptions.items():
-            if callbacks.on_workflow_stopped is not None:
-                try:
-                    callbacks.on_workflow_stopped(workflow_id)
-                except Exception:
-                    logger.exception(
-                        'Error in on_workflow_stopped callback for subscription %s',
-                        subscription_id,
-                    )
+        """Increment workflow state version when a workflow is stopped."""
+        self._workflows[workflow_id].version += 1
 
     def _notify_command_success(
         self, workflow_id: WorkflowId, action: str, success_count: int, total_count: int

@@ -112,6 +112,26 @@ class TestSessionUpdater:
 
         assert updater.session_id == session_id
 
+    def test_cleanup_stops_periodic_callback(self):
+        session_id = SessionId('session-1')
+        registry = SessionRegistry()
+
+        updater = SessionUpdater(session_id=session_id, session_registry=registry)
+
+        class FakeCallback:
+            def __init__(self):
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        callback = FakeCallback()
+        updater.set_periodic_callback(callback)
+
+        updater.cleanup()
+
+        assert callback.stopped
+
     def test_works_without_optional_services(self):
         session_id = SessionId('session-1')
         registry = SessionRegistry()
