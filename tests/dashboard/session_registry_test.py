@@ -160,3 +160,18 @@ class TestSessionRegistry:
 
         # Original registry should not be modified
         assert registry.session_count == 1
+
+    def test_get_seconds_since_heartbeat_returns_elapsed_time(self):
+        registry = SessionRegistry()
+        session_id = SessionId('session-1')
+        registry.register(session_id)
+
+        time.sleep(0.05)
+
+        elapsed = registry.get_seconds_since_heartbeat(session_id)
+        assert elapsed is not None
+        assert elapsed >= 0.05
+
+    def test_get_seconds_since_heartbeat_returns_none_for_unknown(self):
+        registry = SessionRegistry()
+        assert registry.get_seconds_since_heartbeat(SessionId('unknown')) is None

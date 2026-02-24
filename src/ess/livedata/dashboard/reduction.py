@@ -16,10 +16,10 @@ from ess.livedata.logging_config import configure_logging
 
 from .dashboard import DashboardBase
 from .session_updater import SessionUpdater
-from .widgets.backend_status_widget import BackendStatusWidget
 from .widgets.job_status_widget import JobStatusListWidget
 from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
+from .widgets.system_status_widget import SystemStatusWidget
 from .widgets.workflow_status_widget import WorkflowStatusListWidget
 
 # Remove external Google Fonts dependencies from MaterialTemplate.
@@ -142,9 +142,12 @@ class ReductionApp(DashboardBase):
             job_service=self._services.job_service,
         )
 
-        backend_status_widget = BackendStatusWidget(
+        system_status_widget = SystemStatusWidget(
+            session_registry=self._services.session_registry,
             service_registry=self._services.service_registry,
+            current_session_id=session_updater.session_id,
         )
+        system_status_widget.register_periodic_refresh(session_updater)
 
         plot_grid_tabs = PlotGridTabs(
             plot_orchestrator=self._services.plot_orchestrator,
@@ -154,7 +157,7 @@ class ReductionApp(DashboardBase):
             plotting_controller=self._services.plotting_controller,
             job_status_widget=job_status_widget,
             workflow_status_widget=workflow_status_widget,
-            backend_status_widget=backend_status_widget,
+            system_status_widget=system_status_widget,
             plot_data_service=self._services.plot_data_service,
             session_updater=session_updater,
         )

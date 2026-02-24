@@ -206,3 +206,22 @@ class SessionRegistry:
         """Number of currently active sessions."""
         with self._lock:
             return len(self._sessions)
+
+    def get_seconds_since_heartbeat(self, session_id: SessionId) -> float | None:
+        """
+        Get seconds since last heartbeat for a session.
+
+        Parameters
+        ----------
+        session_id:
+            Session ID to check.
+
+        Returns
+        -------
+        :
+            Seconds since last heartbeat, or None if session not found.
+        """
+        with self._lock:
+            if session_id not in self._sessions:
+                return None
+            return time.monotonic() - self._sessions[session_id].last_heartbeat
