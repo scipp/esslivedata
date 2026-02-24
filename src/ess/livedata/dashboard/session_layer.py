@@ -4,7 +4,7 @@
 SessionLayer - Per-session state for a single plot layer.
 
 Each browser session creates SessionLayer instances to track layer versions
-and hold session-bound HoloViews components (Pipe, DynamicMap, Presenter)
+and hold session-bound HoloViews components (Pipe, DynamicMap, PresenterBase)
 when data is available.
 """
 
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 import holoviews as hv
 
 from .plot_data_service import LayerId, LayerStateMachine
-from .plots import Plotter, Presenter
+from .plots import Plotter, PresenterBase
 
 
 @dataclass
@@ -36,7 +36,7 @@ class SessionComponents:
         The DynamicMap or Element created by the presenter.
     """
 
-    presenter: Presenter
+    presenter: PresenterBase
     pipe: hv.streams.Pipe
     dmap: hv.DynamicMap | hv.Element
 

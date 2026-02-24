@@ -13,36 +13,26 @@ from abc import ABC, abstractmethod
 from contextlib import ExitStack
 from typing import Any, Protocol, Self
 
+import structlog
+
 from ..config.instruments import available_instruments
 from .processor import Processor
 
 
 class ServiceBase(ABC):
     def __init__(self, *, name: str | None = None, log_level: int = logging.INFO):
-        self._logger = logging.getLogger(name or __name__)
-        self._setup_logging(log_level)
+        self._logger = structlog.get_logger()
+        self._silence_noisy_loggers()
         self._running = False
         self._setup_signal_handlers()
 
     @staticmethod
-    def configure_logging(log_level: int) -> None:
-        """Configure logging for the root logger if not already configured"""
-        root = logging.getLogger()
-        if not root.handlers:  # Only configure if no handlers exist
-            logging.basicConfig(
-                level=log_level,
-                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                stream=sys.stdout,
-            )
+    def _silence_noisy_loggers() -> None:
+        """Silence third-party loggers that produce excessive output."""
         # scipp.transform_coords logs info messages that are not useful and would show
         # with every workflow call
-        scipp_logger = logging.getLogger('scipp')
+        scipp_logger = logging.getLogger('scipp')  # noqa: TID251
         scipp_logger.setLevel(logging.WARNING)
-
-    def _setup_logging(self, log_level: int) -> None:
-        """Configure logging for this service instance if not already configured"""
-        self.configure_logging(log_level)
-        self._logger.setLevel(log_level)
 
     @property
     def is_running(self) -> bool:

@@ -168,7 +168,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
                 logger.error(
                     'job_data_error',
                     job_id=str(error.job_id),
-                    error=error.error_message[:200] if error.error_message else None,
+                    error=error.error_message,
                 )
 
         # We used to compute results only after 1-N accumulation calls, reasoning that
@@ -187,7 +187,7 @@ class OrchestratingProcessor(Generic[Tin, Tout]):
                     'job_failed',
                     job_id=str(result.job_id),
                     workflow_id=str(result.workflow_id),
-                    error=result.error_message[:200],
+                    error=result.error_message,
                 )
             else:
                 valid_results.append(result)

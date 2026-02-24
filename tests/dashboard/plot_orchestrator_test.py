@@ -14,6 +14,7 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotGridConfig,
     PlotOrchestrator,
 )
+from ess.livedata.dashboard.plots import PresenterBase
 
 
 class FakePlotParams(pydantic.BaseModel):
@@ -69,11 +70,8 @@ class FakePlotter:
         return self.compute(data)
 
 
-class FakePresenter:
-    """Fake Presenter for testing."""
-
-    def __init__(self, plotter):
-        self._plotter = plotter
+class FakePresenter(PresenterBase):
+    """Fake presenter for testing."""
 
     def present(self, pipe):
         import holoviews as hv

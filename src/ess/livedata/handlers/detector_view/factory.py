@@ -15,6 +15,8 @@ from scippnexus import NXdetector
 from ess.reduce.nexus.types import NeXusData, SampleRun
 from ess.reduce.time_of_flight.types import TofLookupTableFilename
 
+from ..accumulators import NoCopyAccumulator, NoCopyWindowAccumulator
+
 # Import types unconditionally for runtime type hint resolution
 # (used by workflow_factory.attach_factory to inspect parameter types)
 from ..detector_view_specs import DetectorViewParams
@@ -38,8 +40,6 @@ from .types import (
     ViewConfig,
 )
 from .workflow import (
-    NoCopyAccumulator,
-    NoCopyWindowAccumulator,
     add_geometric_projection,
     add_logical_projection,
     create_base_workflow,
@@ -187,8 +187,10 @@ class DetectorViewFactory:
         target_keys: dict[str, type] = {
             'cumulative': DetectorImage[Cumulative],
             'current': DetectorImage[Current],
-            'counts_total': CountsTotal,
-            'counts_in_toa_range': CountsInRange,
+            'counts_total': CountsTotal[Current],
+            'counts_in_toa_range': CountsInRange[Current],
+            'counts_total_cumulative': CountsTotal[Cumulative],
+            'counts_in_toa_range_cumulative': CountsInRange[Cumulative],
         }
         context_keys: dict[str, type] = {}
         window_outputs = (

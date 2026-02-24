@@ -20,7 +20,6 @@ from .types import (
     AccumulationMode,
     CountsInRange,
     CountsTotal,
-    Current,
     DetectorHistogram,
     DetectorImage,
     EventCoordName,
@@ -243,33 +242,40 @@ def detector_image(
     return DetectorImage[AccumulationMode](image)
 
 
-def counts_total(histogram: AccumulatedHistogram[Current]) -> CountsTotal:
+def counts_total(
+    histogram: AccumulatedHistogram[AccumulationMode],
+) -> CountsTotal[AccumulationMode]:
     """
-    Compute total event counts in current window.
+    Compute total event counts.
+
+    This generic provider works for both accumulation modes.
 
     Parameters
     ----------
     histogram:
-        Histogram for current window.
+        Histogram for the given accumulation mode.
 
     Returns
     -------
     :
         Total counts as 0D scalar.
     """
-    return CountsTotal(histogram.sum())
+    return CountsTotal[AccumulationMode](histogram.sum())
 
 
 def counts_in_range(
-    histogram: AccumulatedHistogram[Current], histogram_slice: HistogramSlice
-) -> CountsInRange:
+    histogram: AccumulatedHistogram[AccumulationMode],
+    histogram_slice: HistogramSlice,
+) -> CountsInRange[AccumulationMode]:
     """
-    Compute event counts within specified range in current window.
+    Compute event counts within specified range.
+
+    This generic provider works for both accumulation modes.
 
     Parameters
     ----------
     histogram:
-        Histogram for current window.
+        Histogram for the given accumulation mode.
     histogram_slice:
         Optional (low, high) range for counting. If None, counts all.
 
@@ -286,4 +292,4 @@ def counts_in_range(
     else:
         sliced = histogram
 
-    return CountsInRange(sliced.sum())
+    return CountsInRange[AccumulationMode](sliced.sum())

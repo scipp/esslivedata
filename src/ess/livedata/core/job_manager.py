@@ -381,7 +381,7 @@ class JobManager:
             logger.warning(
                 "job_warning",
                 job_id=str(job.job_id),
-                error_message=reply.error_message[:200],
+                error_message=reply.error_message,
             )
         else:
             # Clear warning state on successful data processing
@@ -412,7 +412,7 @@ class JobManager:
                 logger.error(
                     "job_error",
                     job_id=str(job.job_id),
-                    error_message=result.error_message[:200],
+                    error_message=result.error_message,
                 )
             else:
                 # Clear error state on successful finalization
