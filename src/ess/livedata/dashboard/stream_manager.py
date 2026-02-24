@@ -5,38 +5,30 @@ Utilities for connecting subscribers to :py:class:`DataService`
 """
 
 from collections.abc import Callable
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 from ess.livedata.config.workflow_spec import ResultKey
 
-from .data_service import DataService
-from .data_subscriber import DataSubscriber, Pipe
-
-P = TypeVar('P', bound=Pipe)
+from .data_service import DataService, DataServiceSubscriber
+from .data_subscriber import DataSubscriber
 
 
-class StreamManager(Generic[P]):
-    """Manages data streams connecting DataService to plotting pipes."""
+class StreamManager:
+    """Manages data streams connecting DataService to callbacks."""
 
-    def __init__(
-        self,
-        *,
-        data_service: DataService,
-        pipe_factory: Callable[[Any], P],
-    ):
+    def __init__(self, *, data_service: DataService):
         self.data_service = data_service
-        self._pipe_factory = pipe_factory
 
     def make_stream(
         self,
         keys_by_role: dict[str, list[ResultKey]],
-        on_first_data: Callable[[P], None] | None = None,
+        on_data: Callable[[dict[ResultKey, Any]], None],
         extractors: dict[ResultKey, Any] | None = None,
-    ) -> P:
+    ) -> DataServiceSubscriber[ResultKey]:
         """
-        Create a stream for the given result keys organized by role.
+        Create a data stream for the given result keys organized by role.
 
-        The pipe is created lazily on first trigger with correctly extracted data.
+        Registers a subscriber that assembles data and invokes the callback.
         Assembly format depends on role count:
         - Single role: flat dict[ResultKey, data] (standard plotters)
         - Multiple roles: dict[str, dict[ResultKey, data]] (correlation plotters)
@@ -47,8 +39,8 @@ class StreamManager(Generic[P]):
             Dict mapping role names to lists of ResultKeys. For standard plots,
             this is {"primary": [keys...]}. For correlation plots, includes
             additional roles like "x_axis", "y_axis".
-        on_first_data
-            Optional callback invoked when first data arrives with the created pipe.
+        on_data
+            Callback invoked on every data update with the assembled data.
             Called when at least one key from each role has data.
         extractors
             Optional dict mapping keys to UpdateExtractor instances. If not
@@ -57,7 +49,9 @@ class StreamManager(Generic[P]):
         Returns
         -------
         :
-            A pipe that will receive assembled data updates.
+            The registered subscriber. Can be passed to
+            DataService.unregister_subscriber() to stop receiving updates
+            (e.g., when workflow restarts).
         """
         from .extractors import LatestValueExtractor
 
@@ -70,9 +64,8 @@ class StreamManager(Generic[P]):
 
         subscriber = DataSubscriber(
             keys_by_role=keys_by_role,
-            pipe_factory=self._pipe_factory,
             extractors=extractors,
-            on_first_data=on_first_data,
+            on_data=on_data,
         )
         self.data_service.register_subscriber(subscriber)
-        return subscriber.pipe
+        return subscriber

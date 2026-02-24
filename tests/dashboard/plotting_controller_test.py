@@ -32,7 +32,7 @@ def job_service():
 @pytest.fixture
 def stream_manager(data_service):
     """Create a StreamManager for testing."""
-    return StreamManager(data_service=data_service, pipe_factory=hv.streams.Pipe)
+    return StreamManager(data_service=data_service)
 
 
 @pytest.fixture

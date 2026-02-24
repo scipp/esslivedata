@@ -28,7 +28,7 @@ from .plot_params import (
     PlotDisplayParams1d,
     PlotDisplayParams2d,
 )
-from .plots import ImagePlotter, LinePlotter
+from .plots import ImagePlotter, LinePlotter, PresenterBase
 
 
 class NormalizationParams(pydantic.BaseModel):
@@ -148,9 +148,10 @@ def _make_lookup(axis_data: sc.DataArray, data_max_time: sc.Variable) -> sc.bins
     mode = 'nearest' if data_max_time < axis_min_time else 'previous'
     if mode == 'nearest':  # scipp>=25.11.0 rejects int coords in this mode
         dim = axis_values.dim
-        axis_values = axis_values.assign_coords(
-            {dim: axis_values.coords[dim].astype('float64')}
-        )
+        coord = axis_values.coords[dim]
+        # Only convert to float64 if needed; datetime64 coords are accepted as-is
+        if coord.dtype != sc.DType.datetime64:
+            axis_values = axis_values.assign_coords({dim: coord.astype('float64')})
     return sc.lookup(axis_values, mode=mode)
 
 
@@ -189,7 +190,7 @@ class CorrelationHistogramPlotter:
     def initialize_from_data(self, data: dict[str, Any]) -> None:
         """No-op: histogram edges are computed dynamically on each call."""
 
-    def __call__(self, data: dict[str, Any]) -> Any:
+    def compute(self, data: dict[str, Any]) -> None:
         """Compute histograms for all data sources and render.
 
         Parameters
@@ -238,7 +239,26 @@ class CorrelationHistogramPlotter:
             else:
                 histograms[key] = dependent.hist(bin_spec)
 
-        return self._renderer(histograms)
+        self._renderer.compute(histograms)
+
+    def get_cached_state(self) -> Any | None:
+        """Get the last computed state from the renderer."""
+        return self._renderer.get_cached_state()
+
+    def has_cached_state(self) -> bool:
+        """Check if the renderer has computed state."""
+        return self._renderer.has_cached_state()
+
+    def create_presenter(self) -> PresenterBase:
+        """Create a presenter owned by this plotter.
+
+        Uses the renderer for presentation.
+        """
+        return self._renderer.create_presenter(owner=self)
+
+    def mark_presenters_dirty(self) -> None:
+        """Mark all presenters as dirty by delegating to the renderer."""
+        self._renderer.mark_presenters_dirty()
 
 
 class CorrelationHistogram1dPlotter(CorrelationHistogramPlotter):

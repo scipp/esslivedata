@@ -10,21 +10,8 @@ from typing import Any
 import pytest
 
 from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
-from ess.livedata.dashboard.data_subscriber import DataSubscriber, Pipe
+from ess.livedata.dashboard.data_subscriber import DataSubscriber
 from ess.livedata.dashboard.extractors import LatestValueExtractor
-
-
-class FakePipe(Pipe):
-    """Fake implementation of Pipe for testing."""
-
-    def __init__(self, data: Any = None) -> None:
-        self.init_data = data
-        self.data = data
-        self.send_calls: list[Any] = []
-
-    def send(self, data: Any) -> None:
-        self.send_calls.append(data)
-        self.data = data
 
 
 @pytest.fixture
@@ -52,24 +39,10 @@ def make_result_key(workflow_id):
     return _make
 
 
-@pytest.fixture
-def fake_pipe_factory():
-    """Fake pipe factory that tracks created pipes."""
-    created_pipes: list[FakePipe] = []
-
-    def factory(data: Any) -> FakePipe:
-        pipe = FakePipe(data)
-        created_pipes.append(pipe)
-        return pipe
-
-    factory.created_pipes = created_pipes
-    return factory
-
-
 class TestDataSubscriberSingleRole:
     """Test DataSubscriber with a single role (standard plots)."""
 
-    def test_keys_returns_all_keys(self, make_result_key, fake_pipe_factory):
+    def test_keys_returns_all_keys(self, make_result_key):
         """Test that keys property returns all keys from all roles."""
         key1 = make_result_key('detector1')
         key2 = make_result_key('detector2')
@@ -78,37 +51,16 @@ class TestDataSubscriberSingleRole:
 
         subscriber = DataSubscriber(
             keys_by_role=keys_by_role,
-            pipe_factory=fake_pipe_factory,
             extractors=extractors,
+            on_data=lambda d: None,
         )
 
         assert subscriber.keys == {key1, key2}
 
-    def test_pipe_created_on_first_trigger(self, make_result_key, fake_pipe_factory):
-        """Test that pipe is created on first trigger."""
-        key = make_result_key('detector')
-        keys_by_role = {'primary': [key]}
-        extractors = {key: LatestValueExtractor()}
+    def test_on_data_called_with_assembled_data(self, make_result_key):
+        """Test that on_data callback receives assembled data."""
+        received_data: list[Any] = []
 
-        subscriber = DataSubscriber(
-            keys_by_role=keys_by_role,
-            pipe_factory=fake_pipe_factory,
-            extractors=extractors,
-        )
-
-        # Before trigger, accessing pipe raises error
-        with pytest.raises(RuntimeError, match="not yet initialized"):
-            _ = subscriber.pipe
-
-        # Trigger subscriber
-        subscriber.trigger({key: 'value1'})
-
-        # After trigger, pipe is accessible
-        pipe = subscriber.pipe
-        assert isinstance(pipe, FakePipe)
-
-    def test_single_role_assembles_flat_dict(self, make_result_key, fake_pipe_factory):
-        """Single role outputs flat dict[ResultKey, data] for standard plotters."""
         key1 = make_result_key('detector1')
         key2 = make_result_key('detector2')
         keys_by_role = {'primary': [key1, key2]}
@@ -116,43 +68,69 @@ class TestDataSubscriberSingleRole:
 
         subscriber = DataSubscriber(
             keys_by_role=keys_by_role,
-            pipe_factory=fake_pipe_factory,
             extractors=extractors,
+            on_data=lambda d: received_data.append(d),
+        )
+
+        subscriber.trigger({key1: 'value1', key2: 'value2'})
+
+        assert len(received_data) == 1
+        assert key1 in received_data[0]
+        assert key2 in received_data[0]
+        assert received_data[0][key1] == 'value1'
+        assert received_data[0][key2] == 'value2'
+
+    def test_single_role_assembles_flat_dict(self, make_result_key):
+        """Single role outputs flat dict[ResultKey, data] for standard plotters."""
+        received_data: list[Any] = []
+
+        key1 = make_result_key('detector1')
+        key2 = make_result_key('detector2')
+        keys_by_role = {'primary': [key1, key2]}
+        extractors = {k: LatestValueExtractor() for k in [key1, key2]}
+
+        subscriber = DataSubscriber(
+            keys_by_role=keys_by_role,
+            extractors=extractors,
+            on_data=lambda d: received_data.append(d),
         )
 
         subscriber.trigger({key1: 'value1', key2: 'value2'})
 
         # Should receive flat dict (not grouped by role)
-        pipe = subscriber.pipe
-        assert key1 in pipe.init_data
-        assert key2 in pipe.init_data
-        assert pipe.init_data[key1] == 'value1'
-        assert pipe.init_data[key2] == 'value2'
+        data = received_data[0]
+        assert key1 in data
+        assert key2 in data
+        assert data[key1] == 'value1'
+        assert data[key2] == 'value2'
 
-    def test_multiple_triggers_send_to_pipe(self, make_result_key, fake_pipe_factory):
-        """Test that subsequent triggers send data to existing pipe."""
+    def test_multiple_triggers_call_on_data_each_time(self, make_result_key):
+        """Test that each trigger calls on_data."""
+        received_data: list[Any] = []
+
         key = make_result_key('detector')
         keys_by_role = {'primary': [key]}
         extractors = {key: LatestValueExtractor()}
 
         subscriber = DataSubscriber(
             keys_by_role=keys_by_role,
-            pipe_factory=fake_pipe_factory,
             extractors=extractors,
+            on_data=lambda d: received_data.append(d),
         )
 
-        # First trigger creates pipe
         subscriber.trigger({key: 'value1'})
-        pipe = subscriber.pipe
-        assert len(pipe.send_calls) == 0  # First trigger creates, doesn't send
-
-        # Second trigger sends to pipe
         subscriber.trigger({key: 'value2'})
-        assert len(pipe.send_calls) == 1
-        assert key in pipe.send_calls[0]
+        subscriber.trigger({key: 'value3'})
 
-    def test_partial_data_included(self, make_result_key, fake_pipe_factory):
+        assert len(received_data) == 3
+        assert received_data[0][key] == 'value1'
+        assert received_data[1][key] == 'value2'
+        assert received_data[2][key] == 'value3'
+
+    def test_partial_data_included(self, make_result_key):
         """Test that partial data is included in assembly."""
+        received_data: list[Any] = []
+
         key1 = make_result_key('detector1')
         key2 = make_result_key('detector2')
         keys_by_role = {'primary': [key1, key2]}
@@ -160,19 +138,21 @@ class TestDataSubscriberSingleRole:
 
         subscriber = DataSubscriber(
             keys_by_role=keys_by_role,
-            pipe_factory=fake_pipe_factory,
             extractors=extractors,
+            on_data=lambda d: received_data.append(d),
         )
 
         # Only provide data for key1
         subscriber.trigger({key1: 'value1'})
 
-        pipe = subscriber.pipe
-        assert key1 in pipe.init_data
-        assert key2 not in pipe.init_data
+        data = received_data[0]
+        assert key1 in data
+        assert key2 not in data
 
-    def test_keys_sorted_deterministically(self, workflow_id, fake_pipe_factory):
+    def test_keys_sorted_deterministically(self, workflow_id):
         """Test that keys are sorted deterministically in output."""
+        received_data: list[Any] = []
+
         # Create keys with specific ordering
         job_a = JobId(source_name='a_detector', job_number=uuid.uuid4())
         job_b = JobId(source_name='b_detector', job_number=uuid.uuid4())
@@ -185,13 +165,13 @@ class TestDataSubscriberSingleRole:
 
         subscriber = DataSubscriber(
             keys_by_role=keys_by_role,
-            pipe_factory=fake_pipe_factory,
             extractors=extractors,
+            on_data=lambda d: received_data.append(d),
         )
 
         subscriber.trigger({key_a: 'value_a', key_b: 'value_b'})
 
-        result_keys = list(subscriber.pipe.init_data.keys())
+        result_keys = list(received_data[0].keys())
         # Should be sorted alphabetically by source_name
         assert result_keys[0].job_id.source_name == 'a_detector'
         assert result_keys[1].job_id.source_name == 'b_detector'
@@ -200,10 +180,10 @@ class TestDataSubscriberSingleRole:
 class TestDataSubscriberMultiRole:
     """Test DataSubscriber with multiple roles (correlation plots)."""
 
-    def test_multi_role_assembles_grouped_dict(
-        self, make_result_key, fake_pipe_factory
-    ):
+    def test_multi_role_assembles_grouped_dict(self, make_result_key):
         """Multiple roles output dict[str, dict[ResultKey, data]]."""
+        received_data: list[Any] = []
+
         primary_key = make_result_key('detector')
         x_axis_key = make_result_key('position')
         keys_by_role = {'primary': [primary_key], 'x_axis': [x_axis_key]}
@@ -211,20 +191,20 @@ class TestDataSubscriberMultiRole:
 
         subscriber = DataSubscriber(
             keys_by_role=keys_by_role,
-            pipe_factory=fake_pipe_factory,
             extractors=extractors,
+            on_data=lambda d: received_data.append(d),
         )
 
         subscriber.trigger({primary_key: 'detector_data', x_axis_key: 'position_data'})
 
         # Should receive grouped dict
-        pipe = subscriber.pipe
-        assert 'primary' in pipe.init_data
-        assert 'x_axis' in pipe.init_data
-        assert pipe.init_data['primary'][primary_key] == 'detector_data'
-        assert pipe.init_data['x_axis'][x_axis_key] == 'position_data'
+        data = received_data[0]
+        assert 'primary' in data
+        assert 'x_axis' in data
+        assert data['primary'][primary_key] == 'detector_data'
+        assert data['x_axis'][x_axis_key] == 'position_data'
 
-    def test_keys_property_includes_all_roles(self, make_result_key, fake_pipe_factory):
+    def test_keys_property_includes_all_roles(self, make_result_key):
         """Keys property returns union of keys from all roles."""
         primary_key = make_result_key('detector')
         x_axis_key = make_result_key('position')
@@ -240,24 +220,19 @@ class TestDataSubscriberMultiRole:
 
         subscriber = DataSubscriber(
             keys_by_role=keys_by_role,
-            pipe_factory=fake_pipe_factory,
             extractors=extractors,
+            on_data=lambda d: None,
         )
 
         assert subscriber.keys == {primary_key, x_axis_key, y_axis_key}
 
 
-class TestDataSubscriberOnFirstData:
-    """Test on_first_data callback behavior with role-based ready condition."""
+class TestDataSubscriberReadyCondition:
+    """Test on_data callback behavior with role-based ready condition."""
 
-    def test_single_role_fires_when_any_data_available(
-        self, make_result_key, fake_pipe_factory
-    ):
-        """Single role fires on_first_data when any key has data."""
-        callback_invoked = []
-
-        def on_first_data(pipe):
-            callback_invoked.append(pipe)
+    def test_single_role_fires_when_any_data_available(self, make_result_key):
+        """Single role fires on_data when any key has data."""
+        callback_invoked: list[Any] = []
 
         key1 = make_result_key('detector1')
         key2 = make_result_key('detector2')
@@ -266,9 +241,8 @@ class TestDataSubscriberOnFirstData:
 
         subscriber = DataSubscriber(
             keys_by_role=keys_by_role,
-            pipe_factory=fake_pipe_factory,
             extractors=extractors,
-            on_first_data=on_first_data,
+            on_data=lambda d: callback_invoked.append(d),
         )
 
         # Trigger with only one key
@@ -277,14 +251,9 @@ class TestDataSubscriberOnFirstData:
         # Should fire (at least one key from the one role)
         assert len(callback_invoked) == 1
 
-    def test_multi_role_requires_data_from_each_role(
-        self, make_result_key, fake_pipe_factory
-    ):
+    def test_multi_role_requires_data_from_each_role(self, make_result_key):
         """Multi-role requires at least one key from EACH role to fire."""
-        callback_invoked = []
-
-        def on_first_data(pipe):
-            callback_invoked.append(pipe)
+        callback_invoked: list[Any] = []
 
         primary_key = make_result_key('detector')
         x_axis_key = make_result_key('position')
@@ -293,9 +262,8 @@ class TestDataSubscriberOnFirstData:
 
         subscriber = DataSubscriber(
             keys_by_role=keys_by_role,
-            pipe_factory=fake_pipe_factory,
             extractors=extractors,
-            on_first_data=on_first_data,
+            on_data=lambda d: callback_invoked.append(d),
         )
 
         # Trigger with only primary - should NOT fire
@@ -306,12 +274,9 @@ class TestDataSubscriberOnFirstData:
         subscriber.trigger({primary_key: 'detector_data', x_axis_key: 'position_data'})
         assert len(callback_invoked) == 1
 
-    def test_on_first_data_fires_only_once(self, make_result_key, fake_pipe_factory):
-        """on_first_data fires only once, even with multiple triggers."""
-        callback_invoked = []
-
-        def on_first_data(pipe):
-            callback_invoked.append(pipe)
+    def test_no_callback_with_empty_data(self, make_result_key):
+        """on_data does not fire when there's no data."""
+        callback_invoked: list[Any] = []
 
         key = make_result_key('detector')
         keys_by_role = {'primary': [key]}
@@ -319,35 +284,8 @@ class TestDataSubscriberOnFirstData:
 
         subscriber = DataSubscriber(
             keys_by_role=keys_by_role,
-            pipe_factory=fake_pipe_factory,
             extractors=extractors,
-            on_first_data=on_first_data,
-        )
-
-        # Multiple triggers
-        subscriber.trigger({key: 'value1'})
-        subscriber.trigger({key: 'value2'})
-        subscriber.trigger({key: 'value3'})
-
-        # Should fire only once
-        assert len(callback_invoked) == 1
-
-    def test_no_callback_with_empty_data(self, make_result_key, fake_pipe_factory):
-        """on_first_data does not fire when there's no data."""
-        callback_invoked = []
-
-        def on_first_data(pipe):
-            callback_invoked.append(pipe)
-
-        key = make_result_key('detector')
-        keys_by_role = {'primary': [key]}
-        extractors = {key: LatestValueExtractor()}
-
-        subscriber = DataSubscriber(
-            keys_by_role=keys_by_role,
-            pipe_factory=fake_pipe_factory,
-            extractors=extractors,
-            on_first_data=on_first_data,
+            on_data=lambda d: callback_invoked.append(d),
         )
 
         # Trigger with empty store

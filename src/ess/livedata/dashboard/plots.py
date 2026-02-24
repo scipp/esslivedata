@@ -2,8 +2,10 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """This file contains utilities for creating plots in the dashboard."""
 
+from __future__ import annotations
+
 import time
-from abc import ABC, abstractmethod
+import weakref
 from typing import Any, cast
 
 import holoviews as hv
@@ -19,7 +21,6 @@ from .plot_params import (
     PlotAspectType,
     PlotParams1d,
     PlotParams2d,
-    PlotParams3d,
     PlotParamsBars,
     PlotScale,
     PlotScaleParams,
@@ -28,6 +29,91 @@ from .plot_params import (
 )
 from .scipp_to_holoviews import to_holoviews
 from .time_utils import format_time_ns_local
+
+
+class PresenterBase:
+    """
+    Base class for presenters with dirty flag tracking.
+
+    Tracks whether new data has been computed since the last time this
+    presenter consumed an update. This enables efficient polling-based
+    update detection in multi-session scenarios.
+
+    Parameters
+    ----------
+    plotter:
+        The plotter that creates and manages this presenter's state.
+    owner:
+        Optional "logical owner" for identity checks. Used when a plotter
+        delegates presenter creation to an inner renderer but wants to be
+        recognized as the owner for lifecycle management (e.g., detecting
+        plotter replacement). Defaults to plotter if not specified.
+    """
+
+    def __init__(self, plotter: Plotter, *, owner: Plotter | None = None) -> None:
+        self._plotter = plotter
+        self._owner = owner
+        self._dirty: bool = False
+
+    def is_owned_by(self, plotter: Plotter) -> bool:
+        """Check if this presenter is owned by the given plotter."""
+        owner = self._owner if self._owner is not None else self._plotter
+        return owner is plotter
+
+    def _mark_dirty(self) -> None:
+        """Mark this presenter as having a pending update."""
+        self._dirty = True
+
+    def has_pending_update(self) -> bool:
+        """Check if there is a pending update to present."""
+        return self._dirty
+
+    def consume_update(self) -> Any:
+        """
+        Consume the pending update and return the cached state.
+
+        Clears the dirty flag and returns the plotter's cached state.
+        """
+        self._dirty = False
+        return self._plotter.get_cached_state()
+
+    def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap | hv.Element:
+        """Create a DynamicMap or Element for this session from a data pipe."""
+        raise NotImplementedError("Subclasses must implement present()")
+
+
+class DefaultPresenter(PresenterBase):
+    """
+    Default presenter for standard plotters.
+
+    Pipe receives pre-computed HoloViews elements from PlotDataService.
+    DynamicMap just passes through the data - no computation per-session.
+
+    Plotters requiring interactive controls (kdims) must override
+    create_presenter() to return a custom presenter.
+    """
+
+    def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
+        """Create a DynamicMap that passes through pre-computed elements."""
+
+        def passthrough(data):
+            return data
+
+        return hv.DynamicMap(passthrough, streams=[pipe], cache_size=1)
+
+
+class StaticPresenter(PresenterBase):
+    """
+    Presenter for static plots. Returns the element directly.
+
+    Static plots (rectangles, lines, etc.) don't need DynamicMaps since their
+    content doesn't change. The pipe.data contains the pre-computed hv.Element
+    which is returned as-is.
+    """
+
+    def present(self, pipe: hv.streams.Pipe) -> hv.Element:
+        """Return the static element from the pipe data."""
+        return pipe.data
 
 
 def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
@@ -72,9 +158,12 @@ def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
         return f'{end_str} (Lag: {lag_s:.1f}s)'
 
 
-class Plotter(ABC):
+class Plotter:
     """
     Base class for plots that support autoscaling.
+
+    Tracks presenters via WeakSet and marks them dirty when state changes.
+    This enables efficient polling-based update detection.
     """
 
     def __init__(
@@ -94,6 +183,8 @@ class Plotter(ABC):
         **kwargs:
             Additional keyword arguments passed to the autoscaler if created.
         """
+        self._cached_state: Any | None = None
+        self._presenters: weakref.WeakSet[PresenterBase] = weakref.WeakSet()
         self.autoscaler_kwargs = kwargs
         self.autoscalers: dict[ResultKey, Autoscaler] = {}
         self.layout_params = layout_params or LayoutParams()
@@ -259,10 +350,21 @@ class Plotter(ABC):
             return (1.0, 10.0)
         return None
 
-    def __call__(
-        self, data: dict[ResultKey, sc.DataArray], **kwargs
-    ) -> hv.Overlay | hv.Layout | hv.Element:
-        """Create one or more plots from the given data."""
+    def compute(self, data: dict[ResultKey, sc.DataArray], **kwargs) -> None:
+        """
+        Compute plot elements from input data and cache the result.
+
+        This is Stage 1 of the two-stage plotter architecture. It transforms
+        input data into HoloViews elements, caches the result, and marks all
+        registered presenters as dirty.
+
+        Parameters
+        ----------
+        data:
+            Dictionary mapping ResultKeys to DataArrays.
+        **kwargs:
+            Additional keyword arguments passed to plot().
+        """
         plots: list[hv.Element] = []
         try:
             for data_key, da in data.items():
@@ -304,7 +406,54 @@ class Plotter(ABC):
         if time_info is not None:
             result = result.opts(title=time_info, fontsize={'title': '10pt'})
 
-        return result
+        self._set_cached_state(result)
+
+    def create_presenter(self, *, owner: Plotter | None = None) -> PresenterBase:
+        """
+        Create a presenter for this plotter.
+
+        Stage 2 of the two-stage architecture. Returns a fresh presenter
+        instance that can be used to create session-bound DynamicMaps.
+        The presenter is registered with this plotter and will be marked
+        dirty when compute() produces new state.
+
+        Override this method in subclasses that need custom presenters
+        (e.g., ROI plotters with edit streams).
+
+        Parameters
+        ----------
+        owner:
+            Optional "logical owner" for identity checks. Used when a plotter
+            delegates presenter creation to an inner renderer. Defaults to self.
+
+        Returns
+        -------
+        :
+            A presenter instance for this plotter.
+        """
+        presenter = DefaultPresenter(self, owner=owner)
+        self._presenters.add(presenter)
+        return presenter
+
+    def _set_cached_state(self, state: Any) -> None:
+        """Store computed state and mark all presenters dirty."""
+        self._cached_state = state
+        self.mark_presenters_dirty()
+
+    def mark_presenters_dirty(self) -> None:
+        """Mark all registered presenters as having pending updates."""
+        # Convert to list to avoid RuntimeError if WeakSet is modified during iteration
+        # (e.g., by garbage collector removing dead references)
+        for presenter in list(self._presenters):
+            presenter._mark_dirty()
+
+    def get_cached_state(self) -> Any | None:
+        """Get the last computed state, or None if not yet computed."""
+        return self._cached_state
+
+    def has_cached_state(self) -> bool:
+        """Check if state has been computed."""
+        return self._cached_state is not None
 
     def _apply_generic_options(self, plot_element: hv.Element) -> hv.Element:
         """Apply generic options like aspect ratio to a plot element."""
@@ -322,37 +471,15 @@ class Plotter(ABC):
             self.autoscalers[data_key] = Autoscaler(**self.autoscaler_kwargs)
         return self.autoscalers[data_key].update_bounds(data, coord_data=coord_data)
 
-    def initialize_from_data(self, data: dict[ResultKey, sc.DataArray]) -> None:
-        """
-        Initialize plotter state from initial data.
-
-        Called before creating the DynamicMap to allow plotters to
-        inspect the data and set up interactive dimensions.
-
-        Parameters
-        ----------
-        data:
-            Initial data dictionary.
-        """
-        # Default implementation does nothing; subclasses can override
-        return
-
-    @property
-    def kdims(self) -> list[hv.Dimension] | None:
-        """
-        Return key dimensions for interactive widgets.
-
-        Returns
-        -------
-        :
-            List of HoloViews Dimension objects for creating interactive widgets,
-            or None if the plotter doesn't require interactive dimensions.
-        """
-        return None
-
-    @abstractmethod
     def plot(self, data: sc.DataArray, data_key: ResultKey, **kwargs) -> Any:
-        """Create a plot from the given data. Must be implemented by subclasses."""
+        """Create a plot from the given data.
+
+        Override this method for plotters that use the default compute() flow.
+        Plotters that override compute() entirely don't need to implement this.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement plot() or override compute()"
+        )
 
 
 class LinePlotter(Plotter):
@@ -471,247 +598,6 @@ class ImagePlotter(Plotter):
         if use_log_scale and (clim := self._get_log_scale_clim(plot_data)) is not None:
             opts['clim'] = clim
         return histogram.opts(**opts)
-
-
-class SlicerPlotter(Plotter):
-    """Plotter for 3D data with interactive slicing or flattening."""
-
-    def __init__(
-        self,
-        scale_opts: PlotScaleParams2d,
-        tick_params: TickParams | None = None,
-        **kwargs,
-    ):
-        """
-        Initialize the slicer plotter.
-
-        Parameters
-        ----------
-        scale_opts:
-            Scaling options for axes and color.
-        tick_params:
-            Tick configuration parameters.
-        **kwargs:
-            Additional keyword arguments passed to the base class.
-        """
-        super().__init__(**kwargs)
-        self._scale_opts = scale_opts
-        self._kdims: list[hv.Dimension] | None = None
-        self._base_opts = self._make_2d_base_opts(scale_opts, tick_params)
-        self._last_slice_dim: str | None = None
-        self._last_slice_idx: int | float | None = None
-        self._last_mode: str | None = None
-
-    @classmethod
-    def from_params(cls, params: PlotParams3d):
-        """Create SlicerPlotter from PlotParams3d."""
-        return cls(
-            scale_opts=params.plot_scale,
-            grow_threshold=0.1,
-            tick_params=params.ticks,
-            layout_params=params.layout,
-            aspect_params=params.plot_aspect,
-        )
-
-    def initialize_from_data(self, data: dict[ResultKey, sc.DataArray]) -> None:
-        """
-        Initialize the slicer from initial data.
-
-        Creates kdims from the first data array.
-
-        Parameters
-        ----------
-        data:
-            Dictionary of initial data arrays.
-        """
-        if not data:
-            raise ValueError("No data provided to initialize_from_data")
-        # Get first data array to create kdims
-        first_data = next(iter(data.values()))
-
-        if first_data.ndim != 3:
-            raise ValueError(f"Expected 3D data, got {first_data.ndim}D")
-
-        # Create kdims from the data
-        dim_names = list(first_data.dims)
-
-        # Mode selector: slice or flatten
-        mode_selector = hv.Dimension(
-            'mode',
-            values=['slice', 'flatten'],
-            default='slice',
-            label='Mode',
-        )
-
-        # Create dimension selector with actual dimension names
-        dim_selector = hv.Dimension(
-            'slice_dim',
-            values=dim_names,
-            default=dim_names[0],
-            label='Slice Dimension',
-        )
-
-        # Create 3 sliders, one for each dimension
-        sliders = []
-        for dim_name in dim_names:
-            if (
-                coord := first_data.coords.get(dim_name)
-            ) is not None and coord.ndim == 1:
-                # Use coordinate values for the slider
-                # For bin-edge coordinates, use midpoints
-                if first_data.coords.is_edges(dim_name):
-                    coord_values = sc.midpoints(coord, dim=dim_name).values
-                else:
-                    coord_values = coord.values
-                sliders.append(
-                    hv.Dimension(
-                        f'{dim_name}_value',
-                        values=coord_values,
-                        default=coord_values[0],
-                        label=dim_name,
-                        unit=str(coord.unit),
-                    )
-                )
-            else:
-                # Fall back to integer indices
-                size = first_data.sizes[dim_name]
-                sliders.append(
-                    hv.Dimension(
-                        f'{dim_name}_index',
-                        range=(0, size - 1),
-                        default=0,
-                        label=f'{dim_name} index',
-                    )
-                )
-
-        self._kdims = [mode_selector, dim_selector, *sliders]
-
-    @property
-    def kdims(self) -> list[hv.Dimension] | None:
-        """
-        Return kdims for interactive widgets: 1 dimension selector + 3 sliders.
-
-        Returns
-        -------
-        :
-            List containing 4 HoloViews Dimensions (selector + 3 sliders),
-            or None if not yet initialized.
-        """
-        return self._kdims
-
-    def plot(
-        self,
-        data: sc.DataArray,
-        data_key: ResultKey,
-        *,
-        mode: str = 'slice',
-        slice_dim: str = '',
-        **kwargs,
-    ) -> hv.Image:
-        """
-        Create a 2D image from 3D data by slicing or flattening.
-
-        Parameters
-        ----------
-        data:
-            3D DataArray to process.
-        data_key:
-            Key identifying this data.
-        mode:
-            Either 'slice' to select a single slice, or 'flatten' to concatenate
-            two dimensions into one.
-        slice_dim:
-            For 'slice' mode: dimension to slice along (removes this dimension).
-            For 'flatten' mode: dimension to keep (the other two are flattened).
-        **kwargs:
-            For 'slice' mode: '{slice_dim}_value' (coordinate) or
-            '{slice_dim}_index' (integer) for the slice position.
-
-        Returns
-        -------
-        :
-            A HoloViews Image element showing the 2D result.
-        """
-        if mode == 'flatten':
-            plot_data = self._flatten_outer_dims(data, keep_dim=slice_dim)
-        else:
-            plot_data = self._slice_data(data, slice_dim, kwargs)
-
-        # Prepare data with appropriate dtype and log scale masking
-        use_log_scale = self._scale_opts.color_scale == PlotScale.log
-        plot_data = self._prepare_2d_image_data(plot_data, use_log_scale)
-
-        # Detect if mode or displayed dimensions changed
-        mode_changed = self._last_mode is not None and self._last_mode != mode
-        dim_changed = (
-            self._last_slice_dim is not None and self._last_slice_dim != slice_dim
-        )
-        self._last_mode = mode
-        self._last_slice_dim = slice_dim
-
-        # Update autoscaler: use 3D data for value (color) bounds to ensure
-        # consistent color scale, but use 2D plot_data for coordinate (axis) bounds
-        # so we properly track ranges even with 2D coords (which become 1D
-        # after slicing).
-        framewise = self._update_autoscaler_and_get_framewise(
-            data, data_key, coord_data=plot_data
-        )
-
-        # Force rescale if mode or displayed dimensions changed
-        if mode_changed or dim_changed:
-            framewise = True
-
-        image = to_holoviews(plot_data)
-        opts = dict(self._base_opts)
-        opts['framewise'] = framewise
-        # Set explicit clim for log scale when data is all NaN to avoid HoloViews error
-        if use_log_scale and (clim := self._get_log_scale_clim(plot_data)) is not None:
-            opts['clim'] = clim
-        return image.opts(**opts)
-
-    def _slice_data(
-        self, data: sc.DataArray, slice_dim: str, kwargs: dict
-    ) -> sc.DataArray:
-        """Slice 3D data along the specified dimension."""
-        # Determine if we're using coordinate values or integer indices
-        if (coord_value := kwargs.get(f'{slice_dim}_value')) is not None:
-            coord = data.coords[slice_dim]
-            slice_idx = sc.scalar(coord_value, unit=coord.unit)
-        else:
-            slice_idx = kwargs.get(f'{slice_dim}_index', 0)
-        return data[slice_dim, slice_idx]
-
-    def _flatten_outer_dims(self, data: sc.DataArray, keep_dim: str) -> sc.DataArray:
-        """Flatten two dimensions, keeping the specified dimension separate.
-
-        Parameters
-        ----------
-        data:
-            3D DataArray to flatten.
-        keep_dim:
-            Dimension to keep (not flatten). The other two dimensions will be
-            flattened together.
-        """
-        dims = list(data.dims)
-        flatten_dims = [d for d in dims if d != keep_dim]
-
-        # Transpose so keep_dim is last (required for flatten to work on
-        # adjacent dims)
-        new_order = [*flatten_dims, keep_dim]
-        if dims != new_order:
-            data = data.transpose(new_order)
-
-        # Conditionally use the inner of the flattened dims as output dim name. It might
-        # seem natural to use something like flat_dim = '/'.join(flatten_dims) instead,
-        # but in practice that causes more trouble, since we lose connection to
-        # the relevant coords.
-        if (
-            coord := data.coords.get(flatten_dims[1])
-        ) is not None and coord.dims == flatten_dims:
-            flat_dim = flatten_dims[1]
-        else:
-            flat_dim = '/'.join(flatten_dims)
-        return data.flatten(dims=flatten_dims, to=flat_dim)
 
 
 class BarsPlotter(Plotter):

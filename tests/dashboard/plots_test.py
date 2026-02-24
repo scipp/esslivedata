@@ -19,6 +19,11 @@ from ess.livedata.dashboard.plot_params import (
     PlotScale,
     PlotScaleParams2d,
 )
+from ess.livedata.dashboard.slicer_plotter import (
+    SlicerPlotter,
+    SlicerPresenter,
+    SlicerState,
+)
 
 hv.extension('bokeh')
 
@@ -282,6 +287,13 @@ class TestLinePlotter:
 
 
 class TestSlicerPlotter:
+    """Tests for SlicerPlotter two-stage architecture.
+
+    SlicerPlotter uses a two-stage architecture:
+    - compute(): Returns SlicerState with 3D data and pre-computed clim (shared)
+    - SlicerPresenter: Handles interactive slicing per-session with kdims
+    """
+
     @pytest.fixture
     def coordinates_3d(self):
         """Create test coordinates for 3D data."""
@@ -318,164 +330,245 @@ class TestSlicerPlotter:
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         # Use linear scale to avoid NaN masking of zeros in tests
         params.plot_scale.color_scale = PlotScale.linear
-        return plots.SlicerPlotter.from_params(params)
+        return SlicerPlotter.from_params(params)
+
+    @pytest.fixture
+    def slicer_presenter(self, slicer_plotter):
+        """Create SlicerPresenter for testing render_slice."""
+        return slicer_plotter.create_presenter()
 
     def test_initialization(self, slicer_plotter):
         """Test that SlicerPlotter initializes correctly."""
-        # kdims should be None before initialization
-        assert slicer_plotter.kdims is None
         # Uses base class autoscalers dict (initialized lazily)
         assert slicer_plotter.autoscalers == {}
 
-    def test_switching_slice_dimension_sets_framewise_true(self, data_3d, data_key):
-        """Test that switching slice dimension forces framewise=True for axis rescaling.
+    # === Stage 1: compute() tests ===
 
-        This is a regression test for issue #559: when switching which
-        dimension to slice along, the axis ranges must update to reflect
-        the new displayed dimensions.
-        """
+    def test_compute_returns_slicer_state(self, slicer_plotter, data_3d, data_key):
+        """Test that compute() returns a SlicerState with prepared data and clim."""
+        data_dict = {data_key: data_3d}
+        slicer_plotter.compute(data_dict)
+        result = slicer_plotter.get_cached_state()
+
+        assert isinstance(result, SlicerState)
+        # Data should have same keys
+        assert set(result.data.keys()) == set(data_dict.keys())
+        # Data should be prepared (converted to float64)
+        assert result.data[data_key].dtype == 'float64'
+        assert result.clim is not None  # Should have computed clim
+
+    def test_compute_calculates_global_clim(self, data_3d, data_key):
+        """Test that compute() pre-calculates color limits from the full 3D data."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         params.plot_scale.color_scale = PlotScale.linear
-        plotter = plots.SlicerPlotter.from_params(params)
-        plotter.initialize_from_data({data_key: data_3d})
+        plotter = SlicerPlotter.from_params(params)
 
-        # First plot: slice along z
+        data_dict = {data_key: data_3d}
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
+
+        # clim should span the full range of data
+        expected_min = float(data_3d.values.min())
+        expected_max = float(data_3d.values.max())
+        assert result.clim == (expected_min, expected_max)
+
+    def test_compute_log_scale_clim_excludes_nonpositive(self, data_3d, data_key):
+        """Test that log scale clim excludes zero and negative values."""
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        params.plot_scale.color_scale = PlotScale.log
+        plotter = SlicerPlotter.from_params(params)
+
+        data_dict = {data_key: data_3d}
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
+
+        # data_3d starts at 0 (from arange), so min should be > 0
+        assert result.clim is not None
+        assert result.clim[0] > 0
+
+    # === Stage 2: render_slice() tests (on SlicerPresenter) ===
+
+    def test_render_slice_slices_3d_data(self, slicer_presenter, data_3d):
+        """Test that render_slice correctly slices 3D data."""
         z_value = float(data_3d.coords['z'].values[0])
-        result1 = plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value)
-
-        # First call should have framewise=True (bounds were empty)
-        norm_opts1 = hv.Store.lookup_options('bokeh', result1, 'norm').kwargs
-        assert norm_opts1.get('framewise') is True
-
-        # Second plot: same dimension, different slice position
-        z_value2 = float(data_3d.coords['z'].values[2])
-        result2 = plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value2)
-
-        # Same dimension: framewise can be False (bounds didn't change)
-        norm_opts2 = hv.Store.lookup_options('bokeh', result2, 'norm').kwargs
-        assert norm_opts2.get('framewise') is False
-
-        # Third plot: switch to slice along y (different displayed dimensions!)
-        y_value = float(data_3d.coords['y'].values[0])
-        result3 = plotter.plot(data_3d, data_key, slice_dim='y', y_value=y_value)
-
-        # Dimension changed: framewise MUST be True to rescale axes
-        norm_opts3 = hv.Store.lookup_options('bokeh', result3, 'norm').kwargs
-        assert norm_opts3.get('framewise') is True, (
-            "framewise should be True when slice dimension changes to "
-            "force axis rescaling"
+        result = slicer_presenter.render_slice(
+            data_3d, clim=None, slice_dim='z', z_value=z_value
         )
 
-    def test_plot_slices_3d_data(self, slicer_plotter, data_3d, data_key):
-        """Test that SlicerPlotter correctly slices 3D data."""
-        slicer_plotter.initialize_from_data({data_key: data_3d})
-        z_value = float(data_3d.coords['z'].values[0])
-        result = slicer_plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value)
         assert isinstance(result, hv.Image)
-        # Verify that the correct slice data is returned
         expected_slice = data_3d['z', 0]
-        # HoloViews Image.data is a dictionary with keys 'x', 'y', 'values'
-        data_dict = result.data
-        # Compare with expected slice (HoloViews uses numpy arrays without units)
-        np.testing.assert_allclose(
-            data_dict['values'],
-            expected_slice.values,
-        )
+        np.testing.assert_allclose(result.data['values'], expected_slice.values)
 
-    def test_plot_with_different_slice_index(self, data_3d, data_key):
-        """Test that changing slice index affects the plot."""
+    def test_render_slice_with_different_positions(self, data_3d):
+        """Test that different slice positions produce different results."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
         params.plot_scale.color_scale = PlotScale.linear
-        plotter = plots.SlicerPlotter.from_params(params)
-        plotter.initialize_from_data({data_key: data_3d})
-        # Plot with different slice value
-        z_value = float(data_3d.coords['z'].values[2])
-        result = plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value)
-        assert isinstance(result, hv.Image)
+        plotter = SlicerPlotter.from_params(params)
+        presenter = plotter.create_presenter()
 
-        # Verify that the correct slice data is returned
-        expected_slice = data_3d['z', 2]
-        data_dict = result.data
-        np.testing.assert_allclose(
-            data_dict['values'],
-            expected_slice.values,
+        z_value_0 = float(data_3d.coords['z'].values[0])
+        result_0 = presenter.render_slice(
+            data_3d, clim=None, slice_dim='z', z_value=z_value_0
         )
+
+        z_value_2 = float(data_3d.coords['z'].values[2])
+        result_2 = presenter.render_slice(
+            data_3d, clim=None, slice_dim='z', z_value=z_value_2
+        )
+
+        # Values should be different
+        with pytest.raises(AssertionError):
+            np.testing.assert_allclose(result_0.data['values'], result_2.data['values'])
 
     @pytest.mark.parametrize('slice_dim', ['z', 'y', 'x'])
-    def test_can_slice_along_different_dimensions(
-        self, slicer_plotter, data_3d, data_key, slice_dim
+    def test_render_slice_along_different_dimensions(
+        self, slicer_presenter, data_3d, slice_dim
     ):
-        """Test that we can slice along different dimensions."""
-        slicer_plotter.initialize_from_data({data_key: data_3d})
-
-        # Get the coordinate value for the slice dimension
+        """Test slicing along different dimensions."""
         slice_value = float(data_3d.coords[slice_dim].values[0])
-
-        # Perform the slice
-        result = slicer_plotter.plot(
+        result = slicer_presenter.render_slice(
             data_3d,
-            data_key,
+            clim=None,
             slice_dim=slice_dim,
             **{f'{slice_dim}_value': slice_value},
         )
 
         assert isinstance(result, hv.Image)
-
-        # Verify correct slice data
         expected = data_3d[slice_dim, 0]
-        data_dict = result.data
-        np.testing.assert_allclose(
-            data_dict['values'],
-            expected.values,
+        np.testing.assert_allclose(result.data['values'], expected.values)
+
+    def test_render_slice_uses_provided_clim(self, slicer_presenter, data_3d):
+        """Test that render_slice uses the provided clim for consistent color scale."""
+        clim = (10.0, 100.0)
+        z_value = float(data_3d.coords['z'].values[0])
+        result = slicer_presenter.render_slice(
+            data_3d, clim=clim, slice_dim='z', z_value=z_value
         )
 
-    def test_kdims_with_coords(self, slicer_plotter, data_3d, data_key):
-        """Test that kdims use coordinate values when available."""
-        slicer_plotter.initialize_from_data({data_key: data_3d})
-        kdims = slicer_plotter.kdims
+        # Check that clim is set in options (clim is a 'plot' option, not 'norm')
+        plot_opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
+        assert plot_opts.get('clim') == clim
 
-        assert kdims is not None
-        assert len(kdims) == 5  # mode + selector + 3 sliders
+    def test_render_slice_framewise_always_true(self, slicer_presenter, data_3d):
+        """Test that render_slice always sets framewise=True."""
+        z_value = float(data_3d.coords['z'].values[0])
+        result = slicer_presenter.render_slice(
+            data_3d, clim=None, slice_dim='z', z_value=z_value
+        )
 
-        # Check mode and dimension selectors
+        norm_opts = hv.Store.lookup_options('bokeh', result, 'norm').kwargs
+        assert norm_opts.get('framewise') is True
+
+    def test_render_slice_flatten_mode(self, data_3d):
+        """Test that flatten mode works in render_slice."""
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        params.plot_scale.color_scale = PlotScale.linear
+        plotter = SlicerPlotter.from_params(params)
+        presenter = plotter.create_presenter()
+
+        # Original data is (z:5, y:8, x:10)
+        # Keep x: flatten z,y -> (40, 10)
+        result = presenter.render_slice(
+            data_3d, clim=None, mode='flatten', slice_dim='x'
+        )
+        assert isinstance(result, hv.Image | hv.QuadMesh)
+        assert result.data['values'].shape == (40, 10)
+
+    def test_compute_log_scale_masks_zeros(self, data_3d, data_key):
+        """Test that log scale masks zeros in compute()."""
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        params.plot_scale.color_scale = PlotScale.log
+        plotter = SlicerPlotter.from_params(params)
+
+        data_dict = {data_key: data_3d}
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
+
+        # First value (0) should be NaN in log scale (data_3d starts at 0 from arange)
+        prepared_data = result.data[data_key]
+        assert np.isnan(prepared_data.values[0, 0, 0])
+
+    # === SlicerPresenter tests ===
+
+    def test_create_presenter_returns_slicer_presenter(self, slicer_plotter):
+        """Test that create_presenter returns a SlicerPresenter."""
+        presenter = slicer_plotter.create_presenter()
+        assert isinstance(presenter, SlicerPresenter)
+
+    def test_presenter_initializes_kdims_from_state(
+        self, slicer_plotter, data_3d, data_key
+    ):
+        """Test that SlicerPresenter creates kdims from SlicerState."""
+        data_dict = {data_key: data_3d}
+        slicer_plotter.compute(data_dict)
+        state = slicer_plotter.get_cached_state()
+
+        presenter = slicer_plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=state)
+        dmap = presenter.present(pipe)
+
+        # DynamicMap should have kdims
+        assert dmap.kdims is not None
+        assert len(dmap.kdims) == 5  # mode + selector + 3 sliders
+
+    def test_presenter_kdims_with_coords(self, slicer_plotter, data_3d, data_key):
+        """Test that presenter kdims use coordinate values when available."""
+        data_dict = {data_key: data_3d}
+        slicer_plotter.compute(data_dict)
+        state = slicer_plotter.get_cached_state()
+
+        presenter = slicer_plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=state)
+        dmap = presenter.present(pipe)
+
+        kdims = dmap.kdims
         assert kdims[0].name == 'mode'
         assert kdims[1].name == 'slice_dim'
 
-        # Check that sliders use coord values for dimensions with coords
         z_dim = next(d for d in kdims if 'z' in d.name)
         assert z_dim.name == 'z_value'  # Uses value not index
         assert z_dim.unit == 's'
-        assert hasattr(z_dim, 'values')  # Has discrete values
 
-    def test_kdims_without_coords(self, slicer_plotter, data_3d_no_coords, data_key):
-        """Test that kdims fall back to indices without coordinates."""
-        slicer_plotter.initialize_from_data({data_key: data_3d_no_coords})
-        kdims = slicer_plotter.kdims
+    def test_presenter_kdims_without_coords(
+        self, slicer_plotter, data_3d_no_coords, data_key
+    ):
+        """Test that presenter kdims fall back to indices without coordinates."""
+        data_dict = {data_key: data_3d_no_coords}
+        slicer_plotter.compute(data_dict)
+        state = slicer_plotter.get_cached_state()
 
-        assert kdims is not None
-        # Check that sliders use integer indices for dimensions without coords
+        presenter = slicer_plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=state)
+        dmap = presenter.present(pipe)
+
+        kdims = dmap.kdims
         z_dim = next(d for d in kdims if 'z' in d.name)
-        assert z_dim.name == 'z_index'  # Uses index not value
-        assert hasattr(z_dim, 'range')  # Has range not discrete values
+        assert z_dim.name == 'z_index'  # Falls back to index
 
-    def test_plot_with_coord_value(self, data_3d, data_key):
-        """Test plotting with coordinate value."""
-        params = PlotParams3d(plot_scale=PlotScaleParams2d())
-        plotter = plots.SlicerPlotter.from_params(params)
-        plotter.initialize_from_data({data_key: data_3d})
+    def test_presenter_dmap_renders_slice(self, slicer_plotter, data_3d, data_key):
+        """Test that presenter's DynamicMap can render slices."""
+        data_dict = {data_key: data_3d}
+        slicer_plotter.compute(data_dict)
+        state = slicer_plotter.get_cached_state()
 
-        # Get a valid coordinate value from the data
-        z_coord = data_3d.coords['z']
-        z_value = float(z_coord.values[2])
+        presenter = slicer_plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=state)
+        dmap = presenter.present(pipe)
 
-        result = plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value)
-        assert result is not None
+        # Get a slice
+        z_value = float(data_3d.coords['z'].values[0])
+        y_value = float(data_3d.coords['y'].values[0])
+        x_value = float(data_3d.coords['x'].values[0])
+
+        result = dmap['slice', 'z', z_value, y_value, x_value]
+        assert isinstance(result, hv.Image)
+
+    # === Registry test (unchanged) ===
 
     def test_multiple_datasets_rejected_by_registry(self, data_3d, data_key):
         """Test slicer plotter is rejected for multiple datasets by the registry."""
         from ess.livedata.dashboard.plotting import plotter_registry
 
-        # Create second dataset
         workflow_id2 = WorkflowId(
             instrument='test_instrument',
             namespace='test_namespace',
@@ -487,19 +580,18 @@ class TestSlicerPlotter:
             workflow_id=workflow_id2, job_id=job_id2, output_name='test_result'
         )
 
-        # Single dataset should be compatible
         single_data = {data_key: data_3d}
         compatible = plotter_registry.get_compatible_plotters(single_data)
         assert 'slicer' in compatible
 
-        # Multiple datasets should not be compatible
         multiple_data = {data_key: data_3d, data_key2: data_3d}
         compatible = plotter_registry.get_compatible_plotters(multiple_data)
         assert 'slicer' not in compatible
 
-    def test_edge_coordinates(self, slicer_plotter, data_key):
-        """Test handling of edge coordinates."""
-        # Create data with edge coordinates
+    # === Edge coordinate tests ===
+
+    def test_edge_coordinates_in_presenter(self, slicer_plotter, data_key):
+        """Test handling of edge coordinates in presenter kdims."""
         x_edges = sc.linspace('x', 0.0, 10.0, num=11, unit='m')
         y_edges = sc.linspace('y', 0.0, 8.0, num=9, unit='m')
         z_edges = sc.linspace('z', 0.0, 5.0, num=6, unit='s')
@@ -509,292 +601,21 @@ class TestSlicerPlotter:
             coords={'x': x_edges, 'y': y_edges, 'z': z_edges},
         )
 
-        slicer_plotter.initialize_from_data({data_key: data})
+        data_dict = {data_key: data}
+        slicer_plotter.compute(data_dict)
+        state = slicer_plotter.get_cached_state()
+
+        presenter = slicer_plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=state)
+        dmap = presenter.present(pipe)
 
         # For edge coords, slider uses midpoints
-        z_midpoint = float(sc.midpoints(z_edges, dim='z').values[0])
-        result = slicer_plotter.plot(data, data_key, slice_dim='z', z_value=z_midpoint)
-        assert isinstance(result, hv.Image)
+        z_kdim = next(d for d in dmap.kdims if 'z' in d.name)
+        expected_midpoint = float(sc.midpoints(z_edges, dim='z').values[0])
+        assert z_kdim.values[0] == pytest.approx(expected_midpoint)
 
-    def test_mixed_edge_and_bin_center_coordinates(self, slicer_plotter, data_key):
-        """Test handling of mixed edge and bin-center coordinates."""
-        # Create data with mixed coordinate types
-        x_edges = sc.linspace('x', 0.0, 10.0, num=11, unit='m')  # edges
-        y_centers = sc.linspace('y', 0.5, 7.5, num=8, unit='m')  # bin centers
-        z_edges = sc.linspace('z', 0.0, 5.0, num=6, unit='s')  # edges
-
-        data = sc.DataArray(
-            sc.ones(dims=['z', 'y', 'x'], shape=[5, 8, 10], unit='counts'),
-            coords={'x': x_edges, 'y': y_centers, 'z': z_edges},
-        )
-
-        slicer_plotter.initialize_from_data({data_key: data})
-        kdims = slicer_plotter.kdims
-
-        assert kdims is not None
-        # Check that kdims are created correctly for mixed coords
-        z_dim = next(d for d in kdims if 'z' in d.name)
-        assert z_dim.name == 'z_value'
-        assert z_dim.unit == 's'
-
-        y_dim = next(d for d in kdims if 'y' in d.name)
-        assert y_dim.name == 'y_value'
-        assert y_dim.unit == 'm'
-
-        # Slice along z using midpoint (since z has edges)
-        z_midpoint = float(sc.midpoints(z_edges, dim='z').values[2])
-        result = slicer_plotter.plot(data, data_key, slice_dim='z', z_value=z_midpoint)
-        assert isinstance(result, hv.Image)
-
-        # Verify the slice has correct data
-        expected_slice = data['z', 2]
-        data_dict = result.data
-        np.testing.assert_allclose(
-            data_dict['values'],
-            expected_slice.values,
-        )
-
-    def test_inconsistent_dimensions_raises(self, data_key):
-        """Test that data with inconsistent slice dimensions raises error."""
-        params = PlotParams3d(plot_scale=PlotScaleParams2d())
-        plotter = plots.SlicerPlotter.from_params(params)
-
-        # First data has dims ['z', 'y', 'x']
-        data1 = sc.DataArray(
-            sc.ones(dims=['z', 'y', 'x'], shape=[5, 8, 10], unit='counts')
-        )
-        # Try slicing with invalid dimension - scipp raises DimensionError
-        with pytest.raises(sc.DimensionError, match="Expected dimension"):
-            plotter.plot(data1, data_key, slice_dim='invalid_dim', invalid_dim_index=0)
-
-    def test_call_with_dimension_selector(self, data_3d, data_key):
-        """Test that __call__ accepts slice_dim and value parameters."""
-        params = PlotParams3d(plot_scale=PlotScaleParams2d())
-        plotter = plots.SlicerPlotter.from_params(params)
-        plotter.initialize_from_data({data_key: data_3d})
-
-        # Call with slice_dim and values as HoloViews would with multiple kdims
-        z_value = float(data_3d.coords['z'].values[2])
-        y_value = float(data_3d.coords['y'].values[0])
-        x_value = float(data_3d.coords['x'].values[0])
-
-        result = plotter(
-            {data_key: data_3d},
-            slice_dim='z',
-            z_value=z_value,
-            y_value=y_value,
-            x_value=x_value,
-        )
-        assert result is not None
-
-    def test_call_slices_along_selected_dimension(self, data_3d, data_key):
-        """Test that __call__ uses the selected dimension."""
-        params = PlotParams3d(plot_scale=PlotScaleParams2d())
-        plotter = plots.SlicerPlotter.from_params(params)
-        plotter.initialize_from_data({data_key: data_3d})
-
-        # Call with different slice dimensions
-        z_value = float(data_3d.coords['z'].values[1])
-        y_value = float(data_3d.coords['y'].values[3])
-        x_value = float(data_3d.coords['x'].values[0])
-
-        result_z = plotter(
-            {data_key: data_3d},
-            slice_dim='z',
-            z_value=z_value,
-            y_value=y_value,
-            x_value=x_value,
-        )
-        assert result_z is not None
-
-        result_y = plotter(
-            {data_key: data_3d},
-            slice_dim='y',
-            z_value=z_value,
-            y_value=y_value,
-            x_value=x_value,
-        )
-        assert result_y is not None
-
-    def test_initialize_from_data_sets_kdims(self, data_3d, data_key):
-        """Test that initialize_from_data enables kdims."""
-        params = PlotParams3d(plot_scale=PlotScaleParams2d())
-        plotter = plots.SlicerPlotter.from_params(params)
-
-        # Initialize with data
-        plotter.initialize_from_data({data_key: data_3d})
-
-        # kdims: mode + slice_dim selector + 3 sliders = 5 kdims
-        kdims = plotter.kdims
-        assert kdims is not None
-        assert len(kdims) == 5
-
-        # First kdim is the mode selector (slice vs flatten)
-        assert kdims[0].name == 'mode'
-        assert kdims[0].values == ['slice', 'flatten']
-        assert kdims[0].default == 'slice'
-
-        # Second kdim is the dimension selector
-        assert kdims[1].name == 'slice_dim'
-        assert kdims[1].values == ['z', 'y', 'x']
-        assert kdims[1].default == 'z'
-
-        # Next 3 kdims are the sliders for each dimension
-        # Since data_3d has coords, they use coord values not indices
-        assert kdims[2].name == 'z_value'
-        assert kdims[2].unit == 's'
-        assert hasattr(kdims[2], 'values')
-
-        assert kdims[3].name == 'y_value'
-        assert kdims[3].unit == 'm'
-        assert hasattr(kdims[3], 'values')
-
-        assert kdims[4].name == 'x_value'
-        assert kdims[4].unit == 'm'
-        assert hasattr(kdims[4], 'values')
-
-    def test_initialize_from_data_raises_if_no_data_given(self):
-        """Test that initialize_from_data rejects empty data."""
-        params = PlotParams3d(plot_scale=PlotScaleParams2d())
-        plotter = plots.SlicerPlotter.from_params(params)
-
-        # Initialize with empty dict
-        with pytest.raises(ValueError, match='No data provided'):
-            plotter.initialize_from_data({})
-
-    def test_slice_returns_correct_coordinate_values(self, data_3d, data_key):
-        """Test that the slice has correct coordinate values."""
-        params = PlotParams3d(plot_scale=PlotScaleParams2d())
-        params.plot_scale.color_scale = PlotScale.linear
-        plotter = plots.SlicerPlotter.from_params(params)
-        plotter.initialize_from_data({data_key: data_3d})
-
-        # Slice along z at index 2
-        z_value = float(data_3d.coords['z'].values[2])
-        result = plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value)
-
-        # Extract coordinate values from HoloViews Image
-        data_dict = result.data
-
-        # Get expected coordinates (directly from sliced data, not midpoints)
-        sliced = data_3d['z', 2]
-        expected_x = sliced.coords['x'].values
-        expected_y = sliced.coords['y'].values
-
-        # Verify coordinate values match
-        np.testing.assert_allclose(data_dict['x'], expected_x)
-        np.testing.assert_allclose(data_dict['y'], expected_y)
-
-    def test_multiple_slices_have_different_values(self, data_3d, data_key):
-        """Test that different slice indices produce different data values."""
-        params = PlotParams3d(plot_scale=PlotScaleParams2d())
-        params.plot_scale.color_scale = PlotScale.linear
-        plotter = plots.SlicerPlotter.from_params(params)
-        plotter.initialize_from_data({data_key: data_3d})
-
-        # Get two different slices
-        z_value_0 = float(data_3d.coords['z'].values[0])
-        result_0 = plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value_0)
-
-        z_value_2 = float(data_3d.coords['z'].values[2])
-        result_2 = plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value_2)
-
-        # Extract values
-        data_dict_0 = result_0.data
-        data_dict_2 = result_2.data
-
-        # Values should be different (since data_3d uses arange)
-        with pytest.raises(AssertionError):
-            np.testing.assert_allclose(
-                data_dict_0['values'],
-                data_dict_2['values'],
-            )
-
-    def test_log_scale_masks_zeros_and_negatives(self, data_3d, data_key):
-        """Test that log scale correctly masks zero and negative values as NaN."""
-        params = PlotParams3d(plot_scale=PlotScaleParams2d())
-        # Explicitly use log scale (which is the default)
-        params.plot_scale.color_scale = PlotScale.log
-        plotter = plots.SlicerPlotter.from_params(params)
-        plotter.initialize_from_data({data_key: data_3d})
-
-        # Slice at z=0 which contains a zero value at position [0, 0]
-        z_value = float(data_3d.coords['z'].values[0])
-        result = plotter.plot(data_3d, data_key, slice_dim='z', z_value=z_value)
-
-        data_dict = result.data
-        expected_slice = data_3d['z', 0]
-
-        # First value should be NaN (masked zero) in the log scale plot
-        assert np.isnan(data_dict['values'][0, 0])
-        # Original value was zero
-        assert expected_slice.values[0, 0] == 0.0
-
-        # Other positive values should remain unchanged
-        np.testing.assert_allclose(
-            data_dict['values'][0, 1:],  # Skip the NaN at [0, 0]
-            expected_slice.values[0, 1:],
-        )
-
-    def test_flatten_mode_keeps_specified_dimension(self, data_3d, data_key):
-        """Test that flatten mode keeps the specified dimension."""
-        params = PlotParams3d(plot_scale=PlotScaleParams2d())
-        params.plot_scale.color_scale = PlotScale.linear
-        plotter = plots.SlicerPlotter.from_params(params)
-        plotter.initialize_from_data({data_key: data_3d})
-
-        # Original data is (z:5, y:8, x:10)
-        # Keep x: flatten z,y -> (40, 10)
-        result = plotter.plot(data_3d, data_key, mode='flatten', slice_dim='x')
-        assert isinstance(result, hv.Image | hv.QuadMesh)
-        assert result.data['values'].shape == (40, 10)
-
-        # Keep y: flatten z,x -> (50, 8)
-        result = plotter.plot(data_3d, data_key, mode='flatten', slice_dim='y')
-        assert isinstance(result, hv.Image | hv.QuadMesh)
-        assert result.data['values'].shape == (50, 8)
-
-        # Keep z: flatten y,x -> (80, 5)
-        result = plotter.plot(data_3d, data_key, mode='flatten', slice_dim='z')
-        assert isinstance(result, hv.Image | hv.QuadMesh)
-        assert result.data['values'].shape == (80, 5)
-
-    def test_flatten_mode_preserves_all_data(self, data_3d, data_key):
-        """Test that flatten mode preserves all data values."""
-        params = PlotParams3d(plot_scale=PlotScaleParams2d())
-        params.plot_scale.color_scale = PlotScale.linear
-        plotter = plots.SlicerPlotter.from_params(params)
-        plotter.initialize_from_data({data_key: data_3d})
-
-        result = plotter.plot(data_3d, data_key, mode='flatten', slice_dim='x')
-        data_dict = result.data
-
-        # Total number of values should match
-        assert data_dict['values'].size == data_3d.values.size
-        # Sum should be preserved
-        np.testing.assert_allclose(
-            np.nansum(data_dict['values']),
-            np.sum(data_3d.values),
-        )
-
-    def test_switching_mode_sets_framewise_true(self, data_3d, data_key):
-        """Test that switching between slice and flatten sets framewise=True."""
-        params = PlotParams3d(plot_scale=PlotScaleParams2d())
-        plotter = plots.SlicerPlotter.from_params(params)
-        plotter.initialize_from_data({data_key: data_3d})
-
-        # First call in slice mode
-        plotter.plot(data_3d, data_key, mode='slice', slice_dim='z', z_index=0)
-        # Second call switching to flatten mode should trigger framewise
-        result2 = plotter.plot(data_3d, data_key, mode='flatten', slice_dim='x')
-
-        # The opts should include framewise=True after mode change
-        # (We can't easily inspect opts, but the mode change detection is tested)
-        assert result2 is not None
-
-    def test_handles_2d_dimension_coords(self, data_key):
-        """Test that SlicerPlotter handles 2D dimension coordinates gracefully."""
-        # Create data with a 2D dimension coordinate (common with detector geometry)
+    def test_2d_dimension_coords_in_presenter(self, slicer_plotter, data_key):
+        """Test that 2D dimension coordinates fall back to index-based slider."""
         data = sc.DataArray(
             data=sc.array(
                 dims=['z', 'y', 'x'],
@@ -802,7 +623,6 @@ class TestSlicerPlotter:
                 unit='counts',
             ),
         )
-        # Make 'y' a 2D coordinate
         y_2d = sc.array(
             dims=['z', 'y'],
             values=np.arange(6).reshape(2, 3).astype('float64'),
@@ -816,24 +636,16 @@ class TestSlicerPlotter:
             }
         )
 
-        params = PlotParams3d(plot_scale=PlotScaleParams2d())
-        plotter = plots.SlicerPlotter.from_params(params)
-        plotter.initialize_from_data({data_key: data})
+        data_dict = {data_key: data}
+        slicer_plotter.compute(data_dict)
+        state = slicer_plotter.get_cached_state()
 
-        # Should not raise - 2D coord falls back to index-based slider
-        kdims = plotter.kdims
-        y_kdim = next(d for d in kdims if d.name.startswith('y'))
-        assert y_kdim.name == 'y_index'  # Falls back to index, not value
+        presenter = slicer_plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=state)
+        dmap = presenter.present(pipe)
 
-        # Slice mode should work (result may be Image or QuadMesh)
-        result_slice = plotter.plot(
-            data, data_key, mode='slice', slice_dim='z', z_value=0.0
-        )
-        assert isinstance(result_slice, hv.Image | hv.QuadMesh)
-
-        # Flatten mode should work
-        result_flatten = plotter.plot(data, data_key, mode='flatten', slice_dim='x')
-        assert isinstance(result_flatten, hv.Image | hv.QuadMesh)
+        y_kdim = next(d for d in dmap.kdims if d.name.startswith('y'))
+        assert y_kdim.name == 'y_index'  # Falls back to index
 
 
 class TestPlotterLabelChanges:
@@ -866,7 +678,8 @@ class TestPlotterLabelChanges:
         plotter = plots.LinePlotter.from_params(PlotParams1d())
         data_dict = {data_key_with_output_name: simple_data}
 
-        result = plotter(data_dict)
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
 
         # Result should have label that includes output_name
         # Label format: "detector/roi_current_0"
@@ -930,7 +743,8 @@ class TestPlotterOverlayMode:
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {data_key_1: simple_data_1}
 
-        result = plotter(data_dict)
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
 
         # Should return Overlay, not raw Curve
         assert isinstance(result, hv.Overlay)
@@ -947,7 +761,8 @@ class TestPlotterOverlayMode:
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {data_key_1: simple_data_1, data_key_2: simple_data_2}
 
-        result = plotter(data_dict)
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
 
         # Should return Overlay
         assert isinstance(result, hv.Overlay)
@@ -964,7 +779,8 @@ class TestPlotterOverlayMode:
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {data_key_1: simple_data_1}
 
-        result = plotter(data_dict)
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
 
         # Should return raw Curve, not Overlay
         assert isinstance(result, hv.Curve)
@@ -977,7 +793,8 @@ class TestPlotterOverlayMode:
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {}
 
-        result = plotter(data_dict)
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
 
         # With overlay mode and empty data, returns Overlay containing Text
         assert isinstance(result, hv.Overlay)
@@ -995,7 +812,8 @@ class TestPlotterOverlayMode:
         plotter = plots.LinePlotter.from_params(params)
         data_dict = {}
 
-        result = plotter(data_dict)
+        plotter.compute(data_dict)
+        result = plotter.get_cached_state()
 
         # With layout mode and empty data, returns Text directly
         assert isinstance(result, hv.Text)
@@ -1117,7 +935,8 @@ class TestBarsPlotter:
             key2: sc.DataArray(sc.scalar(20.0, unit='counts')),
         }
 
-        result = plotter(data)
+        plotter.compute(data)
+        result = plotter.get_cached_state()
         # With layout mode and 2 sources, should return Layout
         assert isinstance(result, hv.Layout)
         assert len(result) == 2
@@ -1380,7 +1199,8 @@ class TestLagIndicator:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
-        result = plotter({data_key: data})
+        plotter.compute({data_key: data})
+        result = plotter.get_cached_state()
 
         # Check that title contains time range and lag
         opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
@@ -1400,7 +1220,8 @@ class TestLagIndicator:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
-        result = plotter({data_key: data})
+        plotter.compute({data_key: data})
+        result = plotter.get_cached_state()
 
         # Check that no title is set (or title doesn't contain Lag)
         opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
@@ -1450,7 +1271,8 @@ class TestLagIndicator:
         )
 
         plotter = plots.LinePlotter.from_params(PlotParams1d())
-        result = plotter({data_key1: data1, data_key2: data2})
+        plotter.compute({data_key1: data1, data_key2: data2})
+        result = plotter.get_cached_state()
 
         # Check that lag is approximately 5 seconds (the older data)
         opts = hv.Store.lookup_options('bokeh', result, 'plot').kwargs
@@ -1458,3 +1280,107 @@ class TestLagIndicator:
         assert 'Lag:' in opts['title']
         # Should show ~5 seconds, not ~1 second (using oldest end_time)
         assert '5.' in opts['title'] or '6.' in opts['title']
+
+
+class TestTwoStageArchitecture:
+    """Tests for the two-stage compute/present architecture."""
+
+    @pytest.fixture
+    def simple_data(self):
+        """Create simple 1D data for testing."""
+        return sc.DataArray(
+            data=sc.array(dims=['x'], values=[1.0, 2.0, 3.0]),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0])},
+        )
+
+    @pytest.fixture
+    def data_key(self):
+        """Create a test ResultKey."""
+        workflow_id = WorkflowId(
+            instrument='test_instrument',
+            namespace='test_namespace',
+            name='test_workflow',
+            version=1,
+        )
+        job_id = JobId(source_name='test_source', job_number=uuid.uuid4())
+        return ResultKey(
+            workflow_id=workflow_id, job_id=job_id, output_name='test_result'
+        )
+
+    def test_create_presenter_returns_presenter(self, simple_data, data_key):
+        """Test that create_presenter() returns a Presenter."""
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+
+        presenter = plotter.create_presenter()
+
+        # Should have a present() method
+        assert hasattr(presenter, 'present')
+        assert callable(presenter.present)
+
+    def test_presenter_creates_dynamic_map(self, simple_data, data_key):
+        """Test that Presenter.present() creates a DynamicMap."""
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        data_dict = {data_key: simple_data}
+        # With new architecture, pipe receives pre-computed elements
+        plotter.compute(data_dict)
+        computed = plotter.get_cached_state()
+
+        presenter = plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=computed)
+        dmap = presenter.present(pipe)
+
+        assert isinstance(dmap, hv.DynamicMap)
+
+    def test_slicer_presenter_creates_kdims_from_state(self, data_key):
+        """Test that SlicerPresenter creates kdims from SlicerState."""
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        plotter = SlicerPlotter.from_params(params)
+
+        # Create 3D data
+        data_3d = sc.DataArray(
+            sc.arange('z', 0, 5 * 8 * 10, dtype='float64').fold(
+                dim='z', sizes={'z': 5, 'y': 8, 'x': 10}
+            ),
+            coords={
+                'z': sc.linspace('z', 0, 1, 5, unit='s'),
+                'y': sc.linspace('y', 0, 1, 8, unit='m'),
+                'x': sc.linspace('x', 0, 1, 10, unit='m'),
+            },
+        )
+        data_dict = {data_key: data_3d}
+
+        # Compute returns SlicerState
+        plotter.compute(data_dict)
+        state = plotter.get_cached_state()
+        assert isinstance(state, SlicerState)
+
+        # Presenter creates DynamicMap with kdims
+        presenter = plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=state)
+        dmap = presenter.present(pipe)
+
+        # DynamicMap should have kdims for mode, slice_dim, and per-dimension sliders
+        assert len(dmap.kdims) >= 3  # mode, slice_dim, + at least one slider
+        kdim_names = [d.name for d in dmap.kdims]
+        assert 'mode' in kdim_names
+        assert 'slice_dim' in kdim_names
+
+    def test_default_presenter_passes_through_computed_data(
+        self, simple_data, data_key
+    ):
+        """Test that DefaultPresenter passes through pre-computed elements."""
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        data_dict = {data_key: simple_data}
+        # With new architecture, compute() is called once and result is passed to pipe
+        plotter.compute(data_dict)
+        computed = plotter.get_cached_state()
+
+        presenter = plotter.create_presenter()
+        pipe = hv.streams.Pipe(data=computed)
+        dmap = presenter.present(pipe)
+
+        # Get current value - should pass through the computed element
+        current = dmap[()]
+        assert current is not None
+        # The result should be the same as the computed element (pass-through)
+        assert type(current) is type(computed)

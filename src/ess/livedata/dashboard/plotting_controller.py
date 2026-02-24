@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Hashable
 from typing import Any, TypeVar
 
-import holoviews as hv
 import pydantic
 
 from ess.livedata.config.workflow_spec import (
@@ -13,6 +12,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
 )
 
+from .data_service import DataServiceSubscriber
 from .job_service import JobService
 from .plot_params import create_extractors_from_params
 from .plotting import OVERLAY_PATTERNS, PlotterSpec, plotter_registry
@@ -175,8 +175,8 @@ class PlottingController:
         keys_by_role: dict[str, list[ResultKey]],
         plot_name: str,
         params: dict | pydantic.BaseModel,
-        on_first_data: Callable[[Any], None],
-    ) -> None:
+        on_data: Callable[[dict[ResultKey, Any]], None],
+    ) -> DataServiceSubscriber[ResultKey]:
         """
         Set up data pipeline for any plot type.
 
@@ -193,8 +193,16 @@ class PlottingController:
             Name of the plotter to use.
         params
             Plotter parameters as a dict or validated Pydantic model.
-        on_first_data
-            Callback when data is ready for plot creation.
+        on_data
+            Callback invoked on every data update with the assembled data.
+            Called when at least one key from each role has data.
+
+        Returns
+        -------
+        :
+            The data subscriber. Can be unregistered via
+            DataService.unregister_subscriber() to stop receiving updates
+            (e.g., when workflow restarts).
         """
         # Validate params if dict, pass through if already a model
         if isinstance(params, dict):
@@ -209,58 +217,34 @@ class PlottingController:
 
         # Standard path: single subscription with role-aware assembly
         extractors = create_extractors_from_params(all_keys, window, spec)
-        self._stream_manager.make_stream(
+        return self._stream_manager.make_stream(
             keys_by_role=keys_by_role,
-            on_first_data=on_first_data,
+            on_data=on_data,
             extractors=extractors,
         )
 
-    def create_plot_from_pipeline(
+    def create_plotter(
         self,
         plot_name: str,
         params: dict | pydantic.BaseModel,
-        pipe: Any,
-    ) -> hv.DynamicMap:
+    ):
         """
-        Create a plot from an already-initialized data pipeline.
-
-        This is Phase 2 of two-phase plot creation. The pipeline must have
-        data already (typically called after setup_data_pipeline's subscriber
-        has been triggered).
+        Create a plotter instance for the given name and parameters.
 
         Parameters
         ----------
         plot_name:
-            The name of the plotter to use.
+            The name of the plotter to create.
         params:
             The plotter parameters as a dict or validated Pydantic model.
-        pipe:
-            The pipe from setup_data_pipeline() with data available.
 
         Returns
         -------
         :
-            A HoloViews DynamicMap that updates with streaming data.
+            A Plotter instance configured with the given parameters.
         """
         plotter = plotter_registry.create_plotter(plot_name, params=params)
-
-        # ROI request plotters create and return their own DynamicMap with interactive
-        # BoxEdit/PolyDraw edit streams. Standard plotters return plot elements that
-        # we wrap in a DynamicMap below.
+        # ROI request plotters need the ROI publisher
         if isinstance(plotter, ROIPublisherAware):
             plotter.set_roi_publisher(self._roi_publisher)
-            # Get the first data key and its data for the plot() call
-            data_key = next(iter(pipe.data.keys()))
-            data = pipe.data[data_key]
-            # plot() creates and returns the interactive DynamicMap
-            return plotter.plot(data, data_key)
-
-        # Initialize plotter with extracted data from pipe to determine kdims
-        plotter.initialize_from_data(pipe.data)
-
-        # Create DynamicMap with kdims (None if plotter doesn't use them)
-        dmap = hv.DynamicMap(plotter, streams=[pipe], kdims=plotter.kdims, cache_size=1)
-
-        # Return DynamicMap directly without Layout wrapping.
-        # This preserves the plotter's framewise settings when layers are overlaid.
-        return dmap
+        return plotter

@@ -7,13 +7,15 @@ from abc import ABC, abstractmethod
 from contextlib import ExitStack
 
 import panel as pn
-from holoviews import Dimension, streams
+from holoviews import Dimension
 
 from ess.livedata import ServiceBase
 
 from .config_store import ConfigStoreManager
 from .dashboard_services import DashboardServices
 from .kafka_transport import DashboardKafkaTransport
+from .session_registry import SessionId
+from .session_updater import SessionUpdater
 from .transport import NullTransport, Transport
 
 # Global throttling for sliders, etc.
@@ -42,17 +44,14 @@ class DashboardBase(ServiceBase, ABC):
         self._exit_stack = ExitStack()
         self._exit_stack.__enter__()
 
-        self._callback = None
-
         # Config store manager for file-backed persistent UI state (GUI dashboards)
         config_manager = ConfigStoreManager(instrument=instrument, store_type='file')
 
-        # Setup all dashboard services
+        # Setup all dashboard services (includes session registry)
         self._services = DashboardServices(
             instrument=instrument,
             dev=dev,
             exit_stack=self._exit_stack,
-            pipe_factory=streams.Pipe,
             transport=self._create_transport(transport),
             config_manager=config_manager,
         )
@@ -89,18 +88,19 @@ class DashboardBase(ServiceBase, ABC):
         pass
 
     @abstractmethod
-    def create_main_content(self) -> pn.viewable.Viewable:
-        """Override this method to create the main dashboard content."""
+    def create_main_content(
+        self, session_updater: SessionUpdater
+    ) -> pn.viewable.Viewable:
+        """
+        Override this method to create the main dashboard content.
 
-    def _step(self):
-        """Step function for periodic updates."""
-        # We use hold() to ensure that the UI does not update repeatedly when multiple
-        # messages are processed in a single step. This is important to avoid, e.g.,
-        # multiple lines in the same plot, or different plots updating in short
-        # succession, which is visually distracting.
-        # Furthermore, this improves performance by reducing the number of re-renders.
-        with pn.io.hold():
-            self._services.orchestrator.update()
+        Parameters
+        ----------
+        session_updater:
+            The session updater for this browser session. Widgets that need
+            to register handlers for periodic updates should receive this
+            in their constructor.
+        """
 
     def get_dashboard_title(self) -> str:
         """Get the dashboard title. Override for custom titles."""
@@ -110,37 +110,65 @@ class DashboardBase(ServiceBase, ABC):
         """Get the header background color. Override for custom colors."""
         return '#2596be'
 
-    def start_periodic_updates(self, period: int = 500) -> None:
+    def _get_session_id(self) -> SessionId:
+        """Get the current session ID from Panel state."""
+        session_context = pn.state.curdoc.session_context
+        if session_context is not None:
+            return SessionId(session_context.id)
+        # Fallback for non-session contexts (e.g., testing)
+        return SessionId('unknown')
+
+    def _create_session_updater(self) -> SessionUpdater:
         """
-        Start periodic updates for the dashboard.
+        Create a SessionUpdater for the current browser session.
+
+        The updater auto-registers with the session registry.
+        """
+        return SessionUpdater(
+            session_id=self._get_session_id(),
+            session_registry=self._services.session_registry,
+            notification_queue=self._services.notification_queue,
+        )
+
+    def _start_periodic_callback(
+        self, session_updater: SessionUpdater, period: int = 500
+    ) -> None:
+        """
+        Start the periodic callback for a session.
 
         Parameters
         ----------
+        session_updater:
+            The session updater to drive with the periodic callback.
         period:
             The period in milliseconds for the periodic update step.
-            Default is 500 ms. Even if the backend produces updates, e.g., once per
-            second, this default should reduce UI lag somewhat. If there are no new
-            messages, the step function should not do anything.
         """
-        if self._callback is not None:
-            # Callback from previous session, e.g., before reloading the page. As far as
-            # I can tell the garbage collector does clean this up eventually, but
-            # let's be explicit.
-            self._callback.stop()
+        session_id = session_updater.session_id
+        session_registry = self._services.session_registry
 
         def _safe_step():
             try:
-                self._step()
+                session_updater.periodic_update()
             except Exception:
                 self._logger.exception("Error in periodic update step.")
 
-        self._callback = pn.state.add_periodic_callback(_safe_step, period=period)
-        self._logger.info("Periodic updates started")
+        callback = pn.state.add_periodic_callback(_safe_step, period=period)
+
+        def _cleanup_session(session_context):
+            self._logger.info("Session destroyed: %s", session_id)
+            session_registry.unregister(session_id)
+            callback.stop()
+
+        pn.state.on_session_destroyed(_cleanup_session)
+        self._logger.info("Periodic updates started for session %s", session_id)
 
     def create_layout(self) -> pn.template.MaterialTemplate:
         """Create the basic dashboard layout."""
+        # Create session updater first so widgets can register handlers
+        session_updater = self._create_session_updater()
+
         sidebar_content = self.create_sidebar_content()
-        main_content = self.create_main_content()
+        main_content = self.create_main_content(session_updater)
 
         template = pn.template.MaterialTemplate(
             title=self.get_dashboard_title(),
@@ -150,7 +178,7 @@ class DashboardBase(ServiceBase, ABC):
         )
         # Inject CSS for offline mode (replaces Material Icons font with Unicode)
         template.config.raw_css.extend(self.get_raw_css())
-        self.start_periodic_updates()
+        self._start_periodic_callback(session_updater)
         return template
 
     def get_raw_css(self) -> list[str]:
