@@ -170,7 +170,6 @@ class DashboardServices:
         roi_publisher = ROIPublisher(sink=transport_resources.roi_sink)
 
         self.plotting_controller = PlottingController(
-            job_service=self.job_service,
             stream_manager=self.stream_manager,
             roi_publisher=roi_publisher,
         )

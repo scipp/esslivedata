@@ -18,7 +18,6 @@ from .extractors import (
     UpdateExtractor,
     WindowAggregatingExtractor,
 )
-from .job_service import JobService
 from .plot_params import WindowMode, WindowParams
 from .plotter_registry import PlotterSpec, plotter_registry
 from .plotting import OVERLAY_PATTERNS
@@ -34,13 +33,11 @@ class PlottingController:
     """
     Controller for managing plotting operations and configurations.
 
-    Coordinates between job services, stream managers, and plot creation,
+    Coordinates between stream managers and plot creation,
     using a two-phase pipeline for creating plots with streaming data.
 
     Parameters
     ----------
-    job_service:
-        Service for accessing job data and information.
     stream_manager:
         Manager for creating data streams.
     roi_publisher:
@@ -49,11 +46,9 @@ class PlottingController:
 
     def __init__(
         self,
-        job_service: JobService,
         stream_manager: StreamManager,
         roi_publisher: ROIPublisher | None = None,
     ) -> None:
-        self._job_service = job_service
         self._stream_manager = stream_manager
         self._roi_publisher = roi_publisher
 

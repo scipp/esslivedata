@@ -10,7 +10,6 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
 )
 from ess.livedata.dashboard.data_service import DataService
-from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.stream_manager import StreamManager
 
@@ -24,22 +23,15 @@ def data_service():
 
 
 @pytest.fixture
-def job_service():
-    """Create a JobService for testing."""
-    return JobService()
-
-
-@pytest.fixture
 def stream_manager(data_service):
     """Create a StreamManager for testing."""
     return StreamManager(data_service=data_service)
 
 
 @pytest.fixture
-def plotting_controller(job_service, stream_manager):
+def plotting_controller(stream_manager):
     """Create a PlottingController for testing."""
     return PlottingController(
-        job_service=job_service,
         stream_manager=stream_manager,
     )
 
