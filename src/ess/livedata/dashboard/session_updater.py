@@ -174,15 +174,7 @@ class SessionUpdater:
     def _show_notifications(self, notifications: list[NotificationEvent]) -> None:
         """Show notifications using Panel's notification system."""
         for event in notifications:
-            try:
-                show_notification(event)
-            except Exception:
-                # Panel notifications may not be available in all contexts
-                logger.debug(
-                    "Could not show notification in session %s: %s",
-                    self._session_id,
-                    event.message,
-                )
+            show_notification(event)
 
     def cleanup(self) -> None:
         """Clean up session resources."""
