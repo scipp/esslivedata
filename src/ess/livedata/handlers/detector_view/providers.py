@@ -10,7 +10,6 @@ and image generation in the detector view workflow.
 from __future__ import annotations
 
 import scipp as sc
-
 from ess.reduce.nexus.types import EmptyDetector, RawDetector, SampleRun
 from ess.reduce.time_of_flight.types import TofDetector
 

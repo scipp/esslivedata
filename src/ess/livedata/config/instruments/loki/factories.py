@@ -10,21 +10,9 @@ from .specs import SansWorkflowParams
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize LOKI-specific factories and workflows."""
+    import ess.loki.live  # noqa: F401
     import sciline
     import sciline.typing
-    from scippnexus import NXdetector
-
-    import ess.loki.live  # noqa: F401
-    from ess import loki
-    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
-    from ess.livedata.handlers.detector_view import (
-        DetectorViewFactory,
-        GeometricViewConfig,
-        NeXusDetectorSource,
-    )
-    from ess.livedata.handlers.stream_processor_workflow import (
-        StreamProcessorWorkflow,
-    )
     from ess.reduce.nexus.types import NeXusData, NeXusDetectorName, SampleRun
     from ess.sans import types as sans_types
     from ess.sans.types import (
@@ -34,6 +22,18 @@ def setup_factories(instrument: Instrument) -> None:
         Numerator,
         ReducedQ,
         Transmission,
+    )
+    from scippnexus import NXdetector
+
+    from ess import loki
+    from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
+    from ess.livedata.handlers.detector_view import (
+        DetectorViewFactory,
+        GeometricViewConfig,
+        NeXusDetectorSource,
+    )
+    from ess.livedata.handlers.stream_processor_workflow import (
+        StreamProcessorWorkflow,
     )
 
     # Created once outside workflow wrappers since this configures some files from pooch

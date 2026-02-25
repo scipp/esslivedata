@@ -10,10 +10,9 @@ workflows with configurable projection types and parameters.
 from __future__ import annotations
 
 import scipp as sc
-from scippnexus import NXdetector
-
 from ess.reduce.nexus.types import NeXusData, SampleRun
 from ess.reduce.time_of_flight.types import TofLookupTableFilename
+from scippnexus import NXdetector
 
 from ..accumulators import NoCopyAccumulator, NoCopyWindowAccumulator
 

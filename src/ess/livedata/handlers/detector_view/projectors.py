@@ -20,7 +20,6 @@ from typing import Protocol
 
 import numpy as np
 import scipp as sc
-
 from ess.reduce.live.raw import (
     CalibratedPositionWithNoisyReplicas,
     DetectorViewResolution,

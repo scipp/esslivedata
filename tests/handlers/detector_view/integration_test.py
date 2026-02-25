@@ -4,10 +4,10 @@
 
 import numpy as np
 import pytest
+from ess.reduce.nexus.types import NeXusData, SampleRun
 from scippnexus import NXdetector
 
 from ess.livedata.config.models import ROI, Interval, RectangleROI
-from ess.reduce.nexus.types import NeXusData, SampleRun
 
 from .utils import make_fake_ungrouped_nexus_data, make_test_factory, make_test_params
 

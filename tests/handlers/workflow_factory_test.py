@@ -2,11 +2,11 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import pytest
 import sciline
+from ess.reduce.streaming import StreamProcessor
 from pydantic import BaseModel, ValidationError
 
 from ess.livedata.config.workflow_spec import WorkflowConfig, WorkflowId, WorkflowSpec
 from ess.livedata.handlers.workflow_factory import WorkflowFactory
-from ess.reduce.streaming import StreamProcessor
 
 
 class MyParams(BaseModel):
