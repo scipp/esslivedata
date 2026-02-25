@@ -16,11 +16,8 @@ from contextlib import contextmanager, nullcontext
 import panel as pn
 import structlog
 
-from .notification_queue import (
-    NotificationEvent,
-    NotificationQueue,
-    NotificationType,
-)
+from .notification_queue import NotificationEvent, NotificationQueue
+from .notifications import show_notification
 from .session_registry import SessionId, SessionRegistry
 from .widgets.heartbeat_widget import HeartbeatWidget
 
@@ -178,19 +175,7 @@ class SessionUpdater:
         """Show notifications using Panel's notification system."""
         for event in notifications:
             try:
-                notification_type = event.notification_type
-                if notification_type == NotificationType.SUCCESS:
-                    pn.state.notifications.success(
-                        event.message, duration=event.duration
-                    )
-                elif notification_type == NotificationType.WARNING:
-                    pn.state.notifications.warning(
-                        event.message, duration=event.duration
-                    )
-                elif notification_type == NotificationType.ERROR:
-                    pn.state.notifications.error(event.message, duration=event.duration)
-                else:
-                    pn.state.notifications.info(event.message, duration=event.duration)
+                show_notification(event)
             except Exception:
                 # Panel notifications may not be available in all contexts
                 logger.debug(

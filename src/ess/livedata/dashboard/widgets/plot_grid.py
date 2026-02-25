@@ -8,7 +8,7 @@ from typing import Any
 
 import panel as pn
 
-from ..notification_queue import NotificationType, notification_duration
+from ..notifications import show_error
 from ..plot_orchestrator import CellGeometry
 
 
@@ -425,10 +425,7 @@ class PlotGrid:
 
     def _show_error(self, message: str) -> None:
         """Display an error notification."""
-        if pn.state.notifications is not None:
-            pn.state.notifications.error(
-                message, duration=notification_duration(NotificationType.ERROR)
-            )
+        show_error(message)
 
     def insert_widget_at(self, geometry: CellGeometry, widget: Any) -> None:
         """

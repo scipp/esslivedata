@@ -31,10 +31,7 @@ from ess.livedata.dashboard.data_roles import PRIMARY, X_AXIS, Y_AXIS
 
 if TYPE_CHECKING:
     from ess.livedata.config import Instrument
-from ess.livedata.dashboard.notification_queue import (
-    NotificationType,
-    notification_duration,
-)
+from ess.livedata.dashboard.notifications import show_error
 from ess.livedata.dashboard.plot_configuration_adapter import PlotConfigurationAdapter
 from ess.livedata.dashboard.plot_orchestrator import (
     DataSourceConfig,
@@ -1029,10 +1026,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
 
     def _show_error(self, message: str) -> None:
         """Display an error notification."""
-        if pn.state.notifications is not None:
-            pn.state.notifications.error(
-                message, duration=notification_duration(NotificationType.ERROR)
-            )
+        show_error(message)
 
 
 class PlotConfigModal:
