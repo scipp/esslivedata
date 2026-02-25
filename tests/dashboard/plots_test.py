@@ -3,6 +3,7 @@
 
 import uuid
 import warnings
+from typing import ClassVar
 
 import holoviews as hv
 import numpy as np
@@ -1384,3 +1385,148 @@ class TestTwoStageArchitecture:
         assert current is not None
         # The result should be the same as the computed element (pass-through)
         assert type(current) is type(computed)
+
+
+class TestBuildSaveFilename:
+    """Tests for _build_save_filename."""
+
+    @pytest.fixture
+    def make_key(self):
+        """Factory for creating ResultKeys with specified parameters."""
+
+        def _make(
+            instrument: str = 'dream',
+            source_name: str = 'monitor',
+            output_name: str = 'counts',
+        ) -> ResultKey:
+            workflow_id = WorkflowId(
+                instrument=instrument,
+                namespace='ns',
+                name='wf',
+                version=1,
+            )
+            job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
+            return ResultKey(
+                workflow_id=workflow_id, job_id=job_id, output_name=output_name
+            )
+
+        return _make
+
+    def test_returns_none_for_empty_data(self):
+        assert plots._build_save_filename({}) is None
+
+    def test_single_source_with_end_time(self, make_key):
+        key = make_key()
+        da = sc.DataArray(
+            data=sc.array(dims=['x'], values=[1.0]),
+            coords={
+                'x': sc.array(dims=['x'], values=[0.0]),
+                'end_time': sc.scalar(1_700_000_000_000_000_000),
+            },
+        )
+        result = plots._build_save_filename({key: da})
+        assert result is not None
+        assert result.startswith('DREAM_monitor_counts_')
+        # Verify it ends with a filename-safe timestamp pattern
+        time_part = result.split('_', 3)[3]
+        assert 'T' in time_part
+        assert ':' not in time_part
+
+    def test_multiple_sources_sorted(self, make_key):
+        key_b = make_key(source_name='beta')
+        key_a = make_key(source_name='alpha')
+        da = sc.DataArray(data=sc.array(dims=['x'], values=[1.0]))
+        result = plots._build_save_filename({key_b: da, key_a: da})
+        assert result is not None
+        assert 'alpha-beta' in result
+
+    def test_multiple_outputs_sorted(self, make_key):
+        key_z = make_key(output_name='z_result')
+        key_a = make_key(output_name='a_result')
+        da = sc.DataArray(data=sc.array(dims=['x'], values=[1.0]))
+        result = plots._build_save_filename({key_z: da, key_a: da})
+        assert result is not None
+        assert 'a_result-z_result' in result
+
+    def test_instrument_is_uppercased(self, make_key):
+        key = make_key(instrument='loki')
+        da = sc.DataArray(data=sc.array(dims=['x'], values=[1.0]))
+        result = plots._build_save_filename({key: da})
+        assert result is not None
+        assert result.startswith('LOKI_')
+
+    def test_falls_back_to_current_time_without_end_time(self, make_key):
+        key = make_key()
+        da = sc.DataArray(data=sc.array(dims=['x'], values=[1.0]))
+        result = plots._build_save_filename({key: da})
+        assert result is not None
+        # Should still produce a valid filename
+        assert result.startswith('DREAM_monitor_counts_')
+
+    def test_slash_in_source_name_replaced(self, make_key):
+        key = make_key(source_name='det/bank1')
+        da = sc.DataArray(data=sc.array(dims=['x'], values=[1.0]))
+        result = plots._build_save_filename({key: da})
+        assert result is not None
+        assert '/' not in result
+
+
+class TestMakeSaveFilenameHook:
+    """Tests for _make_save_filename_hook."""
+
+    def test_sets_filename_on_save_tool(self):
+        from bokeh.models.tools import SaveTool
+
+        save_tool = SaveTool()
+
+        class FakePlot:
+            class state:
+                class toolbar:
+                    tools: ClassVar = [save_tool]
+
+        hook = plots._make_save_filename_hook('DREAM_monitor_counts_2026-02-23T12-34')
+        hook(FakePlot(), None)
+        assert save_tool.filename == 'DREAM_monitor_counts_2026-02-23T12-34'
+
+    def test_ignores_non_save_tools(self):
+        from bokeh.models.tools import PanTool
+
+        pan_tool = PanTool()
+
+        class FakePlot:
+            class state:
+                class toolbar:
+                    tools: ClassVar = [pan_tool]
+
+        hook = plots._make_save_filename_hook('test_filename')
+        # Should not raise
+        hook(FakePlot(), None)
+
+
+class TestComputeAppliesSaveFilenameHook:
+    """Tests that Plotter.compute() attaches the save filename hook."""
+
+    @pytest.fixture
+    def simple_data(self):
+        return sc.DataArray(
+            data=sc.array(dims=['x'], values=[1, 2, 3]),
+            coords={'x': sc.array(dims=['x'], values=[10, 20, 30])},
+        )
+
+    def test_compute_attaches_hooks_to_element(self, data_key, simple_data):
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.compute({data_key: simple_data})
+        result = plotter.get_cached_state()
+
+        # Render with Bokeh to trigger hooks
+        renderer = BokehRenderer.instance(mode='server')
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            bokeh_fig, _ = renderer.get_plot(result).state, None
+
+        # Verify SaveTool has the expected filename set
+        from bokeh.models.tools import SaveTool
+
+        save_tools = [t for t in bokeh_fig.toolbar.tools if isinstance(t, SaveTool)]
+        assert len(save_tools) == 1
+        assert save_tools[0].filename.startswith('TEST_INSTRUMENT_')

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import time
 import weakref
+from collections.abc import Callable
 from typing import Any, cast
 
 import holoviews as hv
@@ -28,7 +29,7 @@ from .plot_params import (
     TickParams,
 )
 from .scipp_to_holoviews import to_holoviews
-from .time_utils import format_time_ns_local
+from .time_utils import format_time_ns_for_filename, format_time_ns_local
 
 
 class PresenterBase:
@@ -156,6 +157,77 @@ def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
     else:
         end_str = format_time_ns_local(min_end)
         return f'{end_str} (Lag: {lag_s:.1f}s)'
+
+
+def _build_save_filename(data: dict[ResultKey, sc.DataArray]) -> str | None:
+    """
+    Build a descriptive filename for the Bokeh SaveTool from plot data.
+
+    Extracts instrument, source names, output names, and the latest data
+    timestamp to produce a filename like "DREAM_monitor_counts_2026-02-23T12-34".
+
+    Parameters
+    ----------
+    data:
+        Dictionary mapping ResultKeys to DataArrays.
+
+    Returns
+    -------
+    :
+        Filename string (without extension), or None if data is empty.
+    """
+    if not data:
+        return None
+
+    first_key = next(iter(data))
+    instrument = first_key.workflow_id.instrument.upper()
+
+    source_names = sorted({k.job_id.source_name for k in data})
+    output_names = sorted({k.output_name for k in data})
+
+    sources_part = '-'.join(source_names)
+    outputs_part = '-'.join(output_names)
+
+    max_end: int | None = None
+    for da in data.values():
+        if 'end_time' in da.coords:
+            end_ns = da.coords['end_time'].value
+            if max_end is None or end_ns > max_end:
+                max_end = end_ns
+
+    time_ns = max_end if max_end is not None else time.time_ns()
+    time_part = format_time_ns_for_filename(time_ns)
+
+    filename = f"{instrument}_{sources_part}_{outputs_part}_{time_part}"
+    return filename.replace('/', '-')
+
+
+def _make_save_filename_hook(
+    filename: str,
+) -> Callable[[Any, Any], None]:
+    """
+    Create a HoloViews hook that sets the SaveTool filename on a Bokeh figure.
+
+    Parameters
+    ----------
+    filename:
+        Filename (without extension) to set on the SaveTool.
+
+    Returns
+    -------
+    :
+        A hook function compatible with ``hv.Element.opts(hooks=[...])``.
+    """
+
+    def hook(plot: Any, element: Any) -> None:
+        del element
+        from bokeh.models.tools import SaveTool
+
+        for tool in plot.state.toolbar.tools:
+            if isinstance(tool, SaveTool):
+                tool.filename = filename
+
+    return hook
 
 
 class Plotter:
@@ -386,6 +458,11 @@ class Plotter:
             ]
 
         plots = [self._apply_generic_options(p) for p in plots]
+
+        save_filename = _build_save_filename(data)
+        if save_filename is not None:
+            hook = _make_save_filename_hook(save_filename)
+            plots = [p.opts(hooks=[hook]) for p in plots]
 
         if self.layout_params.combine_mode == 'overlay':
             result = hv.Overlay(plots).opts(shared_axes=True)
