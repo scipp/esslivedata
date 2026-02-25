@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import threading
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from .session_registry import SessionId
@@ -27,13 +27,32 @@ class NotificationType(Enum):
     ERROR = 'error'
 
 
+# Display durations in milliseconds per notification type.
+# 0 means the notification persists until the user dismisses it.
+_DURATIONS: dict[NotificationType, int] = {
+    NotificationType.ERROR: 0,
+    NotificationType.WARNING: 8000,
+    NotificationType.SUCCESS: 3000,
+    NotificationType.INFO: 3000,
+}
+
+
+def notification_duration(notification_type: NotificationType) -> int:
+    """Return the display duration in milliseconds for a notification type."""
+    return _DURATIONS[notification_type]
+
+
 @dataclass
 class NotificationEvent:
     """A notification event to be shown to users."""
 
     message: str
     notification_type: NotificationType = NotificationType.INFO
-    duration: int = 3000  # milliseconds
+    duration: int | None = field(default=None)
+
+    def __post_init__(self) -> None:
+        if self.duration is None:
+            self.duration = _DURATIONS[self.notification_type]
 
 
 @dataclass

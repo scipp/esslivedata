@@ -16,6 +16,7 @@ import yaml
 
 from ...config.grid_template import GridSpec
 from ...config.workflow_spec import WorkflowId, WorkflowSpec
+from ..notification_queue import NotificationType, notification_duration
 from ..plot_orchestrator import (
     GridId,
     PlotCell,
@@ -666,7 +667,9 @@ class PlotGridManager:
     def _show_upload_error(self, message: str) -> None:
         """Display an upload error notification."""
         if pn.state.notifications is not None:
-            pn.state.notifications.error(message, duration=5000)
+            pn.state.notifications.error(
+                message, duration=notification_duration(NotificationType.ERROR)
+            )
 
     def shutdown(self) -> None:
         """Unsubscribe from lifecycle events."""
