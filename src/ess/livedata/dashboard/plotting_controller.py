@@ -19,8 +19,12 @@ from .extractors import (
     WindowAggregatingExtractor,
 )
 from .plot_params import WindowMode, WindowParams
-from .plotter_registry import PlotterSpec, plotter_registry
-from .plotting import OVERLAY_PATTERNS
+from .plotter_registry import (
+    OVERLAY_PATTERNS,
+    PlotterSpec,
+    _register_all_plotters,
+    plotter_registry,
+)
 from .roi_publisher import ROIPublisher
 from .roi_request_plots import ROIPublisherAware
 from .stream_manager import StreamManager
@@ -49,6 +53,7 @@ class PlottingController:
         stream_manager: StreamManager,
         roi_publisher: ROIPublisher | None = None,
     ) -> None:
+        _register_all_plotters()
         self._stream_manager = stream_manager
         self._roi_publisher = roi_publisher
 

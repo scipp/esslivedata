@@ -488,7 +488,7 @@ class TestOverlayPatterns:
 
     def test_image_has_readback_patterns(self):
         """Test that image plotter suggests readback overlays only."""
-        from ess.livedata.dashboard.plotting import OVERLAY_PATTERNS
+        from ess.livedata.dashboard.plotter_registry import OVERLAY_PATTERNS
 
         assert 'image' in OVERLAY_PATTERNS
         patterns = OVERLAY_PATTERNS['image']
@@ -500,7 +500,7 @@ class TestOverlayPatterns:
 
     def test_readback_suggests_request(self):
         """Test that readback plotters suggest their corresponding request overlays."""
-        from ess.livedata.dashboard.plotting import OVERLAY_PATTERNS
+        from ess.livedata.dashboard.plotter_registry import OVERLAY_PATTERNS
 
         # rectangles_readback suggests rectangles_request
         assert 'rectangles_readback' in OVERLAY_PATTERNS
@@ -516,7 +516,7 @@ class TestOverlayPatterns:
 
     def test_patterns_have_correct_structure(self):
         """Test that patterns are (output_name, plotter_name) tuples."""
-        from ess.livedata.dashboard.plotting import OVERLAY_PATTERNS
+        from ess.livedata.dashboard.plotter_registry import OVERLAY_PATTERNS
 
         for patterns in OVERLAY_PATTERNS.values():
             for pattern in patterns:
@@ -527,7 +527,7 @@ class TestOverlayPatterns:
 
     def test_overlay_chain_enforces_order(self):
         """Test that overlay chain enforces image -> readback -> request order."""
-        from ess.livedata.dashboard.plotting import OVERLAY_PATTERNS
+        from ess.livedata.dashboard.plotter_registry import OVERLAY_PATTERNS
 
         # Image can only go to readback
         image_overlays = [p[1] for p in OVERLAY_PATTERNS['image']]
