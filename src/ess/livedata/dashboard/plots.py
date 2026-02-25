@@ -31,6 +31,25 @@ from .scipp_to_holoviews import to_holoviews
 from .time_utils import format_time_ns_local
 
 
+def _normalize_to_rate(da: sc.DataArray) -> sc.DataArray:
+    """Normalize data to rate (per second) using start_time/end_time coords.
+
+    Only applies to data with unit 'counts'. Returns the input unchanged if
+    the unit is not 'counts', the required time coordinates are missing, or
+    the duration is not positive.
+    """
+    if da.unit != 'counts':
+        return da
+    if 'start_time' not in da.coords or 'end_time' not in da.coords:
+        return da
+    duration_s = (da.coords['end_time'] - da.coords['start_time']).to(
+        unit='s', dtype='float64'
+    )
+    if duration_s.value <= 0:
+        return da
+    return da / duration_s
+
+
 class PresenterBase:
     """
     Base class for presenters with dirty flag tracking.
@@ -171,6 +190,7 @@ class Plotter:
         *,
         aspect_params: PlotAspect | None = None,
         layout_params: LayoutParams | None = None,
+        normalize_to_rate: bool = False,
         **kwargs,
     ):
         """
@@ -180,9 +200,13 @@ class Plotter:
         ----------
         layout_params:
             Layout parameters for combining multiple datasets. If None, uses defaults.
+        normalize_to_rate:
+            If True, normalize counts data to rate (counts/s) using
+            start_time/end_time coordinates before plotting.
         **kwargs:
             Additional keyword arguments passed to the autoscaler if created.
         """
+        self._normalize_to_rate = normalize_to_rate
         self._cached_state: Any | None = None
         self._presenters: weakref.WeakSet[PresenterBase] = weakref.WeakSet()
         self.autoscaler_kwargs = kwargs
@@ -365,6 +389,9 @@ class Plotter:
         **kwargs:
             Additional keyword arguments passed to plot().
         """
+        if self._normalize_to_rate:
+            data = {key: _normalize_to_rate(da) for key, da in data.items()}
+
         plots: list[hv.Element] = []
         try:
             for data_key, da in data.items():
@@ -520,6 +547,7 @@ class LinePlotter(Plotter):
         """Create LinePlotter from PlotParams1d."""
         from .plot_params import Curve1dRenderMode
 
+        rate = getattr(params, 'rate', None)
         return cls(
             grow_threshold=0.1,
             layout_params=params.layout,
@@ -527,6 +555,7 @@ class LinePlotter(Plotter):
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
             as_histogram=params.curve.mode == Curve1dRenderMode.histogram,
+            normalize_to_rate=rate.normalize_to_rate if rate is not None else False,
         )
 
     def plot(
@@ -571,12 +600,14 @@ class ImagePlotter(Plotter):
     @classmethod
     def from_params(cls, params: PlotParams2d):
         """Create ImagePlotter from PlotParams2d."""
+        rate = getattr(params, 'rate', None)
         return cls(
             grow_threshold=0.1,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
+            normalize_to_rate=rate.normalize_to_rate if rate is not None else False,
         )
 
     def plot(
@@ -630,6 +661,7 @@ class BarsPlotter(Plotter):
             horizontal=params.orientation.horizontal,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
+            normalize_to_rate=params.rate.normalize_to_rate,
         )
 
     def plot(
@@ -704,6 +736,7 @@ class Overlay1DPlotter(Plotter):
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
+            normalize_to_rate=params.rate.normalize_to_rate,
         )
 
     def plot(

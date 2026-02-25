@@ -1384,3 +1384,245 @@ class TestTwoStageArchitecture:
         assert current is not None
         # The result should be the same as the computed element (pass-through)
         assert type(current) is type(computed)
+
+
+def _make_time_coords(duration_s: float = 5.0) -> dict[str, sc.Variable]:
+    """Create start_time/end_time coords with given duration."""
+    import time
+
+    now_ns = time.time_ns()
+    return {
+        'start_time': sc.scalar(now_ns - int(duration_s * 1e9), unit='ns'),
+        'end_time': sc.scalar(now_ns, unit='ns'),
+    }
+
+
+class TestNormalizeToRate:
+    """Tests for the _normalize_to_rate helper function."""
+
+    def test_counts_data_is_normalized(self):
+        """Counts data with valid time coords returns data / duration_s."""
+        time_coords = _make_time_coords(duration_s=5.0)
+        da = sc.DataArray(
+            sc.array(dims=['x'], values=[10.0, 20.0, 50.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 3.0, unit='m'),
+                **time_coords,
+            },
+        )
+        result = plots._normalize_to_rate(da)
+        assert result.unit == 'counts/s'
+        expected = da.values / 5.0
+        np.testing.assert_allclose(result.values, expected, rtol=0.01)
+
+    def test_non_counts_unit_unchanged(self):
+        """Data with non-counts unit is returned unchanged."""
+        time_coords = _make_time_coords(duration_s=5.0)
+        da = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='m'),
+            coords={
+                'x': sc.arange('x', 2.0, unit='m'),
+                **time_coords,
+            },
+        )
+        result = plots._normalize_to_rate(da)
+        assert result.unit == 'm'
+        assert sc.identical(result, da)
+
+    def test_missing_start_time_unchanged(self):
+        """Data missing start_time is returned unchanged."""
+        import time
+
+        da = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 2.0, unit='m'),
+                'end_time': sc.scalar(time.time_ns(), unit='ns'),
+            },
+        )
+        result = plots._normalize_to_rate(da)
+        assert sc.identical(result, da)
+
+    def test_missing_end_time_unchanged(self):
+        """Data missing end_time is returned unchanged."""
+        import time
+
+        da = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 2.0, unit='m'),
+                'start_time': sc.scalar(time.time_ns(), unit='ns'),
+            },
+        )
+        result = plots._normalize_to_rate(da)
+        assert sc.identical(result, da)
+
+    def test_zero_duration_unchanged(self):
+        """Data with zero duration (start == end) is returned unchanged."""
+        import time
+
+        t = time.time_ns()
+        da = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 2.0, unit='m'),
+                'start_time': sc.scalar(t, unit='ns'),
+                'end_time': sc.scalar(t, unit='ns'),
+            },
+        )
+        result = plots._normalize_to_rate(da)
+        assert sc.identical(result, da)
+
+    def test_negative_duration_unchanged(self):
+        """Data with negative duration (end < start) is returned unchanged."""
+        import time
+
+        now = time.time_ns()
+        da = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 2.0, unit='m'),
+                'start_time': sc.scalar(now, unit='ns'),
+                'end_time': sc.scalar(now - int(1e9), unit='ns'),
+            },
+        )
+        result = plots._normalize_to_rate(da)
+        assert sc.identical(result, da)
+
+    def test_works_with_2d_data(self):
+        """Normalization works with multi-dimensional (2D image) data."""
+        time_coords = _make_time_coords(duration_s=2.0)
+        da = sc.DataArray(
+            sc.array(
+                dims=['y', 'x'], values=[[10.0, 20.0], [30.0, 40.0]], unit='counts'
+            ),
+            coords={
+                'x': sc.arange('x', 2.0, unit='m'),
+                'y': sc.arange('y', 2.0, unit='m'),
+                **time_coords,
+            },
+        )
+        result = plots._normalize_to_rate(da)
+        assert result.unit == 'counts/s'
+        expected = da.values / 2.0
+        np.testing.assert_allclose(result.values, expected, rtol=0.01)
+
+    def test_works_with_3d_data(self):
+        """Normalization works with 3D data."""
+        time_coords = _make_time_coords(duration_s=4.0)
+        da = sc.DataArray(
+            sc.full(dims=['z', 'y', 'x'], shape=[3, 4, 5], value=8.0, unit='counts'),
+            coords={
+                'x': sc.arange('x', 5.0, unit='m'),
+                'y': sc.arange('y', 4.0, unit='m'),
+                'z': sc.arange('z', 3.0, unit='m'),
+                **time_coords,
+            },
+        )
+        result = plots._normalize_to_rate(da)
+        assert result.unit == 'counts/s'
+        np.testing.assert_allclose(result.values, 2.0, rtol=0.01)
+
+
+class TestRateNormalizationIntegration:
+    """Integration tests for rate normalization through plotters."""
+
+    @pytest.fixture
+    def data_key(self):
+        """Create a test ResultKey."""
+        workflow_id = WorkflowId(
+            instrument='test_instrument',
+            namespace='test_namespace',
+            name='test_workflow',
+            version=1,
+        )
+        job_id = JobId(source_name='test_source', job_number=uuid.uuid4())
+        return ResultKey(
+            workflow_id=workflow_id, job_id=job_id, output_name='test_result'
+        )
+
+    @pytest.fixture
+    def counts_1d(self):
+        """Create 1D counts data with time coords."""
+        time_coords = _make_time_coords(duration_s=5.0)
+        return sc.DataArray(
+            sc.array(dims=['x'], values=[10.0, 20.0, 50.0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 3.0, unit='m'),
+                **time_coords,
+            },
+        )
+
+    @pytest.fixture
+    def counts_2d(self):
+        """Create 2D counts data with time coords."""
+        time_coords = _make_time_coords(duration_s=5.0)
+        return sc.DataArray(
+            sc.array(
+                dims=['y', 'x'], values=[[10.0, 20.0], [30.0, 40.0]], unit='counts'
+            ),
+            coords={
+                'x': sc.arange('x', 2.0, unit='m'),
+                'y': sc.arange('y', 2.0, unit='m'),
+                **time_coords,
+            },
+        )
+
+    def test_line_plotter_normalizes_when_enabled(self, counts_1d, data_key):
+        """LinePlotter with normalize_to_rate=True produces counts/s output."""
+        from ess.livedata.dashboard.plot_params import RateNormalizationParams
+
+        params = PlotParams1d(
+            rate=RateNormalizationParams(normalize_to_rate=True),
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        plotter.compute({data_key: counts_1d})
+        result = plotter.get_cached_state()
+        # Should render without error
+        assert result is not None
+
+    def test_line_plotter_does_not_normalize_when_disabled(self, counts_1d, data_key):
+        """LinePlotter with default params does not normalize."""
+        params = PlotParams1d()
+        plotter = plots.LinePlotter.from_params(params)
+        plotter.compute({data_key: counts_1d})
+        result = plotter.get_cached_state()
+        assert result is not None
+
+    def test_image_plotter_normalizes_when_enabled(self, counts_2d, data_key):
+        """ImagePlotter with normalize_to_rate=True produces counts/s output."""
+        from ess.livedata.dashboard.plot_params import RateNormalizationParams
+
+        params = PlotParams2d(
+            rate=RateNormalizationParams(normalize_to_rate=True),
+        )
+        plotter = plots.ImagePlotter.from_params(params)
+        plotter.compute({data_key: counts_2d})
+        result = plotter.get_cached_state()
+        assert result is not None
+
+    def test_slicer_plotter_normalizes_when_enabled(self, data_key):
+        """SlicerPlotter with normalize_to_rate=True normalizes 3D data."""
+        from ess.livedata.dashboard.plot_params import RateNormalizationParams
+
+        time_coords = _make_time_coords(duration_s=5.0)
+        data_3d = sc.DataArray(
+            sc.full(dims=['z', 'y', 'x'], shape=[3, 4, 5], value=50.0, unit='counts'),
+            coords={
+                'x': sc.linspace('x', 0, 1, 5, unit='m'),
+                'y': sc.linspace('y', 0, 1, 4, unit='m'),
+                'z': sc.linspace('z', 0, 1, 3, unit='s'),
+                **time_coords,
+            },
+        )
+        params = PlotParams3d(
+            rate=RateNormalizationParams(normalize_to_rate=True),
+        )
+        plotter = SlicerPlotter.from_params(params)
+        plotter.compute({data_key: data_3d})
+        state = plotter.get_cached_state()
+        assert isinstance(state, SlicerState)
+        first_da = next(iter(state.data.values()))
+        # Values should be ~10.0 (50/5) with unit counts/s
+        assert first_da.unit == 'counts/s'
+        np.testing.assert_allclose(first_da.values, 10.0, rtol=0.01)
