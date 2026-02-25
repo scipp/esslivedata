@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta content="width=device-width, initial-scale=1.0" name="viewport">
+    <title>ESS Live Data | Logged Out</title>
+    <link rel="icon" type="image/x-icon" href="{{ PANEL_CDN }}images/favicon.ico">
+    <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    html, body {
+      height: 100%;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 1em;
+      line-height: 1.6;
+    }
+    .wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      background: linear-gradient(135deg, #003554 0%, #006494 50%, #2596be 100%);
+    }
+    .logout-card {
+      background: #ffffff;
+      border-radius: 8px;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+      padding: 2.5em 2em 2em;
+      width: 380px;
+      max-width: 90vw;
+      text-align: center;
+    }
+    .logout-card img {
+      width: 180px;
+      margin-bottom: 0.75em;
+    }
+    .logout-card p {
+      color: #555;
+      font-size: 0.95em;
+      margin-bottom: 1.5em;
+    }
+    .form-button {
+      display: inline-block;
+      width: 100%;
+      padding: 11px;
+      background: #2596be;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      font-size: 1em;
+      font-weight: 600;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+    .form-button:hover {
+      background: #1d7a9c;
+    }
+    .form-button:active {
+      background: #16637f;
+    }
+    </style>
+</head>
+<body>
+  <div class="wrap">
+    <form class="logout-card" action=".{{ LOGIN_ENDPOINT }}" method="get">
+      <img src="https://scipp.github.io/nightly-dashboard/ess-logo.svg" alt="ESS Logo">
+      <p>You have been successfully logged out.</p>
+      <button class="form-button" type="submit">Log in again</button>
+    </form>
+  </div>
+</body>
+</html>

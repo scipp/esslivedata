@@ -5,6 +5,7 @@
 import logging
 from abc import ABC, abstractmethod
 from contextlib import ExitStack
+from pathlib import Path
 
 import panel as pn
 from holoviews import Dimension
@@ -20,6 +21,10 @@ from .transport import NullTransport, Transport
 
 # Global throttling for sliders, etc.
 pn.config.throttled = True
+
+_TEMPLATES_DIR = Path(__file__).parent / 'templates'
+_LOGIN_TEMPLATE = str(_TEMPLATES_DIR / 'login.html')
+_LOGOUT_TEMPLATE = str(_TEMPLATES_DIR / 'logout.html')
 
 
 class DashboardBase(ServiceBase, ABC):
@@ -254,6 +259,8 @@ class DashboardBase(ServiceBase, ABC):
             dev=self._dev,
             basic_auth=self._basic_auth_password,
             cookie_secret=self._basic_auth_cookie_secret,
+            login_template=_LOGIN_TEMPLATE,
+            logout_template=_LOGOUT_TEMPLATE,
         )
 
     def _start_impl(self) -> None:
@@ -274,6 +281,8 @@ class DashboardBase(ServiceBase, ABC):
                 dev=self._dev,
                 basic_auth=self._basic_auth_password,
                 cookie_secret=self._basic_auth_cookie_secret,
+                login_template=_LOGIN_TEMPLATE,
+                logout_template=_LOGOUT_TEMPLATE,
             )
         except KeyboardInterrupt:
             self._logger.info("Keyboard interrupt received, shutting down...")
