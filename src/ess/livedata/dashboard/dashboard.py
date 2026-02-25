@@ -25,7 +25,7 @@ pn.config.throttled = True
 _TEMPLATES_DIR = Path(__file__).parent / 'templates'
 _LOGIN_TEMPLATE = str(_TEMPLATES_DIR / 'login.html')
 _LOGOUT_TEMPLATE = str(_TEMPLATES_DIR / 'logout.html')
-_STATIC_DIRS = {'static': str(_TEMPLATES_DIR)}
+_STATIC_DIRS = {'assets': str(_TEMPLATES_DIR)}
 
 
 class DashboardBase(ServiceBase, ABC):
