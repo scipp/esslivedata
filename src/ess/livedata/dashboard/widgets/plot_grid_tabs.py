@@ -18,6 +18,7 @@ import structlog
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
 from ..data_roles import PRIMARY
+from ..format_utils import extract_error_summary
 from ..plot_data_service import LayerState, LayerStateMachine, PlotDataService
 from ..plot_orchestrator import (
     CellGeometry,
@@ -764,7 +765,7 @@ class PlotGridTabs:
             match state.state:
                 case LayerState.ERROR:
                     error_text = state.error_message or "Unknown error"
-                    status = f"Error: {error_text[:100]}..."
+                    status = f"Error: {extract_error_summary(error_text)}"
                     text_color = '#dc3545'
                 case LayerState.STOPPED:
                     status = "Workflow ended"
