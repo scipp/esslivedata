@@ -477,3 +477,6 @@ def _register_all_plotters() -> None:
         data_requirements=DataRequirements(**_polygon_roi_requirements),
         factory=PolygonsRequestPlotter.from_params,
     )
+
+
+_register_all_plotters()

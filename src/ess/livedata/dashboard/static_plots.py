@@ -17,8 +17,6 @@ import holoviews as hv
 import pydantic
 from pydantic_core import core_schema
 
-from .plotter_registry import DataRequirements, PlotterCategory, plotter_registry
-
 
 class LineDash(StrEnum):
     """Line dash styles for HoloViews plots."""
@@ -343,6 +341,8 @@ class LinesPlotter(StaticPlotter):
 
 def _register_static_plotters() -> None:
     """Register static plotters with the plotter registry."""
+    from .plotter_registry import DataRequirements, PlotterCategory, plotter_registry
+
     # Dummy data requirements for static plotters (never validated)
     static_data_requirements = DataRequirements(min_dims=0, max_dims=0)
 
