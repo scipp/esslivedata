@@ -121,7 +121,7 @@ class DetectorViewParams(pydantic.BaseModel):
         """Return the range for the currently selected coordinate mode, if enabled."""
         match self.coordinate_mode.mode:
             case 'toa':
-                return self.toa_range.range_ns if self.toa_range.enabled else None
+                return self.toa_range.range if self.toa_range.enabled else None
             case 'tof':
                 return self.tof_range.range if self.tof_range.enabled else None
             case 'wavelength':

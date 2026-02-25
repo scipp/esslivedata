@@ -27,7 +27,13 @@ from ess.livedata.handlers.monitor_workflow_types import (
     MonitorHistogram,
     WindowMonitorHistogram,
 )
-from ess.livedata.parameter_models import TimeUnit, TOAEdges, TOFEdges, TOFRange
+from ess.livedata.parameter_models import (
+    TimeUnit,
+    TOAEdges,
+    TOARange,
+    TOFEdges,
+    TOFRange,
+)
 
 
 class TestMonitorDataParams:
@@ -98,6 +104,18 @@ class TestMonitorDataParams:
             coordinate_mode=CoordinateModeSettings(mode='toa'),
         )
         assert params.get_active_range() is None
+
+    def test_get_active_range_toa_mode_preserves_user_unit(self):
+        """get_active_range returns TOA range in the user's unit, not forced to ns."""
+        params = MonitorDataParams(
+            coordinate_mode=CoordinateModeSettings(mode='toa'),
+            toa_range=TOARange(enabled=True, start=0.0, stop=71.4, unit=TimeUnit.MS),
+        )
+        range_filter = params.get_active_range()
+        assert range_filter is not None
+        low, high = range_filter
+        assert low.unit == 'ms'
+        assert high.unit == 'ms'
 
     def test_get_active_range_tof_mode(self):
         """Test get_active_range returns TOF range in TOF mode."""

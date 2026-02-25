@@ -6,8 +6,13 @@ import pytest
 
 from ess.livedata.config.instrument import Instrument
 from ess.livedata.config.workflow_spec import JobId
-from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
+from ess.livedata.handlers.detector_view_specs import (
+    CoordinateModeSettings,
+    DetectorROIAuxSources,
+    DetectorViewParams,
+)
 from ess.livedata.handlers.workflow_factory import SpecHandle
+from ess.livedata.parameter_models import TimeUnit, TOARange, TOFRange
 
 
 class TestRegisterDetectorViewSpecs:
@@ -255,3 +260,43 @@ class TestDetectorROIAuxSources:
             rendered_high_res['roi_rectangle']
             == f"high_resolution/{shared_job_number}/roi_rectangle"
         )
+
+
+class TestDetectorViewParamsGetActiveRange:
+    """Tests for DetectorViewParams.get_active_range() unit handling."""
+
+    def test_toa_range_preserves_user_unit(self):
+        """get_active_range returns TOA range in the user's unit, not forced to ns."""
+        params = DetectorViewParams(
+            coordinate_mode=CoordinateModeSettings(mode='toa'),
+            toa_range=TOARange(enabled=True, start=0.0, stop=71.4, unit=TimeUnit.MS),
+        )
+        range_filter = params.get_active_range()
+        assert range_filter is not None
+        low, high = range_filter
+        assert low.unit == 'ms'
+        assert high.unit == 'ms'
+
+    def test_tof_range_preserves_user_unit(self):
+        """get_active_range returns TOF range in the user's unit."""
+        params = DetectorViewParams(
+            coordinate_mode=CoordinateModeSettings(mode='tof'),
+            tof_range=TOFRange(enabled=True, start=10.0, stop=50.0, unit=TimeUnit.MS),
+        )
+        range_filter = params.get_active_range()
+        assert range_filter is not None
+        low, high = range_filter
+        assert low.unit == 'ms'
+        assert high.unit == 'ms'
+
+    def test_wavelength_range_preserves_user_unit(self):
+        """get_active_range returns wavelength range in the user's unit."""
+        pytest.skip("wavelength mode not yet supported in CoordinateModeSettings")
+
+    def test_disabled_range_returns_none(self):
+        """get_active_range returns None when the range filter is disabled."""
+        params = DetectorViewParams(
+            coordinate_mode=CoordinateModeSettings(mode='toa'),
+            toa_range=TOARange(enabled=False),
+        )
+        assert params.get_active_range() is None
