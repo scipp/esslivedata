@@ -12,7 +12,7 @@ from ess.livedata.handlers.to_nxevent_data import (
 )
 
 
-def test_MonitorEvents_from_ev44() -> None:
+def test_MonitorEvents_from_ev44_no_reference_time() -> None:
     ev44 = eventdata_ev44.EventData(
         source_name='ignored',
         message_id=0,
@@ -21,25 +21,71 @@ def test_MonitorEvents_from_ev44() -> None:
         pixel_id=[1, 1, 1],
         time_of_flight=[1, 2, 3],
     )
-    monitor_events = MonitorEvents.from_ev44(ev44)
+    result = MonitorEvents.from_ev44(ev44)
+    assert len(result) == 1
+    ts, monitor_events = result[0]
+    assert ts is None
     assert monitor_events.time_of_arrival == [1, 2, 3]
     assert monitor_events.unit == 'ns'
 
 
-@pytest.mark.parametrize('events_cls', [MonitorEvents, DetectorEvents])
-def test_MonitorEvents_from_ev44_raises_with_multi_pulse_message(
-    events_cls: MonitorEvents,
-) -> None:
+def test_MonitorEvents_from_ev44_single_pulse_with_reference_time() -> None:
     ev44 = eventdata_ev44.EventData(
         source_name='ignored',
         message_id=0,
-        reference_time=[1, 2],
-        reference_time_index=[0, 1],
+        reference_time=[1000],
+        reference_time_index=[0],
         pixel_id=[1, 1, 1],
         time_of_flight=[1, 2, 3],
     )
-    with pytest.raises(NotImplementedError):
-        events_cls.from_ev44(ev44)
+    result = MonitorEvents.from_ev44(ev44)
+    assert len(result) == 1
+    ts, monitor_events = result[0]
+    assert ts == 1000
+    assert list(monitor_events.time_of_arrival) == [1, 2, 3]
+
+
+def test_MonitorEvents_from_ev44_multi_pulse() -> None:
+    ev44 = eventdata_ev44.EventData(
+        source_name='ignored',
+        message_id=0,
+        reference_time=[100, 200, 300],
+        reference_time_index=[0, 2, 5],
+        pixel_id=[1, 1, 1, 1, 1, 1, 1],
+        time_of_flight=[10, 20, 30, 40, 50, 60, 70],
+    )
+    result = MonitorEvents.from_ev44(ev44)
+    assert len(result) == 3
+
+    assert result[0][0] == 100
+    assert list(result[0][1].time_of_arrival) == [10, 20]
+
+    assert result[1][0] == 200
+    assert list(result[1][1].time_of_arrival) == [30, 40, 50]
+
+    assert result[2][0] == 300
+    assert list(result[2][1].time_of_arrival) == [60, 70]
+
+
+def test_DetectorEvents_from_ev44_multi_pulse() -> None:
+    ev44 = eventdata_ev44.EventData(
+        source_name='ignored',
+        message_id=0,
+        reference_time=[100, 200],
+        reference_time_index=[0, 3],
+        pixel_id=[1, 2, 3, 4, 5],
+        time_of_flight=[10, 20, 30, 40, 50],
+    )
+    result = DetectorEvents.from_ev44(ev44)
+    assert len(result) == 2
+
+    assert result[0][0] == 100
+    assert list(result[0][1].time_of_arrival) == [10, 20, 30]
+    assert list(result[0][1].pixel_id) == [1, 2, 3]
+
+    assert result[1][0] == 200
+    assert list(result[1][1].time_of_arrival) == [40, 50]
+    assert list(result[1][1].pixel_id) == [4, 5]
 
 
 def test_MonitorEvents_ToNXevent_data() -> None:
