@@ -1626,3 +1626,24 @@ class TestRateNormalizationIntegration:
         # Values should be ~10.0 (50/5) with unit counts/s
         assert first_da.unit == 'counts/s'
         np.testing.assert_allclose(first_da.values, 10.0, rtol=0.01)
+
+    def test_bars_plotter_normalizes_when_enabled(self, data_key):
+        """BarsPlotter with normalize_to_rate=True shows counts/s in vdim unit."""
+        from ess.livedata.dashboard.plot_params import (
+            PlotParamsBars,
+            RateNormalizationParams,
+        )
+
+        time_coords = _make_time_coords(duration_s=5.0)
+        data_0d = sc.DataArray(
+            sc.scalar(50.0, unit='counts'),
+            coords=time_coords,
+        )
+        params = PlotParamsBars(rate=RateNormalizationParams(normalize_to_rate=True))
+        plotter = plots.BarsPlotter.from_params(params)
+        plotter.compute({data_key: data_0d})
+        result = plotter.get_cached_state()
+        # get_cached_state wraps in an Overlay even for single bars
+        bars = next(iter(result.values()))
+        assert isinstance(bars, hv.Bars)
+        assert bars.vdims[0].unit == 'counts/s'

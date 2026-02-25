@@ -673,10 +673,12 @@ class BarsPlotter(Plotter):
 
         bar_label = data_key.job_id.source_name
         value = float(data.value)
+        unit = str(data.unit) if data.unit is not None else None
+        vdim = hv.Dimension(data_key.output_name or 'values', unit=unit)
         bars = hv.Bars(
             [(bar_label, value)],
             kdims=['source'],
-            vdims=[data_key.output_name or ''],
+            vdims=[vdim],
             label=label,
         )
         opts = {'invert_axes': self._horizontal, 'show_legend': False, 'toolbar': None}
