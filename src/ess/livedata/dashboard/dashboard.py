@@ -166,6 +166,14 @@ class DashboardBase(ServiceBase, ABC):
         pn.state.on_session_destroyed(_cleanup_session)
         self._logger.info("Periodic updates started for session %s", session_id)
 
+    def _create_logout_header(self) -> list[pn.viewable.Viewable]:
+        """Create a logout button for the header when auth is enabled."""
+        logout_link = pn.pane.HTML(
+            '<a href="/logout" class="esslivedata-logout">Logout</a>',
+            sizing_mode='fixed',
+        )
+        return [logout_link]
+
     def create_layout(self) -> pn.template.MaterialTemplate:
         """Create the basic dashboard layout."""
         # Create session updater first so widgets can register handlers
@@ -182,11 +190,14 @@ class DashboardBase(ServiceBase, ABC):
             sizing_mode='stretch_both',
         )
 
+        header = self._create_logout_header() if self._basic_auth_password else []
+
         template = pn.template.MaterialTemplate(
             title=self.get_dashboard_title(),
             sidebar=sidebar_content,
             main=main_with_heartbeat,
             header_background=self.get_header_background(),
+            header=header,
         )
         # Inject CSS for offline mode (replaces Material Icons font with Unicode)
         template.config.raw_css.extend(self.get_raw_css())
@@ -216,6 +227,18 @@ class DashboardBase(ServiceBase, ABC):
                 background-repeat: no-repeat;
                 background-position: center;
                 background-size: 30px 36px;
+            }}
+            /* Logout button in header */
+            .esslivedata-logout {{
+                color: white;
+                text-decoration: none;
+                font-size: 14px;
+                padding: 4px 12px;
+                border: 1px solid rgba(255, 255, 255, 0.5);
+                border-radius: 4px;
+            }}
+            .esslivedata-logout:hover {{
+                background: rgba(255, 255, 255, 0.15);
             }}
             """
         ]
