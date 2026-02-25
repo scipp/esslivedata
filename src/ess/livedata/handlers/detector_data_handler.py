@@ -58,6 +58,8 @@ _registry = {
     'geometry-dream-no-shape-2025-05-01.nxs': 'md5:4471e2490a3dd7f6e3ed4aa0a1e0b47d',
     'geometry-loki-2025-01-01.nxs': 'md5:8d0e103276934a20ba26bb525e53924a',
     'geometry-loki-2025-03-26.nxs': 'md5:279dc8cf7dae1fac030d724bc45a2572',
+    'geometry-loki-2026-02-11.nxs': 'md5:0b40ba0ec640f1c497ec02b233f42ec6',
+    'geometry-loki-2026-02-23.nxs': 'md5:5110801aa7c7d79a32cb73b9fb71f167',
     'geometry-bifrost-2025-01-01.nxs': 'md5:ae3caa99dd56de9495b9321eea4e4fef',
     'geometry-odin-2025-09-25.nxs': 'md5:5615a6203813b4ab84a191f7478ceb3c',
     'geometry-tbl-2025-12-03.nxs': 'md5:040a70659155eb386245755455ee3e62',
