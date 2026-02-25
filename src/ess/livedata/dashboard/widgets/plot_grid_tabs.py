@@ -764,7 +764,9 @@ class PlotGridTabs:
             match state.state:
                 case LayerState.ERROR:
                     error_text = state.error_message or "Unknown error"
-                    status = f"Error: {error_text[:100]}..."
+                    # Extract the last line, which is the exception message
+                    error_summary = error_text.strip().rsplit('\n', 1)[-1]
+                    status = f"Error: {error_summary}"
                     text_color = '#dc3545'
                 case LayerState.STOPPED:
                     status = "Workflow ended"
