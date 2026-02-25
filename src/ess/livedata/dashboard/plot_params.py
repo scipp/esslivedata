@@ -10,7 +10,7 @@ from enum import StrEnum
 import pydantic
 
 
-class WindowMode(str, enum.Enum):
+class WindowMode(enum.StrEnum):
     """Enumeration of extraction modes."""
 
     latest = 'latest'
@@ -27,7 +27,7 @@ class WindowAggregation(StrEnum):
     mean = 'mean'
 
 
-class PlotScale(str, enum.Enum):
+class PlotScale(enum.StrEnum):
     """Enumeration of plot scales."""
 
     linear = 'linear'
@@ -53,14 +53,14 @@ class Curve1dParams(pydantic.BaseModel):
     )
 
 
-class CombineMode(str, enum.Enum):
+class CombineMode(enum.StrEnum):
     """Enumeration of combine modes for multiple datasets."""
 
     overlay = 'overlay'
     layout = 'layout'
 
 
-class PlotAspectType(str, enum.Enum):
+class PlotAspectType(enum.StrEnum):
     """Enumeration of aspect types."""
 
     square = 'Square'
@@ -70,7 +70,7 @@ class PlotAspectType(str, enum.Enum):
     free = 'Free'
 
 
-class StretchMode(str, enum.Enum):
+class StretchMode(enum.StrEnum):
     """Stretch mode for responsive plots with fixed aspect.
 
     When using a fixed aspect ratio, choose how the plot fills its container:

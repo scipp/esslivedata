@@ -4,17 +4,17 @@
 import numpy as np
 import pytest
 import scipp as sc
+from ess.reduce.nexus.types import (
+    EmptyDetector,
+    NeXusData,
+    SampleRun,
+)
 from scipp.testing import assert_identical
 from scippnexus import NXdetector
 
 from ess.livedata.config.instruments.bifrost import specs
 from ess.livedata.config.instruments.bifrost.factories import (
     _create_base_reduction_workflow,
-)
-from ess.reduce.nexus.types import (
-    EmptyDetector,
-    NeXusData,
-    SampleRun,
 )
 
 

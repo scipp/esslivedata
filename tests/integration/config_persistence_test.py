@@ -599,9 +599,9 @@ def test_plot_orchestrator_persists_multi_layer_cells(tmp_path) -> None:
         restored_cell = next(iter(restored_grid.cells.values()))
 
         # Verify both layers were restored
-        assert (
-            len(restored_cell.layers) == 2
-        ), f"Expected 2 layers, got {len(restored_cell.layers)}"
+        assert len(restored_cell.layers) == 2, (
+            f"Expected 2 layers, got {len(restored_cell.layers)}"
+        )
 
         # Verify layer configs (order should be preserved)
         restored_layer1 = restored_cell.layers[0]

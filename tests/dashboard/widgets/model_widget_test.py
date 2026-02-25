@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-from enum import Enum
+from enum import StrEnum
 
 import pydantic
 
@@ -22,7 +22,7 @@ def test_get_defaults_handles_default_factory():
 class TestModelWidget:
     def test_create_from_dynamic_model(self) -> None:
         def make_model(description: str, option: str) -> type[pydantic.BaseModel]:
-            class Option(str, Enum):
+            class Option(StrEnum):
                 OPTION1 = option
 
             class InnerModel(pydantic.BaseModel):

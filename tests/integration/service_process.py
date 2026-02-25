@@ -9,7 +9,7 @@ import threading
 import time
 from contextlib import ExitStack
 from types import TracebackType
-from typing import Any
+from typing import Any, Self
 
 logger = logging.getLogger(__name__)
 
@@ -293,7 +293,7 @@ class ServiceProcess:
         """Get accumulated stderr from the service."""
         return ''.join(self._stderr_lines)
 
-    def __enter__(self) -> 'ServiceProcess':
+    def __enter__(self) -> Self:
         """Enter context manager - starts the service."""
         self.start()
         return self
@@ -349,7 +349,7 @@ class ServiceGroup:
             # All services started successfully, don't clean up
             stack.pop_all()
 
-    def stop_all(self, timeout: float = 10.0) -> None:
+    def stop_all(self, timeout: float = 10.0) -> Self:
         """
         Stop all services in the group (in reverse order).
 
@@ -378,7 +378,7 @@ class ServiceGroup:
 
                 stack.callback(make_stop_callback(name, service))
 
-    def __enter__(self) -> 'ServiceGroup':
+    def __enter__(self) -> Self:
         """Enter context manager - starts all services."""
         self.start_all()
         return self
