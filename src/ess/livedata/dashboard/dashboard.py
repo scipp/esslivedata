@@ -173,10 +173,26 @@ class DashboardBase(ServiceBase, ABC):
 
     def _create_logout_header(self) -> list[pn.viewable.Viewable]:
         """Create a logout button for the header when auth is enabled."""
+        # ruff: disable[E501]
         logout_link = pn.pane.HTML(
-            '<a href="/logout" class="esslivedata-logout">Log out</a>',
+            """<div style="text-align: right; padding-right: 8px;">
+            <a href="/logout" style="
+                color: white;
+                text-decoration: none;
+                font-size: 13px;
+                font-weight: 500;
+                letter-spacing: 0.5px;
+                padding: 6px 18px;
+                border: 1.5px solid rgba(255, 255, 255, 0.7);
+                border-radius: 20px;
+                display: inline-block;
+                transition: background 0.2s, border-color 0.2s;
+                " onmouseover="this.style.background='rgba(255,255,255,0.2)';this.style.borderColor='white'"
+                onmouseout="this.style.background='none';this.style.borderColor='rgba(255,255,255,0.7)'"
+            >Log out</a></div>""",
             sizing_mode='stretch_width',
         )
+        # ruff: enable[E501]
         return [logout_link]
 
     def create_layout(self) -> pn.template.MaterialTemplate:
@@ -232,24 +248,6 @@ class DashboardBase(ServiceBase, ABC):
                 background-repeat: no-repeat;
                 background-position: center;
                 background-size: 30px 36px;
-            }}
-            /* Logout button in header */
-            .esslivedata-logout {{
-                color: white !important;
-                text-decoration: none !important;
-                font-size: 13px;
-                font-weight: 500;
-                letter-spacing: 0.5px;
-                padding: 6px 18px;
-                border: 1.5px solid rgba(255, 255, 255, 0.7);
-                border-radius: 20px;
-                float: right;
-                margin-top: 4px;
-                transition: background 0.2s, border-color 0.2s;
-            }}
-            .esslivedata-logout:hover {{
-                background: rgba(255, 255, 255, 0.2);
-                border-color: white;
             }}
             """
         ]
