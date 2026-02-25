@@ -174,8 +174,8 @@ class DashboardBase(ServiceBase, ABC):
     def _create_logout_header(self) -> list[pn.viewable.Viewable]:
         """Create a logout button for the header when auth is enabled."""
         logout_link = pn.pane.HTML(
-            '<a href="/logout" class="esslivedata-logout">Logout</a>',
-            sizing_mode='fixed',
+            '<a href="/logout" class="esslivedata-logout">Log out</a>',
+            sizing_mode='stretch_width',
         )
         return [logout_link]
 
@@ -235,15 +235,21 @@ class DashboardBase(ServiceBase, ABC):
             }}
             /* Logout button in header */
             .esslivedata-logout {{
-                color: white;
-                text-decoration: none;
-                font-size: 14px;
-                padding: 4px 12px;
-                border: 1px solid rgba(255, 255, 255, 0.5);
-                border-radius: 4px;
+                color: white !important;
+                text-decoration: none !important;
+                font-size: 13px;
+                font-weight: 500;
+                letter-spacing: 0.5px;
+                padding: 6px 18px;
+                border: 1.5px solid rgba(255, 255, 255, 0.7);
+                border-radius: 20px;
+                float: right;
+                margin-top: 4px;
+                transition: background 0.2s, border-color 0.2s;
             }}
             .esslivedata-logout:hover {{
-                background: rgba(255, 255, 255, 0.15);
+                background: rgba(255, 255, 255, 0.2);
+                border-color: white;
             }}
             """
         ]
