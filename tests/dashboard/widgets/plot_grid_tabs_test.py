@@ -40,10 +40,9 @@ def stream_manager(data_service):
 
 
 @pytest.fixture
-def plotting_controller(job_service, stream_manager):
+def plotting_controller(stream_manager):
     """Create a PlottingController for testing."""
     return PlottingController(
-        job_service=job_service,
         stream_manager=stream_manager,
     )
 

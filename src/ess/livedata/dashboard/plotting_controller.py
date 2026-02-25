@@ -13,9 +13,17 @@ from ess.livedata.config.workflow_spec import (
 )
 
 from .data_service import DataServiceSubscriber
-from .job_service import JobService
-from .plot_params import create_extractors_from_params
-from .plotting import OVERLAY_PATTERNS, PlotterSpec, plotter_registry
+from .extractors import (
+    LatestValueExtractor,
+    UpdateExtractor,
+    WindowAggregatingExtractor,
+)
+from .plot_params import WindowMode, WindowParams
+from .plotter_registry import (
+    OVERLAY_PATTERNS,
+    PlotterSpec,
+    plotter_registry,
+)
 from .roi_publisher import ROIPublisher
 from .roi_request_plots import ROIPublisherAware
 from .stream_manager import StreamManager
@@ -28,13 +36,11 @@ class PlottingController:
     """
     Controller for managing plotting operations and configurations.
 
-    Coordinates between job services, stream managers, and plot creation,
+    Coordinates between stream managers and plot creation,
     using a two-phase pipeline for creating plots with streaming data.
 
     Parameters
     ----------
-    job_service:
-        Service for accessing job data and information.
     stream_manager:
         Manager for creating data streams.
     roi_publisher:
@@ -43,11 +49,9 @@ class PlottingController:
 
     def __init__(
         self,
-        job_service: JobService,
         stream_manager: StreamManager,
         roi_publisher: ROIPublisher | None = None,
     ) -> None:
-        self._job_service = job_service
         self._stream_manager = stream_manager
         self._roi_publisher = roi_publisher
 
@@ -248,3 +252,49 @@ class PlottingController:
         if isinstance(plotter, ROIPublisherAware):
             plotter.set_roi_publisher(self._roi_publisher)
         return plotter
+
+
+def create_extractors_from_params(
+    keys: list[ResultKey],
+    window: WindowParams | None,
+    spec: PlotterSpec | None = None,
+) -> dict[ResultKey, UpdateExtractor]:
+    """
+    Create extractors based on plotter spec and window configuration.
+
+    Parameters
+    ----------
+    keys:
+        Result keys to create extractors for.
+    window:
+        Window parameters for extraction mode and aggregation.
+        If None, falls back to LatestValueExtractor.
+    spec:
+        Optional plotter specification. If provided and contains a required
+        extractor, that extractor type is used.
+
+    Returns
+    -------
+    :
+        Dictionary mapping result keys to extractor instances.
+    """
+    # Plotter requires specific extractor (e.g., TimeSeriesPlotter)
+    if spec is not None and spec.data_requirements.required_extractor is not None:
+        extractor_type = spec.data_requirements.required_extractor
+        return {key: extractor_type() for key in keys}
+
+    # No fixed requirement - check if window params provided
+    if window is not None:
+        if window.mode == WindowMode.latest:
+            return {key: LatestValueExtractor() for key in keys}
+        else:  # mode == WindowMode.window
+            return {
+                key: WindowAggregatingExtractor(
+                    window_duration_seconds=window.window_duration_seconds,
+                    aggregation=window.aggregation,
+                )
+                for key in keys
+            }
+
+    # Fallback to latest value extractor
+    return {key: LatestValueExtractor() for key in keys}

@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING
 import panel as pn
 
 from ...config.workflow_spec import WorkflowId, WorkflowSpec
-from ..buttons import ButtonStyles, create_tool_button, create_tool_button_stylesheet
-from ..icons import get_icon
 from ..plot_params import WindowMode
+from .buttons import ButtonStyles, create_tool_button, create_tool_button_stylesheet
+from .icons import get_icon
 
 if TYPE_CHECKING:
     from ..plot_orchestrator import PlotConfig
@@ -308,7 +308,7 @@ def _format_window_info(params) -> str:
 
 def _get_static_overlay_display_info(config: PlotConfig) -> tuple[str, str]:
     """Get display info for a static overlay layer."""
-    from ..plotting import plotter_registry
+    from ..plotter_registry import plotter_registry
 
     plotter_name = config.plot_name
     try:

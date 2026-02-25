@@ -36,7 +36,7 @@ from ess.livedata.dashboard.plot_orchestrator import (
     DataSourceConfig,
     PlotConfig,
 )
-from ess.livedata.dashboard.plotting import PlotterSpec
+from ess.livedata.dashboard.plotter_registry import PlotterSpec
 
 from .configuration_widget import ConfigurationPanel
 from .wizard import Wizard, WizardStep

@@ -341,11 +341,7 @@ class LinesPlotter(StaticPlotter):
 
 def _register_static_plotters() -> None:
     """Register static plotters with the plotter registry."""
-    from .plotting import (
-        DataRequirements,
-        PlotterCategory,
-        plotter_registry,
-    )
+    from .plotter_registry import DataRequirements, PlotterCategory, plotter_registry
 
     # Dummy data requirements for static plotters (never validated)
     static_data_requirements = DataRequirements(min_dims=0, max_dims=0)

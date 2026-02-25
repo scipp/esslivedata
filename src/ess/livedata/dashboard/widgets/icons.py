@@ -12,7 +12,7 @@ To add a new icon: download from https://raw.githubusercontent.com/tabler/tabler
 copy the SVG path elements, and add an entry to the _ICONS dict using the _svg() helper.
 
 Usage:
-    from ess.livedata.dashboard.icons import get_icon
+    from ess.livedata.dashboard.widgets.icons import get_icon
 
     button = pn.widgets.Button(name='', icon=get_icon('settings'))
 """

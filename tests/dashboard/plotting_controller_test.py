@@ -10,7 +10,6 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
 )
 from ess.livedata.dashboard.data_service import DataService
-from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.stream_manager import StreamManager
 
@@ -24,22 +23,15 @@ def data_service():
 
 
 @pytest.fixture
-def job_service():
-    """Create a JobService for testing."""
-    return JobService()
-
-
-@pytest.fixture
 def stream_manager(data_service):
     """Create a StreamManager for testing."""
     return StreamManager(data_service=data_service)
 
 
 @pytest.fixture
-def plotting_controller(job_service, stream_manager):
+def plotting_controller(stream_manager):
     """Create a PlottingController for testing."""
     return PlottingController(
-        job_service=job_service,
         stream_manager=stream_manager,
     )
 
@@ -139,7 +131,7 @@ class TestSpecRequirements:
 
     def test_empty_requirements_always_validates(self) -> None:
         """Test that empty requires_aux_sources always returns True."""
-        from ess.livedata.dashboard.plotting import SpecRequirements
+        from ess.livedata.dashboard.plotter_registry import SpecRequirements
 
         spec_req = SpecRequirements(requires_aux_sources=[])
 
@@ -149,7 +141,7 @@ class TestSpecRequirements:
 
     def test_returns_false_when_aux_sources_is_none_but_required(self) -> None:
         """Test that validation fails when aux_sources is None but required."""
-        from ess.livedata.dashboard.plotting import SpecRequirements
+        from ess.livedata.dashboard.plotter_registry import SpecRequirements
         from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
 
         spec_req = SpecRequirements(requires_aux_sources=[DetectorROIAuxSources])
@@ -158,7 +150,7 @@ class TestSpecRequirements:
 
     def test_returns_true_when_aux_sources_matches_required(self) -> None:
         """Test that validation passes when aux_sources matches requirement."""
-        from ess.livedata.dashboard.plotting import SpecRequirements
+        from ess.livedata.dashboard.plotter_registry import SpecRequirements
         from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
 
         spec_req = SpecRequirements(requires_aux_sources=[DetectorROIAuxSources])
@@ -167,7 +159,7 @@ class TestSpecRequirements:
 
     def test_returns_true_for_subclass_of_required(self) -> None:
         """Test that validation passes for subclasses of required type."""
-        from ess.livedata.dashboard.plotting import SpecRequirements
+        from ess.livedata.dashboard.plotter_registry import SpecRequirements
         from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
 
         # Create a subclass of DetectorROIAuxSources
@@ -181,7 +173,7 @@ class TestSpecRequirements:
     def test_returns_false_when_aux_sources_does_not_match(self) -> None:
         """Test that validation fails when aux_sources doesn't match requirement."""
         from ess.livedata.config.workflow_spec import AuxSourcesBase
-        from ess.livedata.dashboard.plotting import SpecRequirements
+        from ess.livedata.dashboard.plotter_registry import SpecRequirements
         from ess.livedata.handlers.detector_view_specs import DetectorROIAuxSources
 
         # Create a different aux_sources type
@@ -194,7 +186,7 @@ class TestSpecRequirements:
 
     def test_default_spec_requirements_has_no_requirements(self) -> None:
         """Test that default SpecRequirements has no aux_sources requirements."""
-        from ess.livedata.dashboard.plotting import SpecRequirements
+        from ess.livedata.dashboard.plotter_registry import SpecRequirements
 
         spec_req = SpecRequirements()
 
@@ -496,7 +488,7 @@ class TestOverlayPatterns:
 
     def test_image_has_readback_patterns(self):
         """Test that image plotter suggests readback overlays only."""
-        from ess.livedata.dashboard.plotting import OVERLAY_PATTERNS
+        from ess.livedata.dashboard.plotter_registry import OVERLAY_PATTERNS
 
         assert 'image' in OVERLAY_PATTERNS
         patterns = OVERLAY_PATTERNS['image']
@@ -508,7 +500,7 @@ class TestOverlayPatterns:
 
     def test_readback_suggests_request(self):
         """Test that readback plotters suggest their corresponding request overlays."""
-        from ess.livedata.dashboard.plotting import OVERLAY_PATTERNS
+        from ess.livedata.dashboard.plotter_registry import OVERLAY_PATTERNS
 
         # rectangles_readback suggests rectangles_request
         assert 'rectangles_readback' in OVERLAY_PATTERNS
@@ -524,7 +516,7 @@ class TestOverlayPatterns:
 
     def test_patterns_have_correct_structure(self):
         """Test that patterns are (output_name, plotter_name) tuples."""
-        from ess.livedata.dashboard.plotting import OVERLAY_PATTERNS
+        from ess.livedata.dashboard.plotter_registry import OVERLAY_PATTERNS
 
         for patterns in OVERLAY_PATTERNS.values():
             for pattern in patterns:
@@ -535,7 +527,7 @@ class TestOverlayPatterns:
 
     def test_overlay_chain_enforces_order(self):
         """Test that overlay chain enforces image -> readback -> request order."""
-        from ess.livedata.dashboard.plotting import OVERLAY_PATTERNS
+        from ess.livedata.dashboard.plotter_registry import OVERLAY_PATTERNS
 
         # Image can only go to readback
         image_overlays = [p[1] for p in OVERLAY_PATTERNS['image']]

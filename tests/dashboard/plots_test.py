@@ -567,7 +567,7 @@ class TestSlicerPlotter:
 
     def test_multiple_datasets_rejected_by_registry(self, data_3d, data_key):
         """Test slicer plotter is rejected for multiple datasets by the registry."""
-        from ess.livedata.dashboard.plotting import plotter_registry
+        from ess.livedata.dashboard.plotter_registry import plotter_registry
 
         workflow_id2 = WorkflowId(
             instrument='test_instrument',
@@ -1079,7 +1079,7 @@ class TestOverlay1DPlotter:
 
     def test_registered_in_plotter_registry(self):
         """Test that overlay_1d plotter is registered in the registry."""
-        from ess.livedata.dashboard.plotting import plotter_registry
+        from ess.livedata.dashboard.plotter_registry import plotter_registry
 
         assert 'overlay_1d' in plotter_registry
         spec = plotter_registry.get_spec('overlay_1d')
@@ -1089,7 +1089,7 @@ class TestOverlay1DPlotter:
 
     def test_compatible_with_2d_data(self, data_2d_with_roi_coord, data_key):
         """Test that registry identifies overlay_1d as compatible with 2D data."""
-        from ess.livedata.dashboard.plotting import plotter_registry
+        from ess.livedata.dashboard.plotter_registry import plotter_registry
 
         data = {data_key: data_2d_with_roi_coord}
         compatible = plotter_registry.get_compatible_plotters(data)
@@ -1099,7 +1099,7 @@ class TestOverlay1DPlotter:
         self, data_2d_with_roi_coord, data_key
     ):
         """Test that overlay_1d is not compatible with multiple datasets."""
-        from ess.livedata.dashboard.plotting import plotter_registry
+        from ess.livedata.dashboard.plotter_registry import plotter_registry
 
         key2 = ResultKey(
             workflow_id=data_key.workflow_id,

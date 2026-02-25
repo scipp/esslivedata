@@ -41,7 +41,7 @@ def refresh(self):
 
 ## Icons
 
-Do not use Unicode characters for button icons. Use embedded SVG icons from `dashboard/icons.py` via `get_icon()`. Use the `create_tool_button()` helper from `dashboard/buttons.py` for consistent styling.
+Do not use Unicode characters for button icons. Use embedded SVG icons from `dashboard/widgets/icons.py` via `get_icon()`. Use the `create_tool_button()` helper from `dashboard/widgets/buttons.py` for consistent styling.
 
 ## Avoiding flicker
 
