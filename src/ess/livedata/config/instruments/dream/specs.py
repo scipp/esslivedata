@@ -289,9 +289,10 @@ class PowderReductionWithVanadiumOutputs(PowderReductionOutputs):
 
 
 # Register powder reduction workflow specs
-_powder_detector_names = [
-    name for name in instrument.detector_names if 'sans' not in name
-]
+# The SANS detector is included here because the instrument scientist confirmed
+# that even though it is primarily a SANS detector, it may also be used for powder
+# diffraction measurements.
+_powder_detector_names = instrument.detector_names
 
 powder_reduction_handle = instrument.register_spec(
     name='powder_reduction',
