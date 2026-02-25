@@ -9,6 +9,7 @@ import panel as pn
 
 from ess.livedata.core.job import JobState, JobStatus
 from ess.livedata.core.job_manager import JobAction
+from ess.livedata.dashboard.format_utils import extract_error_summary
 from ess.livedata.dashboard.job_controller import JobController
 from ess.livedata.dashboard.job_service import JobService
 
@@ -248,7 +249,7 @@ class JobStatusWidget:
             return f"Started: {start_str}"
 
     def _format_error_message(self) -> str:
-        """Format error/warning message to show first line as brief summary."""
+        """Format error/warning message as brief summary."""
         if self._job_status.error_message:
             msg = self._job_status.error_message
             color = UIConstants.ERROR_COLOR
@@ -258,8 +259,8 @@ class JobStatusWidget:
         else:
             return ""  # No error or warning message
 
-        first_line = msg.split('\n')[0].strip()
-        return f'<div style="{self._get_error_style(color)}">Error: {first_line}</div>'
+        summary = extract_error_summary(msg)
+        return f'<div style="{self._get_error_style(color)}">Error: {summary}</div>'
 
     def _get_error_color(self) -> str:
         """Get error color based on error type."""
