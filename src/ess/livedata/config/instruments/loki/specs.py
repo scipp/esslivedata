@@ -19,7 +19,7 @@ from ess.livedata.handlers.monitor_workflow_specs import (
     register_monitor_workflow_specs,
 )
 
-from .views import get_wire_view
+from .views import get_tube_view
 
 
 class TransmissionMode(StrEnum):
@@ -210,13 +210,13 @@ xy_projection_handle = register_detector_view_spec(
     source_names=detector_names,
 )
 
-# Register wire view for all detector banks
+# Register tube view for all detector banks
 instrument.add_logical_view(
-    name='wire_view',
-    title='Wire View',
+    name='tube_view',
+    title='Tube View',
     description='Sum over straw and pixel dimensions to show layer x tube counts.',
     source_names=detector_names,
-    transform=get_wire_view,
+    transform=get_tube_view,
     output_ndim=2,
     reduction_dim=['straw', 'pixel'],
 )
