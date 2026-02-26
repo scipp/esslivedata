@@ -140,7 +140,7 @@ Plotters use a two-stage pattern: `Plotter.compute(data)` (stage 1) runs on the 
 
 ### D3. Dirty-Flag and Version-Based Polling
 
-Cross-thread communication uses dirty flags and version counters instead of direct callbacks. The background thread sets dirty flags on plotters when data arrives. The periodic callback checks `is_dirty()` and calls `pipe.send()` only when needed. Status widgets compare `_last_state_version` with the current version from shared services, doing full rebuilds only on change.
+Cross-thread communication uses dirty flags and version counters instead of direct callbacks. The background thread sets dirty flags on plotters when data arrives. The periodic callback checks `is_dirty()` and calls `pipe.send()` only when needed. Status widgets compare `_last_state_version` with the current version from shared services, doing full rebuilds only on change. This also provides natural backpressure: if a session is slow, intermediate updates are skipped and only the latest state is delivered (see G9).
 
 ### D4. Bokeh Model Freeze Batching
 
@@ -275,3 +275,13 @@ Workflows declare their outputs via `WorkflowOutputsBase` subclasses with `sc.Da
 ### G8. f144 Attribute Registry
 
 The `f144_attribute_registry` on `Instrument` maps log stream source names to metadata (Pydantic `LogDataAttributes`: unit, dtype, optional `value_min`/`value_max`). Only log streams present in this registry are preprocessed; unknown sources are dropped. This controls which slow-control parameters are available in the system.
+
+### G9. Backpressure and Graceful Degradation
+
+The system has no explicit backpressure signaling (no "slow down" from downstream to upstream). Instead, every stage uses "latest value wins" semantics that naturally shed stale data when consumers can't keep up:
+
+- **Kafka to Orchestrator**: `BackgroundMessageSource` drops oldest batches on queue overflow (see G3). The consumer thread never blocks.
+- **Orchestrator to Plotters**: `Orchestrator.update()` drains the entire consumer queue each cycle. `Plotter.compute()` calls `_set_cached_state()` which overwrites the previous cached state — no intermediate states are queued.
+- **Plotters to Sessions**: `mark_presenters_dirty()` is idempotent (setting `True` when already `True` is a no-op). If `compute()` fires twice before a session polls, the session sees only the latest state. Hidden tabs skip `pipe.send()` entirely; the dirty flag is retained for the next tab switch.
+
+Sessions are fully isolated: each has its own `PresenterBase` instances, dirty flags, and `pn.io.PeriodicCallback`. A slow session delays only its own updates — it cannot block other sessions, `Plotter.compute()`, the orchestrator, or Kafka consumption (all run on separate threads). The effective behavior is that slow sessions display at a lower frame rate, always showing the most recent data.
