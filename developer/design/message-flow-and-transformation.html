@@ -1,0 +1,1264 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Message Flow and Transformation &#8212; ESSlivedata</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../../_static/documentation_options.js?v=4b8ad96a"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+    <script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.12.1/dist/mermaid.esm.min.mjs";
+
+
+
+
+
+const initStyles = () => {
+    const defaultStyle = document.createElement('style');
+    defaultStyle.textContent = `pre.mermaid {
+    /* Same as .mermaid-container > pre */
+    display: block;
+    width: 100%;
+}
+
+pre.mermaid > svg {
+    /* Same as .mermaid-container > pre > svg */
+    height: 500px;
+    width: 100%;
+    max-width: 100% !important;
+}`;
+    document.head.appendChild(defaultStyle);
+
+    const fullscreenStyle = document.createElement('style');
+    fullscreenStyle.textContent = `.mermaid-container {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+}
+
+.mermaid-container > pre {
+    display: block;
+    width: 100%;
+}
+
+.mermaid-container > pre > svg {
+    height: 500px;
+    width: 100%;
+    max-width: 100% !important;
+}
+
+.mermaid-fullscreen-btn {
+    width: 28px;
+    height: 28px;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(0, 0, 0, 0.3);
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+    color: #333;
+}
+
+.mermaid-fullscreen-btn:hover {
+    opacity: 100% !important;
+    background: rgba(255, 255, 255, 1);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+    transform: scale(1.1);
+}
+
+.mermaid-fullscreen-btn.dark-theme {
+    background: rgba(50, 50, 50, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #e0e0e0;
+}
+
+.mermaid-fullscreen-btn.dark-theme:hover {
+    background: rgba(60, 60, 60, 1);
+    box-shadow: 0 3px 10px rgba(255, 255, 255, 0.2);
+}
+
+.mermaid-fullscreen-modal {
+    display: none;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 95vw;
+    height: 100vh;
+    background: rgba(255, 255, 255, 0.98);
+    z-index: 9999;
+    padding: 20px;
+    overflow: auto;
+}
+
+.mermaid-fullscreen-modal.dark-theme {
+    background: rgba(0, 0, 0, 0.98);
+}
+
+.mermaid-fullscreen-modal.active {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.mermaid-container-fullscreen {
+    position: relative;
+    width: 95vw;
+    height: 90vh;
+    max-width: 95vw;
+    max-height: 90vh;
+    background: white;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    overflow: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.mermaid-container-fullscreen.dark-theme {
+    background: #1a1a1a;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+}
+
+.mermaid-container-fullscreen pre.mermaid {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.mermaid-container-fullscreen .mermaid svg {
+    height: 100% !important;
+    width: 100% !important;
+    cursor: grab;
+}
+
+.mermaid-fullscreen-close {
+    position: fixed !important;
+    top: 20px !important;
+    right: 20px !important;
+    width: 40px;
+    height: 40px;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    border-radius: 50%;
+    cursor: pointer;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    transition: all 0.2s;
+    font-size: 24px;
+    line-height: 1;
+    color: #333;
+}
+
+.mermaid-fullscreen-close:hover {
+    background: white;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+    transform: scale(1.1);
+}
+
+.mermaid-fullscreen-close.dark-theme {
+    background: rgba(50, 50, 50, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #e0e0e0;
+}
+
+.mermaid-fullscreen-close.dark-theme:hover {
+    background: rgba(60, 60, 60, 1);
+    box-shadow: 0 6px 16px rgba(255, 255, 255, 0.2);
+}
+
+.mermaid-fullscreen-modal .mermaid-fullscreen-btn {
+    display: none !important;
+}`;
+    document.head.appendChild(fullscreenStyle);
+}
+
+// Detect if page has dark background
+const isDarkTheme = () => {
+    // We use a set of heuristics:
+    // 1. Check for common dark mode classes or attributes
+    // 2. Check computed background color brightness
+    if (document.documentElement.classList.contains('dark') ||
+        document.documentElement.getAttribute('data-theme') === 'dark' ||
+        document.body.classList.contains('dark') ||
+        document.body.getAttribute('data-theme') === 'dark') {
+        // console.log("Dark theme detected via class/attribute");
+        return true;
+    }
+    if (document.documentElement.classList.contains('light') ||
+        document.documentElement.getAttribute('data-theme') === 'light' ||
+        document.body.classList.contains('light') ||
+        document.body.getAttribute('data-theme') === 'light') {
+        // console.log("Light theme detected via class/attribute");
+        return false;
+    }
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        // console.log("Dark theme detected via prefers-color-scheme");
+        return true;
+    }
+    const bgColor = window.getComputedStyle(document.body).backgroundColor;
+    const match = bgColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)/);
+    if (match) {
+        const r = parseInt(match[1]);
+        const g = parseInt(match[2]);
+        const b = parseInt(match[3]);
+        const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+        // console.log("Background color brightness:", brightness);
+        return brightness < 128;
+    }
+    // console.log("No dark or light theme detected, defaulting to light theme");
+    return false;
+};
+
+let darkTheme = isDarkTheme();
+let modal = null;
+let modalContent = null;
+let previousScrollOffset = [window.scrollX, window.scrollY];
+
+const runMermaid = async (rerun) => {
+    console.log("Running mermaid diagrams, rerun =", rerun);
+    // clear all existing mermaid charts
+    let all_mermaids = document.querySelectorAll(".mermaid");
+
+    if (rerun) {
+        all_mermaids.forEach((el) => {
+            if(!el.hasAttribute("data-original-code")) {
+                // store original code
+                // console.log(`Storing original code for first run: `, el.innerHTML);
+                el.setAttribute('data-original-code', el.innerHTML);
+            }
+            if(el.getAttribute("data-processed") === "true") {
+                // remove and restore original
+                el.removeAttribute("data-processed");
+                // console.log(`Restoring original code for re-run: `, el.getAttribute('data-original-code'));
+                el.innerHTML = el.getAttribute('data-original-code');
+            } else {
+                // store original code
+                // console.log(`Storing original code for re-run: `, el.innerHTML);
+                el.setAttribute('data-original-code', el.innerHTML);
+            }
+        });
+        await mermaid.run();
+    }
+
+    all_mermaids = document.querySelectorAll(".mermaid");
+    const mermaids_processed = document.querySelectorAll(".mermaid[data-processed='true']");
+
+    if ("False" === "True") {
+        const mermaids_to_add_zoom = -1 === -1 ? all_mermaids.length : -1;
+        if(mermaids_to_add_zoom > 0) {
+            var svgs = d3.selectAll("");
+            if(all_mermaids.length !== mermaids_processed.length) {
+                setTimeout(() => runMermaid(false), 200);
+                return;
+            } else if(svgs.size() !== mermaids_to_add_zoom) {
+                setTimeout(() => runMermaid(false), 200);
+                return;
+            } else {
+                svgs.each(function() {
+                    var svg = d3.select(this);
+                    svg.html("<g class='wrapper'>" + svg.html() + "</g>");
+                    var inner = svg.select("g");
+                    var zoom = d3.zoom().on("zoom", function(event) {
+                        inner.attr("transform", event.transform);
+                    });
+                    svg.call(zoom);
+                });
+            }
+        }
+    } else if(all_mermaids.length !== mermaids_processed.length) {
+        // Wait for mermaid to process all diagrams
+        setTimeout(() => runMermaid(false), 200);
+        return;
+    }
+
+    // Stop here if not adding fullscreen capability
+    if ("True" !== "True") return;
+
+    if (modal !== null ) {
+        // Destroy existing modal
+        modal.remove();
+        modal = null;
+        modalContent = null;
+    }
+
+    modal = document.createElement('div');
+    modal.className = 'mermaid-fullscreen-modal' + (darkTheme ? ' dark-theme' : '');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', 'Fullscreen diagram viewer');
+    modal.innerHTML = `
+        <button class="mermaid-fullscreen-close${darkTheme ? ' dark-theme' : ''}" aria-label="Close fullscreen">✕</button>
+        <div class="mermaid-container-fullscreen${darkTheme ? ' dark-theme' : ''}"></div>
+    `;
+    document.body.appendChild(modal);
+
+    modalContent = modal.querySelector('.mermaid-container-fullscreen');
+    const closeBtn = modal.querySelector('.mermaid-fullscreen-close');
+
+    const closeModal = () => {
+        modal.classList.remove('active');
+        modalContent.innerHTML = '';
+        document.body.style.overflow = ''
+        window.scrollTo({left: previousScrollOffset[0], top: previousScrollOffset[1], behavior: 'instant'});
+    };
+
+    closeBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && modal.classList.contains('active')) {
+            closeModal();
+        }
+    });
+
+    document.querySelectorAll('.mermaid').forEach((mermaidDiv) => {
+        if (mermaidDiv.parentNode.classList.contains('mermaid-container') ||
+            mermaidDiv.closest('.mermaid-fullscreen-modal')) {
+            // Already processed, adjust button class if needed
+            const existingBtn = mermaidDiv.parentNode.querySelector('.mermaid-fullscreen-btn');
+            if (existingBtn) {
+                existingBtn.className = 'mermaid-fullscreen-btn' + (darkTheme ? ' dark-theme' : '');
+            }
+            return;
+        }
+
+        const container = document.createElement('div');
+        container.className = 'mermaid-container';
+        mermaidDiv.parentNode.insertBefore(container, mermaidDiv);
+        container.appendChild(mermaidDiv);
+
+        const fullscreenBtn = document.createElement('button');
+        fullscreenBtn.className = 'mermaid-fullscreen-btn' + (darkTheme ? ' dark-theme' : '');
+        fullscreenBtn.setAttribute('aria-label', 'View diagram in fullscreen');
+        fullscreenBtn.textContent = '⛶';
+        fullscreenBtn.style.opacity = '50%';
+
+        // Calculate dynamic position based on diagram's margin and padding
+        const diagramStyle = window.getComputedStyle(mermaidDiv);
+        const marginTop = parseFloat(diagramStyle.marginTop) || 0;
+        const marginRight = parseFloat(diagramStyle.marginRight) || 0;
+        const paddingTop = parseFloat(diagramStyle.paddingTop) || 0;
+        const paddingRight = parseFloat(diagramStyle.paddingRight) || 0;
+        fullscreenBtn.style.top = `${marginTop + paddingTop + 4}px`;
+        fullscreenBtn.style.right = `${marginRight + paddingRight + 4}px`;
+
+        fullscreenBtn.addEventListener('click', () => {
+            previousScrollOffset = [window.scroll, window.scrollY];
+            const clone = mermaidDiv.cloneNode(true);
+            modalContent.innerHTML = '';
+            modalContent.appendChild(clone);
+
+            const svg = clone.querySelector('svg');
+            if (svg) {
+                svg.removeAttribute('width');
+                svg.removeAttribute('height');
+                svg.style.width = '100%';
+                svg.style.height = 'auto';
+                svg.style.maxWidth = '100%';
+                svg.style.sdisplay = 'block';
+
+                if ("False" === "True") {
+                    setTimeout(() => {
+                        const g = svg.querySelector('g');
+                        if (g) {
+                            var svgD3 = d3.select(svg);
+                            svgD3.html("<g class='wrapper'>" + svgD3.html() + "</g>");
+                            var inner = svgD3.select("g");
+                            var zoom = d3.zoom().on("zoom", function(event) {
+                                inner.attr("transform", event.transform);
+                            });
+                            svgD3.call(zoom);
+                        }
+                    }, 100);
+                }
+            }
+
+            modal.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        });
+        container.appendChild(fullscreenBtn);
+    });
+};
+
+const load = async () => {
+    initStyles();
+
+    await runMermaid(true);
+
+    const reRunIfThemeChanges = async () => {
+        const newDarkTheme = isDarkTheme();
+        if (newDarkTheme !== darkTheme) {
+            darkTheme = newDarkTheme;
+            console.log("Theme change detected, re-running mermaid with", darkTheme ? "dark" : "default", "theme");
+            await mermaid.initialize(
+                {...JSON.parse(
+                    `{"startOnLoad": false}`
+                ),
+                ...{ darkMode: darkTheme, theme: darkTheme ? 'dark' : 'default' },
+                }
+            );
+            await runMermaid(true);
+        }
+    };
+
+    // Update theme classes when theme changes
+    const themeObserver = new MutationObserver(reRunIfThemeChanges);
+    themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'data-theme']
+    });
+    themeObserver.observe(document.body, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'data-theme']
+    });
+};
+
+
+
+
+
+console.log("Initializing mermaid with", darkTheme ? "dark" : "default", "theme");
+mermaid.initialize(
+    {...JSON.parse(
+        `{"startOnLoad": false}`
+    ),
+    ...{ darkMode: darkTheme, theme: darkTheme ? 'dark' : 'default' },
+    }
+);
+
+window.addEventListener("load", load);</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'developer/design/message-flow-and-transformation';</script>
+    <script src="../../_static/anaconda-icon.js?v=461bdc62"></script>
+    <link rel="icon" href="../../_static/favicon.ico"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Livedata Dashboard Architecture" href="dashboard-architecture.html" />
+    <link rel="prev" title="Backend Service Architecture" href="backend-service-architecture.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="26.2.5" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.svg" class="logo__image only-light" alt="ESSlivedata - Home"/>
+    <img src="../../_static/logo-dark.svg" class="logo__image only-dark pst-js-only" alt="ESSlivedata - Home"/>
+  
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-anaconda fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">Conda</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-anaconda fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">Conda</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting-started.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../coding-conventions.html">Coding conventions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../dependency-management.html">Dependency management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="backend-service-architecture.html">Backend Service Architecture</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Message Flow and Transformation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="dashboard-architecture.html">Livedata Dashboard Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="orchestrator-flow.html">Orchestrator Flow: Plot Creation Lifecycle</a></li>
+</ul>
+</div>
+</nav></div>
+        <div class="sidebar-primary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#overview">Overview</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#end-to-end-message-journey">End-to-End Message Journey</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#message-abstraction">Message Abstraction</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#the-message-type">The Message Type</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#streamid-identifying-message-streams">StreamId: Identifying Message Streams</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#stream-mapping">Stream Mapping</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#streammapping-and-streamlut">StreamMapping and StreamLUT</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#message-adapters">Message Adapters</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#adapter-pattern">Adapter Pattern</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#core-adapters">Core Adapters</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#adapter-composition">Adapter Composition</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#error-handling">Error Handling</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#message-batching">Message Batching</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#messagebatch-structure">MessageBatch Structure</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#simplemessagebatcher">SimpleMessageBatcher</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#naivemessagebatcher">NaiveMessageBatcher</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#message-source-chain">Message Source Chain</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#messagesource-protocol">MessageSource Protocol</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#kafkamessagesource">KafkaMessageSource</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#backgroundmessagesource">BackgroundMessageSource</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#adaptingmessagesource">AdaptingMessageSource</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#multiconsumer">MultiConsumer</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#serialization-and-schema">Serialization and Schema</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#flatbuffers-schemas">FlatBuffers Schemas</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#kafka-sink-serialization">Kafka Sink Serialization</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#unrollingsinkadapter">UnrollingSinkAdapter</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#summary">Summary</a></li>
+</ul>
+  </nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../../_sources/developer/design/message-flow-and-transformation.md"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Development</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Message Flow and Transformation</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="message-flow-and-transformation">
+<h1>Message Flow and Transformation<a class="headerlink" href="#message-flow-and-transformation" title="Link to this heading">#</a></h1>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading">#</a></h2>
+<p>ESSlivedata processes neutron detector data flowing through Kafka topics. Messages transform from raw Kafka messages to typed domain objects ready for processing.</p>
+<p><strong>Key Principles</strong>: Isolation from Kafka details, composable transformations, type safety, performance optimization.</p>
+</section>
+<section id="end-to-end-message-journey">
+<h2>End-to-End Message Journey<a class="headerlink" href="#end-to-end-message-journey" title="Link to this heading">#</a></h2>
+<pre  class="mermaid">
+        flowchart TB
+    subgraph Kafka[&quot;Kafka Topics&quot;]
+        DetTopic[&quot;Detector Topic&lt;br/&gt;(EV44)&quot;]
+        MonTopic[&quot;Monitor Topic&lt;br/&gt;(EV44)&quot;]
+        LogTopic[&quot;Log Topic&lt;br/&gt;(F144)&quot;]
+        DataTopic[&quot;Data Topic&lt;br/&gt;(DA00)&quot;]
+    end
+
+    subgraph Source[&quot;Message Source Chain&quot;]
+        KC[Kafka Consumer]
+        KMS[KafkaMessageSource]
+        BMS[BackgroundMessageSource]
+        AMS[AdaptingMessageSource]
+    end
+
+    subgraph Adaptation[&quot;Adapter Chain&quot;]
+        RTA[RouteByTopicAdapter]
+        EV44A[KafkaToEv44Adapter]
+        DetA[Ev44ToDetectorEventsAdapter]
+        MonA[KafkaToMonitorEventsAdapter]
+        F144A[KafkaToF144Adapter]
+        LogA[F144ToLogDataAdapter]
+        DA00A[KafkaToDa00Adapter]
+        ScippA[Da00ToScippAdapter]
+    end
+
+    subgraph Domain[&quot;Domain Messages&quot;]
+        DetMsg[&quot;Message&amp;lt;DetectorEvents&amp;gt;&quot;]
+        MonMsg[&quot;Message&amp;lt;MonitorEvents&amp;gt;&quot;]
+        LogMsg[&quot;Message&amp;lt;LogData&amp;gt;&quot;]
+        DataMsg[&quot;Message&amp;lt;DataArray&amp;gt;&quot;]
+    end
+
+    subgraph Processing[&quot;Processor&quot;]
+        P[StreamProcessor /&lt;br/&gt;OrchestratingProcessor]
+    end
+
+    DetTopic --&gt; KC
+    MonTopic --&gt; KC
+    LogTopic --&gt; KC
+    DataTopic --&gt; KC
+
+    KC --&gt; KMS
+    KMS --&gt; BMS
+    BMS --&gt; AMS
+
+    AMS --&gt; RTA
+    RTA --&gt; EV44A
+    RTA --&gt; MonA
+    RTA --&gt; F144A
+    RTA --&gt; DA00A
+
+    EV44A --&gt; DetA
+    DetA --&gt; DetMsg
+    MonA --&gt; MonMsg
+    F144A --&gt; LogA
+    LogA --&gt; LogMsg
+    DA00A --&gt; ScippA
+    ScippA --&gt; DataMsg
+
+    DetMsg --&gt; P
+    MonMsg --&gt; P
+    LogMsg --&gt; P
+    DataMsg --&gt; P
+
+    classDef kafka fill:#fff3e0,stroke:#ef6c00;
+    classDef source fill:#e3f2fd,stroke:#1976d2;
+    classDef adapter fill:#f3e5f5,stroke:#7b1fa2;
+    classDef domain fill:#e8f5e9,stroke:#388e3c;
+    classDef processor fill:#fff9c4,stroke:#fbc02d;
+
+    class DetTopic,MonTopic,LogTopic,DataTopic kafka;
+    class KC,KMS,BMS,AMS source;
+    class RTA,EV44A,DetA,MonA,F144A,LogA,DA00A,ScippA adapter;
+    class DetMsg,MonMsg,LogMsg,DataMsg domain;
+    class P processor;
+    </pre><p><strong>Stages</strong>: Kafka Topics (FlatBuffers: EV44, F144, DA00) → Message Source Chain (consumption, polling, adaptation) → Adapter Chain (deserialization to domain types) → Domain Messages (typed) → Processor (routes by StreamId).</p>
+</section>
+<section id="message-abstraction">
+<h2>Message Abstraction<a class="headerlink" href="#message-abstraction" title="Link to this heading">#</a></h2>
+<section id="the-message-type">
+<h3>The Message Type<a class="headerlink" href="#the-message-type" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">Message[T]</span></code> is an immutable (frozen) dataclass with <code class="docutils literal notranslate"><span class="pre">timestamp</span></code> (nanoseconds since Unix epoch UTC), <code class="docutils literal notranslate"><span class="pre">stream</span></code> (StreamId), and <code class="docutils literal notranslate"><span class="pre">value</span></code> (generic type T). Generic over value type, timestamp-based ordering, stream identification.</p>
+</section>
+<section id="streamid-identifying-message-streams">
+<h3>StreamId: Identifying Message Streams<a class="headerlink" href="#streamid-identifying-message-streams" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">StreamId</span></code> contains <code class="docutils literal notranslate"><span class="pre">kind</span></code> (StreamKind enum: detector, monitor, log, config, data, status) and <code class="docutils literal notranslate"><span class="pre">name</span></code> (specific identifier). Isolates internal code from Kafka topic names.</p>
+</section>
+</section>
+<section id="stream-mapping">
+<h2>Stream Mapping<a class="headerlink" href="#stream-mapping" title="Link to this heading">#</a></h2>
+<p>Isolates ESSlivedata from Kafka topic structure: Kafka uses <code class="docutils literal notranslate"><span class="pre">(topic,</span> <span class="pre">source_name)</span></code> tuples, ESSlivedata uses <code class="docutils literal notranslate"><span class="pre">StreamId(kind,</span> <span class="pre">name)</span></code>. Enables topic renaming, split/merged topics, simplified testing.</p>
+<section id="streammapping-and-streamlut">
+<h3>StreamMapping and StreamLUT<a class="headerlink" href="#streammapping-and-streamlut" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">InputStreamKey</span></code> = <code class="docutils literal notranslate"><span class="pre">(topic,</span> <span class="pre">source_name)</span></code>. <code class="docutils literal notranslate"><span class="pre">StreamLUT</span></code> = dict mapping InputStreamKey to internal name. <code class="docutils literal notranslate"><span class="pre">StreamMapping</span></code> contains detector_lut, monitor_lut, log_topics, config/data/status topics. Adapters use stream_lut to convert Kafka identifiers to StreamId.</p>
+</section>
+</section>
+<section id="message-adapters">
+<h2>Message Adapters<a class="headerlink" href="#message-adapters" title="Link to this heading">#</a></h2>
+<section id="adapter-pattern">
+<h3>Adapter Pattern<a class="headerlink" href="#adapter-pattern" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">MessageAdapter</span></code> protocol: <code class="docutils literal notranslate"><span class="pre">adapt(message:</span> <span class="pre">T)</span> <span class="pre">-&gt;</span> <span class="pre">U</span></code>. Benefits: composable, type-safe, testable, reusable.</p>
+</section>
+<section id="core-adapters">
+<h3>Core Adapters<a class="headerlink" href="#core-adapters" title="Link to this heading">#</a></h3>
+<p><strong>KafkaToEv44Adapter</strong>: Deserializes EV44 event data (uses stream_lut, extracts timestamp, returns <code class="docutils literal notranslate"><span class="pre">Message[EventData]</span></code>).</p>
+<p><strong>KafkaToMonitorEventsAdapter</strong>: Optimized—directly extracts time-of-flight arrays from FlatBuffers, skips unused fields, reduces memory allocations.</p>
+<p><strong>Ev44ToDetectorEventsAdapter</strong>: Converts <code class="docutils literal notranslate"><span class="pre">Message[EventData]</span></code> → <code class="docutils literal notranslate"><span class="pre">Message[DetectorEvents]</span></code>. Option: <code class="docutils literal notranslate"><span class="pre">merge_detectors=True</span></code> merges all detector banks.</p>
+<p><strong>KafkaToDa00Adapter</strong> and <strong>Da00ToScippAdapter</strong>: Process DataArray messages, handle DA00/Scipp compatibility.</p>
+<p><strong>KafkaToF144Adapter</strong> and <strong>F144ToLogDataAdapter</strong>: Process log data, decouple from upstream schema changes.</p>
+</section>
+<section id="adapter-composition">
+<h3>Adapter Composition<a class="headerlink" href="#adapter-composition" title="Link to this heading">#</a></h3>
+<p><strong>ChainedAdapter</strong>: Chains two adapters sequentially (<code class="docutils literal notranslate"><span class="pre">second.adapt(first.adapt(message))</span></code>).</p>
+<p><strong>RouteByTopicAdapter</strong>: Routes by Kafka topic to different adapters. Provides <code class="docutils literal notranslate"><span class="pre">.topics</span></code> list for subscription.</p>
+<p><strong>RouteBySchemaAdapter</strong>: Routes by FlatBuffers schema identifier. Use case: multiple schemas on same topic.</p>
+</section>
+<section id="error-handling">
+<h3>Error Handling<a class="headerlink" href="#error-handling" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">AdaptingMessageSource</span></code> with <code class="docutils literal notranslate"><span class="pre">raise_on_error=False</span></code> (default) logs errors and skips messages. <code class="docutils literal notranslate"><span class="pre">raise_on_error=True</span></code> re-raises exceptions. Unknown schema exceptions logged as warnings.</p>
+</section>
+</section>
+<section id="message-batching">
+<h2>Message Batching<a class="headerlink" href="#message-batching" title="Link to this heading">#</a></h2>
+<p>Groups messages into time-aligned windows for time-aligned processing, job scheduling, efficient accumulation, predictable latency.</p>
+<section id="messagebatch-structure">
+<h3>MessageBatch Structure<a class="headerlink" href="#messagebatch-structure" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">MessageBatch</span></code> = <code class="docutils literal notranslate"><span class="pre">(start_time,</span> <span class="pre">end_time,</span> <span class="pre">messages)</span></code>. Times in nanoseconds, <code class="docutils literal notranslate"><span class="pre">[start_time,</span> <span class="pre">end_time)</span></code> (inclusive, exclusive).</p>
+</section>
+<section id="simplemessagebatcher">
+<h3>SimpleMessageBatcher<a class="headerlink" href="#simplemessagebatcher" title="Link to this heading">#</a></h3>
+<p>Time-aligned batching used by <code class="docutils literal notranslate"><span class="pre">OrchestratingProcessor</span></code>. Initial batch contains all messages; subsequent batches aligned to <code class="docutils literal notranslate"><span class="pre">batch_length_s</span></code> intervals. Late messages included in next batch. Empty batches returned when next batch starts. Batch completion triggered by first message for next batch.</p>
+<p><strong>Important</strong>: Relies on message timestamps (not wall-clock time). If messages stop arriving, current batch may never complete.</p>
+</section>
+<section id="naivemessagebatcher">
+<h3>NaiveMessageBatcher<a class="headerlink" href="#naivemessagebatcher" title="Link to this heading">#</a></h3>
+<p>Simple batcher for testing—all messages in one batch. Use for testing without time-based logic or services not needing time alignment.</p>
+</section>
+</section>
+<section id="message-source-chain">
+<h2>Message Source Chain<a class="headerlink" href="#message-source-chain" title="Link to this heading">#</a></h2>
+<section id="messagesource-protocol">
+<h3>MessageSource Protocol<a class="headerlink" href="#messagesource-protocol" title="Link to this heading">#</a></h3>
+<p>Protocol: <code class="docutils literal notranslate"><span class="pre">get_messages()</span> <span class="pre">-&gt;</span> <span class="pre">Sequence[T]</span></code>. Called by processor each iteration, returns available messages (may be empty).</p>
+</section>
+<section id="kafkamessagesource">
+<h3>KafkaMessageSource<a class="headerlink" href="#kafkamessagesource" title="Link to this heading">#</a></h3>
+<p>Basic Kafka consumer wrapper. Blocking: polls Kafka for up to <code class="docutils literal notranslate"><span class="pre">timeout</span></code> seconds, processor blocked during poll.</p>
+</section>
+<section id="backgroundmessagesource">
+<h3>BackgroundMessageSource<a class="headerlink" href="#backgroundmessagesource" title="Link to this heading">#</a></h3>
+<p>Non-blocking Kafka consumer. Background thread polls continuously, messages queued in memory, <code class="docutils literal notranslate"><span class="pre">get_messages()</span></code> drains queue without blocking, automatic overflow handling (drops oldest batches). Benefits: processor never blocked on Kafka I/O, handles bursts, reduces risk of falling behind. Context manager: start/stop background thread.</p>
+</section>
+<section id="adaptingmessagesource">
+<h3>AdaptingMessageSource<a class="headerlink" href="#adaptingmessagesource" title="Link to this heading">#</a></h3>
+<p>Wraps source to apply adapters. Returns <code class="docutils literal notranslate"><span class="pre">list[Message[DomainType]]</span></code>. Error handling: catches exceptions during adaptation, logs/skips messages (if <code class="docutils literal notranslate"><span class="pre">raise_on_error=False</span></code>).</p>
+</section>
+<section id="multiconsumer">
+<h3>MultiConsumer<a class="headerlink" href="#multiconsumer" title="Link to this heading">#</a></h3>
+<p>Combines multiple Kafka consumers. Use case: different offset strategies for config topics (earliest) vs data topics (latest).</p>
+</section>
+</section>
+<section id="serialization-and-schema">
+<h2>Serialization and Schema<a class="headerlink" href="#serialization-and-schema" title="Link to this heading">#</a></h2>
+<section id="flatbuffers-schemas">
+<h3>FlatBuffers Schemas<a class="headerlink" href="#flatbuffers-schemas" title="Link to this heading">#</a></h3>
+<p>ESSlivedata uses FlatBuffers schemas from <code class="docutils literal notranslate"><span class="pre">streaming_data_types</span></code>:</p>
+<p><strong>EV44 (Event Data)</strong>: Fields: <code class="docutils literal notranslate"><span class="pre">source_name</span></code>, <code class="docutils literal notranslate"><span class="pre">reference_time</span></code> (pulse times), <code class="docutils literal notranslate"><span class="pre">time_of_flight</span></code>, <code class="docutils literal notranslate"><span class="pre">detector_id</span></code>.</p>
+<p><strong>F144 (Log Data)</strong>: Fields: <code class="docutils literal notranslate"><span class="pre">source_name</span></code>, <code class="docutils literal notranslate"><span class="pre">value</span></code> (scalar/array), <code class="docutils literal notranslate"><span class="pre">timestamp_unix_ns</span></code>.</p>
+<p><strong>DA00 (DataArray)</strong>: Compatibility layer via <code class="docutils literal notranslate"><span class="pre">scipp_da00_compat</span></code>: <code class="docutils literal notranslate"><span class="pre">scipp_to_da00</span></code>, <code class="docutils literal notranslate"><span class="pre">da00_to_scipp</span></code>.</p>
+</section>
+<section id="kafka-sink-serialization">
+<h3>Kafka Sink Serialization<a class="headerlink" href="#kafka-sink-serialization" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">KafkaSink</span></code> publishes messages using built-in serializers: <code class="docutils literal notranslate"><span class="pre">serialize_dataarray_to_da00</span></code> (default), <code class="docutils literal notranslate"><span class="pre">serialize_dataarray_to_f144</span></code> (logs). Stream-specific: config (JSON), status (X5f2), data (DA00).</p>
+</section>
+<section id="unrollingsinkadapter">
+<h3>UnrollingSinkAdapter<a class="headerlink" href="#unrollingsinkadapter" title="Link to this heading">#</a></h3>
+<p>Handles DataGroup results: splits <code class="docutils literal notranslate"><span class="pre">Message[DataGroup]</span></code> with multiple outputs into separate DA00 messages per output. Stream name includes output: <code class="docutils literal notranslate"><span class="pre">workflow_id/job_id/output_name</span></code>.</p>
+</section>
+</section>
+<section id="summary">
+<h2>Summary<a class="headerlink" href="#summary" title="Link to this heading">#</a></h2>
+<p>Message transformation pipeline: Kafka Messages (FlatBuffers) → Source Chain (consumption, polling, adaptation) → Adapters (deserialization, domain conversion) → Stream Mapping (Kafka isolation) → Batching (time-aligned windows) → Domain Messages (type-safe).</p>
+<p><strong>Key Abstractions</strong>: <code class="docutils literal notranslate"><span class="pre">Message[T]</span></code>, <code class="docutils literal notranslate"><span class="pre">StreamId</span></code>, <code class="docutils literal notranslate"><span class="pre">MessageAdapter</span></code>, <code class="docutils literal notranslate"><span class="pre">StreamMapping</span></code>, <code class="docutils literal notranslate"><span class="pre">MessageBatcher</span></code>, <code class="docutils literal notranslate"><span class="pre">BackgroundMessageSource</span></code>.</p>
+<p>Enables high-rate data stream processing with type safety, testability, and Kafka isolation.</p>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="backend-service-architecture.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Backend Service Architecture</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="dashboard-architecture.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Livedata Dashboard Architecture</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025 Scipp contributors.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item"><!-- This will display the version of the docs -->
+Current ESSlivedata version: 26.2.5 (<a href="https://github.com/scipp/esslivedata/releases">older versions</a>).</div>
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

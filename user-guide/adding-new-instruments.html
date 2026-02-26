@@ -1,0 +1,1114 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Adding New Instruments &#8212; ESSlivedata</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../_static/documentation_options.js?v=4b8ad96a"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=f281be69"></script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'user-guide/adding-new-instruments';</script>
+    <script src="../_static/anaconda-icon.js?v=461bdc62"></script>
+    <link rel="icon" href="../_static/favicon.ico"/>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Installation" href="installation.html" />
+    <link rel="prev" title="Deployment Configuration" href="deployment.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="26.2.5" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/logo.svg" class="logo__image only-light" alt="ESSlivedata - Home"/>
+    <img src="../_static/logo-dark.svg" class="logo__image only-dark pst-js-only" alt="ESSlivedata - Home"/>
+  
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../developer/index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../about/index.html">
+    About
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-anaconda fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">Conda</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../developer/index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../about/index.html">
+    About
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-anaconda fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">Conda</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Live Data Reduction</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="services.html">Services</a></li>
+<li class="toctree-l1"><a class="reference internal" href="deployment.html">Deployment Configuration</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Adding New Instruments</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Installation</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Examples</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="dream-demo.html">DREAM demo</a></li>
+</ul>
+</div>
+</nav></div>
+        <div class="sidebar-primary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#required-steps">Required Steps</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#package-structure">Package Structure</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#creating-the-instrument-instance">Creating the Instrument instance</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#two-phase-registration-pattern">Two-Phase Registration Pattern</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#phase-1-register-specs-in-specs-py">Phase 1: Register Specs (in <code class="docutils literal notranslate"><span class="pre">specs.py</span></code>)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#phase-2-attach-factories-in-factories-py-or-elsewhere">Phase 2: Attach Factories (in <code class="docutils literal notranslate"><span class="pre">factories.py</span></code> or elsewhere)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#why-two-phases">Why Two Phases?</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#critical-lazy-import-requirements">Critical: Lazy Import Requirements</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#stream-configuration">Stream Configuration</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#fake-detectors">Fake Detectors</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#detector-configuration-in-factories">Detector Configuration in Factories</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#detector-view-registration">Detector View Registration</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#logical-views-2d-3d-detectors-with-transforms">Logical Views (2D/3D detectors with transforms)</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#geometric-projections-complex-geometries">Geometric Projections (complex geometries)</a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#geometry-files">Geometry Files</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#complete-example-dummy-instrument">Complete Example: Dummy Instrument</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#init-py"><code class="docutils literal notranslate"><span class="pre">__init__.py</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#specs-py"><code class="docutils literal notranslate"><span class="pre">specs.py</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#streams-py"><code class="docutils literal notranslate"><span class="pre">streams.py</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#factories-py"><code class="docutils literal notranslate"><span class="pre">factories.py</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#grid-templates-optional">Grid Templates (Optional)</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#creating-grid-templates">Creating Grid Templates</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reference-implementations">Reference Implementations</a></li>
+</ul>
+  </nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/user-guide/adding-new-instruments.md"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">User Guide</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Adding New Instruments</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="adding-new-instruments">
+<h1>Adding New Instruments<a class="headerlink" href="#adding-new-instruments" title="Link to this heading">#</a></h1>
+<p>This guide explains how to add support for a new instrument in ESSlivedata.</p>
+<section id="required-steps">
+<h2>Required Steps<a class="headerlink" href="#required-steps" title="Link to this heading">#</a></h2>
+<ol class="arabic simple">
+<li><p>Create a new instrument package in <code class="docutils literal notranslate"><span class="pre">src/ess/livedata/config/instruments/&lt;instrument&gt;/</span></code></p>
+<ul class="simple">
+<li><p>The directory name will be used as the instrument identifier</p></li>
+</ul>
+</li>
+<li><p>Create and register an <code class="docutils literal notranslate"><span class="pre">Instrument</span></code> instance (imported via the package)</p></li>
+<li><p>Provide <code class="docutils literal notranslate"><span class="pre">stream_mapping</span></code> accessible from the package namespace</p></li>
+<li><p>Optionally provide a <code class="docutils literal notranslate"><span class="pre">setup_factories(instrument)</span></code> function to attach workflow factories</p></li>
+<li><p>Optionally provide <code class="docutils literal notranslate"><span class="pre">detector_fakes</span></code> configuration for development/testing</p></li>
+</ol>
+</section>
+<section id="package-structure">
+<h2>Package Structure<a class="headerlink" href="#package-structure" title="Link to this heading">#</a></h2>
+<p>The minimal requirements are:</p>
+<ul class="simple">
+<li><p><strong>Required</strong>: A package with <code class="docutils literal notranslate"><span class="pre">__init__.py</span></code></p></li>
+<li><p><strong>Required</strong>: <code class="docutils literal notranslate"><span class="pre">stream_mapping</span></code> dict accessible from the package namespace</p></li>
+<li><p><strong>Required</strong>: An <code class="docutils literal notranslate"><span class="pre">Instrument</span></code> instance registered with <code class="docutils literal notranslate"><span class="pre">instrument_registry</span></code></p></li>
+<li><p><strong>Optional</strong>: <code class="docutils literal notranslate"><span class="pre">setup_factories(instrument)</span></code> function accessible from the package</p></li>
+<li><p><strong>Optional</strong>: <code class="docutils literal notranslate"><span class="pre">detector_fakes</span></code> dict accessible from the package (for fake data generation)</p></li>
+</ul>
+<p>The typical convention uses this structure (but you can organize differently):</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>src/ess/livedata/config/instruments/&lt;instrument&gt;/
+├── __init__.py          # Imports and re-exports for package namespace
+├── specs.py             # Instrument instance and workflow spec registration
+├── views.py             # Detector view transform functions (optional)
+├── streams.py           # Stream mappings (typically defines stream_mapping and detector_fakes)
+└── factories.py         # Factory implementations (setup_factories function)
+</pre></div>
+</div>
+<p><strong>Note</strong>: The file organization (<code class="docutils literal notranslate"><span class="pre">specs.py</span></code>, <code class="docutils literal notranslate"><span class="pre">streams.py</span></code>, <code class="docutils literal notranslate"><span class="pre">factories.py</span></code>) is a convention, not a requirement. Large instruments may split factories into multiple files, combine specs and streams, etc. The system only requires that:</p>
+<ul class="simple">
+<li><p>The package imports create an <code class="docutils literal notranslate"><span class="pre">Instrument</span></code> and register it</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">stream_mapping</span></code> is accessible from the package namespace (e.g., imported in <code class="docutils literal notranslate"><span class="pre">__init__.py</span></code>)</p></li>
+<li><p>If factories are needed, <code class="docutils literal notranslate"><span class="pre">setup_factories</span></code> is accessible from the package namespace</p></li>
+<li><p>If using fake data generators, <code class="docutils literal notranslate"><span class="pre">detector_fakes</span></code> is accessible from the package namespace</p></li>
+</ul>
+</section>
+<section id="creating-the-instrument-instance">
+<h2>Creating the Instrument instance<a class="headerlink" href="#creating-the-instrument-instance" title="Link to this heading">#</a></h2>
+<p>In <code class="docutils literal notranslate"><span class="pre">specs.py</span></code> (or any module imported by <code class="docutils literal notranslate"><span class="pre">__init__.py</span></code>), create and register the instrument:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">ess.livedata.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">Instrument</span><span class="p">,</span> <span class="n">instrument_registry</span>
+
+<span class="n">instrument</span> <span class="o">=</span> <span class="n">Instrument</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s1">&#39;instrument_name&#39;</span><span class="p">,</span>
+    <span class="n">detector_names</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;detector1&#39;</span><span class="p">,</span> <span class="s1">&#39;detector2&#39;</span><span class="p">],</span>
+    <span class="n">monitors</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;monitor1&#39;</span><span class="p">,</span> <span class="s1">&#39;monitor2&#39;</span><span class="p">],</span>
+    <span class="n">f144_attribute_registry</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;motion1&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s1">&#39;units&#39;</span><span class="p">:</span> <span class="s1">&#39;mm&#39;</span><span class="p">}},</span>
+<span class="p">)</span>
+
+<span class="c1"># Register with global registry</span>
+<span class="n">instrument_registry</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">instrument</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The variable name <code class="docutils literal notranslate"><span class="pre">instrument</span></code> is conventional but not required.</p>
+</section>
+<section id="two-phase-registration-pattern">
+<h2>Two-Phase Registration Pattern<a class="headerlink" href="#two-phase-registration-pattern" title="Link to this heading">#</a></h2>
+<p>ESSlivedata uses a <strong>two-phase registration pattern</strong> to separate specifications with minimal dependencies from factory implementations:</p>
+<section id="phase-1-register-specs-in-specs-py">
+<h3>Phase 1: Register Specs (in <code class="docutils literal notranslate"><span class="pre">specs.py</span></code>)<a class="headerlink" href="#phase-1-register-specs-in-specs-py" title="Link to this heading">#</a></h3>
+<p>Register workflow specifications with explicit metadata and return a handle:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Register a detector view spec</span>
+<span class="n">view_handle</span> <span class="o">=</span> <span class="n">instrument</span><span class="o">.</span><span class="n">register_spec</span><span class="p">(</span>
+    <span class="n">namespace</span><span class="o">=</span><span class="s1">&#39;detector_data&#39;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s1">&#39;detector1_xy&#39;</span><span class="p">,</span>
+    <span class="n">version</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">title</span><span class="o">=</span><span class="s1">&#39;Detector 1 XY View&#39;</span><span class="p">,</span>
+    <span class="n">description</span><span class="o">=</span><span class="s1">&#39;2D view of detector 1&#39;</span><span class="p">,</span>
+    <span class="n">source_names</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;detector1&#39;</span><span class="p">],</span>
+    <span class="n">params</span><span class="o">=</span><span class="n">DetectorViewParams</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Register a data reduction workflow spec</span>
+<span class="n">workflow_handle</span> <span class="o">=</span> <span class="n">instrument</span><span class="o">.</span><span class="n">register_spec</span><span class="p">(</span>
+    <span class="n">namespace</span><span class="o">=</span><span class="s1">&#39;data_reduction&#39;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s1">&#39;my_workflow&#39;</span><span class="p">,</span>
+    <span class="n">version</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">title</span><span class="o">=</span><span class="s1">&#39;My Workflow&#39;</span><span class="p">,</span>
+    <span class="n">description</span><span class="o">=</span><span class="s1">&#39;Reduces data to I(Q)&#39;</span><span class="p">,</span>
+    <span class="n">source_names</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;detector1&#39;</span><span class="p">,</span> <span class="s1">&#39;detector2&#39;</span><span class="p">],</span>
+    <span class="n">params</span><span class="o">=</span><span class="n">MyWorkflowParams</span><span class="p">,</span>
+    <span class="n">outputs</span><span class="o">=</span><span class="n">MyWorkflowOutputs</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="phase-2-attach-factories-in-factories-py-or-elsewhere">
+<h3>Phase 2: Attach Factories (in <code class="docutils literal notranslate"><span class="pre">factories.py</span></code> or elsewhere)<a class="headerlink" href="#phase-2-attach-factories-in-factories-py-or-elsewhere" title="Link to this heading">#</a></h3>
+<p>Use the handle to attach the actual factory implementation. This must be done in a function called <code class="docutils literal notranslate"><span class="pre">setup_factories</span></code> that’s accessible from your package namespace:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">setup_factories</span><span class="p">(</span><span class="n">instrument</span><span class="p">:</span> <span class="n">Instrument</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Initialize instrument-specific factories and workflows.&quot;&quot;&quot;</span>
+    <span class="c1"># Lazy imports go here (only loaded when needed)</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">ess.reduce.nexus</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_detector</span>
+
+    <span class="c1"># Import the handle from wherever specs were registered</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">specs</span>
+
+    <span class="n">specs</span><span class="o">.</span><span class="n">view_handle</span><span class="o">.</span><span class="n">attach_factory</span><span class="p">()(</span><span class="n">make_view_function</span><span class="p">)</span>
+
+    <span class="nd">@specs</span><span class="o">.</span><span class="n">workflow_handle</span><span class="o">.</span><span class="n">attach_factory</span><span class="p">()</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">make_workflow</span><span class="p">():</span>
+        <span class="c1"># Create and return workflow</span>
+        <span class="k">return</span> <span class="n">StreamProcessorWorkflow</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">setup_factories</span></code> function will be called automatically by <code class="docutils literal notranslate"><span class="pre">Instrument.load_factories()</span></code> if it exists in the package namespace.</p>
+</section>
+<section id="why-two-phases">
+<h3>Why Two Phases?<a class="headerlink" href="#why-two-phases" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p><strong>Phase 1 (specs)</strong>: Always imported - provides metadata for UI generation and configuration discovery</p></li>
+<li><p><strong>Phase 2 (factories)</strong>: Loaded on-demand - contains actual workflow logic and implementation</p></li>
+<li><p>This separation ensures the dashboard and other spec consumers don’t depend on instrument-specific packages</p></li>
+</ul>
+</section>
+<section id="critical-lazy-import-requirements">
+<h3>Critical: Lazy Import Requirements<a class="headerlink" href="#critical-lazy-import-requirements" title="Link to this heading">#</a></h3>
+<p><strong>IMPORTANT</strong>: The instrument package must be importable without importing other packages from the <code class="docutils literal notranslate"><span class="pre">ess</span></code> namespace (such as <code class="docutils literal notranslate"><span class="pre">ess.reduce</span></code>, <code class="docutils literal notranslate"><span class="pre">ess.dream</span></code>, <code class="docutils literal notranslate"><span class="pre">ess.powder</span></code>, <code class="docutils literal notranslate"><span class="pre">ess.sans</span></code>, <code class="docutils literal notranslate"><span class="pre">ess.loki</span></code>, etc.). All such imports must be done lazily inside the <code class="docutils literal notranslate"><span class="pre">setup_factories()</span></code> function.</p>
+<p><strong>Correct pattern</strong> (instrument packages imported inside <code class="docutils literal notranslate"><span class="pre">setup_factories</span></code>):</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># factories.py</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">setup_factories</span><span class="p">(</span><span class="n">instrument</span><span class="p">:</span> <span class="n">Instrument</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Initialize instrument-specific factories and workflows.&quot;&quot;&quot;</span>
+    <span class="c1"># Instrument package imports go here</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">ess.dream</span><span class="w"> </span><span class="kn">import</span> <span class="n">DreamPowderWorkflow</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">ess.powder</span><span class="w"> </span><span class="kn">import</span> <span class="n">types</span> <span class="k">as</span> <span class="n">powder_types</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">ess.livedata.handlers.detector_data_handler</span><span class="w"> </span><span class="kn">import</span> <span class="n">DetectorProjection</span>
+    <span class="c1"># ... rest of factory setup</span>
+</pre></div>
+</div>
+<p><strong>Incorrect pattern</strong> (importing at module level):</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># factories.py - DON&#39;T DO THIS!</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">ess.dream</span><span class="w"> </span><span class="kn">import</span> <span class="n">DreamPowderWorkflow</span>  <span class="c1"># BAD: imported at module level</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">ess.powder</span><span class="w"> </span><span class="kn">import</span> <span class="n">types</span> <span class="k">as</span> <span class="n">powder_types</span>  <span class="c1"># BAD: imported at module level</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">setup_factories</span><span class="p">(</span><span class="n">instrument</span><span class="p">:</span> <span class="n">Instrument</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Initialize instrument-specific factories and workflows.&quot;&quot;&quot;</span>
+    <span class="c1"># ...</span>
+</pre></div>
+</div>
+<p><strong>Why this matters</strong>:</p>
+<ul class="simple">
+<li><p>The dashboard and other spec consumers need to import instrument packages to read metadata (workflow parameters, output types, etc.)</p></li>
+<li><p>These consumers should not be forced to install or import instrument-specific packages like <code class="docutils literal notranslate"><span class="pre">essdiffraction</span></code>, <code class="docutils literal notranslate"><span class="pre">esssans</span></code>, etc.</p></li>
+<li><p>Specs are imported during configuration discovery and registry initialization</p></li>
+<li><p>Factory implementations are only loaded when actually running the workflows</p></li>
+</ul>
+<p><strong>Which imports are allowed at module level</strong>:</p>
+<ul class="simple">
+<li><p>Configuration and type definitions: <code class="docutils literal notranslate"><span class="pre">ess.livedata.config.*</span></code>, <code class="docutils literal notranslate"><span class="pre">ess.livedata.parameter_models.*</span></code></p></li>
+<li><p>Standard library and common dependencies: <code class="docutils literal notranslate"><span class="pre">scipp</span></code>, <code class="docutils literal notranslate"><span class="pre">pydantic</span></code>, <code class="docutils literal notranslate"><span class="pre">typing</span></code></p></li>
+<li><p>Imports from your own instrument package: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">.</span> <span class="pre">import</span> <span class="pre">specs</span></code></p></li>
+</ul>
+<p><strong>Which imports must be lazy (inside <code class="docutils literal notranslate"><span class="pre">setup_factories</span></code>)</strong>:</p>
+<ul class="simple">
+<li><p>Any imports from other <code class="docutils literal notranslate"><span class="pre">ess.*</span></code> packages: <code class="docutils literal notranslate"><span class="pre">ess.dream</span></code>, <code class="docutils literal notranslate"><span class="pre">ess.powder</span></code>, <code class="docutils literal notranslate"><span class="pre">ess.sans</span></code>, <code class="docutils literal notranslate"><span class="pre">ess.loki</span></code>, etc.</p></li>
+<li><p>Workflow implementation modules: <code class="docutils literal notranslate"><span class="pre">ess.livedata.handlers.*</span></code> (detector handlers, workflow factories, etc.) as those depend on <code class="docutils literal notranslate"><span class="pre">ess.reduce</span></code>.</p></li>
+<li><p>Workflow framework: <code class="docutils literal notranslate"><span class="pre">sciline</span></code></p></li>
+<li><p>Geometry and data loading: <code class="docutils literal notranslate"><span class="pre">scippnexus</span></code>, etc.</p></li>
+</ul>
+</section>
+</section>
+<section id="stream-configuration">
+<h2>Stream Configuration<a class="headerlink" href="#stream-configuration" title="Link to this heading">#</a></h2>
+<p>In <code class="docutils literal notranslate"><span class="pre">streams.py</span></code>, define stream mappings and optionally fake detector configuration:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">ess.livedata.config.env</span><span class="w"> </span><span class="kn">import</span> <span class="n">StreamingEnv</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">ess.livedata.kafka</span><span class="w"> </span><span class="kn">import</span> <span class="n">InputStreamKey</span><span class="p">,</span> <span class="n">StreamLUT</span><span class="p">,</span> <span class="n">StreamMapping</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">.._ess</span><span class="w"> </span><span class="kn">import</span> <span class="n">make_common_stream_mapping_inputs</span><span class="p">,</span> <span class="n">make_dev_stream_mapping</span>
+
+<span class="c1"># Fake detector configuration for development (optional)</span>
+<span class="n">detector_fakes</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s1">&#39;panel_a&#39;</span><span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">128</span><span class="o">**</span><span class="mi">2</span><span class="p">),</span>              <span class="c1"># (first_id, last_id)</span>
+    <span class="s1">&#39;panel_b&#39;</span><span class="p">:</span> <span class="p">(</span><span class="mi">128</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="mi">128</span><span class="o">**</span><span class="mi">2</span><span class="p">),</span>
+<span class="p">}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_instrument_detectors</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">StreamLUT</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Define detector stream mappings for production.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="n">InputStreamKey</span><span class="p">(</span><span class="n">topic</span><span class="o">=</span><span class="s1">&#39;instrument_detector&#39;</span><span class="p">,</span> <span class="n">source_name</span><span class="o">=</span><span class="s1">&#39;panel_a&#39;</span><span class="p">):</span> <span class="s1">&#39;panel_a&#39;</span><span class="p">,</span>
+        <span class="n">InputStreamKey</span><span class="p">(</span><span class="n">topic</span><span class="o">=</span><span class="s1">&#39;instrument_detector&#39;</span><span class="p">,</span> <span class="n">source_name</span><span class="o">=</span><span class="s1">&#39;panel_b&#39;</span><span class="p">):</span> <span class="s1">&#39;panel_b&#39;</span><span class="p">,</span>
+    <span class="p">}</span>
+
+<span class="c1"># Stream mappings for different environments</span>
+<span class="n">stream_mapping</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">StreamingEnv</span><span class="o">.</span><span class="n">DEV</span><span class="p">:</span> <span class="n">make_dev_stream_mapping</span><span class="p">(</span>
+        <span class="s1">&#39;instrument_name&#39;</span><span class="p">,</span>
+        <span class="n">detector_names</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="n">detector_fakes</span><span class="p">)</span>
+    <span class="p">),</span>
+    <span class="n">StreamingEnv</span><span class="o">.</span><span class="n">PROD</span><span class="p">:</span> <span class="n">StreamMapping</span><span class="p">(</span>
+        <span class="o">**</span><span class="n">make_common_stream_mapping_inputs</span><span class="p">(</span><span class="n">instrument</span><span class="o">=</span><span class="s1">&#39;instrument_name&#39;</span><span class="p">),</span>
+        <span class="n">detectors</span><span class="o">=</span><span class="n">_make_instrument_detectors</span><span class="p">(),</span>
+    <span class="p">),</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<section id="fake-detectors">
+<h3>Fake Detectors<a class="headerlink" href="#fake-detectors" title="Link to this heading">#</a></h3>
+<p>To enable development without real detector data, define pixel ID ranges in the <code class="docutils literal notranslate"><span class="pre">detector_fakes</span></code> dictionary:</p>
+<ul class="simple">
+<li><p>The pixel IDs should match your detector configuration and must not overlap</p></li>
+<li><p>The fake detector service will generate random events within these ID ranges</p></li>
+<li><p>Use these when running services with the <code class="docutils literal notranslate"><span class="pre">--dev</span></code> flag</p></li>
+<li><p>This configuration is optional and only needed if you plan to use fake data generators</p></li>
+</ul>
+</section>
+</section>
+<section id="detector-configuration-in-factories">
+<h2>Detector Configuration in Factories<a class="headerlink" href="#detector-configuration-in-factories" title="Link to this heading">#</a></h2>
+<p>In <code class="docutils literal notranslate"><span class="pre">factories.py</span></code>, configure detectors with <code class="docutils literal notranslate"><span class="pre">detector_number</span></code> arrays.
+This is optional, if <code class="docutils literal notranslate"><span class="pre">configure_detector</span></code> is not called the <code class="docutils literal notranslate"><span class="pre">detector_number</span></code> array will be loaded from the NeXus geometry file.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">setup_factories</span><span class="p">(</span><span class="n">instrument</span><span class="p">:</span> <span class="n">Instrument</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Initialize instrument-specific factories and workflows.&quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">scipp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sc</span>
+
+    <span class="c1"># Configure detector with explicit detector_number</span>
+    <span class="n">instrument</span><span class="o">.</span><span class="n">configure_detector</span><span class="p">(</span>
+        <span class="s1">&#39;panel_a&#39;</span><span class="p">,</span>
+        <span class="n">detector_number</span><span class="o">=</span><span class="n">sc</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="s1">&#39;yx&#39;</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">128</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">unit</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span><span class="o">.</span><span class="n">fold</span><span class="p">(</span>
+            <span class="n">dim</span><span class="o">=</span><span class="s1">&#39;yx&#39;</span><span class="p">,</span> <span class="n">sizes</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;y&#39;</span><span class="p">:</span> <span class="mi">128</span><span class="p">,</span> <span class="s1">&#39;x&#39;</span><span class="p">:</span> <span class="mi">128</span><span class="p">}</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+</pre></div>
+</div>
+<section id="detector-view-registration">
+<h3>Detector View Registration<a class="headerlink" href="#detector-view-registration" title="Link to this heading">#</a></h3>
+<p>ESSlivedata supports different detector view projections:</p>
+<section id="logical-views-2d-3d-detectors-with-transforms">
+<h4>Logical Views (2D/3D detectors with transforms)<a class="headerlink" href="#logical-views-2d-3d-detectors-with-transforms" title="Link to this heading">#</a></h4>
+<p>For detectors that need custom transforms (folding, slicing, renaming dimensions), use <code class="docutils literal notranslate"><span class="pre">instrument.add_logical_view()</span></code> in <code class="docutils literal notranslate"><span class="pre">specs.py</span></code>. This registers both the spec and transform, with the factory auto-attached during <code class="docutils literal notranslate"><span class="pre">load_factories()</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># In specs.py</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.views</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_detector_view</span>
+
+<span class="n">instrument</span><span class="o">.</span><span class="n">add_logical_view</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s1">&#39;detector_xy&#39;</span><span class="p">,</span>
+    <span class="n">title</span><span class="o">=</span><span class="s1">&#39;Detector XY View&#39;</span><span class="p">,</span>
+    <span class="n">description</span><span class="o">=</span><span class="s1">&#39;2D view of detector counts&#39;</span><span class="p">,</span>
+    <span class="n">source_names</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;detector1&#39;</span><span class="p">],</span>
+    <span class="n">transform</span><span class="o">=</span><span class="n">get_detector_view</span><span class="p">,</span>
+    <span class="n">roi_support</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>  <span class="c1"># Enable ROI selection (default: True)</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>The transform function goes in a separate <code class="docutils literal notranslate"><span class="pre">views.py</span></code> to keep <code class="docutils literal notranslate"><span class="pre">specs.py</span></code> lightweight:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># In views.py</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">scipp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sc</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">get_detector_view</span><span class="p">(</span><span class="n">da</span><span class="p">:</span> <span class="n">sc</span><span class="o">.</span><span class="n">DataArray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sc</span><span class="o">.</span><span class="n">DataArray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Transform detector data to 2D view.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">da</span><span class="o">.</span><span class="n">fold</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="s1">&#39;detector_number&#39;</span><span class="p">,</span> <span class="n">sizes</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;y&#39;</span><span class="p">:</span> <span class="mi">128</span><span class="p">,</span> <span class="s1">&#39;x&#39;</span><span class="p">:</span> <span class="mi">128</span><span class="p">})</span>
+</pre></div>
+</div>
+<p>For downsampling views that need proper ROI index mapping, use <code class="docutils literal notranslate"><span class="pre">reduction_dim</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># In views.py</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">fold_image</span><span class="p">(</span><span class="n">da</span><span class="p">:</span> <span class="n">sc</span><span class="o">.</span><span class="n">DataArray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sc</span><span class="o">.</span><span class="n">DataArray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Fold for downsampling - don&#39;t sum here, use reduction_dim instead.&quot;&quot;&quot;</span>
+    <span class="n">da</span> <span class="o">=</span> <span class="n">da</span><span class="o">.</span><span class="n">rename_dims</span><span class="p">({</span><span class="s1">&#39;dim_0&#39;</span><span class="p">:</span> <span class="s1">&#39;x&#39;</span><span class="p">,</span> <span class="s1">&#39;dim_1&#39;</span><span class="p">:</span> <span class="s1">&#39;y&#39;</span><span class="p">})</span>
+    <span class="n">da</span> <span class="o">=</span> <span class="n">da</span><span class="o">.</span><span class="n">fold</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="s1">&#39;x&#39;</span><span class="p">,</span> <span class="n">sizes</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;x&#39;</span><span class="p">:</span> <span class="mi">512</span><span class="p">,</span> <span class="s1">&#39;x_bin&#39;</span><span class="p">:</span> <span class="o">-</span><span class="mi">1</span><span class="p">})</span>
+    <span class="n">da</span> <span class="o">=</span> <span class="n">da</span><span class="o">.</span><span class="n">fold</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="s1">&#39;y&#39;</span><span class="p">,</span> <span class="n">sizes</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;y&#39;</span><span class="p">:</span> <span class="mi">512</span><span class="p">,</span> <span class="s1">&#39;y_bin&#39;</span><span class="p">:</span> <span class="o">-</span><span class="mi">1</span><span class="p">})</span>
+    <span class="k">return</span> <span class="n">da</span>
+
+<span class="c1"># In specs.py</span>
+<span class="n">instrument</span><span class="o">.</span><span class="n">add_logical_view</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s1">&#39;detector_downsampled&#39;</span><span class="p">,</span>
+    <span class="n">title</span><span class="o">=</span><span class="s1">&#39;Detector (512x512)&#39;</span><span class="p">,</span>
+    <span class="n">description</span><span class="o">=</span><span class="s1">&#39;Downsampled detector view&#39;</span><span class="p">,</span>
+    <span class="n">source_names</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;detector1&#39;</span><span class="p">],</span>
+    <span class="n">transform</span><span class="o">=</span><span class="n">fold_image</span><span class="p">,</span>
+    <span class="n">reduction_dim</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;x_bin&#39;</span><span class="p">,</span> <span class="s1">&#39;y_bin&#39;</span><span class="p">],</span>  <span class="c1"># Dimensions to sum over</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="geometric-projections-complex-geometries">
+<h4>Geometric Projections (complex geometries)<a class="headerlink" href="#geometric-projections-complex-geometries" title="Link to this heading">#</a></h4>
+<p>For detectors with complex 3D geometries, use helper functions to register projections:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">ess.livedata.handlers.detector_view_specs</span><span class="w"> </span><span class="kn">import</span> <span class="n">register_detector_view_spec</span>
+
+<span class="c1"># Single projection for all detectors</span>
+<span class="n">xy_handle</span> <span class="o">=</span> <span class="n">register_detector_view_spec</span><span class="p">(</span>
+    <span class="n">instrument</span><span class="o">=</span><span class="n">instrument</span><span class="p">,</span>
+    <span class="n">projection</span><span class="o">=</span><span class="s1">&#39;xy_plane&#39;</span><span class="p">,</span>
+    <span class="n">source_names</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;detector_0&#39;</span><span class="p">,</span> <span class="s1">&#39;detector_1&#39;</span><span class="p">],</span>
+<span class="p">)</span>
+
+<span class="c1"># Mixed projections - different projection types per detector</span>
+<span class="c1"># Creates a unified &quot;Detector Projection&quot; workflow</span>
+<span class="c1"># source_names defaults to the dict keys</span>
+<span class="n">projection_handle</span> <span class="o">=</span> <span class="n">register_detector_view_spec</span><span class="p">(</span>
+    <span class="n">instrument</span><span class="o">=</span><span class="n">instrument</span><span class="p">,</span>
+    <span class="n">projection</span><span class="o">=</span><span class="p">{</span>
+        <span class="s1">&#39;mantle_detector&#39;</span><span class="p">:</span> <span class="s1">&#39;cylinder_mantle_z&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;endcap_backward_detector&#39;</span><span class="p">:</span> <span class="s1">&#39;xy_plane&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;endcap_forward_detector&#39;</span><span class="p">:</span> <span class="s1">&#39;xy_plane&#39;</span><span class="p">,</span>
+    <span class="p">},</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>Available projections:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">xy_plane</span></code>: 2D projection onto XY plane</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cylinder_mantle_z</span></code>: Cylindrical projection (for detectors like DREAM’s mantle)</p></li>
+</ul>
+<p>When using a dict for <code class="docutils literal notranslate"><span class="pre">projection</span></code>, each detector can use a different projection type,
+but they will all appear under a single “Detector Projection” workflow in the UI.</p>
+<p>Geometric projections are towards the sample position (assumed at the origin).
+For more details see <a class="reference external" href="https://scipp.github.io/essreduce/generated/modules/ess.reduce.live.raw.html">ess.reduce.live.raw</a>.</p>
+</section>
+</section>
+<section id="geometry-files">
+<h3>Geometry Files<a class="headerlink" href="#geometry-files" title="Link to this heading">#</a></h3>
+<p>Geometry files are needed when:</p>
+<ul class="simple">
+<li><p>Using geometric projections (<code class="docutils literal notranslate"><span class="pre">xy_plane</span></code>, <code class="docutils literal notranslate"><span class="pre">cylinder_mantle_z</span></code>)</p></li>
+<li><p>Loading <code class="docutils literal notranslate"><span class="pre">detector_number</span></code> from NeXus (if not provided explicitly)</p></li>
+</ul>
+<p>If you configure <code class="docutils literal notranslate"><span class="pre">detector_number</span></code> explicitly via <code class="docutils literal notranslate"><span class="pre">configure_detector()</span></code>, no geometry file is needed.</p>
+<p>To provide a geometry file:</p>
+<ol class="arabic simple">
+<li><p>Create a NeXus geometry file following the naming convention: <code class="docutils literal notranslate"><span class="pre">geometry-&lt;instrument&gt;-&lt;date&gt;.nxs</span></code></p>
+<ul class="simple">
+<li><p>Use <code class="docutils literal notranslate"><span class="pre">ess-livedata-make-geometry-nexus</span></code> to create from a regular NeXus file</p></li>
+<li><p>The date should be the first date the geometry file is used in production</p></li>
+</ul>
+</li>
+<li><p>Add the file’s MD5 hash to the <code class="docutils literal notranslate"><span class="pre">_registry</span></code> in <a class="reference download internal" download="" href="../_downloads/1ed322a18191ffa0831c096e850ca5aa/detector_data_handler.py"><span class="xref download myst">detector_data_handler.py</span></a></p></li>
+<li><p>Upload the file to https://public.esss.dk/groups/scipp/beamlime/geometry/</p></li>
+</ol>
+<p>Multiple geometry files can exist for an instrument (for different time periods), but only one is active at a time.</p>
+</section>
+</section>
+<section id="complete-example-dummy-instrument">
+<h2>Complete Example: Dummy Instrument<a class="headerlink" href="#complete-example-dummy-instrument" title="Link to this heading">#</a></h2>
+<p>Here’s the complete structure for the dummy instrument as a reference:</p>
+<section id="init-py">
+<h3><code class="docutils literal notranslate"><span class="pre">__init__.py</span></code><a class="headerlink" href="#init-py" title="Link to this heading">#</a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">.factories</span><span class="w"> </span><span class="kn">import</span> <span class="n">setup_factories</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.streams</span><span class="w"> </span><span class="kn">import</span> <span class="n">detector_fakes</span><span class="p">,</span> <span class="n">stream_mapping</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;detector_fakes&#39;</span><span class="p">,</span> <span class="s1">&#39;setup_factories&#39;</span><span class="p">,</span> <span class="s1">&#39;stream_mapping&#39;</span><span class="p">]</span>
+</pre></div>
+</div>
+</section>
+<section id="specs-py">
+<h3><code class="docutils literal notranslate"><span class="pre">specs.py</span></code><a class="headerlink" href="#specs-py" title="Link to this heading">#</a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">ess.livedata.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">Instrument</span><span class="p">,</span> <span class="n">instrument_registry</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">ess.livedata.handlers.detector_view_specs</span><span class="w"> </span><span class="kn">import</span> <span class="n">DetectorViewParams</span>
+
+<span class="c1"># Create instrument</span>
+<span class="n">instrument</span> <span class="o">=</span> <span class="n">Instrument</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s1">&#39;dummy&#39;</span><span class="p">,</span>
+    <span class="n">detector_names</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;panel_0&#39;</span><span class="p">],</span>
+    <span class="n">monitors</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;monitor1&#39;</span><span class="p">,</span> <span class="s1">&#39;monitor2&#39;</span><span class="p">],</span>
+    <span class="n">f144_attribute_registry</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;motion1&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s1">&#39;units&#39;</span><span class="p">:</span> <span class="s1">&#39;mm&#39;</span><span class="p">}},</span>
+<span class="p">)</span>
+
+<span class="c1"># Register instrument</span>
+<span class="n">instrument_registry</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">instrument</span><span class="p">)</span>
+
+<span class="c1"># Register detector view spec</span>
+<span class="n">panel_0_view_handle</span> <span class="o">=</span> <span class="n">instrument</span><span class="o">.</span><span class="n">register_spec</span><span class="p">(</span>
+    <span class="n">namespace</span><span class="o">=</span><span class="s1">&#39;detector_data&#39;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s1">&#39;panel_0_xy&#39;</span><span class="p">,</span>
+    <span class="n">version</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">title</span><span class="o">=</span><span class="s1">&#39;Panel 0&#39;</span><span class="p">,</span>
+    <span class="n">source_names</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;panel_0&#39;</span><span class="p">],</span>
+    <span class="n">params</span><span class="o">=</span><span class="n">DetectorViewParams</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Register data reduction workflow spec</span>
+<span class="n">total_counts_handle</span> <span class="o">=</span> <span class="n">instrument</span><span class="o">.</span><span class="n">register_spec</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s1">&#39;total_counts&#39;</span><span class="p">,</span>
+    <span class="n">version</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">title</span><span class="o">=</span><span class="s1">&#39;Total counts&#39;</span><span class="p">,</span>
+    <span class="n">description</span><span class="o">=</span><span class="s1">&#39;Dummy workflow that computes total counts.&#39;</span><span class="p">,</span>
+    <span class="n">source_names</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;panel_0&#39;</span><span class="p">],</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="streams-py">
+<h3><code class="docutils literal notranslate"><span class="pre">streams.py</span></code><a class="headerlink" href="#streams-py" title="Link to this heading">#</a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">ess.livedata.config.env</span><span class="w"> </span><span class="kn">import</span> <span class="n">StreamingEnv</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">ess.livedata.kafka</span><span class="w"> </span><span class="kn">import</span> <span class="n">InputStreamKey</span><span class="p">,</span> <span class="n">StreamLUT</span><span class="p">,</span> <span class="n">StreamMapping</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.._ess</span><span class="w"> </span><span class="kn">import</span> <span class="n">make_common_stream_mapping_inputs</span><span class="p">,</span> <span class="n">make_dev_stream_mapping</span>
+
+<span class="n">detector_fakes</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;panel_0&#39;</span><span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">128</span><span class="o">**</span><span class="mi">2</span><span class="p">)}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_dummy_detectors</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">StreamLUT</span><span class="p">:</span>
+    <span class="k">return</span> <span class="p">{</span><span class="n">InputStreamKey</span><span class="p">(</span><span class="n">topic</span><span class="o">=</span><span class="s1">&#39;dummy_detector&#39;</span><span class="p">,</span> <span class="n">source_name</span><span class="o">=</span><span class="s1">&#39;panel_0&#39;</span><span class="p">):</span> <span class="s1">&#39;panel_0&#39;</span><span class="p">}</span>
+
+<span class="n">stream_mapping</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">StreamingEnv</span><span class="o">.</span><span class="n">DEV</span><span class="p">:</span> <span class="n">make_dev_stream_mapping</span><span class="p">(</span><span class="s1">&#39;dummy&#39;</span><span class="p">,</span> <span class="n">detector_names</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;panel_0&#39;</span><span class="p">]),</span>
+    <span class="n">StreamingEnv</span><span class="o">.</span><span class="n">PROD</span><span class="p">:</span> <span class="n">StreamMapping</span><span class="p">(</span>
+        <span class="o">**</span><span class="n">make_common_stream_mapping_inputs</span><span class="p">(</span><span class="n">instrument</span><span class="o">=</span><span class="s1">&#39;dummy&#39;</span><span class="p">),</span>
+        <span class="n">detectors</span><span class="o">=</span><span class="n">_make_dummy_detectors</span><span class="p">(),</span>
+    <span class="p">),</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="factories-py">
+<h3><code class="docutils literal notranslate"><span class="pre">factories.py</span></code><a class="headerlink" href="#factories-py" title="Link to this heading">#</a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Only config and common dependencies at module level</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">scipp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sc</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">ess.livedata.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">Instrument</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">specs</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">setup_factories</span><span class="p">(</span><span class="n">instrument</span><span class="p">:</span> <span class="n">Instrument</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Initialize dummy-specific factories and workflows.&quot;&quot;&quot;</span>
+    <span class="c1"># Instrument packages and implementation imports go here</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">sciline</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">ess.livedata.handlers.detector_data_handler</span><span class="w"> </span><span class="kn">import</span> <span class="n">DetectorLogicalView</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">ess.livedata.handlers.stream_processor_workflow</span><span class="w"> </span><span class="kn">import</span> <span class="n">StreamProcessorWorkflow</span>
+
+    <span class="c1"># Configure detector</span>
+    <span class="n">instrument</span><span class="o">.</span><span class="n">configure_detector</span><span class="p">(</span>
+        <span class="s1">&#39;panel_0&#39;</span><span class="p">,</span>
+        <span class="n">detector_number</span><span class="o">=</span><span class="n">sc</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="s1">&#39;yx&#39;</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">128</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">unit</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span><span class="o">.</span><span class="n">fold</span><span class="p">(</span>
+            <span class="n">dim</span><span class="o">=</span><span class="s1">&#39;yx&#39;</span><span class="p">,</span> <span class="n">sizes</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;y&#39;</span><span class="p">:</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="s1">&#39;x&#39;</span><span class="p">:</span> <span class="mi">128</span><span class="p">}</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Attach detector view factory</span>
+    <span class="n">logical_view</span> <span class="o">=</span> <span class="n">DetectorLogicalView</span><span class="p">(</span><span class="n">instrument</span><span class="o">=</span><span class="n">instrument</span><span class="p">)</span>
+    <span class="n">specs</span><span class="o">.</span><span class="n">panel_0_view_handle</span><span class="o">.</span><span class="n">attach_factory</span><span class="p">()(</span><span class="n">logical_view</span><span class="o">.</span><span class="n">make_view</span><span class="p">)</span>
+
+    <span class="c1"># Attach workflow factory</span>
+    <span class="nd">@specs</span><span class="o">.</span><span class="n">total_counts_handle</span><span class="o">.</span><span class="n">attach_factory</span><span class="p">()</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">make_total_counts_workflow</span><span class="p">():</span>
+        <span class="c1"># Define workflow implementation</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">total_counts</span><span class="p">(</span><span class="n">events</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">events</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+        <span class="n">workflow</span> <span class="o">=</span> <span class="n">sciline</span><span class="o">.</span><span class="n">Pipeline</span><span class="p">((</span><span class="n">total_counts</span><span class="p">,))</span>
+        <span class="k">return</span> <span class="n">StreamProcessorWorkflow</span><span class="p">(</span>
+            <span class="n">base_workflow</span><span class="o">=</span><span class="n">workflow</span><span class="p">,</span>
+            <span class="n">dynamic_keys</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;panel_0&#39;</span><span class="p">:</span> <span class="n">Events</span><span class="p">},</span>
+            <span class="n">target_keys</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;total_counts&#39;</span><span class="p">:</span> <span class="n">TotalCounts</span><span class="p">},</span>
+            <span class="n">accumulators</span><span class="o">=</span><span class="p">(</span><span class="n">TotalCounts</span><span class="p">,),</span>
+        <span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="grid-templates-optional">
+<h2>Grid Templates (Optional)<a class="headerlink" href="#grid-templates-optional" title="Link to this heading">#</a></h2>
+<p>Grid templates are pre-configured plot grid layouts that users can select when creating a new grid in the dashboard. They provide a convenient starting point with commonly used workflow configurations.</p>
+<section id="creating-grid-templates">
+<h3>Creating Grid Templates<a class="headerlink" href="#creating-grid-templates" title="Link to this heading">#</a></h3>
+<p>The easiest way to create a grid template is to design it interactively in the dashboard:</p>
+<ol class="arabic simple">
+<li><p><strong>Create and configure a grid in the UI</strong>: Start the dashboard for your instrument, create a new grid, and configure it with the desired layout and workflow subscriptions.</p></li>
+<li><p><strong>Extract the grid configuration</strong>: The dashboard persists grid configurations to <code class="docutils literal notranslate"><span class="pre">~/.config/esslivedata/&lt;instrument&gt;/plot_configs.yaml</span></code>. Open this file and find the grid you created under the <code class="docutils literal notranslate"><span class="pre">plot_grids.grids</span></code> key.</p></li>
+<li><p><strong>Create the template file</strong>: Copy the grid configuration to a new file in your instrument’s <code class="docutils literal notranslate"><span class="pre">grid_templates/</span></code> directory:</p></li>
+</ol>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>src/ess/livedata/config/instruments/&lt;instrument&gt;/
+├── __init__.py
+├── specs.py
+├── streams.py
+├── factories.py
+└── grid_templates/
+    └── detector_overview.yaml
+</pre></div>
+</div>
+<p>Template files in <code class="docutils literal notranslate"><span class="pre">grid_templates/</span></code> are automatically included as package data.</p>
+<p>Templates use the same format as persisted grids. You can optionally add a <code class="docutils literal notranslate"><span class="pre">description</span></code> field that will be shown in the template selector.</p>
+<p>Templates are loaded once at dashboard startup. When a user selects a template, they can adjust the grid size before creating the grid. The minimum grid size is determined by the cells in the template.</p>
+</section>
+</section>
+<section id="reference-implementations">
+<h2>Reference Implementations<a class="headerlink" href="#reference-implementations" title="Link to this heading">#</a></h2>
+<p>For more complex examples, see existing instrument configurations in <code class="docutils literal notranslate"><span class="pre">src/ess/livedata/config/instruments/</span></code>.</p>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="deployment.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Deployment Configuration</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="installation.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Installation</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025 Scipp contributors.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item"><!-- This will display the version of the docs -->
+Current ESSlivedata version: 26.2.5 (<a href="https://github.com/scipp/esslivedata/releases">older versions</a>).</div>
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

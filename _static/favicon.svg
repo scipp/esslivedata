@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="128" height="128" viewBox="0 0 128 128">
+<defs>
+</defs>
+<g>
+<path d="M60,76 L18.430780618346937,52.000000000000014" stroke-width="6" stroke="#A3A800" stroke-linecap="round" />
+<circle cx="32.847099602436565" cy="48.84709960243657" r="8.64" stroke-dasharray="6.785840131753954 47.50088092227767" stroke-dashoffset="-22.619467105846518" stroke-width="5" stroke="#A3A800" stroke-linecap="round" fill="none" />
+<path d="M60,76 L47.57668583507901,29.63556033812472" stroke-width="6" stroke="#A3A800" stroke-linecap="round" />
+<circle cx="59.99999999999999" cy="37.599999999999994" r="8.64" stroke-dasharray="6.785840131753954 47.50088092227767" stroke-dashoffset="-29.40530723760047" stroke-width="5" stroke="#A3A800" stroke-linecap="round" fill="none" />
+<circle cx="40.80000000000001" cy="42.744624494677545" r="8.64" stroke-dasharray="6.785840131753954 47.50088092227767" stroke-dashoffset="-40.71504079052372" stroke-width="5" stroke="#A3A800" stroke-linecap="round" fill="none" />
+<path d="M60,76 L83.99999999999997,34.43078061834693" stroke-width="6" stroke="#A3A800" stroke-linecap="round" />
+<circle cx="87.1529003975634" cy="48.84709960243654" r="8.64" stroke-dasharray="6.785840131753949 47.50088092227768" stroke-dashoffset="-36.191147369354425" stroke-width="5" stroke="#A3A800" stroke-linecap="round" fill="none" />
+<circle cx="69.93865133193678" cy="38.90844827049977" r="8.64" stroke-dasharray="6.785840131753954 47.50088092227767" stroke-dashoffset="-47.50088092227767" stroke-width="5" stroke="#A3A800" stroke-linecap="round" fill="none" />
+<path d="M60,76 L106.36443966187528,63.576685835079005" stroke-width="6" stroke="#A3A800" stroke-linecap="round" />
+<circle cx="98.4" cy="75.99999999999999" r="8.64" stroke-dasharray="6.785840131753954 47.50088092227767" stroke-dashoffset="-42.97698750110837" stroke-width="5" stroke="#A3A800" stroke-linecap="round" fill="none" />
+<circle cx="93.25537550532246" cy="56.80000000000001" r="8.64" stroke-dasharray="6.785840131753954 47.50088092227767" stroke-dashoffset="-0.0" stroke-width="5" stroke="#A3A800" stroke-linecap="round" fill="none" />
+<path d="M60,76 L101.56921938165307,99.99999999999997" stroke-width="6" stroke="#A3A800" stroke-linecap="round" />
+<circle cx="97.09155172950022" cy="85.93865133193678" r="8.64" stroke-dasharray="6.785840131753954 47.50088092227767" stroke-dashoffset="-6.785840131753954" stroke-width="5" stroke="#A3A800" stroke-linecap="round" fill="none" />
+</g>
+<g>
+<circle cx="60" cy="76" r="48" stroke-dasharray="150.79644737231007 150.79644737231007" stroke-dashoffset="-175.92918860102844" stroke-width="8" stroke="#A3A800" stroke-linecap="round" fill="none" />
+</g>
+</svg>

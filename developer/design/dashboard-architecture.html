@@ -1,0 +1,1458 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Livedata Dashboard Architecture &#8212; ESSlivedata</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../../_static/documentation_options.js?v=4b8ad96a"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+    <script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.12.1/dist/mermaid.esm.min.mjs";
+
+
+
+
+
+const initStyles = () => {
+    const defaultStyle = document.createElement('style');
+    defaultStyle.textContent = `pre.mermaid {
+    /* Same as .mermaid-container > pre */
+    display: block;
+    width: 100%;
+}
+
+pre.mermaid > svg {
+    /* Same as .mermaid-container > pre > svg */
+    height: 500px;
+    width: 100%;
+    max-width: 100% !important;
+}`;
+    document.head.appendChild(defaultStyle);
+
+    const fullscreenStyle = document.createElement('style');
+    fullscreenStyle.textContent = `.mermaid-container {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+}
+
+.mermaid-container > pre {
+    display: block;
+    width: 100%;
+}
+
+.mermaid-container > pre > svg {
+    height: 500px;
+    width: 100%;
+    max-width: 100% !important;
+}
+
+.mermaid-fullscreen-btn {
+    width: 28px;
+    height: 28px;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(0, 0, 0, 0.3);
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+    color: #333;
+}
+
+.mermaid-fullscreen-btn:hover {
+    opacity: 100% !important;
+    background: rgba(255, 255, 255, 1);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+    transform: scale(1.1);
+}
+
+.mermaid-fullscreen-btn.dark-theme {
+    background: rgba(50, 50, 50, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #e0e0e0;
+}
+
+.mermaid-fullscreen-btn.dark-theme:hover {
+    background: rgba(60, 60, 60, 1);
+    box-shadow: 0 3px 10px rgba(255, 255, 255, 0.2);
+}
+
+.mermaid-fullscreen-modal {
+    display: none;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 95vw;
+    height: 100vh;
+    background: rgba(255, 255, 255, 0.98);
+    z-index: 9999;
+    padding: 20px;
+    overflow: auto;
+}
+
+.mermaid-fullscreen-modal.dark-theme {
+    background: rgba(0, 0, 0, 0.98);
+}
+
+.mermaid-fullscreen-modal.active {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.mermaid-container-fullscreen {
+    position: relative;
+    width: 95vw;
+    height: 90vh;
+    max-width: 95vw;
+    max-height: 90vh;
+    background: white;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    overflow: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.mermaid-container-fullscreen.dark-theme {
+    background: #1a1a1a;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+}
+
+.mermaid-container-fullscreen pre.mermaid {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.mermaid-container-fullscreen .mermaid svg {
+    height: 100% !important;
+    width: 100% !important;
+    cursor: grab;
+}
+
+.mermaid-fullscreen-close {
+    position: fixed !important;
+    top: 20px !important;
+    right: 20px !important;
+    width: 40px;
+    height: 40px;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    border-radius: 50%;
+    cursor: pointer;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    transition: all 0.2s;
+    font-size: 24px;
+    line-height: 1;
+    color: #333;
+}
+
+.mermaid-fullscreen-close:hover {
+    background: white;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+    transform: scale(1.1);
+}
+
+.mermaid-fullscreen-close.dark-theme {
+    background: rgba(50, 50, 50, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #e0e0e0;
+}
+
+.mermaid-fullscreen-close.dark-theme:hover {
+    background: rgba(60, 60, 60, 1);
+    box-shadow: 0 6px 16px rgba(255, 255, 255, 0.2);
+}
+
+.mermaid-fullscreen-modal .mermaid-fullscreen-btn {
+    display: none !important;
+}`;
+    document.head.appendChild(fullscreenStyle);
+}
+
+// Detect if page has dark background
+const isDarkTheme = () => {
+    // We use a set of heuristics:
+    // 1. Check for common dark mode classes or attributes
+    // 2. Check computed background color brightness
+    if (document.documentElement.classList.contains('dark') ||
+        document.documentElement.getAttribute('data-theme') === 'dark' ||
+        document.body.classList.contains('dark') ||
+        document.body.getAttribute('data-theme') === 'dark') {
+        // console.log("Dark theme detected via class/attribute");
+        return true;
+    }
+    if (document.documentElement.classList.contains('light') ||
+        document.documentElement.getAttribute('data-theme') === 'light' ||
+        document.body.classList.contains('light') ||
+        document.body.getAttribute('data-theme') === 'light') {
+        // console.log("Light theme detected via class/attribute");
+        return false;
+    }
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        // console.log("Dark theme detected via prefers-color-scheme");
+        return true;
+    }
+    const bgColor = window.getComputedStyle(document.body).backgroundColor;
+    const match = bgColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)/);
+    if (match) {
+        const r = parseInt(match[1]);
+        const g = parseInt(match[2]);
+        const b = parseInt(match[3]);
+        const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+        // console.log("Background color brightness:", brightness);
+        return brightness < 128;
+    }
+    // console.log("No dark or light theme detected, defaulting to light theme");
+    return false;
+};
+
+let darkTheme = isDarkTheme();
+let modal = null;
+let modalContent = null;
+let previousScrollOffset = [window.scrollX, window.scrollY];
+
+const runMermaid = async (rerun) => {
+    console.log("Running mermaid diagrams, rerun =", rerun);
+    // clear all existing mermaid charts
+    let all_mermaids = document.querySelectorAll(".mermaid");
+
+    if (rerun) {
+        all_mermaids.forEach((el) => {
+            if(!el.hasAttribute("data-original-code")) {
+                // store original code
+                // console.log(`Storing original code for first run: `, el.innerHTML);
+                el.setAttribute('data-original-code', el.innerHTML);
+            }
+            if(el.getAttribute("data-processed") === "true") {
+                // remove and restore original
+                el.removeAttribute("data-processed");
+                // console.log(`Restoring original code for re-run: `, el.getAttribute('data-original-code'));
+                el.innerHTML = el.getAttribute('data-original-code');
+            } else {
+                // store original code
+                // console.log(`Storing original code for re-run: `, el.innerHTML);
+                el.setAttribute('data-original-code', el.innerHTML);
+            }
+        });
+        await mermaid.run();
+    }
+
+    all_mermaids = document.querySelectorAll(".mermaid");
+    const mermaids_processed = document.querySelectorAll(".mermaid[data-processed='true']");
+
+    if ("False" === "True") {
+        const mermaids_to_add_zoom = -1 === -1 ? all_mermaids.length : -1;
+        if(mermaids_to_add_zoom > 0) {
+            var svgs = d3.selectAll("");
+            if(all_mermaids.length !== mermaids_processed.length) {
+                setTimeout(() => runMermaid(false), 200);
+                return;
+            } else if(svgs.size() !== mermaids_to_add_zoom) {
+                setTimeout(() => runMermaid(false), 200);
+                return;
+            } else {
+                svgs.each(function() {
+                    var svg = d3.select(this);
+                    svg.html("<g class='wrapper'>" + svg.html() + "</g>");
+                    var inner = svg.select("g");
+                    var zoom = d3.zoom().on("zoom", function(event) {
+                        inner.attr("transform", event.transform);
+                    });
+                    svg.call(zoom);
+                });
+            }
+        }
+    } else if(all_mermaids.length !== mermaids_processed.length) {
+        // Wait for mermaid to process all diagrams
+        setTimeout(() => runMermaid(false), 200);
+        return;
+    }
+
+    // Stop here if not adding fullscreen capability
+    if ("True" !== "True") return;
+
+    if (modal !== null ) {
+        // Destroy existing modal
+        modal.remove();
+        modal = null;
+        modalContent = null;
+    }
+
+    modal = document.createElement('div');
+    modal.className = 'mermaid-fullscreen-modal' + (darkTheme ? ' dark-theme' : '');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', 'Fullscreen diagram viewer');
+    modal.innerHTML = `
+        <button class="mermaid-fullscreen-close${darkTheme ? ' dark-theme' : ''}" aria-label="Close fullscreen">✕</button>
+        <div class="mermaid-container-fullscreen${darkTheme ? ' dark-theme' : ''}"></div>
+    `;
+    document.body.appendChild(modal);
+
+    modalContent = modal.querySelector('.mermaid-container-fullscreen');
+    const closeBtn = modal.querySelector('.mermaid-fullscreen-close');
+
+    const closeModal = () => {
+        modal.classList.remove('active');
+        modalContent.innerHTML = '';
+        document.body.style.overflow = ''
+        window.scrollTo({left: previousScrollOffset[0], top: previousScrollOffset[1], behavior: 'instant'});
+    };
+
+    closeBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && modal.classList.contains('active')) {
+            closeModal();
+        }
+    });
+
+    document.querySelectorAll('.mermaid').forEach((mermaidDiv) => {
+        if (mermaidDiv.parentNode.classList.contains('mermaid-container') ||
+            mermaidDiv.closest('.mermaid-fullscreen-modal')) {
+            // Already processed, adjust button class if needed
+            const existingBtn = mermaidDiv.parentNode.querySelector('.mermaid-fullscreen-btn');
+            if (existingBtn) {
+                existingBtn.className = 'mermaid-fullscreen-btn' + (darkTheme ? ' dark-theme' : '');
+            }
+            return;
+        }
+
+        const container = document.createElement('div');
+        container.className = 'mermaid-container';
+        mermaidDiv.parentNode.insertBefore(container, mermaidDiv);
+        container.appendChild(mermaidDiv);
+
+        const fullscreenBtn = document.createElement('button');
+        fullscreenBtn.className = 'mermaid-fullscreen-btn' + (darkTheme ? ' dark-theme' : '');
+        fullscreenBtn.setAttribute('aria-label', 'View diagram in fullscreen');
+        fullscreenBtn.textContent = '⛶';
+        fullscreenBtn.style.opacity = '50%';
+
+        // Calculate dynamic position based on diagram's margin and padding
+        const diagramStyle = window.getComputedStyle(mermaidDiv);
+        const marginTop = parseFloat(diagramStyle.marginTop) || 0;
+        const marginRight = parseFloat(diagramStyle.marginRight) || 0;
+        const paddingTop = parseFloat(diagramStyle.paddingTop) || 0;
+        const paddingRight = parseFloat(diagramStyle.paddingRight) || 0;
+        fullscreenBtn.style.top = `${marginTop + paddingTop + 4}px`;
+        fullscreenBtn.style.right = `${marginRight + paddingRight + 4}px`;
+
+        fullscreenBtn.addEventListener('click', () => {
+            previousScrollOffset = [window.scroll, window.scrollY];
+            const clone = mermaidDiv.cloneNode(true);
+            modalContent.innerHTML = '';
+            modalContent.appendChild(clone);
+
+            const svg = clone.querySelector('svg');
+            if (svg) {
+                svg.removeAttribute('width');
+                svg.removeAttribute('height');
+                svg.style.width = '100%';
+                svg.style.height = 'auto';
+                svg.style.maxWidth = '100%';
+                svg.style.sdisplay = 'block';
+
+                if ("False" === "True") {
+                    setTimeout(() => {
+                        const g = svg.querySelector('g');
+                        if (g) {
+                            var svgD3 = d3.select(svg);
+                            svgD3.html("<g class='wrapper'>" + svgD3.html() + "</g>");
+                            var inner = svgD3.select("g");
+                            var zoom = d3.zoom().on("zoom", function(event) {
+                                inner.attr("transform", event.transform);
+                            });
+                            svgD3.call(zoom);
+                        }
+                    }, 100);
+                }
+            }
+
+            modal.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        });
+        container.appendChild(fullscreenBtn);
+    });
+};
+
+const load = async () => {
+    initStyles();
+
+    await runMermaid(true);
+
+    const reRunIfThemeChanges = async () => {
+        const newDarkTheme = isDarkTheme();
+        if (newDarkTheme !== darkTheme) {
+            darkTheme = newDarkTheme;
+            console.log("Theme change detected, re-running mermaid with", darkTheme ? "dark" : "default", "theme");
+            await mermaid.initialize(
+                {...JSON.parse(
+                    `{"startOnLoad": false}`
+                ),
+                ...{ darkMode: darkTheme, theme: darkTheme ? 'dark' : 'default' },
+                }
+            );
+            await runMermaid(true);
+        }
+    };
+
+    // Update theme classes when theme changes
+    const themeObserver = new MutationObserver(reRunIfThemeChanges);
+    themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'data-theme']
+    });
+    themeObserver.observe(document.body, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'data-theme']
+    });
+};
+
+
+
+
+
+console.log("Initializing mermaid with", darkTheme ? "dark" : "default", "theme");
+mermaid.initialize(
+    {...JSON.parse(
+        `{"startOnLoad": false}`
+    ),
+    ...{ darkMode: darkTheme, theme: darkTheme ? 'dark' : 'default' },
+    }
+);
+
+window.addEventListener("load", load);</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'developer/design/dashboard-architecture';</script>
+    <script src="../../_static/anaconda-icon.js?v=461bdc62"></script>
+    <link rel="icon" href="../../_static/favicon.ico"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Orchestrator Flow: Plot Creation Lifecycle" href="orchestrator-flow.html" />
+    <link rel="prev" title="Message Flow and Transformation" href="message-flow-and-transformation.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="26.2.5" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.svg" class="logo__image only-light" alt="ESSlivedata - Home"/>
+    <img src="../../_static/logo-dark.svg" class="logo__image only-dark pst-js-only" alt="ESSlivedata - Home"/>
+  
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-anaconda fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">Conda</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-anaconda fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">Conda</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting-started.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../coding-conventions.html">Coding conventions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../dependency-management.html">Dependency management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="backend-service-architecture.html">Backend Service Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="message-flow-and-transformation.html">Message Flow and Transformation</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Livedata Dashboard Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="orchestrator-flow.html">Orchestrator Flow: Plot Creation Lifecycle</a></li>
+</ul>
+</div>
+</nav></div>
+        <div class="sidebar-primary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#table-of-contents">Table of Contents</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#overview">Overview</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#system-context-dashboard-and-kafka-integration">System Context: Dashboard and Kafka Integration</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#high-level-architecture">High-Level Architecture</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#component-overview">Component Overview</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#configuration-architecture">Configuration Architecture</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#two-way-configuration-flow">Two-Way Configuration Flow</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#configbackedparam-translation-mechanism">ConfigBackedParam Translation Mechanism</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#data-flow-architecture">Data Flow Architecture</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#real-time-data-flow">Real-Time Data Flow</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-configbackedparam-mechanism">The ConfigBackedParam Mechanism</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#purpose-and-role">Purpose and Role</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#how-it-works">How It Works</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#architectural-implications">Architectural Implications</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#mvc-pattern-analysis">MVC Pattern Analysis</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#subscription-and-notification-flow">Subscription and Notification Flow</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#analysis">Analysis</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#background-threading-architecture">Background Threading Architecture</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#kafkabridge-threading-model">KafkaBridge Threading Model</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#message-processing-strategy">Message Processing Strategy</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#extension-points">Extension Points</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#adding-new-configuration-parameters">Adding New Configuration Parameters</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#adding-new-data-types">Adding New Data Types</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#adding-new-visualizations">Adding New Visualizations</a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../../_sources/developer/design/dashboard-architecture.md"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Development</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Livedata Dashboard Architecture</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="livedata-dashboard-architecture">
+<h1>Livedata Dashboard Architecture<a class="headerlink" href="#livedata-dashboard-architecture" title="Link to this heading">#</a></h1>
+<section id="table-of-contents">
+<h2>Table of Contents<a class="headerlink" href="#table-of-contents" title="Link to this heading">#</a></h2>
+<ol class="arabic simple">
+<li><p><a class="reference internal" href="#overview"><span class="std std-ref">Overview</span></a></p></li>
+<li><p><a class="reference internal" href="#system-context-dashboard-and-kafka-integration"><span class="std std-ref">System Context: Dashboard and Kafka Integration</span></a></p></li>
+<li><p><a class="reference internal" href="#high-level-architecture"><span class="std std-ref">High-Level Architecture</span></a></p></li>
+<li><p><a class="reference internal" href="#configuration-architecture"><span class="std std-ref">Configuration Architecture</span></a></p></li>
+<li><p><a class="reference internal" href="#data-flow-architecture"><span class="std std-ref">Data Flow Architecture</span></a></p></li>
+<li><p><a class="reference internal" href="#the-configbackedparam-mechanism"><span class="std std-ref">The ConfigBackedParam Mechanism</span></a></p></li>
+<li><p><a class="reference internal" href="#background-threading-architecture"><span class="std std-ref">Background Threading Architecture</span></a></p></li>
+<li><p><a class="reference internal" href="#extension-points"><span class="std std-ref">Extension Points</span></a></p></li>
+</ol>
+</section>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading">#</a></h2>
+<p>The Livedata dashboard is a real-time data visualization system that follows a layered architecture with clear separation of concerns between presentation, application logic, and infrastructure. The system is designed for live display of raw and processed detector data with configurable processing parameters, using dependency injection patterns for testability and maintainability.</p>
+<p>A key architectural principle is the separation between <strong>Pydantic models</strong> (used for Kafka message validation and backend communication) and <strong>Param models</strong> (used for GUI widgets and user interaction).</p>
+<p>The dashboard processes 1-D and 2-D data displayed using Holoviews with update rates on the order of 1Hz. Data updates are received via Kafka streams, and user controls result in configuration updates published to Kafka topics for backend consumption.</p>
+</section>
+<section id="system-context-dashboard-and-kafka-integration">
+<h2>System Context: Dashboard and Kafka Integration<a class="headerlink" href="#system-context-dashboard-and-kafka-integration" title="Link to this heading">#</a></h2>
+<p>The Livedata dashboard operates within a Kafka-based system, interacting with multiple backend services via Kafka topics for both data and configuration.</p>
+<pre  class="mermaid">
+        flowchart TD
+    ConfigTopic([&quot;Livedata Config Topic&quot;])
+    DataTopic([&quot;Livedata Data Topic&quot;])
+    ECDCTopic([&quot;ECDC Topics&quot;])
+
+    subgraph BackendServices[&quot;Livedata Backend Services&quot;]
+        MonitorData[&quot;monitor_data service&quot;]
+        DetectorData[&quot;detector_data service&quot;]
+        DataReduction[&quot;data_reduction service&quot;]
+    end
+
+    DashboardApp[&quot;Livedata Dashboard&quot;]
+
+    %% Raw data from ECDC topics
+    ECDCTopic --&gt; BackendServices
+
+    %% Data publishing
+    MonitorData -- Publishes --&gt; DataTopic
+    DetectorData -- Publishes --&gt; DataTopic
+    DataReduction -- Publishes --&gt; DataTopic
+
+    %% Data consumption by dashboard
+    DataTopic -- Feeds --&gt; DashboardApp
+
+    %% Config flows
+    ConfigTopic -- Consumed by --&gt; MonitorData
+    ConfigTopic -- Consumed by --&gt; DetectorData
+    ConfigTopic -- Consumed by --&gt; DataReduction
+    ConfigTopic -- Consumed by --&gt; DashboardApp
+    DashboardApp -- Publishes config --&gt; ConfigTopic
+    DataReduction -- Publishes config (workflow specs) --&gt; ConfigTopic
+
+    classDef kafka fill:#fff3e0,stroke:#ef6c00,color:#e65100;
+    classDef backend fill:#e3f2fd,stroke:#1976d2,color:#0d47a1;
+    classDef dashboard fill:#ede7f6,stroke:#7b1fa2,color:#4a148c;
+    class ConfigTopic,DataTopic,ECDCTopic kafka;
+    class BackendServices,MonitorData,DetectorData,DataReduction backend;
+    class DashboardApp dashboard;
+    </pre><p><strong>Key Points:</strong></p>
+<ul class="simple">
+<li><p>Backend Services publish data streams to a single Kafka topic</p></li>
+<li><p>The Dashboard consumes this data topic, feeding into internal <code class="docutils literal notranslate"><span class="pre">DataService</span></code> components</p></li>
+<li><p>The Dashboard both publishes to and consumes from the config topic</p></li>
+<li><p>All backend services consume the config topic for configuration updates</p></li>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">data_reduction</span></code> service can publish configuration messages (workflow specs, status)</p></li>
+</ul>
+</section>
+<section id="high-level-architecture">
+<h2>High-Level Architecture<a class="headerlink" href="#high-level-architecture" title="Link to this heading">#</a></h2>
+<pre  class="mermaid">
+        graph TD
+    subgraph &quot;Livedata Backend Services&quot;
+        K1[Kafka Data Streams]
+        K2[Kafka Config Topic]
+    end
+
+    subgraph &quot;Infrastructure Layer&quot;
+        KT[KafkaTransport]
+        TMH[&quot;ThrottlingMessageHandler&lt;br&gt;(prevents flooding Kafka)&quot;]
+        MB[&quot;BackgroundMessageBridge&lt;br&gt;(prevents blocking UI)&quot;]
+        MS[MessageSource]
+        DF[DataForwarder]
+    end
+
+    subgraph &quot;Application Layer&quot;
+        CS[ConfigService]
+        WCS[&quot;WorkflowConfigService&lt;br&gt;(adapts ConfigService)&quot;]
+        DS[[&quot;DataService(s)&quot;]]
+        DSU[[&quot;DataSubscriber(s)&quot;]]
+        PM[[&quot;ConfigBackedParam(s)&lt;br&gt;(param.Parameterized)&quot;]]
+        WC[WorkflowController]
+        SM[[&quot;StreamManager(s)&quot;]]
+    end
+
+    subgraph &quot;Presentation Layer&quot;
+        W1[[&quot;Plot(s)&lt;br&gt;(Holoviews)&quot;]]
+        UI[&quot;Workflow Widgets&lt;br&gt;(Panel)&quot;]
+        W2[[&quot;Config Widgets&lt;br&gt;(Panel)&quot;]]
+    end
+
+    DSU -- holoviews.streams.Pipe --&gt; W1
+    WCS &lt;--&gt; WC
+    CS &lt;--&gt; WCS
+    DS &lt;-.-&gt; WC
+    WC &lt;--&gt; UI
+    K1 --&gt; MS
+    K2 &lt;--&gt; KT
+    MS --&gt; DF
+    DF --&gt; DS
+    DS --&gt; DSU
+    SM -.-&gt;|creates|DSU
+    DSU -.-&gt;|subscribes|DS
+    PM -.-&gt;|subscribes|CS
+    WCS -.-&gt;|subscribes|CS
+    MB &lt;--&gt; CS
+    CS &lt;-- Pydantic --&gt; PM
+    PM &lt;--&gt; W2
+    KT &lt;--&gt; TMH
+    TMH &lt;--&gt; MB
+
+    classDef kafka fill:#fff3e0,stroke:#ef6c00,color:#e65100;
+    classDef infra fill:#e3f2fd,stroke:#1976d2,color:#0d47a1;
+    classDef app fill:#ede7f6,stroke:#7b1fa2,color:#4a148c;
+    classDef prese fill:#ede7f6,stroke:#7b1fa2,color:#4a148c;
+    class K1,K2 kafka;
+    class KT,KT,TMH,MB,MS,DF infra;
+    class CS,WCS,DS,DSU,PM,WC,SM app;
+    class W1,UI,W2 prese;
+    </pre><section id="component-overview">
+<h3>Component Overview<a class="headerlink" href="#component-overview" title="Link to this heading">#</a></h3>
+<p>The architecture is structured in three main layers:</p>
+<ul class="simple">
+<li><p><strong>Infrastructure Layer</strong>: Manages Kafka integration and external message sources</p></li>
+<li><p><strong>Application Layer</strong>: Contains business logic, orchestration, and data management</p></li>
+<li><p><strong>Presentation Layer</strong>: Handles GUI components and user interaction</p></li>
+</ul>
+</section>
+</section>
+<section id="configuration-architecture">
+<h2>Configuration Architecture<a class="headerlink" href="#configuration-architecture" title="Link to this heading">#</a></h2>
+<p>The dashboard implements a configuration system that maintains a clear separation between frontend widgets (using Param for interactive controls) and backend validation/communication (using Pydantic models throughout). The <code class="docutils literal notranslate"><span class="pre">ConfigService</span></code> operates entirely with Pydantic models, ensuring type safety and validation consistency.</p>
+<section id="two-way-configuration-flow">
+<h3>Two-Way Configuration Flow<a class="headerlink" href="#two-way-configuration-flow" title="Link to this heading">#</a></h3>
+<pre  class="mermaid">
+        sequenceDiagram
+    participant PW as Param Widget
+    participant PM as Param Model
+    participant CS as ConfigService
+    participant SV as Schema Validator
+    participant KB as KafkaBridge
+    participant KT as Kafka Topic
+    participant BE as Backend Services
+
+    Note over PW,BE: User Changes Parameter
+    PW-&gt;&gt;PM: User input (num_edges=150)
+    PM-&gt;&gt;PM: Create Pydantic model from Param state
+    PM-&gt;&gt;CS: update_config(key, pydantic_model)
+    CS-&gt;&gt;CS: Validate isinstance(value, BaseModel)
+    CS-&gt;&gt;SV: validate(key, pydantic_model)
+    CS-&gt;&gt;KB: publish(key, model.model_dump(mode='json'))
+    KB-&gt;&gt;KT: JSON message
+    KT-&gt;&gt;BE: Backend consumes
+
+    Note over PW,BE: Backend/Remote Updates Configuration
+    BE-&gt;&gt;KT: Updated config (JSON)
+    KT-&gt;&gt;KB: JSON message
+    KB-&gt;&gt;CS: incoming JSON message
+    CS-&gt;&gt;SV: deserialize(key, json_data) -&gt; Pydantic model
+    CS-&gt;&gt;PM: callback(pydantic_model)
+    PM-&gt;&gt;PM: Extract dict from Pydantic model
+    PM-&gt;&gt;PW: param.update(**model.model_dump())
+    PW-&gt;&gt;PW: Widget reflects new state
+    </pre></section>
+<section id="configbackedparam-translation-mechanism">
+<h3>ConfigBackedParam Translation Mechanism<a class="headerlink" href="#configbackedparam-translation-mechanism" title="Link to this heading">#</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">ConfigBackedParam</span></code> serves as a <strong>translation layer</strong> that:</p>
+<ol class="arabic simple">
+<li><p><strong>Outbound (Param → Pydantic)</strong>: Creates Pydantic models from Param state using <code class="docutils literal notranslate"><span class="pre">self.schema.model_validate(kwargs)</span></code></p></li>
+<li><p><strong>Inbound (Pydantic → Param)</strong>: Extracts data from Pydantic models using <code class="docutils literal notranslate"><span class="pre">model.model_dump()</span></code></p></li>
+<li><p><strong>Schema Binding</strong>: Connects each Param model to its corresponding Pydantic schema</p></li>
+<li><p><strong>Validation</strong>: Ensures all data flowing through ConfigService is properly validated</p></li>
+</ol>
+</section>
+</section>
+<section id="data-flow-architecture">
+<h2>Data Flow Architecture<a class="headerlink" href="#data-flow-architecture" title="Link to this heading">#</a></h2>
+<section id="real-time-data-flow">
+<h3>Real-Time Data Flow<a class="headerlink" href="#real-time-data-flow" title="Link to this heading">#</a></h3>
+<pre  class="mermaid">
+        sequenceDiagram
+    participant K as Kafka Stream
+    participant MS as MessageSource
+    participant O as Orchestrator
+    participant DF as DataForwarder
+    participant DS as DataService
+    participant S as Subscribers
+    participant UI as GUI Components
+
+    K-&gt;&gt;MS: Raw detector/monitor data
+    MS-&gt;&gt;O: Batch messages
+    O-&gt;&gt;DF: Forward with stream name
+    Note over O,DF: Transaction batching
+    DF-&gt;&gt;DS: Store by DataKey
+    DS-&gt;&gt;S: Notify subscribers
+    S-&gt;&gt;UI: Update visualizations
+    </pre></section>
+</section>
+<section id="the-configbackedparam-mechanism">
+<h2>The ConfigBackedParam Mechanism<a class="headerlink" href="#the-configbackedparam-mechanism" title="Link to this heading">#</a></h2>
+<section id="purpose-and-role">
+<h3>Purpose and Role<a class="headerlink" href="#purpose-and-role" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">ConfigBackedParam</span></code> is a key architectural component for simple configuration widgets. It serves as a dedicated translation layer and per-widget controller, bridging the gap between:</p>
+<ul class="simple">
+<li><p><strong>Param models</strong> (<code class="docutils literal notranslate"><span class="pre">param.Parameterized</span></code>): Used for GUI widgets and user interaction</p></li>
+<li><p><strong>Pydantic models</strong>: Used for backend validation, serialization, and communication</p></li>
+</ul>
+<p>This mechanism enables a clean, testable, and maintainable way to synchronize widget state with configuration state, without leaking infrastructure details into the presentation layer.</p>
+</section>
+<section id="how-it-works">
+<h3>How It Works<a class="headerlink" href="#how-it-works" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p>Each simple configuration widget is backed by a <code class="docutils literal notranslate"><span class="pre">ConfigBackedParam</span></code> subclass</p></li>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">ConfigBackedParam</span></code>:</p>
+<ul>
+<li><p>Registers the relevant Pydantic schema with <code class="docutils literal notranslate"><span class="pre">ConfigService</span></code></p></li>
+<li><p>Subscribes to config updates for its key, updating the widget state when changes arrive</p></li>
+<li><p>Propagates user changes from the widget to <code class="docutils literal notranslate"><span class="pre">ConfigService</span></code> by translating Param state to a Pydantic model</p></li>
+</ul>
+</li>
+</ul>
+<pre  class="mermaid">
+        sequenceDiagram
+    participant ConfigService
+    participant ConfigBackedParam
+    participant PanelWidget
+
+    ConfigService-&gt;&gt;ConfigBackedParam: Notify config update
+    ConfigBackedParam-&gt;&gt;PanelWidget: Update widget state
+    PanelWidget-&gt;&gt;ConfigBackedParam: User changes widget
+    ConfigBackedParam-&gt;&gt;ConfigService: Update config
+    </pre></section>
+<section id="architectural-implications">
+<h3>Architectural Implications<a class="headerlink" href="#architectural-implications" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p><strong>Localized Coupling</strong>: <code class="docutils literal notranslate"><span class="pre">ConfigBackedParam</span></code> knows about both Param and Pydantic models, but this coupling is intentional and limited to the translation layer</p></li>
+<li><p><strong>No Architectural Problem</strong>: This is not problematic coupling, but a necessary and well-encapsulated translation between two distinct model types</p></li>
+<li><p><strong>Testability</strong>: The translation logic is isolated and can be tested independently</p></li>
+<li><p><strong>Extensibility</strong>: More complex workflows can use a centralized controller, while simple controls benefit from this lightweight mechanism</p></li>
+</ul>
+</section>
+</section>
+<section id="mvc-pattern-analysis">
+<h2>MVC Pattern Analysis<a class="headerlink" href="#mvc-pattern-analysis" title="Link to this heading">#</a></h2>
+<section id="subscription-and-notification-flow">
+<h3>Subscription and Notification Flow<a class="headerlink" href="#subscription-and-notification-flow" title="Link to this heading">#</a></h3>
+<pre  class="mermaid">
+        sequenceDiagram
+    participant ConfigService
+    participant DataService
+    participant WorkflowController
+    participant ConfigBackedParam
+    participant PanelWidgets
+
+    ConfigService-&gt;&gt;WorkflowController: Notify config update
+    DataService-&gt;&gt;WorkflowController: Notify data update
+    WorkflowController-&gt;&gt;PanelWidgets: Notify relevant update
+    PanelWidgets-&gt;&gt;WorkflowController: User actions (start/stop workflow)
+    WorkflowController-&gt;&gt;ConfigService: Update config
+    WorkflowController-&gt;&gt;DataService: Update data (e.g., cleanup)
+
+    ConfigService-&gt;&gt;ConfigBackedParam: Notify config update (simple controls)
+    ConfigBackedParam-&gt;&gt;PanelWidgets: Notify widget update
+    PanelWidgets-&gt;&gt;ConfigBackedParam: User changes widget (simple controls)
+    ConfigBackedParam-&gt;&gt;ConfigService: Update config (simple controls)
+    </pre></section>
+<section id="analysis">
+<h3>Analysis<a class="headerlink" href="#analysis" title="Link to this heading">#</a></h3>
+<p><strong>Strengths:</strong></p>
+<ul class="simple">
+<li><p>Clear separation of concerns with well-defined responsibilities</p></li>
+<li><p>Testability through controller and widget isolation using fakes</p></li>
+<li><p>Maintainability with centralized business logic</p></li>
+<li><p>Extensibility for future requirements</p></li>
+<li><p>Efficient handling of simple controls via <code class="docutils literal notranslate"><span class="pre">ConfigBackedParam</span></code></p></li>
+</ul>
+<p><strong>Potential Pitfalls:</strong></p>
+<ul class="simple">
+<li><p>Controller bloat as it mediates more services</p></li>
+<li><p>State synchronization challenges between controller and services</p></li>
+<li><p>Subscription complexity with multiple layers</p></li>
+</ul>
+<p><strong>Anti-Patterns Avoided:</strong></p>
+<ul class="simple">
+<li><p>No leaky abstractions between views and services</p></li>
+<li><p>No tight coupling between controllers and specific GUI frameworks</p></li>
+<li><p>No direct service access from views</p></li>
+</ul>
+</section>
+</section>
+<section id="background-threading-architecture">
+<h2>Background Threading Architecture<a class="headerlink" href="#background-threading-architecture" title="Link to this heading">#</a></h2>
+<section id="kafkabridge-threading-model">
+<h3>KafkaBridge Threading Model<a class="headerlink" href="#kafkabridge-threading-model" title="Link to this heading">#</a></h3>
+<pre  class="mermaid">
+        sequenceDiagram
+    participant GUI as GUI Thread
+    participant KB as KafkaBridge
+    participant BT as Background Thread
+    participant K as Kafka
+
+    Note over GUI,K: Startup
+    GUI-&gt;&gt;KB: start()
+    KB-&gt;&gt;BT: spawn thread
+    BT-&gt;&gt;K: subscribe to topic
+
+    Note over GUI,K: Publishing (Non-blocking)
+    GUI-&gt;&gt;KB: publish(key, value)
+    KB-&gt;&gt;KB: queue.put()
+    BT-&gt;&gt;KB: queue.get()
+    BT-&gt;&gt;K: produce message
+
+    Note over GUI,K: Consuming (Batched)
+    K-&gt;&gt;BT: poll messages
+    BT-&gt;&gt;KB: incoming_queue.put()
+    GUI-&gt;&gt;KB: process_incoming_messages()
+    KB-&gt;&gt;GUI: pop_message() × N
+    </pre></section>
+<section id="message-processing-strategy">
+<h3>Message Processing Strategy<a class="headerlink" href="#message-processing-strategy" title="Link to this heading">#</a></h3>
+<p>The KafkaBridge implements several optimizations:</p>
+<ol class="arabic simple">
+<li><p><strong>Batched Processing</strong>: Consumes up to <code class="docutils literal notranslate"><span class="pre">max_batch_size</span></code> messages per poll</p></li>
+<li><p><strong>Timed Polling</strong>: Only checks for incoming messages at specified intervals</p></li>
+<li><p><strong>Queue-based Communication</strong>: Non-blocking queues between GUI and background threads</p></li>
+<li><p><strong>Smart Idle Handling</strong>: Minimal CPU usage when no messages are available</p></li>
+</ol>
+</section>
+</section>
+<section id="extension-points">
+<h2>Extension Points<a class="headerlink" href="#extension-points" title="Link to this heading">#</a></h2>
+<section id="adding-new-configuration-parameters">
+<h3>Adding New Configuration Parameters<a class="headerlink" href="#adding-new-configuration-parameters" title="Link to this heading">#</a></h3>
+<ol class="arabic simple">
+<li><p><strong>Create Pydantic Model</strong> (Backend validation):</p></li>
+</ol>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">NewParam</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">enabled</span><span class="p">:</span> <span class="nb">bool</span>
+</pre></div>
+</div>
+<ol class="arabic simple" start="2">
+<li><p><strong>Create Param Model</strong> (GUI widget):</p></li>
+</ol>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">NewParamWidget</span><span class="p">(</span><span class="n">ConfigBackedParam</span><span class="p">):</span>
+    <span class="n">value</span> <span class="o">=</span> <span class="n">param</span><span class="o">.</span><span class="n">Number</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+    <span class="n">enabled</span> <span class="o">=</span> <span class="n">param</span><span class="o">.</span><span class="n">Boolean</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">schema</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">type</span><span class="p">[</span><span class="n">NewParam</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="n">NewParam</span>
+</pre></div>
+</div>
+<ol class="arabic simple" start="3">
+<li><p><strong>Subscribe to ConfigService</strong>:</p></li>
+</ol>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">widget</span><span class="o">.</span><span class="n">subscribe</span><span class="p">(</span><span class="n">config_service</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="adding-new-data-types">
+<h3>Adding New Data Types<a class="headerlink" href="#adding-new-data-types" title="Link to this heading">#</a></h3>
+<ol class="arabic simple">
+<li><p>Create new <code class="docutils literal notranslate"><span class="pre">DataKey</span></code> subclass</p></li>
+<li><p>Implement corresponding <code class="docutils literal notranslate"><span class="pre">DataSubscriber</span></code></p></li>
+<li><p>Register subscriber with appropriate <code class="docutils literal notranslate"><span class="pre">DataService</span></code></p></li>
+</ol>
+</section>
+<section id="adding-new-visualizations">
+<h3>Adding New Visualizations<a class="headerlink" href="#adding-new-visualizations" title="Link to this heading">#</a></h3>
+<ol class="arabic simple">
+<li><p>Create new subscriber implementing <code class="docutils literal notranslate"><span class="pre">DataSubscriber</span></code></p></li>
+<li><p>Register with appropriate <code class="docutils literal notranslate"><span class="pre">DataService</span></code></p></li>
+<li><p>Implement visualization using Holoviews/Panel</p></li>
+</ol>
+</section>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="message-flow-and-transformation.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Message Flow and Transformation</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="orchestrator-flow.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Orchestrator Flow: Plot Creation Lifecycle</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025 Scipp contributors.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item"><!-- This will display the version of the docs -->
+Current ESSlivedata version: 26.2.5 (<a href="https://github.com/scipp/esslivedata/releases">older versions</a>).</div>
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>
