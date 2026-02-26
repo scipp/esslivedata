@@ -104,6 +104,27 @@ class TestSessionStatusRow:
         )
         assert "Stale" in row._status_pane.object
 
+    def test_shows_username_with_session_id(self):
+        row = SessionStatusRow(
+            session_id=SessionId("test-session-id"),
+            is_current_session=False,
+            seconds_since_heartbeat=1.0,
+            username="Simon",
+        )
+        html = row._session_id_pane.object
+        assert "Simon" in html
+        assert "test-sessio" in html  # truncated to 12 chars
+
+    def test_shows_only_session_id_without_username(self):
+        row = SessionStatusRow(
+            session_id=SessionId("test-session-id"),
+            is_current_session=False,
+            seconds_since_heartbeat=1.0,
+        )
+        html = row._session_id_pane.object
+        assert "test-sessio" in html
+        assert "<code>" in html
+
 
 class TestSessionStatusWidget:
     @pytest.fixture

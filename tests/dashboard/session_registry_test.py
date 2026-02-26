@@ -175,3 +175,27 @@ class TestSessionRegistry:
     def test_get_seconds_since_heartbeat_returns_none_for_unknown(self):
         registry = SessionRegistry()
         assert registry.get_seconds_since_heartbeat(SessionId('unknown')) is None
+
+    def test_register_with_username(self):
+        registry = SessionRegistry()
+        session_id = SessionId('session-1')
+
+        registry.register(session_id, username='Simon')
+
+        info = registry.get_session_info(session_id)
+        assert info is not None
+        assert info.username == 'Simon'
+
+    def test_register_without_username(self):
+        registry = SessionRegistry()
+        session_id = SessionId('session-1')
+
+        registry.register(session_id)
+
+        info = registry.get_session_info(session_id)
+        assert info is not None
+        assert info.username is None
+
+    def test_get_session_info_returns_none_for_unknown(self):
+        registry = SessionRegistry()
+        assert registry.get_session_info(SessionId('unknown')) is None

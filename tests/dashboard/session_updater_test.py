@@ -141,3 +141,17 @@ class TestSessionUpdater:
 
         # Should not raise
         updater.periodic_update()
+
+    def test_username_forwarded_to_registry(self):
+        session_id = SessionId('session-1')
+        registry = SessionRegistry()
+
+        SessionUpdater(
+            session_id=session_id,
+            session_registry=registry,
+            username='Simon',
+        )
+
+        info = registry.get_session_info(session_id)
+        assert info is not None
+        assert info.username == 'Simon'
