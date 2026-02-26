@@ -31,15 +31,32 @@ def _ensure_coords(da: sc.DataArray) -> sc.DataArray:
     return da
 
 
-def convert_histogram_1d(data: sc.DataArray, label: str = '') -> hv.Histogram:
-    """
-    Convert a 1D scipp DataArray to a Holoviews Histogram.
+def prepare_1d(
+    data: sc.DataArray,
+) -> tuple[sc.DataArray, list[hv.Dimension], list[hv.Dimension]]:
+    """Prepare a 1D DataArray for HoloViews conversion.
+
+    Ensures coordinates exist and returns the HoloViews dimension objects
+    needed by all 1D element constructors. Call this once and pass the result
+    to multiple element constructors to avoid redundant work.
+
+    Parameters
+    ----------
+    data:
+        Input 1D DataArray (may be missing dimension coordinates).
 
     Returns
     -------
-    hv.Histogram
-        A Holoviews Histogram object.
+    :
+        Tuple of (prepared DataArray, kdims, vdims).
     """
+    data = _ensure_coords(data)
+    coord = data.coords[data.dim]
+    return data, [coord_to_dimension(coord)], [create_value_dimension(data)]
+
+
+def convert_histogram_1d(data: sc.DataArray, label: str = '') -> hv.Histogram:
+    """Convert a 1D scipp DataArray to a Holoviews Histogram."""
     dim = data.dim
     coord = data.coords[dim]
     kdims = [coord_to_dimension(coord)]
@@ -51,62 +68,32 @@ def convert_histogram_1d(data: sc.DataArray, label: str = '') -> hv.Histogram:
 
 
 def convert_curve_1d(data: sc.DataArray, label: str = '') -> hv.Curve:
-    """
-    Convert a 1D scipp DataArray to a Holoviews Curve.
-
-    Returns
-    -------
-    hv.Curve
-        A Holoviews Curve object.
-    """
-    data = _ensure_coords(data)
-    dim = data.dim
-    coord = data.coords[dim]
-    kdims = [coord_to_dimension(coord)]
-    vdims = [create_value_dimension(data)]
-
+    """Convert a 1D scipp DataArray to a Holoviews Curve."""
+    data, kdims, vdims = prepare_1d(data)
     return hv.Curve(
-        data=(coord.values, data.values), kdims=kdims, vdims=vdims, label=label
+        data=(data.coords[data.dim].values, data.values),
+        kdims=kdims,
+        vdims=vdims,
+        label=label,
     )
 
 
 def convert_scatter_1d(data: sc.DataArray, label: str = '') -> hv.Scatter:
-    """
-    Convert a 1D scipp DataArray to a Holoviews Scatter.
-
-    Returns
-    -------
-    hv.Scatter
-        A Holoviews Scatter object.
-    """
-    data = _ensure_coords(data)
-    dim = data.dim
-    coord = data.coords[dim]
-    kdims = [coord_to_dimension(coord)]
-    vdims = [create_value_dimension(data)]
-
+    """Convert a 1D scipp DataArray to a Holoviews Scatter."""
+    data, kdims, vdims = prepare_1d(data)
     return hv.Scatter(
-        data=(coord.values, data.values), kdims=kdims, vdims=vdims, label=label
+        data=(data.coords[data.dim].values, data.values),
+        kdims=kdims,
+        vdims=vdims,
+        label=label,
     )
 
 
 def convert_error_bars_1d(data: sc.DataArray, label: str = '') -> hv.ErrorBars:
-    """
-    Convert a 1D scipp DataArray to a Holoviews Curve.
-
-    Returns
-    -------
-    hv.ErrorBars
-        A Holoviews ErrorBars object.
-    """
-    data = _ensure_coords(data)
-    dim = data.dim
-    coord = data.coords[dim]
-    kdims = [coord_to_dimension(coord)]
-    vdims = [create_value_dimension(data)]
-
+    """Convert a 1D scipp DataArray to a Holoviews ErrorBars."""
+    data, kdims, vdims = prepare_1d(data)
     return hv.ErrorBars(
-        data=(coord.values, data.values, sc.stddevs(data).values),
+        data=(data.coords[data.dim].values, data.values, sc.stddevs(data).values),
         kdims=kdims,
         vdims=[*vdims, 'yerr'],
         label=label,
@@ -114,22 +101,10 @@ def convert_error_bars_1d(data: sc.DataArray, label: str = '') -> hv.ErrorBars:
 
 
 def convert_spread_1d(data: sc.DataArray, label: str = '') -> hv.Spread:
-    """
-    Convert a 1D scipp DataArray to a Holoviews Spread.
-
-    Returns
-    -------
-    hv.Spread
-        A Holoviews Spread object (filled error band).
-    """
-    data = _ensure_coords(data)
-    dim = data.dim
-    coord = data.coords[dim]
-    kdims = [coord_to_dimension(coord)]
-    vdims = [create_value_dimension(data)]
-
+    """Convert a 1D scipp DataArray to a Holoviews Spread."""
+    data, kdims, vdims = prepare_1d(data)
     return hv.Spread(
-        data=(coord.values, data.values, sc.stddevs(data).values),
+        data=(data.coords[data.dim].values, data.values, sc.stddevs(data).values),
         kdims=kdims,
         vdims=[*vdims, 'yerr'],
         label=label,

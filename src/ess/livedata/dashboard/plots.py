@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import time
 import weakref
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import holoviews as hv
 import numpy as np
@@ -28,11 +28,8 @@ from .plot_params import (
     TickParams,
 )
 from .scipp_to_holoviews import (
-    convert_curve_1d,
-    convert_error_bars_1d,
     convert_histogram_1d,
-    convert_scatter_1d,
-    convert_spread_1d,
+    prepare_1d,
     to_holoviews,
 )
 from .time_utils import format_time_ns_local
@@ -542,6 +539,15 @@ class LinePlotter(Plotter):
             errors=params.line.errors,
         )
 
+    _BASE_ELEMENT_TYPE: ClassVar[dict[str, type[hv.Element]]] = {
+        'line': hv.Curve,
+        'points': hv.Scatter,
+    }
+    _ERROR_ELEMENT_TYPE: ClassVar[dict[str, type[hv.Element]]] = {
+        'bars': hv.ErrorBars,
+        'band': hv.Spread,
+    }
+
     def plot(
         self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
     ) -> hv.Element | hv.Overlay:
@@ -556,36 +562,50 @@ class LinePlotter(Plotter):
         framewise = self._update_autoscaler_and_get_framewise(da, data_key)
         opts = dict(framewise=framewise, **self._base_opts)
 
-        # Create base element
-        match self._mode:
-            case 'line':
-                base = convert_curve_1d(da, label=label)
-            case 'points':
-                base = convert_scatter_1d(da, label=label)
-            case 'histogram':
-                base = convert_histogram_1d(da, label=label)
-            case _:
-                base = convert_curve_1d(da, label=label)
+        if is_histogram:
+            base = convert_histogram_1d(da, label=label).opts(**opts)
+            if da.variances is not None and self._errors != 'none':
+                # Error elements need midpoint coords (N values, not N+1 edges)
+                error_da = self._convert_bin_edges_to_midpoints(da)
+                error_da, kdims, vdims = prepare_1d(error_da)
+                error_element = self._make_error_element(
+                    error_da, kdims, vdims, label
+                ).opts(**opts, **self._sizing_opts)
+                return base.opts(**self._sizing_opts) * error_element
+            return base
 
-        base = base.opts(**opts)
+        # Non-histogram: prepare once, build base + error from same data
+        da, kdims, vdims = prepare_1d(da)
+        coord_vals = da.coords[da.dim].values
 
-        # Add error overlay if data has variances and errors are enabled
+        base_type = self._BASE_ELEMENT_TYPE.get(self._mode, hv.Curve)
+        base = base_type(
+            data=(coord_vals, da.values), kdims=kdims, vdims=vdims, label=label
+        ).opts(**opts)
+
         if da.variances is not None and self._errors != 'none':
-            # For histogram mode, error elements need midpoint coords
-            error_da = self._convert_bin_edges_to_midpoints(da) if is_histogram else da
-            if self._errors == 'band':
-                error_element = convert_spread_1d(error_da, label=label)
-            else:
-                error_element = convert_error_bars_1d(error_da, label=label)
-            error_element = error_element.opts(**opts)
-            # Apply sizing opts to child elements individually. Bokeh needs
-            # responsive/aspect on each element to size the figure correctly;
-            # applying them only to the composite Overlay is not sufficient.
-            base = base.opts(**self._sizing_opts)
-            error_element = error_element.opts(**self._sizing_opts)
-            return base * error_element
+            error_element = self._make_error_element(da, kdims, vdims, label).opts(
+                **opts, **self._sizing_opts
+            )
+            return base.opts(**self._sizing_opts) * error_element
 
         return base
+
+    def _make_error_element(
+        self,
+        da: sc.DataArray,
+        kdims: list[hv.Dimension],
+        vdims: list[hv.Dimension],
+        label: str,
+    ) -> hv.Element:
+        """Construct error element from already-prepared data and dims."""
+        error_type = self._ERROR_ELEMENT_TYPE.get(self._errors, hv.ErrorBars)
+        return error_type(
+            data=(da.coords[da.dim].values, da.values, sc.stddevs(da).values),
+            kdims=kdims,
+            vdims=[*vdims, 'yerr'],
+            label=label,
+        )
 
 
 class ImagePlotter(Plotter):
