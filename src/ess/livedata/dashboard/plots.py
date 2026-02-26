@@ -159,26 +159,39 @@ def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
         return f'{end_str} (Lag: {lag_s:.1f}s)'
 
 
+_MAX_SOURCES_IN_FILENAME = 3
+
+
+def _sanitize_for_filename(text: str) -> str:
+    """Replace characters that are problematic in filenames."""
+    import re
+
+    # Replace runs of whitespace or path-unsafe characters with a single hyphen
+    return re.sub(r'[\s/\\:*?"<>|()]+', '-', text).strip('-')
+
+
 def build_save_filename(
     instrument: str,
-    source_names: list[str],
-    output_names: list[str],
+    source_titles: list[str],
+    output_titles: list[str],
 ) -> str:
     """
     Build a descriptive filename for the Bokeh SaveTool.
 
-    Produces a filename like "DREAM_monitor_counts" from instrument,
-    source, and output names. Timestamps are omitted because the
-    file-system creation time serves the same purpose.
+    Produces a filename like "DREAM_I-Q_Mantle-SANS" from instrument,
+    output titles, and source titles. Source titles are included only
+    when there are few enough to keep the name readable. Timestamps are
+    omitted because the file-system creation time serves the same
+    purpose.
 
     Parameters
     ----------
     instrument:
         Instrument name (will be uppercased).
-    source_names:
-        Data source names.
-    output_names:
-        Output/result names.
+    source_titles:
+        Human-readable source/detector titles.
+    output_titles:
+        Human-readable output titles.
 
     Returns
     -------
@@ -186,11 +199,11 @@ def build_save_filename(
         Filename string (without extension).
     """
     parts = [instrument.upper()]
-    if source_names:
-        parts.append('-'.join(sorted(source_names)))
-    if output_names:
-        parts.append('-'.join(sorted(output_names)))
-    return '_'.join(parts).replace('/', '-')
+    if output_titles:
+        parts.append('-'.join(_sanitize_for_filename(t) for t in sorted(output_titles)))
+    if source_titles and len(source_titles) <= _MAX_SOURCES_IN_FILENAME:
+        parts.append('-'.join(_sanitize_for_filename(t) for t in sorted(source_titles)))
+    return '_'.join(parts)
 
 
 def make_save_filename_hook(

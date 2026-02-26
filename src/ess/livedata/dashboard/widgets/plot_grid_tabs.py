@@ -72,14 +72,19 @@ def _get_sizing_mode(config: PlotConfig) -> str:
     return 'stretch_both'
 
 
-def _build_save_filename_from_cell(cell: PlotCell) -> str | None:
+def _build_save_filename_from_cell(
+    cell: PlotCell,
+    workflow_registry: Mapping[WorkflowId, WorkflowSpec],
+    get_source_title: Callable[[str], str],
+) -> str | None:
     """Build a descriptive SaveTool filename from a plot cell's layer configs.
 
-    Collects instrument, source names, and output names from all non-static
-    layers. Returns None if no non-static layers exist.
+    Resolves human-readable titles for outputs and sources so the
+    filename uses e.g. "I-Q" and "Mantle" rather than raw identifiers.
+    Returns None if no non-static layers exist.
     """
-    source_names: list[str] = []
-    output_names: list[str] = []
+    source_titles: list[str] = []
+    output_titles: list[str] = []
     instrument: str | None = None
     for layer in cell.layers:
         config = layer.config
@@ -87,11 +92,14 @@ def _build_save_filename_from_cell(cell: PlotCell) -> str | None:
             continue
         if instrument is None:
             instrument = config.workflow_id.instrument
-        source_names.extend(config.source_names)
-        output_names.append(config.output_name)
+        source_titles.extend(get_source_title(s) for s in config.source_names)
+        _, output_title = get_workflow_display_info(
+            workflow_registry, config.workflow_id, config.output_name
+        )
+        output_titles.append(output_title)
     if instrument is None:
         return None
-    return build_save_filename(instrument, source_names, output_names)
+    return build_save_filename(instrument, source_titles, output_titles)
 
 
 class PlotGridTabs:
@@ -923,7 +931,9 @@ class PlotGridTabs:
         else:
             result = hv.Overlay(plots)
 
-        filename = _build_save_filename_from_cell(cell)
+        filename = _build_save_filename_from_cell(
+            cell, self._workflow_registry, self._orchestrator.get_source_title
+        )
         if filename is not None:
             hook = make_save_filename_hook(filename)
             result = result.opts(hooks=[hook])

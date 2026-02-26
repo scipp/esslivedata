@@ -1391,32 +1391,45 @@ class TestBuildSaveFilename:
     """Tests for build_save_filename."""
 
     def test_single_source_and_output(self):
-        result = plots.build_save_filename('dream', ['monitor'], ['counts'])
-        assert result == 'DREAM_monitor_counts'
+        result = plots.build_save_filename('dream', ['Mantle'], ['I(Q)'])
+        assert result == 'DREAM_I-Q_Mantle'
 
     def test_multiple_sources_sorted(self):
-        result = plots.build_save_filename('dream', ['beta', 'alpha'], ['counts'])
-        assert result == 'DREAM_alpha-beta_counts'
+        result = plots.build_save_filename('dream', ['SANS', 'Mantle'], ['I(Q)'])
+        assert result == 'DREAM_I-Q_Mantle-SANS'
 
     def test_multiple_outputs_sorted(self):
-        result = plots.build_save_filename('dream', ['mon'], ['z_result', 'a_result'])
-        assert result == 'DREAM_mon_a_result-z_result'
+        result = plots.build_save_filename(
+            'loki', ['Rear'], ['Transmission Fraction', 'I(Q)']
+        )
+        assert result == 'LOKI_I-Q-Transmission-Fraction_Rear'
 
     def test_instrument_is_uppercased(self):
-        result = plots.build_save_filename('loki', ['src'], ['out'])
+        result = plots.build_save_filename('loki', ['Rear'], ['I(Q)'])
         assert result.startswith('LOKI_')
 
-    def test_slash_in_source_name_replaced(self):
-        result = plots.build_save_filename('dream', ['det/bank1'], ['counts'])
-        assert '/' not in result
+    def test_spaces_sanitized(self):
+        result = plots.build_save_filename('dream', ['Backward Endcap'], ['I(Q)'])
+        assert ' ' not in result
+
+    def test_parens_sanitized(self):
+        result = plots.build_save_filename('dream', ['Mantle'], ['I(Q)'])
+        assert '(' not in result
+        assert ')' not in result
+
+    def test_many_sources_omitted(self):
+        sources = ['Rear', 'Mid Bottom', 'Mid Left', 'Mid Top', 'Front Bottom']
+        result = plots.build_save_filename('loki', sources, ['I(Q)'])
+        # Sources omitted when there are too many
+        assert result == 'LOKI_I-Q'
 
     def test_empty_sources(self):
-        result = plots.build_save_filename('dream', [], ['counts'])
-        assert result == 'DREAM_counts'
+        result = plots.build_save_filename('dream', [], ['I(Q)'])
+        assert result == 'DREAM_I-Q'
 
     def test_empty_outputs(self):
-        result = plots.build_save_filename('dream', ['monitor'], [])
-        assert result == 'DREAM_monitor'
+        result = plots.build_save_filename('dream', ['Mantle'], [])
+        assert result == 'DREAM_Mantle'
 
 
 class TestMakeSaveFilenameHook:
