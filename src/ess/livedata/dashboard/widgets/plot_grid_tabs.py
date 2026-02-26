@@ -33,7 +33,7 @@ from ..plot_orchestrator import (
     SubscriptionId,
 )
 from ..plot_params import PlotAspectType, StretchMode
-from ..plots import build_save_filename, make_save_filename_hook
+from ..save_filename import build_save_filename_from_cell, make_save_filename_hook
 from ..session_layer import SessionLayer
 from ..session_updater import SessionUpdater
 from .plot_config_modal import PlotConfigModal
@@ -70,36 +70,6 @@ def _get_sizing_mode(config: PlotConfig) -> str:
             return 'stretch_width'
         return 'stretch_height'
     return 'stretch_both'
-
-
-def _build_save_filename_from_cell(
-    cell: PlotCell,
-    workflow_registry: Mapping[WorkflowId, WorkflowSpec],
-    get_source_title: Callable[[str], str],
-) -> str | None:
-    """Build a descriptive SaveTool filename from a plot cell's layer configs.
-
-    Resolves human-readable titles for outputs and sources so the
-    filename uses e.g. "I-Q" and "Mantle" rather than raw identifiers.
-    Returns None if no non-static layers exist.
-    """
-    source_titles: list[str] = []
-    output_titles: list[str] = []
-    instrument: str | None = None
-    for layer in cell.layers:
-        config = layer.config
-        if config.is_static():
-            continue
-        if instrument is None:
-            instrument = config.workflow_id.instrument
-        source_titles.extend(get_source_title(s) for s in config.source_names)
-        _, output_title = get_workflow_display_info(
-            workflow_registry, config.workflow_id, config.output_name
-        )
-        output_titles.append(output_title)
-    if instrument is None:
-        return None
-    return build_save_filename(instrument, source_titles, output_titles)
 
 
 class PlotGridTabs:
@@ -931,7 +901,7 @@ class PlotGridTabs:
         else:
             result = hv.Overlay(plots)
 
-        filename = _build_save_filename_from_cell(
+        filename = build_save_filename_from_cell(
             cell, self._workflow_registry, self._orchestrator.get_source_title
         )
         if filename is not None:

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import time
 import weakref
-from collections.abc import Callable
 from typing import Any, cast
 
 import holoviews as hv
@@ -157,81 +156,6 @@ def _compute_time_info(data: dict[str, sc.DataArray]) -> str | None:
     else:
         end_str = format_time_ns_local(min_end)
         return f'{end_str} (Lag: {lag_s:.1f}s)'
-
-
-_MAX_SOURCES_IN_FILENAME = 3
-
-
-def _sanitize_for_filename(text: str) -> str:
-    """Replace characters that are problematic in filenames."""
-    import re
-
-    # Replace runs of whitespace or path-unsafe characters with a single hyphen
-    return re.sub(r'[\s/\\:*?"<>|()]+', '-', text).strip('-')
-
-
-def build_save_filename(
-    instrument: str,
-    source_titles: list[str],
-    output_titles: list[str],
-) -> str:
-    """
-    Build a descriptive filename for the Bokeh SaveTool.
-
-    Produces a filename like "DREAM_I-Q_Mantle-SANS" from instrument,
-    output titles, and source titles. Source titles are included only
-    when there are few enough to keep the name readable. Timestamps are
-    omitted because the file-system creation time serves the same
-    purpose.
-
-    Parameters
-    ----------
-    instrument:
-        Instrument name (will be uppercased).
-    source_titles:
-        Human-readable source/detector titles.
-    output_titles:
-        Human-readable output titles.
-
-    Returns
-    -------
-    :
-        Filename string (without extension).
-    """
-    parts = [instrument.upper()]
-    if output_titles:
-        parts.append('-'.join(_sanitize_for_filename(t) for t in sorted(output_titles)))
-    if source_titles and len(source_titles) <= _MAX_SOURCES_IN_FILENAME:
-        parts.append('-'.join(_sanitize_for_filename(t) for t in sorted(source_titles)))
-    return '_'.join(parts)
-
-
-def make_save_filename_hook(
-    filename: str,
-) -> Callable[[Any, Any], None]:
-    """
-    Create a HoloViews hook that sets the SaveTool filename on a Bokeh figure.
-
-    Parameters
-    ----------
-    filename:
-        Filename (without extension) to set on the SaveTool.
-
-    Returns
-    -------
-    :
-        A hook function compatible with ``hv.Element.opts(hooks=[...])``.
-    """
-
-    def hook(plot: Any, element: Any) -> None:
-        del element
-        from bokeh.models.tools import SaveTool
-
-        for tool in plot.state.toolbar.tools:
-            if isinstance(tool, SaveTool):
-                tool.filename = filename
-
-    return hook
 
 
 class Plotter:

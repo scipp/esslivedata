@@ -3,7 +3,6 @@
 
 import uuid
 import warnings
-from typing import ClassVar
 
 import holoviews as hv
 import numpy as np
@@ -1385,80 +1384,3 @@ class TestTwoStageArchitecture:
         assert current is not None
         # The result should be the same as the computed element (pass-through)
         assert type(current) is type(computed)
-
-
-class TestBuildSaveFilename:
-    """Tests for build_save_filename."""
-
-    def test_single_source_and_output(self):
-        result = plots.build_save_filename('dream', ['Mantle'], ['I(Q)'])
-        assert result == 'DREAM_I-Q_Mantle'
-
-    def test_multiple_sources_sorted(self):
-        result = plots.build_save_filename('dream', ['SANS', 'Mantle'], ['I(Q)'])
-        assert result == 'DREAM_I-Q_Mantle-SANS'
-
-    def test_multiple_outputs_sorted(self):
-        result = plots.build_save_filename(
-            'loki', ['Rear'], ['Transmission Fraction', 'I(Q)']
-        )
-        assert result == 'LOKI_I-Q-Transmission-Fraction_Rear'
-
-    def test_instrument_is_uppercased(self):
-        result = plots.build_save_filename('loki', ['Rear'], ['I(Q)'])
-        assert result.startswith('LOKI_')
-
-    def test_spaces_sanitized(self):
-        result = plots.build_save_filename('dream', ['Backward Endcap'], ['I(Q)'])
-        assert ' ' not in result
-
-    def test_parens_sanitized(self):
-        result = plots.build_save_filename('dream', ['Mantle'], ['I(Q)'])
-        assert '(' not in result
-        assert ')' not in result
-
-    def test_many_sources_omitted(self):
-        sources = ['Rear', 'Mid Bottom', 'Mid Left', 'Mid Top', 'Front Bottom']
-        result = plots.build_save_filename('loki', sources, ['I(Q)'])
-        # Sources omitted when there are too many
-        assert result == 'LOKI_I-Q'
-
-    def test_empty_sources(self):
-        result = plots.build_save_filename('dream', [], ['I(Q)'])
-        assert result == 'DREAM_I-Q'
-
-    def test_empty_outputs(self):
-        result = plots.build_save_filename('dream', ['Mantle'], [])
-        assert result == 'DREAM_Mantle'
-
-
-class TestMakeSaveFilenameHook:
-    """Tests for make_save_filename_hook."""
-
-    def test_sets_filename_on_save_tool(self):
-        from bokeh.models.tools import SaveTool
-
-        save_tool = SaveTool()
-
-        class FakePlot:
-            class state:
-                class toolbar:
-                    tools: ClassVar = [save_tool]
-
-        hook = plots.make_save_filename_hook('DREAM_monitor_counts')
-        hook(FakePlot(), None)
-        assert save_tool.filename == 'DREAM_monitor_counts'
-
-    def test_ignores_non_save_tools(self):
-        from bokeh.models.tools import PanTool
-
-        pan_tool = PanTool()
-
-        class FakePlot:
-            class state:
-                class toolbar:
-                    tools: ClassVar = [pan_tool]
-
-        hook = plots.make_save_filename_hook('test_filename')
-        # Should not raise
-        hook(FakePlot(), None)

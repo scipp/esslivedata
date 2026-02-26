@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
+from typing import ClassVar
+
 import pydantic
 import scipp as sc
 
@@ -18,8 +20,10 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotConfig,
 )
 from ess.livedata.dashboard.plot_params import PlotParams1d
-from ess.livedata.dashboard.widgets.plot_grid_tabs import (
-    _build_save_filename_from_cell,
+from ess.livedata.dashboard.save_filename import (
+    build_save_filename,
+    build_save_filename_from_cell,
+    make_save_filename_hook,
 )
 
 _WF_ID = WorkflowId(instrument='dream', namespace='ns', name='wf', version=1)
@@ -92,7 +96,7 @@ def _make_cell(*layers: Layer) -> PlotCell:
 
 
 def _build(cell: PlotCell) -> str | None:
-    return _build_save_filename_from_cell(cell, _WORKFLOW_REGISTRY, _get_source_title)
+    return build_save_filename_from_cell(cell, _WORKFLOW_REGISTRY, _get_source_title)
 
 
 class TestBuildSaveFilenameFromCell:
@@ -134,3 +138,74 @@ class TestBuildSaveFilenameFromCell:
         result = _build(cell)
         assert result is not None
         assert 'unknown_det' in result
+
+
+class TestBuildSaveFilename:
+    """Tests for build_save_filename."""
+
+    def test_single_source_and_output(self):
+        assert build_save_filename('dream', ['Mantle'], ['I(Q)']) == 'DREAM_I-Q_Mantle'
+
+    def test_multiple_sources_sorted(self):
+        result = build_save_filename('dream', ['SANS', 'Mantle'], ['I(Q)'])
+        assert result == 'DREAM_I-Q_Mantle-SANS'
+
+    def test_multiple_outputs_sorted(self):
+        result = build_save_filename(
+            'loki', ['Rear'], ['Transmission Fraction', 'I(Q)']
+        )
+        assert result == 'LOKI_I-Q-Transmission-Fraction_Rear'
+
+    def test_instrument_is_uppercased(self):
+        assert build_save_filename('loki', ['Rear'], ['I(Q)']).startswith('LOKI_')
+
+    def test_spaces_sanitized(self):
+        result = build_save_filename('dream', ['Backward Endcap'], ['I(Q)'])
+        assert ' ' not in result
+
+    def test_parens_sanitized(self):
+        result = build_save_filename('dream', ['Mantle'], ['I(Q)'])
+        assert '(' not in result
+        assert ')' not in result
+
+    def test_many_sources_omitted(self):
+        sources = ['Rear', 'Mid Bottom', 'Mid Left', 'Mid Top', 'Front Bottom']
+        result = build_save_filename('loki', sources, ['I(Q)'])
+        assert result == 'LOKI_I-Q'
+
+    def test_empty_sources(self):
+        assert build_save_filename('dream', [], ['I(Q)']) == 'DREAM_I-Q'
+
+    def test_empty_outputs(self):
+        assert build_save_filename('dream', ['Mantle'], []) == 'DREAM_Mantle'
+
+
+class TestMakeSaveFilenameHook:
+    """Tests for make_save_filename_hook."""
+
+    def test_sets_filename_on_save_tool(self):
+        from bokeh.models.tools import SaveTool
+
+        save_tool = SaveTool()
+
+        class FakePlot:
+            class state:
+                class toolbar:
+                    tools: ClassVar = [save_tool]
+
+        hook = make_save_filename_hook('DREAM_monitor_counts')
+        hook(FakePlot(), None)
+        assert save_tool.filename == 'DREAM_monitor_counts'
+
+    def test_ignores_non_save_tools(self):
+        from bokeh.models.tools import PanTool
+
+        pan_tool = PanTool()
+
+        class FakePlot:
+            class state:
+                class toolbar:
+                    tools: ClassVar = [pan_tool]
+
+        hook = make_save_filename_hook('test_filename')
+        hook(FakePlot(), None)
