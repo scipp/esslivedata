@@ -10,8 +10,8 @@ in specs.py.
 import scipp as sc
 
 
-def get_wire_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
-    """Transform to fold detector data for wire view.
+def get_tube_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
+    """Transform to fold detector data for tube view.
 
     Folds raw detector data into (layer, straw, tube, pixel) dimensions using
     bank-specific sizes from DETECTOR_BANK_SIZES. The subsequent summing over
