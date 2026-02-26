@@ -171,6 +171,7 @@ warn_unreachable = true
 [tool.setuptools.package-data]
 "ess.livedata.config.defaults" = ["*.yaml", "*.yaml.jinja"]
 "ess.livedata.config.instruments" = ["*/grid_templates/*.yaml"]
+"ess.livedata.dashboard.templates" = ["*.html"]
 
 [tool.codespell]
 ignore-words-list = [
